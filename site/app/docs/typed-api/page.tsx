@@ -172,14 +172,22 @@ try {
           request's own — two users' renders can never share a promise.
         </li>
         <li>
-          <strong>Batching.</strong> The GET/HEAD calls a page makes in one tick ride one{" "}
+          <strong>Batching.</strong> The calls a page makes in one tick ride one{" "}
           <code>POST /_denext/api-batch</code>. Same-origin only, a marker header a{" "}
           <code>{"<form>"}</code>{" "}
           cannot set, capped, and every item runs as a sub-request through the full pipeline, so
           middleware applies exactly as to a direct call. Each item keeps the parent&apos;s client
           address — including the <code>rateLimitHeader</code> header the app names — so a per-route
           {" "}
-          <code>rateLimit()</code> counts a batched call like a direct one. Mutations never batch.
+          <code>rateLimit()</code>{" "}
+          counts a batched call like a direct one. Reads run concurrently; a mutation (POST, PUT,
+          PATCH, DELETE) runs alone, after every call made before it has settled and before any made
+          after it starts — the order you called them in. Each mutation passes its own route&apos;s
+          CSRF checks: it carries the batch&apos;s verified <code>Origin</code> and its own{" "}
+          <code>x-csrf-token</code> for <code>csrf({"{ doubleSubmit: true }"})</code>
+          . A mutation with any other custom header goes alone;{" "}
+          <code>createApiClient({"{ batch: { mutations: false } }"})</code> (or{" "}
+          <code>apiBatch: {"{ mutations: false }"}</code> on the server) keeps them out.
         </li>
         <li>
           <strong>In-process on the server.</strong>{" "}
@@ -216,7 +224,8 @@ export function Post({ id }: { id: string }) {
 }
 
 // Suspense mode: the server runs the call in-process inside <Suspense>, records the value under
-// the hook's useId(), and the client adopts it — hydration never refetches (Flight routes).
+// the hook's useId(), and the client adopts it — hydration never refetches (Flight routes and
+// isomorphic ones, buffered or streamed, and an isomorphic soft navigation).
 const { data } = useApi("/api/posts/[id]", "GET", { params: { id } }, { suspense: true });
 
 // Refetch when the server revalidates a tag (needs the Live transport):

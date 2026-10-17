@@ -3,9 +3,10 @@
  * `addContactAsync`, `presentFormAsync`, …, the enums and the permission calls) in Expo's legacy
  * shapes, the entry SDK 58 keeps for apps that have not moved to the `Contact` / `Group` classes.
  * It is the same implementation `denext/expo/contacts` exports from its main entry (where Expo
- * 58's legacy functions throw and denext's work), over `@capgo/capacitor-contacts` (`denext
- * mobile add contacts`), with the same limits: no containers, no change events, and off the
- * shell every call rejects with `ERR_UNAVAILABLE` except the permissions and `isAvailableAsync`.
+ * 58's legacy functions throw and denext's work), over `@capgo/capacitor-contacts` and denext's
+ * `DenextContacts` (`denext mobile add contacts`), with the same behaviour: containers on iOS,
+ * change events, and off the shell every call rejects with `ERR_UNAVAILABLE` except the
+ * permissions and `isAvailableAsync`.
  * Here `Contact`, `Group` and `Container` are the legacy record types.
  *
  * @example

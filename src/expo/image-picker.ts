@@ -1,11 +1,14 @@
 /**
- * `expo-image-picker` for denext: one picture from the camera or the photo library over
- * `denext/mobile`'s {@linkcode pickImage} (`@capacitor/camera` in the Capacitor shell, a
- * file input on the web).
+ * `expo-image-picker` for denext: photos and videos from the library or the camera over
+ * `denext/mobile`'s {@linkcode pickImage} / {@linkcode pickMedia} (`@capacitor/camera` in the
+ * Capacitor shell, a file input on the web).
  *
- * One asset per pick (`allowsMultipleSelection` picks one), images only, no crop editor.
- * `width` / `height` are measured by loading the picture. Permissions are asked by the
- * picker itself, so the permission calls report `granted`.
+ * `mediaTypes` (images, videos or both), `allowsMultipleSelection` with `selectionLimit`, and
+ * `orderedSelection` (iOS 15+, with `@capawesome/capacitor-file-picker` installed) are honoured;
+ * a video asset carries its `duration` in milliseconds. There is no crop editor. `width` /
+ * `height` come from the picker, else are measured by loading the picture (or the video's
+ * metadata). Permissions are asked by the picker itself, so the permission calls report
+ * `granted`.
  *
  * @example
  * ```ts
@@ -19,7 +22,13 @@
  */
 
 import { bytesToBase64 } from "../mobile/base64.ts";
-import { type PickedImage, pickImage } from "../mobile/pickers.ts";
+import {
+  type PickedImage,
+  type PickedMedia,
+  pickImage,
+  pickMedia,
+  type PickMediaTypes,
+} from "../mobile/pickers.ts";
 import {
   createPermissionHook,
   measureImage,
@@ -71,16 +80,18 @@ export interface ImagePickerOptions {
   aspect?: [number, number];
   /** JPEG quality, 0–1 (native only). */
   quality?: number;
-  /** The media kinds (images only here). */
+  /** The media kinds: images (the default), videos, or both. */
   mediaTypes?: MediaType | MediaType[] | MediaTypeOptions;
   /** Include EXIF (not provided). */
   exif?: boolean;
   /** Include the image as base64 in `asset.base64`. */
   base64?: boolean;
-  /** Allow several (one is picked here). */
+  /** Allow picking several from the library. */
   allowsMultipleSelection?: boolean;
-  /** The selection limit (one here). */
+  /** With `allowsMultipleSelection`, the most that can be picked (`0`: the system's maximum). */
   selectionLimit?: number;
+  /** Number the picks and return them in selection order (iOS 15+). */
+  orderedSelection?: boolean;
   /** The camera to open (ignored). */
   cameraType?: CameraType;
 }
@@ -95,7 +106,7 @@ export interface ImagePickerAsset {
   width: number;
   /** Height in pixels (0 when it could not be measured). */
   height: number;
-  /** `"image"`. */
+  /** `"image"` or `"video"`. */
   type?: "image" | "video" | "livePhoto" | "pairedVideo" | null;
   /** A file name. */
   fileName?: string | null;
@@ -105,10 +116,12 @@ export interface ImagePickerAsset {
   exif?: Record<string, unknown> | null;
   /** The image as base64 (with `base64: true`). */
   base64?: string | null;
-  /** The duration (videos only). */
+  /** A video's length in milliseconds (null for an image). */
   duration?: number | null;
   /** The MIME type. */
   mimeType?: string;
+  /** The picked `File` (web only), for `FormData` uploads. */
+  file?: File;
 }
 
 /** What a launch call resolves with. */
@@ -147,24 +160,113 @@ async function toAsset(picked: PickedImage, base64: boolean): Promise<ImagePicke
   return asset;
 }
 
+/** Expo's `mediaTypes` (new or legacy form) as `denext/mobile`'s media types. */
+function mediaKinds(mediaTypes: ImagePickerOptions["mediaTypes"]): PickMediaTypes {
+  if (mediaTypes === undefined) return "images";
+  if (mediaTypes === MediaTypeOptions.All) return "all";
+  if (mediaTypes === MediaTypeOptions.Videos) return "videos";
+  if (mediaTypes === MediaTypeOptions.Images) return "images";
+  const kinds: readonly string[] = Array.isArray(mediaTypes) ? mediaTypes : [mediaTypes];
+  const images = kinds.includes("images") || kinds.includes("livePhotos");
+  const videos = kinds.includes("videos");
+  return images && videos ? "all" : videos ? "videos" : "images";
+}
+
+/** A video's pixel size and length in seconds (zeros when it cannot be loaded here). */
+function measureVideo(url: string): Promise<{ width: number; height: number; duration: number }> {
+  const zero = { width: 0, height: 0, duration: 0 };
+  const doc = (globalThis as { document?: Document }).document;
+  if (typeof doc?.createElement !== "function") return Promise.resolve(zero);
+  const video = doc.createElement("video");
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(zero), 5000);
+    const done = (size: typeof zero) => {
+      clearTimeout(timer);
+      video.removeAttribute("src");
+      resolve(size);
+    };
+    video.onloadedmetadata = () =>
+      done({
+        width: video.videoWidth,
+        height: video.videoHeight,
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+      });
+    video.onerror = () => done(zero);
+    video.preload = "metadata";
+    video.src = url;
+  });
+}
+
+/** A `denext/mobile` photo or video as an Expo asset. */
+async function mediaToAsset(item: PickedMedia, base64: boolean): Promise<ImagePickerAsset> {
+  const uri = item.webPath;
+  let { width, height, duration: seconds } = item;
+  if (width === undefined || height === undefined || (item.type === "video" && !seconds)) {
+    const measured = item.type === "video"
+      ? await measureVideo(uri)
+      : { ...(await measureImage(uri)), duration: 0 };
+    width ??= measured.width;
+    height ??= measured.height;
+    seconds ||= measured.duration;
+  }
+  const asset: ImagePickerAsset = {
+    uri,
+    width,
+    height,
+    type: item.type,
+    fileName: item.name ?? `${item.type}.${item.format}`,
+    mimeType: item.mimeType,
+    assetId: null,
+    exif: null,
+    duration: item.type === "video" ? Math.round((seconds ?? 0) * 1000) : null,
+    ...(item.size === undefined ? {} : { fileSize: item.size }),
+    ...(item.file ? { file: item.file } : {}),
+  };
+  if (base64 && item.type === "image") {
+    const bytes = new Uint8Array(await (await fetch(uri)).arrayBuffer());
+    asset.base64 = bytesToBase64(bytes);
+    asset.fileSize = bytes.byteLength;
+  }
+  return asset;
+}
+
 /** Pick from `source` and shape the result. */
 async function launch(
   source: "camera" | "photos",
   options: ImagePickerOptions,
 ): Promise<ImagePickerResult> {
-  const picked = await pickImage({
-    source,
-    ...(options.quality === undefined ? {} : { quality: Math.round(options.quality * 100) }),
+  const quality = options.quality === undefined
+    ? {}
+    : { quality: Math.round(options.quality * 100) };
+  const kinds = mediaKinds(options.mediaTypes);
+  const multiple = source === "photos" && options.allowsMultipleSelection === true;
+  if (kinds === "images" && !multiple) {
+    // One picture: the picker `pickImage` opens (with the camera / photos prompt natively).
+    const picked = await pickImage({ source, ...quality });
+    if (!picked) return { canceled: true, assets: null };
+    return { canceled: false, assets: [await toAsset(picked, options.base64 === true)] };
+  }
+  const picked = await pickMedia({
+    source: source === "camera" ? "camera" : "library",
+    mediaTypes: kinds,
+    multiple,
+    ...(options.selectionLimit === undefined ? {} : { selectionLimit: options.selectionLimit }),
+    ...(options.orderedSelection === true ? { ordered: true } : {}),
+    ...quality,
   });
   if (!picked) return { canceled: true, assets: null };
-  return { canceled: false, assets: [await toAsset(picked, options.base64 === true)] };
+  const assets = await Promise.all(
+    picked.map((item) => mediaToAsset(item, options.base64 === true)),
+  );
+  return { canceled: false, assets };
 }
 
 /**
- * Pick a picture from the photo library.
+ * Pick photos or videos from the library: one, or several with `allowsMultipleSelection`.
  *
- * @param options The quality and `base64` options.
- * @returns The asset, or `canceled: true`.
+ * @param options `mediaTypes`, `allowsMultipleSelection`, `selectionLimit`, `orderedSelection`,
+ * `quality` and `base64`.
+ * @returns The assets, or `canceled: true`.
  */
 export function launchImageLibraryAsync(
   options: ImagePickerOptions = {},
@@ -173,9 +275,9 @@ export function launchImageLibraryAsync(
 }
 
 /**
- * Take a picture with the camera.
+ * Take a picture with the camera, or record a video with `mediaTypes: "videos"`.
  *
- * @param options The quality and `base64` options.
+ * @param options `mediaTypes`, `quality` and `base64`.
  * @returns The asset, or `canceled: true`.
  */
 export function launchCameraAsync(options: ImagePickerOptions = {}): Promise<ImagePickerResult> {

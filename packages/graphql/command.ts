@@ -6,6 +6,9 @@
  *   stable and diffable), or write it — what a CI step commits or feeds to a codegen tool.
  * - `denext graphql diff <file>` — compare the current SDL to a committed one; exits 1 on
  *   any difference and prints the changed lines.
+ * - `denext graphql client --lang python|go|swift|kotlin [--out <file>] [--package <name>]` — a
+ *   typed client in another language: the schema's types and an `execute` helper, one file with
+ *   no dependency beyond its standard library.
  *
  * @module
  */
@@ -89,27 +92,42 @@ export function diffSdl(before: string, after: string): string[] {
 export function createGraphqlCommand(
   getSdl: () => Promise<string>,
   io: GraphqlCommandIo = defaultIo,
+  path = "/graphql",
 ): CommandSpec {
   return {
     name: "graphql",
-    summary: "Print or diff the app's GraphQL schema (SDL)",
+    summary: "Print or diff the app's GraphQL schema (SDL), or generate a typed client",
     usage: [
       "Usage: denext graphql <action> [options]",
       "",
       "Actions:",
       "  sdl [--out <file>]   Print the schema as sorted SDL (default), or write it",
       "  diff <file>          Compare against a committed SDL; exit 1 on any change",
+      "  client --lang <lang> [--out <file>] [--package <name>]",
+      "                       A typed client (python, go, swift, kotlin)",
     ].join("\n"),
     positionals: [
-      { name: "action", help: "sdl | diff" },
+      { name: "action", help: "sdl | diff | client" },
       { name: "file", help: "the committed SDL to diff against" },
     ],
     flags: [
       {
         name: "out",
         type: "string",
-        help: "write the SDL here instead of stdout",
+        help: "write the SDL (or the client) here instead of stdout",
         valueName: "<file>",
+      },
+      {
+        name: "lang",
+        type: "string",
+        help: "client: the language (python | go | swift | kotlin)",
+        valueName: "<lang>",
+      },
+      {
+        name: "package",
+        type: "string",
+        help: "client: the Go / Kotlin package name (default client)",
+        valueName: "<name>",
       },
     ],
     // `sdl` / `diff` load the app's schema module (a module-path `schema`) and so its imports:
@@ -117,7 +135,7 @@ export function createGraphqlCommand(
     // The positionals are the action and a file, not the project dir — derive it from --cwd.
     loadsModules: true,
     moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
-    run: (ctx) => runGraphql(ctx, getSdl, io),
+    run: (ctx) => runGraphql(ctx, getSdl, io, path),
   };
 }
 
@@ -125,32 +143,62 @@ async function runGraphql(
   ctx: CommandContext,
   getSdl: () => Promise<string>,
   io: GraphqlCommandIo,
+  path: string,
 ): Promise<void> {
   const action = ctx.positionals[0] ?? "sdl";
-  if (action === "sdl") {
-    const sdl = await getSdl();
-    const out = ctx.flags.out;
-    if (typeof out === "string" && out) {
-      await io.writeFile(out, sdl);
-      io.log(`Wrote ${out} (${sdl.split("\n").length - 1} lines)`);
-    } else io.log(sdl.trimEnd());
-    return;
-  }
-  if (action === "diff") {
-    const file = ctx.positionals[1];
-    if (!file) throw new Error("denext graphql diff needs the committed SDL's path");
-    const changes = diffSdl(await io.readFile(file), await getSdl());
-    if (!changes.length) {
-      io.log(`graphql: ${file} is up to date`);
-      return;
-    }
-    for (const line of changes) io.log(line);
-    io.log(
-      `${changes.length} changed line(s) since ${file} — regenerate with \`denext graphql sdl --out ${file}\``,
-    );
-    io.exit(1);
-    return;
-  }
-  io.error(`Unknown action "${action}". Try: denext graphql sdl | diff <file>`);
+  if (action === "client") return await client(ctx, await getSdl(), io, path);
+  if (action === "sdl") return await sdlAction(ctx, await getSdl(), io);
+  if (action === "diff") return await diffAction(ctx, await getSdl(), io);
+  io.error(`Unknown action "${action}". Try: denext graphql sdl | diff <file> | client`);
   throw new Error(`unknown graphql action: ${action}`);
+}
+
+/** `sdl`: the schema, to stdout or `--out`. */
+async function sdlAction(ctx: CommandContext, sdl: string, io: GraphqlCommandIo): Promise<void> {
+  const out = ctx.flags.out;
+  if (typeof out === "string" && out) {
+    await io.writeFile(out, sdl);
+    io.log(`Wrote ${out} (${sdl.split("\n").length - 1} lines)`);
+  } else io.log(sdl.trimEnd());
+}
+
+/** `diff <file>`: exit 1 with the changed lines when the schema moved. */
+async function diffAction(ctx: CommandContext, sdl: string, io: GraphqlCommandIo): Promise<void> {
+  const file = ctx.positionals[1];
+  if (!file) throw new Error("denext graphql diff needs the committed SDL's path");
+  const changes = diffSdl(await io.readFile(file), sdl);
+  if (!changes.length) {
+    io.log(`graphql: ${file} is up to date`);
+    return;
+  }
+  for (const line of changes) io.log(line);
+  io.log(
+    `${changes.length} changed line(s) since ${file} — regenerate with \`denext graphql sdl --out ${file}\``,
+  );
+  io.exit(1);
+}
+
+/** `client`: a typed client in `--lang` from the schema, to stdout or `--out`. */
+async function client(
+  ctx: CommandContext,
+  sdl: string,
+  io: GraphqlCommandIo,
+  path: string,
+): Promise<void> {
+  const { emitClient, isClientLanguage, CLIENT_LANGUAGES } = await import(
+    "@denext/openapi/clients"
+  );
+  const lang = ctx.flags.lang;
+  if (!isClientLanguage(lang)) {
+    io.error(`denext graphql client needs --lang ${CLIENT_LANGUAGES.join(" | ")}`);
+    throw new Error(`unknown client language: ${String(lang)}`);
+  }
+  const { modelFromSdl } = await import("./client.ts");
+  const pkg = typeof ctx.flags.package === "string" ? ctx.flags.package : undefined;
+  const { source } = emitClient(modelFromSdl(sdl, path), lang, { packageName: pkg });
+  const out = ctx.flags.out;
+  if (typeof out === "string" && out) {
+    await io.writeFile(out, source);
+    io.log(`Wrote ${out} (${lang} client)`);
+  } else io.log(source.trimEnd());
 }

@@ -11,8 +11,11 @@ import {
   mergeModuleConfig,
   readConfig,
   readImportsAbsolute,
+  resolvesInThisProcess,
+  unresolvedImportKeys,
   writeMergedModuleConfig,
 } from "../src/build/module-config.ts";
+import { denoJson } from "../src/build/scaffold.ts";
 
 Deno.test("acquireFwdepsInstall: serializes concurrent installs, skips when already done", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_fwlock_" });
@@ -87,6 +90,151 @@ Deno.test("configAnchorsResolution: manual node_modules or npm: imports anchor",
   assert(
     !configAnchorsResolution({ imports: { denext: "../../mod.ts", "@db/pg": "jsr:@db/postgres" } }),
   );
+});
+
+Deno.test("configAnchorsResolution: an import-map key the running process cannot resolve anchors", () => {
+  // What the running CLI's config resolves (a stand-in for import.meta.resolve).
+  const known = new Set(["denext", "denext/server", "@std/path", "@std/path/posix"]);
+  const resolves = (key: string) => known.has(key);
+  // An app-only prefix (a Gleam build's `@gleam/`) or bare key: the merged config is needed,
+  // or an app server module importing it is "not in import map" (B2).
+  assert(
+    configAnchorsResolution({ imports: { "@gleam/": "./gleam/build/dev/javascript/" } }, resolves),
+  );
+  assert(configAnchorsResolution({ imports: { "@db/pg": "jsr:@db/postgres" } }, resolves));
+  assertEquals(
+    unresolvedImportKeys(
+      { imports: { denext: "../mod.ts", "denext/mobile": "../m.ts" } },
+      resolves,
+    ),
+    ["denext/mobile"],
+  );
+  // Keys the process resolves keep a plain project off the re-exec (startup cost, no --allow-run).
+  assert(!configAnchorsResolution({ imports: { denext: "../../mod.ts" } }, resolves));
+  assert(
+    !configAnchorsResolution({
+      imports: { "denext/server": "../s.ts", "@std/path/posix": "jsr:@std/path/posix" },
+    }, resolves),
+  );
+  assert(!configAnchorsResolution({}, resolves));
+  assertEquals(unresolvedImportKeys({}, resolves), []);
+  // Without a resolver only the manual / npm: rule applies (the CSS stage's check).
+  assert(!configAnchorsResolution({ imports: { "@gleam/": "./gleam/" } }));
+});
+
+Deno.test("resolvesInThisProcess: asks Deno's resolver under the config this process runs with", () => {
+  // The test runs under the framework's config: its map, a jsr: entry's subpaths, its workspace.
+  assert(resolvesInThisProcess("denext/server"));
+  assert(resolvesInThisProcess("@std/path"));
+  assert(resolvesInThisProcess("@std/path/posix"));
+  assert(resolvesInThisProcess("@denext/htmx"));
+  assert(!resolvesInThisProcess("@gleam/"));
+  assert(!resolvesInThisProcess("@gleam/app.mjs"));
+  assert(!resolvesInThisProcess("denext-not-a-key"));
+});
+
+Deno.test("the source checkout's framework config does not anchor the repo's plain examples", async () => {
+  // The startup-cost guard: an example that maps only what the framework config resolves must
+  // not start re-exec'ing. examples/hello maps denext's own entries and nothing else.
+  const root = new URL("..", import.meta.url).pathname;
+  for (const example of ["hello", "htmx", "pages-router", "typed-api"]) {
+    const cfg = await readConfig(join(root, "examples", example, "deno.json"));
+    assertEquals(
+      unresolvedImportKeys(cfg, resolvesInThisProcess),
+      [],
+      `examples/${example} would re-exec`,
+    );
+  }
+});
+
+Deno.test("a scaffolded app's map, passed to the CLI with --config, anchors nothing", async () => {
+  // R1: a source checkout runs a scaffolded app's least-privilege `start` task (no --allow-run)
+  // as `deno run --config <app>/deno.json <checkout>/cli.ts start`, with the app's denext keys
+  // pointed into the checkout. Checked against the framework config's own map, keys it lacks
+  // (`denext/`, the template's `denext/deploy`) re-exec'd that run into NotCapable; asked of the
+  // resolver the CLI actually runs under, every key resolves and nothing re-runs.
+  const dir = await Deno.makeTempDir({ prefix: "denext_scaffold_resolve_" });
+  try {
+    const fw = new URL("../", import.meta.url).href;
+    const cfg = JSON.parse(denoJson({ dir })) as { imports: Record<string, string> };
+    assert("denext/deploy" in cfg.imports, Object.keys(cfg.imports).join(", "));
+    Object.assign(cfg.imports, {
+      "denext": `${fw}mod.ts`,
+      "denext/": `${fw}src/`,
+      "denext/jsx-runtime": `${fw}src/jsx/jsx-runtime.ts`,
+      "denext/jsx-dev-runtime": `${fw}src/jsx/jsx-runtime.ts`,
+      "denext/server": `${fw}src/server/mod.ts`,
+      "denext/client": `${fw}src/client/mod.ts`,
+      "denext/testing": `${fw}src/testing/mod.ts`,
+      "denext/auth": `${fw}src/server/auth/public.ts`,
+      "denext/deploy": `${fw}src/deploy/mod.ts`,
+    });
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(cfg, null, 2));
+    const probe = join(dir, "probe.ts");
+    await Deno.writeTextFile(
+      probe,
+      `import { readConfig, resolvesInThisProcess, unresolvedImportKeys } from ${
+        JSON.stringify(`${fw}src/build/module-config.ts`)
+      };\n` +
+        `const cfg = await readConfig(${JSON.stringify(join(dir, "deno.json"))});\n` +
+        `console.log(JSON.stringify(unresolvedImportKeys(cfg, resolvesInThisProcess)));\n`,
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "--allow-read", "--config", join(dir, "deno.json"), probe],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const dec = new TextDecoder();
+    assertEquals(out.code, 0, dec.decode(out.stderr));
+    assertEquals(JSON.parse(dec.decode(out.stdout)), []);
+    // The framework config alone lacks them: the old static check's false positive.
+    assert(!resolvesInThisProcess("denext/"));
+    assert(!resolvesInThisProcess("denext/deploy"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a re-exec the CLI may not spawn fails with the way out, not NotCapable", async () => {
+  // A source checkout's CLI under the framework's config, an app mapping a key only it knows, and
+  // no --allow-run: the module re-exec cannot run, so the CLI says what to do instead.
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_reexec_refused_" }));
+  try {
+    await Deno.mkdir(join(dir, "app"));
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ imports: { "@gleam/": "./gleam/" } }),
+    );
+    await Deno.writeTextFile(join(dir, "app", "page.tsx"), "export default () => null;\n");
+    const root = new URL("..", import.meta.url).pathname;
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--config",
+        join(root, "deno.json"),
+        "--allow-read",
+        "--allow-env",
+        "--allow-net",
+        "--allow-write=.denext",
+        join(root, "cli.ts"),
+        "start",
+        ".",
+      ],
+      cwd: dir,
+      stdin: "null", // no terminal: Deno cannot ask for --allow-run, so the CLI refuses up front
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+    }).output();
+    const stderr = new TextDecoder().decode(out.stderr);
+    assert(out.code !== 0, stderr);
+    assert(!stderr.includes("NotCapable"), stderr);
+    assert(stderr.includes("has no --allow-run"), stderr);
+    assert(stderr.includes("(@gleam/)"), stderr);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("mergeModuleConfig: app imports win on overlap; passthrough of compilerOptions + nodeModulesDir", () => {

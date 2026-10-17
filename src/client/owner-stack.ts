@@ -1,12 +1,17 @@
 // `captureOwnerStack()` for the client fiber renderer (development only).
 //
 // The owner chain is the one the DevTools panel shows (`getOwnerStack` in
-// ./devtools-inspect.ts): the component fibers above the one rendering, nearest first.
+// ./devtools-inspect.ts), nearest first: React's JSX-owner chain — the component whose render
+// created each element — when the elements came from a dev build's `jsxDEV` (which records
+// the rendering component and the JSX's source on the element, through the recorder this
+// module installs), else the component fibers above the one rendering (the render-parent
+// chain; an element made by `h()` / `createElement` carries no owner).
 // It is formatted the way React 19 formats an owner stack — one `\n    at Name (location)`
 // line per owner, the component calling `captureOwnerStack()` itself not included — so code
 // that logs or parses React's string reads this one the same way. The location is where the
-// component was declared, from the Fast Refresh family registry and the dev metadata pass;
-// a component they don't know prints as `\n    at Name`.
+// owner wrote the JSX of the next element down when `jsxDEV` recorded it, else where the
+// component was declared (the Fast Refresh family registry and the dev metadata pass); a
+// component neither knows prints as `\n    at Name`.
 //
 // Installed on the client dispatcher by the dev path only (`installDevRender`, which the dev
 // entries and `denext/testing` call), so a production bundle never contains it and the
@@ -56,6 +61,91 @@ export function sourceOf(type: unknown): SourceLocation | undefined {
   return loc;
 }
 
+/** The `source` a dev build's `jsxDEV` passes: where the JSX was written. */
+interface JsxSource {
+  fileName?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+}
+
+/** An element as a dev build's `jsxDEV` leaves it: its owner and its JSX source. */
+interface OwnedElement {
+  /** The component fiber that rendered when the element was made (`null`: outside a render). */
+  _owner?: Fiber | null;
+  /** Where the element's JSX was written. */
+  _source?: JsxSource | null;
+}
+
+/** The `jsxDEV` recorder's registry slot (the runtime reads the same symbol). */
+const JSX_DEV = Symbol.for("denext.jsxDev");
+
+/**
+ * Note an element's owner (the component rendering now) and its JSX source — non-enumerable,
+ * so props spreading, `JSON.stringify` and equality checks over an element never see them.
+ */
+function recordElement(el: object, source: unknown): void {
+  if (!devHydrationActive()) return;
+  Object.defineProperty(el, "_owner", { value: currentFiber, configurable: true });
+  if (source && typeof source === "object") {
+    Object.defineProperty(el, "_source", { value: source, configurable: true });
+  }
+}
+
+/** A JSX source as a location (`fileName` as the dev build wrote it: a path or a URL). */
+function jsxLocation(src: JsxSource | null | undefined): SourceLocation | undefined {
+  if (!src || typeof src.fileName !== "string") return undefined;
+  const loc: SourceLocation = { file: src.fileName };
+  if (typeof src.lineNumber === "number") loc.line = src.lineNumber;
+  if (typeof src.columnNumber === "number") loc.column = src.columnNumber;
+  return loc;
+}
+
+/** One component in an owner chain, nearest first. */
+export interface OwnerFrame {
+  /** The owner's component fiber. */
+  fiber: Fiber;
+  /**
+   * Where the owner wrote the JSX of the element below it in the chain, when a dev build's
+   * `jsxDEV` recorded it (absent on the render-parent fallback).
+   */
+  callSite?: SourceLocation;
+}
+
+/** At most this many owners are listed (an owner cycle or a pathological tree stays cheap). */
+const MAX_OWNERS = 200;
+
+/**
+ * The owner chain of `fiber`, nearest first: the JSX owners when its element came from a dev
+ * build's `jsxDEV` (each frame with the call site of the element below it), else the
+ * component fibers above it.
+ *
+ * @param fiber A component fiber.
+ * @returns The owners.
+ */
+export function ownerFrames(fiber: Fiber): OwnerFrame[] {
+  const first = fiber.vnode as OwnedElement;
+  if (!("_owner" in first)) return renderParents(fiber);
+  const out: OwnerFrame[] = [];
+  const seen = new Set<Fiber>();
+  for (let el: OwnedElement = first; el._owner && out.length < MAX_OWNERS;) {
+    const owner = el._owner;
+    if (seen.has(owner)) break;
+    seen.add(owner);
+    out.push({ fiber: owner, callSite: jsxLocation(el._source) });
+    el = owner.vnode as OwnedElement;
+  }
+  return out;
+}
+
+/** The component fibers above `fiber`, nearest first (the owner chain without `jsxDEV`). */
+function renderParents(fiber: Fiber): OwnerFrame[] {
+  const out: OwnerFrame[] = [];
+  for (let f = fiber.return; f !== null; f = f.return) {
+    if (f.tag === "component") out.push({ fiber: f });
+  }
+  return out;
+}
+
 /** One stack frame's location, `file:line:column` as far as it is known. */
 function frameLocation(loc: SourceLocation): string {
   if (loc.line === undefined) return loc.file;
@@ -73,10 +163,9 @@ function frameLocation(loc: SourceLocation): string {
  */
 function formatOwnerStack(fiber: Fiber): string {
   let out = "";
-  for (let f = fiber.return; f !== null; f = f.return) {
-    if (f.tag !== "component") continue;
-    const type = f.vnode.type;
-    const loc = sourceOf(type);
+  for (const { fiber: owner, callSite } of ownerFrames(fiber)) {
+    const type = owner.vnode.type;
+    const loc = callSite ?? sourceOf(type);
     out += `\n    at ${componentDisplayName(type)}${loc ? ` (${frameLocation(loc)})` : ""}`;
   }
   return out;
@@ -90,14 +179,21 @@ function captureRenderOwnerStack(): string | null {
 }
 
 /**
- * Install (`true`) or remove (`false`) `captureOwnerStack()` on the client dispatcher. Called
- * from the dev path only (`installDevRender`), so a production bundle never contains it; it
- * still answers only while `__denextDev` is set.
+ * Install (`true`) or remove (`false`) `captureOwnerStack()` on the client dispatcher, and the
+ * recorder a dev build's `jsxDEV` hands each element to (its owner and JSX source). Called
+ * from the dev path only (`installDevRender`), so a production bundle never contains it; both
+ * still act only while `__denextDev` is set.
  *
  * @param on Install (default) or remove.
  */
 export function installOwnerStack(on = true): void {
   const d = clientDispatcher as { captureOwnerStack?: () => string | null };
-  if (on) d.captureOwnerStack = captureRenderOwnerStack;
-  else delete d.captureOwnerStack;
+  const g = globalThis as { [JSX_DEV]?: (el: object, source: unknown) => void };
+  if (on) {
+    d.captureOwnerStack = captureRenderOwnerStack;
+    g[JSX_DEV] = recordElement;
+  } else {
+    delete d.captureOwnerStack;
+    delete g[JSX_DEV];
+  }
 }

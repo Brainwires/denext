@@ -95,7 +95,7 @@ export function readsContext(node: Fiber, contextId: symbol): boolean {
 }
 
 /** XML namespaces for non-HTML host elements. */
-const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+export const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML";
 
 /**
@@ -197,6 +197,16 @@ export function collectEffects(fiber: Fiber, out: Fiber[], parked: Fiber[] = out
 
 export function needsSync(fiber: Fiber): boolean {
   return ((fiber.flags | fiber.subtreeFlags) & (Placement | ChildDeletion | ChildrenChanged)) !== 0;
+}
+
+/**
+ * A host's `dangerouslySetInnerHTML` object, or undefined (null counts as absent). Such a host
+ * owns no reconciled children, so its DOM children are never synced (that would prune them).
+ */
+export function rawHtmlOf(
+  props: Record<string, unknown> | null | undefined,
+): { __html?: unknown } | undefined {
+  return (props?.dangerouslySetInnerHTML ?? undefined) as { __html?: unknown } | undefined;
 }
 
 /** Pre-order DFS over the work-in-progress tree. */

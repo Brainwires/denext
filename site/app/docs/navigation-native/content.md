@@ -183,6 +183,18 @@ The screens set `touch-action: pan-y pinch-zoom` so the browser leaves horizonta
 the swipe. A scroll container of your own inside a screen (a virtualized list's scroller) needs
 the same, or Chrome may take the horizontal movement from the swipe.
 
+### Screen readers and focus
+
+A push or a pop reads the new screen's `title` to screen readers through an `aria-live` region
+(`announceRouteChanges: false` turns it off), and moves keyboard and screen reader focus into the
+screen, as VoiceOver and TalkBack do on a native screen change: a push focuses the screen's first
+heading (the header title, made focusable with `tabindex="-1"`), else the screen itself, and a pop
+gives focus back to the element that had it when the screen was left, such as the row that opened
+it. The first screen takes no focus, focus in a field outside the stack stays where it is, and
+when the focused heading already says the title the announcement is skipped, so it is read once.
+`focusOnNavigation: false` on `StackView` or `HistoryStack` turns the focus move off. A tab switch
+announces the tab and leaves focus on it.
+
 ## Modals and sheets
 
 `presentation` changes how a screen is shown; the screen is still a route and a history entry,

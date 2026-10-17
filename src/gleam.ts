@@ -1,0 +1,101 @@
+/**
+ * The optional `gleam()` plugin: compile the app's Gleam project to JavaScript at `denext dev`
+ * startup, whenever a `.gleam` file or `gleam.toml` changes, and at `denext build` / `export`, so
+ * TypeScript imports it typed through the `@gleam/` import-map prefix.
+ *
+ * ```ts
+ * // denext.config.ts
+ * import { gleam } from "denext/gleam";
+ * export default { plugins: [gleam()] };
+ * ```
+ *
+ * ```ts
+ * // app/page.tsx
+ * import { greet } from "@gleam/app/app.mjs"; // typed from Gleam's .d.mts
+ * ```
+ *
+ * The compiler is denext's pinned Gleam, downloaded and SHA-256-verified into the toolchain cache on
+ * first need (`denext toolchain install --with gleam` fetches it ahead, for offline work);
+ * `DENEXT_GLEAM=<path>` or the `gleam` option names another. Gleam's JavaScript target needs no
+ * Erlang. When no compiler can be had (offline before the first download) the step fails, unless
+ * the project has compiled output already, which it keeps with one warning. An app with no Gleam
+ * project is left alone; a compile error fails the step. `denext add gleam:<package>` creates the
+ * project and the import-map entry.
+ *
+ * Lustre apps (the Gleam UI framework) run as denext islands: when the app depends on Lustre, the
+ * Gleam build writes `.denext/lustre.ts`, the app's own Lustre build wrapped as a kit, and
+ * {@link lustreIsland} turns a Lustre app into an island component; {@link lustreElement} renders a
+ * Lustre component as a custom element, its shadow root prerendered as Declarative Shadow DOM;
+ * {@link defineLustreView} runs a Lustre app on the server as a server component whose DOM patches
+ * travel over the Live socket (beside `defineLiveView`).
+ *
+ * ```ts
+ * // app/counter.tsx
+ * "use client";
+ * import { lustreIsland } from "denext/gleam";
+ * import { lustre } from "../.denext/lustre.ts";
+ * import * as counter from "@gleam/app/counter.mjs";
+ * export const Counter = lustreIsland(lustre, counter.app(), {
+ *   flags: (props: { start: number }) => props.start,
+ * });
+ * ```
+ *
+ * This module is safe to import from client code: the build plugin's own modules load only when
+ * the plugin is set up.
+ *
+ * @module
+ */
+
+import type { DenextPlugin } from "./plugin/mod.ts";
+import type { GleamOptions } from "./build/gleam.ts";
+
+export type { GleamOptions } from "./build/gleam.ts";
+export { lustreKit } from "./lustre/kit.ts";
+export type {
+  GleamResult,
+  LustreApp,
+  LustreKit,
+  LustreModules,
+  LustreRuntime,
+  PrerenderedShadow,
+} from "./lustre/kit.ts";
+export { lustreIsland } from "./lustre/island.ts";
+export type { LustreIslandOptions } from "./lustre/island.ts";
+export { lustreElement } from "./lustre/element.ts";
+export type { LustreElementAttributes } from "./lustre/element.ts";
+export { defineLustreView } from "./lustre/view.ts";
+export type { LustreEventPayload, LustreViewComponent, LustreViewConfig } from "./lustre/view.ts";
+export { lustreServerKit } from "./lustre/server-kit.ts";
+export type {
+  LustreRuntimeInstance,
+  LustreServerKit,
+  LustreServerModules,
+  LustreServerRuntime,
+} from "./lustre/server-kit.ts";
+export { lustreViewIsland } from "./lustre/view-island.ts";
+export type { LustreViewIslandProps } from "./lustre/view-island.ts";
+export type { LustreReconciler, LustreReconcilerClass } from "./lustre/view-client.ts";
+
+/**
+ * The plugin's implementation, loaded when the plugin is set up. The specifier is not a literal so
+ * a client bundle that imports this module for `lustreIsland` never follows it into the build
+ * code (the compiler download, `Deno.Command`, the file system).
+ */
+const BUILD_MODULE = "./build/gleam.ts";
+
+/**
+ * The Gleam build plugin. Registers a prepare step that runs `gleam build --target javascript` in
+ * the Gleam project (`gleam.toml` at the app root, else `gleam/`, or `options.dir`).
+ *
+ * @param options The project directory and the `gleam` executable.
+ * @returns The plugin, for `plugins: [gleam()]`.
+ */
+export function gleam(options: GleamOptions = {}): DenextPlugin {
+  return {
+    name: "denext:gleam",
+    async setup(ctx) {
+      const build: typeof import("./build/gleam.ts") = await import(BUILD_MODULE);
+      await build.gleamPlugin(options).setup(ctx);
+    },
+  };
+}

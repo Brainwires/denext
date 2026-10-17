@@ -19,10 +19,14 @@ name: Publish to JSR
 #   git tag openapi-v0.1.0    && git push origin openapi-v0.1.0      # @denext/openapi
 #   git tag graphql-v0.1.0    && git push origin graphql-v0.1.0      # @denext/graphql
 #   git tag react-router-v0.1.0 && git push origin react-router-v0.1.0  # @denext/react-router
+#   git tag tanstack-start-v0.1.0 && git push origin tanstack-start-v0.1.0  # @denext/tanstack-start
 #   git tag content-collections-v0.1.0 && git push origin content-collections-v0.1.0  # @denext/content-collections
 #   git tag backend-v0.1.0    && git push origin backend-v0.1.0      # @denext/backend
 #   git tag lightningcss-v1.0.0-rc.72 && git push origin lightningcss-v1.0.0-rc.72  # @denext/lightningcss
 #   git tag swc-v76.0.0      && git push origin swc-v76.0.0          # @denext/swc
+#   git tag docs-corpus-v4.3.0 && git push origin docs-corpus-v4.3.0  # @denext/docs-corpus
+#   (its version IS denext's: the release script tags docs-corpus-v<version> itself for every
+#   denext release and waits for JSR to list it before it tags v<version>: see scripts/release.ts)
 #   (likewise avif-v* / og-v* / sqlite-v*)
 #
 # Bump the version in that package's deno.json before tagging — JSR rejects
@@ -43,10 +47,12 @@ on:
       - "openapi-v*" # @denext/openapi
       - "graphql-v*" # @denext/graphql
       - "react-router-v*" # @denext/react-router
+      - "tanstack-start-v*" # @denext/tanstack-start
       - "content-collections-v*" # @denext/content-collections
       - "backend-v*" # @denext/backend
       - "lightningcss-v*" # @denext/lightningcss
       - "swc-v*" # @denext/swc
+      - "docs-corpus-v*" # @denext/docs-corpus
 
 permissions:
   contents: read
@@ -98,15 +104,22 @@ jobs:
             openapi-v*)      cfg=packages/openapi/deno.json ;;
             graphql-v*)      cfg=packages/graphql/deno.json ;;
             react-router-v*) cfg=packages/react-router/deno.json ;;
+            tanstack-start-v*) cfg=packages/tanstack-start/deno.json ;;
             content-collections-v*) cfg=packages/content-collections/deno.json ;;
             backend-v*)      cfg=packages/backend/deno.json ;;
             lightningcss-v*) cfg=packages/lightningcss/deno.json ;;
             swc-v*)          cfg=packages/swc/deno.json ;;
+            docs-corpus-v*)  cfg=packages/docs-corpus/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
           esac
           echo "config=$cfg" >> "$GITHUB_OUTPUT"
           echo "Publishing package configured by $cfg"
+
+      # JSR takes the version from the config, not the tag: a tag on the wrong commit must not
+      # publish another version under its name.
+      - name: Check the tag names the config's version
+        run: deno run --allow-read=. scripts/publish-tag.ts "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.config }}"
 
       # The whole suite runs only when CI hasn't already passed it: on the tagged commit itself
       # (fmt + lint only), or on the parent of the release script's own `release: denext <v>`

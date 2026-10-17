@@ -517,6 +517,49 @@ or weaker than ideal.
    mints multi-audience tokens without `azp` can opt back into membership with
    `strictAudience: false`.
 
+### `<Script strategy="worker">` (Partytown) and HTML injection
+
+**`nextScriptWorkers`** runs `<Script strategy="worker">` through the app's Partytown, whose web
+worker runs a script outside the page's CSP. Left alone, that turns an HTML injection the CSP
+would neutralise into script execution: Partytown runs every `<script type="text/partytown">`
+it finds, so an injected one — inline code, or a source from any host — would run in the worker
+with the page reachable through Partytown's proxy. Worse, once a visit has registered
+Partytown's service worker, an injected `<iframe>` pointing at its sandbox page would start
+Partytown on any page of the origin. denext closes both:
+
+- **A per-response nonce.** Every worker script and its boot tag carry a nonce minted for that
+  response, and that page's CSP lists it as `'nonce-…'`. `boot.js` takes the nonce each boot
+  tag ran with from `document.currentScript.nonce` (browsers hide a nonce from markup and CSS
+  selectors once parsed), requires every boot tag to agree, and checks that the CSP lists it: a
+  probe `<script nonce>` runs only if it does. Only `text/partytown` scripts with that nonce, or
+  made by code with `document.createElement` (Partytown does that for a script a worker script
+  loads; an injection writes markup and cannot), are handed to Partytown; the rest are retyped
+  inert. An injection cannot know the nonce (it is
+  fixed before it is minted), a guessed or copied one fails, and an injected boot tag with a
+  different nonce makes the page refuse Partytown altogether.
+- **Held until checked.** From the first boot tag on, every `text/partytown` script is retyped
+  inert the moment it enters the document and restored only once the check passes, so no
+  sandbox can pick one up early. Scripts a client render adds later are checked the same way.
+- **A gated sandbox.** The published `partytown-sw.js` wraps Partytown's service worker and
+  serves the sandbox page only to a tab a checked boot announced, once. An injected iframe gets
+  a 403.
+- **Nothing else to start Partytown with.** Only `boot.js`, the service worker and the media
+  helper are published; the raw snippet, the atomics mode (pinned off) and the debug build,
+  each a page script an injection could include under `script-src 'self'`, are not.
+- **Cached output.** A cached page keeps its nonce with its body, which a later injection cannot
+  join. A `"use cache"` body and a PPR shell are combined with later renders, so they get no
+  nonce: a worker script there runs on the main thread, under the CSP, with a dev warning.
+
+What remains is the app's own choice: a worker script it renders (a tag manager, say) may load
+further scripts from the worker, where the page's `scriptSrc` does not apply. denext does not
+filter those through Partytown's `resolveUrl`: Partytown carries config functions into the
+worker as source text, so a per-route policy could only reach them by evaluating code on the
+page, which the CSP forbids. A route that sets `csp: "off"` or `'unsafe-inline'` in `scriptSrc`
+gets no nonce (a nonce would switch `'unsafe-inline'` off); there an injected script could run in
+the worker, but it could run on the main thread anyway. `tests/e2e/script-worker.e2e.test.ts`
+injects worker scripts with no nonce, a guessed one and one copied from another response, plus a
+boot tag and a sandbox iframe on a page with none, and checks that nothing but the app's own runs.
+
 The former backlog of parity checks is complete — each is now a case in
 `tests/nextjs-cve-parity.test.ts` or `tests/safe-fetch.test.ts`; see the
 `Security` sections of the changelog, 0.12.0 → 2.0.0.

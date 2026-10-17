@@ -132,3 +132,31 @@ Deno.test('unbundled dev serves a "use server" module as its action stub', async
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// An inline `"use server"` function in a module the browser gets (Next's build error): the
+// module is served as that error, never as its source.
+Deno.test("unbundled dev serves a module holding an inline action as the build error", async () => {
+  const root = new URL("../", import.meta.url).href;
+  const { dir: written } = await project({
+    "deno.json": JSON.stringify({ imports: { "denext": `${root}mod.ts` } }),
+    "app/Widget.tsx": `"use client";\nexport function W() {\n` +
+      `  async function leak() { "use server"; return "DEV_INLINE_SECRET"; }\n  return leak;\n}\n`,
+  });
+  const dir = await Deno.realPath(written);
+  const dev = createUnbundledDev({
+    projectDir: dir,
+    appDir: join(dir, "app"),
+    configPath: join(dir, "deno.json"),
+    outDir: join(dir, ".denext"),
+    compat: false,
+  });
+  try {
+    const served = (await dev._internal.transform(join(dir, "app", "Widget.tsx"))).code;
+    assertEquals(served.includes("DEV_INLINE_SECRET"), false);
+    assertStringIncludes(served, "It is not allowed to define inline");
+    assertStringIncludes(served, "Widget.tsx:3:3");
+  } finally {
+    await dev.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

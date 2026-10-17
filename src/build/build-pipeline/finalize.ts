@@ -7,6 +7,7 @@ import { join } from "@std/path";
 import { resetFonts } from "../../compat/next/font/registry.ts";
 import { extractPublicEnvRefs } from "../../runtime/public-env.ts";
 import { defaultLoader } from "../../server/mod.ts";
+import { generateServerActionsKey } from "../../server/action-bound.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import { type BundleChunk, bundleSummaryLines } from "../bundle-report.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
@@ -18,6 +19,7 @@ import { serializeBoundary } from "../module-graph.ts";
 import { collectPageFontEntries } from "../pipeline-shared.ts";
 import { precompressDir } from "../precompress.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
+import { PARTYTOWN_BUILD_DIR, preparePartytown } from "../partytown.ts";
 import { type BuildContext, log, timed } from "./context.ts";
 
 /**
@@ -109,6 +111,10 @@ function buildManifestFor(
     // Keys this build's cached pages (the prod server passes it to `PageCache`). A pinned id
     // (`DENEXT_BUILD_ID`) also lets `denext start` sweep other builds from a shared store.
     buildId: resolveBuildId(pinnedId),
+    // Seals the values bound to Server Actions (src/server/action-bound.ts): new per build, read
+    // only by the server (`DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` overrides it for replicas built
+    // separately).
+    serverActionsKey: generateServerActionsKey(),
     ...(pinnedId ? { buildIdPinned: true } : {}),
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,
@@ -201,6 +207,13 @@ export async function finalizeBuild(
 ): Promise<void> {
   const publicEnvKeys = await timed("publicEnvKeys", () => collectPublicEnvKeys(ctx.clientDir));
   const fonts = await timed("selfHostPageFonts", () => selfHostPageFonts(ctx));
+  // `<Script strategy="worker">`: the app's Partytown, swapped in with the client dir.
+  await timed("partytown", () =>
+    preparePartytown(
+      ctx.paths.config,
+      ctx.projectDir,
+      join(ctx.clientDir, PARTYTOWN_BUILD_DIR),
+    ));
   const serverCopies = await timed(
     "serverCopies",
     () => buildServerCopies(ctx.paths, ctx.compat, ctx.css?.importMap),

@@ -4,14 +4,17 @@
 //   beforeInteractive -> a blocking <script> (runs as soon as it is parsed)
 //   afterInteractive  -> <script defer> (default; runs after parsing)
 //   lazyOnload        -> <script defer> loaded with low priority
-//   worker            -> accepted for next/script parity, but runs on the MAIN thread
-//                        (as afterInteractive). True off-main-thread execution needs a
-//                        Partytown-style DOM-proxying worker runtime, which denext does
-//                        not bundle — see KNOWN-LIMITATIONS.md. A one-time dev warning
-//                        fires so the difference is visible.
+//   worker            -> off the main thread through Partytown, as Next does, once
+//                        `nextScriptWorkers` is on and the app installed
+//                        `@qwik.dev/partytown` (or `@builder.io/partytown`): a
+//                        `<script type="text/partytown">` after the same-origin boot script
+//                        the server serves (src/build/partytown.ts). Without either it runs
+//                        on the main thread (as afterInteractive), with a dev warning naming
+//                        the fix.
 
-import { h } from "../jsx/jsx-runtime.ts";
+import { Fragment, h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
+import { renderScope } from "./render-scope.ts";
 
 /** When a {@link Script} runs relative to page parsing/interactivity. */
 export type ScriptStrategy =
@@ -20,17 +23,73 @@ export type ScriptStrategy =
   | "lazyOnload"
   | "worker";
 
-let warnedWorkerStrategy = false;
+/**
+ * Where `strategy="worker"` scripts go, on a process-wide slot: the server sets it from
+ * `nextScriptWorkers` (`lib` when the Partytown package was found, `missing` when it was not),
+ * and in the browser the boot script sets it (with the page's nonce) before any module runs, so
+ * a hydrating client component renders what the server did. Unset: the option is off.
+ */
+type ScriptWorkersSlot = { lib?: string; missing?: boolean; nonce?: string };
+const slot = globalThis as {
+  __denextScriptWorkers?: ScriptWorkersSlot;
+  __denextDev?: boolean;
+  /** Server bridge: whether this render's output outlives the response (a `"use cache"` body, a PPR shell). */
+  __denextScriptWorkersShared?: () => boolean;
+};
 
-/** Dev-warn (once) that `strategy="worker"` runs on the main thread in denext. */
-function warnWorkerStrategy(): void {
-  if (warnedWorkerStrategy) return;
-  warnedWorkerStrategy = true;
-  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+/**
+ * Set (or clear, with `undefined`) where `strategy="worker"` scripts go. The servers call it
+ * at startup from `nextScriptWorkers` and the Partytown files they found.
+ *
+ * @param value `{ lib }` — the public path Partytown is served under (ends with `/`);
+ *   `{ missing: true }` — the option is on but the package is not installed; `undefined` — off.
+ */
+export function setScriptWorkers(value: ScriptWorkersSlot | undefined): void {
+  slot.__denextScriptWorkers = value;
+}
+
+/**
+ * The CSP nonce that authorizes this response's worker scripts, or null when Partytown is not
+ * published. One per response (the request's render scope), so the document's CSP carries it
+ * and Partytown's boot runs only the `text/partytown` scripts that hold it: an injected one
+ * cannot know it. In the browser it is the nonce the boot script validated. Null as well where
+ * the output outlives the response — a `"use cache"` body or a PPR shell is combined with
+ * later renders, so a nonce in it would be public and reusable; worker scripts there take the
+ * main-thread fallback.
+ */
+export function scriptWorkerNonce(): string | null {
+  const workers = slot.__denextScriptWorkers;
+  if (!workers?.lib) return null;
+  if (workers.nonce !== undefined) return workers.nonce || null; // the browser: the boot's
+  if (slot.__denextScriptWorkersShared?.()) return null;
+  const scope = renderScope();
+  if (!scope.scriptNonce) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    scope.scriptNonce = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return scope.scriptNonce;
+}
+
+const warnedWorkerStrategy = new Set<string>();
+
+/** Why a worker script took the main-thread fallback, and the fix (dev warning text). */
+const WORKER_FALLBACK = {
+  off: "set `nextScriptWorkers: true` in denext.config.ts and install `@qwik.dev/partytown` " +
+    "to run it in a web worker.",
+  missing: "`nextScriptWorkers` is on but Partytown is not installed. Install " +
+    "`@qwik.dev/partytown` into node_modules (`deno add npm:@qwik.dev/partytown` with " +
+    '`"nodeModulesDir": "auto"`, or your package manager) and restart.',
+  shared: 'it renders inside a `"use cache"` body or a PPR shell, which outlives the response, ' +
+    "so it cannot carry the response's nonce. Render it outside the cached part.",
+};
+
+/** Dev-warn (once per cause) that `strategy="worker"` runs on the main thread, naming the fix. */
+function warnWorkerStrategy(cause: keyof typeof WORKER_FALLBACK): void {
+  if (warnedWorkerStrategy.has(cause) || slot.__denextDev !== true) return;
+  warnedWorkerStrategy.add(cause);
   console.warn(
-    'denext: <Script strategy="worker"> runs on the MAIN thread (as afterInteractive) — ' +
-      "denext bundles no Partytown-style off-main-thread runtime. Remove the strategy or " +
-      "self-host Partytown if you need true off-main-thread execution.",
+    'denext: <Script strategy="worker"> runs on the MAIN thread (as afterInteractive): ' +
+      WORKER_FALLBACK[cause],
   );
 }
 
@@ -49,7 +108,13 @@ export interface ScriptProps {
 /** Render a `<script>` with the given loading {@link ScriptStrategy}. */
 export function Script(props: ScriptProps): VNode {
   const { strategy = "afterInteractive", children, ...rest } = props;
-  if (strategy === "worker") warnWorkerStrategy(); // main-thread fallback (see above)
+  if (strategy === "worker") {
+    const workers = slot.__denextScriptWorkers;
+    const nonce = scriptWorkerNonce();
+    if (workers?.lib && nonce) return workerScript(workers.lib, nonce, rest, children);
+    // The main-thread fallback (as afterInteractive).
+    warnWorkerStrategy(workers?.lib ? "shared" : workers?.missing ? "missing" : "off");
+  }
   const attrs: Record<string, unknown> = { ...rest };
   // `defer` only applies to external scripts; inline scripts run in place. `worker`
   // degrades to afterInteractive semantics (deferred external, or inline in place).
@@ -60,6 +125,26 @@ export function Script(props: ScriptProps): VNode {
     return h("script", { ...attrs, dangerouslySetInnerHTML: { __html: children } });
   }
   return h("script", attrs);
+}
+
+/**
+ * A `strategy="worker"` script for Partytown: the boot script (same-origin and external, so
+ * the strict CSP allows it; idempotent, so every worker script may carry it), then the script
+ * as `type="text/partytown"`, which the browser does not run and Partytown runs in its worker.
+ * Both carry the response's nonce: the boot runs only the scripts whose nonce the page's CSP
+ * allows. The boot is a plain blocking script so it has set the slot before any module runs.
+ */
+function workerScript(
+  lib: string,
+  nonce: string,
+  attrs: Record<string, unknown>,
+  children?: string,
+): VNode {
+  const props = { ...attrs, type: "text/partytown", nonce };
+  const script = typeof children === "string" && children.length > 0
+    ? h("script", { ...props, dangerouslySetInnerHTML: { __html: children } })
+    : h("script", props);
+  return h(Fragment, null, h("script", { src: `${lib}boot.js`, nonce }), script);
 }
 
 /**

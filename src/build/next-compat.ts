@@ -57,6 +57,12 @@ import {
   SQLITE_WASM_BRIDGE,
 } from "./sqlite-wasm.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
+import { chainSourceTransforms, compatSourceTransform } from "./compat-chain.ts";
+import {
+  findInlineServerActions,
+  inlineServerActionError,
+  transformInlineServerActions,
+} from "./inline-server-action.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "./esbuild/mod.ts";
 import {
@@ -199,6 +205,9 @@ const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
 export const NEXT_AUTH_SERVER_SPECIFIERS: ReadonlySet<string> = new Set([
   "next-auth",
   "next-auth/jwt",
+  "next-auth/next",
+  "next-auth/middleware",
+  "next-auth/adapters",
   "next-auth/providers",
   ...[
     "apple",
@@ -927,6 +936,9 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   // The `next-auth` shim's server modules (`NextAuth()`, `next-auth/jwt`, the providers).
   "denext/next-auth",
   "denext/next-auth/jwt",
+  "denext/next-auth/next",
+  "denext/next-auth/middleware",
+  "denext/next-auth/adapters",
   "denext/next-auth/providers",
   "denext/next-auth/providers/apple",
   "denext/next-auth/providers/auth0",
@@ -958,6 +970,8 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/cli/command",
   "denext/plugin-kit",
   "denext/plugin-kit/vite-emitter",
+  // The `gleam()` build plugin: imported by denext.config.ts, it runs the Gleam compiler.
+  "denext/gleam",
   "denext/lint-plugin",
   "denext/bundle",
   "denext/build/css",
@@ -1472,6 +1486,13 @@ export interface BundleNextCompatModulesOptions {
    * Requires `absWorkingDir`. Off → the narrow `catalogPackages` behavior is unchanged.
    */
   resolveAllNodeModules?: boolean;
+  /**
+   * Without {@link resolveAllNodeModules}: the packages (by name) on the import paths to the
+   * app's npm `"use client"` / `"use server"` files, resolved from `node_modules` the way the
+   * boundary walk resolved them (`npm-boundary.ts`), so the island the page imports is the
+   * very module the build registered. Ignored under {@link resolveAllNodeModules}.
+   */
+  boundaryPackages?: readonly string[];
   /**
    * App MDX config (`denext.config.ts` `mdx`): unified remark/rehype/recma plugin lists
    * forwarded to MDX's `compile` for `.mdx`/`.md` sources. Omit for the baseline
@@ -2291,6 +2312,28 @@ async function resolveBareForBuild(
   return remapped ?? await resolveNodeFromBrowser(fromDir, spec, conditions, platformExtensions);
 }
 
+/**
+ * Where the narrow (catalog) resolver walks `node_modules` from for `spec`, or `null` when the
+ * specifier is not its to claim. A catalog / workspace package imported from outside
+ * `node_modules` resolves from the app root (pnpm hoists direct deps there). Inside a package — a catalog
+ * package's dependency subtree in `node_modules`, or a workspace package's raw source (its own
+ * `package.json`, inside or outside the app) — every bare specifier resolves importer-relative,
+ * since the deno-loader can't see those packages' deps. The app's own code importing anything
+ * else is the deno-loader's (the import map, `npm:`): `nodeResolve: false` asked for that.
+ */
+async function narrowFromDir(
+  projectDir: string,
+  packages: Set<string>,
+  spec: string,
+  importer: string,
+): Promise<string | null> {
+  const [name] = splitPackageSpecifier(spec);
+  const inModules = inNodeModules(importer);
+  if (packages.has(name) && !inModules) return projectDir;
+  const appCode = !importer || (!inModules && await ownerPackageDir(importer) === projectDir);
+  return appCode ? null : dirname(importer);
+}
+
 export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
@@ -2308,17 +2351,13 @@ export function catalogResolverPlugin(
         // denext's own runtime imports — never intercept them. (The narrow catalog set is
         // always plain package names, so this only gates the `"all"` path.)
         if (all && /^[a-z][a-z0-9+.-]*:/.test(args.path)) return null;
-        const [name] = splitPackageSpecifier(args.path);
-        const importerInNodeModules = inNodeModules(args.importer);
         // `"all"`: always walk up from the importer's own dir (Node semantics) — this is
         // what lets a workspace package's SOURCE file (outside the app root) resolve its
-        // deps from its own `node_modules`, not just the app's. The narrow catalog set
-        // keeps its app-root bias for hoisted direct deps (backward-compatible).
+        // deps from its own `node_modules`, not just the app's.
         const fromDir = all
           ? (args.importer ? dirname(args.importer) : projectDir)
-          : (packages.has(name) && !importerInNodeModules) || !args.importer
-          ? projectDir
-          : dirname(args.importer);
+          : await narrowFromDir(projectDir, packages, args.path, args.importer);
+        if (fromDir === null) return null;
         const resolved = await resolveBareForBuild(
           args.importer,
           fromDir,
@@ -2500,11 +2539,58 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
   if (options.resolveAllNodeModules) {
     return [catalogResolverPlugin(options.absWorkingDir, "all", conditions, exts)];
   }
+  const plugins: esbuild.Plugin[] = [];
+  if (options.boundaryPackages && options.boundaryPackages.length > 0) {
+    const packages = new Set(options.boundaryPackages);
+    plugins.push(boundaryPackageResolverPlugin(options.absWorkingDir, packages, conditions, exts));
+  }
   if (options.catalogPackages && options.catalogPackages.length > 0) {
     const packages = new Set(options.catalogPackages);
-    return [catalogResolverPlugin(options.absWorkingDir, packages, conditions, exts)];
+    plugins.push(catalogResolverPlugin(options.absWorkingDir, packages, conditions, exts));
   }
-  return [];
+  return plugins;
+}
+
+/** `npm:@scope/pkg@^1/sub` → `@scope/pkg/sub` (the import map's npm specifiers). */
+export function npmSpecifierToBare(spec: string): string {
+  const rest = spec.slice("npm:".length).replace(/^\//, "");
+  const scoped = rest.startsWith("@");
+  const parts = rest.split("/");
+  const nameParts = scoped ? parts.slice(0, 2) : parts.slice(0, 1);
+  const last = nameParts.length - 1;
+  const at = nameParts[last].indexOf("@");
+  if (at > 0) nameParts[last] = nameParts[last].slice(0, at);
+  return [...nameParts, ...parts.slice(nameParts.length)].join("/");
+}
+
+/**
+ * esbuild plugin (`nodeResolve: false`): a bare specifier naming one of `packages` resolves from
+ * the importer's own directory through denext's node_modules resolver — exactly as the npm
+ * boundary walk resolves it — so a library's `"use client"` island is one module in the server
+ * bundle, reached by the page and registered as the island. Anything else (or a package not
+ * installed in `node_modules`) falls through to the deno-loader.
+ */
+function boundaryPackageResolverPlugin(
+  projectDir: string,
+  packages: ReadonlySet<string>,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): esbuild.Plugin {
+  return {
+    name: "denext-npm-boundary-resolver",
+    setup(build) {
+      build.onResolve({ filter: /^[^./]/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        const spec = args.path.startsWith("npm:") ? npmSpecifierToBare(args.path) : args.path;
+        if (/^[a-z][a-z0-9+.-]*:/.test(spec) || spec.startsWith("#")) return null;
+        const [name] = splitPackageSpecifier(spec);
+        if (!packages.has(name)) return null;
+        const fromDir = args.importer ? dirname(args.importer) : projectDir;
+        const resolved = await resolveNodeFrom(fromDir, spec, conditions, platformExtensions);
+        return resolved ? { path: resolved } : null;
+      });
+    },
+  };
 }
 
 /**
@@ -2543,27 +2629,36 @@ function frameworkUrlExternalPlugin(): esbuild.Plugin {
 }
 
 /**
- * esbuild plugin (SSR bundle): apply the `"use cache"` transform to app modules IN the bundle.
- * The runtime use-cache loader rewrites a source module into a `.denext/server-cache/uc_*`
- * copy and imports it natively — which, for a compat app, bypasses the react→denext bundle
- * (the copy's `next/*` and `.mdx` imports then fail under Deno's loader). Transforming at
- * bundle time keeps every module inside the one bundle, identity intact, and `use cache`
- * semantics active. Modules without the directive fall through to the normal loader.
- * Exported for testing.
+ * esbuild plugin (SSR bundle): the server-side directive transforms, applied to app modules IN
+ * the bundle — `"use cache"` (when `useCache`, Cache Components on) and inline `"use server"`
+ * functions (always: each becomes a registered server reference, hoisted to module scope when
+ * nested; see ./inline-server-action.ts). The runtime use-cache loader rewrites a source module
+ * into a `.denext/server-cache/uc_*` copy and imports it natively — which, for a compat app,
+ * bypasses the react→denext bundle (the copy's `next/*` and `.mdx` imports then fail under
+ * Deno's loader). Transforming at bundle time keeps every module inside the one bundle, identity
+ * intact. Modules with neither directive fall through to the normal loader. Exported for testing.
+ *
+ * @param options.useCache Compile `"use cache"` (default true).
  */
-export function cacheDirectivePlugin(): esbuild.Plugin {
+export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbuild.Plugin {
+  const useCache = options.useCache ?? true;
   return {
-    name: "denext-use-cache",
+    name: "denext-server-directives",
     setup(build) {
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/, namespace: "file" }, async (args) => {
         if (inNodeModules(args.path)) return undefined;
         const source = await Deno.readTextFile(args.path);
-        if (!source.includes("use cache")) return undefined;
-        const { code, changed } = await transformUseCache(source, toFileUrl(args.path).href);
-        if (!changed) return undefined;
+        const cache = useCache && source.includes("use cache");
+        if (!cache && !source.includes("use server")) return undefined;
+        const url = toFileUrl(args.path).href;
+        const cached = cache
+          ? await transformUseCache(source, url)
+          : { code: source, changed: false };
+        const inline = await transformInlineServerActions(cached.code, url);
+        if (!cached.changed && !inline.changed) return undefined;
         const ext = extname(args.path).slice(1);
         return {
-          contents: code,
+          contents: inline.code,
           loader: (ext === "mjs" ? "js" : ext) as esbuild.Loader,
           resolveDir: dirname(args.path),
         };
@@ -2638,10 +2733,21 @@ async function compatPlugins(
   return plugins;
 }
 
-/** The caller's plugins, then `lists: "denext"`'s DOM list aliases (when on). */
+/**
+ * The caller's plugins, then `lists: "denext"`'s DOM list aliases (when on). A module a caller
+ * plugin answers still goes through the `"use cache"` transform and the `platform` fold that
+ * later plugins apply to every other app module (./compat-chain.ts).
+ */
 function leadingPlugins(options: BundleNextCompatModulesOptions): esbuild.Plugin[] {
   const lists = options.domLists ? [domListsPlugin(options.platform ?? "browser")] : [];
-  return [...(options.extraPlugins ?? []), ...lists];
+  const transform = compatSourceTransform({
+    useCache: options.platform === "deno" && options.useCache === true,
+    inlineActions: options.platform === "deno",
+    refuseInlineActions: options.platform !== "deno",
+    platform: options.buildTarget,
+    projectDir: options.absWorkingDir,
+  });
+  return [...chainSourceTransforms(options.extraPlugins ?? [], transform), ...lists];
 }
 
 /**
@@ -2696,7 +2802,7 @@ async function sourcePlugins(
     ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
-    ...(deno && options.useCache ? [cacheDirectivePlugin()] : []),
+    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true })] : []),
     mdxPlugin(options.mdxOptions),
     ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
   ];
@@ -2828,10 +2934,14 @@ async function writeAnalyzeMeta(
  *
  * @param servers Map of stable module id → `{ url, exports }` (boundary manifest).
  * @param stubOf Generate the stub source for a `(moduleId, exports)` pair.
+ * @param unregistered The browser source for an app `"use server"` module the boundary does not
+ *   hold (see {@link BuildNextCompatClientOptions.serverModuleSource}); `null` stubs it and fails
+ *   the build.
  */
 export function serverStubPlugin(
   servers: Iterable<readonly [string, { url: string; exports: readonly string[] }]>,
   stubOf: (moduleId: string, exports: readonly string[]) => string,
+  unregistered?: (path: string) => Promise<string | null>,
 ): esbuild.Plugin {
   const byPath = new Map<string, { id: string; exports: readonly string[] }>();
   for (const [id, ref] of servers) {
@@ -2853,7 +2963,15 @@ export function serverStubPlugin(
             resolveDir: dirname(args.path),
           };
         }
-        if ((await readDirective(args.path)) !== "server") return null;
+        if ((await readDirective(args.path)) !== "server") {
+          // An app module holding an inline `"use server"` function fails the build here, at
+          // load (Next's error), so no output is written with its body in it.
+          return inNodeModules(args.path) ? null : await inlineActionErrors(args.path, cwdOf());
+        }
+        const own = inNodeModules(args.path) ? null : await unregistered?.(args.path);
+        if (own != null) {
+          return { contents: own, loader: sourceLoader(args.path), resolveDir: dirname(args.path) };
+        }
         // A `"use server"` file inside an npm package that is not in the boundary — the other
         // build (ESM vs CJS) of a package whose action module the boundary holds: an app's
         // client code imports the package's ESM build while its islands are the server
@@ -2867,9 +2985,10 @@ export function serverStubPlugin(
           resolveDir: dirname(args.path),
         };
       });
+      const cwdOf = () => build.initialOptions.absWorkingDir ?? Deno.cwd();
       build.onEnd((result) => {
         if (unknown.size === 0) return;
-        const cwd = build.initialOptions.absWorkingDir ?? Deno.cwd();
+        const cwd = cwdOf();
         const leaks: ServerModuleLeak[] = [...unknown].map((module) => ({
           module,
           entries: ["a client bundle"],
@@ -2880,6 +2999,33 @@ export function serverStubPlugin(
       });
     },
   };
+}
+
+/** esbuild's loader for a JS/TS module path (`.mjs` / `.cjs` → `js`, `.mts` / `.cts` → `ts`). */
+function sourceLoader(path: string): esbuild.Loader {
+  const ext = extname(path).slice(1);
+  if (ext === "mjs" || ext === "cjs") return "js";
+  return (ext === "mts" || ext === "cts" ? "ts" : ext) as esbuild.Loader;
+}
+
+/**
+ * The esbuild load result failing `path` when it holds an inline `"use server"` function
+ * (Next's error, naming its positions), else null (the next plugin loads it).
+ */
+async function inlineActionErrors(
+  path: string,
+  cwd: string,
+): Promise<{ errors: esbuild.PartialMessage[] } | null> {
+  let source: string;
+  try {
+    source = await Deno.readTextFile(path);
+  } catch {
+    return null; // unreadable: esbuild reports it
+  }
+  const at = await findInlineServerActions(source);
+  if (at.length === 0) return null;
+  const rel = relative(cwd, path);
+  return { errors: [{ text: inlineServerActionError(new Map([[rel, at]])) }] };
 }
 
 /**

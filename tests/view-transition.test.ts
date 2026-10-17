@@ -16,7 +16,7 @@ import {
   getViewTransitionSupport,
 } from "../src/client/fiber/view-transition-support.ts";
 import { render } from "../src/testing/mod.ts";
-import { withViewTransition } from "../src/client/navigation.ts";
+import { withViewTransition } from "../src/client/nav-document.ts";
 
 function style(el: { getAttribute(n: string): string | null }): string {
   return el.getAttribute("style") ?? "";

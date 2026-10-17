@@ -417,6 +417,22 @@ App Router pipeline (Flight, streaming, per-segment boundaries, soft nav, ISR, F
 serves them, and the plugin writes no render path of its own. Proof the synthesizer seam
 scales to a full framework router, not just aliasing.
 
+[`@denext/tanstack-start`](https://github.com/Brainwires/denext/tree/main/packages/tanstack-start)
+takes the claiming path: a **prepare step** runs TanStack's own route generator over
+`src/routes/`, a **request handler** answers every request with TanStack Start's own handler
+(streamed pages, server functions in Start's RPC format, server routes) after denext's
+same-origin check and body cap, and a **build step** builds the client and server bundles — both
+compiled onto denext's React with `@denext/denext/build/next-compat`, as `pages-router` does for
+an npm-React app, with TanStack's own compiler run over them as extra esbuild plugins (denext's
+`"use cache"` transform still runs on what it compiles). Both builds fail on Start's import
+protection (its rules, the app's `importProtection` options, Start's messages), read from each
+bundle's esbuild metafile so only what tree-shaking kept counts; the client build also fails on
+denext's server-only scan (`findServerOnlyLeaks`), and `serverModuleSource` lets it serve a
+`"use server"` module's server functions as RPC stubs. Under `denext export` the same build step
+runs Start's prerender against the server bundle: the pages go to `<outDir>/pages-static/`
+(which an export with no `app/` copies to its root, as for `pages-router`), the client bundle is
+published with `emitFile`, and the routes that need a server are listed.
+
 ## The first-party catalog
 
 The **first-party catalog is generated**, not hand-maintained: every `@denext/*` package,
@@ -574,3 +590,10 @@ The walk-throughs below are the ones worth **reading as models** of a seam — t
   writes React Router's route types (`+types/<route>.ts` under `.react-router/types/`) and adds
   `denext typegen` (**CLI verb**). The model for adapting a foreign routing convention onto
   denext's own pipeline.
+- **[`@denext/tanstack-start`](https://github.com/Brainwires/denext/tree/main/packages/tanstack-start)** — a TanStack
+  Start app on denext: it generates the route tree (**prepare step**), answers every request
+  with Start's own handler — streamed pages, `createServerFn` server functions, server routes —
+  behind denext's same-origin check and body cap, serves the client bundle (**request
+  handler**), and builds that bundle with TanStack's compiler (**build step**); the browser
+  hydrates with Start's `StartClient`. Start's import protection guards both bundles, and
+  `denext export` prerenders the app with Start's `prerender` / `pages` options.

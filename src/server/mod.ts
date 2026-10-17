@@ -155,6 +155,14 @@ export type {
   ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
+// A channel's replay log (`createChannel({ history })`): in memory by default, Redis shared.
+export { inMemoryChannelLog } from "../runtime/channel-log.ts";
+export type {
+  ChannelHistory,
+  ChannelLog,
+  ChannelLogEntry,
+  InMemoryChannelLogOptions,
+} from "../runtime/channel-log.ts";
 // The shared store parked live views (`defineLiveView`) resume from on any instance.
 export { getLiveViewStore, memoryLiveViewStore, setLiveViewStore } from "./live-view-store.ts";
 export type { LiveViewStore, MemoryLiveViewStoreOptions } from "./live-view-store.ts";
@@ -192,7 +200,7 @@ export {
 // Plugin contract (Workstream C): the semver-stable surface a plugin (e.g. a Pages
 // Router) extends. `RouteSynthesizer` + the route/convention registrars are the
 // route seam; the plugin types + registrars below are the request/build seams.
-export type { RouteSynthesizer } from "../router/manifest.ts";
+export type { RouteSynthesizer, ScanRoutesOptions } from "../router/manifest.ts";
 export { scanRoutes } from "../router/manifest.ts";
 export type {
   DenextPlugin,
@@ -580,6 +588,8 @@ export type { RedisCacheStoreOptions } from "./redis-cache.ts";
 export { redisClient, RedisConnectionError, RedisError } from "./redis.ts";
 export { redisChannelTransport } from "./redis-pubsub.ts";
 export type { RedisChannelTransport, RedisChannelTransportOptions } from "./redis-pubsub.ts";
+export { redisChannelLog } from "./redis-channel-log.ts";
+export type { RedisChannelLogOptions } from "./redis-channel-log.ts";
 export type {
   RedisClient,
   RedisClientOptions,

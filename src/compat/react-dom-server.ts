@@ -108,6 +108,8 @@ export async function renderToReadableStream(
   const source = denextRenderToReadableStream(node, {
     signal: options.signal,
     idPrefix: options.identifierPrefix,
+    // React writes an `<html>` root as a document: `<!DOCTYPE html>` first, `</body></html>` last.
+    documentShell: true,
   });
   const reader = source.getReader();
   // React's contract: the promise resolves once the SHELL has rendered and REJECTS when the

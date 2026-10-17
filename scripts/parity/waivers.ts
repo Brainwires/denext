@@ -155,6 +155,14 @@ export const WAIVERS: Waiver[] = [
       "bridges, the Express request handler, dev-ready signals, on-disk file/session storage). denext " +
       "runs on Deno web standards (Request/Response/ReadableStream), so these have no place in the runtime.",
   },
+  {
+    specifier: "next-auth@4/providers/twitter",
+    symbol: "TwitterLegacy",
+    categories: ["MISSING_VALUE"],
+    reason: "NextAuth.js v4's OAuth 1.0a Twitter provider (also v4's default `Twitter()` without " +
+      '`version: "2.0"`). denext\'s auth runs OAuth 2.0 / OIDC only, and X signs in through OAuth 2.0; ' +
+      "an app registers an OAuth 2.0 client and keeps `Twitter()` (KNOWN-DIFFERENCES).",
+  },
 ];
 
 /**

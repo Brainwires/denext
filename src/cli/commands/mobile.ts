@@ -882,6 +882,10 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  @capgo/background-geolocation, UIBackgroundModes location,\n" +
     "  NSLocationAlwaysAndWhenInUseUsageDescription and Android's FOREGROUND_SERVICE_LOCATION\n" +
     "  (not ACCESS_BACKGROUND_LOCATION), and prints the App Store and Play review steps.\n" +
+    "  background-audio has no npm package: it writes denext's DenextNowPlaying plugin\n" +
+    "  (setNowPlaying / onMediaControl / setAudioSession: lock-screen and notification\n" +
+    "  controls), UIBackgroundModes audio, and Android's media-playback foreground service\n" +
+    "  with FOREGROUND_SERVICE_MEDIA_PLAYBACK.\n" +
     "  application adds @capacitor/app and @capacitor/device (expo-application). camera also\n" +
     "  adds NSMicrophoneUsageDescription (video recorded in the page has sound).\n" +
     "  text-to-speech adds @capacitor-community/text-to-speech (expo-speech on the OS speech\n" +
@@ -891,7 +895,11 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  expo-print (@capgo/capacitor-printer), expo-brightness\n" +
     "  (@capacitor-community/screen-brightness) and expo-intent-launcher\n" +
     "  (@capgo/capacitor-intent-launcher, Android); contacts and calendar write their usage\n" +
-    "  strings and permissions.\n" +
+    "  strings and permissions. contacts, calendar, print and brightness also write denext's\n" +
+    "  DenextContacts / DenextCalendar / DenextPrint / DenextBrightness plugin beside the npm\n" +
+    "  one (registered like context-menu) for the Expo calls it lacks: containers and change\n" +
+    "  events, attendees and single occurrences, HTML to PDF and the iOS printer picker,\n" +
+    "  Android's system brightness (brightness also declares WRITE_SETTINGS).\n" +
     "  app-config has no npm package: it writes an Expo app's own native config, read\n" +
     "  statically from app.json / app.config.* as `migrate --from expo` does, into the shell:\n" +
     "  ios.infoPlist usage strings and the ones its config plugins set (Info.plist, each only\n" +

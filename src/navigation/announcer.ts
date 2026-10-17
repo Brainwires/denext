@@ -72,7 +72,8 @@ export function announceRoute(message: string): void {
 /**
  * Hook: announce the screen whenever `key` changes after the first render (the first screen
  * is the page the screen reader is already reading). `title` wins; without one the document's
- * title is read a moment later, once the navigation has set it.
+ * title is read a moment later, once the navigation has set it. Nothing is announced when the
+ * focused element already says it (a stack moved focus to the new screen's title).
  *
  * @param key What identifies the shown screen (a stack's top entry, the active tab).
  * @param title The screen's title, when known.
@@ -89,7 +90,11 @@ export function useRouteAnnouncer(key: string, title: string | undefined, enable
     if (previous === null || previous === key) return;
     const timer = setTimeout(() => {
       const now = latest.current;
-      if (now.enabled) announceRoute(now.title ?? doc()?.title ?? "");
+      const text = (now.title ?? doc()?.title ?? "").trim();
+      // A navigation that moved focus to a heading saying the title is already read out.
+      const focused = (doc()?.activeElement as { textContent?: string | null } | null)
+        ?.textContent?.trim();
+      if (now.enabled && focused !== text) announceRoute(text);
     }, DELAY_MS);
     return () => clearTimeout(timer);
   }, [key]);

@@ -32,12 +32,14 @@ export async function writeDockerFiles(
   ctx: DeployContext,
   options: Pick<DockerPresetOptions, "port" | "denoTag" | "stack">,
 ): Promise<void> {
-  const { resolveDocker } = await import("../../build/docker-detect.ts");
+  const { dockerPortAndTag, resolveDocker } = await import("../../build/docker-detect.ts");
   const { dockerPlan, DOCKER_SENTINEL } = await import("../../build/docker-template.ts");
+  // The same checks as `generate docker --port / --deno-tag`: both go into the Dockerfile.
+  const { port, tag } = dockerPortAndTag(options.port, options.denoTag || undefined);
   const resolved = await resolveDocker(ctx.projectDir, {
     target: ctx.manifest.mode === "spa" ? "spa" : "server",
-    ...(options.port !== undefined ? { port: options.port } : {}),
-    ...(options.denoTag ? { denoTag: options.denoTag } : {}),
+    ...(port !== undefined ? { port } : {}),
+    ...(tag ? { denoTag: tag } : {}),
     ...(options.stack ? { all: true } : {}),
   });
   for (const warning of resolved.warnings) ctx.warn(warning);

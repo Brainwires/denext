@@ -4,6 +4,8 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import { timed } from "../runtime/timing.ts";
+import { serverStyleSheetsHtml } from "../runtime/server-style-sheets.ts";
+import { beginSignalCollection } from "../runtime/signal-state.ts";
 import type { VNode } from "../jsx/types.ts";
 import {
   collapseHeadTags,
@@ -444,7 +446,16 @@ export async function renderPage(
       if (r.islands.length > 0) islands = r.islands;
       if (Object.keys(r.signalState).length > 0) signalState = r.signalState;
     } else {
-      html = await timed("renderToString", () => renderToString(tree, { head }));
+      // No Flight boundary: the route hydrates as one client bundle. Collect the signal state
+      // its render recorded (`useApi({ suspense: true })` results, `useSignal` values) for the
+      // `#__denext_state` island the route entry adopts before it hydrates.
+      const finish = beginSignalCollection();
+      try {
+        html = await timed("renderToString", () => renderToString(tree, { head }));
+      } finally {
+        const collected = finish();
+        if (Object.keys(collected).length > 0) signalState = collected;
+      }
     }
     hoistHeadIntoMetadata(head, metadata);
     const status = ctx.signal.status || 200;
@@ -541,6 +552,8 @@ function hoistHeadIntoMetadata(head: HeadCollector, metadata: Metadata): void {
   const parts = [
     collapseHeadTags(head.tags),
     head.serverInserted?.join("") ?? "",
+    // Render-time style sheets (react-native-web's, React Native mode): read after the shell.
+    serverStyleSheetsHtml(),
     currentContext()?.resourceHints?.join("") ?? "",
     renderFontStyles(),
   ];
@@ -797,6 +810,8 @@ function hoistStaticHead(
   const parts = [
     collapseHeadTags(head.tags),
     withServerInserted ? (head.serverInserted ?? []).join("") : "",
+    // Render-time style sheets (react-native-web's): process-wide, so a Flight prerender too.
+    serverStyleSheetsHtml(),
     (currentContext()?.resourceHints ?? []).join(""),
     renderFontStyles(),
   ];

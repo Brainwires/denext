@@ -1649,8 +1649,11 @@ Deno.test("the checked-in toolchain pin: the runtime pin's release, every target
     "darwin-x86_64",
     "linux-aarch64",
     "linux-x86_64",
+    "windows-aarch64",
     "windows-x86_64",
   ]);
+  // The release's denort zips cover the same targets (2.9.7-denext.20 on; Windows on Arm .21).
+  assertEquals(Object.keys(tc.denort ?? {}).sort(), Object.keys(tc.targets).sort());
   for (const [key, a] of Object.entries(tc.targets)) {
     assertEquals(a.format, "zip", key);
     assert(/^[0-9a-f]{64}$/.test(a.sha256), `${key}: sha256`);
@@ -1676,12 +1679,14 @@ Deno.test("the checked-in pin is the deno version denext's runtime targets", asy
 
 Deno.test("the checked-in pin passes pinFromRelease's own checks, for every target and backend", async () => {
   const { DESKTOP_RUNTIME_PIN: pin } = await import("../src/build/desktop-runtime.ts");
-  // Every OS + arch a runtime is built for (no Windows arm64), each with both backends.
+  // Every OS + arch a runtime is built for (Windows on Arm from 2.9.7-denext.21), each with both
+  // backends.
   const targets = [
     ["darwin", "aarch64"],
     ["darwin", "x86_64"],
     ["linux", "aarch64"],
     ["linux", "x86_64"],
+    ["windows", "aarch64"],
     ["windows", "x86_64"],
   ].map(([os, arch]) => desktopRuntimeTarget(os, arch));
   assertEquals(Object.keys(pin.targets).sort(), targets.sort());

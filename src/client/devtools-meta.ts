@@ -146,7 +146,7 @@ export const HOOK_CELL_KINDS: Record<string, readonly number[]> = {
   useErrorBoundary: [], // runtime/hooks.ts:479 — reads the boundary provider
   // Composites — derived from their implementations.
   useCallback: [4], // runtime/hooks.ts:175 → dispatcher.useMemo
-  useEffectEvent: [5, 4], // runtime/hooks.ts:206-209 → useRef + useMemo
+  useEffectEvent: [5, 11, 4], // runtime/hooks.ts → useRef + useInsertionEffect + useMemo
   useTransition: [1, 4], // runtime/hooks.ts:345-346 → useState + useCallback
   useOptimistic: [5, 1, 5, 4], // runtime/hooks.ts:366-377 → useRef, useState, useRef, useCallback
   useImperativeHandle: [10], // runtime/hooks.ts:404 → useLayoutEffect

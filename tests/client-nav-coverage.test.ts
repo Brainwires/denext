@@ -32,8 +32,8 @@ import {
   useSelectedLayoutSegment,
   useSelectedLayoutSegments,
   useTranslations,
-  withViewTransition,
 } from "../src/client/navigation.ts";
+import { withViewTransition } from "../src/client/nav-document.ts";
 import {
   dispatchInteraction,
   getIslandTimeline,

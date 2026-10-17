@@ -9,10 +9,15 @@
  * - In a browser, the page's print dialog: `html` and `uri` print from a hidden `<iframe>`, and
  *   with neither the page itself prints (Expo's web behaviour).
  *
- * `printToFileAsync` (HTML to a PDF file) and `selectPrinterAsync` (iOS's printer picker) are not
- * available: neither the plugin nor a browser makes a PDF or lists printers, so both reject with
- * `ERR_UNAVAILABLE`. `width`, `height`, `margins`, `orientation` and `printerUrl` are left to the
- * print dialog.
+ * `printToFileAsync` (HTML to a PDF file) and, on iOS, `selectPrinterAsync` (the printer picker)
+ * and `printerUrl` (printing straight to that printer, without the dialog) go through denext's
+ * `DenextPrint` plugin, which `denext mobile add print` installs beside the printer plugin: the
+ * PDF is laid out on `width` x `height` points (US Letter, 612 x 792, by default) inside
+ * `margins`, by UIMarkupTextPrintFormatter + UIPrintPageRenderer on iOS and a WebView's print
+ * adapter on Android, and written to the app's cache folder. In a browser, or a shell without
+ * `DenextPrint`, both reject with `ERR_UNAVAILABLE` (a browser makes no PDF and lists no
+ * printers), and `selectPrinterAsync` does on Android too, as in Expo. `printAsync`'s `width`,
+ * `height`, `margins` and `orientation` are left to the print dialog.
  *
  * @example
  * ```ts
@@ -116,6 +121,31 @@ interface PrinterPlugin {
   printFile(options: { path: string; mimeType?: string; name?: string }): Promise<void>;
 }
 
+/** denext's `DenextPrint` (PDF files; the iOS printer picker and direct printing). */
+interface DenextPrintPlugin {
+  printToFile(options: {
+    html: string;
+    width?: number;
+    height?: number;
+    margins?: PageMargins;
+    base64?: boolean;
+    textZoom?: number;
+  }): Promise<FilePrintResult>;
+  selectPrinter(): Promise<Printer>;
+  printToPrinter(
+    options: { printerUrl: string; html?: string; data?: string; path?: string },
+  ): Promise<void>;
+}
+
+/** `DenextPrint` with `method`, or undefined (the web, or a shell without it). */
+function denextPrint(method: keyof DenextPrintPlugin): DenextPrintPlugin | undefined {
+  return nativePlugin<DenextPrintPlugin>("DenextPrint", [method]);
+}
+
+/** Why a `DenextPrint` call is unavailable. */
+const NEEDS_DENEXT_PRINT = "It needs denext's DenextPrint plugin in the Capacitor shell " +
+  "(`denext mobile add print`).";
+
 /** The shell's printer plugin, if installed. */
 function printer(): PrinterPlugin | undefined {
   return nativePlugin<PrinterPlugin>("Printer", ["printHtml", "printBase64", "printFile"]);
@@ -131,13 +161,15 @@ async function base64Of(blob: Blob): Promise<string> {
   return btoa(bin);
 }
 
-/** Print `uri` through the plugin: a data or http(s) URL as bytes, anything else as a path. */
-async function printUriNative(p: PrinterPlugin, uri: string): Promise<void> {
+/** What a `uri` prints as: its bytes (a data or http(s) URL) or a file path of the app. */
+type PrintSource = { data: string; mimeType: string } | { path: string };
+
+/** `uri` as a {@linkcode PrintSource}: a data or http(s) URL as bytes, anything else as a path. */
+async function printSource(uri: string): Promise<PrintSource> {
   const data = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(uri);
   if (data) {
     const mimeType = data[1] || "application/pdf";
-    const payload = data[2] ? data[3] : btoa(decodeURIComponent(data[3]));
-    return await p.printBase64({ data: payload, mimeType });
+    return { data: data[2] ? data[3] : btoa(decodeURIComponent(data[3])), mimeType };
   }
   if (/^https?:/i.test(uri)) {
     const res = await fetch(uri);
@@ -145,12 +177,30 @@ async function printUriNative(p: PrinterPlugin, uri: string): Promise<void> {
       throw new Error(`denext/expo: fetching ${uri} to print failed (HTTP ${res.status})`);
     }
     const blob = await res.blob();
-    return await p.printBase64({
-      data: await base64Of(blob),
-      mimeType: blob.type || "application/pdf",
-    });
+    return { data: await base64Of(blob), mimeType: blob.type || "application/pdf" };
   }
-  return await p.printFile({ path: uri.replace(/^file:\/\//, "") });
+  return { path: uri.replace(/^file:\/\//, "") };
+}
+
+/** Print `uri` through the plugin: a data or http(s) URL as bytes, anything else as a path. */
+async function printUriNative(p: PrinterPlugin, uri: string): Promise<void> {
+  const source = await printSource(uri);
+  if ("path" in source) return await p.printFile({ path: source.path });
+  return await p.printBase64(source);
+}
+
+/** iOS: print `html` or `uri` straight to the printer at `printerUrl` (no dialog). */
+async function printToPrinter(
+  p: DenextPrintPlugin,
+  printerUrl: string,
+  html: string | undefined,
+  uri: string | undefined,
+): Promise<void> {
+  if (html) return await p.printToPrinter({ printerUrl, html });
+  const source = await printSource(uri!);
+  return await p.printToPrinter(
+    "path" in source ? { printerUrl, path: source.path } : { printerUrl, data: source.data },
+  );
 }
 
 /**
@@ -207,8 +257,11 @@ export async function printAsync(options: PrintOptions): Promise<void> {
     throw new Error("Must provide exactly one of `html` and `uri` but both were specified");
   }
   if (nativePlatform() === "web") return await printWeb(options);
-  const p = printer();
-  if (!p) {
+  const direct = options.printerUrl && nativePlatform() === "ios"
+    ? denextPrint("printToPrinter")
+    : undefined;
+  const p = direct ? undefined : printer();
+  if (!p && !direct) {
     throw unavailable(
       "expo-print",
       "printAsync",
@@ -219,36 +272,51 @@ export async function printAsync(options: PrintOptions): Promise<void> {
   if (printing) throw new Error("Another print request is already in progress");
   printing = true;
   try {
-    if (html) await p.printHtml({ html });
-    else await printUriNative(p, options.uri!);
+    if (direct) await printToPrinter(direct, options.printerUrl!, html, options.uri);
+    else if (html) await p!.printHtml({ html });
+    else await printUriNative(p!, options.uri!);
   } finally {
     printing = false;
   }
 }
 
 /**
- * Pick a printer (iOS): not available here.
+ * Pick a printer with the system printer picker (iOS, as in Expo). Pass its `url` as
+ * `printAsync`'s `printerUrl` to print there without the dialog.
  *
- * @returns Never: it rejects with `ERR_UNAVAILABLE`.
+ * @returns The printer.
+ * @throws `E_PRINTER_SELECTION_CANCELLED` when the picker is closed; `ERR_UNAVAILABLE` off iOS
+ *   or without `DenextPrint`.
  */
-export function selectPrinterAsync(): Promise<Printer> {
-  return Promise.reject(
-    unavailable("expo-print", "selectPrinterAsync", "The print dialog picks the printer."),
-  );
+export async function selectPrinterAsync(): Promise<Printer> {
+  const p = nativePlatform() === "ios" ? denextPrint("selectPrinter") : undefined;
+  if (!p) {
+    throw unavailable(
+      "expo-print",
+      "selectPrinterAsync",
+      nativePlatform() === "ios" ? NEEDS_DENEXT_PRINT : "Only iOS has a printer picker.",
+    );
+  }
+  const { name, url } = await p.selectPrinter();
+  return { name, url };
 }
 
 /**
- * Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).
+ * Render HTML to a PDF file in the app's cache folder: on pages of `width` x `height` points
+ * (612 x 792, US Letter, by default) inside `margins`, with `base64` the bytes too.
  *
- * @param _options The HTML and page setup.
- * @returns Never: it rejects with `ERR_UNAVAILABLE`.
+ * @param options The HTML and page setup.
+ * @returns The file's URI, its page count and, when asked for, its base64.
+ * @throws `ERR_UNAVAILABLE` in a browser, or in a shell without `DenextPrint`.
  */
-export function printToFileAsync(_options?: FilePrintOptions): Promise<FilePrintResult> {
-  return Promise.reject(
-    unavailable(
-      "expo-print",
-      "printToFileAsync",
-      "No PDF renderer is available here; print with printAsync, or render the PDF on a server.",
-    ),
-  );
+export async function printToFileAsync(options: FilePrintOptions = {}): Promise<FilePrintResult> {
+  const p = denextPrint("printToFile");
+  if (!p) throw unavailable("expo-print", "printToFileAsync", NEEDS_DENEXT_PRINT);
+  const { width, height, margins, base64, textZoom } = options;
+  const setup = Object.entries({ width, height, margins, base64, textZoom })
+    .filter(([, value]) => value !== undefined);
+  const result = await p.printToFile({ html: options.html ?? "", ...Object.fromEntries(setup) });
+  const out: FilePrintResult = { uri: result.uri, numberOfPages: result.numberOfPages };
+  if (result.base64 !== undefined) out.base64 = result.base64;
+  return out;
 }

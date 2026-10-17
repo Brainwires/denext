@@ -359,7 +359,7 @@ denext replacement; where there is none, the Capacitor plugin to look at.
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `react-native-fs`, `react-native-blob-util` | `readFile` / `writeFile` / `listDir` / `downloadToFile` from `denext/mobile` (`denext mobile add filesystem`) |
 | `react-native-vision-camera`                | `pickImage` / `scanBarcode`, or the `expo-camera` shim (a `getUserMedia` preview); no frame processors        |
-| `react-native-image-crop-picker`            | `pickImage` (one image, no crop editor)                                                                       |
+| `react-native-image-crop-picker`            | `pickImage` / `pickMedia` (several photos and videos; no crop editor)                                         |
 | `react-native-config`                       | A module of your own mapped in `deno.json` `imports`, holding the build's public values                       |
 | `@sentry/react-native`                      | `denext mobile add sentry` and `initCrashReporting`                                                           |
 | CodePush (`react-native-code-push`)         | Over-the-air UI updates (`denext mobile add-ota`, `checkForUiUpdate`)                                         |

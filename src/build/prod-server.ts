@@ -12,6 +12,7 @@ import { applyPlugins, runPluginTeardown } from "../plugin/mod.ts";
 import { stopServices } from "../server/service-loader.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
+import { loadPartytownBuild, PARTYTOWN_BUILD_DIR } from "./partytown.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import { displayHost, installExitDeadline, serveWithPortFallback } from "../server/serve-utils.ts";
 import { type Instrumentation, runShutdownHook } from "../server/instrumentation.ts";
@@ -123,6 +124,8 @@ export async function startProdServer(options: ProdServerOptions): Promise<Deno.
 
   const clientDir = join(paths.outDir, "client");
   await assertBuilt(paths, clientDir);
+  // `<Script strategy="worker">`: the Partytown files the build wrote, when the app turned it on.
+  await loadPartytownBuild(paths.config, join(clientDir, PARTYTOWN_BUILD_DIR));
   // The server render's loader (the build's platform files and copies), which plugins render
   // through too: a Pages Router page then loads the files its client bundle was built with.
   const info = await readBuildInfo(paths);

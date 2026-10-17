@@ -220,21 +220,38 @@ export function useRef<T>(initial?: T): { current: T | undefined } {
   return dispatcher().useRef(initial);
 }
 
+/** React 19.2's error for calling an Effect Event while a component renders. */
+const EFFECT_EVENT_IN_RENDER =
+  "A function wrapped in useEffectEvent can't be called during rendering.";
+
 /**
- * Return a **stable** callback that always sees the latest props/state — React
- * 19.2's `useEffectEvent`. Use it for the "event" part of an Effect that should
- * not itself be a dependency (so the Effect doesn't re-run when the handler's
- * closure changes). Do not call the returned function during render.
+ * Return a callback that always sees the latest committed props/state — React 19.2's
+ * `useEffectEvent`. Use it for the "event" part of an Effect that should not itself be a
+ * dependency (so the Effect doesn't re-run when the handler's closure changes).
  *
- * @param handler The event handler; its latest version is always invoked.
- * @returns A referentially-stable function forwarding to the latest `handler`.
+ * As in React, the handler it forwards to is swapped in when the render commits (before any
+ * layout or passive effect runs), not while rendering, so a render that never commits leaves
+ * the previous one in place; and calling it during a render throws. Its identity is stable
+ * (React's is not guaranteed to be — don't list it as an Effect dependency either way).
+ *
+ * @param handler The event handler; its latest committed version is invoked.
+ * @returns A function forwarding to the latest committed `handler`.
  */
 export function useEffectEvent<A extends unknown[], R>(
   handler: (...args: A) => R,
 ): (...args: A) => R {
   const ref = useRef(handler);
-  ref.current = handler; // keep the latest closure each render
-  return useMemo(() => (...args: A) => ref.current(...args), []);
+  useInsertionEffect(() => {
+    ref.current = handler; // commit-time swap (React updates Effect Events before effects)
+  });
+  const renderer = dispatcher();
+  return useMemo(() => (...args: A) => {
+    // The renderer's dispatcher is installed only while one of its components renders.
+    if ((globalThis as DispatcherHolder)[DISPATCHER_KEY] === renderer) {
+      throw new Error(EFFECT_EVENT_IN_RENDER);
+    }
+    return ref.current(...args);
+  }, []);
 }
 
 /** Read the current value of `context` from the nearest enclosing provider. */

@@ -5,6 +5,7 @@
 //                              # the same, but every package the baseline already records
 //                              # installs at that version — only a package new to the
 //                              # catalog comes in at latest (to add one without moving the rest)
+//   (the baseline keeps to spec.ts's BASELINE_HOLDS release lines)
 //   deno task parity:drift     # install latest, compare to committed baseline, print
 //                              # what changed upstream — never writes, never fails CI
 //
@@ -14,7 +15,7 @@
 // the only part that touches npm/network; it installs into a throwaway temp dir (via
 // Deno's `--node-modules-dir=auto`) so the repo root stays clean.
 
-import { REAL_PACKAGE_TAGS, REAL_PACKAGES } from "./spec.ts";
+import { BASELINE_HOLDS, REAL_PACKAGE_TAGS, REAL_PACKAGES, realDependencySpec } from "./spec.ts";
 import type { Baseline, Surface } from "./types.ts";
 import { fromFileUrl } from "@std/path";
 
@@ -26,12 +27,17 @@ const RUNNER = fromFileUrl(new URL("./_real-runner.ts", import.meta.url));
 async function captureReal(
   dir: string,
   pinned: Record<string, string> = {},
+  holds: Readonly<Record<string, string>> = {},
 ): Promise<{ versions: Record<string, string>; surfaces: Surface[] }> {
   const deps = Object.fromEntries(
-    REAL_PACKAGES.map((p) => [p, pinned[p] ?? REAL_PACKAGE_TAGS[p] ?? "latest"]),
+    REAL_PACKAGES.map((p) => [
+      p,
+      realDependencySpec(p, pinned[p] ?? holds[p] ?? REAL_PACKAGE_TAGS[p] ?? "latest"),
+    ]),
   );
-  // typescript is the extractor's own dependency; pin a major so resolution is stable.
-  deps["typescript"] = "^5";
+  // typescript is the extractor's own dependency: 7.0.x, whose IPC API (typescript/unstable/sync)
+  // the extractor speaks; pinned to the minor until that API settles.
+  deps["typescript"] = "~7.0.2";
   await Deno.writeTextFile(
     `${dir}/package.json`,
     JSON.stringify({ name: "denext-parity-real", private: true, dependencies: deps }, null, 2),
@@ -136,6 +142,11 @@ function diffLine(sign: string, names: string[]): string[] {
   return names.length ? [`    ${sign} ${names.join(", ")}`] : [];
 }
 
+/** The baseline keeps to BASELINE_HOLDS; a drift report looks at what is actually latest. */
+function holdsFor(drift: boolean): Readonly<Record<string, string>> {
+  return drift ? {} : BASELINE_HOLDS;
+}
+
 async function main() {
   const drift = Deno.args.includes("--latest");
   const pinned = !drift && Deno.args.includes("--pinned")
@@ -144,7 +155,7 @@ async function main() {
   const dir = await Deno.makeTempDir({ prefix: "denext_parity_" });
   try {
     console.error(`installing ${REAL_PACKAGES.join(", ")} into ${dir} …`);
-    const captured = await captureReal(dir, pinned);
+    const captured = await captureReal(dir, pinned, holdsFor(drift));
 
     if (drift) {
       const oldB = JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline;

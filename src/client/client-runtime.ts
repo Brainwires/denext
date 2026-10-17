@@ -9,7 +9,8 @@
  */
 
 // Boot: mount/hydrate the page, install soft navigation, seed the layout-segment hooks.
-export { setResumabilityReboot, startClient, startGlobalErrorClient } from "./navigation.ts";
+export { startClient, startGlobalErrorClient } from "./navigation.ts";
+export { setResumabilityReboot } from "./nav-state.ts";
 // Flight soft navigation: only the generated Flight entry calls this, so an app with no Flight
 // route tree-shakes the whole Flight soft-nav runtime (flight-nav.ts) out of its bundle.
 export { setFlightParser } from "./flight-nav.ts";
@@ -30,6 +31,11 @@ export { clientActionStub } from "../runtime/server-action.ts";
 // otherwise calls `loadClassRuntime()` — the single dynamic-import site — when the document
 // says the server rendered a class. The install itself is deliberately NOT re-exported here.
 export { loadClassRuntime } from "./class-loader.ts";
+// Isomorphic islands: the route entry emits `installIsoIslands()` ONLY when the app's sources use
+// a `client:*` directive (a build scan), so an app without one drops the island runtime.
+// A split island's stand-in (`isoIslandChunk`) is imported by the build's island rewrite
+// (src/build/iso-islands.ts) only into the modules it rewrites.
+export { installIsoIslands, isoIslandChunk } from "./iso-island.ts";
 // Activity: the entry emits `installActivitySupport()` to wire the offscreen scheduler into
 // the reconciler seam ONLY when the app uses `<Activity>` — so an app that never renders one
 // drops this re-export (and the whole offscreen begin logic) via tree-shaking.

@@ -14,6 +14,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { type ScaffoldOptions, scaffoldProject } from "../../src/build/scaffold.ts";
 import { removeTempDir } from "../helpers/temp.ts";
+import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -67,31 +68,44 @@ function freePort(): number {
   return port;
 }
 
+/** The `deno` a task runs on, and its environment. */
+interface Runner {
+  readonly deno: string;
+  readonly env: Record<string, string>;
+}
+
+/** The Deno running this suite. */
+const STOCK: Runner = { deno: Deno.execPath(), env: { NO_COLOR: "1" } };
+
 /** Run the app's `build` task's flags to completion; fail with its output. */
-async function build(dir: string, cfg: DenoJson): Promise<void> {
+async function build(dir: string, cfg: DenoJson, run: Runner = STOCK): Promise<void> {
   const { flags, args } = taskArgs(cfg.tasks.build, dir);
-  const out = await new Deno.Command(Deno.execPath(), {
+  const out = await new Deno.Command(run.deno, {
     args: ["run", ...flags, ...args],
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
-    env: { NO_COLOR: "1" },
+    env: run.env,
   }).output();
   const dec = new TextDecoder();
   assertEquals(out.code, 0, `build failed:\n${dec.decode(out.stdout)}${dec.decode(out.stderr)}`);
 }
 
 /** Run the `start` task's exact flags, fetch `/`, and stop the server; the page and output. */
-async function start(dir: string, cfg: DenoJson): Promise<{ html: string; output: string }> {
+async function start(
+  dir: string,
+  cfg: DenoJson,
+  run: Runner = STOCK,
+): Promise<{ html: string; output: string }> {
   const { flags, args } = taskArgs(cfg.tasks.start, dir);
   assert(!flags.some((f) => f === "-A" || f.startsWith("--allow-run")), cfg.tasks.start);
   const port = freePort();
-  const child = new Deno.Command(Deno.execPath(), {
+  const child = new Deno.Command(run.deno, {
     args: ["run", ...flags, ...args, "--port", String(port)],
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
-    env: { NO_COLOR: "1" },
+    env: run.env,
   }).spawn();
   let output = "";
   const drain = async (stream: ReadableStream<Uint8Array>) => {
@@ -112,6 +126,9 @@ async function start(dir: string, cfg: DenoJson): Promise<{ html: string; output
       } catch { /* not listening yet */ }
       if (!html) await new Promise((r) => setTimeout(r, 100));
     }
+    // A second request once the first was delivered: Deno's legacy-abort notice prints on the
+    // first response whose signal was read, so it is in the output by now if it is coming.
+    if (html) await (await fetch(`http://127.0.0.1:${port}/`)).body?.cancel();
   } finally {
     if (!exited) child.kill("SIGTERM");
     await child.status;
@@ -151,3 +168,29 @@ for (const { name, opts, expect } of CASES) {
     }
   });
 }
+
+const TOOLCHAIN = cachedToolchain();
+
+Deno.test({
+  name:
+    "denext create: the start task on denext's toolchain serves without the legacy-abort notice",
+  // The pinned toolchain, already in the cache: started on it directly (a `toolchain link`ed
+  // `deno`), the least-privilege task cannot re-run itself with `--unstable-no-legacy-abort`, so
+  // the scaffolded deno.json's `"unstable": ["no-legacy-abort"]` is what turns it on.
+  ignore: TOOLCHAIN === null,
+  fn: async () => {
+    const run: Runner = { deno: TOOLCHAIN!, env: linkedEnv(TOOLCHAIN!) };
+    const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_scaffold_start_" }));
+    try {
+      await scaffoldProject({ dir, vscode: false, template: "minimal" });
+      const cfg = await pointAtThisCheckout(dir);
+      await build(dir, cfg, run);
+      const { html, output } = await start(dir, cfg, run);
+      assert(html, `start served nothing:\n${output}`);
+      assertStringIncludes(html, "Hello from denext");
+      assert(!output.includes("(legacy behavior)"), output);
+    } finally {
+      await removeTempDir(dir);
+    }
+  },
+});

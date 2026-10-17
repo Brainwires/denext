@@ -24,6 +24,8 @@
 #      mounted and the .pkg through `installer`. And install.ps1 against a loopback release, and
 #      install.ps1 / install.sh against this commit's own binary build (the toolchain step included)
 #      and the real latest release (which may predate the `toolchain` verb: denext < 4.0).
+#      Windows on Arm (windows-11-arm) runs the desktop suites, install.ps1 and the Arm64 package +
+#      .msi natively; not required for a release until it is reliably green.
 #   4. `denext desktop run` builds outside the project, launches the app (Linux under Xvfb, and macOS)
 #      and quits cleanly (`scripts/ci/desktop-run-smoke.ts`); and a packaged app whose import map
 #      names local modules by absolute path still runs once those sources are moved away
@@ -671,6 +673,120 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'toolchain status failed' }
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
+
+  # Windows on Arm (windows-11-arm), natively: Deno 2.9.7's aarch64-pc-windows-msvc build, the
+  # desktop suites, install.ps1 (its tests, this commit's Arm64 binary with the toolchain step, the
+  # real latest release) and the Arm64 package on the pinned runtime — the bundle's PE files are
+  # Arm64 and its .msi installs, upgrades and uninstalls per user and per machine. Not required for
+  # a release yet (scripts/release-ci.ts DESKTOP_CI_OPTIONAL_JOBS, continue-on-error) until its
+  # runs are reliably green; then it moves to DESKTOP_CI_JOBS.
+  windows-arm:
+    name: windows on arm (windows-11-arm — desktop tests, install.ps1, Arm64 .msi)
+    runs-on: windows-11-arm
+    continue-on-error: true
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7" # exactly: the pinned Deno Desktop runtime's Deno
+      - name: Deno is 2.9.7, built for Arm64
+        shell: pwsh
+        run: |
+          deno --version
+          $v = (deno --version | Select-Object -First 1)
+          if ($v -notmatch '^deno 2\.9\.7 .*aarch64-pc-windows-msvc') { throw "unexpected: $v" }
+      - name: Desktop test suites
+        shell: pwsh
+        run: deno task test:desktop
+      - name: The installer's own tests (Windows PowerShell 5.1 and pwsh)
+        shell: pwsh
+        run: deno test -A tests/install-ps1.test.ts
+      # This commit's installer with this commit's Arm64 binary (a local release: DENEXT_ARTIFACTS,
+      # still checksum-verified), so `toolchain install` fetches the pinned Windows on Arm toolchain.
+      - name: Install this commit's Arm64 binary build, toolchain included, run it, uninstall
+        shell: powershell
+        env:
+          DENEXT_NO_PATH: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $asset = 'denext-aarch64-pc-windows-msvc.zip'
+          $art = Join-Path $env:RUNNER_TEMP 'art'
+          New-Item -ItemType Directory -Force -Path $art | Out-Null
+          deno compile -A --include src/cli/lazy-modules.generated.ts --output (Join-Path $env:RUNNER_TEMP 'denext.exe') cli.ts
+          if ($LASTEXITCODE -ne 0) { throw 'deno compile failed' }
+          Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'denext.exe') -DestinationPath (Join-Path $art $asset)
+          $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $art $asset)).Hash.ToLowerInvariant()
+          Set-Content -Encoding ascii -Path (Join-Path $art 'SHA256SUMS') -Value "$hash  $asset"
+          $env:DENEXT_ARTIFACTS = $art
+          $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext-head'
+          $out = & ./scripts/install.ps1 *>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch "installing denext's Deno toolchain") { throw 'the toolchain step did not run' }
+          if ($out -match 'could not be installed now|predates|no Windows on Arm Deno toolchain') { throw 'the toolchain step failed' }
+          $exe = Join-Path $env:DENEXT_INSTALL 'bin\denext.exe'
+          $v = & $exe --version
+          if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
+          & $exe toolchain status
+          if ($LASTEXITCODE -ne 0) { throw 'toolchain status failed' }
+          & ./scripts/install.ps1 -Uninstall
+          if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
+      - name: Install the latest release for real, run it, uninstall
+        shell: powershell
+        env:
+          DENEXT_NO_PATH: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
+          & ./scripts/install.ps1
+          $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
+          if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
+          & ./scripts/install.ps1 -Uninstall
+          if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
+      # WiX 5.0.2: the last release under MS-RL alone (WiX 6+ adds the OSMF EULA).
+      - name: WiX 5
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix --version
+      - name: A deep link and version 1.0.0
+        shell: pwsh
+        working-directory: examples/native
+        run: |
+          $c = Get-Content -Raw denext.config.ts
+          $c = $c.Replace('app: { identifier: "com.example.denext-native" }', 'app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }')
+          Set-Content -NoNewline -Path denext.config.ts -Value $c
+          if (-not (Select-String -Quiet -Pattern denextnative -Path denext.config.ts)) { throw 'no deep link' }
+          deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.version = "1.0.0"; Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          deno install
+      - name: Package 1.0.0 for Arm64 (.msi + .zip, unsigned)
+        shell: pwsh
+        working-directory: examples/native
+        run: |
+          deno run -A scripts/package-windows.ts --arch arm64 --format msi,zip
+          if ($LASTEXITCODE -ne 0) { throw 'package failed' }
+          Copy-Item dist/denext-native-arm64.msi dist/old.msi
+      - name: The package is Arm64
+        shell: pwsh
+        working-directory: examples/native
+        run: deno run -A ../../scripts/ci/desktop-cross-package-check.ts dist denext-native windows arm64 zip
+      - name: Package 1.0.1 for Arm64 (.msi)
+        shell: pwsh
+        working-directory: examples/native
+        run: |
+          deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.version = "1.0.1"; Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          deno run -A scripts/package-windows.ts --arch arm64 --no-export --format msi
+          if ($LASTEXITCODE -ne 0) { throw 'package failed' }
+          Get-ChildItem dist
+      - name: Per-user install, upgrade, uninstall
+        shell: pwsh
+        working-directory: examples/native
+        run: ../../scripts/ci/msi-roundtrip.ps1 -Msi dist/old.msi -AppName "denext native" -Exe denext-native-arm64.exe -Scheme denextnative -Upgrade dist/denext-native-arm64.msi -UpgradeVersion 1.0.1
+      - name: Per-machine install, upgrade, uninstall
+        shell: pwsh
+        working-directory: examples/native
+        run: ../../scripts/ci/msi-roundtrip.ps1 -PerMachine -Msi dist/old.msi -AppName "denext native" -Exe denext-native-arm64.exe -Scheme denextnative -Upgrade dist/denext-native-arm64.msi -UpgradeVersion 1.0.1
 
   # install.sh end to end on Linux: this commit's binary (a local release, the toolchain step
   # included), then the real latest release, which may predate the `toolchain` verb (denext < 4.0).

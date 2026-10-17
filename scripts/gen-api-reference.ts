@@ -48,6 +48,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/virtual-masonry", file: `${ROOT}src/virtual-masonry.ts` },
   { module: "denext/mvu", file: `${ROOT}src/mvu.ts` },
   { module: "denext/feature", file: `${ROOT}src/feature.ts` },
+  { module: "denext/gleam", file: `${ROOT}src/gleam.ts` },
   { module: "denext/platform", file: `${ROOT}src/platform.ts` },
   { module: "denext/result", file: `${ROOT}src/result.ts` },
   { module: "denext/jsx-directives", file: `${ROOT}src/jsx-directives.ts` },

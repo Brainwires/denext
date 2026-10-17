@@ -202,6 +202,9 @@ Deno.test("msi: the WiX source is dual-scope, upgrades in place, and registers t
     ],
   });
   assertStringIncludes(wxs, 'Scope="perUserOrMachine"');
+  // Schema 500 (WiX writes it as the Page Count): Windows Installer opens an Arm64 package only at
+  // 500 and refuses a lower one with 1620, so the one source serves `-arch x64` and `-arch arm64`.
+  assertStringIncludes(wxs, 'InstallerVersion="500"');
   assertStringIncludes(wxs, 'Version="2.3.4"');
   assertStringIncludes(wxs, 'Manufacturer="Acme Inc."');
   assertStringIncludes(wxs, 'UpgradeCode="{6793091E-3930-53B0-8465-3E0524F492E7}"');

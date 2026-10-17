@@ -7,7 +7,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { childToolchainMarker, toolchainRuntimeFlags } from "../src/cli/self-exec.ts";
+import {
+  childToolchainMarker,
+  legacyAbortActive,
+  toolchainRuntimeFlags,
+} from "../src/cli/self-exec.ts";
 
 const src = (path: string) => toFileUrl(join(Deno.cwd(), path)).href;
 
@@ -98,4 +102,33 @@ await server.finished;
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("legacyAbortActive: tells the legacy abort from the flag, and prints no notice itself", async () => {
+  const script = join(await Deno.makeTempDir({ prefix: "dnx-legacy-probe-" }), "probe.ts");
+  try {
+    await Deno.writeTextFile(
+      script,
+      `import { legacyAbortActive } from ${JSON.stringify(src("src/cli/self-exec.ts"))};
+console.log(JSON.stringify(await legacyAbortActive()));
+`,
+    );
+    const run = async (flags: string[]) => {
+      const out = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", "--config", join(Deno.cwd(), "deno.json"), ...flags, script],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(out.stderr);
+      assert(out.success, stderr);
+      assert(!/legacy behavior/.test(stderr), stderr);
+      return new TextDecoder().decode(out.stdout).trim();
+    };
+    assertEquals(await run([]), "true");
+    assertEquals(await run(["--unstable-no-legacy-abort"]), "false");
+  } finally {
+    await Deno.remove(join(script, ".."), { recursive: true });
+  }
+  // In this process (the suite may run with or without the flag) it answers a boolean.
+  assertEquals(typeof await legacyAbortActive(), "boolean");
 });

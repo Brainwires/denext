@@ -19,6 +19,7 @@ import {
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
+import { findInlineServerActions, inlineServerActionError } from "./inline-server-action.ts";
 import {
   findShippedServerModules,
   formatServerModuleLeaks,
@@ -346,6 +347,8 @@ export interface GenerateRouteEntryOptions {
   usesActivity?: boolean;
   /** Install `<ViewTransition>` support. Default `false`. */
   usesViewTransition?: boolean;
+  /** Install the isomorphic `client:*` island runtime. Default `false`. */
+  usesIsoIslands?: boolean;
   /** Install host-singleton support (a client root layout's document tags). Default `true`. */
   usesSingletons?: boolean;
   /**
@@ -355,6 +358,35 @@ export interface GenerateRouteEntryOptions {
    */
   devMetaFooter?: string;
 }
+
+/**
+ * The entry statements that adopt the server's `#__denext_state` island BEFORE hydration, so
+ * `useSignal` / `useStore` resume from it and `useApi({ suspense: true })` adopts its result
+ * instead of refetching. Parked on a global (no framework import) so the signal runtime stays
+ * off the shared chunk unless the app actually uses it; the readers check the same global. An
+ * absent island clears it (a re-run entry after a soft navigation must not keep the old page's).
+ */
+const SIGNAL_STATE_ADOPTION =
+  `  // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
+  // resume from it instead of recomputing their initializers. Parked on a global
+  // (no framework import) so the signal runtime stays off the shared chunk unless
+  // the app actually uses signals; useSignal reads the same global.
+  const stateEl = document.getElementById("__denext_state");
+  let adoptedState;
+  if (stateEl) {
+    try {
+      const raw = JSON.parse(stateEl.textContent || "null");
+      if (raw && typeof raw === "object") {
+        adoptedState = {};
+        for (const k of Object.keys(raw)) {
+          if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+          adoptedState[k] = raw[k];
+        }
+      }
+    } catch { /* ignore malformed state */ }
+  }
+  globalThis.__denextSignalState = adoptedState;
+`;
 
 /**
  * Generate the browser entry source that hydrates a single page route.
@@ -373,16 +405,21 @@ export function generateRouteEntry(
   const { activityImport, activityInstall } = activitySupportBlock(opts.usesActivity ?? false);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(opts.usesViewTransition ?? false);
   const { singletonImport, singletonInstall } = singletonSupportBlock(opts.usesSingletons ?? true);
+  // A `client:*` island hydrates on its own (iso-island.ts): installed before hydration.
+  const isoImport = opts.usesIsoIslands
+    ? `import { installIsoIslands } from "denext/client-runtime";\n`
+    : "";
+  const isoInstall = opts.usesIsoIslands ? "installIsoIslands();\n" : "";
   return `// denext generated route entry — do not edit.
 ${
     clientInstrumentationImport(opts.instrumentationClient)
   }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
-${classImport}${activityImport}${vtImport}${singletonImport}${refreshImport}${
+${classImport}${activityImport}${vtImport}${isoImport}${singletonImport}${refreshImport}${
     routeEntryImports(route, slots)
   }
-${refreshReg}${classInstall}${activityInstall}${vtInstall}${singletonInstall}
+${refreshReg}${classInstall}${activityInstall}${vtInstall}${isoInstall}${singletonInstall}
 async function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -391,7 +428,7 @@ async function main() {
     ? JSON.parse(dataEl.textContent || "{}")
     : { params: {}, searchParams: "" };
   const sp = new URLSearchParams(data.searchParams || "");
-  ${routeEntryTree(route, slots)}
+${SIGNAL_STATE_ADOPTION}  ${routeEntryTree(route, slots)}
 ${classBoot}  try {
     startClient(el, tree);
   } catch (err) {
@@ -554,6 +591,19 @@ export function appUsesViewTransition(
   extraFiles: string[] = [],
 ): Promise<boolean> {
   return scanAppSources(rootDir, (c) => /\bViewTransition\b/.test(c), extraFiles);
+}
+
+/**
+ * Whether any source file under `rootDir` writes a `client:*` directive — the build-time signal
+ * that makes a route entry install the isomorphic island runtime (iso-island.ts). An island
+ * can't be marked without writing the directive, so the scan can't false-drop one.
+ */
+export function appUsesIsoIslands(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(
+    rootDir,
+    (c) => /\bclient:(?:load|idle|visible|interaction|media|only)\b/.test(c),
+    extraFiles,
+  );
 }
 
 /**
@@ -817,26 +867,7 @@ function flightMain(catchBody: string, classBoot: string): string {
   } catch {
     return;
   }
-  // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
-  // resume from it instead of recomputing their initializers. Parked on a global
-  // (no framework import) so the signal runtime stays off the shared chunk unless
-  // the app actually uses signals; useSignal reads the same global.
-  const stateEl = document.getElementById("__denext_state");
-  if (stateEl) {
-    try {
-      const raw = JSON.parse(stateEl.textContent || "null");
-      let clean;
-      if (raw && typeof raw === "object") {
-        clean = {};
-        for (const k of Object.keys(raw)) {
-          if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
-          clean[k] = raw[k];
-        }
-      }
-      globalThis.__denextSignalState = clean || undefined;
-    } catch { /* ignore malformed state */ }
-  }
-${classBoot}  await registry.ensure(flight); // this page's islands (code-split chunks)
+${SIGNAL_STATE_ADOPTION}${classBoot}  await registry.ensure(flight); // this page's islands (code-split chunks)
   // A null tree is a root-less islands page (every client part a carved island): nothing to
   // hydrate at the root — startClient only installs navigation, and the islands boot below.
   const tree = flight == null ? null : parseFlight(flight, registry);
@@ -1029,6 +1060,8 @@ export interface BundleOptions {
    * tree-shakes the per-element marking runtime out. Defaults to `false`; dev passes `true`.
    */
   usesViewTransition?: boolean;
+  /** Whether the app writes a `client:*` directive (an {@linkcode appUsesIsoIslands} scan). */
+  usesIsoIslands?: boolean;
   /**
    * Whether the app renders a document tag (from an {@linkcode appRendersDocumentTags} scan).
    * When false, the generated entry omits `installSingletonSupport()` so `deno bundle`
@@ -1231,7 +1264,7 @@ export function absolutizeImports(
  */
 export async function prepareConfig(
   tmpDir: string,
-  opts: Pick<BundleOptions, "configPath" | "importMap">,
+  opts: Pick<BundleOptions, "configPath" | "importMap" | "dev">,
 ): Promise<string> {
   // `configPath` may be a plain filesystem path OR a `file://` URL — the latter when the
   // app has no `deno.json` of its own and `resolveProject` falls back to
@@ -1273,11 +1306,36 @@ export async function prepareConfig(
     ...appImports,
     ...opts.importMap,
   };
+  if (opts.dev) devJsx(base);
   // `links` name directories relative to the config, which now lives in `tmpDir`.
   carryLinks(base, base, dirname(configFsPath), tmpDir);
   const configPath = join(tmpDir, "deno.merged.json");
   await Deno.writeTextFile(configPath, JSON.stringify(base));
   return configPath;
+}
+
+/**
+ * A dev bundle compiles the automatic JSX runtime's dev form (`react-jsx` → `react-jsxdev`):
+ * `jsxDEV` with each element's source, which the owner stack (`captureOwnerStack()`, the
+ * DevTools panel) follows. A production bundle keeps `react-jsx`, so none of it ships. An
+ * import map that names `<source>/jsx-runtime` but not `<source>/jsx-dev-runtime` gets the
+ * latter pointed at the same module (denext's runtime exports `jsxDEV` too).
+ */
+function devJsx(
+  config: {
+    compilerOptions?: { jsx?: string; jsxImportSource?: string };
+    imports?: Record<string, string>;
+  },
+): void {
+  const options = config.compilerOptions;
+  if (options?.jsx !== "react-jsx") return;
+  options.jsx = "react-jsxdev";
+  const source = options.jsxImportSource ?? "react";
+  const imports = config.imports ?? {};
+  const runtime = imports[`${source}/jsx-runtime`];
+  if (runtime && !imports[`${source}/jsx-dev-runtime`]) {
+    imports[`${source}/jsx-dev-runtime`] = runtime;
+  }
 }
 
 /** The running framework's version (its `deno.json`), read once. */
@@ -1650,6 +1708,38 @@ async function assertNoServerModules(
 }
 
 /**
+ * Fail a bundle that shipped an app module holding an inline `"use server"` function (Next's
+ * build error, see ./inline-server-action.ts): its body, and whatever it closes over, would be
+ * served publicly. Each shipped app module (a rewritten copy read as itself) is scanned once.
+ */
+async function assertNoInlineServerActions(
+  shipped: Array<{ sources: Set<string> }>,
+  originals: Map<string, string>,
+  projectDir: string,
+): Promise<void> {
+  const raws = new Set(shipped.flatMap(({ sources }) => [...sources]));
+  const found = new Map<string, string[]>();
+  for (const raw of raws) {
+    const rel = shippedAppModule(raw, originals, projectDir);
+    if (rel === null) continue;
+    const at = await findInlineServerActions(await Deno.readTextFile(raw).catch(() => ""));
+    if (at.length > 0) found.set(rel, at);
+  }
+  if (found.size > 0) throw new Error(inlineServerActionError(found));
+}
+
+/** A shipped source's app module (project-relative; a copy as its original), or null. */
+function shippedAppModule(
+  raw: string,
+  originals: Map<string, string>,
+  projectDir: string,
+): string | null {
+  if (!/\.(?:[cm]?[jt]sx?)$/.test(raw)) return null;
+  const rel = relative(projectDir, originals.get(raw) ?? raw);
+  return rel.startsWith("..") || /(^|[\\/])node_modules[\\/]/.test(rel) ? null : rel;
+}
+
+/**
  * Fail a browser bundle that shipped server-only code — a `node:` import, a
  * `server-only` marker, or a `Deno.` access reached from a route's isomorphic tree or a
  * `"use client"` island (see {@linkcode findServerOnlyLeaks}). `deno bundle
@@ -1679,6 +1769,7 @@ async function assertNoServerOnlyLeaks(
     shippedBy.push({ label: label ?? "the app's client entry", entry: path, sources });
   }
   await assertNoServerModules(shippedBy, resolution, projectDir);
+  await assertNoInlineServerActions(shippedBy, originals, projectDir);
   const found = new Map<string, { leak: ServerOnlyLeak; entries: string[] }>();
   for (const [i, { source }] of entries.entries()) {
     const label = await generatedEntryLabel(source, projectDir);
@@ -1712,6 +1803,7 @@ async function bundleResolution(tmpDir: string, opts: BundleOptions): Promise<Bu
   const configPath = await prepareConfig(tmpDir, {
     configPath: opts.configPath,
     importMap: { ...opts.importMap, ...client.importMap },
+    dev: opts.dev,
   });
   return { client, configPath };
 }
@@ -1863,6 +1955,7 @@ export function bundleRoute(
       classRuntime: opts.classRuntime,
       usesActivity: opts.usesActivity,
       usesViewTransition: opts.usesViewTransition,
+      usesIsoIslands: opts.usesIsoIslands,
       usesSingletons: opts.usesSingletons,
       devMetaFooter: opts.devMetaFooter,
     }),

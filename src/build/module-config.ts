@@ -34,11 +34,57 @@ export interface DenoConfigView {
  * project (relative/jsr imports, `nodeModulesDir: "auto"` or unset) does NOT — Deno
  * resolves it under the framework config unchanged.
  *
+ * Given `resolves` (normally {@linkcode resolvesInThisProcess}), an import-map entry the running
+ * process cannot resolve anchors too: an app-only key (`"@gleam/": "./gleam/…"`, `"@db/pg":
+ * "jsr:…"`) that an app server module imports is otherwise "not in import map" under a source
+ * checkout's CLI started with the framework's config. Keys the process already resolves — the
+ * framework config's own map, its `jsr:`/`npm:` subpaths and workspace packages, or every key of
+ * the app's map when the CLI was started with `--config <app>/deno.json` (a scaffolded app's
+ * least-privilege `start` task under a checkout's CLI) — keep the project on the no-re-exec path:
+ * no second process at startup, and no `--allow-run` needed for one.
+ *
  * @param appCfg The app's parsed deno config.
+ * @param resolves Whether the running process resolves a bare specifier; omit to check
+ *   `manual` / `npm:` only.
  */
-export function configAnchorsResolution(appCfg: DenoConfigView): boolean {
+export function configAnchorsResolution(
+  appCfg: DenoConfigView,
+  resolves?: (key: string) => boolean,
+): boolean {
   if (appCfg.nodeModulesDir === "manual") return true;
-  return Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
+  const imports = appCfg.imports ?? {};
+  if (Object.values(imports).some((v) => String(v).startsWith("npm:"))) return true;
+  if (!resolves) return false;
+  return unresolvedImportKeys(appCfg, resolves).length > 0;
+}
+
+/**
+ * The keys of `appCfg`'s import map that `resolves` refuses: what a module re-exec under the merged
+ * framework+app config would be for.
+ *
+ * @param appCfg The app's parsed deno config.
+ * @param resolves Whether the running process resolves a bare specifier.
+ */
+export function unresolvedImportKeys(
+  appCfg: DenoConfigView,
+  resolves: (key: string) => boolean,
+): string[] {
+  return Object.keys(appCfg.imports ?? {}).filter((key) => !resolves(key));
+}
+
+/**
+ * Whether this process resolves the bare specifier `key` — asked of Deno's own resolver
+ * (`import.meta.resolve`), so it answers for whichever config the CLI actually runs under (the
+ * framework's, or an app's passed with `--config`), workspace packages and `"x/"` prefixes
+ * included. Resolving maps a specifier only; it loads nothing.
+ */
+export function resolvesInThisProcess(key: string): boolean {
+  try {
+    import.meta.resolve(key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

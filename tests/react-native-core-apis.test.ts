@@ -89,7 +89,7 @@ Deno.test("Platform.constants: RN's shared fields per shell, plus denextShell", 
   const web = Platform.constants;
   assertEquals(web.denextShell, "web");
   assertEquals(web.systemName, "web");
-  assertEquals(web.reactNativeVersion, { major: 0, minor: 86, patch: 3, prerelease: null });
+  assertEquals(web.reactNativeVersion, { major: 0, minor: 88, patch: 0, prerelease: null });
   assertEquals(web.forceTouchAvailable, false);
   await inShell("ios", {}, () => {
     const c = Platform.constants;

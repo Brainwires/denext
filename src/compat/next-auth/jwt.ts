@@ -19,7 +19,6 @@
  * @module
  */
 
-import { readAuthSession } from "../../server/auth/session.ts";
 import {
   createRequestContext,
   currentContext,
@@ -27,6 +26,7 @@ import {
 } from "../../server/request-context.ts";
 import { fromBase64Url, toBase64Url } from "../../server/session.ts";
 import { activeNextAuth } from "./state.ts";
+import { sealedSessionToken } from "./token.ts";
 
 /**
  * The token `callbacks.jwt` receives and returns. Augment it to type your own claims:
@@ -198,15 +198,6 @@ export async function decode<Payload = JWT>(params: JWTDecodeParams): Promise<Pa
   return null;
 }
 
-/** The sealed token the current request's session carries, or `null`. */
-async function sealedSessionToken(): Promise<string | null> {
-  const active = activeNextAuth();
-  if (!active) return null;
-  const session = await readAuthSession(active.denext);
-  const sealed = (session as { authjs?: unknown } | null)?.authjs;
-  return typeof sealed === "string" && !session?.mfaPending ? sealed : null;
-}
-
 /**
  * The decoded token of the request's session (JWT strategy), or `null` when signed out. Call it
  * from a route handler, middleware or a Server Action; given `req` outside a request context, it
@@ -225,9 +216,9 @@ export function getToken(params: GetTokenParams & { raw: true }): Promise<string
 export function getToken(params?: GetTokenParams): Promise<JWT | null>;
 export async function getToken(params: GetTokenParams = {}): Promise<JWT | string | null> {
   const read = async () => {
-    const sealed = await sealedSessionToken();
-    if (!sealed || params.raw) return sealed;
     const active = activeNextAuth();
+    const sealed = await sealedSessionToken(active);
+    if (!sealed || params.raw) return sealed;
     return active ? await decode({ token: sealed, secret: active.secret }) : null;
   };
   if (currentContext() || !(params.req instanceof Request)) return await read();

@@ -5,16 +5,20 @@
 // better-sqlite3 driver adapter: schema generator, `@prisma/client` imports, the adapter at
 // each construction site, the deno.json links/imports/task, the patch package + setup script,
 // and package.json cleanup. These tests drive a minimal Prisma app through migrateProject and
-// assert the whole transform, plus that non-runtime tooling (the seed script) is left alone.
+// assert the whole transform, the seed and test tooling included (they move to the Deno client
+// with the app, the seed run by a `prisma:seed` task).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
+import { readDatasource, wiredProvider } from "../src/build/prisma-migrate.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
 
 /** Write a minimal App-Router + Prisma app into a fresh temp dir; return its path. */
-async function scaffoldPrismaApp(): Promise<string> {
+async function scaffoldPrismaApp(
+  datasource = `provider = "sqlite"\n  url      = env("DATABASE_URL")`,
+): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext-prisma-" });
   await Deno.writeTextFile(
     join(dir, "package.json"),
@@ -22,12 +26,13 @@ async function scaffoldPrismaApp(): Promise<string> {
       name: "prisma-app",
       dependencies: { "react": "^18.0.0", "react-dom": "^18.0.0", "@prisma/client": "^5.22.0" },
       devDependencies: { "prisma": "^5.22.0" },
+      prisma: { seed: "tsx prisma/seed.ts" },
     }),
   );
   await Deno.mkdir(join(dir, "prisma"), { recursive: true });
   await Deno.writeTextFile(
     join(dir, "prisma", "schema.prisma"),
-    `datasource db {\n  provider = "sqlite"\n  url      = env("DATABASE_URL")\n}\n\n` +
+    `datasource db {\n  ${datasource}\n}\n\n` +
       `generator client {\n  provider = "prisma-client-js"\n}\n\n` +
       `model Note {\n  id Int @id @default(autoincrement())\n  title String\n}\n`,
   );
@@ -43,11 +48,26 @@ async function scaffoldPrismaApp(): Promise<string> {
     join(dir, "app", "models", "note.server.ts"),
     `import type { Note } from "@prisma/client";\nexport type { Note };\n`,
   );
-  // A NON-runtime tooling file (the seed) — must be left untouched (Node-only, native client).
+  // The seed and the test tooling — moved to the Deno client with the app.
   await Deno.writeTextFile(
     join(dir, "prisma", "seed.ts"),
     `import { PrismaClient } from "@prisma/client";\nnew PrismaClient();\n`,
   );
+  await Deno.mkdir(join(dir, "tests", "setup"), { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "tests", "db-utils.ts"),
+    `import { PrismaClient } from "@prisma/client";\nexport const db = new PrismaClient({ log: [] });\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "tests", "setup", "fixtures.ts"),
+    `import type { Note } from "@prisma/client";\nexport const note: Partial<Note> = {};\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "vitest.setup.ts"),
+    `import { PrismaClient } from "@prisma/client";\nawait new PrismaClient().$connect();\n`,
+  );
+  // Tooling without Prisma is left alone.
+  await Deno.writeTextFile(join(dir, "tests", "plain.test.ts"), `export const x = 1;\n`);
   return dir;
 }
 
@@ -63,6 +83,13 @@ Deno.test("prisma migrate: detects Prisma and reports the wiring", async () => {
   assertEquals(r.prisma.refsRewritten.sort(), ["app/db.server.ts", "app/models/note.server.ts"]);
   assert(r.prisma.packageJsonEdited, "package.json prisma deps should be dropped");
   assertEquals(r.prisma.setupTask, "prisma:setup");
+  assertEquals(r.prisma.seedTask, "prisma:seed");
+  assertEquals(r.prisma.toolingRewritten, [
+    "prisma/seed.ts",
+    "tests/db-utils.ts",
+    "tests/setup/fixtures.ts",
+    "vitest.setup.ts",
+  ]);
   assertEquals(r.prisma.warnings, []);
   await Deno.remove(dir, { recursive: true });
 });
@@ -102,12 +129,57 @@ Deno.test("prisma migrate: type-only import repointed, no adapter injected", asy
   await Deno.remove(dir, { recursive: true });
 });
 
-Deno.test("prisma migrate: non-runtime tooling (seed) is left untouched", async () => {
+Deno.test("prisma migrate: the seed and test tooling move to the Deno client", async () => {
   const dir = await scaffoldPrismaApp();
   await migrateProject(dir, { denextLocalPath: REPO_ROOT });
   const seed = await read(dir, "prisma/seed.ts");
-  assertStringIncludes(seed, `from "@prisma/client"`); // NOT rewritten
-  assert(!seed.includes("__denextPrismaAdapter"), "seed must not get the Deno adapter");
+  assertStringIncludes(seed, `from "../generated/client/client.ts"`);
+  assertStringIncludes(seed, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+  const utils = await read(dir, "tests/db-utils.ts");
+  assertStringIncludes(utils, `from "../generated/client/client.ts"`);
+  // An options object keeps its fields, with the adapter merged in.
+  assertStringIncludes(utils, "new PrismaClient({ adapter: __denextPrismaAdapter(), log: [] })");
+  const fixtures = await read(dir, "tests/setup/fixtures.ts");
+  assertStringIncludes(fixtures, `from "../../generated/client/client.ts"`);
+  assert(!fixtures.includes("__denextPrismaAdapter"), "a type-only module needs no adapter");
+  assertStringIncludes(await read(dir, "vitest.setup.ts"), `from "./generated/client/client.ts"`);
+  assertEquals(await read(dir, "tests/plain.test.ts"), "export const x = 1;\n");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: the seed runs on Deno (task, package.json, prisma.config.ts)", async () => {
+  const dir = await scaffoldPrismaApp();
+  await Deno.writeTextFile(
+    join(dir, "prisma.config.ts"),
+    `export default { migrations: { seed: "tsx prisma/seed.ts" } };\n`,
+  );
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  const deno = JSON.parse(await read(dir, "deno.json")) as { tasks?: Record<string, string> };
+  assertEquals(deno.tasks?.["prisma:seed"], "deno run -A prisma/seed.ts");
+  const pkg = JSON.parse(await read(dir, "package.json")) as { prisma?: { seed?: string } };
+  assertEquals(pkg.prisma?.seed, "deno run -A prisma/seed.ts", "`prisma db seed` runs it on Deno");
+  assertStringIncludes(await read(dir, "prisma.config.ts"), `seed: "deno run -A prisma/seed.ts"`);
+  // A second migrate leaves the seed stable (one adapter, the same command).
+  const seed1 = await read(dir, "prisma/seed.ts");
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(await read(dir, "prisma/seed.ts"), seed1);
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: a seed named only by its command is found", async () => {
+  const dir = await scaffoldPrismaApp();
+  await Deno.remove(join(dir, "prisma", "seed.ts"));
+  await Deno.writeTextFile(
+    join(dir, "other-seed.mts"),
+    `import { PrismaClient } from "@prisma/client";\nnew PrismaClient();\n`,
+  );
+  const pkg = JSON.parse(await read(dir, "package.json"));
+  pkg.prisma.seed = "node --loader ts-node/esm ./other-seed.mts";
+  await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(pkg));
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assert(r.prisma?.toolingRewritten.includes("other-seed.mts"));
+  const deno = JSON.parse(await read(dir, "deno.json")) as { tasks?: Record<string, string> };
+  assertEquals(deno.tasks?.["prisma:seed"], "deno run -A other-seed.mts");
   await Deno.remove(dir, { recursive: true });
 });
 
@@ -199,3 +271,133 @@ Deno.test("prisma migrate: generated start task uses -A (it re-execs a child den
   assertStringIncludes(deno.tasks?.start ?? "", "-A");
   await Deno.remove(dir, { recursive: true });
 });
+
+// ── Postgres / MySQL datasources: the database's own driver adapter, no `links` shim ──
+
+const PG_DATASOURCE = `provider  = "postgresql"\n  url       = env("POSTGRES_PRISMA_URL")\n` +
+  `  directUrl = env("POSTGRES_URL_NON_POOLING")`;
+
+Deno.test("prisma migrate: a postgresql datasource gets @prisma/adapter-pg, no links shim", async () => {
+  const dir = await scaffoldPrismaApp(PG_DATASOURCE);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.provider, "postgresql");
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-pg");
+  assertEquals(r.prisma?.clientModules, ["app/db.server.ts"]);
+  assertEquals(r.prisma?.warnings, []);
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(db, `import { PrismaPg as __PrismaPg } from "@prisma/adapter-pg";`);
+  // The URL comes from the variable the datasource names, not a hard-coded DATABASE_URL.
+  assertStringIncludes(db, `connectionString: Deno.env.get("POSTGRES_PRISMA_URL")`);
+  assertStringIncludes(db, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+  assert(!db.includes("better-sqlite3"), "no SQLite adapter for a Postgres datasource");
+  assertStringIncludes(
+    await read(dir, "tests/db-utils.ts"),
+    "new PrismaClient({ adapter: __denextPrismaAdapter(), log: [] })",
+  );
+  const deno = JSON.parse(await read(dir, "deno.json")) as {
+    nodeModulesDir?: string;
+    links?: string[];
+    imports?: Record<string, string>;
+  };
+  assertEquals(deno.nodeModulesDir, "manual");
+  assertEquals(deno.links, undefined, "pg is pure JS: no `links` substitution");
+  assertEquals(deno.imports?.["@prisma/adapter-pg"], "npm:@prisma/adapter-pg@6.19.3");
+  assert(!("@prisma/adapter-better-sqlite3" in (deno.imports ?? {})));
+  // No compat bundle: neither the patch package nor its bundle step.
+  assert(!(await exists(join(dir, "patch/better-sqlite3/package.json"))));
+  const setup = await read(dir, "scripts/denext-prisma-setup.ts");
+  assert(!setup.includes("bundle the better-sqlite3 compat"));
+  assertStringIncludes(setup, `const URL_VAR = "POSTGRES_PRISMA_URL";`);
+  assertStringIncludes(setup, "migrate", "SQL migrations are applied with `migrate deploy`");
+  // The schema's datasource (directUrl included) is left for the Prisma CLI.
+  const schema = await read(dir, "prisma/schema.prisma");
+  assertStringIncludes(schema, `directUrl = env("POSTGRES_URL_NON_POOLING")`);
+  assertStringIncludes(schema, `runtime         = "deno"`);
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: the postgres setup script type-checks and stops without a URL", async () => {
+  const dir = await scaffoldPrismaApp(PG_DATASOURCE);
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  const script = join(dir, "scripts/denext-prisma-setup.ts");
+  const checked = await new Deno.Command(Deno.execPath(), {
+    args: ["check", "--no-config", "--quiet", script],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(checked.success, new TextDecoder().decode(checked.stderr));
+  const env = { ...Deno.env.toObject() };
+  delete env.POSTGRES_PRISMA_URL;
+  const ran = await new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", "--no-config", script],
+    cwd: dir,
+    env,
+    clearEnv: true,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(!ran.success, "setup must refuse to run without the datasource URL");
+  assertStringIncludes(new TextDecoder().decode(ran.stderr), "set POSTGRES_PRISMA_URL");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: `postgres` (Prisma's alias) wires the pg adapter too", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "postgres"\n  url = env("DATABASE_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-pg");
+  assertStringIncludes(await read(dir, "app/db.server.ts"), `Deno.env.get("DATABASE_URL")`);
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: a mysql datasource gets @prisma/adapter-mariadb", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "mysql"\n  url      = env("DATABASE_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.provider, "mysql");
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-mariadb");
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(
+    db,
+    `import { PrismaMariaDb as __PrismaMariaDb } from "@prisma/adapter-mariadb";`,
+  );
+  assertStringIncludes(db, `new __PrismaMariaDb(Deno.env.get("DATABASE_URL") ?? "")`);
+  const deno = JSON.parse(await read(dir, "deno.json")) as {
+    links?: string[];
+    imports?: Record<string, string>;
+  };
+  assertEquals(deno.links, undefined);
+  assertEquals(deno.imports?.["@prisma/adapter-mariadb"], "npm:@prisma/adapter-mariadb@6.19.3");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: an unwired provider keeps its constructions and says why", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "sqlserver"\n  url = env("DATABASE_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.adapter, null);
+  assertEquals(r.prisma?.clientModules, []);
+  assert(r.prisma?.warnings.some((w) => w.includes(`"sqlserver" has no driver adapter`)));
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(db, "new PrismaClient()", "no SQLite adapter forced onto SQL Server");
+  assert(!db.includes("__denextPrismaAdapter"));
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: readDatasource / wiredProvider", () => {
+  assertEquals(
+    readDatasource(`datasource db {\n  provider = "postgresql"\n  url = env("PG_URL")\n}\n`),
+    { provider: "postgresql", envVar: "PG_URL" },
+  );
+  assertEquals(
+    readDatasource(`datasource db {\n  provider = "sqlite"\n  url = "file:./dev.db"\n}`),
+    { provider: "sqlite", envVar: null },
+  );
+  assertEquals(readDatasource("model A { id Int @id }"), { provider: null, envVar: null });
+  assertEquals(wiredProvider(null), "sqlite");
+  assertEquals(wiredProvider("postgres"), "postgresql");
+  assertEquals(wiredProvider("mysql"), "mysql");
+  assertEquals(wiredProvider("mongodb"), null);
+  assertEquals(wiredProvider("cockroachdb"), null);
+});
+
+async function exists(path: string): Promise<boolean> {
+  return await Deno.stat(path).then(() => true, () => false);
+}

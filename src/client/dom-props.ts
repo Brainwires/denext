@@ -21,6 +21,7 @@ import {
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
+import { SVG_NAMESPACE } from "./fiber/fiber-utils.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -95,9 +96,14 @@ export function installDomPropWarnings(on = true): void {
   devWarnings = on ? { html: warnDangerousHtml, url: warnRefusedUrl } : null;
 }
 
+/** The `__html` of a `dangerouslySetInnerHTML` value (undefined when there is none). */
+function htmlOf(value: unknown): unknown {
+  return (value as { __html?: unknown } | null | undefined)?.__html;
+}
+
 /** Raw HTML injection (React parity): apply innerHTML; warn (dev) about the XSS sink. */
 function applyDangerousHtml(el: Element, value: unknown): void {
-  const html = (value as { __html?: unknown } | null | undefined)?.__html;
+  const html = htmlOf(value);
   if (typeof html !== "string") return;
   devWarnings?.html(el.tagName.toLowerCase());
   el.innerHTML = html;
@@ -120,8 +126,10 @@ function setProp(
   if (isFormActionProp(name, value)) {
     return setFormAction(el, state, value as (payload: unknown) => void, onError);
   }
+  // Compared by `__html` (React parity): a fresh `{ __html }` object of the same markup each
+  // render must not re-create the nodes.
   if (name === "dangerouslySetInnerHTML") {
-    if (oldValue !== value) applyDangerousHtml(el, value);
+    if (htmlOf(oldValue) !== htmlOf(value)) applyDangerousHtml(el, value);
     return;
   }
   if (typeof value === "function") return; // non-event function props aren't attrs
@@ -395,7 +403,6 @@ function normalizeAttr(name: string): string {
   return name;
 }
 
-const SVG_NS = "http://www.w3.org/2000/svg";
 // SVG attributes that are genuinely camelCase in the DOM and must NOT be kebab-cased.
 // Everything else camelCase on an SVG element is a React-style presentation attribute
 // (strokeWidth → stroke-width, strokeLinecap → stroke-linecap, …) that SVG spells with
@@ -423,7 +430,7 @@ const SVG_KEEP_CAMELCASE = /* @__PURE__ */ new Set(
 export function domAttrName(el: Element, name: string): string {
   const base = normalizeAttr(name);
   if (
-    el.namespaceURI === SVG_NS && /[a-z][A-Z]/.test(base) &&
+    el.namespaceURI === SVG_NAMESPACE && /[a-z][A-Z]/.test(base) &&
     !SVG_KEEP_CAMELCASE.has(base) && !base.startsWith("data") && !base.startsWith("aria")
   ) {
     return base.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();

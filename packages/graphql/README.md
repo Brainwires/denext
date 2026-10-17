@@ -32,7 +32,7 @@ covers SDL + resolvers.
 // deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.5.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.6.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0",
     "@pothos/core": "npm:@pothos/core@^4" // if you use Pothos
@@ -205,7 +205,13 @@ notice says so.
 ```sh
 denext graphql sdl --out schema.graphql   # regenerate the committed SDL (sorted, stable)
 denext graphql diff schema.graphql        # exit 1 when the schema changed
+denext graphql client --lang go --out client.go   # a typed client: python | go | swift | kotlin
 ```
+
+`denext graphql client` writes the schema's types (object and interface types with every field
+optional, input types with their required fields, enums) and a client whose
+`execute(query, variables, operationName)` posts one operation and raises the response's `errors`
+— one file, the language's standard library only, through `@denext/openapi`'s emitters.
 
 Feed the SDL to `graphql-codegen` or any client generator; `denext build` writes the same
 file into the output directory.

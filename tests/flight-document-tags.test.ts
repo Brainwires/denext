@@ -1,14 +1,16 @@
-// A root layout's <html>/<head>/<body> are rendered nested inside the page container, where
-// the browser's HTML parser drops the three tags and keeps their content in place. Every Flight
-// tree the server emits (the document's inlined tree, the soft-navigation / refresh payload, a
-// streamed page's tail and a PPR shell) mirrors that parsed DOM: the three tags are peeled to
-// their children, so the client hydrates the server markup instead of re-creating the page.
-// The HTML itself is unchanged.
+// A root layout's <html>/<head>/<body> are the document's own tags: the page render emits only
+// their content, inside the page container, and the document assembler writes the real tags
+// (with the layout's attributes). Every Flight tree the server emits (the document's inlined
+// tree, the soft-navigation / refresh payload, a streamed page's tail and a PPR shell) mirrors
+// that DOM: the three tags are peeled to their children, so the client hydrates the server
+// markup instead of re-creating the page.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import "./helpers/singleton-runtime.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
+import { renderToString } from "../src/jsx/render-to-string.ts";
+import { prerenderToShell } from "../src/jsx/render-to-ppr.ts";
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -51,18 +53,35 @@ const nextLayout = (children: VNodeChildren) =>
 
 const DOCUMENT_TAG = /"t":"(html|head|body)"/;
 
-Deno.test("the Flight tree peels <html>/<head>/<body>; the HTML keeps them", async () => {
+Deno.test("the page render peels <html>/<head>/<body> from both the HTML and the Flight tree", async () => {
   const head = { tags: [] } as unknown as HeadCollector;
   const { html, flight } = await renderToHtmlFlight(nextLayout(h("p", null, "hi")), { head });
-  // The HTML is what the server always sent: the tags nested in the page container.
-  assertStringIncludes(html, '<html lang="en"><head><style>p{color:red}</style></head>');
-  assertStringIncludes(html, '<body class="b"><nav>');
+  // The HTML is the content alone: never an <html> nested in the page container.
+  assertEquals(
+    html,
+    '<style>p{color:red}</style><nav><button type="button">0</button></nav><p>hi</p>',
+  );
   // The Flight tree is the parsed DOM: no document tags; <title>/<meta> were hoisted into the
   // document head (null here), the <style> stays where it was.
   const json = JSON.stringify(flight);
   assert(!DOCUMENT_TAG.test(json), json);
   assertStringIncludes(json, '{"$":"h","t":"style","p":{},"c":["p{color:red}"]}');
   assertStringIncludes(json, '"t":"nav"');
+});
+
+Deno.test("the HTML-only and PPR page renders emit the content alone too", async () => {
+  const want = '<style>p{color:red}</style><nav><button type="button">0</button></nav><p>hi</p>';
+  const head = () => ({ tags: [] }) as unknown as HeadCollector;
+  assertEquals(await renderToString(nextLayout(h("p", null, "hi")), { head: head() }), want);
+  const shell = await prerenderToShell(nextLayout(h("p", null, "hi")), { head: head() });
+  assertEquals(shell.shell, want);
+});
+
+Deno.test("outside the page render (no head collector) the document tags are kept", async () => {
+  // `react-dom/server`'s renderToString of a whole document, an email template, …
+  const html = await renderToString(nextLayout(h("p", null, "hi")));
+  assertStringIncludes(html, '<html lang="en"><head>');
+  assertStringIncludes(html, '<body class="b"><nav>');
 });
 
 Deno.test("hydrating the peeled tree adopts the parsed DOM (no mismatch, same nodes)", async () => {
@@ -266,6 +285,18 @@ function makeApp(
   });
 }
 
+/**
+ * A served document has one `<html>`, `<head>` and `<body>`: the root layout's are never nested
+ * in the page container, and their attributes are on the real tags.
+ */
+function assertOneDocument(body: string): void {
+  for (const tag of ["html", "head", "body"]) {
+    assertEquals(body.match(new RegExp(`<${tag}[\\s>]`, "g"))?.length, 1, `one <${tag}>: ${body}`);
+  }
+  assertStringIncludes(body, '<html lang="en"');
+  assertStringIncludes(body, '<body class="b"');
+}
+
 /** The `#__denext_flight` JSON of a document. */
 /** The Flight tree the browser hydrates from `body`, as JSON (streamed chunks put back). */
 function inlined(body: string): string {
@@ -279,7 +310,7 @@ const holePage = () =>
 Deno.test("buffered document + soft-nav payload: no document tags in the Flight tree", async () => {
   const app = makeApp({}, plainPage);
   const body = await (await app(new Request("http://x/"))).text();
-  assertStringIncludes(body, '<html lang="en">'); // the HTML still nests them
+  assertOneDocument(body);
   const flight = inlined(body);
   assert(!DOCUMENT_TAG.test(flight), flight);
   assertStringIncludes(flight, "c_doc#Counter");
@@ -293,6 +324,7 @@ Deno.test("streamed document: the tail's Flight tree has no document tags", asyn
   const app = makeApp({ streaming: true, csp: "off" }, holePage);
   const body = await (await app(new Request("http://x/", { headers: { cookie: "u=ann" } })))
     .text();
+  assertOneDocument(body);
   const flight = inlined(body);
   assert(!DOCUMENT_TAG.test(flight), flight);
   assertStringIncludes(flight, "hi ann");
@@ -305,6 +337,7 @@ Deno.test("PPR shell (MISS and cached HIT): no document tags in the Flight tree"
     const res = await app(new Request("http://x/", { headers: { cookie: `u=${user}` } }));
     const body = await res.text();
     assertEquals(res.headers.get("x-denext-cache"), cache);
+    assertOneDocument(body);
     const flight = inlined(body);
     assert(!DOCUMENT_TAG.test(flight), flight);
     assertStringIncludes(flight, `hi ${user}`);

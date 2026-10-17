@@ -12,7 +12,12 @@
  * @module
  */
 
-import { isScreenReaderEnabled, onScreenReaderChange } from "../mobile/accessibility.ts";
+import {
+  isAccessibilitySettingEnabled,
+  isScreenReaderEnabled,
+  onAccessibilitySettingChange,
+  onScreenReaderChange,
+} from "../mobile/accessibility.ts";
 import {
   type EmitterSubscription,
   type HandlerSubscriptions,
@@ -100,6 +105,8 @@ function watch(
   if (eventName === "screenReaderChanged" || eventName === "accessibilityServiceChanged") {
     return onScreenReaderChange(handler);
   }
+  if (eventName === "boldTextChanged") return onAccessibilitySettingChange("boldText", handler);
+  if (eventName === "grayscaleChanged") return onAccessibilitySettingChange("grayscale", handler);
   if (eventName === "announcementFinished") {
     const set = announced ??= new Set();
     set.add(handler);
@@ -194,8 +201,9 @@ function focusNode(tag: unknown): void {
  * - `isScreenReaderEnabled` / `isAccessibilityServiceEnabled` and their events: denext's
  *   `DenextAccessibility` plugin in the shell (`denext mobile add accessibility`), else `false`
  *   (no web API exposes it).
- * - `isBoldTextEnabled`, `isGrayscaleEnabled`, `prefersCrossFadeTransitions`: `false` (no
- *   web signal).
+ * - `isBoldTextEnabled` / `isGrayscaleEnabled` and their events: the OS's Bold Text and grayscale
+ *   settings through the `DenextAccessibility` plugin in the shell, else `false` (no web signal).
+ * - `prefersCrossFadeTransitions`: `false` (no web signal).
  * - `announceForAccessibility`: a visually hidden `aria-live="polite"` region
  *   (`announceForAccessibilityWithOptions(text, { queue: false })` uses an assertive one).
  * - `setAccessibilityFocus(node)`: focuses the node (react-native-web's `findNodeHandle`
@@ -210,8 +218,8 @@ function focusNode(tag: unknown): void {
  * ```
  */
 export const AccessibilityInfo: AccessibilityInfoStatic = {
-  isBoldTextEnabled: () => Promise.resolve(false),
-  isGrayscaleEnabled: () => Promise.resolve(false),
+  isBoldTextEnabled: () => isAccessibilitySettingEnabled("boldText"),
+  isGrayscaleEnabled: () => isAccessibilitySettingEnabled("grayscale"),
   isInvertColorsEnabled: () => Promise.resolve(mediaMatches(MEDIA.invertColorsChanged!)),
   isReduceMotionEnabled: () => Promise.resolve(mediaMatches(MEDIA.reduceMotionChanged!)),
   isHighTextContrastEnabled: () => Promise.resolve(mediaMatches(MEDIA.highTextContrastChanged!)),

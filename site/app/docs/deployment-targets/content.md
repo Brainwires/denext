@@ -296,9 +296,10 @@ export default {
 prints the flags it baked.
 
 **Cross-compiling** takes any `deno compile` target: `x86_64-unknown-linux-gnu`,
-`aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin` or
-`x86_64-pc-windows-msvc`. The binary's runtime is the `denort` of denext's
-[Deno toolchain](/docs/toolchain) for that target (`2.9.7-denext.20` and later):
+`aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`,
+`x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc` (Windows on Arm). The binary's
+runtime is the `denort` of denext's [Deno toolchain](/docs/toolchain) for that
+target (`2.9.7-denext.20` and later; Windows on Arm `2.9.7-denext.21` and later):
 the same release as the CLI, pinned by SHA-256 in denext and downloaded into the
 toolchain cache on first use, so the binary carries the toolchain's patches.
 `Deno.SQL` is there (`postgresClient(url)` and `backend({ postgres: {} })` work
@@ -306,9 +307,9 @@ as under `denext start`). With `DENEXT_DENO=stock` (or another `deno` through
 `DENEXT_DENO=<path>`), `deno compile` picks its own runtime, Deno's stock
 `denort`, which has no `Deno.SQL`.
 
-The first request prints one `Deno.serve: request.signal…` notice: a compiled
-binary does not take `--unstable-no-legacy-abort`. The notice is cosmetic:
-denext handles both abort behaviours.
+A compiled binary keeps `--unstable-no-legacy-abort` (from `2.9.7-denext.21`),
+so it behaves as `denext start` does and prints no `request.signal` notice on
+its first request.
 
 **What does not compile:**
 

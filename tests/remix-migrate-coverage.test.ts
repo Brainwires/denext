@@ -687,7 +687,9 @@ Deno.test("transformRemixApp: getLoadContext → load-context.ts, entry.client �
     );
     assertStringIncludes(loadContext, "cspNonce: undefined,");
     assertStringIncludes(loadContext, "// was: res.locals.cspNonce — denext's CSP is hash-based");
-    assertStringIncludes(loadContext, "// TODO: was `req.ip` — provide it here\n  ip: undefined,");
+    // An Express request read becomes its denext equivalent.
+    assertStringIncludes(loadContext, 'import { clientIp } from "denext/server";');
+    assertStringIncludes(loadContext, "// was: req.ip (server/index.ts:7)\n  ip: clientIp(),");
     assert(info.warnings.some((w) => w.includes("getLoadContext → load-context.ts")));
     // No entry.server here — instrumentation.ts still exists to register the load context.
     const instrumentation = await Deno.readTextFile(join(tmp, "instrumentation.ts"));

@@ -6,8 +6,20 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { npmBoundaryByImporter, npmSpecifierToBare } from "../src/build/npm-boundary.ts";
-import { buildBoundaryManifest, resetModuleGraphCache } from "../src/build/module-graph.ts";
+import {
+  npmBoundaryByImporter,
+  npmSpecifierToBare,
+  packageNameOfPath,
+} from "../src/build/npm-boundary.ts";
+import { buildNextCompatModules } from "../src/build/next-compat-build.ts";
+import { loadBundleRef } from "../src/build/next-compat-loader.ts";
+import { stopNextCompat } from "../src/build/next-compat.ts";
+import { defaultLoader } from "../src/server/mod.ts";
+import {
+  buildBoundaryManifest,
+  npmBoundaryPackageNames,
+  resetModuleGraphCache,
+} from "../src/build/module-graph.ts";
 import { compatModuleList } from "../src/build/pipeline-shared.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
 
@@ -75,10 +87,11 @@ Deno.test("npm boundary: islands and actions inside a package, via the SSR (CJS)
     assertEquals(found.get(page), {
       client: [join(cjs, "provider.js")],
       server: [join(cjs, "actions.js")],
+      packages: ["ui-lib"],
     });
     // A local client island's npm imports are client code: no islands of their own.
-    assertEquals(found.get(island), { client: [], server: [] });
-    assertEquals(found.get(join(root, "app/styles.css")), { client: [], server: [] });
+    assertEquals(found.get(island), { client: [], server: [], packages: [] });
+    assertEquals(found.get(join(root, "app/styles.css")), { client: [], server: [], packages: [] });
   } finally {
     removeTempDirSync(root);
   }
@@ -92,8 +105,11 @@ Deno.test("npm boundary: the boundary manifest adds them only when asked (compat
     const page = join(appDir, "page.tsx");
     const plain = await buildBoundaryManifest(appDir, [page]);
     assertEquals([...plain.client.values()].length, 0);
+    assertEquals(npmBoundaryPackageNames(), []);
     resetModuleGraphCache();
     const bm = await buildBoundaryManifest(appDir, [page], { npm: npmBoundaryByImporter });
+    // What the server bundle resolves from node_modules under `nodeResolve: false`.
+    assertEquals(npmBoundaryPackageNames(), ["ui-lib"]);
     const provider = toFileUrl(join(root, "node_modules/ui-lib/cjs/provider.js")).href;
     const client = [...bm.client.values()].find((r) => r.url === provider);
     assert(client, "the npm island is in the manifest");
@@ -112,7 +128,11 @@ Deno.test("npm boundary: an unbuildable graph answers nothing (the app's own bou
   try {
     const page = join(root, "page.tsx");
     await Deno.writeTextFile(page, "export default function P( { return 1 }\n"); // syntax error
-    assertEquals((await npmBoundaryByImporter([page])).get(page), { client: [], server: [] });
+    assertEquals((await npmBoundaryByImporter([page])).get(page), {
+      client: [],
+      server: [],
+      packages: [],
+    });
     assertEquals((await npmBoundaryByImporter([])).size, 0);
   } finally {
     removeTempDirSync(root);
@@ -176,6 +196,66 @@ Deno.test("serverStubPlugin: an npm `use server` file outside the boundary never
     assertEquals(stubs, ["unregistered:ui-lib/esm/actions.js act"]);
   } finally {
     await (await import("../src/build/esbuild/mod.ts")).stop();
+    removeTempDirSync(root);
+  }
+});
+
+Deno.test("packageNameOfPath: the package a node_modules file belongs to", () => {
+  assertEquals(packageNameOfPath("/a/node_modules/ui-lib/cjs/x.js"), "ui-lib");
+  assertEquals(packageNameOfPath("/a/node_modules/@s/p/x.js"), "@s/p");
+  assertEquals(
+    packageNameOfPath("/a/node_modules/.pnpm/p@1/node_modules/@s/p/dist/x.js"),
+    "@s/p",
+  );
+  assertEquals(packageNameOfPath("C:\\a\\node_modules\\ui-lib\\x.js"), "ui-lib");
+  assertEquals(packageNameOfPath("/a/src/x.js"), null);
+});
+
+Deno.test({
+  name: "npm boundary, nodeResolve: false: the server bundle's island is the walk's module",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-npm-boundary-nr-" }));
+  try {
+    const lib = "node_modules/ui-lib";
+    await write(root, {
+      // Deno resolves the package itself (no `nodeResolve`): through package.json into
+      // node_modules, with Deno's conditions (`import` first → the ESM build).
+      "deno.json": JSON.stringify({ nodeModulesDir: "manual", imports: {} }),
+      "package.json": JSON.stringify({ name: "app", dependencies: { "ui-lib": "1.0.0" } }),
+      "app/page.tsx":
+        `export { Provider } from "ui-lib";\nexport default function Page() { return null; }\n`,
+      [`${lib}/package.json`]: JSON.stringify({
+        name: "ui-lib",
+        version: "1.0.0",
+        exports: { ".": { import: "./esm/index.js", require: "./cjs/index.js" } },
+      }),
+      [`${lib}/esm/index.js`]: `"use client";\nexport function Provider() { return "esm"; }\n`,
+      [`${lib}/cjs/index.js`]: `"use strict";\n"use client";\n` +
+        `exports.Provider = function Provider() { return "cjs"; };\n`,
+    });
+    const page = join(root, "app/page.tsx");
+    const found = (await npmBoundaryByImporter([page])).get(page)!;
+    const island = join(root, lib, "cjs/index.js");
+    assertEquals(found.client, [island]);
+    assertEquals(found.packages, ["ui-lib"]);
+    const moduleMap = await buildNextCompatModules({
+      projectDir: root,
+      configPath: join(root, "deno.json"),
+      outDir: join(root, ".denext"),
+      modules: [page, island],
+      resolveAllNodeModules: false,
+      boundaryPackages: found.packages,
+    });
+    type Mod = { Provider: () => string };
+    const fromPage = await loadBundleRef(defaultLoader, moduleMap.get(page)!) as Mod;
+    const fromIsland = await loadBundleRef(defaultLoader, moduleMap.get(island)!) as Mod;
+    // One module: the page's `Provider` IS the registered island's (so it renders as one).
+    assertEquals(fromPage.Provider(), "cjs");
+    assert(fromPage.Provider === fromIsland.Provider, "the page imports the island module");
+  } finally {
+    await stopNextCompat().catch(() => {});
     removeTempDirSync(root);
   }
 });

@@ -1,7 +1,7 @@
 ---
 title: Internationalization
 slug: i18n
-lead: Locale routing with a default-locale prefix, locale negotiation, automatic hreflang, and the next-intl compat surface with its ICU subset.
+lead: Locale routing with a default-locale prefix, locale negotiation, automatic hreflang, and the next-intl compat surface with its ICU message formatter.
 ---
 
 ## Configure locales
@@ -118,20 +118,27 @@ rendering. `createNavigation(routing)` returns a locale-prefixing `Link`,
 { "imports": { "next-intl": "jsr:@denext/denext/next-intl" } }
 ```
 
-## The ICU message subset
+## ICU messages
 
 Messages are formatted by a first-party ICU implementation built on the standard
 `Intl.*` APIs — zero npm deps and zero bundled data, no `intl-messageformat`. It
-covers plurals with `offset:` and `#`, `selectordinal`, `select`, nested
-submessages, `::` number and date-field skeletons, `duration`, and
-`spellout`/`ordinal`.
+covers plurals with `offset:` and `#`, `selectordinal`, `select`, submessages
+nested up to 1,000 levels deep (a message longer than 262,144 characters, or
+nested deeper, throws a `SyntaxError`), `duration`, `spellout`/`ordinal`, and the `::` skeletons:
 
-> [!NOTE]
-> It is a common-subset re-implementation. An **unknown number/date skeleton
-> token is silently ignored** rather than formatted, and deeply nested
-> `plural`/`select` is depth-capped at 64 levels (beyond the cap is an error,
-> not a wrong render). Standard messages format identically; exotic skeletons
-> may differ. See [known limitations](/docs/limitations).
+- **Number skeletons**, long and concise: `currency/EUR`, `unit/…`,
+  `measure-unit/…` with `per-measure-unit/…`, `unit-width-*`, fraction and
+  significant digits (`.00##`, `.00+`, `.00/w`, `.##/@@#r`, `@@#`),
+  `precision-increment/0.05`, `rounding-mode-*`, `compact-*` / `K` / `KK`,
+  `scientific` / `engineering` / `E0`, `sign-*` / `+!` / `()`, `group-*` / `,_`,
+  `integer-width/…` / `000`, `scale/N`, `%` / `%x100` and `numbering-system/…`.
+  A token `Intl.NumberFormat` has no option for (`decimal-always`) is ignored, as
+  next-intl's formatter ignores it.
+- **Date skeletons**: every CLDR field `Intl.DateTimeFormat` can express — era,
+  year, month, day, weekday, the four hour cycles (`h`/`H`/`K`/`k`), `j`,
+  minute, second, fractional seconds (`S`), day periods (`B`) and the time-zone
+  name styles (`z`, `v`, `O`, `Z`, `X`). A quarter, week or day-of-year field
+  throws, as in next-intl, rather than rendering a date without it.
 
 ```text
 {count, plural, offset:1 =0 {nobody} one {you and # other} other {you and # others}}

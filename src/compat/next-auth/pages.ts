@@ -48,7 +48,9 @@ const MESSAGES: Record<string, string> = {
 /** The message for an error code. */
 function message(code: string | null): string {
   if (!code) return "";
-  return `<p role="alert">${esc(MESSAGES[code] ?? "Unable to sign in.")}</p>`;
+  // Own keys only: `?error=constructor` must not reach `Object.prototype`.
+  const text = Object.hasOwn(MESSAGES, code) ? MESSAGES[code] : "Unable to sign in.";
+  return `<p role="alert">${esc(text)}</p>`;
 }
 
 /** One provider's sign-in form. */

@@ -137,6 +137,13 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   and the transition types once it is ready, and a returned cleanup runs when it
   finishes (a boundary that persists across a soft navigation runs `onUpdate` when its
   content changed or it moved); a `ref` receives the same instance; import-gated.
+- **Fragment refs** (React 19.3) — `<Fragment ref={r}>` puts a `FragmentInstance` in
+  `r.current`: `addEventListener` / `removeEventListener` / `dispatchEvent`, `focus` /
+  `focusLast` / `blur`, `observeUsing` / `unobserveUsing`, `getClientRects`, `getRootNode`,
+  `compareDocumentPosition` and `scrollIntoView` over the fragment's host children, kept on
+  children that mount later and taken off ones that unmount; set and cleared at commit like any
+  ref (a callback ref's cleanup included), ignored by the server render and attached by hydration.
+  Loaded on first use, so apps that don't use it pay nothing.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping
@@ -147,7 +154,7 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   window.
 - Class components (`Component`/`PureComponent`) on every path, through an on-demand
   runtime chunk (Part 2 §3.2).
-- React 19.2's `captureOwnerStack()` (the render-parent chain, in development) and
+- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development) and
   `cacheSignal()` (aborts when the server render ends).
 
 ## Data, caching & ISR
@@ -557,11 +564,14 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `useNetworkStatus`, `useKeepAwake`, `hideSplash`, `secureStore` (Keychain /
   Keystore; IndexedDB, not secret, on the web), the file API (`readFile` /
   `writeFile` / `deleteFile` / `listDir` / `downloadToFile`; OPFS on the web),
-  `pickImage` / `pickDocument`, `scanBarcode` (`BarcodeDetector` on the web),
+  `pickImage` / `pickMedia` (several photos and videos, or a recorded video) /
+  `pickDocument`, `scanBarcode` (`BarcodeDetector` on the web),
   `setQuickActions` / `onQuickAction`, `openSqlite` / `deleteSqlite`
   (`@capacitor-community/sqlite`; the app's `@sqlite.org/sqlite-wasm` on OPFS on
-  the web), and `showContextMenu` (an accessible in-page menu, or an
-  app-registered native plugin). Each calls its official Capacitor plugin in the
+  the web), `showContextMenu` (an accessible in-page menu, or an
+  app-registered native plugin), and background audio with lock-screen controls
+  (`setNowPlaying` / `onMediaControl` / `setAudioSession`; the Media Session API
+  on the web). Each calls its official Capacitor plugin in the
   shell.
 - **Deep links, push and OAuth sheets** — `onDeepLink` / `useDeepLink` (cold and
   warm start, filtered by `accept`, routed once); `requestPushPermission` /
@@ -782,7 +792,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Locale routing** with `localePrefix` `"as-needed"` (default — the default
   locale is unprefixed) or `"always"` (every locale, including the default, gets
   a prefix), **`next-intl`** compatibility (provider, navigation, middleware,
-  routing), ICU message subset, `useTranslations`.
+  routing), ICU messages, `useTranslations`.
 - **Automatic `hreflang`** — configuring i18n emits per-locale `hreflang`
   alternates (+ `x-default`) and a per-locale canonical on every page, in SSR
   and static export alike; a page's own `alternates.languages` always wins.
@@ -924,13 +934,15 @@ cache uses Deno's built-in `node:sqlite`.)
   `useApi` need no type argument once it is imported.
 - **The client** (`src/runtime/api-client.ts`): `createApiClient({ base?, dedupe?, batch?,
   fetch? })`. Concurrent equal GET/HEAD calls share one fetch (per request during SSR —
-  never across users); the GET/HEAD calls of one tick ride ONE `POST /_denext/api-batch`
+  never across users); the calls of one tick ride ONE `POST /_denext/api-batch`
   (`src/server/api-batch-handler.ts`: same-origin, a marker header, caps; items run as
-  sub-requests through the FULL pipeline so middleware applies); a server-side call runs
+  sub-requests through the FULL pipeline so middleware applies; reads concurrently, each
+  mutation alone in call order with the batch's verified `Origin` and its own `x-csrf-token`
+  for the route's CSRF check); a server-side call runs
   in-process through the pipeline and the tag-aware cache (`src/server/api-dispatcher.ts`,
   no loopback HTTP). `useApi(path, method, opts, { tags?, suspense? })` is the hook
-  (`src/client/use-api.ts`; Suspense mode seeds hydration from the SSR value on Flight
-  routes; `useApiLive` from `denext/live` refetches on a Live tag invalidation).
+  (`src/client/use-api.ts`; Suspense mode seeds hydration from the SSR value on Flight and
+  isomorphic routes alike; `useApiLive` from `denext/live` refetches on a Live tag invalidation).
 - **Errors as values, opt-in** (`denext/result`): `Result`, `ok` / `err`, `tryAsync` /
   `trySync`, `map` / `andThen`, and an exhaustive `match(x).with(…).exhaustive()` whose missing
   case is a compile error; a `defineApi` handler may `return err("code")` (a declared code only)
@@ -1728,15 +1740,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   Radix's slot package. — `src/compat/slot.ts:41, 88, 107`.
 - **`next-intl` compat, `Intl.*` + first-party** — a first-party ICU
   MessageFormat implementation covering plurals with `offset:`/`#`,
-  selectordinal, select, nested submessages, `::` number and date-field
-  skeletons, `duration`, and `spellout`/`ordinal` (a number-to-words speller,
+  selectordinal, select, submessages nested up to 1,000 levels deep (an
+  iterative parser and renderer; longer or deeper hostile messages throw), the long and concise `::` number skeletons and the date-field
+  skeletons `Intl` can express, `duration`, and `spellout`/`ordinal` (a number-to-words speller,
   English built in) — **zero npm deps and zero bundled data** (no
   `intl-messageformat`). Plus `t.rich()`/`t.markup()` rich-text/markup rendering
   and **localized `pathnames`** — per-locale URL translation with a
   locale-prefixing `<Link>`/`useRouter`/`redirect` and a reverse-mapping
-  `getPathname`. It is a common-subset re-implementation, not
-  `intl-messageformat`; the subset edges are in
-  [KNOWN-LIMITATIONS](https://denext.dev/docs/limitations). —
+  `getPathname`. It is a re-implementation, not `intl-messageformat`. —
   `src/compat/next-intl/icu.ts:1`,
   `src/compat/next-intl/index.ts:1`, `src/compat/next-intl/navigation.ts`.
 - **Self-hosted Google fonts (build-time, pure core)** — `selfHostFonts`

@@ -166,7 +166,9 @@ export function User({ id }: { id: string }) {
 
 Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
 definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
-`openapi.json` at build, and back `denext openapi emit | diff | lint | types` — zero extra annotation.
+`openapi.json` at build, and back `denext openapi emit | diff | lint | types | client` — zero extra
+annotation (`client --lang python|go|swift|kotlin` writes a dependency-free typed client; `denext
+graphql client` does the same from a GraphQL schema).
 Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
 described in full; others are `{}` + a lint warning.
 Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
@@ -210,6 +212,10 @@ import { orderEvents, orderStatus } from "./live.ts";
 const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
+
+A channel with `history: 50` logs each key's publishes: `useChannel(ch, key, { since: "0",
+onMessage })` replays the key's history after `authorize`, and a reconnect resumes from its last
+cursor (in memory per instance; `redisChannelTransport()` shares the log in Redis).
 
 **Model–View–Update (Elm / Lustre style):** `denext/mvu` runs `update(msg, model) → [model,
 effects]` in a component, with effects and subscriptions as data the runtime executes; the same
@@ -412,8 +418,9 @@ survives virtualized-list scroll corrections automatically (the runtime installs
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
-`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
-when cancelled), `setQuickActions`/`useQuickAction` (home-screen shortcuts), `openSqlite` (the
+`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
+videos)/`pickDocument`/`scanBarcode` (`null` when cancelled), `setQuickActions`/`useQuickAction`
+(home-screen shortcuts), `openSqlite` (the
 app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
@@ -460,7 +467,8 @@ core and `offline-screen` writes a page; web fallback where one exists): `keyboa
 prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`; `deliveredNotifications` / `removeDeliveredNotifications({ threadId })` list and clear delivered ones, pushes too),
 `biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
-`background-location`, `purchases` (RevenueCat), `app-review`, `app-update`,
+`background-location`, `background-audio` (`setNowPlaying`/`onMediaControl`/`setAudioSession`:
+background playback with lock-screen / notification controls; the Media Session API on the web), `purchases` (RevenueCat), `app-review`, `app-update`,
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
@@ -561,7 +569,9 @@ exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on U
 default, warms the resolver up at launch). A window hands at most 3 refused navigations a second to the
 browser. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
-`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
+`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`;
+`denext desktop dev --inspect-renderer[=<addr>]` opens the window's page to a CDP client (CEF,
+WebView2; a free loopback port by default, non-loopback refused). `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
 `--allow-*` goes in `desktop.extraPermissions`, never in `scripts/package-*.ts`. Under the stock
 runtime these answer `unavailable` and the page keeps its web path. Under the pinned runtime `clipboard` reaches the OS clipboard
@@ -598,7 +608,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.20 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.21 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -688,7 +698,9 @@ a reload / relaunch never settles. Docs: https://denext.dev/docs/updates
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
-expo-router's routes), and every `expo-*` import resolves to a `denext/expo/*` shim over
+expo-router's routes); on the App Router (no `mode: "spa"`) Server and `"use client"` components
+import `react-native` too, server-rendered with react-native-web's style sheet in the `<head>`
+(no expo-router there). Every `expo-*` import resolves to a `denext/expo/*` shim over
 `denext/mobile` (`denext/expo/manifest` lists what each omits; the synchronous JSI APIs are not
 provided). React Native's mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`, `Alert`,
 `RefreshControl`, `Linking`, …) are replaced with shell-backed ones, `FlatList` / `SectionList` /
@@ -919,6 +931,13 @@ export default async function Blog() {
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
+**Gleam:** `denext add gleam:<package>` compiles a Gleam package to
+JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it typed as
+`@gleam/<package>/<module>.mjs`. `plugins: [gleam()]` (from `denext/gleam`) recompiles your own
+`gleam/src/**/*.gleam` at dev and build. The compiler is denext's pinned Gleam (no Erlang needed),
+downloaded and SHA-256-verified on first need beside the Deno toolchain; `denext toolchain install
+--with gleam` fetches it ahead for offline work, `DENEXT_GLEAM=<path>` runs another one.
+
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
 folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
@@ -974,7 +993,8 @@ await screen.fireEvent.click(screen.getByRole("button"));
 A test that needs a fake clock or a module mock imports `vitest` (`vi.useFakeTimers()`,
 `vi.mock()`, `vi.stubEnv`) and runs under `denext test` — the toolchain's `deno test` has
 Vitest's API; stock Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
-`deno test` also runs. Keep a Vitest run's coverage in its own report.
+`deno test` also runs. `denext test` runs the `*.vitest.ts` files as a second pass, and
+`denext test --coverage` reports both passes as one.
 
 **Conformance-probing every route (CI gate):**
 

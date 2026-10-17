@@ -28,7 +28,6 @@
 // `"use cache"` instance method, and `this` / `super` / `arguments` inside a cached
 // function (a nested non-arrow function rebinds them, so it may use them).
 
-import { frameworkFileUrl } from "./bundle.ts";
 import {
   absolutizeSpecifiers,
   applyEdits,
@@ -49,7 +48,9 @@ import {
 
 /** The absolute URL generated modules import the `use cache` runtime from. */
 function runtimeUrl(): string {
-  return frameworkFileUrl("src/server/cache.ts");
+  // Relative to this module (the framework's own scheme: a file:// checkout or JSR), as
+  // `frameworkFileUrl` resolves it — without importing the bundler.
+  return new URL("../server/cache.ts", import.meta.url).href;
 }
 
 /** A short, stable module id (djb2 → base36) used as the cache-key prefix. */
@@ -76,27 +77,43 @@ function blockStmts(body: Node): Node[] | null {
   return body.stmts ?? body.body ?? [];
 }
 
-/** Scan a leading directive prologue for `"use cache"` (skips other directives). */
-function hasUseCacheDirective(stmts: Node[]): boolean {
+/**
+ * `"use cache"` and its handler-kind spellings (Next.js 16): `"use cache: private"`,
+ * `"use cache: remote"`, or any other `"use cache: <name>"` a `cacheHandlers` entry names.
+ */
+const USE_CACHE_DIRECTIVE = /^use cache(?::\s*([a-z-]+))?$/;
+
+/** The handler kind of a `"use cache"` directive: `"default"` for the bare one. */
+function directiveKind(value: string): string | null {
+  const m = USE_CACHE_DIRECTIVE.exec(value);
+  return m ? (m[1] ?? "default") : null;
+}
+
+/**
+ * Scan a leading directive prologue for `"use cache"` (skips other directives) and return its
+ * handler kind, or null when there is none.
+ */
+function cacheDirectiveKind(stmts: Node[]): string | null {
   for (const stmt of stmts) {
     if (stmt?.type !== "ExpressionStatement") break;
     const e = stmt.expression;
     if (e?.type !== "StringLiteral") break;
-    if (e.value === "use cache") return true;
+    const kind = directiveKind(e.value);
+    if (kind) return kind;
     // Some other directive ("use strict"/"use server"): keep scanning the prologue.
   }
-  return false;
+  return null;
 }
 
-/** True if a function body opens with a `"use cache"` directive. */
-function fnHasUseCache(fn: Node): boolean {
+/** The handler kind of a function body's leading `"use cache"` directive, or null. */
+function fnCacheKind(fn: Node): string | null {
   const stmts = blockStmts(fn?.body);
-  return stmts ? hasUseCacheDirective(stmts) : false;
+  return stmts ? cacheDirectiveKind(stmts) : null;
 }
 
-/** True if the module opens with a top-level `"use cache"` directive. */
-function moduleHasUseCache(body: Node[]): boolean {
-  return hasUseCacheDirective(body);
+/** True if a function body opens with a `"use cache"` directive (any kind). */
+function fnHasUseCache(fn: Node): boolean {
+  return fnCacheKind(fn) !== null;
 }
 
 /**
@@ -137,8 +154,11 @@ interface CacheState {
   readonly moduleUrl: string;
   /** Method cache ids handed out so far (a repeat gets a `~n` suffix). */
   readonly methodIds: Set<string>;
-  /** A module-top `"use cache"`: every function the module declares is cached. */
-  readonly moduleLevel: boolean;
+  /**
+   * A module-top `"use cache"`'s handler kind (every function the module declares is cached),
+   * or null when the module has none.
+   */
+  readonly moduleKind: string | null;
   anon: number;
   wrappedAny: boolean;
 }
@@ -148,7 +168,19 @@ function idFor(st: CacheState, name: string | undefined): string {
 }
 
 function shouldCache(st: CacheState, fn: Node): boolean {
-  return st.moduleLevel || fnHasUseCache(fn);
+  return st.moduleKind !== null || fnHasUseCache(fn);
+}
+
+/**
+ * The wrapper's options literal for `fn`: `{}`, or the handler `kind` (a function's own
+ * directive wins over the module's) and the `bound` thunk over `names`.
+ */
+function optionsFor(st: CacheState, fn: Node, names: readonly string[] = []): string {
+  const kind = fnCacheKind(fn) ?? st.moduleKind ?? "default";
+  const parts: string[] = [];
+  if (kind !== "default") parts.push(`kind: ${JSON.stringify(kind)}`);
+  if (names.length) parts.push(`bound: () => [${names.join(", ")}]`);
+  return parts.length ? `{ ${parts.join(", ")} }` : "{}";
 }
 
 /** Surround `[start, end)` of `fn` with `prefix` … `suffix` and mark the module changed. */
@@ -164,7 +196,7 @@ function surround(st: CacheState, fn: Node, prefix: string, suffix: string): voi
  * `_dnxUseCache("id", <expr>, {})`, preserving the surrounding binding/export.
  */
 function wrapExpr(st: CacheState, fn: Node, name: string | undefined): void {
-  surround(st, fn, `_dnxUseCache(${JSON.stringify(idFor(st, name))}, `, `, {})`);
+  surround(st, fn, `_dnxUseCache(${JSON.stringify(idFor(st, name))}, `, `, ${optionsFor(st, fn)})`);
 }
 
 /**
@@ -176,7 +208,12 @@ function wrapExpr(st: CacheState, fn: Node, name: string | undefined): void {
 function wrapDecl(st: CacheState, fn: Node): void {
   const name = fn.identifier?.value as string | undefined;
   if (!name) return; // an anonymous declaration can't be re-bound by name
-  surround(st, fn, `const ${name} = _dnxUseCache(${JSON.stringify(idFor(st, name))}, `, `, {});`);
+  surround(
+    st,
+    fn,
+    `const ${name} = _dnxUseCache(${JSON.stringify(idFor(st, name))}, `,
+    `, ${optionsFor(st, fn)});`,
+  );
 }
 
 /** Wrap each cached function initializer of a `const`/`let`/`var` declaration. */
@@ -201,13 +238,13 @@ function wrapDefaultDecl(st: CacheState, item: Node): void {
   const name = decl.identifier?.value as string | undefined;
   const id = JSON.stringify(idFor(st, name ?? "default"));
   if (!name || !referencedOutside(st.body, name, item)) {
-    return surround(st, decl, `_dnxUseCache(${id}, `, `, {})`);
+    return surround(st, decl, `_dnxUseCache(${id}, `, `, ${optionsFor(st, decl)})`);
   }
   surround(
     st,
     decl,
     `const ${name} = _dnxUseCache(${id}, `,
-    `, {});\nexport { ${name} as default };`,
+    `, ${optionsFor(st, decl)});\nexport { ${name} as default };`,
   );
   // Drop the `export default ` keywords before the (now wrapped) function.
   st.edits.push({ start: startOf(st.ctx, item), end: startOf(st.ctx, decl), text: "" });
@@ -248,7 +285,7 @@ const INSTANCE_METHOD_ERROR =
   "methods instead.";
 
 /** Function-like nodes: each opens a scope the transform tracks for closures. */
-const FN_SCOPES = new Set([
+export const FN_SCOPES = new Set([
   ...FN_TYPES,
   "ClassMethod",
   "PrivateMethod",
@@ -411,7 +448,7 @@ function newScopeScan(): ScopeScan {
  * method can close over: a loop variable, a `catch` parameter or a block `let`/`const` has a
  * value per iteration / block, so it is bound like an enclosing function's local.
  */
-const BLOCK_SCOPES = new Set([
+export const BLOCK_SCOPES: ReadonlySet<string> = new Set([
   "BlockStatement",
   "ForStatement",
   "ForInStatement",
@@ -452,16 +489,11 @@ function scopeNames(fn: Node): { decls: Set<string>; free: Set<string> } {
 }
 
 /** The enclosing-scope names `fn` reads, sorted: what its cache key binds. */
-function boundNames(fn: Node, scopes: readonly Node[]): string[] {
+export function boundNames(fn: Node, scopes: readonly Node[]): string[] {
   if (scopes.length === 0) return []; // module scope: nothing is closed over per call site
   const outer = new Set<string>();
   for (const scope of scopes) for (const name of declaredNames(scope)) outer.add(name);
   return [...scopeNames(fn).free].filter((name) => outer.has(name)).sort();
-}
-
-/** The wrapper's options literal: `{}`, or the `bound` thunk over `names`. */
-function wrapperOptions(names: readonly string[]): string {
-  return names.length ? `{ bound: () => [${names.join(", ")}] }` : "{}";
 }
 
 // ---- Methods: class static methods and object-literal methods ------------------------
@@ -511,7 +543,7 @@ function rewriteMethod(
     end: endOf(st.ctx, key),
     text: `${syntax.lead}${keyText}${syntax.sep}${wrapper}`,
   });
-  const close = `, ${wrapperOptions(boundNames(member, scopes))})${syntax.end}`;
+  const close = `, ${optionsFor(st, fn, boundNames(member, scopes))})${syntax.end}`;
   st.edits.push({ start: endOf(st.ctx, member), end: endOf(st.ctx, member), text: close });
   st.wrappedAny = true;
 }
@@ -556,7 +588,7 @@ function cacheObjectProp(
   if (prop.type !== "KeyValueProperty") return;
   const value = unwrapParens(prop.value);
   if (!isFn(value) || !fnHasUseCache(value)) return;
-  const opts = wrapperOptions(boundNames(value, scopes));
+  const opts = optionsFor(st, value, boundNames(value, scopes));
   surround(st, value, `_dnxUseCache(${memberId(st, owner, prop.key)}, `, `, ${opts})`);
 }
 
@@ -654,7 +686,7 @@ export async function transformUseCache(
     modId: moduleId(moduleUrl),
     moduleUrl,
     methodIds: new Set(),
-    moduleLevel: moduleHasUseCache(body),
+    moduleKind: cacheDirectiveKind(body),
     anon: 0,
     wrappedAny: false,
   };

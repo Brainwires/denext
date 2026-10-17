@@ -26,6 +26,13 @@
 // attestation pass extracts it from each archive and checks that SHA-256 too. Before denext.17 the
 // field is absent and denext's builds use the npm esbuild.
 //
+// From the first runtime with native type checking each CLI zip also carries `typescript-check/` (the native
+// TypeScript compiler, `tsc[.exe]` + its `lib.*.d.ts`) and the manifest's `cli` target entry a
+// `typescript_check: { version, sha256, tree_sha256 }`; it is pinned beside the archive as `tsgo: { version,
+// sha256, treeSha256 }`, and the attestation pass extracts each archive and re-hashes the binary
+// and the whole directory. Before that release the field is absent (the toolchain type-checks
+// with its in-process TypeScript).
+//
 // From 2.9.7-denext.20 the release also ships `deno-denort-<version>-<target>.zip` (the standalone
 // runtime the fork's `deno compile` builds onto, holding `denort[.exe]`; the manifest's `denort`
 // section): the toolchain pin records them under `denort`, keyed like the CLI archives, with the
@@ -38,19 +45,24 @@ import { fromFileUrl, join } from "@std/path";
 import { runtimeAttestationArgs } from "../src/build/desktop-runtime.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 import { extractArchive } from "../src/build/safe-extract.ts";
+import { tsgoTreeSha256 } from "../src/build/deno-toolchain.ts";
 
 const REPO = "Brainwires/deno";
 const OUT = fromFileUrl(new URL("../src/build/desktop-runtime-pin.json", import.meta.url));
 const TOOLCHAIN_OUT = fromFileUrl(
   new URL("../src/build/deno-toolchain-pin.json", import.meta.url),
 );
-/** The release's Rust target triple → the toolchain pin's `<os>-<arch>` key (`Deno.build`). */
+/**
+ * The release's Rust target triple → the toolchain pin's `<os>-<arch>` key (`Deno.build`). Windows
+ * on Arm (`aarch64-pc-windows-msvc`) ships from 2.9.7-denext.21.
+ */
 const TOOLCHAIN_TARGETS: Readonly<Record<string, string>> = {
   "aarch64-apple-darwin": "darwin-aarch64",
   "x86_64-apple-darwin": "darwin-x86_64",
   "aarch64-unknown-linux-gnu": "linux-aarch64",
   "x86_64-unknown-linux-gnu": "linux-x86_64",
   "x86_64-pc-windows-msvc": "windows-x86_64",
+  "aarch64-pc-windows-msvc": "windows-aarch64",
 };
 /** A CLI archive's name prefix (the rest is `<version>-<target>.zip`). */
 const CLI_PREFIX = "deno-cli-";
@@ -86,8 +98,15 @@ interface PinEsbuild {
   sha256: string;
 }
 
+/** The native TypeScript compiler a CLI zip carries (mirrors `DenoToolchainTsgo`). */
+interface PinTsgo {
+  version: string;
+  sha256: string;
+  treeSha256: string;
+}
+
 /** One CLI archive in the toolchain pin. */
-type CliPinArtifact = PinArtifact & { format: "zip"; esbuild?: PinEsbuild };
+type CliPinArtifact = PinArtifact & { format: "zip"; esbuild?: PinEsbuild; tsgo?: PinTsgo };
 
 /** One denort archive in the toolchain pin. */
 type DenortPinArtifact = PinArtifact & { format: "zip" };
@@ -250,7 +269,20 @@ function cliArtifact(ctx: ReleaseCtx, target: string, a: Loose): CliPinArtifact 
     a,
   );
   const esbuild = cliEsbuild(where, a.esbuild);
-  return esbuild ? { ...artifact, esbuild } : artifact;
+  const tsgo = cliTsgo(where, a.typescript_check);
+  return { ...artifact, ...(esbuild ? { esbuild } : {}), ...(tsgo ? { tsgo } : {}) };
+}
+
+/** A CLI entry's `tsgo` (absent before native type checking), checked for shape. */
+function cliTsgo(where: string, t: Loose): PinTsgo | undefined {
+  if (t === undefined || t === null) return undefined;
+  const version = String(t.version ?? "");
+  const sha256 = String(t.sha256 ?? "");
+  const treeSha256 = String(t.tree_sha256 ?? "");
+  if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`${where}: bad tsgo version ${version}`);
+  if (!/^[0-9a-f]{64}$/.test(sha256)) fail(`${where}: bad tsgo sha256`);
+  if (!/^[0-9a-f]{64}$/.test(treeSha256)) fail(`${where}: bad tsgo tree_sha256`);
+  return { version, sha256, treeSha256 };
 }
 
 /** One denort archive entry, checked like {@linkcode cliArtifact} (a zip holding `denort[.exe]`). */
@@ -383,7 +415,7 @@ async function sha256File(path: string): Promise<string> {
 function pinArchives(
   pin: PinFile,
   cli?: ToolchainPinFile | null,
-): (PinArtifact & { esbuild?: PinEsbuild })[] {
+): (PinArtifact & { esbuild?: PinEsbuild; tsgo?: PinTsgo })[] {
   return [
     ...Object.values(pin.targets).flatMap((t) => BACKENDS.flatMap((b) => t[b] ? [t[b]!] : [])),
     ...Object.values(cli?.targets ?? {}),
@@ -403,6 +435,33 @@ async function archiveFile(
   const path = join(tmp, a.file);
   await Deno.writeFile(path, res.body);
   return path;
+}
+
+/** The `typescript-check/` inside a CLI zip must hash to its pinned SHA-256s (checked in a temp dir). */
+async function checkZipTsgo(
+  a: PinArtifact & { tsgo?: PinTsgo },
+  path: string,
+  tmp: string,
+): Promise<void> {
+  if (!a.tsgo) return;
+  const out = await Deno.makeTempDir({ dir: tmp, prefix: "x-" });
+  try {
+    const dest = join(out, "x");
+    await extractArchive(path, "zip", dest);
+    const exe = a.file.includes("windows") ? "tsc.exe" : "tsc";
+    const got = await sha256File(join(dest, "typescript-check", exe)).catch(() =>
+      fail(`${a.file}: the manifest pins a tsgo, the archive has no typescript-check/${exe}`)
+    );
+    if (got !== a.tsgo.sha256) {
+      fail(`${a.file}: typescript-check/${exe} sha256 ${got} != pinned ${a.tsgo.sha256}`);
+    }
+    const tree = await tsgoTreeSha256(join(dest, "typescript-check"));
+    if (tree !== a.tsgo.treeSha256) {
+      fail(`${a.file}: typescript-check/ tree sha256 ${tree} != pinned ${a.tsgo.treeSha256}`);
+    }
+  } finally {
+    await Deno.remove(out, { recursive: true }).catch(() => {});
+  }
 }
 
 /** The esbuild inside a CLI zip must hash to its pinned SHA-256 (checked in a temp dir). */
@@ -452,6 +511,7 @@ export async function attestPin(pin: PinFile, options: AttestPinOptions = {}): P
       const path = await archiveFile(a, tmp, options);
       await attestArchive(pin, a, path, options.run ?? runGh);
       await checkZipEsbuild(a, path, tmp);
+      await checkZipTsgo(a, path, tmp);
       if (!options.archives) await Deno.remove(path);
     }
   } finally {

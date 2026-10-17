@@ -18,6 +18,14 @@ function registry(): CommandRegistry {
       { name: "host", type: "string", help: "Hostname" },
       { name: "open", type: "boolean", default: false, help: "Open browser" },
       { name: "origin", alias: "o", type: "string", repeatable: true, help: "Repeatable" },
+      {
+        name: "inspect",
+        alias: "i",
+        type: "string",
+        optionalValue: true,
+        valueName: "[=<addr>]",
+        help: "Optional value",
+      },
     ],
     positionals: [{ name: "dir", help: "Project dir" }],
     run: noop,
@@ -51,6 +59,41 @@ Deno.test("a repeatable string flag keeps every value, joined with commas", () =
   const host = registry().parse(["dev", "--host", "x", "--host", "y"]);
   assert(host.kind === "run");
   assertEquals(host.ctx.flags.host, "y");
+});
+
+Deno.test("an optional-value flag: bare is true, only --flag=value carries a value", () => {
+  const bare = registry().parse(["dev", "--inspect", "./app"]);
+  assert(bare.kind === "run");
+  assertEquals(bare.ctx.flags.inspect, true);
+  // The next token stays a positional; it is never taken as the flag's value.
+  assertEquals(bare.ctx.positionals, ["./app"]);
+  const valued = registry().parse(["dev", "--inspect=127.0.0.1:9229", "--port", "4000"]);
+  assert(valued.kind === "run");
+  assertEquals(valued.ctx.flags.inspect, "127.0.0.1:9229");
+  assertEquals(valued.ctx.flags.port, 4000);
+  // An empty inline value is a value (the command decides what it means), not presence.
+  const empty = registry().parse(["dev", "--inspect="]);
+  assert(empty.kind === "run");
+  assertEquals(empty.ctx.flags.inspect, "");
+  const short = registry().parse(["dev", "-i", "./app"]);
+  assert(short.kind === "run");
+  assertEquals(short.ctx.flags.inspect, true);
+  assertEquals(short.ctx.positionals, ["./app"]);
+  const absent = registry().parse(["dev"]);
+  assert(absent.kind === "run");
+  assertEquals(absent.ctx.flags.inspect, undefined);
+  // An ordinary valued flag still takes the next token, and still needs one.
+  const host = registry().parse(["dev", "--host", "x"]);
+  assert(host.kind === "run");
+  assertEquals(host.ctx.flags.host, "x");
+});
+
+Deno.test("help writes an optional value against the flag name", () => {
+  const out = registry().parse(["dev", "--help"]);
+  assert(out.kind === "help" && out.command);
+  const help = registry().formatCommandHelp(out.command);
+  assert(help.includes("--inspect[=<addr>], -i"), help);
+  assert(help.includes("--port, -p <port>"), help);
 });
 
 Deno.test("short alias and boolean presence", () => {

@@ -1017,13 +1017,49 @@
           "name": "Fragment",
           "slug": "Fragment",
           "kind": "variable",
-          "signature": "Fragment: typeOperator",
-          "doc": "Marker used as a VNode type to group children without a wrapping element.",
-          "docFull": "Marker used as a VNode `type` to group children without a wrapping element.",
+          "signature": "Fragment: FragmentComponent",
+          "doc": "Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.",
+          "docFull": "Groups children without a wrapping element (`<>…</>` / `<Fragment key ref>`). The value is the\n{@linkcode FRAGMENT} marker; it is typed as a component so `<Fragment>` type-checks as a JSX tag\nwith React's `FragmentProps`, a `ref` receiving a `FragmentInstance` included.",
           "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "FragmentComponent",
+          "slug": "FragmentComponent",
+          "kind": "typeAlias",
+          "signature": "type FragmentComponent = (props: FragmentProps) => VNode",
+          "doc": "The declared type of Fragment: callable for TypeScript, so <Fragment key ref> type-checks as React's ExoticComponent<FragmentProps> does; at runtime it is the FRAGMENT marker.",
+          "docFull": "The declared type of `Fragment`: callable for TypeScript, so `<Fragment key ref>` type-checks\nas React's `ExoticComponent<FragmentProps>` does; at runtime it is the {@linkcode FRAGMENT} marker.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FragmentInstance",
+          "slug": "FragmentInstance",
+          "kind": "interface",
+          "signature": "interface FragmentInstance",
+          "doc": "What <Fragment ref={r}> puts in r.current (React 19.3's FragmentInstance): DOM-like methods applied to the Fragment's host children — the nearest elements and text nodes below it, not descending into an element — kept current as children mount and unmount.",
+          "docFull": "What `<Fragment ref={r}>` puts in `r.current` (React 19.3's `FragmentInstance`): DOM-like\nmethods applied to the Fragment's host children — the nearest elements and text nodes below\nit, not descending into an element — kept current as children mount and unmount.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FragmentProps",
+          "slug": "FragmentProps",
+          "kind": "interface",
+          "signature": "interface FragmentProps",
+          "doc": "<Fragment>'s props (React's FragmentProps): its children and, from React 19.3, a ref.",
+          "docFull": "`<Fragment>`'s props (React's `FragmentProps`): its children and, from React 19.3, a ref.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "FreeQuery",
@@ -1969,7 +2005,7 @@
           "params": [],
           "returns": "",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "Profiler",
@@ -3393,15 +3429,15 @@
           "slug": "useEffectEvent",
           "kind": "function",
           "signature": "useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R",
-          "doc": "Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.",
-          "docFull": "Return a **stable** callback that always sees the latest props/state — React\n19.2's `useEffectEvent`. Use it for the \"event\" part of an Effect that should\nnot itself be a dependency (so the Effect doesn't re-run when the handler's\nclosure changes). Do not call the returned function during render.",
+          "doc": "Return a callback that always sees the latest committed props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes).",
+          "docFull": "Return a callback that always sees the latest committed props/state — React 19.2's\n`useEffectEvent`. Use it for the \"event\" part of an Effect that should not itself be a\ndependency (so the Effect doesn't re-run when the handler's closure changes).\n\nAs in React, the handler it forwards to is swapped in when the render commits (before any\nlayout or passive effect runs), not while rendering, so a render that never commits leaves\nthe previous one in place; and calling it during a render throws. Its identity is stable\n(React's is not guaranteed to be — don't list it as an Effect dependency either way).",
           "params": [
             {
               "name": "handler",
-              "doc": "The event handler; its latest version is always invoked."
+              "doc": "The event handler; its latest committed version is invoked."
             }
           ],
-          "returns": "A referentially-stable function forwarding to the latest handler.",
+          "returns": "A function forwarding to the latest committed handler.",
           "examples": [],
           "denextOnly": false
         },
@@ -4200,7 +4236,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.2.0",
+          "signature": "VERSION: 4.3.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -4262,7 +4298,7 @@
           "kind": "function",
           "signature": "ViewTransition(props: object): VNode",
           "doc": "React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the first keeps name, the others get React's name_<i> suffix), and the hosts a component child renders. Text directly inside is not animated (it can't be named). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; \"none\" opts out):",
-          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nA hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a\nboundary entirely outside the viewport (before and after) is not animated, as in React.\n\n`onEnter` / `onExit` / `onUpdate` / `onShare` run once the transition's pseudo-elements exist\n(`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /\n`old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its\n`::view-transition-*` pseudo-elements) and the transition types; a returned function runs\nwhen the transition finishes. `onShare` runs on the side that leaves. On a soft navigation a\nboundary that persists runs `onUpdate` when its content changed or its box moved. A `ref`\nreceives the same instance once the boundary's first host mounts. Callbacks and `ref` need a\nclient-rendered `<ViewTransition>` (a function can't cross from a Server Component).\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
+          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/nav-document.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nA hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a\nboundary entirely outside the viewport (before and after) is not animated, as in React.\n\n`onEnter` / `onExit` / `onUpdate` / `onShare` run once the transition's pseudo-elements exist\n(`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /\n`old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its\n`::view-transition-*` pseudo-elements) and the transition types; a returned function runs\nwhen the transition finishes. `onShare` runs on the side that leaves. On a soft navigation a\nboundary that persists runs `onUpdate` when its content changed or its box moved. A `ref`\nreceives the same instance once the boundary's first host mounts. Callbacks and `ref` need a\nclient-rendered `<ViewTransition>` (a function can't cross from a Server Component).\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5972,8 +6008,8 @@
           "slug": "cacheLife",
           "kind": "function",
           "signature": "cacheLife(profile: string | CacheLifeProfile): void",
-          "doc": "Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). A no-op when called outside a cached scope. The last call wins.",
-          "docFull": "Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`).\nA no-op when called outside a cached scope. The last call wins.",
+          "doc": "Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). When it is called more than once, each field keeps the lowest value set (as in Next.js).",
+          "docFull": "Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`). When it\nis called more than once, each field keeps the lowest value set (as in Next.js).",
           "params": [
             {
               "name": "profile",
@@ -6155,8 +6191,20 @@
           "slug": "ChannelEvent",
           "kind": "interface",
           "signature": "interface ChannelEvent",
-          "doc": "One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.",
-          "docFull": "One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, or\nan instance's `presence` snapshot of one `usePresence` room.",
+          "doc": "One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, an instance's presence snapshot of one usePresence room, or a parked live view's view-resumed (it resumed on another instance, so the one that parked it stops its copy).",
+          "docFull": "One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, an\ninstance's `presence` snapshot of one `usePresence` room, or a parked live view's\n`view-resumed` (it resumed on another instance, so the one that parked it stops its copy).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelHistory",
+          "slug": "ChannelHistory",
+          "kind": "interface",
+          "signature": "interface ChannelHistory",
+          "doc": "A channel's retention: how many entries per key, for how long.",
+          "docFull": "A channel's retention: how many entries per key, for how long.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6169,6 +6217,30 @@
           "signature": "type ChannelIdleReason = unsubscribe | disconnect",
           "doc": "Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).",
           "docFull": "Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelLog",
+          "slug": "ChannelLog",
+          "kind": "interface",
+          "signature": "interface ChannelLog",
+          "doc": "Where channel publishes are logged for replay.",
+          "docFull": "Where channel publishes are logged for replay.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelLogEntry",
+          "slug": "ChannelLogEntry",
+          "kind": "interface",
+          "signature": "interface ChannelLogEntry",
+          "doc": "One logged publish.",
+          "docFull": "One logged publish.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8733,6 +8805,35 @@
           "signature": "inMemoryCacheStore(): CacheStore",
           "doc": "The default per-process, in-memory CacheStore.",
           "docFull": "The default per-process, in-memory {@link CacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "inMemoryChannelLog",
+          "slug": "inMemoryChannelLog",
+          "kind": "function",
+          "signature": "inMemoryChannelLog(options?: InMemoryChannelLogOptions): ChannelLog",
+          "doc": "The default log: this instance's publishes, in memory, bounded per key (ChannelHistory), by key count and by total bytes.",
+          "docFull": "The default log: this instance's publishes, in memory, bounded per key ({@link ChannelHistory}),\nby key count and by total bytes.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The key and byte caps."
+            }
+          ],
+          "returns": "The log.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "InMemoryChannelLogOptions",
+          "slug": "InMemoryChannelLogOptions",
+          "kind": "interface",
+          "signature": "interface InMemoryChannelLogOptions",
+          "doc": "Options for inMemoryChannelLog.",
+          "docFull": "Options for {@linkcode inMemoryChannelLog}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11949,6 +12050,39 @@
           "denextOnly": true
         },
         {
+          "name": "redisChannelLog",
+          "slug": "redisChannelLog",
+          "kind": "function",
+          "signature": "redisChannelLog(client: RedisClient, options?: RedisChannelLogOptions): ChannelLog",
+          "doc": "A channel replay log over a Redis connection.",
+          "docFull": "A channel replay log over a Redis connection.",
+          "params": [
+            {
+              "name": "client",
+              "doc": "The connection (the transport's publishing client)."
+            },
+            {
+              "name": "options",
+              "doc": "The key prefix."
+            }
+          ],
+          "returns": "The log.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisChannelLogOptions",
+          "slug": "RedisChannelLogOptions",
+          "kind": "interface",
+          "signature": "interface RedisChannelLogOptions",
+          "doc": "Options for redisChannelLog.",
+          "docFull": "Options for {@linkcode redisChannelLog}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "redisChannelTransport",
           "slug": "redisChannelTransport-fn",
           "kind": "function",
@@ -12256,8 +12390,8 @@
           "slug": "registerCacheLifeProfiles",
           "kind": "function",
           "signature": "registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void",
-          "doc": "Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.",
-          "docFull": "Register named cacheLife profiles (typically from `denext.config`). A custom\nprofile whose name collides with a built-in overrides it. Idempotent-ish: a later\ncall with the same name wins.",
+          "doc": "Register named cacheLife profiles (the config's cacheLife, Next.js's next.config key). A custom profile whose name collides with a built-in overrides it, and a later call with the same name wins. Each profile is validated first.",
+          "docFull": "Register named cacheLife profiles (the config's `cacheLife`, Next.js's `next.config`\nkey). A custom profile whose name collides with a built-in overrides it, and a later call\nwith the same name wins. Each profile is validated first.",
           "params": [
             {
               "name": "profiles",
@@ -12847,8 +12981,8 @@
           "slug": "resolveCacheLife",
           "kind": "function",
           "signature": "resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile",
-          "doc": "Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.",
-          "docFull": "Resolve a cacheLife argument — a built-in/custom profile name or an inline\nprofile object — to a concrete {@link CacheLifeProfile}. An unknown name falls\nback to the `default` profile. Missing fields inherit from `default`.",
+          "doc": "Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. Missing fields inherit from the default profile (a configured default included).",
+          "docFull": "Resolve a cacheLife argument — a built-in/custom profile name or an inline\nprofile object — to a concrete {@link CacheLifeProfile}. Missing fields inherit from the\n`default` profile (a configured `default` included).",
           "params": [
             {
               "name": "profile",
@@ -13014,8 +13148,8 @@
           "slug": "revalidatePath",
           "kind": "function",
           "signature": "revalidatePath(path: string, _type?: layout | page): Promise<void>",
-          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.",
-          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store.",
+          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store. Inside a Server Action the client that called it also re-renders its current route.",
+          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store. Inside a Server Action the client that called it\nalso re-renders its current route.",
           "params": [
             {
               "name": "path",
@@ -13541,9 +13675,30 @@
           "name": "scanRoutes",
           "slug": "scanRoutes",
           "kind": "function",
-          "signature": "scanRoutes(appDir: string): Promise<RouteManifest>",
+          "signature": "scanRoutes(appDir: string, options?: ScanRoutesOptions): Promise<RouteManifest>",
           "doc": "Scan appDir recursively and produce a sorted route manifest.",
           "docFull": "Scan `appDir` recursively and produce a sorted route manifest.",
+          "params": [
+            {
+              "name": "appDir",
+              "doc": "The App Router directory."
+            },
+            {
+              "name": "options",
+              "doc": "Per-scan synthesizers."
+            }
+          ],
+          "returns": "The manifest, most-specific routes first.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ScanRoutesOptions",
+          "slug": "ScanRoutesOptions",
+          "kind": "interface",
+          "signature": "interface ScanRoutesOptions",
+          "doc": "Options for scanRoutes.",
+          "docFull": "Options for {@linkcode scanRoutes}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16651,9 +16806,9 @@
           "name": "Fragment",
           "slug": "Fragment",
           "kind": "variable",
-          "signature": "Fragment: typeOperator",
-          "doc": "Marker used as a VNode type to group children without a wrapping element.",
-          "docFull": "Marker used as a VNode `type` to group children without a wrapping element.",
+          "signature": "Fragment: FragmentComponent",
+          "doc": "Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.",
+          "docFull": "Groups children without a wrapping element (`<>…</>` / `<Fragment key ref>`). The value is the\n{@linkcode FRAGMENT} marker; it is typed as a component so `<Fragment>` type-checks as a JSX tag\nwith React's `FragmentProps`, a `ref` receiving a `FragmentInstance` included.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -17239,7 +17394,7 @@
           "params": [],
           "returns": "",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "Profiler",
@@ -18091,15 +18246,15 @@
           "slug": "useEffectEvent",
           "kind": "function",
           "signature": "useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R",
-          "doc": "Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.",
-          "docFull": "Return a **stable** callback that always sees the latest props/state — React\n19.2's `useEffectEvent`. Use it for the \"event\" part of an Effect that should\nnot itself be a dependency (so the Effect doesn't re-run when the handler's\nclosure changes). Do not call the returned function during render.",
+          "doc": "Return a callback that always sees the latest committed props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes).",
+          "docFull": "Return a callback that always sees the latest committed props/state — React 19.2's\n`useEffectEvent`. Use it for the \"event\" part of an Effect that should not itself be a\ndependency (so the Effect doesn't re-run when the handler's closure changes).\n\nAs in React, the handler it forwards to is swapped in when the render commits (before any\nlayout or passive effect runs), not while rendering, so a render that never commits leaves\nthe previous one in place; and calling it during a render throws. Its identity is stable\n(React's is not guaranteed to be — don't list it as an Effect dependency either way).",
           "params": [
             {
               "name": "handler",
-              "doc": "The event handler; its latest version is always invoked."
+              "doc": "The event handler; its latest committed version is invoked."
             }
           ],
-          "returns": "A referentially-stable function forwarding to the latest handler.",
+          "returns": "A function forwarding to the latest committed handler.",
           "examples": [],
           "denextOnly": false
         },
@@ -18643,8 +18798,8 @@
           "slug": "getOwnerStack",
           "kind": "function",
           "signature": "getOwnerStack(fiberId: number): OwnerStackEntry[]",
-          "doc": "The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's \"owner stack\": the render-parent path rather than the JSX-owner, which coincide for the common case. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.",
-          "docFull": "The component ancestor chain for a node — the names of the component fibers above\nit (nearest first), each with its source when known. An approximation of React's\n\"owner stack\": the render-parent path rather than the JSX-owner, which coincide for\nthe common case. `fiberId` comes from the most recent {@link getInspectorTree}.\nEmpty in production or for an unknown/stale id.",
+          "doc": "A node's owner stack, nearest first: React's JSX-owner chain (the component whose render created each element, with the JSX call site) when the elements came from a dev build's jsxDEV, else the component fibers above it (an element made by h() / createElement records no owner). Each entry carries its declaration source when known. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.",
+          "docFull": "A node's owner stack, nearest first: React's JSX-owner chain (the component whose render\ncreated each element, with the JSX call site) when the elements came from a dev build's\n`jsxDEV`, else the component fibers above it (an element made by `h()` / `createElement`\nrecords no owner). Each entry carries its declaration source when known. `fiberId` comes\nfrom the most recent {@link getInspectorTree}. Empty in production or for an unknown/stale id.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -19100,16 +19255,16 @@
           "name": "createTestApp",
           "slug": "createTestApp",
           "kind": "function",
-          "signature": "createTestApp(projectDir: string): Promise<TestHandler>",
+          "signature": "createTestApp(projectDir: string): Promise<TestApp>",
           "doc": "Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.",
-          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nconst client = createTestClient(await createTestApp(\"./\"));\n```",
+          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Call `close()` (or\n`await using`) to run the plugins' teardowns. Each call gets its own plugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\n```",
           "params": [
             {
               "name": "projectDir",
-              "doc": "The app directory (contains app/, optional middleware.ts)."
+              "doc": "The app directory (contains app/ or pages/, optional middleware.ts)."
             }
           ],
-          "returns": "A (Request) => Promise<Response> handler.",
+          "returns": "The in-process handler, with close() for the plugin teardowns.",
           "examples": [],
           "denextOnly": true
         },
@@ -19406,6 +19561,18 @@
           "signature": "type StoreFactory<S> = () => S | Promise<S>",
           "doc": "Makes a fresh, empty store for one case.",
           "docFull": "Makes a fresh, empty store for one case.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TestApp",
+          "slug": "TestApp",
+          "kind": "interface",
+          "signature": "interface TestApp",
+          "doc": "The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to run the teardowns of the app's denext.config.ts plugins. await using app = await createTestApp(dir) closes it at the end of the scope.",
+          "docFull": "The handler {@linkcode createTestApp} returns: still a plain `(Request) => Response` function\n(pass it to {@linkcode createTestClient} as before), plus `close()` to run the teardowns of the\napp's `denext.config.ts` plugins. `await using app = await createTestApp(dir)` closes it at\nthe end of the scope.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -19841,7 +20008,7 @@
           "name": "subscribeChannel",
           "slug": "subscribeChannel",
           "kind": "function",
-          "signature": "subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void): () => void",
+          "signature": "subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number, cursor?: string) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void, since?: string): () => void",
           "doc": "Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.",
           "docFull": "Receive a `createChannel` channel's pushes for `key`. Backs `useChannel`. Returns an\nunsubscribe. A refusal (`denied` / `no-policy` / …) arrives through `onError` and marks the\nsubscription dead so a reconnect does not re-send it.",
           "params": [
@@ -19855,11 +20022,15 @@
             },
             {
               "name": "onValue",
-              "doc": "Called with each pushed payload and the publisher's seq."
+              "doc": "Called with each pushed payload, the publisher's seq and its replay cursor."
             },
             {
               "name": "onError",
               "doc": "Called with a structured refusal."
+            },
+            {
+              "name": "since",
+              "doc": "Replay a channel with history after this cursor (\"0\": all it retains)."
             }
           ],
           "returns": "",
@@ -19949,8 +20120,8 @@
           "slug": "useChannel",
           "kind": "function",
           "signature": "useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>",
-          "doc": "Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect.",
-          "docFull": "Receive a `createChannel` channel's pushes for `key`. The server authorizes the subscription\nin this viewer's session (and re-checks it lazily); every `publish(key, payload)` — from an\naction, a webhook, a cron — arrives as a new `data`. At-most-once, latest-wins; no replay on\nreconnect.",
+          "doc": "Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect — unless the channel keeps a history: then since replays what was missed, each payload reaches onMessage, and a reconnect resumes from the last cursor.",
+          "docFull": "Receive a `createChannel` channel's pushes for `key`. The server authorizes the subscription\nin this viewer's session (and re-checks it lazily); every `publish(key, payload)` — from an\naction, a webhook, a cron — arrives as a new `data`. At-most-once, latest-wins; no replay on\nreconnect — unless the channel keeps a `history`: then `since` replays what was missed, each\npayload reaches `onMessage`, and a reconnect resumes from the last cursor.",
           "params": [
             {
               "name": "channel",
@@ -20094,7 +20265,7 @@
             },
             {
               "name": "options",
-              "doc": "initial, enabled."
+              "doc": "initial, enabled, since, onMessage."
             }
           ],
           "returns": "{ data, error, status }.",
@@ -20306,6 +20477,31 @@
           "denextOnly": true
         },
         {
+          "name": "bundleDesktopVcRuntime",
+          "slug": "bundleDesktopVcRuntime",
+          "kind": "function",
+          "signature": "bundleDesktopVcRuntime(dir: string, arch: DesktopWindowsArch, deps?: DesktopVcRuntimeDeps): Promise<boolean>",
+          "doc": "Ship the VC++ 2015-2022 runtime DLLs arch's deno desktop binaries import (DESKTOP_VC_RUNTIME_DLLS) next to the bundle's .exe, so the packaged app runs with NO redistributable installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32 (the installed redist) when packaging on Windows for the host's architecture, and each one must be a PE image of arch — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones. All or nothing: when any is missing or another machine's (or packaging off Windows, or for the other architecture), none is copied and a warning names the redistributable the target needs.",
+          "docFull": "Ship the VC++ 2015-2022 runtime DLLs `arch`'s `deno desktop` binaries import\n({@linkcode DESKTOP_VC_RUNTIME_DLLS}) next to the bundle's .exe, so the packaged app runs with\nNO redistributable installed on the target (otherwise it dies at launch with a silent\n0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32\n(the installed redist) when packaging on Windows for the host's architecture, and each one must\nbe a PE image of `arch` — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones.\nAll or nothing: when any is missing or another machine's (or packaging off Windows, or for the\nother architecture), none is copied and a warning names the redistributable the target needs.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "arch",
+              "doc": "The bundle's architecture."
+            },
+            {
+              "name": "deps",
+              "doc": "The host, file access and output sinks."
+            }
+          ],
+          "returns": "Whether the runtime was bundled.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "cefHelperEntitlements",
           "slug": "cefHelperEntitlements",
           "kind": "function",
@@ -20451,6 +20647,18 @@
           "signature": "DESKTOP_INSTALLER_FORMATS: object",
           "doc": "Every installer format, by the OS it is built for.",
           "docFull": "Every installer format, by the OS it is built for.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DESKTOP_VC_RUNTIME_DLLS",
+          "slug": "DESKTOP_VC_RUNTIME_DLLS",
+          "kind": "variable",
+          "signature": "DESKTOP_VC_RUNTIME_DLLS: Readonly<Record<DesktopWindowsArch, typeOperator>>",
+          "doc": "The VC++ 2015-2022 runtime DLLs each architecture's deno desktop binaries import (read from the pinned runtime's import tables). The x64 launcher also imports vcruntime140_1.dll, the FH4 exception-handling runtime; the Arm64 launcher does not. On Windows on Arm, System32's vcruntime140_1.dll (which the Arm64 redist installs there itself) is an x64 image, for x64 code under emulation, beside the Arm64 vcruntime140.dll and msvcp140.dll.",
+          "docFull": "The VC++ 2015-2022 runtime DLLs each architecture's `deno desktop` binaries import (read from\nthe pinned runtime's import tables). The x64 launcher also imports `vcruntime140_1.dll`, the\nFH4 exception-handling runtime; the Arm64 launcher does not. On Windows on Arm, System32's\n`vcruntime140_1.dll` (which the Arm64 redist installs there itself) is an x64 image, for x64\ncode under emulation, beside the Arm64 `vcruntime140.dll` and `msvcp140.dll`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -21091,6 +21299,23 @@
           "denextOnly": true
         },
         {
+          "name": "desktopPeMachine",
+          "slug": "desktopPeMachine",
+          "kind": "function",
+          "signature": "desktopPeMachine(head: Uint8Array): string | null",
+          "doc": "The machine a PE image is built for, read from its header (MZ, e_lfanew → PE\\0\\0, then the file header's Machine): \"x86_64\", \"arm64\", \"x86\", or 0x<hex> for another one. An Arm64X DLL reports \"arm64\".",
+          "docFull": "The machine a PE image is built for, read from its header (`MZ`, `e_lfanew` → `PE\\0\\0`, then\nthe file header's `Machine`): `\"x86_64\"`, `\"arm64\"`, `\"x86\"`, or `0x<hex>` for another one.\nAn Arm64X DLL reports `\"arm64\"`.",
+          "params": [
+            {
+              "name": "head",
+              "doc": "The file's first bytes (4 KiB is plenty)."
+            }
+          ],
+          "returns": "The machine, or null when head is not a PE image.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopPermissions",
           "slug": "DesktopPermissions",
           "kind": "interface",
@@ -21197,6 +21422,27 @@
           "docFull": "What {@link resolveDesktopCapabilities} reads: the project config, or the JSON slice of it the\ndesktop sync writes to `.deno-desktop/config.json` (`{ desktop, spa: { proxy } }`), which the\ngenerated `desktop.ts` imports so `denext.config.ts` (and every plugin it imports) stays out of\nthe packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopRuntimeDenoFlags",
+          "slug": "desktopRuntimeDenoFlags",
+          "kind": "function",
+          "signature": "desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator): string[]",
+          "doc": "The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it: --unstable-no-legacy-abort, which the runtime keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. The stock runtime (an empty env) gets none: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.",
+          "docFull": "The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime\nbuild) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it:\n`--unstable-no-legacy-abort`, which the runtime keeps from the compiled app's metadata (from\n2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not\ndelivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under\n`denext start` and a `build --compile` binary. The stock runtime (an empty env) gets none: it\nignores the setting. A flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.",
+          "params": [
+            {
+              "name": "runtimeEnv",
+              "doc": "The deno desktop child's runtime env (DENORT_DESKTOP_BIN set: not stock)."
+            },
+            {
+              "name": "denoFlags",
+              "doc": "The flags the command already passes (desktop.denoFlags)."
+            }
+          ],
+          "returns": "The flags, to splice in before the entry.",
           "examples": [],
           "denextOnly": true
         },
@@ -21321,6 +21567,35 @@
           "denextOnly": true
         },
         {
+          "name": "desktopVcRedistUrl",
+          "slug": "desktopVcRedistUrl",
+          "kind": "function",
+          "signature": "desktopVcRedistUrl(arch: DesktopWindowsArch): string",
+          "doc": "The VC++ 2015-2022 redistributable installer for arch.",
+          "docFull": "The VC++ 2015-2022 redistributable installer for `arch`.",
+          "params": [
+            {
+              "name": "arch",
+              "doc": "The target architecture."
+            }
+          ],
+          "returns": "Its download URL.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopVcRuntimeDeps",
+          "slug": "DesktopVcRuntimeDeps",
+          "kind": "interface",
+          "signature": "interface DesktopVcRuntimeDeps",
+          "doc": "What bundleDesktopVcRuntime reads the machine and files through (tests stub them).",
+          "docFull": "What {@linkcode bundleDesktopVcRuntime} reads the machine and files through (tests stub them).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopVersionProblem",
           "slug": "desktopVersionProblem",
           "kind": "function",
@@ -21338,6 +21613,18 @@
             }
           ],
           "returns": "The reason, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowsArch",
+          "slug": "DesktopWindowsArch",
+          "kind": "typeAlias",
+          "signature": "type DesktopWindowsArch = x86_64 | arm64",
+          "doc": "A Windows bundle's architecture, as the package script names it.",
+          "docFull": "A Windows bundle's architecture, as the package script names it.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -24389,6 +24676,30 @@
           "denextOnly": true
         },
         {
+          "name": "AudioInterruption",
+          "slug": "AudioInterruption",
+          "kind": "typeAlias",
+          "signature": "type AudioInterruption = exclusive | mix | duck",
+          "doc": "How the app's audio meets other apps' audio, for setAudioSession.",
+          "docFull": "How the app's audio meets other apps' audio, for {@linkcode setAudioSession}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AudioSessionOptions",
+          "slug": "AudioSessionOptions",
+          "kind": "interface",
+          "signature": "interface AudioSessionOptions",
+          "doc": "Options for setAudioSession.",
+          "docFull": "Options for {@linkcode setAudioSession}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthCancelOverlayText",
           "slug": "AuthCancelOverlayText",
           "kind": "interface",
@@ -24759,6 +25070,20 @@
           "returns": "Its status.",
           "examples": [
             "```ts\nimport { checkPermission, openAppSettings } from \"denext/mobile\";\n\nif ((await checkPermission(\"camera\")) === \"blocked\") {\n  if (confirm(\"Camera access is off. Open Settings?\")) await openAppSettings();\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "clearNowPlaying",
+          "slug": "clearNowPlaying",
+          "kind": "function",
+          "signature": "clearNowPlaying(): Promise<void>",
+          "doc": "Take the now-playing information and the controls off the lock screen (the media notification goes, and on Android the foreground service stops). Call it when playback ends for good, not on pause.",
+          "docFull": "Take the now-playing information and the controls off the lock screen (the media\nnotification goes, and on Android the foreground service stops). Call it when playback ends\nfor good, not on pause.",
+          "params": [],
+          "returns": "A promise that settles once the OS has dropped it.",
+          "examples": [
+            "```ts\nimport { clearNowPlaying } from \"denext/mobile\";\n\naudio.addEventListener(\"ended\", () => clearNowPlaying());\n```"
           ],
           "denextOnly": true
         },
@@ -26198,6 +26523,30 @@
           "denextOnly": true
         },
         {
+          "name": "MediaControlAction",
+          "slug": "MediaControlAction",
+          "kind": "typeAlias",
+          "signature": "type MediaControlAction = play | pause | stop | next | previous | seek | seekForward | seekBackward",
+          "doc": "A command from the lock screen, Control Center, the media notification, a headset or a car: \"seek\" carries the target position, \"seekForward\" / \"seekBackward\" the offset.",
+          "docFull": "A command from the lock screen, Control Center, the media notification, a headset or a car:\n`\"seek\"` carries the target `position`, `\"seekForward\"` / `\"seekBackward\"` the `offset`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MediaControlEvent",
+          "slug": "MediaControlEvent",
+          "kind": "interface",
+          "signature": "interface MediaControlEvent",
+          "doc": "A command the OS sent, for onMediaControl.",
+          "docFull": "A command the OS sent, for {@linkcode onMediaControl}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MediaItem",
           "slug": "MediaItem",
           "kind": "interface",
@@ -26580,6 +26929,18 @@
           "denextOnly": true
         },
         {
+          "name": "NowPlayingInfo",
+          "slug": "NowPlayingInfo",
+          "kind": "interface",
+          "signature": "interface NowPlayingInfo",
+          "doc": "What setNowPlaying describes. Every field is optional and merged into the last.",
+          "docFull": "What {@linkcode setNowPlaying} describes. Every field is optional and merged into the last.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "OfflineScreenOptions",
           "slug": "OfflineScreenOptions",
           "kind": "interface",
@@ -26801,6 +27162,25 @@
           "returns": "A function that unsubscribes.",
           "examples": [
             "```ts\nimport { onLocalNotificationTapped } from \"denext/mobile\";\n\nconst stop = onLocalNotificationTapped(({ actionId, inputValue }) => {\n  if (actionId === \"reply\" && inputValue) sendReply(inputValue);\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onMediaControl",
+          "slug": "onMediaControl",
+          "kind": "function",
+          "signature": "onMediaControl(handler: (event: MediaControlEvent) => void): () => void",
+          "doc": "Call handler with each command the OS sends for the now-playing item (lock screen, Control Center, the media notification, headset buttons, a car); returns a function that stops listening. Only the controls setNowPlaying offered are sent. On the web the handlers replace the browser's own media-key behaviour while any is registered.",
+          "docFull": "Call `handler` with each command the OS sends for the now-playing item (lock screen, Control\nCenter, the media notification, headset buttons, a car); returns a function that stops\nlistening. Only the controls {@linkcode setNowPlaying} offered are sent. On the web the\nhandlers replace the browser's own media-key behaviour while any is registered.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with the command: action, plus position for \"seek\" and offset for \"seekForward\" / \"seekBackward\"."
+            }
+          ],
+          "returns": "A function that removes the handler.",
+          "examples": [
+            "```ts\nimport { onMediaControl } from \"denext/mobile\";\n\nconst stop = onMediaControl(({ action }) => {\n  if (action === \"next\") queue.next();\n  if (action === \"previous\") queue.previous();\n});\n```"
           ],
           "denextOnly": true
         },
@@ -27558,6 +27938,18 @@
           "denextOnly": true
         },
         {
+          "name": "PickedMedia",
+          "slug": "PickedMedia",
+          "kind": "interface",
+          "signature": "interface PickedMedia",
+          "doc": "A photo or video from pickMedia.",
+          "docFull": "A photo or video from {@linkcode pickMedia}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "pickFolder",
           "slug": "pickFolder",
           "kind": "function",
@@ -27597,6 +27989,49 @@
           "signature": "interface PickImageOptions",
           "doc": "Options for pickImage.",
           "docFull": "Options for {@linkcode pickImage}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "pickMedia",
+          "slug": "pickMedia",
+          "kind": "function",
+          "signature": "pickMedia(options?: PickMediaOptions): Promise<PickedMedia[] | null>",
+          "doc": "Pick photos and videos: several at once from the library, or one taken / recorded with the camera.",
+          "docFull": "Pick photos and videos: several at once from the library, or one taken / recorded with the\ncamera.\n\n- Inside the native shell, `@capacitor/camera`'s gallery picker (`denext mobile add camera`;\n  `chooseFromGallery`, with `selectionLimit` honoured on iOS and Android 13+) or its\n  `recordVideo`. With `ordered: true`, or without the Camera plugin,\n  `@capawesome/capacitor-file-picker` (`denext mobile add document-picker`) picks from the\n  library instead.\n- Otherwise a file chooser (`<input type=\"file\" multiple accept=\"image/*,video/*\">`); a\n  `source: \"camera\"` one asks mobile browsers for the camera. A browser cannot cap the\n  selection, so the result is cut to `selectionLimit`.\n\nPicks come in the order chosen wherever the platform keeps it. A dismissed picker resolves\n`null` rather than rejecting.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "mediaTypes (\"images\", the default, \"videos\" or \"all\"), multiple, selectionLimit, ordered, quality (0–100, native) and source (\"library\", the default, or \"camera\")."
+            }
+          ],
+          "returns": "The picked items (at least one), or null when the user cancelled. It rejects when permission is denied, or during SSR.",
+          "examples": [
+            "```ts\nimport { pickMedia } from \"denext/mobile\";\n\nconst items = await pickMedia({ mediaTypes: \"all\", multiple: true, selectionLimit: 10 });\nfor (const item of items ?? []) {\n  gallery.add(item.type === \"video\" ? { video: item.webPath, seconds: item.duration } : { src: item.webPath });\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "PickMediaOptions",
+          "slug": "PickMediaOptions",
+          "kind": "interface",
+          "signature": "interface PickMediaOptions",
+          "doc": "Options for pickMedia.",
+          "docFull": "Options for {@linkcode pickMedia}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PickMediaTypes",
+          "slug": "PickMediaTypes",
+          "kind": "typeAlias",
+          "signature": "type PickMediaTypes = images | videos | all",
+          "doc": "What pickMedia offers: photos, videos, or both.",
+          "docFull": "What {@linkcode pickMedia} offers: photos, videos, or both.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -28647,6 +29082,25 @@
           "denextOnly": true
         },
         {
+          "name": "setAudioSession",
+          "slug": "setAudioSession",
+          "kind": "function",
+          "signature": "setAudioSession(options?: AudioSessionOptions): Promise<void>",
+          "doc": "Set how the app's audio behaves: whether it keeps playing in the background and with the phone locked, and how it meets other apps' audio. In the iOS shell this sets the AVAudioSession category (.playback for background audio) and activates it; on Android the choice decides whether a foreground media service keeps playback alive; on the web (and without the plugin) it does nothing, as a browser decides itself.",
+          "docFull": "Set how the app's audio behaves: whether it keeps playing in the background and with the\nphone locked, and how it meets other apps' audio. In the iOS shell this sets the\n`AVAudioSession` category (`.playback` for background audio) and activates it; on Android the\nchoice decides whether a foreground media service keeps playback alive; on the web (and\nwithout the plugin) it does nothing, as a browser decides itself.\n\nNeeds `denext mobile add background-audio` (which also declares the iOS `audio` background\nmode and Android's media-playback foreground service).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "background (default true) and interruption (default \"exclusive\")."
+            }
+          ],
+          "returns": "A promise that settles once the session is set. It rejects when the OS refuses it.",
+          "examples": [
+            "```ts\nimport { setAudioSession } from \"denext/mobile\";\n\nawait setAudioSession({ background: true, interruption: \"exclusive\" });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "setKeyboardResizeMode",
           "slug": "setKeyboardResizeMode",
           "kind": "function",
@@ -28681,6 +29135,25 @@
           "returns": "A promise that settles once registered.",
           "examples": [
             "```ts\nimport { setNotificationCategories } from \"denext/mobile\";\n\nawait setNotificationCategories([{\n  id: \"message\",\n  actions: [\n    { id: \"reply\", title: \"Reply\", input: { buttonTitle: \"Send\", placeholder: \"Message\" } },\n    { id: \"mark-read\", title: \"Mark as read\" },\n  ],\n}]);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "setNowPlaying",
+          "slug": "setNowPlaying",
+          "kind": "function",
+          "signature": "setNowPlaying(info: NowPlayingInfo): Promise<void>",
+          "doc": "Show what is playing on the lock screen, in Control Center / the media notification, and on headsets and cars, and offer the controls in info.controls there (they reach onMediaControl). Each call merges info into the last one, so after the first a page sends what changed: { playing: false, position } on pause, a new title for the next track. Calls that only restate the clock (a timeupdate while playing) are not sent on: the OS runs the position on from the rate.",
+          "docFull": "Show what is playing on the lock screen, in Control Center / the media notification, and on\nheadsets and cars, and offer the controls in `info.controls` there (they reach\n{@linkcode onMediaControl}). Each call merges `info` into the last one, so after the first a\npage sends what changed: `{ playing: false, position }` on pause, a new title for the next\ntrack. Calls that only restate the clock (a `timeupdate` while playing) are not sent on: the\nOS runs the position on from the rate.\n\nIn the shell this needs `denext mobile add background-audio`; elsewhere it uses\n`navigator.mediaSession` (nothing happens without it, or during SSR).",
+          "params": [
+            {
+              "name": "info",
+              "doc": "The track, its state and the controls to offer."
+            }
+          ],
+          "returns": "A promise that settles once the OS has it. It rejects only when the native plugin does.",
+          "examples": [
+            "```ts\nimport { onMediaControl, setAudioSession, setNowPlaying } from \"denext/mobile\";\n\nawait setAudioSession({ background: true });\nconst audio = new Audio(\"/episodes/42.mp3\");\nonMediaControl(({ action, position }) => {\n  if (action === \"play\") audio.play();\n  if (action === \"pause\") audio.pause();\n  if (action === \"seek\" && position !== undefined) audio.currentTime = position;\n});\naudio.addEventListener(\"play\", () =>\n  setNowPlaying({ title: \"Episode 42\", artist: \"The Show\", artwork: \"/cover.jpg\",\n    duration: audio.duration, position: audio.currentTime, playing: true }));\naudio.addEventListener(\"pause\", () =>\n  setNowPlaying({ playing: false, position: audio.currentTime }));\n```"
           ],
           "denextOnly": true
         },
@@ -29592,6 +30065,25 @@
           "denextOnly": true
         },
         {
+          "name": "useMediaControl",
+          "slug": "useMediaControl",
+          "kind": "function",
+          "signature": "useMediaControl(handler: (event: MediaControlEvent) => void): void",
+          "doc": "Hook form of onMediaControl: handles the OS's media commands while the component is mounted, always with the latest handler.",
+          "docFull": "Hook form of {@linkcode onMediaControl}: handles the OS's media commands while the component\nis mounted, always with the latest `handler`.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with each command."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useMediaControl } from \"denext/mobile\";\n\nexport function Player({ audio }: { audio: HTMLAudioElement }) {\n  useMediaControl(({ action, position }) => {\n    if (action === \"play\") audio.play();\n    else if (action === \"pause\") audio.pause();\n    else if (action === \"seek\" && position !== undefined) audio.currentTime = position;\n  });\n  return null;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "useMomentumSafeScroll",
           "slug": "useMomentumSafeScroll",
           "kind": "function",
@@ -30435,9 +30927,9 @@
           "name": "Fragment",
           "slug": "Fragment",
           "kind": "variable",
-          "signature": "Fragment: typeOperator",
-          "doc": "Marker used as a VNode type to group children without a wrapping element.",
-          "docFull": "Marker used as a VNode `type` to group children without a wrapping element.",
+          "signature": "Fragment: FragmentComponent",
+          "doc": "Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.",
+          "docFull": "Groups children without a wrapping element (`<>…</>` / `<Fragment key ref>`). The value is the\n{@linkcode FRAGMENT} marker; it is typed as a component so `<Fragment>` type-checks as a JSX tag\nwith React's `FragmentProps`, a `ref` receiving a `FragmentInstance` included.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -31637,6 +32129,382 @@
       ]
     },
     {
+      "module": "denext/gleam",
+      "symbols": [
+        {
+          "name": "defineLustreView",
+          "slug": "defineLustreView",
+          "kind": "function",
+          "signature": "defineLustreView<Flags, Props>(config: LustreViewConfig<Flags, Props>): LustreViewComponent<Props>",
+          "doc": "Define a Lustre server component: a Lustre app whose state lives on the server, one runtime per mounted view per Live connection. Render the returned component from a Server Component.",
+          "docFull": "Define a Lustre server component: a Lustre app whose state lives on the server, one runtime per\nmounted view per Live connection. Render the returned component from a Server Component.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The view's id, the app's Lustre server kit, the app, how props become flags, and its gates (authorize, an events schema)."
+            }
+          ],
+          "returns": "A Server Component taking the props the flags come from.",
+          "examples": [
+            "```ts\nimport { defineLustreView } from \"denext/gleam\";\nimport { lustreServer } from \"../.denext/lustre-server.ts\";\nimport * as counter from \"@gleam/app/counter.mjs\";\n\nexport const CounterView = defineLustreView({\n  id: \"counter\",\n  kit: lustreServer,\n  app: counter.app(),\n  flags: (props: { start: number }) => props.start,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "gleam",
+          "slug": "gleam",
+          "kind": "function",
+          "signature": "gleam(options?: GleamOptions): DenextPlugin",
+          "doc": "The Gleam build plugin. Registers a prepare step that runs gleam build --target javascript in the Gleam project (gleam.toml at the app root, else gleam/, or options.dir).",
+          "docFull": "The Gleam build plugin. Registers a prepare step that runs `gleam build --target javascript` in\nthe Gleam project (`gleam.toml` at the app root, else `gleam/`, or `options.dir`).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The project directory and the gleam executable."
+            }
+          ],
+          "returns": "The plugin, for plugins: [gleam()].",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GleamOptions",
+          "slug": "GleamOptions",
+          "kind": "interface",
+          "signature": "interface GleamOptions",
+          "doc": "Options shared by the plugin and denext add gleam:.",
+          "docFull": "Options shared by the plugin and `denext add gleam:`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GleamResult",
+          "slug": "GleamResult",
+          "kind": "interface",
+          "signature": "interface GleamResult",
+          "doc": "A Gleam Result as Gleam's JavaScript output builds it (Ok / Error, the value at [0]).",
+          "docFull": "A Gleam `Result` as Gleam's JavaScript output builds it (`Ok` / `Error`, the value at `[0]`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreApp",
+          "slug": "LustreApp",
+          "kind": "interface",
+          "signature": "interface LustreApp<Flags>",
+          "doc": "A Lustre application (lustre.App(flags, model, msg)), as Gleam's .d.mts declares it. Flags is inferred from it: counter.app() typed App$<number, Model$, Msg$> makes the flags a number.",
+          "docFull": "A Lustre application (`lustre.App(flags, model, msg)`), as Gleam's `.d.mts` declares it.\n`Flags` is inferred from it: `counter.app()` typed `App$<number, Model$, Msg$>` makes the flags\na `number`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreElement",
+          "slug": "lustreElement",
+          "kind": "function",
+          "signature": "lustreElement<Attrs>(kit: LustreKit, tag: string, app: LustreApp<undefined>): (props: LustreElementAttributes<Attrs>) => VNode",
+          "doc": "Turn a Lustre component into a denext component that renders it as the custom element tag. Export the result from a \"use client\" module.",
+          "docFull": "Turn a Lustre component into a denext component that renders it as the custom element `tag`.\nExport the result from a `\"use client\"` module.",
+          "params": [
+            {
+              "name": "kit",
+              "doc": "The app's Lustre build (import { lustre } from \"../.denext/lustre.ts\")."
+            },
+            {
+              "name": "tag",
+              "doc": "The custom element's name (it must contain a -)."
+            },
+            {
+              "name": "app",
+              "doc": "The Lustre component (lustre.component(…), flags Nil)."
+            }
+          ],
+          "returns": "The component; its props are the element's attributes.",
+          "examples": [
+            "```ts\n\"use client\";\nimport { lustreElement } from \"denext/gleam\";\nimport { lustre } from \"../.denext/lustre.ts\";\nimport * as counter from \"@gleam/app/counter.mjs\";\n\nexport const CounterElement = lustreElement<{ start: string }>(\n  lustre,\n  \"lustre-counter\",\n  counter.component(),\n);\n// In a Server Component: <CounterElement start=\"3\" />\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreElementAttributes",
+          "slug": "LustreElementAttributes",
+          "kind": "typeAlias",
+          "signature": "type LustreElementAttributes<Attrs> = Partial<Attrs> & object",
+          "doc": "The props of a Lustre custom element in JSX: its attributes (each a string, the component's on_attribute_change decoders parse them), the usual global ones, and light-DOM children for the component's slots.",
+          "docFull": "The props of a Lustre custom element in JSX: its attributes (each a string, the component's\n`on_attribute_change` decoders parse them), the usual global ones, and light-DOM children for the\ncomponent's slots.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\ndeclare module \"denext/jsx-runtime\" {\n  namespace JSX {\n    interface IntrinsicElements {\n      \"lustre-counter\": LustreElementAttributes<{ start: string }>;\n    }\n  }\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreEventPayload",
+          "slug": "LustreEventPayload",
+          "kind": "interface",
+          "signature": "interface LustreEventPayload",
+          "doc": "A DOM event a Lustre view's client sent, after the built-in shape check.",
+          "docFull": "A DOM event a Lustre view's client sent, after the built-in shape check.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreIsland",
+          "slug": "lustreIsland",
+          "kind": "function",
+          "signature": "lustreIsland<Flags, Props>(kit: LustreKit, app: LustreApp<Flags>, options?: LustreIslandOptions<Flags, Props>): (props: Props) => VNode",
+          "doc": "Turn a Lustre app into a denext island component. Export the result from a \"use client\" module.",
+          "docFull": "Turn a Lustre app into a denext island component. Export the result from a `\"use client\"`\nmodule.",
+          "params": [
+            {
+              "name": "kit",
+              "doc": "The app's Lustre build (import { lustre } from \"../.denext/lustre.ts\", written by the Gleam build when the app depends on Lustre)."
+            },
+            {
+              "name": "app",
+              "doc": "The Lustre app (counter.app()); its flags type comes from Gleam's .d.mts."
+            },
+            {
+              "name": "options",
+              "doc": "How props become flags, and the root element."
+            }
+          ],
+          "returns": "The island component.",
+          "examples": [
+            "```ts\n\"use client\";\nimport { lustreIsland } from \"denext/gleam\";\nimport { lustre } from \"../.denext/lustre.ts\";\nimport * as counter from \"@gleam/app/counter.mjs\";\n\nexport const Counter = lustreIsland(lustre, counter.app(), {\n  flags: (props: { start: number }) => props.start,\n});\n// In a Server Component: <Counter start={1} client:visible />\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreIslandOptions",
+          "slug": "LustreIslandOptions",
+          "kind": "interface",
+          "signature": "interface LustreIslandOptions<Flags, Props>",
+          "doc": "How lustreIsland maps the component's props onto the app.",
+          "docFull": "How {@link lustreIsland} maps the component's props onto the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreKit",
+          "slug": "lustreKit-fn",
+          "kind": "function",
+          "signature": "lustreKit(modules: LustreModules): LustreKit",
+          "doc": "Wrap the app's Lustre functions for denext/gleam. The generated .denext/lustre.ts calls this; app code imports the kit from there.",
+          "docFull": "Wrap the app's Lustre functions for denext/gleam. The generated `.denext/lustre.ts` calls this;\napp code imports the kit from there.",
+          "params": [
+            {
+              "name": "modules",
+              "doc": "The functions, imported from the app's @gleam/lustre/… build."
+            }
+          ],
+          "returns": "The kit lustreIsland / lustreElement take.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreKit",
+          "slug": "LustreKit-iface",
+          "kind": "interface",
+          "signature": "interface LustreKit",
+          "doc": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
+          "docFull": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreModules",
+          "slug": "LustreModules",
+          "kind": "interface",
+          "signature": "interface LustreModules",
+          "doc": "The functions lustreKit takes, imported from the app's Lustre build.",
+          "docFull": "The functions {@link lustreKit} takes, imported from the app's Lustre build.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreReconciler",
+          "slug": "LustreReconciler",
+          "kind": "interface",
+          "signature": "interface LustreReconciler",
+          "doc": "Lustre's client reconciler (lustre/vdom/reconciler.ffi.mjs), as far as this module uses it.",
+          "docFull": "Lustre's client reconciler (`lustre/vdom/reconciler.ffi.mjs`), as far as this module uses it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreReconcilerClass",
+          "slug": "LustreReconcilerClass",
+          "kind": "typeAlias",
+          "signature": "type LustreReconcilerClass = (root: Element, decodeEvent: (event: Event, path: string, name: string, include?: string[]) => unknown, dispatch: (event: Event, data: unknown) => void) => LustreReconciler",
+          "doc": "The Reconciler class: new Reconciler(root, decodeEvent, dispatch).",
+          "docFull": "The `Reconciler` class: `new Reconciler(root, decodeEvent, dispatch)`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreRuntime",
+          "slug": "LustreRuntime",
+          "kind": "typeAlias",
+          "signature": "type LustreRuntime = object",
+          "doc": "A running client-side Lustre app (Lustre's Runtime).",
+          "docFull": "A running client-side Lustre app (Lustre's `Runtime`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreRuntimeInstance",
+          "slug": "LustreRuntimeInstance",
+          "kind": "interface",
+          "signature": "interface LustreRuntimeInstance",
+          "doc": "A Lustre server Runtime as its constructor builds it (only send is used).",
+          "docFull": "A Lustre server `Runtime` as its constructor builds it (only `send` is used).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreServerKit",
+          "slug": "lustreServerKit-fn",
+          "kind": "function",
+          "signature": "lustreServerKit(modules: LustreServerModules): LustreServerKit",
+          "doc": "Wrap the app's Lustre server-component functions for defineLustreView. The generated .denext/lustre-server.ts calls this.",
+          "docFull": "Wrap the app's Lustre server-component functions for `defineLustreView`. The generated\n`.denext/lustre-server.ts` calls this.",
+          "params": [
+            {
+              "name": "modules",
+              "doc": "The functions, imported from the app's @gleam/lustre/… build."
+            }
+          ],
+          "returns": "The kit defineLustreView takes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreServerKit",
+          "slug": "LustreServerKit-iface",
+          "kind": "interface",
+          "signature": "interface LustreServerKit",
+          "doc": "What defineLustreView and the Live hub call: the app's Lustre server runtime, wrapped.",
+          "docFull": "What `defineLustreView` and the Live hub call: the app's Lustre server runtime, wrapped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreServerModules",
+          "slug": "LustreServerModules",
+          "kind": "interface",
+          "signature": "interface LustreServerModules",
+          "doc": "The functions lustreServerKit takes, imported from the app's Lustre build.",
+          "docFull": "The functions {@link lustreServerKit} takes, imported from the app's Lustre build.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreServerRuntime",
+          "slug": "LustreServerRuntime",
+          "kind": "typeAlias",
+          "signature": "type LustreServerRuntime = object",
+          "doc": "A running Lustre server component.",
+          "docFull": "A running Lustre server component.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreViewComponent",
+          "slug": "LustreViewComponent",
+          "kind": "interface",
+          "signature": "interface LustreViewComponent<Props>",
+          "doc": "The component defineLustreView returns.",
+          "docFull": "The component {@link defineLustreView} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreViewConfig",
+          "slug": "LustreViewConfig",
+          "kind": "interface",
+          "signature": "interface LustreViewConfig<Flags, Props>",
+          "doc": "What defineLustreView takes.",
+          "docFull": "What {@link defineLustreView} takes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreViewIsland",
+          "slug": "lustreViewIsland",
+          "kind": "function",
+          "signature": "lustreViewIsland(Reconciler: LustreReconcilerClass): (props: LustreViewIslandProps) => VNode",
+          "doc": "The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.",
+          "docFull": "The browser island for `defineLustreView`, bound to Lustre's reconciler. The Gleam build calls\nthis in the generated `.denext/lustre-view.ts`; apps don't.",
+          "params": [
+            {
+              "name": "Reconciler",
+              "doc": "Reconciler from the app's @gleam/lustre/lustre/vdom/reconciler.ffi.mjs."
+            }
+          ],
+          "returns": "The island component.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreViewIslandProps",
+          "slug": "LustreViewIslandProps",
+          "kind": "interface",
+          "signature": "interface LustreViewIslandProps",
+          "doc": "The island's props (written by defineLustreView's server render).",
+          "docFull": "The island's props (written by `defineLustreView`'s server render).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PrerenderedShadow",
+          "slug": "PrerenderedShadow",
+          "kind": "interface",
+          "signature": "interface PrerenderedShadow",
+          "doc": "A custom element's prerendered shadow root (a <template shadowrootmode>).",
+          "docFull": "A custom element's prerendered shadow root (a `<template shadowrootmode>`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
       "module": "denext/platform",
       "symbols": [
         {
@@ -32449,6 +33317,18 @@
           "denextOnly": true
         },
         {
+          "name": "CompatReactNativeOptions",
+          "slug": "CompatReactNativeOptions",
+          "kind": "interface",
+          "signature": "interface CompatReactNativeOptions",
+          "doc": "React Native mode (reactNative in the config) for the App Router's compat bundles: what each of the server, Flight and client-route bundles adds (see react-native-app-router.ts reactNativeCompatOptions). Absent when reactNative is off, which leaves every bundle exactly as it is without it.",
+          "docFull": "React Native mode (`reactNative` in the config) for the App Router's compat bundles: what\neach of the server, Flight and client-route bundles adds (see\n`react-native-app-router.ts` `reactNativeCompatOptions`). Absent when `reactNative` is off,\nwhich leaves every bundle exactly as it is without it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "compileMdxSource",
           "slug": "compileMdxSource",
           "kind": "function",
@@ -33148,8 +34028,8 @@
           "slug": "revalidatePath",
           "kind": "function",
           "signature": "revalidatePath(path: string, _type?: layout | page): Promise<void>",
-          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.",
-          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store.",
+          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store. Inside a Server Action the client that called it also re-renders its current route.",
+          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store. Inside a Server Action the client that called it\nalso re-renders its current route.",
           "params": [
             {
               "name": "path",
@@ -34583,6 +35463,42 @@
       "module": "denext/expo/audio",
       "symbols": [
         {
+          "name": "AudioLockScreenOptions",
+          "slug": "AudioLockScreenOptions",
+          "kind": "typeAlias",
+          "signature": "type AudioLockScreenOptions = object",
+          "doc": "Which lock-screen controls to show (expo-audio's shape).",
+          "docFull": "Which lock-screen controls to show (expo-audio's shape).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AudioMetadata",
+          "slug": "AudioMetadata",
+          "kind": "typeAlias",
+          "signature": "type AudioMetadata = object",
+          "doc": "What the lock screen shows for a player (expo-audio's shape).",
+          "docFull": "What the lock screen shows for a player (expo-audio's shape).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AudioMode",
+          "slug": "AudioMode",
+          "kind": "typeAlias",
+          "signature": "type AudioMode = object",
+          "doc": "The audio mode (only shouldPlayInBackground and interruptionMode change anything here).",
+          "docFull": "The audio mode (only `shouldPlayInBackground` and `interruptionMode` change anything here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "AudioModule",
           "slug": "AudioModule",
           "kind": "variable",
@@ -34736,6 +35652,18 @@
           "denextOnly": false
         },
         {
+          "name": "InterruptionMode",
+          "slug": "InterruptionMode",
+          "kind": "typeAlias",
+          "signature": "type InterruptionMode = mixWithOthers | doNotMix | doNotMixPersistent | duckOthers",
+          "doc": "How the app's audio meets other apps' audio.",
+          "docFull": "How the app's audio meets other apps' audio.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "NativeAudioModule",
           "slug": "NativeAudioModule",
           "kind": "class",
@@ -34847,16 +35775,16 @@
           "name": "setAudioModeAsync",
           "slug": "setAudioModeAsync",
           "kind": "function",
-          "signature": "setAudioModeAsync(_mode: Record<string, unknown>): Promise<void>",
-          "doc": "Set the audio session mode: there is no audio session on the web, so nothing changes.",
-          "docFull": "Set the audio session mode: there is no audio session on the web, so nothing changes.",
+          "signature": "setAudioModeAsync(mode: Partial<AudioMode>): Promise<void>",
+          "doc": "Set the audio mode. shouldPlayInBackground and interruptionMode set the shell's audio session through denext/mobile's setAudioSession (denext mobile add background-audio; the iOS .playback category keeps audio playing in the background and with the phone locked); the other fields are accepted. On the web, a browser decides itself, so nothing changes. Lock-screen controls on iOS need a doNotMix mode, as in expo-audio.",
+          "docFull": "Set the audio mode. `shouldPlayInBackground` and `interruptionMode` set the shell's audio\nsession through `denext/mobile`'s {@linkcode setAudioSession} (`denext mobile add\nbackground-audio`; the iOS `.playback` category keeps audio playing in the background and with\nthe phone locked); the other fields are accepted. On the web, a browser decides itself, so\nnothing changes. Lock-screen controls on iOS need a `doNotMix` mode, as in expo-audio.",
           "params": [
             {
-              "name": "_mode",
-              "doc": "The mode."
+              "name": "mode",
+              "doc": "The fields to change."
             }
           ],
-          "returns": "A promise that settles at once.",
+          "returns": "A promise that settles once the session is set.",
           "examples": [],
           "denextOnly": false
         },
@@ -36180,8 +37108,8 @@
           "slug": "addBrightnessListener",
           "kind": "function",
           "signature": "addBrightnessListener(listener: (event: BrightnessEvent) => void): Subscription",
-          "doc": "Call listener when the brightness changes: never, since the plugin reports no changes.",
-          "docFull": "Call `listener` when the brightness changes: never, since the plugin reports no changes.",
+          "doc": "Call listener when the screen's brightness changes (iOS, as in Expo: with DenextBrightness from denext mobile add brightness; never elsewhere).",
+          "docFull": "Call `listener` when the screen's brightness changes (iOS, as in Expo: with `DenextBrightness`\nfrom `denext mobile add brightness`; never elsewhere).",
           "params": [
             {
               "name": "listener",
@@ -36221,8 +37149,8 @@
           "slug": "getBrightnessAsync",
           "kind": "function",
           "signature": "getBrightnessAsync(): Promise<number>",
-          "doc": "The current brightness: the screen's (iOS) or the app window's (Android; -1 while it follows the system).",
-          "docFull": "The current brightness: the screen's (iOS) or the app window's (Android; `-1` while it\nfollows the system).",
+          "doc": "The current brightness: the screen's (iOS) or the app window's (Android; the system's while the window follows it, as in Expo, or -1 without DenextBrightness).",
+          "docFull": "The current brightness: the screen's (iOS) or the app window's (Android; the system's while\nthe window follows it, as in Expo, or `-1` without `DenextBrightness`).",
           "params": [],
           "returns": "0–1 (or -1, see above).",
           "examples": [],
@@ -36233,8 +37161,8 @@
           "slug": "getPermissionsAsync",
           "kind": "function",
           "signature": "getPermissionsAsync(): Promise<PermissionResponse>",
-          "doc": "The system-settings permission: granted in the shell, undetermined on the web.",
-          "docFull": "The system-settings permission: `granted` in the shell, `undetermined` on the web.",
+          "doc": "The system-settings permission (see requestPermissionsAsync).",
+          "docFull": "The system-settings permission (see {@linkcode requestPermissionsAsync}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36245,8 +37173,8 @@
           "slug": "getSystemBrightnessAsync",
           "kind": "function",
           "signature": "getSystemBrightnessAsync(): Promise<number>",
-          "doc": "The system brightness: off Android the screen's, as Expo (getBrightnessAsync); Android's system setting is not readable here.",
-          "docFull": "The system brightness: off Android the screen's, as Expo (`getBrightnessAsync`); Android's\nsystem setting is not readable here.",
+          "doc": "The system brightness: off Android the screen's, as Expo (getBrightnessAsync); on Android the system setting.",
+          "docFull": "The system brightness: off Android the screen's, as Expo (`getBrightnessAsync`); on Android\nthe system setting.",
           "params": [],
           "returns": "0–1.",
           "examples": [],
@@ -36257,8 +37185,8 @@
           "slug": "getSystemBrightnessModeAsync",
           "kind": "function",
           "signature": "getSystemBrightnessModeAsync(): Promise<BrightnessMode>",
-          "doc": "The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; Android's is not readable here (it rejects with ERR_UNAVAILABLE).",
-          "docFull": "The system brightness mode: off Android `BrightnessMode.UNKNOWN`, as in Expo; Android's is not\nreadable here (it rejects with `ERR_UNAVAILABLE`).",
+          "doc": "The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; on Android the system setting's (AUTOMATIC or MANUAL).",
+          "docFull": "The system brightness mode: off Android `BrightnessMode.UNKNOWN`, as in Expo; on Android the\nsystem setting's (`AUTOMATIC` or `MANUAL`).",
           "params": [],
           "returns": "The mode.",
           "examples": [],
@@ -36341,8 +37269,8 @@
           "slug": "requestPermissionsAsync",
           "kind": "function",
           "signature": "requestPermissionsAsync(): Promise<PermissionResponse>",
-          "doc": "Ask for the system-settings permission: as getPermissionsAsync.",
-          "docFull": "Ask for the system-settings permission: as {@linkcode getPermissionsAsync}.",
+          "doc": "Ask for the system-settings permission: on Android the system screen for WRITE_SETTINGS; granted elsewhere in the shell, undetermined on the web.",
+          "docFull": "Ask for the system-settings permission: on Android the system screen for `WRITE_SETTINGS`;\n`granted` elsewhere in the shell, `undetermined` on the web.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36382,8 +37310,8 @@
           "slug": "setSystemBrightnessAsync",
           "kind": "function",
           "signature": "setSystemBrightnessAsync(brightnessValue: number): Promise<void>",
-          "doc": "Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); Android's system setting is not writable here.",
-          "docFull": "Set the system brightness: off Android the screen's, as Expo (`setBrightnessAsync`); Android's\nsystem setting is not writable here.",
+          "doc": "Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); on Android the system setting (switching its mode to manual first, as Expo), which needs WRITE_SETTINGS (requestPermissionsAsync).",
+          "docFull": "Set the system brightness: off Android the screen's, as Expo (`setBrightnessAsync`); on\nAndroid the system setting (switching its mode to manual first, as Expo), which needs\n`WRITE_SETTINGS` ({@linkcode requestPermissionsAsync}).",
           "params": [
             {
               "name": "brightnessValue",
@@ -36399,8 +37327,8 @@
           "slug": "setSystemBrightnessModeAsync",
           "kind": "function",
           "signature": "setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void>",
-          "doc": "Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; Android's is not writable here (it rejects with ERR_UNAVAILABLE).",
-          "docFull": "Set the system brightness mode: off Android, or for `UNKNOWN`, it does nothing, as in Expo;\nAndroid's is not writable here (it rejects with `ERR_UNAVAILABLE`).",
+          "doc": "Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; on Android it writes the system setting, which needs WRITE_SETTINGS (requestPermissionsAsync).",
+          "docFull": "Set the system brightness mode: off Android, or for `UNKNOWN`, it does nothing, as in Expo; on\nAndroid it writes the system setting, which needs `WRITE_SETTINGS`\n({@linkcode requestPermissionsAsync}).",
           "params": [
             {
               "name": "brightnessMode",
@@ -36632,12 +37560,36 @@
           "denextOnly": false
         },
         {
+          "name": "CalendarDialogOpenParamsNext",
+          "slug": "CalendarDialogOpenParamsNext",
+          "kind": "typeAlias",
+          "signature": "type CalendarDialogOpenParamsNext = CalendarDialogParamsNext & OpenEventPresentationOptions",
+          "doc": "CalendarDialogParamsNext with the viewer's options.",
+          "docFull": "{@linkcode CalendarDialogParamsNext} with the viewer's options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "CalendarDialogParams",
           "slug": "CalendarDialogParams",
           "kind": "interface",
           "signature": "interface CalendarDialogParams",
           "doc": "Which event a dialog shows.",
           "docFull": "Which event a dialog shows.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarDialogParamsNext",
+          "slug": "CalendarDialogParamsNext",
+          "kind": "typeAlias",
+          "signature": "type CalendarDialogParamsNext = Omit<CalendarDialogParams, id> & PresentationOptions",
+          "doc": "Which occurrence the object API's dialogs show, and how.",
+          "docFull": "Which occurrence the object API's dialogs show, and how.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36671,20 +37623,20 @@
           "name": "createAttendeeAsync",
           "slug": "createAttendeeAsync",
           "kind": "function",
-          "signature": "createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Add an attendee. Not supported by the plugin.",
-          "docFull": "Add an attendee. Not supported by the plugin.",
+          "signature": "createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Add an attendee to an event (Android).",
+          "docFull": "Add an attendee to an event (Android).",
           "params": [
             {
-              "name": "_eventId",
+              "name": "eventId",
               "doc": "The event."
             },
             {
-              "name": "_details",
+              "name": "details",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The new attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -36727,8 +37679,8 @@
           "slug": "createEventAsync",
           "kind": "function",
           "signature": "createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>",
-          "doc": "Create an event. timeZone, attendees and absolute or location alarms are not passed on.",
-          "docFull": "Create an event. `timeZone`, attendees and absolute or location alarms are not passed on.",
+          "doc": "Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).",
+          "docFull": "Create an event. Attendees and absolute or location alarms are not passed on; `timeZone` is\nset through `DenextCalendar` (ignored without it).",
           "params": [
             {
               "name": "calendarId",
@@ -36813,16 +37765,16 @@
           "name": "deleteAttendeeAsync",
           "slug": "deleteAttendeeAsync",
           "kind": "function",
-          "signature": "deleteAttendeeAsync(_id: string): Promise<void>",
-          "doc": "Remove an attendee. Not supported by the plugin.",
-          "docFull": "Remove an attendee. Not supported by the plugin.",
+          "signature": "deleteAttendeeAsync(id: string): Promise<void>",
+          "doc": "Remove an attendee (Android).",
+          "docFull": "Remove an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "",
           "examples": [],
           "denextOnly": false
         },
@@ -36897,17 +37849,17 @@
           "name": "editEventInCalendarAsync",
           "slug": "editEventInCalendarAsync",
           "kind": "function",
-          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
-          "doc": "Open the system's event editor on an event. Android does not report the outcome (done).",
-          "docFull": "Open the system's event editor on an event. Android does not report the outcome (`done`).",
+          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
+          "doc": "Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).",
+          "docFull": "Open the system's event editor on an event (one occurrence, with `instanceStartDate`, through\n`DenextCalendar`). Android does not report the outcome (`done`).",
           "params": [
             {
               "name": "params",
-              "doc": "The event (instanceStartDate is not supported)."
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "Ignored."
+              "name": "presentationOptions",
+              "doc": "startNewActivityTask (Android, for an occurrence)."
             }
           ],
           "returns": "The outcome.",
@@ -36975,6 +37927,18 @@
           "denextOnly": false
         },
         {
+          "name": "ExpoCalendarAttendee",
+          "slug": "ExpoCalendarAttendee",
+          "kind": "class",
+          "signature": "class ExpoCalendarAttendee",
+          "doc": "An event's attendee, with methods (the new API; the methods are Android only).",
+          "docFull": "An event's attendee, with methods (the new API; the methods are Android only).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "ExpoCalendarEvent",
           "slug": "ExpoCalendarEvent",
           "kind": "class",
@@ -37014,20 +37978,20 @@
           "name": "getAttendeesForEventAsync",
           "slug": "getAttendeesForEventAsync",
           "kind": "function",
-          "signature": "getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
-          "doc": "An event's attendees. The plugin does not read them by event id.",
-          "docFull": "An event's attendees. The plugin does not read them by event id.",
+          "signature": "getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
+          "doc": "An event's attendees (of one occurrence, with instanceStartDate).",
+          "docFull": "An event's attendees (of one occurrence, with `instanceStartDate`).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             },
             {
-              "name": "_recurringEventOptions",
-              "doc": "Which occurrence (Expo's second argument)."
+              "name": "recurringEventOptions",
+              "doc": "Which occurrence."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendees.",
           "examples": [],
           "denextOnly": false
         },
@@ -37111,8 +38075,8 @@
           "slug": "getEventAsync",
           "kind": "function",
           "signature": "getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>",
-          "doc": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).",
-          "docFull": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
+          "doc": "One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).",
+          "docFull": "One event: by id (through `DenextCalendar`), or its occurrence starting at\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
           "params": [
             {
               "name": "id",
@@ -37120,7 +38084,7 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "instanceStartDate, required here."
+              "doc": "instanceStartDate, for one occurrence."
             }
           ],
           "returns": "The event.",
@@ -37289,6 +38253,18 @@
           "denextOnly": false
         },
         {
+          "name": "ModifiableAttendeeProperties",
+          "slug": "ModifiableAttendeeProperties",
+          "kind": "typeAlias",
+          "signature": "type ModifiableAttendeeProperties = Pick<Attendee, name | email | role | status | type>",
+          "doc": "What ExpoCalendarAttendee.update changes.",
+          "docFull": "What {@linkcode ExpoCalendarAttendee.update} changes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "ModifiableCalendarProperties",
           "slug": "ModifiableCalendarProperties",
           "kind": "typeAlias",
@@ -37352,12 +38328,12 @@
           "name": "openEventInCalendar",
           "slug": "openEventInCalendar",
           "kind": "function",
-          "signature": "openEventInCalendar(_id: string): void",
-          "doc": "Open an event in the Android calendar app. The plugin has no such call.",
-          "docFull": "Open an event in the Android calendar app. The plugin has no such call.",
+          "signature": "openEventInCalendar(id: string): void",
+          "doc": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).",
+          "docFull": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns\nbefore the app opens).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             }
           ],
@@ -37369,20 +38345,20 @@
           "name": "openEventInCalendarAsync",
           "slug": "openEventInCalendarAsync",
           "kind": "function",
-          "signature": "openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
-          "doc": "Show an event in the calendar app. The plugin has no such dialog.",
-          "docFull": "Show an event in the calendar app. The plugin has no such dialog.",
+          "signature": "openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
+          "doc": "Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).",
+          "docFull": "Show an event (or, with `instanceStartDate`, one occurrence) in the system's event viewer:\nEKEventViewController on iOS, which reports `done`, `responded`, `deleted` or `canceled`; the\ncalendar app on Android, which reports nothing (`done`).",
           "params": [
             {
-              "name": "_params",
-              "doc": "The event."
+              "name": "params",
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "The presentation."
+              "name": "presentationOptions",
+              "doc": "allowsEditing / allowsCalendarPreview (iOS), startNewActivityTask (Android)."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The outcome.",
           "examples": [],
           "denextOnly": false
         },
@@ -37623,20 +38599,20 @@
           "name": "updateAttendeeAsync",
           "slug": "updateAttendeeAsync",
           "kind": "function",
-          "signature": "updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Change an attendee. Not supported by the plugin.",
-          "docFull": "Change an attendee. Not supported by the plugin.",
+          "signature": "updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Change an attendee (Android).",
+          "docFull": "Change an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             },
             {
-              "name": "_details",
-              "doc": "The fields."
+              "name": "details",
+              "doc": "The fields to change."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -37666,8 +38642,8 @@
           "slug": "updateEventAsync",
           "kind": "function",
           "signature": "updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>",
-          "doc": "Change an event (with futureEvents, this and the following occurrences).",
-          "docFull": "Change an event (with `futureEvents`, this and the following occurrences).",
+          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.",
+          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones; iOS only). An occurrence and a time zone are changed through\n`DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is\nreturned.",
           "params": [
             {
               "name": "id",
@@ -37679,10 +38655,10 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "futureEvents; instanceStartDate is not supported."
+              "doc": "instanceStartDate and futureEvents."
             }
           ],
-          "returns": "The id.",
+          "returns": "The id (of the exception, for an Android occurrence).",
           "examples": [],
           "denextOnly": false
         },
@@ -37901,20 +38877,20 @@
           "name": "createAttendeeAsync",
           "slug": "createAttendeeAsync",
           "kind": "function",
-          "signature": "createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Add an attendee. Not supported by the plugin.",
-          "docFull": "Add an attendee. Not supported by the plugin.",
+          "signature": "createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Add an attendee to an event (Android).",
+          "docFull": "Add an attendee to an event (Android).",
           "params": [
             {
-              "name": "_eventId",
+              "name": "eventId",
               "doc": "The event."
             },
             {
-              "name": "_details",
+              "name": "details",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The new attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -37940,8 +38916,8 @@
           "slug": "createEventAsync",
           "kind": "function",
           "signature": "createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>",
-          "doc": "Create an event. timeZone, attendees and absolute or location alarms are not passed on.",
-          "docFull": "Create an event. `timeZone`, attendees and absolute or location alarms are not passed on.",
+          "doc": "Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).",
+          "docFull": "Create an event. Attendees and absolute or location alarms are not passed on; `timeZone` is\nset through `DenextCalendar` (ignored without it).",
           "params": [
             {
               "name": "calendarId",
@@ -38026,16 +39002,16 @@
           "name": "deleteAttendeeAsync",
           "slug": "deleteAttendeeAsync",
           "kind": "function",
-          "signature": "deleteAttendeeAsync(_id: string): Promise<void>",
-          "doc": "Remove an attendee. Not supported by the plugin.",
-          "docFull": "Remove an attendee. Not supported by the plugin.",
+          "signature": "deleteAttendeeAsync(id: string): Promise<void>",
+          "doc": "Remove an attendee (Android).",
+          "docFull": "Remove an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "",
           "examples": [],
           "denextOnly": false
         },
@@ -38110,17 +39086,17 @@
           "name": "editEventInCalendarAsync",
           "slug": "editEventInCalendarAsync",
           "kind": "function",
-          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
-          "doc": "Open the system's event editor on an event. Android does not report the outcome (done).",
-          "docFull": "Open the system's event editor on an event. Android does not report the outcome (`done`).",
+          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
+          "doc": "Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).",
+          "docFull": "Open the system's event editor on an event (one occurrence, with `instanceStartDate`, through\n`DenextCalendar`). Android does not report the outcome (`done`).",
           "params": [
             {
               "name": "params",
-              "doc": "The event (instanceStartDate is not supported)."
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "Ignored."
+              "name": "presentationOptions",
+              "doc": "startNewActivityTask (Android, for an occurrence)."
             }
           ],
           "returns": "The outcome.",
@@ -38191,20 +39167,20 @@
           "name": "getAttendeesForEventAsync",
           "slug": "getAttendeesForEventAsync",
           "kind": "function",
-          "signature": "getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
-          "doc": "An event's attendees. The plugin does not read them by event id.",
-          "docFull": "An event's attendees. The plugin does not read them by event id.",
+          "signature": "getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
+          "doc": "An event's attendees (of one occurrence, with instanceStartDate).",
+          "docFull": "An event's attendees (of one occurrence, with `instanceStartDate`).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             },
             {
-              "name": "_recurringEventOptions",
-              "doc": "Which occurrence (Expo's second argument)."
+              "name": "recurringEventOptions",
+              "doc": "Which occurrence."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendees.",
           "examples": [],
           "denextOnly": false
         },
@@ -38254,8 +39230,8 @@
           "slug": "getEventAsync",
           "kind": "function",
           "signature": "getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>",
-          "doc": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).",
-          "docFull": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
+          "doc": "One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).",
+          "docFull": "One event: by id (through `DenextCalendar`), or its occurrence starting at\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
           "params": [
             {
               "name": "id",
@@ -38263,7 +39239,7 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "instanceStartDate, required here."
+              "doc": "instanceStartDate, for one occurrence."
             }
           ],
           "returns": "The event.",
@@ -38422,12 +39398,12 @@
           "name": "openEventInCalendar",
           "slug": "openEventInCalendar",
           "kind": "function",
-          "signature": "openEventInCalendar(_id: string): void",
-          "doc": "Open an event in the Android calendar app. The plugin has no such call.",
-          "docFull": "Open an event in the Android calendar app. The plugin has no such call.",
+          "signature": "openEventInCalendar(id: string): void",
+          "doc": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).",
+          "docFull": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns\nbefore the app opens).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             }
           ],
@@ -38439,20 +39415,20 @@
           "name": "openEventInCalendarAsync",
           "slug": "openEventInCalendarAsync",
           "kind": "function",
-          "signature": "openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
-          "doc": "Show an event in the calendar app. The plugin has no such dialog.",
-          "docFull": "Show an event in the calendar app. The plugin has no such dialog.",
+          "signature": "openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
+          "doc": "Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).",
+          "docFull": "Show an event (or, with `instanceStartDate`, one occurrence) in the system's event viewer:\nEKEventViewController on iOS, which reports `done`, `responded`, `deleted` or `canceled`; the\ncalendar app on Android, which reports nothing (`done`).",
           "params": [
             {
-              "name": "_params",
-              "doc": "The event."
+              "name": "params",
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "The presentation."
+              "name": "presentationOptions",
+              "doc": "allowsEditing / allowsCalendarPreview (iOS), startNewActivityTask (Android)."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The outcome.",
           "examples": [],
           "denextOnly": false
         },
@@ -38652,20 +39628,20 @@
           "name": "updateAttendeeAsync",
           "slug": "updateAttendeeAsync",
           "kind": "function",
-          "signature": "updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Change an attendee. Not supported by the plugin.",
-          "docFull": "Change an attendee. Not supported by the plugin.",
+          "signature": "updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Change an attendee (Android).",
+          "docFull": "Change an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             },
             {
-              "name": "_details",
-              "doc": "The fields."
+              "name": "details",
+              "doc": "The fields to change."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -38695,8 +39671,8 @@
           "slug": "updateEventAsync",
           "kind": "function",
           "signature": "updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>",
-          "doc": "Change an event (with futureEvents, this and the following occurrences).",
-          "docFull": "Change an event (with `futureEvents`, this and the following occurrences).",
+          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.",
+          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones; iOS only). An occurrence and a time zone are changed through\n`DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is\nreturned.",
           "params": [
             {
               "name": "id",
@@ -38708,10 +39684,10 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "futureEvents; instanceStartDate is not supported."
+              "doc": "instanceStartDate and futureEvents."
             }
           ],
-          "returns": "The id.",
+          "returns": "The id (of the exception, for an Android occurrence).",
           "examples": [],
           "denextOnly": false
         },
@@ -39761,16 +40737,16 @@
           "name": "addContactsChangeListener",
           "slug": "addContactsChangeListener",
           "kind": "function",
-          "signature": "addContactsChangeListener(_listener: () => void): EventSubscription",
-          "doc": "Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.",
-          "docFull": "Listen for address-book changes. The plugin reports none, so the listener never fires (as\nin Expo's web build); refresh when the app resumes instead.",
+          "signature": "addContactsChangeListener(listener: () => void): EventSubscription",
+          "doc": "Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).",
+          "docFull": "Call `listener` when the address book changes (a contact added, changed or removed, by this\napp or another): `CNContactStoreDidChange` on iOS, a `ContentObserver` on Android (which may\nbatch changes by a few seconds, and report one change twice). Needs `DenextContacts`; on the\nweb, or without it, the listener never fires (as in Expo's web build).",
           "params": [
             {
-              "name": "_listener",
-              "doc": "Never called."
+              "name": "listener",
+              "doc": "Called with no arguments."
             }
           ],
-          "returns": "A subscription whose remove does nothing.",
+          "returns": "A subscription to remove.",
           "examples": [],
           "denextOnly": false
         },
@@ -40009,6 +40985,30 @@
           "signature": "enum ContactTypes",
           "doc": "Person or company.",
           "docFull": "Person or company.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Container",
+          "slug": "Container",
+          "kind": "class",
+          "signature": "class Container",
+          "doc": "A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only, as in Expo, through DenextContacts; elsewhere every call rejects with ERR_UNAVAILABLE.",
+          "docFull": "A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only,\nas in Expo, through `DenextContacts`; elsewhere every call rejects with `ERR_UNAVAILABLE`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContainerClassType",
+          "slug": "ContainerClassType",
+          "kind": "typeAlias",
+          "signature": "type ContainerClassType = local | exchange | cardDAV | unassigned | unknown",
+          "doc": "A container's kind as the class API reports it.",
+          "docFull": "A container's kind as the class API reports it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -40329,16 +41329,16 @@
           "name": "getContainersAsync",
           "slug": "getContainersAsync",
           "kind": "function",
-          "signature": "getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
-          "doc": "The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The containers. The plugin has no container ids, so this always rejects with\n`ERR_UNAVAILABLE`.",
+          "signature": "getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
+          "doc": "The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.",
+          "docFull": "The containers (iOS): the one holding a contact (`contactId`) or a group (`groupId`), the ones\nwith the given ids (`containerId`), or every one.",
           "params": [
             {
-              "name": "_containerQuery",
-              "doc": "Ignored."
+              "name": "containerQuery",
+              "doc": "Which containers."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The containers.",
           "examples": [],
           "denextOnly": false
         },
@@ -40347,10 +41347,10 @@
           "slug": "getDefaultContainerIdAsync",
           "kind": "function",
           "signature": "getDefaultContainerIdAsync(): Promise<string>",
-          "doc": "The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The default container's id. The plugin has no container ids, so this always rejects\nwith `ERR_UNAVAILABLE`.",
+          "doc": "The default container's id: where new contacts go (iOS).",
+          "docFull": "The default container's id: where new contacts go (iOS).",
           "params": [],
-          "returns": "Never resolves.",
+          "returns": "The id.",
           "examples": [],
           "denextOnly": false
         },
@@ -40754,8 +41754,8 @@
           "slug": "removeAllContactsChangeListeners",
           "kind": "function",
           "signature": "removeAllContactsChangeListeners(): void",
-          "doc": "Remove every change listener (they never fire here).",
-          "docFull": "Remove every change listener (they never fire here).",
+          "doc": "Remove every listener addContactsChangeListener added.",
+          "docFull": "Remove every listener {@linkcode addContactsChangeListener} added.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -40902,16 +41902,16 @@
           "name": "addContactsChangeListener",
           "slug": "addContactsChangeListener",
           "kind": "function",
-          "signature": "addContactsChangeListener(_listener: () => void): EventSubscription",
-          "doc": "Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.",
-          "docFull": "Listen for address-book changes. The plugin reports none, so the listener never fires (as\nin Expo's web build); refresh when the app resumes instead.",
+          "signature": "addContactsChangeListener(listener: () => void): EventSubscription",
+          "doc": "Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).",
+          "docFull": "Call `listener` when the address book changes (a contact added, changed or removed, by this\napp or another): `CNContactStoreDidChange` on iOS, a `ContentObserver` on Android (which may\nbatch changes by a few seconds, and report one change twice). Needs `DenextContacts`; on the\nweb, or without it, the listener never fires (as in Expo's web build).",
           "params": [
             {
-              "name": "_listener",
-              "doc": "Never called."
+              "name": "listener",
+              "doc": "Called with no arguments."
             }
           ],
-          "returns": "A subscription whose remove does nothing.",
+          "returns": "A subscription to remove.",
           "examples": [],
           "denextOnly": false
         },
@@ -41242,16 +42242,16 @@
           "name": "getContainersAsync",
           "slug": "getContainersAsync",
           "kind": "function",
-          "signature": "getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
-          "doc": "The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The containers. The plugin has no container ids, so this always rejects with\n`ERR_UNAVAILABLE`.",
+          "signature": "getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
+          "doc": "The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.",
+          "docFull": "The containers (iOS): the one holding a contact (`contactId`) or a group (`groupId`), the ones\nwith the given ids (`containerId`), or every one.",
           "params": [
             {
-              "name": "_containerQuery",
-              "doc": "Ignored."
+              "name": "containerQuery",
+              "doc": "Which containers."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The containers.",
           "examples": [],
           "denextOnly": false
         },
@@ -41260,10 +42260,10 @@
           "slug": "getDefaultContainerIdAsync",
           "kind": "function",
           "signature": "getDefaultContainerIdAsync(): Promise<string>",
-          "doc": "The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The default container's id. The plugin has no container ids, so this always rejects\nwith `ERR_UNAVAILABLE`.",
+          "doc": "The default container's id: where new contacts go (iOS).",
+          "docFull": "The default container's id: where new contacts go (iOS).",
           "params": [],
-          "returns": "Never resolves.",
+          "returns": "The id.",
           "examples": [],
           "denextOnly": false
         },
@@ -45177,12 +46177,12 @@
           "slug": "launchCameraAsync",
           "kind": "function",
           "signature": "launchCameraAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>",
-          "doc": "Take a picture with the camera.",
-          "docFull": "Take a picture with the camera.",
+          "doc": "Take a picture with the camera, or record a video with mediaTypes: \"videos\".",
+          "docFull": "Take a picture with the camera, or record a video with `mediaTypes: \"videos\"`.",
           "params": [
             {
               "name": "options",
-              "doc": "The quality and base64 options."
+              "doc": "mediaTypes, quality and base64."
             }
           ],
           "returns": "The asset, or canceled: true.",
@@ -45194,15 +46194,15 @@
           "slug": "launchImageLibraryAsync",
           "kind": "function",
           "signature": "launchImageLibraryAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>",
-          "doc": "Pick a picture from the photo library.",
-          "docFull": "Pick a picture from the photo library.",
+          "doc": "Pick photos or videos from the library: one, or several with allowsMultipleSelection.",
+          "docFull": "Pick photos or videos from the library: one, or several with `allowsMultipleSelection`.",
           "params": [
             {
               "name": "options",
-              "doc": "The quality and base64 options."
+              "doc": "mediaTypes, allowsMultipleSelection, selectionLimit, orderedSelection, quality and base64."
             }
           ],
-          "returns": "The asset, or canceled: true.",
+          "returns": "The assets, or canceled: true.",
           "examples": [],
           "denextOnly": false
         },
@@ -49944,16 +50944,16 @@
           "name": "printToFileAsync",
           "slug": "printToFileAsync",
           "kind": "function",
-          "signature": "printToFileAsync(_options?: FilePrintOptions): Promise<FilePrintResult>",
-          "doc": "Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).",
-          "docFull": "Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).",
+          "signature": "printToFileAsync(options?: FilePrintOptions): Promise<FilePrintResult>",
+          "doc": "Render HTML to a PDF file in the app's cache folder: on pages of width x height points (612 x 792, US Letter, by default) inside margins, with base64 the bytes too.",
+          "docFull": "Render HTML to a PDF file in the app's cache folder: on pages of `width` x `height` points\n(612 x 792, US Letter, by default) inside `margins`, with `base64` the bytes too.",
           "params": [
             {
-              "name": "_options",
+              "name": "options",
               "doc": "The HTML and page setup."
             }
           ],
-          "returns": "Never: it rejects with ERR_UNAVAILABLE.",
+          "returns": "The file's URI, its page count and, when asked for, its base64.",
           "examples": [],
           "denextOnly": false
         },
@@ -49962,10 +50962,10 @@
           "slug": "selectPrinterAsync",
           "kind": "function",
           "signature": "selectPrinterAsync(): Promise<Printer>",
-          "doc": "Pick a printer (iOS): not available here.",
-          "docFull": "Pick a printer (iOS): not available here.",
+          "doc": "Pick a printer with the system printer picker (iOS, as in Expo). Pass its url as printAsync's printerUrl to print there without the dialog.",
+          "docFull": "Pick a printer with the system printer picker (iOS, as in Expo). Pass its `url` as\n`printAsync`'s `printerUrl` to print there without the dialog.",
           "params": [],
-          "returns": "Never: it rejects with ERR_UNAVAILABLE.",
+          "returns": "The printer.",
           "examples": [],
           "denextOnly": false
         }

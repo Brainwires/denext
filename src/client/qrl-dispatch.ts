@@ -138,7 +138,7 @@ export function resumeEvent(target: unknown, eventType: string, event: unknown):
 }
 
 /** Re-dispatch `event` to its target so a handler attached during resume fires. */
-function replayEvent(event: Event): void {
+export function replayEvent(event: Event): void {
   const target = event.target as (EventTarget & { dispatchEvent?: (e: Event) => boolean }) | null;
   if (!target || typeof target.dispatchEvent !== "function") return;
   try {

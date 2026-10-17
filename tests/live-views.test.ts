@@ -7,7 +7,12 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { type FlightNode, renderToFlight } from "../src/jsx/render-to-flight.ts";
-import { createChannel, resetChannels } from "../src/runtime/channel.ts";
+import {
+  type ChannelTransport,
+  createChannel,
+  inMemoryChannelTransport,
+  resetChannels,
+} from "../src/runtime/channel.ts";
 import { defineLiveView, signLiveViewToken } from "../src/runtime/live-view.ts";
 import { fx, type Next, subs } from "../src/runtime/mvu.ts";
 import { applyFlightOps } from "../src/runtime/flight-patch.ts";
@@ -63,7 +68,7 @@ function next(conn: Conn, pred: (f: Any) => boolean): Promise<Any> {
 const isType = (type: string) => (f: Any) => f.type === type;
 const isError = (code: string) => (f: Any) => f.type === "error" && f.code === code;
 
-function fakeHub(limits: Partial<ViewLimits> = {}, store?: LiveViewStore) {
+function fakeHub(limits: Partial<ViewLimits> = {}, store?: LiveViewStore, bus?: ChannelTransport) {
   let contexts = 0;
   const hub = createLiveViewHub<Conn>({
     limits: () => ({
@@ -92,6 +97,16 @@ function fakeHub(limits: Partial<ViewLimits> = {}, store?: LiveViewStore) {
     backPressured: (conn) => conn.pressured === true,
     armRecover: (conn) => void (conn.armed = true),
     ...(store ? { store: () => store } : {}),
+    // The cross-instance bus, wired as the Live hub wires it to the channel transport.
+    ...(bus
+      ? {
+        announceResumed: (iid: string) =>
+          bus.publish({ kind: "view-resumed", channelId: "", key: iid, seq: 0, instance: "" }),
+      }
+      : {}),
+  });
+  bus?.subscribe((ev) => {
+    if (ev.kind === "view-resumed") hub.resumedElsewhere(ev.key);
   });
   let n = 0;
   const conn = (cookie = ""): Conn => ({
@@ -681,4 +696,68 @@ Deno.test("live views: inspect lists attached and parked views with the model re
   } finally {
     resetLiveDevtools();
   }
+});
+
+defineLiveView<Model, Msg, { start: number }>({
+  id: "test-ticker",
+  init: (props) => [{ n: props.start, pad: "" }],
+  update,
+  view,
+  subscriptions: () => [subs.interval(100, { type: "inc" })],
+});
+
+Deno.test("live views: a view resumed on another instance stops the copy parked on the first", async () => {
+  const store = memoryLiveViewStore();
+  const writes: string[] = [];
+  const spy: LiveViewStore = {
+    set: async (id, sealed, ttl) => {
+      writes.push(id);
+      await store.set(id, sealed, ttl);
+    },
+    take: (id) => store.take(id),
+    delete: (id) => store.delete(id),
+  };
+  const bus = inMemoryChannelTransport();
+  const instanceA = fakeHub({}, spy, bus);
+  const instanceB = fakeHub({}, spy, bus);
+  const a = instanceA.conn("ok");
+  const rendered = next(a, isType("view-render"));
+  await instanceA.hub.mount(a, await mountFrame("test-ticker", { start: 1 }));
+  const first = await rendered;
+  a.closed = true;
+  instanceA.hub.drop(a);
+  assertEquals(instanceA.hub.parked(), 1);
+  // The parked ticker keeps running on A, rewriting its snapshot as the model changes.
+  while (writes.length < 2) await new Promise((r) => setTimeout(r, 20));
+
+  // A resume on B for an instance A does not hold changes nothing on A.
+  bus.publish({
+    kind: "view-resumed",
+    channelId: "",
+    key: "not-parked-here",
+    seq: 0,
+    instance: "",
+  });
+  assertEquals(instanceA.hub.parked(), 1);
+
+  const b = instanceB.conn("ok");
+  const resumed = next(b, isType("view-render"));
+  await instanceB.hub.mount(
+    b,
+    await mountFrame("test-ticker", { start: 1 }, { resume: first.iid }),
+  );
+  const r = await resumed;
+  assert(r.iid !== first.iid, "B resumed the stored model under its own instance id");
+  assertEquals(instanceA.hub.parked(), 0, "A dropped its parked copy at once");
+  assertEquals(instanceA.hub.inspect(), [], "and stopped it");
+  assertEquals(instanceB.hub.inspect().length, 1);
+
+  // A's stopped copy ticks no more: no further store writes (B's view is attached, so it
+  // writes none either), and no snapshot for the old instance id reappears.
+  const settled = writes.length;
+  await new Promise((r) => setTimeout(r, 350));
+  assertEquals(writes.slice(settled), []);
+  assertEquals(await store.take(first.iid), null);
+  instanceA.hub.dispose();
+  instanceB.hub.dispose();
 });

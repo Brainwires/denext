@@ -57,6 +57,13 @@ internal design choice with no observable difference lives in
   normally; inside a Suspense boundary it shows the fallback instead. Deliberate — it is
   what keeps a function-only app from paying for class support — and `classComponents:
   true` in `denext.config.ts` opts out by always importing the runtime statically.
+- **Fragment refs load on first use.** React 19.3's `FragmentInstance` (`<Fragment ref>`) ships
+  as its own `fragment-instance-*` chunk, not in the shared runtime. The first render that
+  reaches a `<Fragment ref>` on a page suspends until the chunk has loaded — its nearest
+  `<Suspense>` shows its fallback for that round trip, or, with none above, what is on screen
+  (the server's HTML, while hydrating) stays — then commits with the ref attached, so layout
+  effects see it as in React. Later renders never wait. Deliberate: an app that uses no Fragment
+  ref pays nothing for one.
 - **`useId` values encode the component's tree position, not a counter.** denext emits
   `_d{path}_{n}_` (e.g. `_d0-2-1_0_`) where React 19.2 emits `_r_{n}_`. Both use the same
   character class — a valid CSS identifier, XML 1.0 name and `view-transition-name`, so
@@ -71,6 +78,12 @@ internal design choice with no observable difference lives in
   `Component` is the function-component _type_. Everything else React exposes
   (`cache`, `Children`, `cloneElement`, `forwardRef`, `Activity`, the hook and
   event types, …) is on both.
+- **`useEffectEvent` returns the same function on every render.** React 19.2 gives it no stable
+  identity (it is not meant to be an Effect dependency); denext's is stable. Everything else
+  matches: calling it during a render throws, and its handler changes when the render commits.
+- **`react-dom/server`'s `resume` throws.** denext's `prerender` resolves every Suspense boundary
+  and returns `postponed: null`, so there is never postponed state to resume; denext's own
+  Partial Prerendering (`cacheComponents`) uses its renderer, not React's postponed state.
 - **SSR attribute serialization follows ReactDOMServer's tables, with a few differences.**
   `true` on an attribute React doesn't know renders `name=""` (React drops it), matching what the
   client reconciler sets; `autoCapitalize={true}` renders `"true"`; `'` is escaped as `&#39;`
@@ -136,6 +149,18 @@ internal design choice with no observable difference lives in
 
 ## Next.js routing and config
 
+- **A Server Action form posts to its own endpoint.** React's server-action form encoding renders
+  `action=""` with a hidden `$ACTION_ID_<id>` input and posts to the page; denext renders
+  `action="/_denext/action/<id>" method="post"`, runs the action there and answers with a 303
+  back to the page (the `Referer`, same origin only). Both work without JavaScript; with it, the
+  hydrated client intercepts the submit either way. The form carries no `encType`, so a no-JS file
+  input posts its file name only.
+- **A bound Server Action's values ride its action URL.** Next.js encrypts the values an inline
+  `"use server"` function closes over (and passes `action.bind(null, value)`'s arguments in the
+  clear) inside the action payload; denext seals both with AES-GCM into the action's reference id,
+  so the form posts to `/_denext/action/<id>.<token>`. Large bound values make a long URL: keep
+  them small (an id, not a record). `action.bind` values are encrypted too, and a value must be
+  one the wire codec carries (no functions, class instances or other actions).
 - **Config `rewrites` have one phase.** Next distinguishes `beforeFiles` /
   `afterFiles` / `fallback` rewrites; denext runs its single `rewrites` list after
   middleware and before the filesystem (Next's `beforeFiles` position). Middleware
@@ -176,6 +201,40 @@ internal design choice with no observable difference lives in
   tree as well, so it has no such layer and treats `client-only` as an empty marker on both
   sides; `server-only` in the client bundle is still a build error, and the runtime
   `clientOnly()` guard still throws on the server.
+
+## Cache Components (`"use cache"`)
+
+- **`"use cache: private"` has no browser-side cache.** In Next.js the client router keeps a
+  private function's rendered output in memory for its `cacheLife` `stale` time and fills it
+  ahead of time by runtime prefetching. denext renders a route when it is requested, so a
+  private function runs on each request and navigation; within one request, matching calls
+  share one run (Next.js's production server behaves the same). It may read `cookies()` and
+  `headers()`, not `connection()`, and makes the render dynamic.
+- **`"use cache: remote"` (and any other `"use cache: <name>"`) uses the configured cache
+  store.** Next.js routes each kind to a `cacheHandlers` entry; denext has one backing store
+  (`cache.store`: node:sqlite by default, or a Redis / Postgres / custom `CacheStore` shared by
+  every instance), so `remote` and plain `"use cache"` entries live in the same place.
+  `cacheHandlers` is not read. A value that doesn't survive JSON (a cached component's element
+  tree) stays in the process either way.
+- **`navigation()` and `prefetch()` resolve at once.** They mark render stages for Next.js's
+  partial and runtime prefetching, which denext doesn't do; in a request they resolve
+  immediately and keep the content below them cacheable. They throw where Next.js's do
+  (outside a request, inside a cached function).
+- **A nested cache passes on what is left of its life.** An outer `"use cache"` without its own
+  `cacheLife()` lives no longer than the inner entries it read: Next.js takes the inner entry's
+  `revalidate` / `expire` durations, denext the time each has left (the same for a fresh entry,
+  shorter for a cached one). Next.js's errors for a short-lived entry nested in an outer one
+  without `cacheLife()` are not raised.
+- **`revalidateTag(tag)` with one argument is not deprecated.** Next.js 16 warns and asks for a
+  profile; in denext it stays the immediate purge that Live, `useApi({ tags })` and the
+  backend's realtime build on, and it does not warn. `revalidateTag(tag, profile)` is the
+  stale-while-revalidate form, as in Next.js.
+- **`updateTag()`, `refresh()` and `revalidateTag()` / `revalidatePath()` also work outside a
+  Server Action** — in a route handler, a job or a webhook — where Next.js throws
+  (`updateTag` and `refresh` are Server Action only there, and none of them may run during a
+  render). Inside a cached function all of them throw, as in Next.js.
+- **`cacheTag()` works outside a cached function**, where Next.js throws: it tags the page being
+  rendered, so `revalidateTag()` purges it. `cacheLife()` outside one throws, as in Next.js.
 
 ## Remix and React Router
 
@@ -398,6 +457,56 @@ place it behaves differently from Auth.js:
 - **`session.user` includes `id`** (the token's `sub`, or the user's id).
 - **The built-in pages are plain HTML** (no `theme`), and their `?error=` codes are Auth.js's.
 
+### NextAuth.js v4 APIs
+
+The v4 server API (`NextAuth(authOptions)`, `getServerSession`, `next-auth/next`,
+`next-auth/middleware`) runs on the same shim, so everything above applies to a v4 app too. Where
+it differs from v4 itself:
+
+- **`getServerSession` only reads.** v4's `getServerSession(req, res, options)` writes a refreshed
+  session cookie onto `res`; denext's slides the session from the `session` endpoint, middleware
+  and route handlers instead, and a `jwt` callback's change made during `getServerSession` is not
+  written back.
+- **`next-auth/middleware` reads denext's session cookie**, opening the sealed token with the
+  `NextAuth()` config's secret (or `NEXTAUTH_SECRET`, or `withAuth`'s `secret`); `jwt.decode`
+  and `cookies` in its options are ignored. Its redirect is a `307` to the request's origin. The
+  paths it never gates (the auth endpoints, `/_next`, `/_denext`, `/favicon.ico`) match on a
+  path-segment boundary, so `/api/authz` stays gated where v4's bare prefix test lets it through.
+- **`next-auth/react`'s server-side calls are answered in-process.** `getSession({ req })`,
+  `getCsrfToken({ req })` and `getProviders({ req })` read the current request's session from the
+  handlers without an HTTP round trip; outside a request they fetch `NEXTAUTH_URL_INTERNAL` /
+  `NEXTAUTH_URL` (else `http://localhost:$PORT`), never the request's `Host`. A CSRF token minted
+  there is set on the current response, which v4 drops.
+- **`signIn(oauthProvider, { redirect: false })` resolves with the provider URL** instead of
+  navigating (v5's behaviour; v4 documents `redirect: false` for Credentials and email only).
+- **`authorize(credentials, req)`'s `req` is a `Request`** that also answers v4's reads:
+  `req.headers["user-agent"]` (lower-case names), `req.query` and `req.body` (the submitted
+  fields). It has no body stream.
+- **Twitter signs in through OAuth 2.0 only.** v4's `Twitter()` defaults to OAuth 1.0a unless
+  given `version: "2.0"`, and `next-auth/providers/twitter` exports that flow as `TwitterLegacy`.
+  denext's auth runs OAuth 2.0 and OIDC only, so `TwitterLegacy` is not exported and `Twitter()`
+  always runs OAuth 2.0 (`version: "2.0"` is accepted). An app on OAuth 1.0a registers an OAuth
+  2.0 client with X and uses its client id and secret.
+
+The `next-auth` parity check (`tests/react-parity.test.ts`) holds these modules to both
+`next-auth@beta` (v5) and `next-auth@4`.
+
+## Type checking (TypeScript 7)
+
+On a Deno toolchain that type-checks natively (see `denext toolchain status`), type errors come
+from TypeScript 7.0's compiler rather than `tsc` 6:
+
+- Union types print sorted (TypeScript 7's stable type ordering): `"dark" | "light"` where `tsc` 6
+  printed `"light" | "dark"`, so a "use one of" suggestion lists them in that order.
+- TypeScript 7.0.2 rejects a regular expression character-class range bounded by a literal
+  (unescaped) character above U+07FF with TS1516; write the escape (`\uD7FF`) instead.
+- The check writes a generated `tsconfig.json` and the dependency types it needs into the project's
+  `.deno/` (with its own `.gitignore`).
+- A graph the stock project model can't express yet (sloppy imports, `--ext`, `text` / `bytes`
+  imports, `@deno-types` / `X-TypeScript-Types` redirects, CommonJS modules, code blocks checked
+  with `--doc`, a Vitest or Jest config's aliases, a custom JSR registry) is checked by the
+  in-process TypeScript 6.0.3, as before. `DENEXT_NATIVE_CHECK=0` selects it for everything.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line
@@ -418,6 +527,10 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   may be cached (ISR, `force-static`, a static export) keeps `og:image` relative and omits
   hreflang / canonical, and a per-request page uses the request's origin and is sent `no-store`.
   Set `canonicalOrigin` or `metadataBase` for absolute URLs everywhere.
+- **next-intl's ICU messages are bounded.** next-intl (FormatJS) parses a message of any size
+  and nesting; denext's parser refuses one longer than 262,144 characters or nesting `plural` /
+  `select` / `selectordinal` more than 1,000 levels deep, with a `SyntaxError`, so a hostile
+  message string costs bounded CPU and memory. Real catalog messages are far inside both.
 - **HSTS is host-only by default** (no `includeSubDomains`/`preload`) so it
   can't brick non-HTTPS sibling subdomains. Strengthen via `hsts`, or
   `hsts: false`.

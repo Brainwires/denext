@@ -358,6 +358,20 @@
       "runFrom": "example"
     },
     {
+      "name": "lustre",
+      "title": "Lustre (Gleam) in a denext app",
+      "blurb": "One Lustre counter, written in Gleam (gleam/src/counter.gleam), used three ways on one page:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/lustre",
+      "tags": [
+        "plugin:gleam",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task dev     # or: deno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
       "name": "mobile",
       "title": "Mobile kitchen sink (Capacitor)",
       "blurb": "A denext SPA in a Capacitor 8 shell that exercises every denext/mobile capability on one scrollable page: haptics, clipboard, share, device info, network, keep-awake, the splash screen, the secure…",
@@ -626,6 +640,20 @@
       "hasReadme": true,
       "category": "routers",
       "run": "denext task install   # installs @tanstack/react-router into node_modules (once)\ndenext task dev       # http://localhost:3000\ndenext task build && denext task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "tanstack-start",
+      "title": "TanStack Start on denext",
+      "blurb": "A TanStack Start app — src/router.tsx exporting getRouter(), file routes under src/routes/, server functions, a server route, and a root route whose shellComponent renders the document — run by the…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/tanstack-start",
+      "tags": [
+        "compat",
+        "plugin:tanstackStart"
+      ],
+      "hasReadme": true,
+      "category": "routers",
+      "run": "denext task install   # installs the TanStack packages into node_modules (once)\ndenext task dev       # http://localhost:3000\ndenext task build && denext task start\ndenext export .       # a static site in out/ (Start's prerender)",
       "runFrom": "example"
     },
     {

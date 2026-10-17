@@ -179,3 +179,58 @@ Deno.test("in-process: a child's Set-Cookie rides the PARENT response (uncached 
   });
   assertEquals(cached.outgoingHeaders.getSetCookie(), []);
 });
+
+/** A plugin request handler (the `matchExternal` claim-hook) serving `/api/legacy` and `/api/legacy-post`. */
+function legacyPlugin(seen: string[]) {
+  return (req: Request): Promise<Response | null> => {
+    const url = new URL(req.url);
+    if (!url.pathname.startsWith("/api/legacy")) return Promise.resolve(null);
+    seen.push(`${req.method} ${url.pathname}`);
+    return Promise.resolve(
+      Response.json({ legacy: true, method: req.method, cookie: req.headers.get("cookie") }),
+    );
+  };
+}
+
+type Legacy = {
+  "/api/legacy": { GET: { response: { legacy: boolean; method: string; cookie: string | null } } };
+  "/api/legacy-post": {
+    POST: { body: { n: number }; response: { legacy: boolean; method: string } };
+  };
+  "/api/missing": { GET: { response: unknown } };
+};
+
+Deno.test("in-process: a route a plugin serves (matchExternal) answers the sub-request, not a 404", async () => {
+  const seen: string[] = [];
+  batchApp({ matchExternal: legacyPlugin(seen) });
+  await asRequest("session=abc", async () => {
+    const api = createApiClient<Legacy>({ fetch: noNetwork });
+    assertEquals(await api("/api/legacy", "GET"), {
+      legacy: true,
+      method: "GET",
+      cookie: "session=abc",
+    });
+    const posted = await api("/api/legacy-post", "POST", { body: { n: 1 } });
+    assertEquals([posted.legacy, posted.method], [true, "POST"]);
+    // Nothing claims it: still the bare JSON 404, never a page render.
+    const err = await api("/api/missing", "GET").catch((e) => e);
+    assert(isApiClientError(err));
+    assertEquals(err.status, 404);
+  });
+  assertEquals(seen, ["GET /api/legacy", "POST /api/legacy-post"]);
+});
+
+Deno.test("in-process: an App Router API route still wins over a plugin claiming the same path", async () => {
+  const seen: string[] = [];
+  batchApp({
+    matchExternal: (req: Request) => {
+      seen.push(new URL(req.url).pathname);
+      return Promise.resolve(Response.json({ plugin: true }));
+    },
+  });
+  await asRequest("", async () => {
+    const api = createApiClient<S>({ fetch: noNetwork });
+    assertEquals((await api("/api/echo", "GET")).q, "");
+  });
+  assertEquals(seen, [], "the plugin is asked only when no App Router route matched");
+});

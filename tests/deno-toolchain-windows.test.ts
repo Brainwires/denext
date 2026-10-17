@@ -129,8 +129,15 @@ Deno.test("windows targets: x86_64 and aarch64 names; the checked-in pin's Windo
     assert(a.file.endsWith("-x86_64-pc-windows-msvc.zip"), a.file);
     assertEquals(a.format ?? "zip", "zip");
     if (a.esbuild) assertEquals(a.esbuild.version, ESBUILD_VERSION);
+    // Windows on Arm is pinned too (2.9.7-denext.21 on), with its own esbuild.exe.
+    const arm = DENO_TOOLCHAIN.targets["windows-aarch64"];
+    assert(arm, "the pin carries a windows-aarch64 build");
+    assert(arm.file.endsWith("-aarch64-pc-windows-msvc.zip"), arm.file);
+    if (arm.esbuild) assertEquals(arm.esbuild.version, ESBUILD_VERSION);
+    assert(DENO_TOOLCHAIN.denort?.["windows-aarch64"], "the pin carries a windows-aarch64 denort");
   }
-  // windows-aarch64 has no build: a clear refusal before any download, and a stock fallback.
+  // A pin without a windows-aarch64 build (before 2.9.7-denext.21): a clear refusal before any
+  // download, and a stock fallback.
   const s = await winServer(await releaseZip());
   try {
     const err = await assertRejects(
@@ -150,6 +157,21 @@ Deno.test("windows targets: x86_64 and aarch64 names; the checked-in pin's Windo
     assert(choice.kind === "stock" && choice.warning);
     assertStringIncludes(choice.warning, "has no build for windows-aarch64");
     assertEquals(s.requests(), 0);
+  } finally {
+    await s.dispose();
+  }
+});
+
+Deno.test("windows install: a windows-aarch64 build installs under its own key", async () => {
+  const s = await winServer(await releaseZip());
+  try {
+    const arm = "windows-aarch64";
+    const pin = { ...s.pin, targets: { [arm]: s.pin.targets[WIN] } };
+    const rt = await ensureWin(s, { pin, target: arm });
+    assertEquals(rt.target, arm);
+    assertEquals(rt.deno, join(s.cache, PINNED, arm, "deno.exe"));
+    assertEquals(await Deno.readTextFile(rt.deno), DENO_EXE);
+    assertEquals(s.requests(), 1);
   } finally {
     await s.dispose();
   }

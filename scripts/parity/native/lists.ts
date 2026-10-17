@@ -3,7 +3,7 @@
 // runtime export names.
 //
 //   EXPECTED (frozen in baselines/lists.baseline.json by `parity:native:refresh -- lists`):
-//     • react-native FlatList / SectionList / VirtualizedList: the props React Native 0.86.3's
+//     • react-native FlatList / SectionList / VirtualizedList: the props React Native 0.88.0's
 //       `.d.ts` declares for each list (its own and `@react-native/virtualized-lists`', plus the
 //       ScrollView props in SCROLL_PROPS), and the public instance methods of the pinned
 //       react-native-web 0.21.2's classes (what apps call on the ref today);
@@ -34,7 +34,7 @@ const gapsPath = (root: string) => `${root}/${DIR}/lists.known-gaps.json`;
 
 /** The pinned versions (React Native: T3's; the packages: the manifest's). */
 const PINS: Record<string, string> = {
-  "react-native": "0.86.3",
+  "react-native": "0.88.0",
   "react-native-web": "0.21.2",
   "@shopify/flash-list": LIST_PACKAGES["@shopify/flash-list"].pinned,
   "@legendapp/list": LIST_PACKAGES["@legendapp/list"].pinned,
@@ -376,13 +376,19 @@ async function rnwMethods(): Promise<Record<string, string[]>> {
   return out;
 }
 
+/** A top-level statement as the TypeScript 7 API returns it. */
+interface StatementNode {
+  readonly kind: number;
+  readonly name?: { readonly text?: string };
+}
+
 /** Whether `node` declares an interface, a type alias or a class. */
 function isTypeDeclaration(
-  ts: typeof import("npm:typescript@^5"),
-  node: import("npm:typescript@^5").Node,
+  kinds: { Interface: number; TypeAlias: number; Class: number },
+  node: StatementNode,
 ): boolean {
-  return ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) ||
-    ts.isClassDeclaration(node);
+  return node.kind === kinds.Interface || node.kind === kinds.TypeAlias ||
+    node.kind === kinds.Class;
 }
 
 /**
@@ -417,8 +423,17 @@ function reactNativeListTypes(nm: string): { flat: string; section: string; virt
 /** The TypeScript-side capture, run over the installed packages in `dir`. */
 // fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
 async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
+  // TypeScript 7's native compiler, through its IPC API (the async client: the sync one needs raw
+  // pipe descriptors Deno's `node:child_process` doesn't expose).
   // deno-lint-ignore no-import-prefix
-  const ts = (await import("npm:typescript@^5")).default;
+  const ts = await import("npm:typescript@~7.0.2/unstable/async");
+  // deno-lint-ignore no-import-prefix
+  const { SyntaxKind } = await import("npm:typescript@~7.0.2/unstable/ast");
+  const kinds = {
+    Interface: SyntaxKind.InterfaceDeclaration,
+    TypeAlias: SyntaxKind.TypeAliasDeclaration,
+    Class: SyntaxKind.ClassDeclaration,
+  };
   const nm = `${dir}/node_modules`;
   const files = {
     ...reactNativeListTypes(nm),
@@ -428,59 +443,88 @@ async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
     legend: `${nm}/@legendapp/list/react-native.d.ts`,
     legendDom: `${nm}/@legendapp/list/react.d.ts`,
   };
-  const program = ts.createProgram(Object.values(files), {
-    strict: true,
-    skipLibCheck: true,
-    moduleResolution: ts.ModuleResolutionKind.Node10,
-  });
-  const checker = program.getTypeChecker();
-  /** The type a named declaration in `file` declares. */
-  const typeOf = (file: string, name: string) => {
-    const node = program.getSourceFile(file)!.statements.find((n) =>
-      (n as { name?: { text?: string } }).name?.text === name && isTypeDeclaration(ts, n)
-    );
-    if (!node) throw new Error(`${name} not found in ${file}`);
-    return checker.getTypeAtLocation(node);
-  };
-  /** Props declared by the package itself (`own`), plus SCROLL_PROPS it inherits. */
-  const props = (file: string, name: string, own: RegExp) =>
-    checker.getPropertiesOfType(typeOf(file, name)).filter((p) =>
-      SCROLL_PROPS.includes(p.name) ||
-      (p.declarations ?? []).some((d) => own.test(d.getSourceFile().fileName))
-    ).map((p) => p.name).sort();
-  const members = (file: string, name: string) =>
-    checker.getPropertiesOfType(typeOf(file, name)).map((p) => p.name).sort();
-  const valueExports = (file: string) => {
-    const sym = checker.getSymbolAtLocation(program.getSourceFile(file)!)!;
-    return checker.getExportsOfModule(sym).filter((s) => {
-      const t = s.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(s) : s;
-      return (t.flags & ts.SymbolFlags.Value) !== 0;
-    }).map((s) => s.name).sort();
-  };
-  const rnLists = /[\\/](Libraries[\\/]Lists|virtualized-lists)[\\/]/;
-  return {
-    "react-native#FlatList": { props: props(files.flat, "FlatListProps", rnLists) },
-    "react-native#SectionList": { props: props(files.section, "SectionListProps", rnLists) },
-    "react-native#VirtualizedList": {
-      props: props(files.virtualized, "VirtualizedListProps", rnLists),
-    },
-    "@shopify/flash-list#FlashList": {
-      props: props(files.flashProps, "FlashListProps", /flash-list/),
-      methods: members(files.flashRef, "FlashListRef").filter((n) => n !== "props"),
-    },
-    "@shopify/flash-list": { exports: valueExports(files.flash) },
-    "@legendapp/list#LegendList": {
-      props: props(files.legend, "LegendListProps", /@legendapp/),
-      methods: members(files.legend, "LegendListRef"),
-    },
-    "@legendapp/list": { exports: valueExports(files.legend) },
-    // The DOM build's `className` comes from React's `HTMLAttributes` (not its own file).
-    "@legendapp/list/react#LegendList": {
-      props: [...props(files.legendDom, "LegendListProps", /@legendapp/), "className"].sort(),
-      methods: members(files.legendDom, "LegendListRef"),
-    },
-    "@legendapp/list/react": { exports: valueExports(files.legendDom) },
-  };
+  const config = `${dir}/__lists_tsconfig__.json`;
+  await Deno.writeTextFile(
+    config,
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        skipLibCheck: true,
+        noEmit: true,
+        module: "esnext",
+        moduleResolution: "bundler",
+        types: [],
+      },
+      files: Object.values(files),
+    }),
+  );
+  const api = new ts.API({ cwd: dir });
+  try {
+    const project = (await api.updateSnapshot({ openProjects: [config] })).getProject(config);
+    if (!project) throw new Error(`typescript did not open ${config}`);
+    const { program, checker } = project;
+    const sourceFile = async (file: string) => {
+      const sf = await program.getSourceFile(file);
+      if (!sf) throw new Error(`${file} is not in the program`);
+      return sf;
+    };
+    /** The type a named declaration in `file` declares. */
+    const typeOf = async (file: string, name: string) => {
+      const statements = (await sourceFile(file)).statements as unknown as readonly StatementNode[];
+      const node = statements.find((n) => n.name?.text === name && isTypeDeclaration(kinds, n));
+      if (!node) throw new Error(`${name} not found in ${file}`);
+      const type = await checker.getTypeAtLocation(node as never);
+      if (!type) throw new Error(`no type for ${name} in ${file}`);
+      return type;
+    };
+    /** Props declared by the package itself (`own`), plus SCROLL_PROPS it inherits. */
+    const props = async (file: string, name: string, own: RegExp) =>
+      (await checker.getPropertiesOfType(await typeOf(file, name))).filter((p) =>
+        SCROLL_PROPS.includes(p.name) || p.declarations.some((d) => own.test(d.path))
+      ).map((p) => p.name).sort();
+    const members = async (file: string, name: string) =>
+      (await checker.getPropertiesOfType(await typeOf(file, name))).map((p) => p.name).sort();
+    const valueExports = async (file: string) => {
+      const sym = await checker.getSymbolAtLocation(await sourceFile(file) as never);
+      if (!sym) throw new Error(`no module symbol for ${file}`);
+      const values: string[] = [];
+      for (const s of await checker.getExportsOfModule(sym)) {
+        const t = s.flags & ts.SymbolFlags.Alias ? await checker.getAliasedSymbol(s) : s;
+        if ((t.flags & ts.SymbolFlags.Value) !== 0) values.push(s.name);
+      }
+      return values.sort();
+    };
+    const rnLists = /[\\/](Libraries[\\/]Lists|virtualized-lists)[\\/]/;
+    return {
+      "react-native#FlatList": { props: await props(files.flat, "FlatListProps", rnLists) },
+      "react-native#SectionList": {
+        props: await props(files.section, "SectionListProps", rnLists),
+      },
+      "react-native#VirtualizedList": {
+        props: await props(files.virtualized, "VirtualizedListProps", rnLists),
+      },
+      "@shopify/flash-list#FlashList": {
+        props: await props(files.flashProps, "FlashListProps", /flash-list/),
+        methods: (await members(files.flashRef, "FlashListRef")).filter((n) => n !== "props"),
+      },
+      "@shopify/flash-list": { exports: await valueExports(files.flash) },
+      "@legendapp/list#LegendList": {
+        props: await props(files.legend, "LegendListProps", /@legendapp/),
+        methods: await members(files.legend, "LegendListRef"),
+      },
+      "@legendapp/list": { exports: await valueExports(files.legend) },
+      // The DOM build's `className` comes from React's `HTMLAttributes` (not its own file).
+      "@legendapp/list/react#LegendList": {
+        props: [...(await props(files.legendDom, "LegendListProps", /@legendapp/)), "className"]
+          .sort(),
+        methods: await members(files.legendDom, "LegendListRef"),
+      },
+      "@legendapp/list/react": { exports: await valueExports(files.legendDom) },
+    };
+  } finally {
+    await api.close();
+    await Deno.remove(config).catch(() => {});
+  }
 }
 
 /**

@@ -198,8 +198,36 @@ openapi({ ui: "scalar", cdn: "/vendor/scalar.js" });   // self-hosted bundle`}
         {`denext openapi emit --out openapi.json   # regenerate the committed spec
 denext openapi diff openapi.json         # exit 1 when an operation or schema changed
 denext openapi lint --strict             # exit 1 when anything is undescribed
-denext openapi types --out api-types.ts  # TypeScript types for a consumer outside the app`}
+denext openapi types --out api-types.ts  # TypeScript types for a consumer outside the app
+denext openapi client --lang python --out client.py   # a typed client in another language`}
       </Code>
+
+      <h2>Clients in other languages</h2>
+      <p>
+        <code>denext openapi client --lang python | go | swift | kotlin</code>{" "}
+        writes one file from the document, with no dependency beyond the language&apos;s standard
+        library: every schema as a type (Python <code>TypedDict</code>s and <code>Literal</code>
+        {" "}
+        enums, Go structs with <code>json</code> tags, Swift <code>Codable</code>{" "}
+        structs and enums, Kotlin data classes and enum classes), and one method per operation —
+        path parameters as arguments, the query as optional keyword / struct / default arguments,
+        the body typed, the response decoded. A non-2xx answer raises the language&apos;s error type
+        carrying the status and the <code>ApiError</code> envelope&apos;s <code>code</code>,{" "}
+        <code>message</code> and <code>data</code>.
+      </p>
+      <Code lang="sh">
+        {`denext openapi client --lang python --out client.py      # urllib + json, Python 3.11+
+denext openapi client --lang go --out client.go --package todos   # net/http + encoding/json
+denext openapi client --lang swift --out Client.swift     # URLSession, async/await
+denext openapi client --lang kotlin --out Client.kt --package com.example.todos   # java.net.http, JVM 11+`}
+      </Code>
+      <p>
+        Go methods take a <code>context.Context</code>; Swift methods are <code>async throws</code>
+        ; Kotlin methods block (call them from <code>Dispatchers.IO</code> in coroutine code).{" "}
+        <code>emitClient(document, lang)</code> from <code>@denext/openapi/clients</code>{" "}
+        does the same from a script. Values the wire codec tags (a Date, a Map, a BigInt) arrive in
+        their tagged JSON form in these clients.
+      </p>
 
       <h2>Consume the API from another project</h2>
       <p>

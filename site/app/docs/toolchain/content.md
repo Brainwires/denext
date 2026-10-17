@@ -72,6 +72,16 @@ is not the pinned build (stock Deno that inherited the marker inside `denext tas
 `-denext.N` that a `toolchain link` from before a denext upgrade still points at) switches to the
 pinned one.
 
+The switch also passes the toolchain's runtime flag, `--unstable-no-legacy-abort`: `request.signal`
+aborts only when a response is not delivered, and Deno prints no legacy-abort notice on the first
+request. A server verb (`dev`, `start`, `profile`) started on the toolchain directly (the `deno`
+that `toolchain link` puts on PATH, or a `deno task` step running it) checks whether it has that
+flag, with one loopback request, and re-runs once on the same binary with it when it does not.
+Without `--allow-run` it keeps serving in-process, so the `deno.json` that `denext create` and
+`denext migrate` write carries `"unstable": ["no-legacy-abort"]`, which turns the flag on for every
+`deno` that reads the config (a least-privilege `start` task included). Add it to an older
+project's `deno.json` (the Setup page of `denext ui` offers to), beside any features already listed.
+
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
 denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb,
@@ -88,7 +98,8 @@ The binary is cached beside Deno's own cache:
 
 `DENO_DIR` defaults to `~/Library/Caches/deno` on macOS, `~/.cache/deno` on Linux and
 `%LOCALAPPDATA%\deno` on Windows. The pinned platforms are `darwin-aarch64`, `darwin-x86_64`,
-`linux-x86_64`, `linux-aarch64` and `windows-x86_64`.
+`linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-aarch64` (Windows on Arm, from
+`2.9.7-denext.21`).
 
 - The download goes to a temporary file in that same directory. Its SHA-256 is checked against
   the pin before it is extracted, made executable or renamed. A mismatch deletes the file
@@ -149,6 +160,19 @@ builds use the npm one and print one warning saying why. `denext toolchain statu
 esbuild the next build runs and where it comes from. An idle esbuild process never keeps a command
 alive.
 
+## Gleam
+
+[Gleam](/docs/gleam) is pinned and fetched the same way: one Gleam release per denext release, a
+SHA-256 per platform (macOS and Windows on arm64 and x64, Linux on arm64 and x64 as Gleam's static
+musl builds), downloaded on first need — `denext add gleam:`, or the `gleam()` plugin at dev and
+build — into `<DENO_DIR>/denext-deno/gleam/<version>/<platform>/`, verified before it is extracted
+and installed atomically under the same cache lock. Gleam's JavaScript target needs no Erlang.
+
+`denext toolchain install --with gleam` fetches it ahead of time, and `denext toolchain status`
+lists its version and whether it is cached. Offline (or with `--deny-net`) before the first download,
+a command that needs it stops with an error naming that command. `DENEXT_GLEAM=<path>` runs another
+`gleam` instead, unverified; a `gleam` on `PATH` is never used unless you name it there.
+
 ## `denext task`, `deno task` and tests
 
 `denext task <name>` is Deno's `deno task`, run on the toolchain with every argument verbatim. Inside
@@ -181,7 +205,9 @@ project (the config, `__mocks__`, automock) and of the environment variables Vit
 grant, so a `deno test` without `-A` lists only what its tests use (`denext deno test
 --allow-read=tests/fixtures …`). `denext test` runs `deno test -A` and needs nothing more.
 
-Coverage of a suite with Vitest files (from `2.9.7-denext.17`): run every pass on the toolchain
+Coverage of a suite with Vitest files (from `2.9.7-denext.17`): `denext test --coverage[=<dir>]`
+runs the `Deno.test` files and then the `*.vitest.ts` files into one directory and makes one report
+from both (the summary, `<dir>/lcov.info`, `<dir>/html/`). By hand, run every pass on the toolchain
 into one directory, each with `--coverage-raw-data-only` so no pass empties what another wrote,
 then report that directory with the toolchain's `deno coverage`:
 
@@ -230,7 +256,8 @@ Finding a project's verbs means importing its `denext.config.ts` (and running ev
 
 ```sh
 denext toolchain install       # download + verify now (fails when it can't)
-denext toolchain status        # pinned version, cache state, whether this run is on it, which esbuild builds use (--json, --verify)
+denext toolchain install --with gleam   # …and the pinned Gleam compiler
+denext toolchain status        # pinned versions (Deno, Gleam), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
@@ -255,10 +282,11 @@ review what Deno's main branch has gained and take the fixes that matter: `2.9.7
 read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
 skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update, and
 `2.9.7-denext.19` took deno_core's fix for an intermittent crash at exit. From `2.9.7-denext.20`
-(the build denext pins today) each release also ships its own `denort` per platform (the
-standalone runtime `deno compile` builds onto), pinned and verified beside the CLI, so a binary
-from `denext build --compile` (or the toolchain's own `deno compile`) carries the same patches,
-`Deno.SQL` included. Each new Deno
+each release also ships its own `denort` per platform (the standalone runtime `deno compile`
+builds onto), pinned and verified beside the CLI, so a binary from `denext build --compile` (or
+the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` included.
+`2.9.7-denext.21` (the build denext pins today) adds Windows on Arm (`aarch64-pc-windows-msvc`)
+builds of the CLI and `denort`, and a compiled program keeps `--unstable-no-legacy-abort`. Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 

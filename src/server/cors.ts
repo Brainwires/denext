@@ -236,6 +236,12 @@ function cacheRoutePolicy(own: CorsConfig): CorsPolicy | null {
 }
 
 /**
+ * Set on an API batch item when the batch came from another origin and passed on the app's
+ * `cors` alone: the item's route runs it only when its own policy allows that origin too.
+ */
+export const BATCH_CORS_HEADER = "x-denext-batch-cors";
+
+/**
  * Whether `origin` (the raw `Origin` header) is allowed by `policy`. Exact string membership:
  * no case folding, no trimming, no prefix/suffix logic.
  *

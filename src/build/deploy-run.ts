@@ -123,6 +123,14 @@ async function writeProjectFile(
  */
 export function createDeployContext(options: DeployContextOptions): DeployContext {
   const { paths, adapter } = options;
+  // The name is a directory under the build's deploy/, emptied before each prepare.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(adapter.name) || adapter.name.includes("..")) {
+    throw new Error(
+      `denext: a deploy adapter's name must be letters, digits and ._- (got ${
+        JSON.stringify(adapter.name)
+      })`,
+    );
+  }
   const dryRun = options.dryRun === true;
   const out = options.log ?? ((line: string) => console.log(line));
   const log = (m: string) => out(`  ${m}`);

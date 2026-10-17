@@ -576,6 +576,11 @@ export interface NpmBoundaryFound {
   readonly client: readonly string[];
   /** `"use server"` files. */
   readonly server: readonly string[];
+  /**
+   * The packages (by name) on the import paths to those files — what the server bundle must
+   * resolve as the walk did for its island to be the walk's file (`nodeResolve: false`).
+   */
+  readonly packages?: readonly string[];
 }
 
 /** Finds, per local module, the npm boundary modules it reaches (`npmBoundaryByImporter`). */
@@ -585,6 +590,18 @@ export type NpmBoundaryFinder = (
 
 /** The npm boundary modules per local file, from {@link npmBoundaryFor} (reset with the graph). */
 const npmBoundaryCache = new Map<string, NpmBoundaryFound>();
+
+/**
+ * Every package (by name) on an import path from a local module to an npm island or action
+ * module, over every walk this process has made since the graph cache was last reset. The
+ * next-compat server bundle resolves these from `node_modules` even with `nodeResolve: false`,
+ * as the walk did, so an npm island is the very module the page imports.
+ */
+export function npmBoundaryPackageNames(): string[] {
+  const names = new Set<string>();
+  for (const found of npmBoundaryCache.values()) found.packages?.forEach((n) => names.add(n));
+  return [...names].sort();
+}
 
 /**
  * The npm islands and action modules `locals` reach, answered from {@link npmBoundaryCache}; the

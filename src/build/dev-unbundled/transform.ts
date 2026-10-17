@@ -2,13 +2,14 @@
 // imports rewritten to dev URLs) and the transform of a GENERATED entry module.
 
 import * as esbuild from "../esbuild/mod.ts";
-import { dirname, fromFileUrl, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, relative, toFileUrl } from "@std/path";
 import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { foldBuildConstants } from "../feature-transform.ts";
 import { transformSpaIslands } from "../spa-islands.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
 import { generateServerStub } from "../client-imports.ts";
+import { findInlineServerActions, inlineServerActionError } from "../inline-server-action.ts";
 import { scanDirective } from "../directives.ts";
 import { serverModuleIdFor } from "../boundary-ids.ts";
 import { staticExportNames } from "../module-graph.ts";
@@ -45,6 +46,9 @@ function singleModuleBuild(
     platform: "browser",
     jsx: "automatic",
     jsxImportSource: "denext",
+    // `jsxDEV` with each element's source: the owner stack (`captureOwnerStack()`, the
+    // DevTools panel) follows the JSX owner and names the line the JSX was written on.
+    jsxDev: true,
     sourcemap: "inline",
     logLevel: "silent",
     plugins,
@@ -114,7 +118,8 @@ async function refreshFooterFor(
  * The module's source as it is served: as written, or — in React Native mode — with the
  * worklets transform and the `require` hoist applied ({@linkcode prepareReactNativeSource}).
  * A `"use server"` module is served as its action stub instead ({@linkcode actionStub}): its
- * source never reaches the browser. Null when it cannot be read (esbuild then reports the
+ * source never reaches the browser; neither does a module holding an inline `"use server"`
+ * function (served as the build error instead). Null when it cannot be read (esbuild then reports the
  * missing file).
  */
 async function servedSource(
@@ -129,6 +134,13 @@ async function servedSource(
   }
   if (scanDirective(source) === "server") {
     return { source: await actionStub(st, abs), action: true };
+  }
+  // An inline `"use server"` function must not reach the browser (Next's build error): the
+  // module is served as that error instead of its source.
+  const inline = await findInlineServerActions(source);
+  if (inline.length > 0) {
+    const message = inlineServerActionError(new Map([[relative(st.opts.appDir, abs), inline]]));
+    return { source: `throw new Error(${JSON.stringify(message)});\n`, action: false };
   }
   return {
     source: st.opts.reactNative ? await prepareReactNativeSource(abs, source) : source,

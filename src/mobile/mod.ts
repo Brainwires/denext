@@ -59,8 +59,9 @@
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
  * - Files and media: {@linkcode readFile} / {@linkcode writeFile} / {@linkcode deleteFile} /
  *   {@linkcode listDir} / {@linkcode downloadToFile} (app storage natively, OPFS on the web),
- *   {@linkcode pickImage} (camera or photo library) and {@linkcode pickDocument} (the system
- *   document picker; both a hidden file input on the web), and {@linkcode scanBarcode}
+ *   {@linkcode pickImage} (camera or photo library), {@linkcode pickMedia} (several photos and
+ *   videos from the library, or a recorded video) and {@linkcode pickDocument} (the system
+ *   document picker; each a hidden file input on the web), and {@linkcode scanBarcode}
  *   (`BarcodeDetector` over the camera on the web).
  * - {@linkcode setQuickActions} / {@linkcode onQuickAction} / {@linkcode useQuickAction}:
  *   home-screen quick actions (long-press on the app icon), cold-start action included.
@@ -115,6 +116,10 @@
  *   {@linkcode defineBackgroundTask} (`mobile add background`), and
  *   {@linkcode onRestoredResult} / {@linkcode restoreRouteOnRelaunch} for Android process death
  *   (`mobile add restore`).
+ * - {@linkcode setNowPlaying} / {@linkcode clearNowPlaying} / {@linkcode onMediaControl} /
+ *   {@linkcode useMediaControl} / {@linkcode setAudioSession}: background audio with the
+ *   lock-screen / notification controls (`denext mobile add background-audio`; the Media Session
+ *   API on the web).
  * - {@linkcode showContextMenu} / {@linkcode useContextMenu} / {@linkcode attachContextMenu}:
  *   native menus (`UIContextMenuInteraction` with the lifted preview and `UIMenu` on iOS,
  *   `PopupMenu` on Android; `denext mobile add context-menu`), an in-page popover elsewhere.
@@ -301,8 +306,12 @@ export {
   type PickDocumentOptions,
   type PickedDocument,
   type PickedImage,
+  type PickedMedia,
   pickImage,
   type PickImageOptions,
+  pickMedia,
+  type PickMediaOptions,
+  type PickMediaTypes,
 } from "./pickers.ts";
 export {
   type PickedFolder,
@@ -519,6 +528,18 @@ export {
   type SentrySiblingSdk,
 } from "./crash-reporting.ts";
 export { installOfflineScreen, type OfflineScreenOptions } from "./offline-screen.ts";
+export {
+  type AudioInterruption,
+  type AudioSessionOptions,
+  clearNowPlaying,
+  type MediaControlAction,
+  type MediaControlEvent,
+  type NowPlayingInfo,
+  onMediaControl,
+  setAudioSession,
+  setNowPlaying,
+  useMediaControl,
+} from "./now-playing.ts";
 export {
   applyFontScale,
   type ApplyFontScaleOptions,

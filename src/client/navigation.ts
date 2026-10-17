@@ -10,8 +10,7 @@ import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { fillPattern, parsePattern, type RouteParams } from "../router/segments.ts";
 import type { StandardSchemaV1 } from "../runtime/define-action.ts";
-import { hydrateDocument, hydrateRoot, type Root } from "./reconciler.ts";
-import { getViewTransitionSupport, takeTransitionTypes } from "./fiber/view-transition-support.ts";
+import { hydrateDocument, hydrateRoot } from "./reconciler.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import {
   type Context,
@@ -22,13 +21,18 @@ import {
   useState,
 } from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
-// ROOT_ID comes from its own leaf module — importing it from document.ts would drag
-// document.ts's server-only deps (which import node:async_hooks) into the client bundle
-// and break it under the strict CSP. The remaining document.ts imports are type-only
-// (erased at build), so they don't pull the module at runtime.
-import { ROOT_ID } from "../server/root-id.ts";
-import type { HydrationData, IsoNavPayload } from "../server/document.ts";
-import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
+// The document.ts imports are type-only (erased at build): its server-only deps (which import
+// node:async_hooks) never reach the client bundle.
+import type { HydrationData } from "../server/document.ts";
+import {
+  globalWin,
+  type NavigateOptions,
+  nextNavStamp,
+  retainedRoot,
+  retainRoot,
+} from "./nav-state.ts";
+
+export type { NavigateOptions };
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
 import { setActionRefreshHandler } from "../runtime/server-action.ts";
 import {
@@ -249,12 +253,16 @@ function prefetchKey(href: string): string {
  */
 let flightNav: FlightNavigator | null = null;
 
-/** The Flight soft-nav handler: the payload, or (`res`) the response streaming it. */
+/**
+ * The Flight soft-nav handler: the payload, or (`res`) the response streaming it, committed
+ * through the loaded soft-nav commit module (`nav`).
+ */
 type FlightNavigator = (
   body: string,
   url: URL,
   href: string,
   options: NavigateOptions,
+  nav: DocumentNav,
   res?: Response,
 ) => Promise<void>;
 
@@ -295,7 +303,10 @@ function pumpPrefetches(): void {
     const { href, key } = prefetchQueue.shift()!;
     prefetchInflight++;
     fetchRoute(href)
-      .then(({ body, flight, iso }) => prefetchStore(key, body, flight, iso))
+      .then(({ body, flight, iso }) => {
+        prefetchStore(key, body, flight, iso);
+        void loadDocumentNav(); // warm the soft-nav commit for the click
+      })
       .catch(() => prefetchCache.delete(key))
       .finally(() => {
         prefetchInflight--;
@@ -306,16 +317,17 @@ function pumpPrefetches(): void {
 
 // ---- Soft navigation -------------------------------------------------------
 
-let navCounter = 0;
+/**
+ * The soft-navigation commit (nav-document.ts: the view-transition wrapper, history, scroll and
+ * the isomorphic / full-HTML paths), loaded on first need — a prefetch warms it, a navigation
+ * starts it alongside the route fetch — so a page that never navigates never fetches it.
+ */
+type DocumentNav = typeof import("./nav-document.ts");
+let documentNav: Promise<DocumentNav | null> | undefined;
 
-/** Options controlling a soft (client-side) navigation. */
-export interface NavigateOptions {
-  /** Replace the current history entry instead of pushing a new one. */
-  replace?: boolean;
-  /** Scroll to the top after navigating (defaults to true). */
-  scroll?: boolean;
-  /** Internal: set when responding to popstate (don't push history). */
-  history?: boolean;
+/** Load (once) the soft-navigation commit module, nav-document.ts; null when its chunk failed. */
+function loadDocumentNav(): Promise<DocumentNav | null> {
+  return documentNav ??= import("./nav-document.ts").catch(() => (documentNav = undefined, null));
 }
 
 // ---- Global soft-navigation pending signal ---------------------------------
@@ -410,75 +422,6 @@ export async function navigate(
   }
 }
 
-/** Surface a soft navigation's failed DOM swap (one copy of the message for both paths below). */
-function reportNavFailure(err: unknown): void {
-  console.error("denext: soft navigation failed", err);
-}
-
-/** The same-origin soft-navigation body. */
-/**
- * Run a soft-nav DOM commit inside a View Transition when the browser supports it
- * (Chromium today), so the route swap cross-fades; where unsupported it runs exactly as
- * before. Feature-detected — no effect and no cost where the API is absent, and the browser
- * honors `prefers-reduced-motion` itself.
- *
- * When the app uses `<ViewTransition>`, the marking runtime (import-gated, via the seam)
- * stamps `view-transition-name` on the wrapper's host child on BOTH sides of the swap — the
- * OUTGOING tree before `startViewTransition` (so the browser's old-state capture sees it) and
- * the INCOMING tree inside the callback after the commit — so a shared `name` morphs between
- * routes, then clears when the transition finishes. Buffered `addTransitionType` types drive
- * `startViewTransition({ types })`. The `commit` may be async (the isomorphic/HTML paths await
- * a re-injected entry before the DOM settles); all its DOM work happens inside the callback,
- * so the transition captures the real before/after. Exported for testing.
- */
-export function withViewTransition(commit: () => void): void {
-  const doc = document as Document & {
-    startViewTransition?: (
-      cb: (() => void | Promise<void>) | { update: () => void | Promise<void>; types?: string[] },
-    ) =>
-      | { ready?: Promise<void>; finished?: Promise<void>; updateCallbackDone?: Promise<void> }
-      | undefined;
-  };
-  if (typeof doc.startViewTransition !== "function") {
-    // `commit` is often an async callback (typed `() => void` via void-bivalence); without a
-    // transition to carry its rejection, surface a DOM-swap failure instead of letting it become
-    // an unhandled promise rejection (a nav that "hangs").
-    Promise.resolve((commit as () => unknown)()).catch(reportNavFailure);
-    return;
-  }
-  const vt = getViewTransitionSupport();
-  const types = takeTransitionTypes();
-  // Stamp the outgoing hosts BEFORE startViewTransition so the old-state capture includes their
-  // names (the capture happens after this synchronous task, before the callback runs). `begin`
-  // scopes this transition's stamped elements + types, so overlapping navigations don't clash.
-  const tx = vt ? vt.begin(types) : null;
-  const update = async () => {
-    await commit();
-    tx?.markIncoming(); // new hosts, before the browser's new-state capture
-  };
-  // A skipped/aborted transition (another started, tab hidden) is not an error: `ready`
-  // rejects with InvalidStateError and `finished` may too. The `{ update, types }` object
-  // form is only understood where transition types exist; fall back to the callback form.
-  let transition:
-    | { ready?: Promise<void>; finished?: Promise<void>; updateCallbackDone?: Promise<void> }
-    | undefined;
-  try {
-    transition = types.length > 0
-      ? doc.startViewTransition({ update, types })
-      : doc.startViewTransition(update);
-  } catch {
-    transition = doc.startViewTransition(update);
-  }
-  // A skipped/aborted transition is not an error; the `<ViewTransition>` callbacks run either way.
-  const ready = () => tx?.ready();
-  transition?.ready?.then(ready, ready);
-  // `updateCallbackDone` rejects ONLY when `commit` itself threw (distinct from an abort, which
-  // rejects `ready`/`finished`) — surface that real DOM-swap failure instead of swallowing it.
-  transition?.updateCallbackDone?.catch(reportNavFailure);
-  const done = () => tx?.clear();
-  (transition?.finished ?? Promise.resolve()).then(done, done);
-}
-
 /** The prefetched render for `url`, else a fresh fetch; null when the fetch failed. */
 async function loadRoute(
   url: URL,
@@ -492,112 +435,26 @@ async function loadRoute(
   }
 }
 
-/**
- * Apply a full-HTML soft nav: swap the hydration data + Flight island, sync the title,
- * update history, and re-run the route's client bundle to hydrate the swapped markup.
- * Reconcile-in-place: when a retained root exists the re-run route bundle calls
- * startClient → root.render(newTree), which diffs the old tree into the new one and
- * patches the DOM — preserving state in unaffected subtrees. Only when there is no retained
- * root (defensive) is the markup blown away and re-mounted.
- */
-function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOptions): void {
-  const parsed = new DOMParser().parseFromString(body, "text/html");
-  const newRoot = parsed.getElementById(ROOT_ID);
-  const container = document.getElementById(ROOT_ID);
-  if (!newRoot || !container) {
-    location.href = href;
-    return;
-  }
-  updateHistory(url, options); // so the bundle sees the correct URL (non-visual — outside the transition)
-  const entrySrc = parsedEntrySrc(parsed);
-  // Everything that changes the visible DOM runs inside the view transition, and we await the
-  // re-injected entry so the reconcile lands before the browser's new-state capture.
-  withViewTransition(async () => {
-    syncTitle(parsed);
-    syncScript(parsed, "__denext_data");
-    // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
-    // payload (and a nav to an isomorphic route clears a stale one).
-    // The re-run entry also reads the incoming page's lazy islands + signal state, not ours.
-    for (const id of ["__denext_flight", "__denext_islands", "__denext_state"]) {
-      syncScript(parsed, id);
-    }
-    // A retained root only reconciles in place when the incoming page re-runs a client
-    // entry (→ `startClient` → `root.render`). A STATIC target ships no entry, and a
-    // root-less islands target (its Flight island is `null`) hydrates only its islands, so
-    // nothing would ever render it: drop the root (its tree unmounts) and swap the markup in,
-    // or the URL would change while the old page stayed on screen.
-    const rootless = parsed.getElementById("__denext_flight")?.textContent === "null";
-    if (retainedRoot && (!entrySrc || rootless)) discardRetainedRoot();
-    swapRootHtml(container, newRoot);
-    emit();
-    scrollAfterNav(url, options);
-    if (entrySrc) await injectRouteEntry(entrySrc, url);
-    // Unmount the islands whose wrapper the swap or the re-run entry's reconcile removed.
-    resumabilityReboot?.([]);
-  });
-}
-
-/** Unmount and forget the retained root (the next `startClient` hydrates fresh). */
-export function discardRetainedRoot(): void {
-  const root = retainedRoot ?? globalWin.__dnxRoot;
-  retainedRoot = globalWin.__dnxRoot = null;
-  try {
-    root?.unmount();
-  } catch { /* a torn-down tree is the goal either way */ }
-}
-
-/** The incoming document's route entry module (its hydration bundle), if it has one. */
-function parsedEntrySrc(parsed: Document): string | null {
-  return parsed.querySelector<HTMLScriptElement>('script[type="module"][src]')?.getAttribute(
-    "src",
-  ) ??
-    null;
-}
-
-/** Adopt the new document's `<title>` (when it has one). */
-function syncTitle(parsed: Document): void {
-  const newTitle = parsed.querySelector("title");
-  if (newTitle) document.title = newTitle.textContent ?? "";
-}
-
-/** Replace the root's markup — unless a retained root reconciles it in place. */
-function swapRootHtml(container: Element, newRoot: Element): void {
-  if (!retainedRoot) container.innerHTML = newRoot.innerHTML;
-}
-
-/**
- * Scroll for the new page unless the navigation opted out: to the element the URL's
- * `#fragment` names (what a hard load does), else to the top.
- */
-export function scrollAfterNav(url: URL, options: NavigateOptions): void {
-  if (options.scroll === false) return;
-  const hash = url.hash.slice(1);
-  if (hash) {
-    let id = hash;
-    try {
-      id = decodeURIComponent(hash);
-    } catch { /* keep the raw fragment */ }
-    const target = document.getElementById(id);
-    if (target) {
-      target.scrollIntoView?.();
-      return;
-    }
-  }
-  globalThis.scrollTo?.(0, 0);
-}
-
+/** The same-origin soft-navigation body. */
 async function navigateSameOrigin(
   url: URL,
   href: string,
   options: NavigateOptions,
   token: number,
 ): Promise<void> {
+  const commit = loadDocumentNav(); // every soft-nav commit path needs it: load it alongside
   const loaded = await loadRoute(url);
   // Superseded while loading (the user clicked again): applying this response now would
   // clobber the newer navigation's document. The newer one owns the page.
   if (token !== navToken) return;
   if (!loaded) {
     location.href = href; // network/parse failure: hard navigate so the user isn't stuck
+    return;
+  }
+  const nav = await commit;
+  if (token !== navToken) return; // superseded while the soft-nav commit loaded
+  if (!nav) {
+    location.href = href; // the soft-nav chunk failed to load: hard navigate
     return;
   }
   const { body, flight, iso, res } = loaded;
@@ -607,179 +464,14 @@ async function navigateSameOrigin(
   // (no Flight runtime, or no root to render into: see flight-nav.ts), hard navigate rather
   // than DOMParser-ing JSON.
   if (flight) {
-    if (flightNav) await flightNav(body, url, href, options, res);
+    if (flightNav) await flightNav(body, url, href, options, nav, res);
     else location.href = href;
     return;
   }
   // Isomorphic route: a compact JSON payload (title/data/entry/styles) instead of the full
   // HTML — the SSR body would be discarded anyway, since the re-run entry re-renders it.
-  if (iso) return applyIsoNav(body, url, href, options);
-  applyHtmlNav(body, url, href, options);
-}
-
-/**
- * Update history for a soft nav: push (default), replace (`options.replace`), or
- * leave untouched (`options.history === false`, i.e. popstate — the browser already
- * changed the URL). Shared by the HTML, Flight, and isomorphic nav paths.
- */
-export function updateHistory(url: URL, options: NavigateOptions): void {
-  if (options.history === false) return;
-  if (options.replace) history.replaceState({}, "", url.href);
-  else history.pushState({}, "", url.href);
-}
-
-/**
- * Re-inject a route's client entry module (cache-busted per nav so it re-evaluates),
- * which re-runs the route → `startClient` → `retainedRoot.render` reconciles in place.
- * The injected `<script>` removes itself after running so they don't pile up. Resolves when
- * the module has evaluated (its synchronous `main()` has rendered) — so a caller can run the
- * DOM swap inside a view transition and await the reconcile before the new-state capture.
- */
-function injectRouteEntry(entrySrc: string, url: URL): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const src = new URL(entrySrc, url.href);
-    src.searchParams.set("nav", String(navCounter++));
-    const script = document.createElement("script");
-    script.type = "module";
-    script.src = src.href;
-    let settled = false;
-    // Resolve on load/error, but also on a timeout: this promise is awaited INSIDE a view
-    // transition's update callback, so a stalled entry chunk (or a nested dynamic import whose
-    // failure never surfaces as the script's `error`) would otherwise hang the reconcile until
-    // the browser's own ~4 s transition timeout. Cap it so the commit lands promptly.
-    const cleanup = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      script.remove();
-      resolve();
-    };
-    const timer = setTimeout(cleanup, 4000);
-    script.addEventListener("load", cleanup, { once: true });
-    script.addEventListener("error", cleanup, { once: true });
-    document.body.appendChild(script);
-  });
-}
-
-/**
- * Apply an isomorphic soft-navigation payload (title/data/entry/styles): a route with
- * a client entry but no Flight boundary re-renders from its re-run bundle, so the SSR
- * body is not needed — this updates history, title, the `#__denext_data` island, and
- * the route's stylesheets, then re-injects the entry (which reconciles the DOM in
- * place). No HTML parse, and the discarded body is never sent over the wire.
- */
-function applyIsoNav(body: string, url: URL, href: string, options: NavigateOptions): void {
-  let payload: IsoNavPayload;
-  try {
-    payload = JSON.parse(body) as IsoNavPayload;
-  } catch {
-    location.href = href; // malformed payload: hard navigate rather than get stuck
-    return;
-  }
-  updateHistory(url, options); // non-visual — outside the transition
-  withViewTransition(async () => {
-    if (payload.title != null) document.title = payload.title;
-    writeDataIsland(payload.data);
-    swapRouteStyles(payload.styles);
-    emit();
-    scrollAfterNav(url, options);
-    // A root-less islands page has no root for the entry to render into: give it a fresh one
-    // (its islands are unmounted first).
-    rootlessPrepare?.();
-    await injectRouteEntry(payload.entry, url); // resolves once the re-run entry has reconciled
-    // The new route has no islands: unmount the ones whose wrapper the reconcile removed.
-    resumabilityReboot?.([]);
-  });
-}
-
-/**
- * Swap the per-route stylesheets (`link[data-dnx-css]`) to the new route's set:
- * drop the ones it no longer wants, keep the ones it still does, and add the new
- * ones. Global stylesheets (unmarked) are left untouched.
- */
-function swapRouteStyles(hrefs: string[] | undefined): void {
-  const want = new Map<string, boolean>(); // absolute href → already present
-  for (const h of hrefs ?? []) want.set(new URL(h, location.href).href, false);
-  document.querySelectorAll("link[data-dnx-css]").forEach((el) => {
-    const link = el as HTMLLinkElement;
-    if (want.has(link.href)) want.set(link.href, true);
-    else link.remove();
-  });
-  for (const [href, present] of want) {
-    if (present) continue;
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = href;
-    link.setAttribute("data-dnx-css", "");
-    document.head.appendChild(link);
-  }
-}
-
-/**
- * Before an isomorphic navigation re-runs a route entry, give a root-less islands page a fresh
- * root to render into (its islands are unmounted first). Installed by flight-nav.ts's
- * `setRootlessMount` once the resumability runtime registers its mount, so it is null in an app
- * with no Flight route, which can never render a root-less page.
- */
-let rootlessPrepare: (() => void) | null = null;
-
-/** Install the root-less page hook (called by flight-nav.ts's `setRootlessMount`). */
-export function setRootlessPrepare(fn: () => void): void {
-  rootlessPrepare = fn;
-}
-
-/** Retain `root` as the page root (flight-nav.ts: a root-less page's first navigation). */
-export function retainRoot(root: Root): void {
-  retainedRoot = globalWin.__dnxRoot = root;
-}
-
-/** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
-export function writeDataIsland(data: HydrationData): void {
-  jsonIsland("__denext_data").textContent = JSON.stringify(data);
-}
-
-/** The live document's JSON island `#<id>`, created (empty, at the end of `<body>`) if absent. */
-function jsonIsland(id: string): HTMLElement {
-  let live = document.getElementById(id);
-  if (!live) {
-    live = document.createElement("script");
-    live.id = id;
-    (live as HTMLScriptElement).type = "application/json";
-    document.body.appendChild(live);
-  }
-  return live;
-}
-
-/**
- * The resumability re-boot hook, registered by the resumability runtime
- * (`bootResumability`) on first load so a Flight soft nav can re-wire the new
- * route's islands/handlers. Kept as an injected callback so `navigation.ts` (shared
- * chunk) never statically imports the resumability runtime — an app without islands
- * bundles none of it. See {@link setResumabilityReboot}.
- */
-export let resumabilityReboot:
-  | ((islands?: IslandPayload[], signalState?: Record<string, unknown>) => void)
-  | null = null;
-
-/** Register the resumability re-boot hook (called by the resumability runtime). */
-export function setResumabilityReboot(
-  fn: (islands?: IslandPayload[], signalState?: Record<string, unknown>) => void,
-): void {
-  resumabilityReboot = fn;
-}
-
-/**
- * Copy the incoming page's JSON island (`#<id>`) into the live document. When the
- * incoming page has no such island, remove any stale live copy so it does not
- * leak into the next hydration.
- */
-function syncScript(parsed: Document, id: string): void {
-  const incoming = parsed.getElementById(id);
-  if (!incoming) {
-    document.getElementById(id)?.remove();
-    return;
-  }
-  jsonIsland(id).textContent = incoming.textContent;
+  if (iso) return nav.applyIsoNav(body, url, href, options, emit);
+  nav.applyHtmlNav(body, url, href, options, emit);
 }
 
 // ---- Link interception -----------------------------------------------------
@@ -871,32 +563,6 @@ function installNavigation(): void {
 let committedHref = "";
 
 /**
- * The retained reconciler root for the hydration container. Kept across soft
- * navigations so a nav reconciles the new route in place (`root.render`) instead
- * of re-mounting — preserving state, skipping a re-hydrate, and (crucially) avoiding
- * hydrating the NEW tree against the PREVIOUS page's stale DOM.
- *
- * `startClient` reads/writes the root through `globalWin.__dnxRoot` (below), not
- * this module-local, because a soft nav re-runs the route bundle and in dev that
- * bundle carries its OWN copy of this module (it is not code-split to share the
- * runtime chunk a production build has). A module-local would reset to `null` on
- * every soft nav, so `startClient` would fall into the `hydrateRoot` branch —
- * adopting the outgoing page's DOM as the incoming tree and flooding the console
- * with hydration mismatches. The global bridges those separate module instances.
- * The other readers here (`navigateSameOrigin`, flight-nav.ts's commit) always run in the
- * persistent initial module, so they keep using this cheap local mirror.
- */
-export let retainedRoot: Root | null = null;
-
-/**
- * The document-global slot the retained root lives on; see {@link retainedRoot}.
- * denext is single-root per document (one {@link ROOT_ID} container), so one slot is
- * correct. Embedding two independent denext apps on one page is unsupported — the
- * second `startClient` would reconcile its tree into the first app's container.
- */
-const globalWin = globalThis as { __dnxRoot?: Root | null; __dnxRootless?: boolean };
-
-/**
  * Mount (first load) or reconcile (soft nav) the route tree and enable client-side
  * navigation. Called by every route bundle: on the initial load it hydrates the
  * server markup and retains the root; on a soft nav's bundle re-run it renders the
@@ -924,7 +590,7 @@ export function startClient(container: Element, tree: VNode | null): void {
     // runtime, so hydration reads the resolved content, not a fallback (no-op on
     // buffered pages). Idempotent with the observer's `isConnected` guard.
     revealStreamedHoles();
-    retainedRoot = globalWin.__dnxRoot = hydrateRoot(container, tree);
+    retainRoot(hydrateRoot(container, tree));
   }
   installNavigation();
   // Read-your-writes: after a Server Action revalidates a tag or calls `refresh()`,
@@ -995,7 +661,7 @@ export async function resetGlobalError(): Promise<void> {
  * islands are left as-is (inert, already in the swapped-in tree).
  */
 function swapDocument(parsed: Document): void {
-  retainedRoot = globalWin.__dnxRoot = null;
+  retainRoot(null);
   document.replaceChild(document.adoptNode(parsed.documentElement), document.documentElement);
   document.title = parsed.title || document.title;
   for (const old of Array.from(document.querySelectorAll("script"))) {
@@ -1006,7 +672,7 @@ function swapDocument(parsed: Document): void {
     const src = old.getAttribute("src");
     if (src && type === "module") {
       const u = new URL(src, location.href);
-      u.searchParams.set("nav", String(navCounter++));
+      u.searchParams.set("nav", nextNavStamp());
       script.src = u.href;
     }
     script.textContent = old.textContent;

@@ -291,7 +291,9 @@ export default {
       <Code lang="bash">
         {`denext desktop dev                 # start (or attach to) denext dev on :3000, open the window
 denext desktop dev --port 4000     # a different dev server port
-denext desktop dev --lan           # attach to a dev server elsewhere on your network`}
+denext desktop dev --lan           # attach to a dev server elsewhere on your network
+denext desktop dev --inspect-renderer               # and open the page to a debugger (free port)
+denext desktop dev --inspect-renderer=127.0.0.1:9339  # on a port of your choice`}
       </Code>
       <p>
         The proxy path is a <strong>dev-only</strong> seam: <code>denext desktop dev</code> sets the
@@ -311,6 +313,81 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
         Ctrl-C stops the window; a dev server that <code>desktop dev</code>{" "}
         started is stopped too, and one it merely attached to is left running.
       </p>
+      <h3 id="desktop-inspect-renderer">Debugging the window&apos;s page</h3>
+      <p>
+        <code>--inspect-renderer[=&lt;addr&gt;]</code>{" "}
+        opens the window&apos;s renderer (the page, not the Deno runtime) to a debugger, so a test
+        runner, an agent or a DevTools frontend can read the DOM, evaluate script, drive input and
+        profile. With no address it picks a free loopback port. It prints the endpoint before the
+        window opens and, on the Chrome DevTools Protocol, the page&apos;s{" "}
+        <code>webSocketDebuggerUrl</code> and a <code>devtools://</code>{" "}
+        URL to open in Chrome once the page has loaded. What it opens depends on the webview backend
+        (deno.json <code>desktop.backend</code>), with the same environment the runtime&apos;s own
+        {" "}
+        <code>deno desktop --inspect-renderer</code> sets:
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Backend</th>
+            <th>Protocol</th>
+            <th>Set on the window</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>CEF (every OS)</td>
+            <td>
+              CDP on <code>http://127.0.0.1:&lt;port&gt;</code>
+            </td>
+            <td>
+              <code>LAUFEY_REMOTE_DEBUGGING_PORT</code>
+            </td>
+          </tr>
+          <tr>
+            <td>WebView2 (Windows)</td>
+            <td>
+              CDP on <code>http://127.0.0.1:&lt;port&gt;</code>
+            </td>
+            <td>
+              <code>--remote-debugging-port</code> appended to{" "}
+              <code>WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS</code>
+            </td>
+          </tr>
+          <tr>
+            <td>WebKitGTK (Linux)</td>
+            <td>WebKit&apos;s own inspector, not CDP</td>
+            <td>
+              <code>WEBKIT_INSPECTOR_HTTP_SERVER</code>
+            </td>
+          </tr>
+          <tr>
+            <td>WKWebView (macOS)</td>
+            <td>none remote: Safari &gt; Develop</td>
+            <td>nothing</td>
+          </tr>
+        </tbody>
+      </table>
+      <Code lang="ts">
+        {`// Any CDP client: list the pages, then evaluate in the window's page.
+const [page] = await (await fetch("http://127.0.0.1:9339/json/list")).json();
+const ws = new WebSocket(page.webSocketDebuggerUrl);
+ws.onopen = () =>
+  ws.send(JSON.stringify({
+    id: 1,
+    method: "Runtime.evaluate",
+    params: { expression: "document.title", returnByValue: true },
+  }));`}
+      </Code>
+      <Callout kind="note">
+        The debugging port is full control of the page, its storage and its cookies, so the address
+        must be loopback: a non-loopback one is refused unless you also pass{" "}
+        <code>--inspect-renderer-allow-remote</code>{" "}
+        (Chromium binds its port on loopback anyway; forward it if you must reach it from another
+        machine). It is a <code>desktop dev</code>{" "}
+        flag only, and the window&apos;s host honours these variables only while DevTools are on,
+        which a packaged app has off unless <code>desktop.inspectable</code> is set.
+      </Callout>
       <Callout kind="note">
         The target is <strong>loopback-only</strong> (<code>127.0.0.1</code> / <code>[::1]</code> /
         {" "}
@@ -855,6 +932,11 @@ denext desktop package --target-os windows --format msi,zip`}
           is set. Without WiX 5 (an installed WiX 6 does not count), or when <code>wix build</code>
           {" "}
           fails, the default <code>.msi</code> falls back to the <code>.zip</code> with a warning.
+          {" "}
+          <code>--arch arm64</code> (or{" "}
+          <code>both</code>) builds Windows on Arm bundles on the pinned runtime&apos;s{" "}
+          <code>aarch64-pc-windows-msvc</code> archives (runtime 2.9.7-denext.21); their{" "}
+          <code>.msi</code> declares Windows Installer schema 500, which an Arm64 package needs.
         </li>
       </ul>
       <p>
@@ -1632,7 +1714,11 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         satisfy them. <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
-        of any file it changes.
+        of any file it changes. <code>denext desktop package</code>{" "}
+        warns when a script is stale: one from before denext 3.1 builds on the stock runtime, and a
+        {" "}
+        <code>scripts/package-macos.ts</code> that does not call{" "}
+        <code>desktopRuntimeDenoFlags</code> builds without <code>--unstable-no-legacy-abort</code>.
       </Callout>
       <Callout kind="note">
         <strong>What is verified.</strong>{" "}
@@ -3053,10 +3139,11 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           requests a CEF window makes are the app&apos;s
           (<a href="/docs/desktop-runtime#no-network-requests-from-the-cef-backend">
             what it turns off
-          </a>). So a Linux CEF app has no spellcheck unless it ships Hunspell dictionaries: put the
-          {" "}
-          <code>.bdic</code> files in <code>&lt;data dir&gt;/CEF/Dictionaries</code>{" "}
-          (Windows and macOS use the OS spellchecker).
+          </a>). So a Linux CEF window never downloads Hunspell dictionaries: from runtime
+          2.9.7-denext.21 the runtime ships them for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and
+          it-IT, and an app adds other languages by putting their <code>.bdic</code> files in{" "}
+          <code>dictionaries/</code>{" "}
+          beside the host executable in its bundle (Windows and macOS use the OS spellchecker).
         </li>
         <li>
           <code>denext doctor</code>{" "}

@@ -170,7 +170,9 @@ export function User({ id }: { id: string }) {
 
 Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
 definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
-`openapi.json` at build, and back `denext openapi emit | diff | lint | types` — zero extra annotation.
+`openapi.json` at build, and back `denext openapi emit | diff | lint | types | client` — zero extra
+annotation (`client --lang python|go|swift|kotlin` writes a dependency-free typed client; `denext
+graphql client` does the same from a GraphQL schema).
 Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
 described in full; others are `{}` + a lint warning.
 Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
@@ -214,6 +216,10 @@ import { orderEvents, orderStatus } from "./live.ts";
 const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
+
+A channel with `history: 50` logs each key's publishes: `useChannel(ch, key, { since: "0",
+onMessage })` replays the key's history after `authorize`, and a reconnect resumes from its last
+cursor (in memory per instance; `redisChannelTransport()` shares the log in Redis).
 
 **Model–View–Update (Elm / Lustre style):** `denext/mvu` runs `update(msg, model) → [model,
 effects]` in a component, with effects and subscriptions as data the runtime executes; the same
@@ -416,8 +422,9 @@ survives virtualized-list scroll corrections automatically (the runtime installs
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
-`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
-when cancelled), `setQuickActions`/`useQuickAction` (home-screen shortcuts), `openSqlite` (the
+`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
+videos)/`pickDocument`/`scanBarcode` (`null` when cancelled), `setQuickActions`/`useQuickAction`
+(home-screen shortcuts), `openSqlite` (the
 app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
@@ -464,7 +471,8 @@ core and `offline-screen` writes a page; web fallback where one exists): `keyboa
 prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`; `deliveredNotifications` / `removeDeliveredNotifications({ threadId })` list and clear delivered ones, pushes too),
 `biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
-`background-location`, `purchases` (RevenueCat), `app-review`, `app-update`,
+`background-location`, `background-audio` (`setNowPlaying`/`onMediaControl`/`setAudioSession`:
+background playback with lock-screen / notification controls; the Media Session API on the web), `purchases` (RevenueCat), `app-review`, `app-update`,
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
@@ -565,7 +573,9 @@ exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on U
 default, warms the resolver up at launch). A window hands at most 3 refused navigations a second to the
 browser. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
-`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
+`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`;
+`denext desktop dev --inspect-renderer[=<addr>]` opens the window's page to a CDP client (CEF,
+WebView2; a free loopback port by default, non-loopback refused). `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
 `--allow-*` goes in `desktop.extraPermissions`, never in `scripts/package-*.ts`. Under the stock
 runtime these answer `unavailable` and the page keeps its web path. Under the pinned runtime `clipboard` reaches the OS clipboard
@@ -602,7 +612,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.20 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.21 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -692,7 +702,9 @@ a reload / relaunch never settles. Docs: https://denext.dev/docs/updates
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
-expo-router's routes), and every `expo-*` import resolves to a `denext/expo/*` shim over
+expo-router's routes); on the App Router (no `mode: "spa"`) Server and `"use client"` components
+import `react-native` too, server-rendered with react-native-web's style sheet in the `<head>`
+(no expo-router there). Every `expo-*` import resolves to a `denext/expo/*` shim over
 `denext/mobile` (`denext/expo/manifest` lists what each omits; the synchronous JSI APIs are not
 provided). React Native's mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`, `Alert`,
 `RefreshControl`, `Linking`, …) are replaced with shell-backed ones, `FlatList` / `SectionList` /
@@ -923,6 +935,13 @@ export default async function Blog() {
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
+**Gleam:** `denext add gleam:<package>` compiles a Gleam package to
+JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it typed as
+`@gleam/<package>/<module>.mjs`. `plugins: [gleam()]` (from `denext/gleam`) recompiles your own
+`gleam/src/**/*.gleam` at dev and build. The compiler is denext's pinned Gleam (no Erlang needed),
+downloaded and SHA-256-verified on first need beside the Deno toolchain; `denext toolchain install
+--with gleam` fetches it ahead for offline work, `DENEXT_GLEAM=<path>` runs another one.
+
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
 folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
@@ -978,7 +997,8 @@ await screen.fireEvent.click(screen.getByRole("button"));
 A test that needs a fake clock or a module mock imports `vitest` (`vi.useFakeTimers()`,
 `vi.mock()`, `vi.stubEnv`) and runs under `denext test` — the toolchain's `deno test` has
 Vitest's API; stock Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
-`deno test` also runs. Keep a Vitest run's coverage in its own report.
+`deno test` also runs. `denext test` runs the `*.vitest.ts` files as a second pass, and
+`denext test --coverage` reports both passes as one.
 
 **Conformance-probing every route (CI gate):**
 
@@ -1210,7 +1230,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ForwardedRef<T> = parenthesized | MutableRefObject<T | null> | null` — The ref a forwardRef render fn receives.
 - `forwardRef<T, P>(render: (props: P, ref: ForwardedRef<T>) => ReactNode): ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>` — React.forwardRef — best-effort. denext threads ref through props, so the render function receives (props, props.ref).
 - `interface ForwardRefExoticComponent<P>` — The result of forwardRef — callable, ref-forwarding, with a settable name.
-- `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `Fragment: FragmentComponent` — Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.
+- `type FragmentComponent = (props: FragmentProps) => VNode` — The declared type of Fragment: callable for TypeScript, so <Fragment key ref> type-checks as React's ExoticComponent<FragmentProps> does; at runtime it is the FRAGMENT marker.
+- `interface FragmentInstance` — What <Fragment ref={r}> puts in r.current (React 19.3's FragmentInstance): DOM-like methods applied to the Fragment's host children — the nearest elements and text nodes below it, not descending into an element — kept current as children mount and unmount.
+- `interface FragmentProps` — <Fragment>'s props (React's FragmentProps): its children and, from React 19.3, a ref.
 - `interface FreeQuery` — Free-form query strings (an endpoint without a query schema).
 - `interface FunctionComponent<P>` — A function component.
 - `getImageProps(props: ImageProps): object` — next/image's getImageProps — resolve ImageProps to the concrete <img> attributes without rendering, for spreading onto your own element (e.g. a background, a <picture> source, or a custom <img>). Mirrors Next's { props } return shape; srcSet is exposed under both srcSet and srcset for convenience.
@@ -1390,7 +1413,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface UseDirectoryOptions` — Options for useDirectory.
 - `interface UseDirectoryResult` — The result of useDirectory.
 - `useEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
-- `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
+- `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a callback that always sees the latest committed props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes).
 - `useErrorBoundary(): ErrorBoundaryController` — Access the nearest enclosing error boundary imperatively. Returns a ErrorBoundaryController whose captureError(e) shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose reset() retries its children. Inert during server rendering.
 - `useEventListener<K>(type: K, handler: (event: indexedAccess) => void, options?: UseEventListenerOptions): void` — Attach a DOM event listener for the lifetime of the component. The handler is held in a ref, so passing a fresh closure each render never re-subscribes and never goes stale.
 - `interface UseEventListenerOptions` — Options for useEventListener.
@@ -1446,7 +1469,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.2.0` — The denext framework version.
+- `VERSION: 4.3.1` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1585,7 +1608,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cachedFetch(input: string | URL, options?: CacheOptions & RequestInit): Promise<string>` — Fetch input and cache the response body across requests (a small fetch-with-caching helper). Returns the cached text on a hit.
 - `interface CachedPage` — A cached rendered page.
 - `interface CacheEntryTiming` — New timing for a soft (SWR) invalidation: stale immediately, hard-expire later.
-- `cacheLife(profile: string | CacheLifeProfile): void` — Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). A no-op when called outside a cached scope. The last call wins.
+- `cacheLife(profile: string | CacheLifeProfile): void` — Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). When it is called more than once, each field keeps the lowest value set (as in Next.js).
 - `interface CacheLifeProfile` — A cache lifetime profile, in **seconds** (Next.js cacheLife). All fields are optional; an omitted field inherits the default profile's value.
 - `interface CacheOptions` — Options accepted by unstable_cache.
 - `interface CacheStats` — A snapshot of cache activity (see getCacheStats).
@@ -1599,8 +1622,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
-- `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.
+- `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, an instance's presence snapshot of one usePresence room, or a parked live view's view-resumed (it resumed on another instance, so the one that parked it stops its copy).
+- `interface ChannelHistory` — A channel's retention: how many entries per key, for how long.
 - `type ChannelIdleReason = unsubscribe | disconnect` — Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).
+- `interface ChannelLog` — Where channel publishes are logged for replay.
+- `interface ChannelLogEntry` — One logged publish.
 - `type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown` — A supervised per-key producer (ChannelConfig.publisher).
 - `interface ChannelPublisherContext<T>` — What a ChannelConfig.publisher receives.
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
@@ -1792,6 +1818,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter` — Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.
 - `interface InMemoryAuthAdapterOptions` — Options for inMemoryAuthAdapter.
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
+- `inMemoryChannelLog(options?: InMemoryChannelLogOptions): ChannelLog` — The default log: this instance's publishes, in memory, bounded per key (ChannelHistory), by key count and by total bytes.
+- `interface InMemoryChannelLogOptions` — Options for inMemoryChannelLog.
 - `inMemoryChannelTransport(): ChannelTransport` — The default transport: loopback, this instance only.
 - `inMemoryRateLimitStore(options?: InMemoryRateLimitStoreOptions): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.
 - `interface InMemoryRateLimitStoreOptions` — Options for inMemoryRateLimitStore.
@@ -2031,6 +2059,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
 - `redisCacheStore(options?: RedisCacheStoreOptions): CacheStore & object` — A CacheStore on Redis, shared by every replica. Size-bounded: the oldest-written entries past maxDataEntries / maxPageEntries are evicted, and hard-expired ones are swept on a throttle.
 - `interface RedisCacheStoreOptions` — Options for redisCacheStore.
+- `redisChannelLog(client: RedisClient, options?: RedisChannelLogOptions): ChannelLog` — A channel replay log over a Redis connection.
+- `interface RedisChannelLogOptions` — Options for redisChannelLog.
 - `redisChannelTransport(options?: RedisChannelTransportOptions): RedisChannelTransport` — Carry Live channel events between replicas through Redis pub/sub.
 - `interface RedisChannelTransport` — A ChannelTransport with its connections' lifecycle.
 - `interface RedisChannelTransportOptions` — Options for redisChannelTransport.
@@ -2053,7 +2083,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `refreshSsoMetadata(config?: AuthConfig, options?: RefreshSsoMetadataOptions): Promise<SsoMetadataRefreshSummary>` — Fetch the metadata of every stored SSO provider registered by metadata_url whose refresh is due (a day after the last fetch, or sooner by its cacheDuration / validUntil), one at a time — the same single-flight, backed-off fetch a sign-in uses, so a job and the sign-ins never fetch one URL twice in a window. Run it from a scheduled job: defineJob({ schedule: "0 * * * *", handler: () => refreshSsoMetadata() }).
 - `interface RefreshSsoMetadataOptions` — Options for refreshSsoMetadata.
 - `registerBootCheck(check: () => Promise<void>): void` — With boot-time DDL off, register a feature's schema check for the server's startup (verifyBootSchemas); a no-op with it on. Each check runs once.
-- `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
+- `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (the config's cacheLife, Next.js's next.config key). A custom profile whose name collides with a built-in overrides it, and a later call with the same name wins. Each profile is validated first.
 - `registerCronSchedules(entries: typeOperator): void` — Register schedules with Deno.cron NOW, from an entrypoint's top level — before the server boots and discovers jobs/. Deno Deploy records the crons an app registers while its entrypoint loads, so the entry denext deploy writes for it calls this with the build's schedules; the boot's scheduler then skips them. A run that fires before the boot has discovered its job waits for that (up to a minute). A no-op where Deno.cron is absent (the server's own scheduler covers the schedules there).
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
 - `registerFrameworkMigrations(key: string, set: SetSource): void` — Declare the migrations a feature applies for itself, so denext db push / migration up apply them out of band. Every Postgres store of denext declares its set when it is built (one per tracking table and schema); a function is resolved when the CLI reads the sets.
@@ -2092,7 +2122,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ResetPasswordResult = object | object` — What resetPassword reports.
 - `type ResolveAliasConfig = Readonly<Record<string, string | ResolveAliasRule>>` — DenextConfig.resolveAlias: import specifier → alias.
 - `interface ResolveAliasRule` — An alias in its object form (DenextConfig.resolveAlias).
-- `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
+- `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. Missing fields inherit from the default profile (a configured default included).
 - `interface ResolvedBackoff` — A validated BackoffOptions: every field present.
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
 - `interface ResolvedRestart` — A validated RestartOptions.
@@ -2104,7 +2134,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RestartOptions` — A restart policy for one piece of work (a Live subscription's resolver, a channel publisher).
 - `type RestartPolicy = always | crash | never` — When a child that ended is started again: "always" (even after a clean exit), "crash" (only after it threw — the default), or "never" (it stays failed / stopped).
 - `type Revalidate = number | false` — Revalidation period in seconds, or false to cache indefinitely.
-- `revalidatePath(path: string, _type?: layout | page): Promise<void>` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.
+- `revalidatePath(path: string, _type?: layout | page): Promise<void>` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store. Inside a Server Action the client that called it also re-renders its current route.
 - `revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void>` — Invalidate every cached data entry and page carrying tag.
 - `type RevenueCatEventType = TEST | INITIAL_PURCHASE | RENEWAL | CANCELLATION | UNCANCELLATION | NON_RENEWING_PURCHASE | SUBSCRIPTION_PAUSED | EXPIRATION | BILLING_ISSUE | PRODUCT_CHANGE | TRANSFER | SUBSCRIBER_ALIAS | SUBSCRIPTION_EXTENDED | TEMPORARY_ENTITLEMENT_GRANT | REFUND_REVERSED | INVOICE_ISSUANCE | VIRTUAL_CURRENCY_TRANSACTION | EXPERIMENT_ENROLLMENT | parenthesized` — The event types RevenueCat sends (a newer one arrives as its own string).
 - `interface RevenueCatWebhookBody` — The whole webhook body.
@@ -2143,7 +2173,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SamlProviderSp` — This service provider, as one SamlProvider presents itself to its IdP.
 - `interface SamlReplayCache` — Where assertion IDs are remembered so each is accepted once. Back it with something every replica shares (a database table, a KV store) when the SP runs on more than one process.
 - `interface SamlSpConfig` — This SAML 2.0 Service Provider.
-- `scanRoutes(appDir: string): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
+- `scanRoutes(appDir: string, options?: ScanRoutesOptions): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
+- `interface ScanRoutesOptions` — Options for scanRoutes.
 - `type SchemaInput<S> = conditional` — The value a Standard Schema accepts (what a client must send); its output when unknown.
 - `type SchemaOutput<S> = conditional` — The value a Standard Schema produces.
 - `scryptHasher(options?: HashPasswordOptions): Hasher` — The default Hasher: salted **scrypt** through node:crypto, encoded as scrypt$N=…,r=…,p=…$salt$hash. Pass it explicitly to raise the cost: ``ts denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }), … }) `` Hashes stay self-describing, so raising the cost never invalidates existing ones.
@@ -2368,7 +2399,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `flushSync<T>(fn?: () => T): T | undefined` — Run fn (if given) and then synchronously flush all pending state updates — including any pending transition work — before returning. Matches React's flushSync(fn).
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
-- `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `Fragment: FragmentComponent` — Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.
 - `interface FreeQuery` — Free-form query strings (an endpoint without a query schema).
 - `h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
 - `type HandlerBody<H> = conditional` — The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).
@@ -2477,7 +2508,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useDebugValue<T>(value: T, format?: (value: T) => unknown): void` — Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op.
 - `useDeferredValue<T>(value: T, initialValue?: T): T` — Return a deferred copy of value that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional initialValue (React 19) is returned on the first render, with a transition scheduled to reach value. On the server (no lane scheduler) it returns initialValue ?? value.
 - `useEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
-- `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
+- `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a callback that always sees the latest committed props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes).
 - `useErrorBoundary(): ErrorBoundaryController` — Access the nearest enclosing error boundary imperatively. Returns a ErrorBoundaryController whose captureError(e) shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose reset() retries its children. Inert during server rendering.
 - `useFormStatus(): FormStatus` — Read whether the **nearest enclosing** <form action={fn}>'s action is in flight (React 19 useFormStatus). Scoped per form — two concurrent forms report independent status. Returns { pending: false } outside a form and during server rendering.
 - `useId(): string` — Return a unique, stable id string. The value is deterministic across the server render and client hydration (ids are assigned in render order), so it is safe to use for id/htmlFor/aria-* attributes without a mismatch.
@@ -2524,7 +2555,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `getFiberIdForDom(el: Node | null): number | null` — The nearest component fiber id owning el — for the element picker and hover- highlight. Walks el up to the nearest host node the last getInspectorTree walk mapped, then up the fiber tree to its owning component (falling back to the host fiber's own id when no component ancestor exists). null when nothing maps — call getInspectorTree first so the DOM map is current.
 - `getHostNode(fiberId: number): Element | null` — The DOM element for a fiber id — its own host node when it is a host fiber, else the first host node in its subtree (a component's rendered root). Backs the panel's tree-row → element highlight. null for an unknown id or a fiber with no host DOM.
 - `getInspectorTree(): InspectNode[]` — The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount.
-- `getOwnerStack(fiberId: number): OwnerStackEntry[]` — The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's "owner stack": the render-parent path rather than the JSX-owner, which coincide for the common case. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.
+- `getOwnerStack(fiberId: number): OwnerStackEntry[]` — A node's owner stack, nearest first: React's JSX-owner chain (the component whose render created each element, with the JSX call site) when the elements came from a dev build's jsxDEV, else the component fibers above it (an element made by h() / createElement records no owner). Each entry carries its declaration source when known. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.
 - `getPageRenderMode(): PageRenderMode | null` — The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only #__denext_render_modes JSON island the document renderer emits. null in production, outside a dev render, or if absent.
 - `getProfile(): ProfileEntry[]` — The collected profile, heaviest total render time first. Empty in production.
 - `getRenderModes(): RenderModeEntry[]` — The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production.
@@ -2564,7 +2595,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ConformanceReport` — The full report from probeApp.
 - `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.
 - `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).
-- `createTestApp(projectDir: string): Promise<TestHandler>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
+- `createTestApp(projectDir: string): Promise<TestApp>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
 - `createTestClient(handler: TestHandler, options?: TestClientOptions): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
 - `fireEvent: FireEvent` — Dispatch DOM events at rendered elements (bubbling), each wrapped in act.
 - `interface FireEvent` — A dispatched-event helper: callable, plus named shortcuts. All are async.
@@ -2586,6 +2617,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>` — The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.
 - `class StoreContractError` — A contract case that failed; its message names what the store got wrong.
 - `type StoreFactory<S> = () => S | Promise<S>` — Makes a fresh, empty store for one case.
+- `interface TestApp` — The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to run the teardowns of the app's denext.config.ts plugins. await using app = await createTestApp(dir) closes it at the end of the scope.
 - `interface TestClient` — A cookie-aware, no-JS test driver over a request handler.
 - `interface TestClientOptions` — Options for createTestClient.
 - `interface TestElement` — The read-only shape of a rendered element that query helpers return.
@@ -2621,12 +2653,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `LiveViewIsland: (props: LiveViewIslandProps) => VNode` — The live-view island. Rendered by defineLiveView's component, registered by the generated Flight entry; not something to render by hand.
 - `interface LiveViewIslandProps` — The island's props (written by defineLiveView's server render).
 - `interface Presence<S>` — The presence of the current room, from usePresence.
-- `subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void): () => void` — Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.
+- `subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number, cursor?: string) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void, since?: string): () => void` — Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.
 - `subscribeLiveTags(tags: string[], onInvalidate: () => void, onError?: (info: LiveErrorInfo) => void): () => void` — Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe.
 - `interface SubscriptionRefLike<In, Out>` — A defineSubscription ref as the client sees it (the id, plus the phantom types).
 - `interface SubscriptionState<Out>` — What useSubscription returns.
 - `useApiLive<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>` — useApi whose tags refetch on a server-side revalidateTag — the Live socket delivers the invalidation; the refetch itself is an ordinary HTTP call with the viewer's cookies. Same signature and result as useApi.
-- `useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>` — Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect.
+- `useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>` — Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect — unless the channel keeps a history: then since replays what was missed, each payload reaches onMessage, and a reconnect resumes from the last cursor.
 - `interface UseChannelOptions<T>` — Options for useChannel.
 - `useLive<A, R>(action: LiveActionRef<A, R>, args: A, options: UseLiveOptions<R>): R | undefined` — Subscribe to a server function's result, re-rendering whenever one of options.tags is invalidated. The function runs on the server under the viewer's own session (it must authorize its own access, like any server action). Pass a **read** action.
 - `useLiveOptimistic<T, A>(liveValue: T, reducer: (current: T, action: A) => T): tuple` — Pair an optimistic overlay with a live value: apply a local update immediately, and let it reconcile automatically when the authoritative value arrives over the socket (the overlay resets whenever liveValue's identity changes).
@@ -2652,6 +2684,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface BuildDesktopTarballOptions` — What buildDesktopTarball archives.
 - `interface BuildLinuxPackageOptions` — What buildDesktopDeb / buildDesktopRpm build.
 - `interface BuildMsiOptions` — What buildDesktopMsi builds.
+- `bundleDesktopVcRuntime(dir: string, arch: DesktopWindowsArch, deps?: DesktopVcRuntimeDeps): Promise<boolean>` — Ship the VC++ 2015-2022 runtime DLLs arch's deno desktop binaries import (DESKTOP_VC_RUNTIME_DLLS) next to the bundle's .exe, so the packaged app runs with NO redistributable installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32 (the installed redist) when packaging on Windows for the host's architecture, and each one must be a PE image of arch — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones. All or nothing: when any is missing or another machine's (or packaging off Windows, or for the other architecture), none is copied and a warning names the redistributable the target needs.
 - `cefHelperEntitlements(path: string): Readonly<Record<string, boolean>> | undefined` — Chromium's default entitlements for the CEF helper app path lies in (… Helper (Renderer).app and its executable), or undefined for any other code.
 - `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
 - `DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, typeOperator>>` — The formats built when neither --format nor desktop.installers.<os> names any.
@@ -2663,6 +2696,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `DESKTOP_DEV_LAN_ENV: DENEXT_DESKTOP_DEV_LAN` — The SECOND dev-only opt-in denext desktop dev --lan sets alongside DESKTOP_DEV_URL_ENV to allow a NON-loopback dev-server target. Without it a non-loopback DENEXT_DESKTOP_DEV_URL is refused at runtime (see desktopDevProxyDecision), so an inherited/hostile env cannot turn a window into a proxy to an arbitrary remote origin.
 - `DESKTOP_DEV_URL_ENV: DENEXT_DESKTOP_DEV_URL` — The env var denext desktop dev sets on the window process to put the runtime into live-reload PROXY mode: its value is the loopback denext dev URL to reverse-proxy to. It is the ONLY switch that turns proxy-all on — a release / run / package invocation never sets it, so those windows serve the static export exactly as before (see runDesktop).
 - `DESKTOP_INSTALLER_FORMATS: object` — Every installer format, by the OS it is built for.
+- `DESKTOP_VC_RUNTIME_DLLS: Readonly<Record<DesktopWindowsArch, typeOperator>>` — The VC++ 2015-2022 runtime DLLs each architecture's deno desktop binaries import (read from the pinned runtime's import tables). The x64 launcher also imports vcruntime140_1.dll, the FH4 exception-handling runtime; the Arm64 launcher does not. On Windows on Arm, System32's vcruntime140_1.dll (which the Arm64 redist installs there itself) is an x64 image, for x64 code under emulation, beside the Arm64 vcruntime140.dll and msvcp140.dll.
 - `DESKTOP_WS_URL_ENV: DENO_DESKTOP_WS_URL` — The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in, per-launch token included (ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>): the URL the page dials, with its own path appended, for a WebSocket to its own server. The runtime keeps it to its own process (child processes don't inherit it).
 - `interface DesktopAppDirs` — The three per-app storage roots a desktop app uses (absolute paths, not created here).
 - `desktopAppName(entryUrl?: string): Promise<string>` — The app's name for artifact paths: DENEXT_APP_NAME, else desktop.app.name in the project's denext.config.ts, else deno.json desktop.app.name, else "app".
@@ -2704,6 +2738,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopPackageMeta` — What every installer says about the app.
 - `interface DesktopPageGlobals` — What the injected globalThis.__denext carries besides the desktop marker and the token (see injectDesktopGlobal).
 - `desktopPeFiles(dir: string): Promise<string[]>` — Every PE file under a Windows bundle directory, recursively, sorted (symlinks are not followed). The runtime refuses an update of a signed app unless EVERY PE file in it carries the running app's signature — the .exe, <App>.dll, WebView2Loader.dll, the app-local VC++ runtime, CEF's DLLs and helpers and any .node addon — so all of them are signed, third-party files included.
+- `desktopPeMachine(head: Uint8Array): string | null` — The machine a PE image is built for, read from its header (MZ, e_lfanew → PE\0\0, then the file header's Machine): "x86_64", "arm64", "x86", or 0x<hex> for another one. An Arm64X DLL reports "arm64".
 - `interface DesktopPermissions` — The Deno permissions a capability method needs, as --allow-* scopes. The union of every enabled capability's descriptor is what the package scripts bake into the desktop binary instead of -A (least-privilege packaging), and what denext doctor reports. An ffi or run entry means full-trust native code: least-privilege is moot for that surface once it is on.
 - `type DesktopProxyFn = (request: Request, url: URL) => Response | Promise<Response>` — Forward a request the desktop window received to the denext dev server. Injected into createDesktopHandler so tests exercise the dev path with a spy and never spawn a real dev server; runDesktop wires it to proxyToBackend.
 - `desktopRequireTool(tool: string, format: string, explicit: boolean): Promise<boolean>` — desktopToolGate for a tool that must be on PATH (the reason carries the install hint).
@@ -2711,6 +2746,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopRunOptions` — Options for desktopRun.
 - `interface DesktopRuntime` — What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.
 - `interface DesktopRuntimeConfig` — What resolveDesktopCapabilities reads: the project config, or the JSON slice of it the desktop sync writes to .deno-desktop/config.json ({ desktop, spa: { proxy } }), which the generated desktop.ts imports so denext.config.ts (and every plugin it imports) stays out of the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.
+- `desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator): string[]` — The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it: --unstable-no-legacy-abort, which the runtime keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. The stock runtime (an empty env) gets none: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
 - `desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.
@@ -2718,7 +2754,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopSlug(name: string): string` — A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
 - `desktopToolGate(why: string | undefined, format: string, explicit: boolean): boolean` — Whether why (a reason the tool for format cannot run, or undefined when it can) still lets the format build: a default format is skipped with a warning, an asked-for one fails.
 - `type DesktopTrust = object | object | object` — The desktop world the app runs in (see the module docs).
+- `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
+- `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: msi | deb | rpm, version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
+- `type DesktopWindowsArch = x86_64 | arm64` — A Windows bundle's architecture, as the package script names it.
 - `interface DesktopWindowSettings` — The resolved initial-window settings runDesktop applies (every key optional).
 - `interface DesktopWindowSize` — A window size in CSS pixels.
 - `desktopWindowsTargetNote(backend: string, noVcRuntime: typeOperator): string` — The closing note of a Windows package run: what the target machine needs for backend. A webview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF build ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022 redistributable for each arch in noVcRuntime (the runtime could not be bundled app-local).
@@ -2950,6 +2989,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AppUpdateInfo` — What getAppUpdateInfo reports. Fields a platform does not know are absent.
 - `type AppUpdateOutcome = accepted | cancelled | failed | not-available | not-allowed | info-missing | unsupported` — How an in-app update call ended: the plugin's AppUpdateResultCode, named, plus "unsupported" (not Android, or no plugin).
 - `attachContextMenu(el: ContextMenuElement, items: ContextMenuItems, onSelect: (id: string) => void, options?: ContextMenuTargetOptions): () => void` — Bind a context menu to el: a long press (or a right click) opens it and onSelect gets the chosen item's id. Inside the iOS shell with denext mobile add context-menu it is the system's UIContextMenuInteraction with the lifted element as its preview; see the module docs for the other platforms.
+- `type AudioInterruption = exclusive | mix | duck` — How the app's audio meets other apps' audio, for setAudioSession.
+- `interface AudioSessionOptions` — Options for setAudioSession.
 - `interface AuthCancelOverlayText` — The text of the cancel overlay (both optional; English by default).
 - `authenticateBiometric(options?: BiometricAuthOptions): Promise<void>` — Ask the user to authenticate with Face ID / Touch ID / a fingerprint (or, with allowDeviceCredential, the device passcode).
 - `interface AuthSessionError` — The Error an openAuthSession promise rejects with.
@@ -2979,6 +3020,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cancelNotification(ids: number | typeOperator): Promise<void>` — Cancel pending local notifications (and remove delivered ones with those ids on Android). An id that is not pending is ignored. Outside the shell it does nothing.
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `checkPermission(name: PermissionName): Promise<PermissionState>` — The current status of a permission, without prompting (see PermissionState for what each status means).
+- `clearNowPlaying(): Promise<void>` — Take the now-playing information and the controls off the lock screen (the media notification goes, and on Android the foreground service stops). Call it when playback ends for good, not on pause.
 - `type ClipboardContent = object | object | object` — Rich content for writeClipboard: text, HTML with an optional plain-text alternative (what apps without HTML paste), or a PNG image as base64. An image replaces the clipboard on its own: it cannot carry text alongside.
 - `type ClipboardFormat = text | html | image` — What readClipboard can read.
 - `clipboardFormats(): Promise<string[]>` — The kinds of content on the clipboard, as MIME types ("text/plain", "text/html", "image/png" for any image, "text/uri-list" for files, "text/rtf").
@@ -3079,6 +3121,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `lockOrientation(orientation: OrientationLock): Promise<void>` — Lock the screen to an orientation (a video player going landscape, a scanner staying portrait). Undo it with unlockOrientation.
 - `materialNameFor(sfName: string): string | undefined` — The Material Symbol an SF Symbol name maps to: the .fill suffix becomes the -fill variant (when there is one), and trailing components are dropped until a stem is known (heart.circle.fill → favorite-fill).
 - `interface MediaAlbum` — An album, as getAlbums lists it.
+- `type MediaControlAction = play | pause | stop | next | previous | seek | seekForward | seekBackward` — A command from the lock screen, Control Center, the media notification, a headset or a car: "seek" carries the target position, "seekForward" / "seekBackward" the offset.
+- `interface MediaControlEvent` — A command the OS sent, for onMediaControl.
 - `interface MediaItem` — One item from getRecentMedia.
 - `interface MomentumSafeScrollOptions` — Options for installMomentumSafeScroll and useMomentumSafeScroll (denext/mobile).
 - `moveToTrash(item: ShellItem): Promise<void>` — Move a file or folder to the Trash (macOS), Recycle Bin (Windows) or the freedesktop trash (Linux), so the user can restore it.
@@ -3108,6 +3152,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NotificationAction` — An action button on a notification.
 - `interface NotificationCategory` — A category: a set of action buttons notifications opt into with categoryId.
 - `interface NotificationChannel` — An Android notification channel.
+- `interface NowPlayingInfo` — What setNowPlaying describes. Every field is optional and merged into the last.
 - `interface OfflineScreenOptions` — Options for installOfflineScreen.
 - `onAppResume(cb: (awayMs: number) => void): () => void` — Call cb each time the page returns to the foreground, with how long it was away in milliseconds.
 - `onBack(handler: BackHandler): () => void` — Register handler for the system back action, on top of the handlers already registered (a LIFO stack, like React Native's BackHandler). On a back action the newest handler runs first; returning true consumes it. When no handler consumes it, the default runs: history back when there is somewhere to go back to, else the app leaves the foreground (@capacitor/app's minimizeApp, exitApp where that is missing).
@@ -3120,6 +3165,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onLiveActivityPushToStartToken(callback: (token: LiveActivityPushToStartToken) => void): () => void` — Call callback with each push-to-start token ActivityKit issues the app (iOS 17.2 and later), including the current one: a token issued before the first subscriber is kept for it. Send each to your server, which replaces the one it had. Elsewhere it is never called.
 - `onLocalNotificationReceived(callback: (notification: LocalNotification) => void): () => void` — Call callback for each local notification delivered while the app is in the foreground. Outside the shell it does nothing.
 - `onLocalNotificationTapped(callback: (tap: LocalNotificationTap) => void, options?: LocalNotificationTapOptions): () => void` — Call callback when the user taps a local notification (or one of its actions), and by default navigate to its data.path (an in-app path) or data.url (under the deep-link acceptance rules), exactly as onPushTapped does for a push. A tap that cold-started the app is kept by the shell (or the Deno Desktop runtime) for the first listener, so subscribe early. In a Deno Desktop window it needs the notifications capability. Elsewhere it does nothing.
+- `onMediaControl(handler: (event: MediaControlEvent) => void): () => void` — Call handler with each command the OS sends for the now-playing item (lock screen, Control Center, the media notification, headset buttons, a car); returns a function that stops listening. Only the controls setNowPlaying offered are sent. On the web the handlers replace the browser's own media-key behaviour while any is registered.
 - `onNativeEvent<D>(name: string, event: string, handler: (data: D) => void): () => void` — Call handler with each event the native plugin name emits. Does nothing (and returns a no-op) where nativeModule would return null.
 - `onOpenFile(callback: (file: OpenedFile) => void): () => void` — Call callback for every file the OS opens with the app (Deno Desktop).
 - `onOrientationChange(cb: (orientation: Orientation) => void): () => void` — Call cb with the new orientation each time the screen rotates.
@@ -3169,9 +3215,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PickedFolder` — A folder pickFolder returned.
 - `type PickedHandle = string` — An opaque handle to a file or folder the user picked in a dialog (pickFolder, pickDocument, saveFile). It is the only authority the filesystem and shell functions accept for a location outside the app's own folders: a result's path is for display only and is never accepted back. A handle lasts for the session (a Deno Desktop launch, or the page's lifetime in a browser); an unknown or expired one rejects with code "forbidden".
 - `interface PickedImage` — A picture from pickImage: one of webPath / dataUrl, plus its format.
+- `interface PickedMedia` — A photo or video from pickMedia.
 - `pickFolder(): Promise<PickedFolder | null>` — Let the user choose a folder.
 - `pickImage(options?: PickImageOptions): Promise<PickedImage | null>` — Take a picture or pick one from the photo library.
 - `interface PickImageOptions` — Options for pickImage.
+- `pickMedia(options?: PickMediaOptions): Promise<PickedMedia[] | null>` — Pick photos and videos: several at once from the library, or one taken / recorded with the camera.
+- `interface PickMediaOptions` — Options for pickMedia.
+- `type PickMediaTypes = images | videos | all` — What pickMedia offers: photos, videos, or both.
 - `preloadSystemIcons(names: ReadonlyArray<string | Pick<SystemIconProps, name | size | weight | scale>>): Promise<void>` — Warm the native SF Symbol cache (in the iOS shell; a no-op elsewhere), so the icons a first screen shows draw without waiting for the bridge. Call it early (before the first render).
 - `prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult>` — Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.
 - `interface PressEvent` — The slice of a pointer / mouse event a bound menu reads.
@@ -3245,8 +3295,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SecureStoreSetResult` — Where SecureStore.set put the value.
 - `interface SentryCapacitorSdk` — The slice of @sentry/capacitor this uses: init(options, siblingInit).
 - `interface SentrySiblingSdk` — The slice of the sibling SDK (@sentry/browser, @sentry/react, …): its init.
+- `setAudioSession(options?: AudioSessionOptions): Promise<void>` — Set how the app's audio behaves: whether it keeps playing in the background and with the phone locked, and how it meets other apps' audio. In the iOS shell this sets the AVAudioSession category (.playback for background audio) and activates it; on Android the choice decides whether a foreground media service keeps playback alive; on the web (and without the plugin) it does nothing, as a browser decides itself.
 - `setKeyboardResizeMode(mode: KeyboardResizeMode): Promise<void>` — Change how the iOS shell resizes the app when the keyboard shows (KeyboardResizeMode), through Keyboard.setResizeMode. @capacitor/keyboard supports it on iOS only, so on Android, on the web and without the plugin this does nothing (Android resizes the WebView itself). The startup mode is plugins.Keyboard.resize in capacitor.config.
 - `setNotificationCategories(categories: typeOperator): Promise<void>` — Register the app's notification categories: the action buttons a notification shows when its categoryId names one. The call **replaces** every category registered before, so pass the full set each time.
+- `setNowPlaying(info: NowPlayingInfo): Promise<void>` — Show what is playing on the lock screen, in Control Center / the media notification, and on headsets and cars, and offer the controls in info.controls there (they reach onMediaControl). Each call merges info into the last one, so after the first a page sends what changed: { playing: false, position } on pause, a new title for the next track. Calls that only restate the clock (a timeupdate while playing) are not sent on: the OS runs the position on from the rate.
 - `setPrivacyScreen(enabled: boolean, options?: PrivacyScreenOptions): Promise<boolean>` — Turn the privacy screen on or off for the whole app.
 - `setQuickActions(actions: typeOperator): Promise<void>` — Replace the app's home-screen quick actions (long-press on the icon).
 - `setSystemBars(options: SystemBarsOptions): Promise<void>` — Style, hide or show the system bars.
@@ -3304,6 +3356,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLocalNotificationTapped(callback: (tap: LocalNotificationTap) => void, options?: LocalNotificationTapOptions): void` — Hook form of onLocalNotificationTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options.
 - `useLocation(options?: UseLocationOptions): LocationState` — Hook form of watchPosition: the latest fix and error, watched while mounted and enabled. Changing accuracy or minimumIntervalMs restarts the watch.
 - `interface UseLocationOptions` — Options for useLocation.
+- `useMediaControl(handler: (event: MediaControlEvent) => void): void` — Hook form of onMediaControl: handles the OS's media commands while the component is mounted, always with the latest handler.
 - `useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void` — Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. A change to force or settleMs re-runs the hook (it releases its share, then takes a new one); settleMs applies only when that share is the one that installs the shim, since a live install keeps its own options.
 - `useNativeViewSlot(type: string, options?: NativeViewSlotOptions): NativeViewSlotHandle` — Keep a native view of type on a slot element: the hook behind NativeViewSlot. Put ref on the slot (give it a size), overlayRef on the element holding DOM drawn over the view, and, while placement is "embed", render nativeViewEmbedScroller inside it. Render your web fallback while status is "web" or "error".
 - `useNetworkStatus(): NetworkStatus` — Hook form of networkStatus: the current status, updated on every change until unmount. Before mount (and during SSR) it reads { connected: true, connectionType: "unknown" }, so an offline banner never flashes on first paint.
@@ -3364,7 +3417,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `createBottomTabNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createBottomTabNavigator for React Native mode, drawn by TabsView: visited tabs stay mounted (hidden with <Activity>), tabBarBadge / tabBarIcon / tabBarLabel / title and lazy / popToTopOnBlur / unmountOnBlur are honoured, and a press on the active tab emits tabPress (a nested stack pops to its root) then scrolls it to the top.
 - `createNativeStackNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createNativeStackNavigator for React Native mode, drawn by StackView.
-- `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `Fragment: FragmentComponent` — Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.
 - `interface HistoryLocation` — A location as the history bindings read it.
 - `interface HistoryScreen` — One screen of a HistoryStack's table.
 - `interface HistorySource` — A history-based router, as HistoryStack and HistoryTabs use it: read the location, hear it change, and navigate. browserHistory, tanstackHistory and reactRouterHistory build one; any router whose location lives in the URL history can implement it in a few lines.
@@ -3467,6 +3520,35 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `feature(name: string): boolean` — Whether the feature flag name is enabled. A feature("KEY") call with a **string literal** argument is folded to a boolean literal at build time (for a KEY listed in features) so the branch is dead-code eliminated; otherwise it reads the build-seeded flag map at runtime, defaulting to false for any unset flag.
 
+### `denext/gleam`
+
+- `defineLustreView<Flags, Props>(config: LustreViewConfig<Flags, Props>): LustreViewComponent<Props>` — Define a Lustre server component: a Lustre app whose state lives on the server, one runtime per mounted view per Live connection. Render the returned component from a Server Component.
+- `gleam(options?: GleamOptions): DenextPlugin` — The Gleam build plugin. Registers a prepare step that runs gleam build --target javascript in the Gleam project (gleam.toml at the app root, else gleam/, or options.dir).
+- `interface GleamOptions` — Options shared by the plugin and denext add gleam:.
+- `interface GleamResult` — A Gleam Result as Gleam's JavaScript output builds it (Ok / Error, the value at [0]).
+- `interface LustreApp<Flags>` — A Lustre application (lustre.App(flags, model, msg)), as Gleam's .d.mts declares it. Flags is inferred from it: counter.app() typed App$<number, Model$, Msg$> makes the flags a number.
+- `lustreElement<Attrs>(kit: LustreKit, tag: string, app: LustreApp<undefined>): (props: LustreElementAttributes<Attrs>) => VNode` — Turn a Lustre component into a denext component that renders it as the custom element tag. Export the result from a "use client" module.
+- `type LustreElementAttributes<Attrs> = Partial<Attrs> & object` — The props of a Lustre custom element in JSX: its attributes (each a string, the component's on_attribute_change decoders parse them), the usual global ones, and light-DOM children for the component's slots.
+- `interface LustreEventPayload` — A DOM event a Lustre view's client sent, after the built-in shape check.
+- `lustreIsland<Flags, Props>(kit: LustreKit, app: LustreApp<Flags>, options?: LustreIslandOptions<Flags, Props>): (props: Props) => VNode` — Turn a Lustre app into a denext island component. Export the result from a "use client" module.
+- `interface LustreIslandOptions<Flags, Props>` — How lustreIsland maps the component's props onto the app.
+- `lustreKit(modules: LustreModules): LustreKit` — Wrap the app's Lustre functions for denext/gleam. The generated .denext/lustre.ts calls this; app code imports the kit from there.
+- `interface LustreKit` — What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.
+- `interface LustreModules` — The functions lustreKit takes, imported from the app's Lustre build.
+- `interface LustreReconciler` — Lustre's client reconciler (lustre/vdom/reconciler.ffi.mjs), as far as this module uses it.
+- `type LustreReconcilerClass = (root: Element, decodeEvent: (event: Event, path: string, name: string, include?: string[]) => unknown, dispatch: (event: Event, data: unknown) => void) => LustreReconciler` — The Reconciler class: new Reconciler(root, decodeEvent, dispatch).
+- `type LustreRuntime = object` — A running client-side Lustre app (Lustre's Runtime).
+- `interface LustreRuntimeInstance` — A Lustre server Runtime as its constructor builds it (only send is used).
+- `lustreServerKit(modules: LustreServerModules): LustreServerKit` — Wrap the app's Lustre server-component functions for defineLustreView. The generated .denext/lustre-server.ts calls this.
+- `interface LustreServerKit` — What defineLustreView and the Live hub call: the app's Lustre server runtime, wrapped.
+- `interface LustreServerModules` — The functions lustreServerKit takes, imported from the app's Lustre build.
+- `type LustreServerRuntime = object` — A running Lustre server component.
+- `interface LustreViewComponent<Props>` — The component defineLustreView returns.
+- `interface LustreViewConfig<Flags, Props>` — What defineLustreView takes.
+- `lustreViewIsland(Reconciler: LustreReconcilerClass): (props: LustreViewIslandProps) => VNode` — The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.
+- `interface LustreViewIslandProps` — The island's props (written by defineLustreView's server render).
+- `interface PrerenderedShadow` — A custom element's prerendered shadow root (a <template shadowrootmode>).
+
 ### `denext/platform`
 
 - `platform: Platform` — The target this build is for. Folded to a string literal at build time in the app's own modules (and platform === "…" to a boolean), so other targets' branches are removed.
@@ -3537,6 +3619,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CommandContext` — The parsed invocation handed to a command's CommandSpec.run.
 - `interface CommandSpec` — A first-class denext CLI verb.
 - `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
+- `interface CompatReactNativeOptions` — React Native mode (reactNative in the config) for the App Router's compat bundles: what each of the server, Flight and client-route bundles adds (see react-native-app-router.ts reactNativeCompatOptions). Absent when reactNative is off, which leaves every bundle exactly as it is without it.
 - `compileMdxSource(path: string, source: string, opts?: MdxBuildOptions): Promise<string>` — Compile one MDX/Markdown source to a JS module string (React automatic runtime, jsxImportSource: "react" → aliased to denext downstream). With no opts this is the baseline plain-MDX/CommonMark path; when the app configures mdx in denext.config.ts, its unified remark/rehype/recma plugin lists (e.g. Codehike, GFM) are forwarded verbatim to MDX's compile. Exported for unit testing the plugin wiring.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `createNextCompatServerLoader(base: ModuleLoader, opts: NextCompatServerLoaderOptions): ModuleLoader` — Wrap a base ModuleLoader so route source modules that have a react→denext rewritten server bundle load from that bundle instead of source (a keyed ref resolves to the module's namespace inside the single server bundle).
@@ -3591,7 +3674,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `readCappedBody(request: Request, maxBytes: number, idleMs?: number): Promise<Uint8Array | TOO_LARGE | STALLED>` — Read a request body into memory, refusing anything over maxBytes (hard-caps even a chunked body with no Content-Length) and aborting a body that stalls for longer than idleMs. Returns the bytes, TOO_LARGE, or STALLED.
 - `registerFamily(type: unknown, id: string): void` — Register a component type under a stable family id (e.g. moduleUrl#Export). Re-registering the same id with a new function ref binds that ref to the same family and marks it current — the mechanism that lets an edited module's fresh references reconcile onto existing fibers.
 - `remixCodegen` — The Remix route-module codegen denext migrate --from remix uses, as a namespace: the swc-based split of a route module into a "use client" component + a server data module (remixCodegen.analyzeModule analyzeModule) and the generated denext wrappers (remixCodegen.pageWrapperSource pageWrapperSource and siblings). A router plugin (@denext/react-router) uses it to generate the same wrappers into .denext/ for an app whose sources stay untouched.
-- `revalidatePath(path: string, _type?: layout | page): Promise<void>` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.
+- `revalidatePath(path: string, _type?: layout | page): Promise<void>` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store. Inside a Server Action the client that called it also re-renders its current route.
 - `revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void>` — Invalidate every cached data entry and page carrying tag.
 - `type RouteParams = Record<string, string | string[]>` — Extracted dynamic route parameters, keyed by segment name. A [slug] segment yields a string; a [...rest] / [[...rest]] catch-all yields the remaining parts as a string[] (Next.js's shape — params.rest.join("/") for the path form).
 - `type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
@@ -3711,6 +3794,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/audio`
 
+- `type AudioLockScreenOptions = object` — Which lock-screen controls to show (expo-audio's shape).
+- `type AudioMetadata = object` — What the lock screen shows for a player (expo-audio's shape).
+- `type AudioMode = object` — The audio mode (only shouldPlayInBackground and interruptionMode change anything here).
 - `AudioModule: NativeAudioModule` — expo-audio's native module object (AudioModule), for code that constructs the classes through it (new AudioModule.AudioRecorder(options)) or calls its functions. The classes and the session and permission calls are the ones this module exports; preloading and the notification permission are not provided and reject with a nativeOnly error.
 - `class AudioPlayer` — An audio player over an HTMLAudioElement (created on first use).
 - `interface AudioPlayerOptions` — Options for a player.
@@ -3723,6 +3809,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class AudioStream` — The type of expo-audio's raw PCM input stream. Streams are not provided here (useAudioStream is not exported): constructing this stand-in throws. Record with AudioRecorder, or read the microphone through Web Audio.
 - `createAudioPlayer(source?: AudioSource, options?: AudioPlayerOptions): AudioPlayer` — A player not tied to a component (call remove() when done).
 - `getRecordingPermissionsAsync(): Promise<PermissionResponse>` — The microphone permission (the browser's).
+- `type InterruptionMode = mixWithOthers | doNotMix | doNotMixPersistent | duckOthers` — How the app's audio meets other apps' audio.
 - `class NativeAudioModule` — The type of expo-audio's native module (what requireNativeModule("ExpoAudio") returns). There is no native module on the web: constructing this stand-in throws. Use the package's functions and AudioPlayer / AudioRecorder instead.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
@@ -3732,7 +3819,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `RecordingPresets: object` — Expo's recording presets.
 - `interface RecordingStatus` — A recording outcome, for the status listener.
 - `requestRecordingPermissionsAsync(): Promise<PermissionResponse>` — Ask for the microphone (a getUserMedia call, stopped at once).
-- `setAudioModeAsync(_mode: Record<string, unknown>): Promise<void>` — Set the audio session mode: there is no audio session on the web, so nothing changes.
+- `setAudioModeAsync(mode: Partial<AudioMode>): Promise<void>` — Set the audio mode. shouldPlayInBackground and interruptionMode set the shell's audio session through denext/mobile's setAudioSession (denext mobile add background-audio; the iOS .playback category keeps audio playing in the background and with the phone locked); the other fields are accepted. On the web, a browser decides itself, so nothing changes. Lock-screen controls on iOS need a doNotMix mode, as in expo-audio.
 - `setIsAudioActiveAsync(_active: boolean): Promise<void>` — Activate or deactivate the audio session: there is none on the web.
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `useAudioPlayer(source?: AudioSource, options?: AudioPlayerOptions): AudioPlayer` — A player for the component's lifetime (released on unmount; a new source replaces the current one).
@@ -3840,24 +3927,24 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/brightness`
 
-- `addBrightnessListener(listener: (event: BrightnessEvent) => void): Subscription` — Call listener when the brightness changes: never, since the plugin reports no changes.
+- `addBrightnessListener(listener: (event: BrightnessEvent) => void): Subscription` — Call listener when the screen's brightness changes (iOS, as in Expo: with DenextBrightness from denext mobile add brightness; never elsewhere).
 - `interface BrightnessEvent` — What a brightness listener receives.
 - `enum BrightnessMode` — How the system sets the brightness (Android).
-- `getBrightnessAsync(): Promise<number>` — The current brightness: the screen's (iOS) or the app window's (Android; -1 while it follows the system).
-- `getPermissionsAsync(): Promise<PermissionResponse>` — The system-settings permission: granted in the shell, undetermined on the web.
-- `getSystemBrightnessAsync(): Promise<number>` — The system brightness: off Android the screen's, as Expo (getBrightnessAsync); Android's system setting is not readable here.
-- `getSystemBrightnessModeAsync(): Promise<BrightnessMode>` — The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; Android's is not readable here (it rejects with ERR_UNAVAILABLE).
+- `getBrightnessAsync(): Promise<number>` — The current brightness: the screen's (iOS) or the app window's (Android; the system's while the window follows it, as in Expo, or -1 without DenextBrightness).
+- `getPermissionsAsync(): Promise<PermissionResponse>` — The system-settings permission (see requestPermissionsAsync).
+- `getSystemBrightnessAsync(): Promise<number>` — The system brightness: off Android the screen's, as Expo (getBrightnessAsync); on Android the system setting.
+- `getSystemBrightnessModeAsync(): Promise<BrightnessMode>` — The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; on Android the system setting's (AUTOMATIC or MANUAL).
 - `isAvailableAsync(): Promise<boolean>` — Whether the brightness can be changed: the shell with the plugin.
 - `isUsingSystemBrightnessAsync(): Promise<boolean>` — Android: whether the app window follows the system brightness (it has no level of its own). Off Android false, as in Expo.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
-- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the system-settings permission: as getPermissionsAsync.
+- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the system-settings permission: on Android the system screen for WRITE_SETTINGS; granted elsewhere in the shell, undetermined on the web.
 - `restoreSystemBrightnessAsync(): Promise<void>` — Android: let the app window follow the system brightness again. Off Android it does nothing, as in Expo.
 - `setBrightnessAsync(brightnessValue: number): Promise<void>` — Set the brightness while the app runs.
-- `setSystemBrightnessAsync(brightnessValue: number): Promise<void>` — Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); Android's system setting is not writable here.
-- `setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void>` — Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; Android's is not writable here (it rejects with ERR_UNAVAILABLE).
+- `setSystemBrightnessAsync(brightnessValue: number): Promise<void>` — Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); on Android the system setting (switching its mode to manual first, as Expo), which needs WRITE_SETTINGS (requestPermissionsAsync).
+- `setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void>` — Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; on Android it writes the system setting, which needs WRITE_SETTINGS (requestPermissionsAsync).
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
 
@@ -3880,38 +3967,41 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum Availability` — An event's free/busy state.
 - `interface Calendar` — A calendar (or an iOS reminders list).
 - `enum CalendarAccessLevel` — The current user's access to a calendar (Android).
+- `type CalendarDialogOpenParamsNext = CalendarDialogParamsNext & OpenEventPresentationOptions` — CalendarDialogParamsNext with the viewer's options.
 - `interface CalendarDialogParams` — Which event a dialog shows.
+- `type CalendarDialogParamsNext = Omit<CalendarDialogParams, id> & PresentationOptions` — Which occurrence the object API's dialogs show, and how.
 - `enum CalendarDialogResultActions` — How a calendar dialog ended.
 - `enum CalendarType` — A calendar's kind (iOS).
-- `createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>` — Add an attendee. Not supported by the plugin.
+- `createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>` — Add an attendee to an event (Android).
 - `createCalendar(details?: Partial<Calendar>): Promise<ExpoCalendar>` — Create a calendar (see createCalendarAsync).
 - `createCalendarAsync(details?: Partial<Calendar>): Promise<string>` — Create a calendar, or (iOS, entityType: "reminder") a reminders list. On Android the plugin needs source.name (the account) and ownerAccount.
-- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. timeZone, attendees and absolute or location alarms are not passed on.
+- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).
 - `createEventInCalendarAsync(eventData?: Omit<Partial<Event>, id>, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's new-event editor, pre-filled. On iOS the result says whether it was saved (with the new id) or canceled; Android does not report it (done, id: null).
 - `createReminderAsync(calendarId: string | null, reminder?: Reminder): Promise<string>` — Create a reminder.
 - `enum DayOfTheWeek` — A weekday, as Expo numbers it (Sunday is 1).
 - `interface DaysOfTheWeek` — A weekday of a recurrence.
-- `deleteAttendeeAsync(_id: string): Promise<void>` — Remove an attendee. Not supported by the plugin.
+- `deleteAttendeeAsync(id: string): Promise<void>` — Remove an attendee (Android).
 - `deleteCalendarAsync(id: string): Promise<void>` — Delete a calendar (or reminders list) and everything in it.
 - `deleteEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<void>` — Delete an event, one occurrence (instanceStartDate) or this and the following ones (futureEvents).
 - `deleteReminderAsync(id: string): Promise<void>` — Delete a reminder.
 - `interface DialogEventResult` — How an event dialog ended, and the event's id.
-- `editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event. Android does not report the outcome (done).
+- `editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).
 - `enum EntityTypes` — What a calendar holds.
 - `interface Event` — An event.
 - `enum EventAccessLevel` — An event's visibility (Android).
 - `enum EventStatus` — An event's status.
 - `class ExpoCalendar` — A calendar, with methods (the new API).
+- `class ExpoCalendarAttendee` — An event's attendee, with methods (the new API; the methods are Android only).
 - `class ExpoCalendarEvent` — An event, with methods (the new API).
 - `class ExpoCalendarReminder` — A reminder, with methods (the new API, iOS).
 - `enum Frequency` — How often a recurrence repeats.
-- `getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees. The plugin does not read them by event id.
+- `getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees (of one occurrence, with instanceStartDate).
 - `getCalendarPermissions(writeOnly?: boolean): Promise<PermissionResponse>` — The calendar permission, without prompting (the new API).
 - `getCalendarPermissionsAsync(): Promise<PermissionResponse>` — The calendar permission, without prompting (legacy).
 - `getCalendars(entityType?: EntityTypes): Promise<ExpoCalendar[]>` — The calendars, as objects (see getCalendarsAsync).
 - `getCalendarsAsync(entityType?: string): Promise<Calendar[]>` — The calendars. On iOS, entityType picks event calendars or reminders lists (both when omitted; reminders lists only when reminders access allows reading them). Android ignores it, as Expo does.
 - `getDefaultCalendarAsync(): Promise<Calendar>` — The default calendar for new events (isPrimary: true).
-- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).
+- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).
 - `getEventsAsync(calendarIds: string[], startDate: Date | string, endDate: Date | string): Promise<Event[]>` — The events (occurrences) overlapping [startDate, endDate] in the given calendars (all calendars when the list is empty).
 - `getReminderAsync(id: string): Promise<Reminder>` — One reminder.
 - `getRemindersAsync(calendarIds: parenthesized[], status: ReminderStatus | null, startDate?: Date | string | null, endDate?: Date | string | null): Promise<Reminder[]>` — The reminders in the given lists (all lists when empty), by status; a date range filters on the due date (on the completion date for completed).
@@ -3921,13 +4011,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `getSourcesAsync(): Promise<Source[]>` — The calendar accounts.
 - `isAvailableAsync(): Promise<boolean>` — Whether the calendar API works here: the shell with the plugin installed.
 - `listEvents(calendars: parenthesized[], startDate: Date, endDate: Date): Promise<ExpoCalendarEvent[]>` — The events overlapping [startDate, endDate] in the given calendars, as objects.
+- `type ModifiableAttendeeProperties = Pick<Attendee, name | email | role | status | type>` — What ExpoCalendarAttendee.update changes.
 - `type ModifiableCalendarProperties = Pick<Calendar, color | title>` — What ExpoCalendar.update changes.
 - `type ModifiableEventProperties = Pick<Event, title | location | timeZone | url | notes | alarms | recurrenceRule | availability | startDate | endDate | allDay>` — What ExpoCalendarEvent.update changes.
 - `type ModifiableReminderProperties = Pick<Reminder, title | location | timeZone | url | notes | alarms | recurrenceRule | startDate | dueDate | completed | completionDate>` — What ExpoCalendarReminder.update changes.
 - `enum MonthOfTheYear` — A month (January is 1).
 - `interface OpenEventDialogResult` — How an "open event" dialog ended.
-- `openEventInCalendar(_id: string): void` — Open an event in the Android calendar app. The plugin has no such call.
-- `openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event in the calendar app. The plugin has no such dialog.
+- `openEventInCalendar(id: string): void` — Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).
+- `openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).
 - `interface OpenEventPresentationOptions` — How to present an existing event.
 - `interface Organizer` — An event's organizer.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
@@ -3947,9 +4038,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requestRemindersPermissionsAsync(): Promise<PermissionResponse>` — Ask for reminders access (legacy).
 - `interface Source` — A calendar account.
 - `enum SourceType` — A calendar source's kind (iOS).
-- `updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>` — Change an attendee. Not supported by the plugin.
+- `updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>` — Change an attendee (Android).
 - `updateCalendarAsync(id: string, details?: Partial<Calendar>): Promise<string>` — Change a calendar's (or reminders list's) title and colour; other fields are ignored.
-- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event (with futureEvents, this and the following occurrences).
+- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.
 - `updateReminderAsync(id: string, details?: Reminder): Promise<string>` — Change a reminder.
 - `useCalendarPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the calendar permission: [response, request, get].
 - `useRemindersPermissions(options?: PermissionHookOptions<object>): tuple` — Hook form of the reminders permission (iOS): [response, request, get].
@@ -3969,29 +4060,29 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CalendarDialogParams` — Which event a dialog shows.
 - `enum CalendarDialogResultActions` — How a calendar dialog ended.
 - `enum CalendarType` — A calendar's kind (iOS).
-- `createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>` — Add an attendee. Not supported by the plugin.
+- `createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>` — Add an attendee to an event (Android).
 - `createCalendarAsync(details?: Partial<Calendar>): Promise<string>` — Create a calendar, or (iOS, entityType: "reminder") a reminders list. On Android the plugin needs source.name (the account) and ownerAccount.
-- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. timeZone, attendees and absolute or location alarms are not passed on.
+- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).
 - `createEventInCalendarAsync(eventData?: Omit<Partial<Event>, id>, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's new-event editor, pre-filled. On iOS the result says whether it was saved (with the new id) or canceled; Android does not report it (done, id: null).
 - `createReminderAsync(calendarId: string | null, reminder?: Reminder): Promise<string>` — Create a reminder.
 - `enum DayOfTheWeek` — A weekday, as Expo numbers it (Sunday is 1).
 - `interface DaysOfTheWeek` — A weekday of a recurrence.
-- `deleteAttendeeAsync(_id: string): Promise<void>` — Remove an attendee. Not supported by the plugin.
+- `deleteAttendeeAsync(id: string): Promise<void>` — Remove an attendee (Android).
 - `deleteCalendarAsync(id: string): Promise<void>` — Delete a calendar (or reminders list) and everything in it.
 - `deleteEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<void>` — Delete an event, one occurrence (instanceStartDate) or this and the following ones (futureEvents).
 - `deleteReminderAsync(id: string): Promise<void>` — Delete a reminder.
 - `interface DialogEventResult` — How an event dialog ended, and the event's id.
-- `editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event. Android does not report the outcome (done).
+- `editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).
 - `enum EntityTypes` — What a calendar holds.
 - `interface Event` — An event.
 - `enum EventAccessLevel` — An event's visibility (Android).
 - `enum EventStatus` — An event's status.
 - `enum Frequency` — How often a recurrence repeats.
-- `getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees. The plugin does not read them by event id.
+- `getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees (of one occurrence, with instanceStartDate).
 - `getCalendarPermissionsAsync(): Promise<PermissionResponse>` — The calendar permission, without prompting (legacy).
 - `getCalendarsAsync(entityType?: string): Promise<Calendar[]>` — The calendars. On iOS, entityType picks event calendars or reminders lists (both when omitted; reminders lists only when reminders access allows reading them). Android ignores it, as Expo does.
 - `getDefaultCalendarAsync(): Promise<Calendar>` — The default calendar for new events (isPrimary: true).
-- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).
+- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).
 - `getEventsAsync(calendarIds: string[], startDate: Date | string, endDate: Date | string): Promise<Event[]>` — The events (occurrences) overlapping [startDate, endDate] in the given calendars (all calendars when the list is empty).
 - `getReminderAsync(id: string): Promise<Reminder>` — One reminder.
 - `getRemindersAsync(calendarIds: parenthesized[], status: ReminderStatus | null, startDate?: Date | string | null, endDate?: Date | string | null): Promise<Reminder[]>` — The reminders in the given lists (all lists when empty), by status; a date range filters on the due date (on the completion date for completed).
@@ -4001,8 +4092,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `isAvailableAsync(): Promise<boolean>` — Whether the calendar API works here: the shell with the plugin installed.
 - `enum MonthOfTheYear` — A month (January is 1).
 - `interface OpenEventDialogResult` — How an "open event" dialog ended.
-- `openEventInCalendar(_id: string): void` — Open an event in the Android calendar app. The plugin has no such call.
-- `openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event in the calendar app. The plugin has no such dialog.
+- `openEventInCalendar(id: string): void` — Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).
+- `openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).
 - `interface OpenEventPresentationOptions` — How to present an existing event.
 - `interface Organizer` — An event's organizer.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
@@ -4019,9 +4110,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requestRemindersPermissionsAsync(): Promise<PermissionResponse>` — Ask for reminders access (legacy).
 - `interface Source` — A calendar account.
 - `enum SourceType` — A calendar source's kind (iOS).
-- `updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>` — Change an attendee. Not supported by the plugin.
+- `updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>` — Change an attendee (Android).
 - `updateCalendarAsync(id: string, details?: Partial<Calendar>): Promise<string>` — Change a calendar's (or reminders list's) title and colour; other fields are ignored.
-- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event (with futureEvents, this and the following occurrences).
+- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.
 - `updateReminderAsync(id: string, details?: Reminder): Promise<string>` — Change a reminder.
 - `useCalendarPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the calendar permission: [response, request, get].
 - `useRemindersPermissions(options?: PermissionHookOptions<object>): tuple` — Hook form of the reminders permission (iOS): [response, request, get].
@@ -4118,7 +4209,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/expo/contacts`
 
 - `addContactAsync(contact: LegacyContact, _containerId?: string): Promise<string>` — Add a contact to the default container.
-- `addContactsChangeListener(_listener: () => void): EventSubscription` — Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.
+- `addContactsChangeListener(listener: () => void): EventSubscription` — Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).
 - `type Address = object` — A legacy postal address.
 - `enum CalendarFormats` — Calendar formats of a legacy Date.
 - `type CalendarFormatType = CalendarFormats | ${[0m[38;5;12mCalendarFormats[0m}` — A CalendarFormats member or its string.
@@ -4139,6 +4230,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum ContactsSortOrder` — The class API's sort orders (ContactQueryOptions.sortOrder).
 - `type ContactType = ContactTypes | ${[0m[38;5;12mContactTypes[0m}` — A ContactTypes member or its string.
 - `enum ContactTypes` — Person or company.
+- `class Container` — A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only, as in Expo, through DenextContacts; elsewhere every call rejects with ERR_UNAVAILABLE.
+- `type ContainerClassType = local | exchange | cardDAV | unassigned | unknown` — A container's kind as the class API reports it.
 - `type ContainerQuery = object` — A legacy container query.
 - `type ContainerType = ContainerTypes | ${[0m[38;5;12mContainerTypes[0m}` — A ContainerTypes member or its string.
 - `enum ContainerTypes` — Kinds of contact container.
@@ -4163,8 +4256,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FormOptions = object` — Options of a contact form. Only allowsEditing is honoured here.
 - `getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>` — One contact.
 - `getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.
-- `getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
-- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
+- `getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.
+- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id: where new contacts go (iOS).
 - `getGroupsAsync(groupQuery: GroupQuery): Promise<LegacyGroup[]>` — The contact groups, optionally only the one with groupId or the ones named groupName.
 - `getPagedContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — getContactsAsync, by its paging name.
 - `getPermissionsAsync(): Promise<ContactsPermissionResponse>` — The contacts permission, without prompting. Read and write are asked together; granted means both (iOS 18 limited access reads as granted with accessPrivileges: "limited").
@@ -4196,7 +4289,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `presentContactPickerAsync(): Promise<ExistingContact | null>` — Let the user pick a contact with the system picker.
 - `presentFormAsync(contactId?: string | null, contact?: LegacyContact | null, formOptions?: FormOptions): Promise<void>` — Show the system contact form: an existing contact (editable unless allowsEditing is false), or a new one prefilled from contact.
 - `type Relationship = object` — A legacy relationship (not read here).
-- `removeAllContactsChangeListeners(): void` — Remove every change listener (they never fire here).
+- `removeAllContactsChangeListeners(): void` — Remove every listener addContactsChangeListener added.
 - `removeContactAsync(contactId: string): Promise<void>` — Delete a contact.
 - `removeGroupAsync(groupId: string): Promise<void>` — Delete a contact group.
 - `requestPermissionsAsync(): Promise<ContactsPermissionResponse>` — Ask for the contacts permission (read and write).
@@ -4209,7 +4302,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/expo/contacts/legacy`
 
 - `addContactAsync(contact: LegacyContact, _containerId?: string): Promise<string>` — Add a contact to the default container.
-- `addContactsChangeListener(_listener: () => void): EventSubscription` — Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.
+- `addContactsChangeListener(listener: () => void): EventSubscription` — Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).
 - `type Address = object` — A legacy postal address.
 - `enum CalendarFormats` — Calendar formats of a legacy Date.
 - `type CalendarFormatType = CalendarFormats | ${[0m[38;5;12mCalendarFormats[0m}` — A CalendarFormats member or its string.
@@ -4235,8 +4328,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FormOptions = object` — Options of a contact form. Only allowsEditing is honoured here.
 - `getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>` — One contact.
 - `getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.
-- `getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
-- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
+- `getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.
+- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id: where new contacts go (iOS).
 - `getGroupsAsync(groupQuery: GroupQuery): Promise<LegacyGroup[]>` — The contact groups, optionally only the one with groupId or the ones named groupName.
 - `getPagedContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — getContactsAsync, by its paging name.
 - `getPermissionsAsync(): Promise<ContactsPermissionResponse>` — The contacts permission, without prompting. Read and write are asked together; granted means both (iOS 18 limited access reads as granted with accessPrivileges: "limited").
@@ -4551,8 +4644,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ImagePickerErrorResult` — A pending-result error (never produced here).
 - `interface ImagePickerOptions` — Options for the launch calls.
 - `type ImagePickerResult = object | object` — What a launch call resolves with.
-- `launchCameraAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Take a picture with the camera.
-- `launchImageLibraryAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Pick a picture from the photo library.
+- `launchCameraAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Take a picture with the camera, or record a video with mediaTypes: "videos".
+- `launchImageLibraryAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Pick photos or videos from the library: one, or several with allowsMultipleSelection.
 - `type MediaLibraryPermissionResponse = PermissionResponse & object` — A photo-library permission answer.
 - `type MediaType = images | videos | livePhotos` — A media kind.
 - `enum MediaTypeOptions` — Media kinds (legacy enum).
@@ -4955,8 +5048,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `printAsync(options: PrintOptions): Promise<void>` — Print HTML or a file with the system print dialog.
 - `interface Printer` — A printer (selectPrinterAsync).
 - `interface PrintOptions` — What to print.
-- `printToFileAsync(_options?: FilePrintOptions): Promise<FilePrintResult>` — Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).
-- `selectPrinterAsync(): Promise<Printer>` — Pick a printer (iOS): not available here.
+- `printToFileAsync(options?: FilePrintOptions): Promise<FilePrintResult>` — Render HTML to a PDF file in the app's cache folder: on pages of width x height points (612 x 792, US Letter, by default) inside margins, with base64 the bytes too.
+- `selectPrinterAsync(): Promise<Printer>` — Pick a printer with the system printer picker (iOS, as in Expo). Pass its url as printAsync's printerUrl to print there without the dialog.
 
 ### `denext/expo/quick-actions`
 

@@ -1,0 +1,34 @@
+// The e2e copies this fixture and sets the datasource provider (postgresql / mysql).
+datasource db {
+  provider = "__PROVIDER__"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Lower-case table and column names, so the raw queries read the same on Postgres and MySQL.
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  profile   Json?
+  balance   Decimal?
+  visits    BigInt   @default(0)
+  avatar    Bytes?
+  posts     Post[]
+
+  @@map("users")
+}
+
+model Post {
+  id        Int     @id @default(autoincrement())
+  title     String
+  published Boolean @default(false)
+  authorId  Int     @map("author_id")
+  author    User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@map("posts")
+}

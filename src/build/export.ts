@@ -30,6 +30,8 @@ import { exportWithoutAppRouter, finishExport, prepareExport } from "./export-pi
 import { copyPublic, renderAllPages, writeGlobalErrorPage } from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { resolveProject } from "./paths.ts";
+import { preparePartytown } from "./partytown.ts";
+import { join } from "@std/path";
 import { writeMobileExportExtras } from "./mobile-export-extras.ts";
 import { writeDesktopPreload } from "./desktop-preload.ts";
 
@@ -48,6 +50,8 @@ async function renderExport(ctx: ExportContext): Promise<void> {
   await bundleExportFlight(ctx);
   await bundleExportGlobalError(ctx);
   await selfHostExportFonts(ctx);
+  // `<Script strategy="worker">`: the app's Partytown, at the path the pages point it at.
+  await preparePartytown(paths.config, paths.projectDir, join(ctx.outDir, "_denext", "~partytown"));
   // 2. Render every page (× each static param set), then the global-error document.
   await renderAllPages(ctx);
   await writeGlobalErrorPage(ctx);

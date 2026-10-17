@@ -1,0 +1,6 @@
+TS2345 [ERROR]: Argument of type '"/api/post"' is not assignable to parameter of type '"/api/posts" | "/api/user/[id]"'.
+await api("/api/post", "POST", { body: { title: "x" }, query: { page: 1 } });
+          ~~~~~~~~~~~
+    at file:///app/api-client-path.ts:6:11
+
+error: Type checking failed.

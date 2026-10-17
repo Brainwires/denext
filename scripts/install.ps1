@@ -213,11 +213,12 @@ function Install-DenoToolchain([string]$exe, [string]$target) {
   }
   Write-Host "denext: installing denext's Deno toolchain"
   if ((Invoke-Denext $exe @('toolchain', 'install')) -ne 0) {
-    # The toolchain is built for x64 Windows only so far: the Arm64 binary runs every verb that
-    # needs Deno on the deno on your Path instead.
+    # A release that pins a toolchain before 2.9.7-denext.21 has no Windows on Arm build: the
+    # Arm64 binary runs every verb that needs Deno on the deno on your Path instead.
     if ($target -like 'aarch64-*') {
-      Write-Host ("denext: denext's Deno toolchain has no Windows on Arm build yet; denext runs " +
-        'the deno on your Path (install it with: irm https://deno.land/install.ps1 | iex)')
+      Write-Host ("denext: no Windows on Arm Deno toolchain could be installed (releases pinning " +
+        'one older than 2.9.7-denext.21 have none); denext runs the deno on your Path until ' +
+        '`denext toolchain install` succeeds (install one with: irm https://deno.land/install.ps1 | iex)')
       return
     }
     Write-Warning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +

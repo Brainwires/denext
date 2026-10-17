@@ -36,6 +36,8 @@ export interface RefFlag {
   altNames?: string[];
   type: string;
   valueName?: string;
+  /** The value is optional (`--name` or `--name=value`); `valueName` carries the brackets. */
+  optionalValue?: boolean;
   default?: string | number | boolean;
   description: string;
 }
@@ -109,6 +111,7 @@ function refFlag(f: FlagSpec): RefFlag {
     ...(f.altNames?.length ? { altNames: [...f.altNames] } : {}),
     type: f.type,
     ...(f.valueName ? { valueName: f.valueName } : {}),
+    ...(f.optionalValue ? { optionalValue: true } : {}),
     ...(f.default !== undefined ? { default: f.default } : {}),
     description: f.help ?? "",
   };

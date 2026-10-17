@@ -30,6 +30,7 @@ import { getCss } from "./assets.ts";
 import { baseLoaderFor } from "./loaders.ts";
 import { bundleKey, type CompatBuild, type DevState, FLIGHT_KEY } from "./state.ts";
 import { compatAssets } from "../pipeline-shared.ts";
+import { reactNativeCompatOptions } from "../react-native-app-router.ts";
 import {
   autoOptimizePackageImports,
   optimizePackageImportsList,
@@ -66,6 +67,8 @@ function compatBuildOptions(
     buildTarget: platform,
     resolveAlias: st.paths.config?.resolveAlias,
     assets: compatAssets(st.paths.projectDir, join(outDir, "client")),
+    // React Native mode's resolvers in every compat bundle (none without `reactNative`).
+    reactNative: reactNativeCompatOptions(st.paths.config, st.paths.projectDir, true),
   };
 }
 
@@ -210,6 +213,7 @@ async function buildCompat(
         classRuntime: "eager",
         usesActivity: true,
         usesViewTransition: true,
+        usesIsoIslands: true,
       }),
     })),
   });

@@ -1114,16 +1114,57 @@ export interface ReactNativeBundleOptions {
 }
 
 /**
+ * The expo-router plugins for the router the app runs on. In SPA mode, expo-router IS the
+ * router: its route context and navigators. On the App Router `app/` is the App Router's, so an
+ * `expo-router` import fails the build, naming the App Router equivalents
+ * ({@linkcode appRouterExpoRouterPlugin}).
+ */
+function expoRouterPlugins(projectDir: string, appRouter: boolean): esbuild.Plugin[] {
+  return appRouter
+    ? [appRouterExpoRouterPlugin()]
+    : [expoRouterContextPlugin(projectDir), expoRouterNavigatorsPlugin()];
+}
+
+/** `expo-router` and its subpaths. */
+const EXPO_ROUTER_FILTER = /^expo-router(?:\/.*)?$/;
+
+/**
+ * The esbuild plugin that fails an `expo-router` import on the App Router: expo-router is a
+ * router of its own (file routes under `app/`, which the App Router owns there), so neither its
+ * route context nor its navigators apply. The error names the App Router equivalents.
+ */
+export function appRouterExpoRouterPlugin(): esbuild.Plugin {
+  return {
+    name: "denext-app-router-expo-router",
+    setup(build) {
+      build.onResolve({ filter: EXPO_ROUTER_FILTER }, (args) => ({
+        errors: [{
+          text: `"${args.path}" is not available on the App Router: \`reactNative\` there ` +
+            "builds react-native / expo-* for the App Router's routes, and `app/` is the App " +
+            'Router\'s. Use `Link` / `useRouter` / `usePathname` from "denext" (or ' +
+            '"denext/navigation" for native stacks and tabs), or run the app in SPA mode ' +
+            '(`mode: "spa"`), where expo-router routes it.',
+        }],
+      }));
+    },
+  };
+}
+
+/**
  * The bundle options React Native mode contributes, or null when `reactNative` is off.
  *
  * @param config The app config.
  * @param projectDir The project root (react-native-web is looked up from here).
  * @param dev Whether this is a dev build (sets `__DEV__`).
+ * @param appRouter For the App Router's compat bundles rather than the SPA's: `expo-router`
+ *   imports fail ({@linkcode appRouterExpoRouterPlugin}) and uniwind (whose stylesheet pass is
+ *   the SPA's) is left out.
  */
 export function reactNativeBundleOptions(
   config: DenextConfig | null | undefined,
   projectDir: string,
   dev: boolean,
+  appRouter = false,
 ): ReactNativeBundleOptions | null {
   const options = reactNativeOptions(config);
   if (!options) return null;
@@ -1137,11 +1178,10 @@ export function reactNativeBundleOptions(
       desktopReactNativePlugin(options.desktopPackage),
       // Ahead of the react-native-web resolver too: with uniwind installed, `react-native` is
       // its web components (which then import react-native-web through the resolver below).
-      ...uniwindPlugins(config, projectDir),
+      ...(appRouter ? [] : uniwindPlugins(config, projectDir)),
       reactNativeWebPlugin(projectDir),
       reactNativePatchesPlugin(),
-      expoRouterContextPlugin(projectDir),
-      expoRouterNavigatorsPlugin(),
+      ...expoRouterPlugins(projectDir, appRouter),
       ...(options.expoShims === false ? [] : [expoShimPlugin()]),
       ...(options.lists === "library" ? [] : [listAdaptersPlugin(projectDir)]),
       reanimatedWorkletsPlugin(projectDir, { dev }),

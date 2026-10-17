@@ -8,6 +8,7 @@ import { extractRealSurfacesFor } from "../scripts/parity/extract-real.ts";
 import { extractDenextSurfacesFor, typeOnlyExports } from "../scripts/parity/extract-denext.ts";
 import { diffSurfaces } from "../scripts/parity/diff.ts";
 import type { Surface } from "../scripts/parity/types.ts";
+import { CATALOG, REAL_PACKAGES, realDependencySpec } from "../scripts/parity/spec.ts";
 
 const FAKE_DTS = `declare class Klass {
   run(): void;
@@ -32,7 +33,10 @@ Deno.test("parity extractor: no __@ members; type-only re-exports are types", as
       JSON.stringify({ name: "fake-pkg", version: "1.0.0", types: "index.d.ts" }),
     );
     await Deno.writeTextFile(join(pkg, "index.d.ts"), FAKE_DTS);
-    const [surface] = extractRealSurfacesFor(dir, [{ specifier: "fake-pkg", real: "fake-pkg" }]);
+    const [surface] = await extractRealSurfacesFor(dir, [{
+      specifier: "fake-pkg",
+      real: "fake-pkg",
+    }]);
     assert(surface.resolved, "the fake package resolves");
     const sym = surface.symbols;
 
@@ -115,5 +119,19 @@ export { run, type run as RunType } from "./impl.ts";
     assertEquals([sym.run.isValue, sym.run.callSignatures?.length], [true, 1]);
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("parity spec: next-auth@4 installs beside v5 under an alias and has its own entries", () => {
+  // Two release lines of one package: `next-auth` is v5 (`beta`), `next-auth-v4` is v4.
+  assert(REAL_PACKAGES.includes("next-auth") && REAL_PACKAGES.includes("next-auth-v4"));
+  assertEquals(realDependencySpec("next-auth-v4", "4"), "npm:next-auth@4");
+  assertEquals(realDependencySpec("next-auth-v4", "4.24.15"), "npm:next-auth@4.24.15");
+  assertEquals(realDependencySpec("next-auth", "beta"), "beta");
+  const v4 = CATALOG.filter((e) => e.group === "next-auth-v4");
+  for (const sub of ["", "/next", "/middleware", "/react", "/jwt", "/providers/github"]) {
+    const entry = v4.find((e) => e.specifier === `next-auth@4${sub}`);
+    assert(entry, `next-auth@4${sub} is checked`);
+    assertEquals(entry.real, `next-auth-v4${sub}`);
   }
 });

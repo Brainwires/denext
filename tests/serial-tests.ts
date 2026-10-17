@@ -11,6 +11,8 @@
 
 /** The test files run one at a time (paths from the repo root). */
 export const SERIAL_TESTS: readonly string[] = [
+  // Sets and restores DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY around each case (the bound-action key).
+  "tests/action-bound.test.ts",
   "tests/auth-example.test.ts",
   "tests/backend-identity.test.ts",
   "tests/backend-postgres.test.ts",
@@ -55,6 +57,9 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/migrate-spa.test.ts",
   "tests/mobile-build.test.ts",
   "tests/mobile-sentry.test.ts",
+  "tests/next-auth-react-v4.test.ts",
+  "tests/next-auth-v4-app.test.ts",
+  "tests/next-auth-v4.test.ts",
   "tests/next-compat-build.test.ts",
   // Deno.chdir into a fixture: next/font/local resolves its files against the cwd.
   "tests/next-font-local-fallback.test.ts",
@@ -65,6 +70,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/postgres-boot.test.ts",
   "tests/public-env.test.ts",
   "tests/react-native-uniwind-css.test.ts",
+  // Sets the variables a migrated load context reads (`process.env.*`) and runs it.
+  "tests/remix-load-context.test.ts",
   "tests/security-remediation.test.ts",
   "tests/server-misc-coverage.test.ts",
   "tests/spa-export.test.ts",
@@ -117,6 +124,10 @@ export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
   "src/build/desktop.ts":
     "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
     "that declares sidecars, after its own server took it; no test sets or reads that variable",
+  "src/build/native-check.ts":
+    "applyNativeCheckEngine sets DENO_CHECK_ENGINE for the verb's Deno children only when the " +
+    "`denext` entrypoint's run half calls it (src/cli/run-verb.ts, exempt below); tests pass their " +
+    "own setEnv / env seams",
   "src/cli/run-verb.ts":
     "the `denext` entrypoint's run half: it sets DENO_BIN / PATH / DENEXT_TOOLCHAIN_ACTIVE only " +
     "inside a compiled binary (the toolchain handed to its children); tests reach it only " +

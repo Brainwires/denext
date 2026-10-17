@@ -129,6 +129,8 @@ export interface BuildContext {
   usesActivity: boolean;
   /** Whether the generated entries install the ViewTransition marking runtime (scan). */
   usesViewTransition: boolean;
+  /** Whether the app writes a `client:*` directive: route entries install the island runtime. */
+  usesIsoIslands: boolean;
   /** Whether the generated entries install the host-singleton runtime (scan). */
   usesSingletons: boolean;
   /** next-compat: source module (project-relative) → server bundle (outDir-relative). */

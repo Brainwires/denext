@@ -41,6 +41,7 @@ export type PendingHole = Promise<
 
 class StreamRenderer extends VNodeRenderer<string> {
   private id = 0;
+  protected override isoIslands = true;
   /** Dev-only: record each boundary's server resolve duration (see StreamOptions). */
   collectTiming = false;
   /** Told each error a streamed hole's render threw that nothing inside the hole caught. */
@@ -156,6 +157,25 @@ export interface StreamOptions {
    * the end of the stream for the DevTools per-boundary timeline. Off in production.
    */
   collectBoundaryTiming?: boolean;
+  /**
+   * React's document rendering: when the shell is an `<html>` element, it opens with
+   * `<!DOCTYPE html>`, the reveal runtime goes inside the document (at the end of the shell's
+   * body) and the closing `</body></html>` is held to the end of the stream, after every
+   * streamed boundary — as `react-dom/server` writes a document. Other shells are unchanged.
+   */
+  documentShell?: boolean;
+}
+
+/**
+ * A document shell (`<html>…</html>`) split around its closing tags; `null` for any other shell.
+ *
+ * @param shell The rendered shell HTML.
+ */
+function splitDocumentShell(shell: string): { open: string; close: string } | null {
+  if (!/^<html[\s>]/i.test(shell)) return null;
+  const close = /<\/body>\s*<\/html>\s*$/i.exec(shell) ?? /<\/html>\s*$/i.exec(shell);
+  if (!close) return { open: shell, close: "" };
+  return { open: shell.slice(0, close.index), close: close[0] };
 }
 
 /** A streaming render: the HTML byte stream plus React's `allReady` signal. */
@@ -301,7 +321,10 @@ export function renderToReadableStream(
     return out;
   };
 
-  /** The tail: the dev timeline island and `shellSuffix`, then close. */
+  /** A document shell's closing tags, held until every boundary has streamed. */
+  let heldClose = "";
+
+  /** The tail: the dev timeline island, a held document close and `shellSuffix`, then close. */
   const finish = (controller: ReadableStreamDefaultController<Uint8Array>) => {
     // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
     if (renderer.collectTiming && timings.length > 0) {
@@ -311,6 +334,7 @@ export function renderToReadableStream(
         `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
       );
     }
+    if (heldClose) write(controller, heldClose);
     if (options.shellSuffix) write(controller, options.shellSuffix);
     controller.close();
   };
@@ -333,7 +357,13 @@ export function renderToReadableStream(
     async start(controller) {
       try {
         const shell = await renderer.resolve(node, []);
-        write(controller, (options.shellPrefix ?? "") + SWAP_RUNTIME + shell);
+        const doc = options.documentShell ? splitDocumentShell(shell) : null;
+        if (doc) heldClose = doc.close;
+        write(
+          controller,
+          (options.shellPrefix ?? "") +
+            (doc ? `<!DOCTYPE html>${doc.open}${SWAP_RUNTIME}` : SWAP_RUNTIME + shell),
+        );
         queue.start(ready.resolve);
         // No boundary left rendering (none, or none that suspended): nothing to gate.
         if (queue.settled) finish(controller);

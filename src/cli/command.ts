@@ -68,6 +68,13 @@ export interface FlagSpec {
    * same. Without it the last value wins.
    */
   readonly repeatable?: boolean;
+  /**
+   * A `string` / `number` flag whose value is optional: `--name` alone reads as `true`, and only
+   * the inline form `--name=value` carries a value (a following token is never taken as its
+   * value, so `--name ./dir` leaves `./dir` a positional). Its {@linkcode valueName} is written
+   * against the name in help (`--inspect-renderer[=<addr>]`), so spell it with the brackets.
+   */
+  readonly optionalValue?: boolean;
 }
 
 /** A declarative positional argument on a {@linkcode CommandSpec}. */
@@ -455,8 +462,10 @@ function positionalsHelp(command: CommandSpec): string[] {
 /** One help line per flag: `--name, -a <value>` padded, then its help text. */
 function flagsHelp(flags: readonly FlagSpec[]): string[] {
   return flags.map((f) => {
-    const label = `  --${f.name}${f.alias ? ", -" + f.alias : ""}` +
-      (f.valueName ? " " + f.valueName : "");
+    // An optional value is written against the name (`--inspect-renderer[=<addr>]`).
+    const optional = f.optionalValue ? f.valueName ?? "" : "";
+    const valued = !f.optionalValue && f.valueName ? " " + f.valueName : "";
+    const label = `  --${f.name}${optional}${f.alias ? ", -" + f.alias : ""}${valued}`;
     return `${label.padEnd(28)}${f.help}`;
   });
 }
@@ -625,23 +634,46 @@ function parseLongFlag(
   const name = eq >= 0 ? tok.slice(2, eq) : tok.slice(2);
   const inline = eq >= 0 ? tok.slice(eq + 1) : undefined;
   const spec = index.byLong.get(name);
-  if (!spec) {
-    if (command.passthrough) {
-      out.passthrough.push(tok);
-      return 0;
-    }
-    const nearFlag = suggest(name, [...index.byLong.keys()]);
-    return {
-      kind: "error",
-      message: `unknown flag "--${name}" for "${command.name}"`,
-      suggestion: nearFlag ? `--${nearFlag}` : undefined,
-    };
+  if (!spec) return unknownLongFlag(command, index, out, tok, name);
+  return storeLongFlag(spec, out, inline, rest[i + 1], name);
+}
+
+/** An unknown `--name`: forwarded on a passthrough verb, else an error with a suggestion. */
+function unknownLongFlag(
+  command: CommandSpec,
+  index: FlagIndex,
+  out: ParsedArgv,
+  tok: string,
+  name: string,
+): number | ParseOutcome {
+  if (command.passthrough) {
+    out.passthrough.push(tok);
+    return 0;
   }
-  if (spec.type === "boolean") {
+  const nearFlag = suggest(name, [...index.byLong.keys()]);
+  return {
+    kind: "error",
+    message: `unknown flag "--${name}" for "${command.name}"`,
+    suggestion: nearFlag ? `--${nearFlag}` : undefined,
+  };
+}
+
+/**
+ * Store a known `--name[=inline]`, taking `next` as its value when it needs one. A boolean, or an
+ * optional-value flag given bare, reads as presence. Returns the extra tokens consumed.
+ */
+function storeLongFlag(
+  spec: FlagSpec,
+  out: ParsedArgv,
+  inline: string | undefined,
+  next: string | undefined,
+  name: string,
+): number {
+  if (spec.type === "boolean" || (spec.optionalValue && inline === undefined)) {
     out.flags[spec.name] = inline === undefined ? true : coerce(spec, inline);
     return 0;
   }
-  const val = inline ?? rest[i + 1];
+  const val = inline ?? next;
   if (val === undefined) throw new Error(`--${name} needs a value`);
   assignValue(out, spec, val);
   return inline === undefined ? 1 : 0;
@@ -668,7 +700,7 @@ function parseShortFlag(
       message: `unknown flag "-${alias}" for "${command.name}"`,
     };
   }
-  if (spec.type === "boolean") {
+  if (spec.type === "boolean" || spec.optionalValue) {
     out.flags[spec.name] = true;
     return 0;
   }

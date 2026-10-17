@@ -19,11 +19,10 @@ import {
   type LiveErrorInfo,
   openLiveSocket,
   parseLiveFlight,
-  refreshLiveRoute,
   registerLiveExtension,
-  releaseLiveSocket,
   sendLiveFrame,
 } from "./live-client.ts";
+import { applyViewError, unmountView, viewExtension } from "./view-extension.ts";
 
 /** What the island mounts a view with (all of it from the server's render of the page). */
 export interface LiveViewSpec {
@@ -72,9 +71,6 @@ interface ViewState extends LiveViewSpec {
 
 /** Events held while a view is not mounted yet (more are dropped). */
 const MAX_QUEUED = 16;
-
-/** Error codes after which re-mounting the same view can only fail again. */
-const TERMINAL = new Set(["denied", "no-policy", "limit", "bad-message"]);
 
 const views = new Map<string, ViewState>();
 let counter = 0;
@@ -142,53 +138,27 @@ function onPatch(msg: Extract<LiveServerMessage, { type: "view-patch" }>): void 
 function onError(msg: Extract<LiveServerMessage, { type: "error" }>): boolean {
   const v = msg.subId === undefined ? undefined : views.get(msg.subId);
   if (!v) return false;
-  if (msg.code === "gone") {
-    // The server can't mount this view from what the page holds (a restart, another instance,
-    // a module not loaded yet): re-render the route once for fresh props + token.
-    v.dead = true;
-    if (!v.refreshed) {
-      v.refreshed = true;
-      refreshLiveRoute();
-    }
-  } else if (TERMINAL.has(msg.code)) {
-    v.dead = true;
-    console.warn(`denext live view ${v.view}: ${msg.reason ?? msg.code}`);
-  } else {
-    console.warn(`denext live view ${v.view}: ${msg.reason ?? msg.code}`);
-  }
+  applyViewError(v, msg, "live view");
   v.cb.onError?.(msg);
   return true;
 }
 
 function ensureExtension(): void {
   if (detach) return;
-  detach = registerLiveExtension({
-    handle(msg) {
-      switch (msg.type) {
-        case "view-render":
-          onRender(msg);
-          return true;
-        case "view-patch":
-          onPatch(msg);
-          return true;
-        case "error":
-          return onError(msg);
-        default:
-          return false;
-      }
-    },
-    resend() {
-      for (const [vid, v] of views) {
-        if (v.dead) continue;
-        v.live = false;
-        sendLiveFrame(mountFrame(vid, v));
-      }
-    },
-    active: () => views.size > 0,
-    closed() {
-      for (const v of views.values()) v.live = false; // hold events until the re-mount answers
-    },
-  });
+  detach = registerLiveExtension(viewExtension(views, mountFrame, (msg) => {
+    switch (msg.type) {
+      case "view-render":
+        onRender(msg);
+        return true;
+      case "view-patch":
+        onPatch(msg);
+        return true;
+      case "error":
+        return onError(msg);
+      default:
+        return false;
+    }
+  }));
 }
 
 /**
@@ -222,10 +192,6 @@ export function mountLiveView(spec: LiveViewSpec, cb: LiveViewCallbacks): LiveVi
       }
       send(vid, v, h, payload);
     },
-    unmount() {
-      if (!views.delete(vid)) return;
-      sendLiveFrame({ type: "view-unmount", vid });
-      releaseLiveSocket();
-    },
+    unmount: () => unmountView(views, vid, { type: "view-unmount", vid }),
   };
 }

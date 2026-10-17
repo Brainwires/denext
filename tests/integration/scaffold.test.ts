@@ -145,8 +145,8 @@ const WINDOWS_PACKAGING_KEYWORDS = [
   "buildDesktopBundle",
   // Ships the VC++ runtime app-local so the packaged app needs no redistributable installed
   // (else it dies at launch with a silent 0xC0000135). Verified end-to-end on a real Windows box.
-  "bundleVcRuntime",
-  "vcruntime140.dll",
+  // Only the DLLs the target arch imports, each checked to be its machine (bundleDesktopVcRuntime).
+  "bundleDesktopVcRuntime(dir, arch)",
   // The closing note says the VC++ runtime was not bundled when it wasn't (a cross-build), and
   // names WebView2 only for a webview build (desktopWindowsTargetNote).
   "noVcRuntime",

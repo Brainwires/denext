@@ -30,6 +30,7 @@ import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative } from "@std/path";
 import { SERIAL_TESTS } from "../tests/serial-tests.ts";
 import { resolveDenoToolchain, TOOLCHAIN_ENV } from "../src/build/deno-toolchain.ts";
+import { TEST_VALUE_FLAGS } from "../src/cli/commands/test-passes.ts";
 
 /** The file-name suffix of a test file that runs on denext's Deno toolchain (Vitest's API). */
 export const VITEST_SUFFIX = ".vitest.ts";
@@ -41,29 +42,7 @@ function covers(entry: string, file: string): boolean {
 }
 
 /** The `deno test` flags whose value may be the next argument (`--filter foo`). */
-const VALUE_FLAGS = new Set([
-  "--filter",
-  "--coverage-threshold",
-  "--reporter",
-  "--junit-path",
-  "--retry",
-  "--repeats",
-  "--shard",
-  "--related",
-  "--ext",
-  "--import-map",
-  "--node-modules-linker",
-  "-c",
-  "--config",
-  "--cert",
-  "--min-dep-age",
-  "--inspect-publish-uid",
-  "--location",
-  "--seed",
-  "--preload",
-  "--require",
-  "--conditions",
-]);
+const VALUE_FLAGS = TEST_VALUE_FLAGS;
 
 /** `args` split into `--ignore` entries, flags (with their values), paths and the `--` tail. */
 function splitArgs(args: readonly string[]) {

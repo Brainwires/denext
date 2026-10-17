@@ -1,6 +1,6 @@
 /**
- * Image and document pickers for `denext/mobile`: the native `Camera` and `FilePicker` plugins
- * in the shell, else a hidden `<input type="file">` created for the call.
+ * Image, media and document pickers for `denext/mobile`: the native `Camera` and `FilePicker`
+ * plugins in the shell, else a hidden `<input type="file">` created for the call.
  *
  * @module
  */
@@ -82,7 +82,75 @@ export interface PickedDocument {
   readonly handle?: PickedHandle;
 }
 
-/** The JS side of `@capacitor/camera` (the call {@linkcode pickImage} makes). */
+/** What {@linkcode pickMedia} offers: photos, videos, or both. */
+export type PickMediaTypes = "images" | "videos" | "all";
+
+/** Options for {@linkcode pickMedia}. */
+export interface PickMediaOptions {
+  /** What can be picked: `"images"` (the default), `"videos"` or `"all"`. */
+  readonly mediaTypes?: PickMediaTypes;
+  /** Let the user pick several (default `false`: one). The library only. */
+  readonly multiple?: boolean;
+  /**
+   * With `multiple`, the most the user may pick; `0` or absent is the system's maximum. The
+   * native pickers enforce it (Android 13+ and iOS); elsewhere the result is cut to it.
+   */
+  readonly selectionLimit?: number;
+  /**
+   * Number the picks in the order chosen and return them in that order (iOS 15+, through
+   * `@capawesome/capacitor-file-picker` when installed). Picks come in selection order anyway
+   * wherever the platform keeps it.
+   */
+  readonly ordered?: boolean;
+  /** JPEG quality of picked photos, 0–100 (native only). */
+  readonly quality?: number;
+  /**
+   * `"library"` (the default) or `"camera"`: take one photo, or record one video with
+   * `mediaTypes: "videos"`.
+   */
+  readonly source?: "library" | "camera";
+}
+
+/** A photo or video from {@linkcode pickMedia}. */
+export interface PickedMedia {
+  /** `"image"` or `"video"`. */
+  readonly type: "image" | "video";
+  /** A URL for `<img src>` / `<video src>` (a `capacitor://` file URL natively, `blob:` on the web). */
+  readonly webPath: string;
+  /** The MIME type (`image/jpeg`, `video/mp4`, …). */
+  readonly mimeType: string;
+  /** The format, lower case (`"jpeg"`, `"heic"`, `"mp4"`, `"quicktime"`, …). */
+  readonly format: string;
+  /** The file name, when known. */
+  readonly name?: string;
+  /** The size in bytes, when known. */
+  readonly size?: number;
+  /** The width in pixels, when the picker reports it. */
+  readonly width?: number;
+  /** The height in pixels, when the picker reports it. */
+  readonly height?: number;
+  /** A video's length in seconds, when the picker reports it. */
+  readonly duration?: number;
+  /** The picked copy's native path (the shell only). */
+  readonly path?: string;
+  /** The picked `File` (the web only), for `FormData` uploads. */
+  readonly file?: File;
+}
+
+/** A `Camera.chooseFromGallery` / `recordVideo` result item. */
+interface CameraMediaResult {
+  type?: number;
+  uri?: string;
+  webPath?: string;
+  metadata?: {
+    size?: number;
+    duration?: number;
+    format?: string;
+    resolution?: string;
+  };
+}
+
+/** The JS side of `@capacitor/camera` (the calls {@linkcode pickImage} and {@linkcode pickMedia} make). */
 interface CameraPlugin {
   getPhoto(options: {
     resultType: "uri" | "dataUrl";
@@ -90,15 +158,47 @@ interface CameraPlugin {
     quality?: number;
     allowEditing: boolean;
   }): Promise<{ webPath?: string; dataUrl?: string; format?: string }>;
+  chooseFromGallery(options: {
+    mediaType: number;
+    allowMultipleSelection: boolean;
+    limit?: number;
+    includeMetadata: boolean;
+    quality?: number;
+  }): Promise<{ results?: CameraMediaResult[] }>;
+  recordVideo(options: { includeMetadata: boolean }): Promise<CameraMediaResult>;
+  pickImages(options: { quality?: number; limit?: number }): Promise<{
+    photos?: Array<{ webPath?: string; path?: string; format?: string }>;
+  }>;
 }
 
-/** The JS side of `@capawesome/capacitor-file-picker` (the call {@linkcode pickDocument} makes). */
+/** One `@capawesome/capacitor-file-picker` result file. */
+interface FilePickerFile {
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  data?: string;
+  path?: string;
+  webPath?: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+}
+
+/** The JS side of `@capawesome/capacitor-file-picker` (the calls {@linkcode pickDocument} and {@linkcode pickMedia} make). */
 interface FilePickerPlugin {
   pickFiles(options: { types?: string[]; limit: number; readData: boolean }): Promise<{
-    files?: Array<
-      { name?: string; mimeType?: string; size?: number; data?: string; path?: string }
-    >;
+    files?: FilePickerFile[];
   }>;
+  pickMedia(options: MediaPickOptions): Promise<{ files?: FilePickerFile[] }>;
+  pickImages(options: MediaPickOptions): Promise<{ files?: FilePickerFile[] }>;
+  pickVideos(options: MediaPickOptions): Promise<{ files?: FilePickerFile[] }>;
+}
+
+/** `FilePicker.pickMedia` / `pickImages` / `pickVideos` options. */
+interface MediaPickOptions {
+  readData: boolean;
+  limit: number;
+  ordered?: boolean;
 }
 
 /** A `Camera.getPhoto` result as a {@linkcode PickedImage}: `as` picks the field (else whichever is set). */
@@ -139,9 +239,15 @@ interface PickerDocument {
 
 /**
  * Open the browser's file chooser through a hidden `<input type="file">` made for this call
- * and removed after it. Resolves the chosen file, or null when the chooser is dismissed.
+ * and removed after it (`multiple` lets the user choose several). Resolves the chosen files, or
+ * null when the chooser is dismissed or nothing was chosen.
  */
-function chooseFile(fn: string, accept: string, capture: boolean): Promise<File | null> {
+function chooseFiles(
+  fn: string,
+  accept: string,
+  capture: boolean,
+  multiple = false,
+): Promise<File[] | null> {
   const doc = (globalThis as { document?: PickerDocument }).document;
   if (typeof doc?.createElement !== "function" || !doc.body) {
     return Promise.reject(new Error(`${fn}: no document to open a file chooser in (SSR)`));
@@ -150,17 +256,23 @@ function chooseFile(fn: string, accept: string, capture: boolean): Promise<File 
   input.type = "file";
   if (accept) input.accept = accept;
   if (capture) input.setAttribute("capture", "environment");
+  if (multiple) input.multiple = true;
   input.style.display = "none";
   return new Promise((resolve) => {
-    const done = (file: File | null) => {
+    const done = (files: File[] | null) => {
       input.remove();
-      resolve(file);
+      resolve(files && files.length > 0 ? files : null);
     };
-    input.addEventListener("change", () => done(input.files?.[0] ?? null), { once: true });
+    input.addEventListener("change", () => done([...(input.files ?? [])]), { once: true });
     input.addEventListener("cancel", () => done(null), { once: true });
     doc.body!.appendChild(input);
     input.click();
   });
+}
+
+/** {@linkcode chooseFiles} for one file. */
+async function chooseFile(fn: string, accept: string, capture: boolean): Promise<File | null> {
+  return (await chooseFiles(fn, accept, capture))?.[0] ?? null;
 }
 
 /** The format of an image file: its MIME subtype, else its extension. */
@@ -180,8 +292,11 @@ async function unlessDismissed<T>(run: () => Promise<T>, codes: readonly string[
   }
 }
 
-/** The Camera plugin's cancel codes (the legacy flow rejects with a message instead). */
-const CAMERA_CANCEL_CODES = ["OS-PLUG-CAMR-0006", "OS-PLUG-CAMR-0020"];
+/**
+ * The Camera plugin's cancel codes (take photo, choose from the gallery, record video; the legacy
+ * flow rejects with a message instead).
+ */
+const CAMERA_CANCEL_CODES = ["OS-PLUG-CAMR-0006", "OS-PLUG-CAMR-0020", "OS-PLUG-CAMR-0017"];
 
 /**
  * Take a picture or pick one from the photo library.
@@ -241,6 +356,297 @@ export async function pickImage(options: PickImageOptions = {}): Promise<PickedI
   if (as === "webPath") return { webPath: URL.createObjectURL(file), format };
   const type = file.type || `image/${format}`;
   return { dataUrl: `data:${type};base64,${await blobToBase64(file)}`, format };
+}
+
+// ---- pickMedia --------------------------------------------------------------------------------
+
+/** {@linkcode PickMediaTypes} → the Camera plugin's `MediaTypeSelection`. */
+const CAMERA_MEDIA_TYPE: Record<PickMediaTypes, number> = { images: 0, videos: 1, all: 2 };
+
+/** {@linkcode PickMediaTypes} → a file input's `accept`. */
+const MEDIA_ACCEPT: Record<PickMediaTypes, string> = {
+  images: "image/*",
+  videos: "video/*",
+  all: "image/*,video/*",
+};
+
+/** File formats whose MIME subtype differs from the format name. */
+const MIME_SUBTYPES: Readonly<Record<string, string>> = {
+  jpg: "jpeg",
+  mov: "quicktime",
+  m4v: "x-m4v",
+  "3gp": "3gpp",
+};
+
+/** The MIME type of a picked `format` of `type`. */
+function mediaMime(type: "image" | "video", format: string): string {
+  return `${type}/${MIME_SUBTYPES[format] ?? format}`;
+}
+
+/** A format from a MIME type's subtype, else a file name's extension, else `"unknown"`. */
+function formatOf(mimeType: string | undefined, name: string | undefined): string {
+  const sub = /^(?:image|video)\/([\w.+-]+)/.exec(mimeType ?? "")?.[1];
+  const ext = /\.(\w+)$/.exec(name ?? "")?.[1];
+  return (sub ?? ext ?? "unknown").toLowerCase();
+}
+
+/** A URL the WebView can load for a native file path (Capacitor's `convertFileSrc`). */
+function webPathFor(path: string | undefined): string {
+  if (!path) return "";
+  const convert = (globalThis as { Capacitor?: { convertFileSrc?: (p: string) => string } })
+    .Capacitor?.convertFileSrc;
+  return typeof convert === "function" ? convert(path) : path;
+}
+
+/** The last path segment of a URI, when it has one. */
+function baseName(uri: string | undefined): string | undefined {
+  const name = uri?.split(/[?#]/)[0].split("/").pop();
+  return name ? decodeURIComponent(name) : undefined;
+}
+
+/** One Camera `MediaResult` as {@linkcode PickedMedia}. */
+function pickedMediaFromCamera(result: CameraMediaResult): PickedMedia {
+  const type = result.type === 1 ? "video" : "image";
+  const meta = result.metadata ?? {};
+  const name = baseName(result.uri ?? result.webPath);
+  const format = String(meta.format ?? formatOf(undefined, name)).toLowerCase();
+  const resolution = /^(\d+)x(\d+)$/.exec(meta.resolution ?? "");
+  return {
+    type,
+    webPath: result.webPath ?? webPathFor(result.uri),
+    mimeType: mediaMime(type, format === "unknown" ? (type === "video" ? "mp4" : "jpeg") : format),
+    format,
+    ...(name ? { name } : {}),
+    ...(typeof meta.size === "number" ? { size: meta.size } : {}),
+    ...(resolution ? { width: Number(resolution[1]), height: Number(resolution[2]) } : {}),
+    ...(type === "video" && typeof meta.duration === "number" ? { duration: meta.duration } : {}),
+    ...(result.uri ? { path: result.uri } : {}),
+  };
+}
+
+/** One FilePicker file as {@linkcode PickedMedia}. */
+function pickedMediaFromFilePicker(file: FilePickerFile): PickedMedia {
+  const mimeType = file.mimeType || "application/octet-stream";
+  const type = mimeType.startsWith("video/") ? "video" : "image";
+  return {
+    type,
+    webPath: file.webPath ?? webPathFor(file.path),
+    mimeType,
+    format: formatOf(mimeType, file.name),
+    ...(file.name ? { name: file.name } : {}),
+    ...(typeof file.size === "number" ? { size: file.size } : {}),
+    ...(typeof file.width === "number" ? { width: file.width } : {}),
+    ...(typeof file.height === "number" ? { height: file.height } : {}),
+    ...(type === "video" && typeof file.duration === "number" ? { duration: file.duration } : {}),
+    ...(file.path ? { path: file.path } : {}),
+  };
+}
+
+/** A browser `File` as {@linkcode PickedMedia}. */
+function pickedMediaFromFile(file: File): PickedMedia {
+  const type = file.type.startsWith("video/") ? "video" : "image";
+  const format = formatOf(file.type, file.name);
+  return {
+    type,
+    webPath: URL.createObjectURL(file),
+    mimeType: file.type || mediaMime(type, format),
+    format,
+    name: file.name,
+    size: file.size,
+    file,
+  };
+}
+
+/** `items` cut to `limit` (0 or absent: all), or null when empty. */
+function upTo<T>(items: readonly T[] | undefined, limit: number): T[] | null {
+  const kept = (items ?? []).slice(0, limit > 0 ? limit : undefined);
+  return kept.length > 0 ? kept : null;
+}
+
+/** The checked options of a {@linkcode pickMedia} call. */
+interface MediaRequest {
+  readonly kinds: PickMediaTypes;
+  readonly multiple: boolean;
+  readonly limit: number;
+  readonly ordered: boolean;
+  readonly quality?: number;
+}
+
+/** {@linkcode pickMedia}'s options, checked. */
+function mediaRequest(options: PickMediaOptions): MediaRequest {
+  const kinds = options.mediaTypes ?? "images";
+  if (!Object.hasOwn(CAMERA_MEDIA_TYPE, kinds)) {
+    throw new TypeError(`pickMedia: unknown mediaTypes "${kinds}" (images, videos or all)`);
+  }
+  const source = options.source ?? "library";
+  if (source !== "library" && source !== "camera") {
+    throw new TypeError(`pickMedia: unknown source "${source}" (library or camera)`);
+  }
+  const multiple = options.multiple === true && source === "library";
+  const limit = !multiple ? 1 : Math.max(0, Math.floor(options.selectionLimit ?? 0));
+  return {
+    kinds,
+    multiple,
+    limit,
+    ordered: options.ordered === true,
+    ...(options.quality === undefined ? {} : { quality: options.quality }),
+  };
+}
+
+/** Record a video with the camera: the Camera plugin's `recordVideo`, else a capture input. */
+async function recordMedia(): Promise<PickedMedia[] | null> {
+  const plugin = nativePlugin<CameraPlugin>("Camera", ["recordVideo"]);
+  if (plugin) {
+    const video = await unlessDismissed(
+      () => plugin.recordVideo({ includeMetadata: true }),
+      CAMERA_CANCEL_CODES,
+    );
+    return video ? [pickedMediaFromCamera({ ...video, type: 1 })] : null;
+  }
+  const files = await chooseFiles("pickMedia", "video/*", true);
+  return files ? [pickedMediaFromFile(files[0])] : null;
+}
+
+/** Take a photo with the camera, through {@linkcode pickImage}. */
+async function takeMedia(quality: number | undefined): Promise<PickedMedia[] | null> {
+  return asMedia(
+    await pickImage({ source: "camera", ...(quality === undefined ? {} : { quality }) }),
+  );
+}
+
+/** A {@linkcode pickImage} result as a one-item {@linkcode pickMedia} result. */
+function asMedia(photo: PickedImage | null): PickedMedia[] | null {
+  if (!photo?.webPath) return null;
+  const { webPath, format } = photo;
+  return [{ type: "image", webPath, mimeType: mediaMime("image", format), format }];
+}
+
+/** The FilePicker plugin call for `kinds`, when the plugin has it. */
+function filePickerMedia(
+  kinds: PickMediaTypes,
+):
+  | ((plugin: FilePickerPlugin, options: MediaPickOptions) => Promise<{ files?: FilePickerFile[] }>)
+  | undefined {
+  const method = kinds === "images"
+    ? "pickImages"
+    : kinds === "videos"
+    ? "pickVideos"
+    : "pickMedia";
+  const plugin = nativePlugin<FilePickerPlugin>("FilePicker", [method]);
+  return plugin ? (p, o) => p[method](o) : undefined;
+}
+
+/** Pick from the library through `@capawesome/capacitor-file-picker`, or undefined without it. */
+async function pickWithFilePicker(
+  request: MediaRequest,
+): Promise<PickedMedia[] | null | undefined> {
+  const call = filePickerMedia(request.kinds);
+  const plugin = call && nativePlugin<FilePickerPlugin>("FilePicker", []);
+  if (!call || !plugin) return undefined;
+  const result = await unlessDismissed(
+    () =>
+      call(plugin, {
+        readData: false,
+        limit: request.limit,
+        ...(request.ordered ? { ordered: true } : {}),
+      }),
+    [],
+  );
+  return upTo(result?.files, request.limit)?.map(pickedMediaFromFilePicker) ?? null;
+}
+
+/** Pick from the library through the Camera plugin, or undefined when it cannot. */
+async function pickWithCamera(request: MediaRequest): Promise<PickedMedia[] | null | undefined> {
+  const quality = request.quality === undefined ? {} : { quality: request.quality };
+  const gallery = nativePlugin<CameraPlugin>("Camera", ["chooseFromGallery"]);
+  if (gallery) {
+    const result = await unlessDismissed(
+      () =>
+        gallery.chooseFromGallery({
+          mediaType: CAMERA_MEDIA_TYPE[request.kinds],
+          allowMultipleSelection: request.multiple,
+          ...(request.multiple && request.limit > 0 ? { limit: request.limit } : {}),
+          includeMetadata: true,
+          ...quality,
+        }),
+      CAMERA_CANCEL_CODES,
+    );
+    return upTo(result?.results, request.limit)?.map(pickedMediaFromCamera) ?? null;
+  }
+  if (request.kinds !== "images") return undefined;
+  const legacy = nativePlugin<CameraPlugin>("Camera", ["pickImages"]);
+  if (legacy && request.multiple) {
+    const result = await unlessDismissed(
+      () =>
+        legacy.pickImages({ ...quality, ...(request.limit > 0 ? { limit: request.limit } : {}) }),
+      CAMERA_CANCEL_CODES,
+    );
+    return upTo(result?.photos, request.limit)?.map((photo) => {
+      const format = String(photo.format ?? "jpeg").toLowerCase();
+      return {
+        type: "image" as const,
+        webPath: photo.webPath ?? webPathFor(photo.path),
+        mimeType: mediaMime("image", format),
+        format,
+        ...(photo.path ? { path: photo.path } : {}),
+      };
+    }) ?? null;
+  }
+  if (!nativePlugin<CameraPlugin>("Camera", ["getPhoto"])) return undefined;
+  return asMedia(await pickImage({ source: "photos", ...quality }));
+}
+
+/**
+ * Pick photos and videos: several at once from the library, or one taken / recorded with the
+ * camera.
+ *
+ * - Inside the native shell, `@capacitor/camera`'s gallery picker (`denext mobile add camera`;
+ *   `chooseFromGallery`, with `selectionLimit` honoured on iOS and Android 13+) or its
+ *   `recordVideo`. With `ordered: true`, or without the Camera plugin,
+ *   `@capawesome/capacitor-file-picker` (`denext mobile add document-picker`) picks from the
+ *   library instead.
+ * - Otherwise a file chooser (`<input type="file" multiple accept="image/*,video/*">`); a
+ *   `source: "camera"` one asks mobile browsers for the camera. A browser cannot cap the
+ *   selection, so the result is cut to `selectionLimit`.
+ *
+ * Picks come in the order chosen wherever the platform keeps it. A dismissed picker resolves
+ * `null` rather than rejecting.
+ *
+ * @param options `mediaTypes` (`"images"`, the default, `"videos"` or `"all"`), `multiple`,
+ * `selectionLimit`, `ordered`, `quality` (0–100, native) and `source` (`"library"`, the default,
+ * or `"camera"`).
+ * @returns The picked items (at least one), or `null` when the user cancelled. It rejects when
+ * permission is denied, or during SSR.
+ * @example
+ * ```ts
+ * import { pickMedia } from "denext/mobile";
+ *
+ * const items = await pickMedia({ mediaTypes: "all", multiple: true, selectionLimit: 10 });
+ * for (const item of items ?? []) {
+ *   gallery.add(item.type === "video" ? { video: item.webPath, seconds: item.duration } : { src: item.webPath });
+ * }
+ * ```
+ */
+export async function pickMedia(options: PickMediaOptions = {}): Promise<PickedMedia[] | null> {
+  const request = mediaRequest(options);
+  if (options.source === "camera") {
+    return request.kinds === "videos" ? await recordMedia() : await takeMedia(request.quality);
+  }
+  if (request.ordered) {
+    const ordered = await pickWithFilePicker(request);
+    if (ordered !== undefined) return ordered;
+  }
+  const camera = await pickWithCamera(request);
+  if (camera !== undefined) return camera;
+  const filePicker = await pickWithFilePicker(request);
+  if (filePicker !== undefined) return filePicker;
+  const files = await chooseFiles(
+    "pickMedia",
+    MEDIA_ACCEPT[request.kinds],
+    false,
+    request.multiple,
+  );
+  return upTo(files ?? [], request.limit)?.map(pickedMediaFromFile) ?? null;
 }
 
 /** The File System Access API's open picker, where the browser has it. */

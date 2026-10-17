@@ -16,6 +16,6 @@ const spec = JSON.parse(Deno.readTextFileSync(Deno.args[1])) as {
   targets: RealTarget[];
   packages: string[];
 };
-const surfaces = extractRealSurfacesFor(workDir, spec.targets);
+const surfaces = await extractRealSurfacesFor(workDir, spec.targets);
 const versions = readVersionsFor(workDir, spec.packages);
 console.log(JSON.stringify({ versions, surfaces }));

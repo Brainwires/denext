@@ -6,9 +6,12 @@
  * waits for the next DOM change (the commit the app's `setState` causes), measures again before
  * that frame paints, and plays Web Animations from the old geometry to the new one:
  *
- *   - `update`: a view that moved is translated from its old position (FLIP; a transform, so
- *     the compositor runs it). A view that changed size snaps to its new size (size is layout,
- *     which a compositor animation can't touch without distorting the content).
+ *   - `update`: a view that moved is translated from its old position, and a view that changed
+ *     size is scaled from its old size (FLIP; one transform, so the compositor runs it and the
+ *     layout is final from the first frame). Each view's transform is computed against the one
+ *     its nearest measured ancestor already plays, so a child of a resized view starts at its
+ *     own old place and size rather than inheriting the parent's stretch (a counter-scale).
+ *     While a resize plays, the view's content is drawn scaled.
  *   - `create`: a view that appeared animates `create.property` (`opacity` or a scale) in.
  *   - `delete`: a view that disappeared is drawn once more, as a snapshot clone in a fixed
  *     layer at its old place, and animates the property out.
@@ -204,37 +207,110 @@ function timingOf(config: LayoutAnimationConfig, anim: LayoutAnimationAnim | und
   };
 }
 
-/** The moved views' FLIP translations (each relative to its nearest moved ancestor). */
+/**
+ * Where a view is drawn on the first frame of the animation: page point `q` of its final layout
+ * is drawn at `scale * q + offset` (per axis). Views that don't animate map like their ancestor.
+ */
+export interface FrameMap {
+  readonly sx: number;
+  readonly sy: number;
+  readonly tx: number;
+  readonly ty: number;
+}
+
+/** No transform. */
+const IDENTITY: FrameMap = { sx: 1, sy: 1, tx: 0, ty: 0 };
+
+/** The old / new rectangle slice the FLIP reads. */
+type Box = Pick<DOMRect, "left" | "top" | "width" | "height">;
+
+/**
+ * A view's FLIP start transform: the `translate(…) scale(…)` that, under its ancestor's start
+ * map `parent` and with `origin` (the view's `transform-origin`, px from its border box's top
+ * left), draws the view's final box `after` over its old box `before`. Returns the view's own
+ * start map too, for its descendants. Exported for testing.
+ *
+ * @param before The view's rectangle before the commit.
+ * @param after Its rectangle after.
+ * @param parent The nearest measured ancestor's start map.
+ * @param origin The view's `transform-origin` in px.
+ */
+export function flipTransform(
+  before: Box,
+  after: Box,
+  parent: FrameMap,
+  origin: { x: number; y: number } = { x: after.width / 2, y: after.height / 2 },
+): { x: number; y: number; scaleX: number; scaleY: number; map: FrameMap } {
+  // The view's start map M(q) = r * (q - after) + before; with M = parent ∘ L and the view's
+  // own L(q) = o + t + s * (q - o) (o = its origin on the page):
+  //   s = r / parent.s,  t = (before - parent.t) / parent.s - after - (1 - s) * (o - after).
+  const rx = after.width > 0 && before.width > 0 ? before.width / after.width : 1;
+  const ry = after.height > 0 && before.height > 0 ? before.height / after.height : 1;
+  const scaleX = rx / parent.sx;
+  const scaleY = ry / parent.sy;
+  const x = (before.left - parent.tx) / parent.sx - after.left - (1 - scaleX) * origin.x;
+  const y = (before.top - parent.ty) / parent.sy - after.top - (1 - scaleY) * origin.y;
+  const map = {
+    sx: rx,
+    sy: ry,
+    tx: before.left - rx * after.left,
+    ty: before.top - ry * after.top,
+  };
+  return { x, y, scaleX, scaleY, map };
+}
+
+/** A view's `transform-origin` in px (`"50px 15px"`; the box's centre when unreadable). */
+function originOf(style: CSSStyleDeclaration, after: Box): { x: number; y: number } {
+  const [ox, oy] = String(style.transformOrigin ?? "").split(" ").map(parseFloat);
+  return {
+    x: Number.isFinite(ox) ? ox : after.width / 2,
+    y: Number.isFinite(oy) ? oy : after.height / 2,
+  };
+}
+
+/**
+ * One view's FLIP start keyframe against its ancestor's start map `parent` (`null` when it
+ * neither moved nor resized), and the start map its descendants inherit.
+ */
+function flipFrame(
+  el: Element,
+  before: DOMRect,
+  parent: FrameMap,
+): { frame: Keyframe | null; map: FrameMap } {
+  const after = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  const f = flipTransform(before, after, parent, originOf(style, after));
+  const moves = Math.abs(f.x) >= 0.5 || Math.abs(f.y) >= 0.5;
+  const scales = Math.abs(f.scaleX - 1) >= 0.001 || Math.abs(f.scaleY - 1) >= 0.001;
+  if (!moves && !scales) return { frame: null, map: parent };
+  const own = style.transform === "none" ? "" : ` ${style.transform}`;
+  const scale = scales ? ` scale(${f.scaleX}, ${f.scaleY})` : "";
+  return { frame: { transform: `translate(${f.x}px, ${f.y}px)${scale}${own}` }, map: f.map };
+}
+
+/** The moved and resized views' FLIP transforms (each against its nearest measured ancestor). */
 function moveAnimations(p: Pending): Animation[] {
   const update = p.config.update;
   if (!update) return [];
   const timing = timingOf(p.config, update);
-  const shift = new Map<Element, { x: number; y: number }>();
+  const maps = new Map<Element, FrameMap>();
   const out: Animation[] = [];
   for (const [el, before] of p.rects) {
     if (!el.isConnected) continue;
-    const after = el.getBoundingClientRect();
-    const dx = before.left - after.left;
-    const dy = before.top - after.top;
-    shift.set(el, { x: dx, y: dy });
-    const inherited = inheritedShift(el, shift);
-    const x = dx - inherited.x;
-    const y = dy - inherited.y;
-    if (Math.abs(x) < 0.5 && Math.abs(y) < 0.5) continue;
-    const transform = getComputedStyle(el).transform;
-    const own = transform === "none" ? "" : ` ${transform}`;
-    out.push(el.animate([{ transform: `translate(${x}px, ${y}px)${own}` }, {}], timing));
+    const { frame, map } = flipFrame(el, before, inheritedMap(el, maps));
+    maps.set(el, map);
+    if (frame) out.push(el.animate([frame, {}], timing));
   }
   return out;
 }
 
-/** The translation an element's nearest measured ancestor already applies to it. */
-function inheritedShift(el: Element, shift: Map<Element, { x: number; y: number }>) {
+/** The start map an element's nearest measured ancestor already applies to it. */
+function inheritedMap(el: Element, maps: Map<Element, FrameMap>): FrameMap {
   for (let a = el.parentElement; a; a = a.parentElement) {
-    const s = shift.get(a);
-    if (s) return s;
+    const m = maps.get(a);
+    if (m) return m;
   }
-  return { x: 0, y: 0 };
+  return IDENTITY;
 }
 
 /** The views added by the commit (the roots of each added subtree). */

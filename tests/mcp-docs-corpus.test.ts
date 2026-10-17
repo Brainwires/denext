@@ -1,6 +1,7 @@
 // The offline docs corpus behind `denext_search_docs` / `denext_read_docs`: the generator's
 // chunking (Markdown + JSX pages), the reader, the `denext://docs` resources, and the staleness
-// guard that keeps the committed src/mcp/docs-corpus.ts in step with its sources.
+// guard that keeps the committed corpus (packages/docs-corpus/mod.ts, `@denext/docs-corpus`) in
+// step with its sources.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -31,7 +32,7 @@ Deno.test("docs corpus: the committed corpus matches its sources (run `deno task
   assertEquals(
     committed.sourceHash,
     await fingerprint(await corpusInputs()),
-    "src/mcp/docs-corpus.ts is stale — run `deno task docs:corpus` (or `deno task docs:build`) and commit it",
+    "packages/docs-corpus/mod.ts is stale — run `deno task docs:corpus` (or `deno task docs:build`) and commit it",
   );
 });
 

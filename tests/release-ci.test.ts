@@ -6,6 +6,7 @@ import {
   type CiJob,
   type CiRun,
   DESKTOP_CI_JOBS,
+  DESKTOP_CI_OPTIONAL_JOBS,
   desktopCiVerdict,
   RELEASE_CI_JOBS,
   releaseCiHint,
@@ -148,6 +149,15 @@ Deno.test("desktop CI gate: the newest desktop-ci run on HEAD, push or dispatch,
     }).gh,
   );
   assertStringIncludes(extra.reason, "cross-launch (linux-to-windows): failure");
+  // An optional job (Windows on Arm, until it is reliably green) may fail or be missing.
+  const [optional] = DESKTOP_CI_OPTIONAL_JOBS;
+  const optionalRed = await desktopCiVerdict(
+    SHA,
+    fakeGh([run(6, "push", "2026-10-06T10:00:00Z")], {
+      6: desktopJobs("success", { [optional]: "failure" }),
+    }).gh,
+  );
+  assert(optionalRed.ok, optionalRed.reason);
   const missing = await desktopCiVerdict(
     SHA,
     fakeGh([run(4, "push", "2026-10-06T10:00:00Z")], {
@@ -171,6 +181,10 @@ Deno.test("desktop CI gate: every required job is named in desktop-ci.yml", asyn
   const workflow = await Deno.readTextFile(
     new URL("../.github/workflows/desktop-ci.yml", import.meta.url),
   );
+  for (const job of DESKTOP_CI_OPTIONAL_JOBS) {
+    assert(!DESKTOP_CI_JOBS.includes(job), `${job} is required or optional, not both`);
+    assertStringIncludes(workflow, `name: ${job}\n`, job);
+  }
   for (const job of DESKTOP_CI_JOBS) {
     // A matrix leg `<name> (<os>)` comes from `name: <name> (${{ matrix.os }})` and that os.
     const leg = /^(.*) \(((?:windows|macos|ubuntu)-latest)\)$/.exec(job);

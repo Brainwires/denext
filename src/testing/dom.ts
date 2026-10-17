@@ -83,6 +83,289 @@ export function clearChildren(parent: { childNodes: unknown[] }): void {
   for (const child of parent.childNodes.splice(0)) (child as TreeNode).parentNode = null;
 }
 
+// ---- innerHTML: markup parsed into child nodes, as a browser does ----------------------------
+
+/** How {@link parseHtmlInto} builds the nodes it parses: an element or a text node at a time. */
+interface HtmlNodeBuilder {
+  /** A new element named `tag` (lower-case), with no attributes or children. */
+  element(tag: string): TreeNode & { setAttribute(name: string, value: string): void };
+  /** A new text node holding `value` (character references already decoded). */
+  text(value: string): TreeNode;
+}
+
+/** Elements with no content or end tag. */
+const VOID_ELEMENTS = new Set(
+  "area base br col embed hr img input link meta param source track wbr".split(" "),
+);
+/** Elements whose content is text up to their end tag (never parsed as markup). */
+const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
+/**
+ * How deep parsed elements nest: deeper ones are added beside the deepest open element instead,
+ * as Blink's parser does (its limit is 512), so a hostile `<div><div>…` stays serializable.
+ */
+const MAX_PARSE_DEPTH = 512;
+/** HTML's whitespace, which separates a tag's name and attributes. */
+const isSpace = (c: string) => c === " " || c === "\t" || c === "\n" || c === "\f" || c === "\r";
+/** An ASCII letter, the only thing that opens a tag after `<` or `</`. */
+const isAlpha = (c: string | undefined) =>
+  c !== undefined && ((c >= "a" && c <= "z") || (c >= "A" && c <= "Z"));
+
+/** One tokenized tag. */
+interface Tag {
+  readonly end: boolean;
+  readonly name: string;
+  readonly attrs: ReadonlyArray<readonly [string, string]>;
+  readonly selfClosing: boolean;
+  /** The index just past its `>`. */
+  readonly next: number;
+}
+
+/**
+ * The tag at `lt` (a `<` followed by a letter, or `</` and a letter), tokenized as HTML's tag
+ * states do: the name and each attribute name run to whitespace, `/` or `>` (an attribute's also to
+ * `=`), a value is quoted (and may hold `>`) or runs to whitespace or `>`, a stray `/` is skipped,
+ * and the first of a repeated attribute wins. One pass, never re-read: `null` only when the input
+ * ends inside the tag.
+ */
+function scanTag(html: string, lt: number): Tag | null {
+  return new TagScanner(html, lt).scan();
+}
+
+/** One {@link scanTag}: a cursor over the tag's characters. */
+class TagScanner {
+  #i: number;
+  readonly #end: boolean;
+  readonly #attrs: Array<readonly [string, string]> = [];
+  readonly #seen = new Set<string>();
+
+  constructor(readonly html: string, lt: number) {
+    this.#end = html[lt + 1] === "/";
+    this.#i = lt + (this.#end ? 2 : 1);
+  }
+
+  scan(): Tag | null {
+    const { html } = this;
+    const name = this.#runTo((c) => isSpace(c) || c === "/" || c === ">").toLowerCase();
+    let selfClosing = false;
+    while (this.#i < html.length) {
+      const c = html[this.#i];
+      if (c === ">") {
+        return { end: this.#end, name, attrs: this.#attrs, selfClosing, next: this.#i + 1 };
+      }
+      selfClosing = c === "/" && html[this.#i + 1] === ">";
+      if (isSpace(c) || c === "/") this.#i++;
+      else if (!this.#attribute()) return null;
+    }
+    return null;
+  }
+
+  /** The characters from the cursor up to one `stop` accepts (or the end). */
+  #runTo(stop: (c: string) => boolean): string {
+    const from = this.#i;
+    while (this.#i < this.html.length && !stop(this.html[this.#i])) this.#i++;
+    return this.html.slice(from, this.#i);
+  }
+
+  #skipSpace(): void {
+    while (this.#i < this.html.length && isSpace(this.html[this.#i])) this.#i++;
+  }
+
+  /** One attribute (its name may start with `=`); `false` when the input ends in its value. */
+  #attribute(): boolean {
+    const first = this.html[this.#i++];
+    const name = first + this.#runTo((c) => isSpace(c) || c === "/" || c === ">" || c === "=");
+    const after = this.#i;
+    this.#skipSpace();
+    let value: string | null = "";
+    if (this.html[this.#i] === "=") {
+      this.#i++;
+      value = this.#value();
+    } else this.#i = after;
+    if (value === null) return false;
+    if (!this.#seen.has(name)) {
+      this.#seen.add(name);
+      this.#attrs.push([name, decodeRefs(value)]);
+    }
+    return true;
+  }
+
+  /** An attribute value after its `=`: quoted, or up to whitespace or `>`; `null` at the end. */
+  #value(): string | null {
+    this.#skipSpace();
+    const q = this.html[this.#i];
+    if (q !== '"' && q !== "'") return this.#runTo((c) => isSpace(c) || c === ">");
+    const close = this.html.indexOf(q, this.#i + 1);
+    if (close === -1) return null;
+    const value = this.html.slice(this.#i + 1, close);
+    this.#i = close + 1;
+    return value;
+  }
+}
+
+const NAMED_REFS: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: "\u00a0",
+};
+
+/** Decode the character references a browser would (`&amp;`, `&#38;`, `&#x26;`, …). */
+function decodeRefs(s: string): string {
+  if (!s.includes("&")) return s;
+  return s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (ref, body: string) => {
+    if (body[0] !== "#") return NAMED_REFS[body.toLowerCase()] ?? ref;
+    const hex = body[1] === "x" || body[1] === "X";
+    const code = parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "\ufffd";
+  });
+}
+
+/**
+ * Parse `html` into child nodes of `parent`, as assigning `innerHTML` does in a browser: elements
+ * with their attributes, text with character references decoded, void elements (`<br>`,
+ * `<input>`) closed, the text of `<script>` / `<style>` / `<textarea>` / `<title>` left
+ * unparsed, comments dropped, an end tag closing up to its open element (a stray one is
+ * ignored), and a `<` that starts no tag kept as text. Shared by the `denext/testing` DOM and
+ * the repo's reconciler test fakes, so a reconciler that prunes nodes it does not own removes
+ * injected markup in a test exactly as it would in a page.
+ *
+ * @param parent The node the parsed nodes are appended to (its children are not cleared).
+ * @param html The markup.
+ * @param build Creates the element and text nodes.
+ */
+function parseHtmlInto(parent: TreeNode, html: string, build: HtmlNodeBuilder): void {
+  new HtmlFragmentParser(html, build, parent).run();
+}
+
+/** The state of one {@link parseHtmlInto}: the input, the open elements and pending text. */
+class HtmlFragmentParser {
+  #i = 0;
+  #text = "";
+  readonly #open: TreeNode[];
+  readonly #names: string[] = [""];
+  /** How many elements of each name are open (a stray end tag is then found without a search). */
+  readonly #openCount = new Map<string, number>();
+
+  constructor(readonly html: string, readonly build: HtmlNodeBuilder, parent: TreeNode) {
+    this.#open = [parent];
+  }
+
+  run(): void {
+    const { html } = this;
+    while (this.#i < html.length) {
+      const lt = html.indexOf("<", this.#i);
+      const end = lt === -1 ? html.length : lt;
+      this.#text += html.slice(this.#i, end);
+      this.#i = end;
+      if (lt !== -1) this.#markup(lt);
+    }
+    this.#flush();
+  }
+
+  /** The markup at `lt` (a `<`): a comment, a tag, or a `<` that is only text. */
+  #markup(lt: number): void {
+    const { html } = this;
+    if (html.startsWith("<!--", lt)) {
+      this.#flush();
+      const end = html.indexOf("-->", lt + 4);
+      this.#i = end === -1 ? html.length : end + 3;
+      return;
+    }
+    if (!isAlpha(html[lt + (html[lt + 1] === "/" ? 2 : 1)])) {
+      this.#text += "<";
+      this.#i = lt + 1;
+      return;
+    }
+    const tag = scanTag(html, lt);
+    if (tag === null) {
+      // The input ends inside the tag: what is left stays text (it is never re-scanned).
+      this.#text += html.slice(lt);
+      this.#i = html.length;
+      return;
+    }
+    this.#flush();
+    this.#i = tag.next;
+    if (tag.end) this.#close(tag.name);
+    else this.#start(tag.name, tag.attrs, tag.selfClosing);
+  }
+
+  /** A start tag: the element, its attributes, then its content (unless void or raw text). */
+  #start(name: string, attrs: Tag["attrs"], selfClosing: boolean): void {
+    const el = this.build.element(name);
+    for (const [attr, value] of attrs) el.setAttribute(attr, value);
+    insertChild(this.#current(), el, null);
+    if (RAW_TEXT_ELEMENTS.has(name)) this.#rawText(name, el);
+    else if (
+      !VOID_ELEMENTS.has(name) && !selfClosing && this.#open.length < MAX_PARSE_DEPTH
+    ) {
+      this.#open.push(el);
+      this.#names.push(name);
+      this.#openCount.set(name, (this.#openCount.get(name) ?? 0) + 1);
+    }
+  }
+
+  /** An end tag closes its open element and every one inside it; a stray one is ignored. */
+  #close(name: string): void {
+    if (!this.#openCount.get(name)) return;
+    const at = this.#names.lastIndexOf(name);
+    for (const closed of this.#names.splice(at)) {
+      this.#openCount.set(closed, this.#openCount.get(closed)! - 1);
+    }
+    this.#open.length = at;
+  }
+
+  /** A raw-text element's content, as one text node, through its end tag. */
+  #rawText(name: string, el: TreeNode): void {
+    const { html } = this;
+    const endTag = new RegExp(`</${name}(?=[\\t\\n\\f\\r />]|$)`, "gi");
+    endTag.lastIndex = this.#i;
+    const close = endTag.exec(html)?.index ?? -1;
+    const body = html.slice(this.#i, close === -1 ? html.length : close);
+    const escapable = name === "textarea" || name === "title";
+    if (body !== "") insertChild(el, this.build.text(escapable ? decodeRefs(body) : body), null);
+    const gt = close === -1 ? -1 : html.indexOf(">", close);
+    this.#i = gt === -1 ? html.length : gt + 1;
+  }
+
+  #current(): TreeNode {
+    return this.#open[this.#open.length - 1];
+  }
+
+  /** Append the pending text as one text node. */
+  #flush(): void {
+    if (this.#text !== "") {
+      insertChild(this.#current(), this.build.text(decodeRefs(this.#text)), null);
+    }
+    this.#text = "";
+  }
+}
+
+/**
+ * Replace `el`'s children with `html` parsed (an `innerHTML` assignment), elements made through
+ * `el`'s document when it has one.
+ */
+export function replaceWithMarkup<
+  E extends TreeNode & { setAttribute(n: string, v: string): void },
+>(
+  el: TreeNode & { ownerDocument: { createElement(tag: string): E } | null },
+  html: string,
+  make: { element(tag: string): E; text(value: string): TreeNode },
+): void {
+  clearChildren(el);
+  parseHtmlInto(el, html, {
+    element: (tag) => el.ownerDocument?.createElement(tag) ?? make.element(tag),
+    text: make.text,
+  });
+}
+
+/** Replace `el`'s children with one text node holding `value` (a `textContent` assignment). */
+export function replaceWithText(el: TreeNode, value: string, text: (v: string) => TreeNode): void {
+  clearChildren(el);
+  if (value !== "") insertChild(el, text(value), null);
+}
+
 /** An element's listener sets, bubble and capture phase, by event type. */
 interface ListenerMaps<F> {
   listeners: Map<string, Set<F>>;
@@ -163,7 +446,6 @@ export class DomEl extends DomNode implements TestElement {
   value = "";
   checked = false;
   ownerDocument: DomDocument | null = null;
-  #rawHtml: string | null = null;
 
   constructor(tagName: string) {
     super();
@@ -197,22 +479,25 @@ export class DomEl extends DomNode implements TestElement {
     return `<${tag}${attrs}>${this.innerHTML}</${tag}>`;
   }
   get innerHTML(): string {
-    if (this.#rawHtml !== null) return this.#rawHtml;
     return this.childNodes.map(serialize).join("");
   }
+  /** Assigning innerHTML replaces the children with the parsed markup, as a browser does. */
   set innerHTML(html: string) {
-    this.#rawHtml = html === "" ? null : html;
-    clearChildren(this);
+    replaceWithMarkup(this, html, DOM_NODES);
   }
   get textContent(): string {
     return this.childNodes.map(textOf).join("");
   }
   set textContent(value: string) {
-    clearChildren(this);
-    this.#rawHtml = null;
-    if (value !== "") this.appendChild(new DomText(value));
+    replaceWithText(this, value, DOM_NODES.text);
   }
 }
+
+/** How this DOM's elements and text nodes are made outside a document. */
+const DOM_NODES = {
+  element: (tag: string) => new DomEl(tag),
+  text: (value: string) => new DomText(value),
+};
 
 // The listener methods (declared on the class through the merged interface below).
 Object.assign(DomEl.prototype, listenerMethods);

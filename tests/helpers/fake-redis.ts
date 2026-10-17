@@ -429,6 +429,28 @@ const COMMANDS: Record<string, (s: Store, a: string[]) => Reply> = {
     const to = Number(stop) < 0 ? all.length + Number(stop) : Number(stop);
     return all.slice(Math.max(0, from), to + 1);
   },
+  ZREMRANGEBYRANK: (s, [k, start, stop]) => {
+    const z = s.get(k, "zset");
+    if (isError(z) || !z) return z ? z : 0;
+    const all = ordered(z).map(([m]) => m);
+    const from = Number(start) < 0 ? all.length + Number(start) : Number(start);
+    const to = Number(stop) < 0 ? all.length + Number(stop) : Number(stop);
+    const gone = all.slice(Math.max(0, from), to + 1);
+    for (const m of gone) z.delete(m);
+    s.prune(k);
+    return gone.length;
+  },
+  INCR: (s, [k]) => {
+    const current = s.get(k, "string");
+    if (isError(current)) return current;
+    const next = Number(current ?? "0") + 1;
+    if (!Number.isSafeInteger(next)) {
+      return { error: "ERR value is not an integer or out of range" };
+    }
+    const item = s.item(k);
+    s.db.set(k, { type: "string", value: String(next), expireAt: item?.expireAt });
+    return next;
+  },
   ZRANGEBYSCORE: (s, [k, min, max]) => {
     const z = s.get(k, "zset");
     if (isError(z)) return z;

@@ -12,6 +12,7 @@ import { runHealthChecks } from "../../server/health.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { FONTS_PUBLIC_PREFIX } from "../self-host-fonts.ts";
 import { CLIENT_PREFIX } from "./assets.ts";
+import { PARTYTOWN_BUILD_DIR, servePartytown } from "../partytown.ts";
 
 /**
  * Liveness probe (for load balancers / k8s). 200 even when the
@@ -77,6 +78,15 @@ async function serveFrameworkEndpoint(
   // Client assets may be requested under basePath; strip it before matching.
   let assetPath = url.pathname;
   if (basePath && assetPath.startsWith(basePath)) assetPath = assetPath.slice(basePath.length);
+  // `<Script strategy="worker">`'s Partytown files (`experimental.nextScriptWorkers`).
+  const partytown = servePartytown(
+    join(clientDir, PARTYTOWN_BUILD_DIR),
+    assetPath,
+    request,
+    secure,
+    hstsCfg,
+  );
+  if (partytown) return await partytown;
   if (assetPath.startsWith(CLIENT_PREFIX)) {
     const rel = assetPath.slice(CLIENT_PREFIX.length);
     return serveImmutableAsset(clientDir, "/" + rel, request, secure, hstsCfg, "// not found");

@@ -206,8 +206,18 @@ export const buildCommand: CommandSpec = {
       () => deployAfterBuild(dir, result && { ...result, ...(target ? { target } : {}) }),
       "deploy manifest",
     );
+    exitOneShot();
   },
 };
+
+/**
+ * End a one-shot verb that imported the app's server modules (`build`, `export`). A client such
+ * a module opens at its top level — a database pool that connects eagerly (`mariadb`), a Redis
+ * connection, an interval — keeps the event loop alive, so the finished verb would never exit.
+ */
+function exitOneShot(): void {
+  Deno.exit(0);
+}
 
 /**
  * The export's target: `--platform`, else {@linkcode PLATFORM_ENV} (what `denext desktop
@@ -266,6 +276,7 @@ export const exportCommand: CommandSpec = {
           ? `\n  Skipped ${result.skipped.length} dynamic route(s) without generateStaticParams.`
           : ""),
     );
+    exitOneShot();
   },
 };
 

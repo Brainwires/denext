@@ -133,11 +133,20 @@ See [Images](/docs/images) for the full model.
   compiles into cross-request server caching (`cacheLife`/`cacheTag`), plus the
   PPR render path — a cached, request-independent static shell with per-request
   dynamic holes behind `<Suspense>`, Flight-capable. Caching is a choice, not a
-  default, so it stays opt-in. Its documented bounds (see KNOWN-LIMITATIONS):
-  reading request data (`cookies()`/`headers()`) inside `use cache` throws, and
-  a streamed hole can't add to the already-flushed head. Inert when off — the
+  default, so it stays opt-in. As in Next.js, reading request data
+  (`cookies()`/`headers()`) inside `use cache` throws — `"use cache: private"` may read
+  them — and a streamed hole can't add to the already-flushed head (see
+  KNOWN-LIMITATIONS). Inert when off — the
   render path is byte-for-byte unchanged. The pre-2.0
   `experimental.cacheComponents` is still honored and warns in dev.
+
+- **`cacheLife`** — `Record<string, { stale?, revalidate?, expire? }>` (seconds; `Infinity`
+  for never). Named profiles for `cacheLife("name")` inside a `"use cache"` function, as in
+  Next.js 16's `next.config`. A name matching a built-in (`default`, `seconds`, `minutes`,
+  `hours`, `days`, `weeks`, `max`) overrides it; a field a custom profile leaves out comes
+  from `default`. Validated at load as Next.js does (`false` is refused; `expire` must be at
+  least `revalidate`). Next 15's `experimental.cacheLife` is still read and warns that it
+  moved; `denext migrate` carries either from `next.config`.
 
 See [Data & caching](/docs/data).
 
@@ -295,7 +304,8 @@ itself (it reads neither the config keys nor the env vars for them).
   responses are relayed as the backend encoded them).
 - **`apiBatch`** — `ApiBatchConfig`. The typed client's batch endpoint
   (`POST /_denext/api-batch`, same-origin only): `enabled` (default `true`;
-  `false` answers `404`), `maxItems` (default 20, at most 100), `maxBodyBytes`
+  `false` answers `404`), `mutations` (default `true`: POST/PUT/PATCH/DELETE items run
+  one at a time in call order; `false` refuses them), `maxItems` (default 20, at most 100), `maxBodyBytes`
   (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
   4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
   [Typed API](/docs/typed-api).
@@ -610,10 +620,11 @@ every `--platform` target included.
   plain file. `{ native: true }` also probes `.native` after the OS on iOS and Android; `false`
   turns platform files off. See [platform-specific files](/docs/platform-files).
 - **`reactNative`** — `boolean | { rootStyle?, expoShims?, lists?, aliases?,
-  desktopPackage? }` (off; SPA mode only). Builds a React Native / Expo app's
-  source for the web through `react-native-web`: `react-native` resolves to
-  react-native-web (with denext's shell-backed overlay) for every importer,
-  `.web.*` files win, `.js` parses as JSX, `__DEV__` / `global` /
+  desktopPackage? }` (off). Builds a React Native / Expo app's source for the
+  web through `react-native-web`, in SPA mode or on the App Router (Server and
+  client components; see [On the App Router](/docs/react-native#on-the-app-router)):
+  `react-native` resolves to react-native-web (with denext's shell-backed
+  overlay) for every importer, `.web.*` files win, `.js` parses as JSX, `__DEV__` / `global` /
   `process.env.EXPO_OS` are defined, and the SPA shell gets Expo web's root
   style and a `viewport-fit=cover` viewport (`rootStyle: false` leaves both
   out). `expoShims: false` resolves `expo-*` packages normally instead of to
@@ -633,20 +644,41 @@ every `--platform` target included.
   baseline (`"all"` bakes `--allow-all`). See
   [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile).
 
+- **`nextScriptWorkers`** — `boolean` (default `false`). Next.js's `experimental.nextScriptWorkers`
+  (that spelling is honored with a dev warning): `<Script strategy="worker">` runs in a web worker
+  through [Partytown](https://partytown.qwik.dev/), which the app installs (`@qwik.dev/partytown`,
+  or Next's `@builder.io/partytown`, in `node_modules`: `deno add npm:@qwik.dev/partytown` with
+  `"nodeModulesDir": "auto"`, or your package manager). `denext dev`, `denext build` and
+  `denext export` publish its files under `/_denext/~partytown/` (below `basePath`) on the app's
+  own origin, plus a `boot.js` holding Next's inline config and snippet, so it works under the
+  strict default CSP with no `workerSrc` or `scriptSrc` opt-in. App Router pages are supported
+  (Next limits it to `pages/`), and a worker script a client component renders later, on a page
+  that loaded `boot.js`, is handed to Partytown too (on any other page it takes the fallback).
+  Only denext's own worker scripts run: each carries a per-response nonce the page's CSP lists, so
+  an injected `text/partytown` script is left inert (see
+  [Security](/docs/security#script-strategyworker-partytown-and-html-injection)). Partytown's
+  other settings go on `window.partytown` before `boot.js` runs; `lib` and `debug` are denext's.
+  Without the flag, or with no Partytown installed, worker scripts run on the main thread as
+  `afterInteractive` and dev warns with the fix; Next fails the build in the second case.
+  Partytown's [trade-offs](https://partytown.qwik.dev/trade-offs) apply: a cross-origin script is
+  fetched from the worker and needs CORS, and what a worker script loads is outside the page's
+  `scriptSrc`.
+
 > **`experimental` is superseded.** Every key denext shipped under it is a
-> top-level field now. Next.js's own spellings stay readable as obsolete
-> aliases for migrated Next apps — `experimental.reactCompiler` →
-> `reactCompiler`, `experimental.cacheComponents` → `cacheComponents` and
-> `experimental.optimizePackageImports` → `optimizePackageImports` — honored
-> when the top-level field is absent (the top-level one wins when both are
-> set), each with a dev warning naming the new field. denext's own former keys
-> were **removed in 3.0** and are a config error naming their replacement:
+> top-level field now. Next.js's own spellings stay readable as obsolete aliases
+> for migrated Next apps — `experimental.reactCompiler` → `reactCompiler`,
+> `experimental.cacheComponents` → `cacheComponents`,
+> `experimental.optimizePackageImports` → `optimizePackageImports` and
+> `experimental.nextScriptWorkers` → `nextScriptWorkers` — honored when the
+> top-level field is absent (the top-level one wins when both are set), each
+> with a dev warning naming the new field. denext's own former keys were
+> **removed in 3.0** and are a config error naming their replacement:
 > `experimental.compiler` → `reactCompiler`, `experimental.asyncContext` →
 > `asyncContext`, `experimental.features` → `features`,
 > `experimental.nodeResolve` → `nodeResolve`. `experimental.streaming` →
-> `streaming` and `experimental.live` → `live` are no longer read at all —
-> move the value up. An unknown `experimental.*` key warns with a
-> did-you-mean, like a top-level one.
+> `streaming` and `experimental.live` → `live` are no longer read at all — move
+> the value up. An unknown `experimental.*` key warns with a did-you-mean, like
+> a top-level one.
 
 ## Config schema
 

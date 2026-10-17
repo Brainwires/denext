@@ -2,7 +2,7 @@
 // that renders / reconciles the fiber's children.
 
 import { devHydrationActive, isClassBoundary, isPlainUnkeyedFragment } from "./fiber-utils.ts";
-import { claimHost, isHydrating } from "./hydration.ts";
+import { beginHostHydration } from "./hydration.ts";
 import { resetBoundary } from "./boundaries.ts";
 import { renderComponent } from "./render-component.ts";
 import { cloneChildFibers, reconcileChildren } from "./reconcile-children.ts";
@@ -31,6 +31,7 @@ import {
   HiddenBit,
   NoLane,
   OffscreenBit,
+  RefAttach,
   Rendered,
   setBit,
   ShowingFallbackBit,
@@ -41,6 +42,7 @@ import {
 import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
 import { listenOn } from "./events.ts";
 import { getSingletonSupport } from "./singleton-support.ts";
+import { fragmentRefs, loadFragmentRefs } from "./fragment-ref-support.ts";
 import { renderLanes } from "./scheduler.ts";
 
 /** Perform one unit of work; return the next unit (first child) or null. */
@@ -204,6 +206,13 @@ export function installStrictBoundaries(on = true): void {
 // marker, reconciles children under the derived context, then wires SuspenseList
 // membership. Split out of {@linkcode beginWork}.
 function beginFragment(wip: Fiber): Fiber | null {
+  // React 19.3's `<Fragment ref>` (or a Fragment whose ref went away, still holding its
+  // instance): the commit hands it to the Fragment-ref runtime, loaded on first use — this render
+  // suspends until it is (fragment-ref-support.ts).
+  if (wip.tag === "fragment" && (wip.vnode.props?.ref != null || wip.stateNode !== null)) {
+    if (fragmentRefs === null) throw loadFragmentRefs();
+    wip.flags |= RefAttach;
+  }
   const { profiler, provInfo, listPolicy } = readFragmentMarkers(wip);
   // A StrictMode boundary makes its whole subtree strict in development — enabling
   // render/effect double-invoke. Only the dev path installs the check.
@@ -371,7 +380,7 @@ function beginHost(wip: Fiber): Fiber | null {
 // establish a form-scoped pending signal seeded into descendant context so useFormStatus reads
 // the nearest form. Split out of {@linkcode beginWork}.
 function beginElement(wip: Fiber): Fiber | null {
-  if (isHydrating) claimHost(wip);
+  beginHostHydration(wip);
   let childInherited = wip.inherited;
   if (wip.vnode.type === "form") {
     const props = wip.vnode.props ?? {};

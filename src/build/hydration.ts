@@ -28,8 +28,10 @@ const INTERACTIVITY = new RegExp(
     // State / effect / ref / context / concurrent hooks.
     "\\buse(State|Reducer|Effect|LayoutEffect|Ref|Context|Transition|DeferredValue|" +
     "SyncExternalStore|Optimistic|ActionState|FormStatus|ImperativeHandle|ErrorBoundary)\\b",
-    // A JSX event-handler prop: onClick=, onInput=, onSubmit=, …
-    "\\bon[A-Z][A-Za-z]*\\s*=",
+    // A JSX event-handler prop: onClick=, onInput=, onSubmit=, … — not a variable or a member
+    // of that name (`const onError = …`, `this.onError = …`, `x.onLoad === y`: a database
+    // driver's own code, which a server-only route reaches through its npm imports).
+    "(?<!\\b(?:const|let|var)\\s+|\\.\\s*)\\bon[A-Z][A-Za-z]*\\s*=(?!=)",
     // Imperative navigation and ssr:false lazy islands.
     "\\b(useRouter|navigate|prefetch|dynamic)\\s*\\(",
     // Interactive Remix (denext/remix) hooks — action submission, navigation

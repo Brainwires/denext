@@ -11,7 +11,7 @@
 // mapper, header-only dimension probing (incl. the WebP variants), and optimizeImage
 // end-to-end (webp encode, output-cache hit, SVG refusal, 400/404 fast paths).
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   __setFetchBaseForTests,
   __useCache,
@@ -22,6 +22,7 @@ import {
   currentCacheScope,
   getCacheStats,
   inMemoryCacheStore,
+  installCacheLifeProfiles,
   installFetchCache,
   PageCache,
   pageCacheExpiry,
@@ -130,11 +131,11 @@ Deno.test("pageCacheExpiry / pageCacheTiming honor dynamic/static/revalidate", (
   assert(t !== null && t.expiresAt === Infinity && t.staleAt > Date.now());
 });
 
-Deno.test("resolveCacheLife: builtin, unknown→default, inline with inherited fields", () => {
+Deno.test("resolveCacheLife: builtin, unknown throws, inline with inherited fields", () => {
   const minutes = resolveCacheLife("minutes");
   assertEquals(minutes.revalidate, 60);
-  // An unknown profile name falls back to the `default` profile.
-  assertEquals(resolveCacheLife("nope").revalidate, resolveCacheLife("default").revalidate);
+  // An unknown profile name is an error, as in Next.js.
+  assertThrows(() => resolveCacheLife("nope"), Error, 'Unknown `cacheLife()` profile "nope"');
   // An inline profile inherits missing fields from `default`.
   const inline = resolveCacheLife({ revalidate: 5 });
   assertEquals(inline.revalidate, 5);
@@ -142,15 +143,19 @@ Deno.test("resolveCacheLife: builtin, unknown→default, inline with inherited f
 });
 
 Deno.test("registerCacheLifeProfiles: a custom profile overrides a builtin name", () => {
-  registerCacheLifeProfiles({ minutes: { revalidate: 7 }, myprofile: { revalidate: 11 } });
-  assertEquals(resolveCacheLife("minutes").revalidate, 7);
-  assertEquals(resolveCacheLife("myprofile").revalidate, 11);
+  try {
+    registerCacheLifeProfiles({ minutes: { revalidate: 7 }, myprofile: { revalidate: 11 } });
+    assertEquals(resolveCacheLife("minutes").revalidate, 7);
+    assertEquals(resolveCacheLife("myprofile").revalidate, 11);
+  } finally {
+    installCacheLifeProfiles(undefined);
+  }
 });
 
 Deno.test("withCacheScope: cacheLife/cacheTag mutate the scope; currentCacheScope reads it", async () => {
-  // Outside a scope these are no-ops (and don't throw).
+  // Outside a scope cacheLife throws (Next.js's rule); cacheTag only tags the page.
   assertEquals(currentCacheScope(), undefined);
-  cacheLife("hours");
+  assertThrows(() => cacheLife("hours"), Error, "can only be called inside");
   const { value, scope } = await withCacheScope(() => {
     assert(currentCacheScope(), "a scope is active inside withCacheScope");
     cacheLife("minutes");

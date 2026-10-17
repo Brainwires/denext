@@ -113,8 +113,7 @@ denext toolchain install   # then: the toolchain, and every verb cached for offl
         {" "}
         (where a new version appears once its pull request is merged); a release candidate is never
         published there. Each release attaches them too. The binary runs on denext&apos;s Deno
-        toolchain where one is built for the machine; on Windows on Arm, which it is not built for
-        yet, the verbs that run Deno use the <code>deno</code> on your <code>Path</code>.
+        toolchain, which is built for every platform the binary is, Windows on Arm included.
       </p>
 
       <h2>Create a project</h2>

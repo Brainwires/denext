@@ -9,11 +9,18 @@
  * @module
  */
 
-import type { Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
+import type { FragmentComponent, Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
 import { FRAGMENT } from "./types.ts";
 import { REACT_ELEMENT_TYPE } from "../runtime/react-brands.ts";
 
-export { FRAGMENT as Fragment };
+/**
+ * Groups children without a wrapping element (`<>…</>` / `<Fragment key ref>`). The value is the
+ * {@linkcode FRAGMENT} marker; it is typed as a component so `<Fragment>` type-checks as a JSX tag
+ * with React's `FragmentProps`, a `ref` receiving a `FragmentInstance` included.
+ */
+export const Fragment: FragmentComponent = FRAGMENT as unknown as FragmentComponent;
+// `Fragment`'s declared type, and the marker `VNodeType` names (type-only: no runtime export).
+export type { FRAGMENT, FragmentComponent, FragmentProps } from "./types.ts";
 // The automatic JSX runtime resolves element typing from this namespace; `VNode`
 // and other types are exported from the `denext` entrypoint, not duplicated here.
 export type { JSX } from "./types.ts";
@@ -91,19 +98,32 @@ export const jsxs: (
   key?: Key,
 ) => VNode = createElement;
 /**
- * Development-mode JSX factory. React's dev runtime passes extra arguments —
- * `isStaticChildren`, `source` (`__source`: file/line), and `self` (`__self`) — used
- * for dev warnings and source mapping. denext produces the same element from `(type,
- * props, key)`; the extra args are accepted for signature parity and currently ignored.
+ * Where the dev JSX recorder lives (`globalThis[JSX_DEV]`): the client dev path installs it
+ * (`installOwnerStack`), and it notes each element's owner and source. A registry symbol, so
+ * the runtime imports nothing of the client renderer.
+ */
+const JSX_DEV: unique symbol = Symbol.for("denext.jsxDev");
+
+/**
+ * Development-mode JSX factory — what a dev build's JSX compiles to (esbuild's `jsxDev`, Deno's
+ * `react-jsxdev`). React's dev runtime passes extra arguments: `isStaticChildren`, `source`
+ * (`{ fileName, lineNumber, columnNumber }` of the JSX) and `self`. The element is the one
+ * `jsx` makes; when the client dev path is installed it also notes the component rendering
+ * (the element's owner) and `source`, which `captureOwnerStack()` and the DevTools owner stack
+ * read. A production build compiles to `jsx`, so none of this is in it.
  */
 export const jsxDEV = (
   type: VNodeType,
   props: (VProps & { children?: VNodeChildren }) | null,
   key?: Key,
   _isStaticChildren?: boolean,
-  _source?: unknown,
+  source?: unknown,
   _self?: unknown,
-): VNode => createElement(type, props, key);
+): VNode => {
+  const el = createElement(type, props, key);
+  (globalThis as { [JSX_DEV]?: (el: VNode, source: unknown) => void })[JSX_DEV]?.(el, source);
+  return el;
+};
 
 /**
  * Classic-runtime style helper, also handy for programmatic node creation:

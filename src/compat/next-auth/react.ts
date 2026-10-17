@@ -19,6 +19,7 @@
  */
 
 import { h } from "../../jsx/jsx-runtime.ts";
+import { getApiDispatcher } from "../../runtime/api-dispatch.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { createContext } from "../../runtime/context.ts";
 import {
@@ -106,6 +107,8 @@ export interface SessionProviderProps {
   session?: Session | null;
   /** The handlers' prefix (default `/api/auth`). */
   basePath?: string;
+  /** Accepted for compatibility (NextAuth.js v4): the handlers are always on the page's origin. */
+  baseUrl?: string;
   /** Refetch every N seconds (`0`, the default, never polls). */
   refetchInterval?: number;
   /** Refetch when the window regains focus (default `true`). */
@@ -132,8 +135,25 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T | null>
   }
 }
 
-/** What Auth.js's `getSession()` takes; accepted for compatibility (it always fetches). */
-export interface GetSessionParams {
+/**
+ * The request a server-side caller passes (NextAuth.js v4's `getSession({ req })` in
+ * `getServerSideProps` or an API route): a `Request`, or a Node-style one with a header bag.
+ */
+export interface ServerRequestLike {
+  /** Its headers (the session cookie). */
+  headers: Headers | Record<string, string | string[] | undefined>;
+}
+
+/** NextAuth.js v4's `{ req }` / `{ ctx }` argument, for a call on the server. */
+export interface CtxOrReq {
+  /** The incoming request. */
+  req?: ServerRequestLike;
+  /** A `getServerSideProps` / `getInitialProps` context carrying it. */
+  ctx?: { req?: ServerRequestLike };
+}
+
+/** What Auth.js's `getSession()` takes; on the server, v4's `{ req }` reads that request's session. */
+export interface GetSessionParams extends CtxOrReq {
   /** Why the session is read (Auth.js's broadcast reason). */
   event?: "storage" | "timer" | "hidden" | string;
   /** Whether to notify other tabs. */
@@ -142,33 +162,138 @@ export interface GetSessionParams {
   broadcast?: boolean;
 }
 
+/** The server-side request a v4 call names, or `undefined` (a browser call). */
+function serverRequest(params: CtxOrReq | undefined): ServerRequestLike | undefined {
+  return params?.req ?? params?.ctx?.req;
+}
+
+/** One header of a server-side request. */
+function headerOf(req: ServerRequestLike, name: string): string | undefined {
+  if (req.headers instanceof Headers) return req.headers.get(name) ?? undefined;
+  const value = req.headers[name];
+  return Array.isArray(value) ? value.join(", ") : value;
+}
+
+/** An environment variable on the server (`undefined` in a browser). */
+function serverEnv(name: string): string | undefined {
+  try {
+    return (globalThis as { Deno?: { env: { get(n: string): string | undefined } } }).Deno?.env
+      .get(name);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * The current session, fetched from `{basePath}/session`.
- *
- * @param _params Accepted for compatibility with Auth.js's signature.
- * @returns The session, or `null`.
+ * The handlers' URL for an HTTP call from the server: `NEXTAUTH_URL_INTERNAL` / `NEXTAUTH_URL` /
+ * `AUTH_URL`, else `http://localhost:$PORT` (3000) — never the request's `Host`, which the
+ * client chooses (as NextAuth.js v4 does).
  */
-export async function getSession(_params?: GetSessionParams): Promise<Session | null> {
-  const data = await fetchJson<Session | null>("session");
+function serverAuthUrl(): URL {
+  const configured = serverEnv("NEXTAUTH_URL_INTERNAL") ?? serverEnv("NEXTAUTH_URL") ??
+    serverEnv("AUTH_URL");
+  const url = new URL(configured ?? `http://localhost:${serverEnv("PORT") ?? "3000"}`);
+  if (url.pathname === "/" || url.pathname === "") url.pathname = DEFAULT_BASE_PATH;
+  return url;
+}
+
+/**
+ * Where the server half of the shim answers `next-auth/react`'s server-side calls in-process
+ * (installed by the handlers module; absent in a browser).
+ */
+const SERVER_HANDLERS = Symbol.for("denext.next-auth.server-handlers");
+
+/** The handlers' in-process answer for the current request, or `null` where there is none. */
+type ServerHandlers = (path: string) => Promise<Response | null>;
+
+/**
+ * The handlers' answer in-process, for the current request: the active `NextAuth()` instance's
+ * own handlers, else the app's pipeline (a `[...nextauth]` route not loaded yet). `null` when
+ * neither answers (outside a request, or the endpoints live where the pipeline can't reach).
+ */
+async function answerInProcess(pathname: string, path: string): Promise<Response | null> {
+  const own = (globalThis as Record<symbol, unknown>)[SERVER_HANDLERS] as
+    | ServerHandlers
+    | undefined;
+  const handled = await own?.(path);
+  if (handled) return handled;
+  const headers = new Headers({ accept: "application/json" });
+  const signal = new AbortController().signal;
+  const dispatched = await getApiDispatcher()?.(pathname, { method: "GET", headers, signal });
+  if (dispatched?.ok) return dispatched;
+  await dispatched?.body?.cancel();
+  return null;
+}
+
+/**
+ * Fetch JSON from the handlers on behalf of a server-side request: in-process (the current
+ * request's cookies; a cookie the endpoint sets reaches its response), or — outside a request —
+ * over HTTP with `req`'s cookie, as v4 does. `null` on any failure.
+ */
+async function fetchServerJson<T>(req: ServerRequestLike, path: string): Promise<T | null> {
+  const base = serverAuthUrl();
+  const pathname = `${base.pathname.replace(/\/+$/, "")}/${path}`;
+  try {
+    let res = await answerInProcess(pathname, path);
+    if (!res) {
+      const headers = new Headers({ accept: "application/json" });
+      const cookie = headerOf(req, "cookie");
+      if (cookie) headers.set("cookie", cookie);
+      res = await fetch(new URL(pathname, base), { headers });
+    }
+    if (!res.ok) return null;
+    return await res.json() as T;
+  } catch {
+    return null;
+  }
+}
+
+/** A session answer, or `null` for anything else. */
+function sessionOrNull(data: Session | null): Session | null {
   return data && typeof data === "object" && data.expires ? data : null;
 }
 
 /**
- * This browser's CSRF token (setting its cookie on first use).
+ * The current session, fetched from `{basePath}/session`. On the server, pass the request
+ * (`getSession({ req })`, v4's form) to read its session.
  *
+ * @param params `{ req }` / `{ ctx }` on the server; the rest is accepted for compatibility.
+ * @returns The session, or `null`.
+ */
+export async function getSession(params?: GetSessionParams): Promise<Session | null> {
+  const req = serverRequest(params);
+  if (req) return sessionOrNull(await fetchServerJson<Session | null>(req, "session"));
+  return sessionOrNull(await fetchJson<Session | null>("session"));
+}
+
+/**
+ * This browser's CSRF token (setting its cookie on first use). On the server, pass the request
+ * (`getCsrfToken({ req })`); a token minted then is set on the current response.
+ *
+ * @param params `{ req }` / `{ ctx }` on the server.
  * @returns The token, or `undefined` when the handlers can't be reached.
  */
-export async function getCsrfToken(): Promise<string | undefined> {
-  return (await fetchJson<{ csrfToken?: string }>("csrf"))?.csrfToken;
+export async function getCsrfToken(params?: CtxOrReq): Promise<string | undefined> {
+  const req = serverRequest(params);
+  const data = req
+    ? await fetchServerJson<{ csrfToken?: string }>(req, "csrf")
+    : await fetchJson<{ csrfToken?: string }>("csrf");
+  return data?.csrfToken;
 }
 
 /**
  * The configured providers.
  *
+ * @param params `{ req }` / `{ ctx }` to list them on the server.
  * @returns Them, by id, or `null` when the handlers can't be reached.
  */
-export function getProviders(): Promise<Record<string, ClientSafeProvider> | null> {
-  return fetchJson<Record<string, ClientSafeProvider>>("providers");
+export function getProviders(
+  params?: CtxOrReq,
+): Promise<Record<string, ClientSafeProvider> | null> {
+  const req = serverRequest(params);
+  return req
+    ? fetchServerJson<Record<string, ClientSafeProvider>>(req, "providers")
+    : fetchJson<Record<string, ClientSafeProvider>>("providers");
 }
 
 /** The current page (`/` outside a browser). */
@@ -228,6 +353,30 @@ function formFields(options: SignInOptions): Record<string, string> {
 }
 
 /**
+ * The type of the provider `signIn()` names, or `undefined` after navigating instead: to the
+ * sign-in page with no provider or one the server doesn't list, to the error page when the
+ * providers can't be read (as Auth.js does).
+ */
+async function providerType(
+  provider: string | undefined,
+  callbackUrl: string,
+): Promise<string | undefined> {
+  const signInPage = `${activeBasePath}/signin?${new URLSearchParams({ callbackUrl })}`;
+  if (!provider) {
+    navigate(signInPage);
+    return undefined;
+  }
+  const providers = await getProviders();
+  if (!providers) {
+    navigate(`${activeBasePath}/error`);
+    return undefined;
+  }
+  if (Object.hasOwn(providers, provider)) return providers[provider].type;
+  navigate(signInPage);
+  return undefined;
+}
+
+/**
  * Sign in. With no provider, open the sign-in page. Otherwise POST to the handlers (with the
  * CSRF token): an OAuth provider navigates to the provider, an email provider to "check your
  * email", Credentials (pass the fields in `options`) signs in and navigates to `callbackUrl` —
@@ -246,16 +395,12 @@ export async function signIn(
   authorizationParams?: Record<string, string> | string | URLSearchParams | string[][],
 ): Promise<SignInResponse | undefined> {
   const callbackUrl = sameOrigin(options.redirectTo ?? options.callbackUrl);
-  if (!provider) {
-    navigate(`${activeBasePath}/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`);
-    return undefined;
-  }
-  const providers = await getProviders();
-  const type = providers?.[provider]?.type;
+  const type = await providerType(provider, callbackUrl);
+  if (!type) return undefined;
   const action = type === "credentials" ? "callback" : "signin";
   const csrfToken = (await getCsrfToken()) ?? "";
   const query = new URLSearchParams(authorizationParams ?? {}).toString();
-  const path = `${action}/${encodeURIComponent(provider)}${query ? `?${query}` : ""}`;
+  const path = `${action}/${encodeURIComponent(provider!)}${query ? `?${query}` : ""}`;
   const { status, url } = await postForm(path, {
     ...formFields(options),
     csrfToken,

@@ -9,7 +9,7 @@ import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { redirect as redirectSignal, RedirectType } from "../src/runtime/error-boundary.ts";
-import { refresh, updateTag } from "../src/server/cache.ts";
+import { refresh, revalidatePath, updateTag } from "../src/server/cache.ts";
 
 function actionRequest(
   id: string,
@@ -168,6 +168,23 @@ Deno.test("an XHR action folds refresh()/updateTag() into its JSON response", as
   assertEquals(body.result, "done");
   assertEquals(body.refresh, true, "refresh() surfaces as refresh:true");
   assertEquals(body.updatedTags, ["posts"], "updateTag() surfaces the tag");
+});
+
+Deno.test("an XHR action that revalidates a path asks the client to refresh (Next parity)", async () => {
+  // Next.js: revalidatePath in a Server Action updates the UI at once — the calling client
+  // re-renders its route. Without it a client-submitted form left the page stale.
+  serverAction("ah_revalidate_path", async () => {
+    await revalidatePath("/");
+    return "done";
+  });
+  const res = await dispatch(
+    actionRequest("ah_revalidate_path", {
+      headers: { origin: "http://app.example.com", "x-denext-action": "1" },
+      json: { args: [] },
+    }),
+  );
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).refresh, true);
 });
 
 // ---- header edge cases -----------------------------------------------------

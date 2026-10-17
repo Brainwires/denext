@@ -24,7 +24,7 @@ export default function GraphQL() {
         {`// deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.5.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.6.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0",
     "@pothos/core": "npm:@pothos/core@^4"
@@ -216,8 +216,18 @@ subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { sig
       <h2>CI</h2>
       <Code lang="sh">
         {`denext graphql sdl --out schema.graphql   # regenerate the committed SDL (sorted, stable)
-denext graphql diff schema.graphql        # exit 1 when the schema changed`}
+denext graphql diff schema.graphql        # exit 1 when the schema changed
+denext graphql client --lang go --out client.go   # a typed client: python | go | swift | kotlin`}
       </Code>
+      <p>
+        <code>denext graphql client</code>{" "}
+        writes the schema&apos;s types (object and interface types with every field optional — what
+        a response holds depends on the selection —, input types with their required fields, enums)
+        and a small client whose <code>execute(query, variables)</code>{" "}
+        posts one operation and raises the response&apos;s <code>errors</code>{" "}
+        — one file, the language&apos;s standard library only, through the same emitters as{" "}
+        <code>denext openapi client</code>.
+      </p>
       <p>
         <code>denext build</code> writes the same <code>schema.graphql</code>{" "}
         into the output directory. Feed it to <code>graphql-codegen</code> or any client generator.

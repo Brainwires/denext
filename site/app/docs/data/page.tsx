@@ -237,14 +237,33 @@ export default {
         <code>super</code> or <code>arguments</code>{" "}
         inside a cached function: its result is shared by every caller.
       </p>
+      <p>
+        <code>cacheLife("hours")</code>{" "}
+        picks a built-in profile (Next.js 16's values) or one you name in the config's{" "}
+        <code>cacheLife</code>; called more than once, each field keeps the lowest value. A cached
+        function that calls another one carries its tags, and lives no longer than it unless it sets
+        {" "}
+        <code>cacheLife</code> itself. <code>revalidateTag(tag, "max")</code>{" "}
+        serves the tagged entries stale while they refresh; <code>updateTag(tag)</code>{" "}
+        expires them for the rest of the request (read-your-writes in a Server Action), and{" "}
+        <code>refresh()</code> re-fetches the route's uncached data.
+      </p>
+      <p>
+        Next.js 16's directive kinds work too. <code>"use cache: private"</code> may read{" "}
+        <code>cookies()</code> and <code>headers()</code> (not{" "}
+        <code>connection()</code>): its result is never stored on the server — matching calls within
+        one request share one run — and it renders per request (a PPR hole).{" "}
+        <code>"use cache: remote"</code> is a shared entry in the configured cache store, like{" "}
+        <code>"use cache"</code>. From <code>next/cache</code>, <code>navigation()</code> and{" "}
+        <code>prefetch()</code>{" "}
+        resolve at once (denext has no runtime prefetch); see KNOWN-DIFFERENCES.
+      </p>
       <Callout kind="note">
         Cache Components and PPR are a stable <strong>opt-in</strong>{" "}
         (off unless you set the flag — caching is a choice, not a default). The legacy{" "}
         <code>experimental.cacheComponents</code>{" "}
-        still works and warns in dev. Its documented bounds — request data inside{" "}
-        <code>use cache</code>{" "}
-        throws; a streamed hole can't add to the already-flushed head — are listed in
-        KNOWN-LIMITATIONS.
+        still works and warns in dev. Its documented bounds — a streamed hole can't add to the
+        already-flushed head — are listed in KNOWN-LIMITATIONS.
       </Callout>
     </DocsShell>
   );

@@ -31,7 +31,7 @@ import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
-import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno } from "./scaffold.ts";
+import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
@@ -80,6 +80,7 @@ import {
   type PrismaMigrateInfo,
   type PrismaWiring,
 } from "./prisma-migrate.ts";
+import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's
  * deno.json exports); the subpath equals the specifier. React-family entries come
@@ -307,8 +308,9 @@ async function buildAppRouterImports(
 }
 
 /**
- * `next-auth` (Auth.js v5) and every `next-auth/*` subpath → denext's shim, mapped onto
- * `denextAuth`, when the app depends on `next-auth` — exact entries, plus the prefix when it is a
+ * `next-auth` (Auth.js v5 or NextAuth.js v4) and every `next-auth/*` subpath (v4's
+ * `next-auth/next`, `next-auth/middleware` and `next-auth/adapters` included) → denext's shim,
+ * mapped onto `denextAuth`, when the app depends on `next-auth` — exact entries, plus the prefix when it is a
  * URL (see the `next/*` ones above).
  */
 async function addNextAuthAliases(
@@ -455,6 +457,8 @@ export interface MigrateResult {
   remix?: RemixMigrateInfo;
   /** Present when the app uses Prisma — the Deno-client/adapter wiring report. */
   prisma?: PrismaMigrateInfo;
+  /** Present when the app depends on `next-auth` — its major, the v4 APIs and adapters found. */
+  nextAuth?: NextAuthMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
@@ -814,8 +818,8 @@ async function writeAppRouterDenoJson(
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
     minimumDependencyAge: DENEXT_MIN_DEP_AGE,
-    ...(prismaWiring ? { links: prismaWiring.links } : {}),
-    unstable: ["sloppy-imports"],
+    ...(prismaWiring?.links.length ? { links: prismaWiring.links } : {}),
+    unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "react",
@@ -881,9 +885,25 @@ async function writeDenoJsonUnlessAuthored(
 ): Promise<boolean> {
   const denoJsonPath = join(dir, "deno.json");
   if (!(await writable(denoJsonPath))) return true;
-  await mfs.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+  // A re-run over its own earlier output keeps the unstable features added to it since.
+  const before = await previousUnstable(denoJsonPath);
+  const merged = {
+    ...denoJson,
+    unstable: withDenextUnstable(before, denoJson.unstable as string[]),
+  };
+  await mfs.writeTextFile(denoJsonPath, denoJsonText(merged));
   written.unshift(denoJsonPath);
   return false;
+}
+
+/** The `unstable` value of a `deno.json` migrate wrote before (`undefined` when none, or unparsable). */
+async function previousUnstable(path: string): Promise<unknown> {
+  try {
+    const cur = await mfs.readTextFile(path);
+    return (JSON.parse(cur) as { unstable?: unknown }).unstable;
+  } catch {
+    return undefined;
+  }
 }
 
 async function writable(path: string): Promise<boolean> {
@@ -958,12 +978,20 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
   compiler: "", // SWC/Babel compiler options don't apply to Deno's toolchain.
   swcMinify: "", // minification is handled by the denext build, always on for prod.
   experimental:
-    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`, and `optimizePackageImports`, which is top-level `optimizePackageImports` (lucide-react, date-fns, … are optimized by default).",
+    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`, `cacheLife`, which is carried to top-level `cacheLife`, `optimizePackageImports`, which is top-level `optimizePackageImports` (lucide-react, date-fns, … are optimized by default), and `nextScriptWorkers`, which is carried to top-level `nextScriptWorkers` (Partytown stays the app's own dependency).",
   poweredByHeader: "", // denext never emits an X-Powered-By header.
   productionBrowserSourceMaps: "", // source-map emission is governed by the denext build.
 };
 /** The set of drop keys (derived from {@link NEXT_DROP_GUIDANCE}). */
 const NEXT_DROP_KEYS = new Set(Object.keys(NEXT_DROP_GUIDANCE));
+
+/** How `Infinity` (a `cacheLife` field) crosses the evaluator's JSON line. */
+const INFINITY_MARKER = "__denext_infinity__";
+
+/** A next.config literal as config source: JSON, with the `Infinity` marker restored. */
+function configLiteral(value: unknown): string {
+  return JSON.stringify(value).replaceAll(JSON.stringify(INFINITY_MARKER), "Infinity");
+}
 
 /** The line prefix {@link NEXT_EVAL_PROGRAM} prints its JSON result behind. */
 const NEXT_EVAL_MARKER = "__DENEXT_NEXT_CONFIG__";
@@ -985,6 +1013,16 @@ ${LOAD_NEXT_CONFIG}
 const out = { fields: {}, rules: {}, dropped: [] };
 if (cfg && typeof cfg === "object") {
   for (const k of PASS) if (cfg[k] !== undefined) out.fields[k] = cfg[k];
+  // cacheLife profiles (top-level since Next 16, experimental in 15): Infinity has no JSON
+  // spelling, so it crosses as a marker the config writer turns back into \`Infinity\`.
+  const life = cfg.cacheLife ?? cfg.experimental?.cacheLife;
+  if (life && typeof life === "object") {
+    out.fields.cacheLife = JSON.parse(
+      JSON.stringify(life, (_k, v) => v === Infinity ? ${JSON.stringify(INFINITY_MARKER)} : v),
+    );
+  }
+  // \`<Script strategy="worker">\`'s Partytown flag: experimental in Next, top-level here.
+  if (cfg.experimental?.nextScriptWorkers === true) out.fields.nextScriptWorkers = true;
   for (const fn of RULES) {
     if (typeof cfg[fn] === "function") {
       try { out.rules[fn] = await cfg[fn](); } catch { /* skip a rule fn that throws */ }
@@ -1365,6 +1403,7 @@ async function migrateNextProject(
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
+  const nextAuth = await nextAuthMigrateInfo(dir, deps, pagesRouter);
   return {
     kind: "next",
     wrote: written,
@@ -1375,6 +1414,7 @@ async function migrateNextProject(
     pagesConfigExists,
     denoJsonExists,
     prisma,
+    ...(nextAuth ? { nextAuth } : {}),
     nextConfig: nextConfigReport(next),
     capacitor,
   };
@@ -2409,7 +2449,7 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
   }
   const notes: string[] = [];
   for (const [k, v] of Object.entries(next.fields)) {
-    bodyLines.push(`  ${propertyKey(k)}: ${JSON.stringify(v)},`);
+    bodyLines.push(`  ${propertyKey(k)}: ${configLiteral(v)},`);
   }
   const ruleEntries = Object.entries(next.rules);
   if (ruleEntries.length) {
@@ -2725,7 +2765,7 @@ function spaDenoJson(
     tasks,
     nodeModulesDir,
     minimumDependencyAge: DENEXT_MIN_DEP_AGE,
-    unstable: ["sloppy-imports"],
+    unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "react",

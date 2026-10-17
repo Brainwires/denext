@@ -5,6 +5,7 @@ import { join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../../server/types.ts";
 import { inRootContext } from "../../server/root-context.ts";
 import { createUseCacheLoaders } from "../use-cache-loader.ts";
+import { projectInlineServerActionModules } from "../inline-server-action.ts";
 import type { DevState } from "./state.ts";
 import { devPlatformRedirects, renderPlatform } from "./platform.ts";
 import type { Platform } from "../platform-extensions.ts";
@@ -55,9 +56,10 @@ export function createDevLoader(
     if (await isCompat()) return (await compatLoader(platform))(filePath);
     const redirects = await devPlatformRedirects(st, platform);
     // A shell's render (`platform` other than `web`) folds `denext/platform` in its copies.
+    // Inline `"use server"` functions compile into server references in the copies.
     if (
       !st.useCacheEnabled && Object.keys(redirects).length === 0 && !st.devCopies.anyEdited &&
-      platform === "web"
+      platform === "web" && (await devInlineActionModules(st)).length === 0
     ) return base(filePath);
     let current = st.ucLoads.get(platform);
     if (current?.gen !== st.generation) {
@@ -78,4 +80,20 @@ export function createDevLoader(
     }
     return (bust ? current.load : current.tag)(filePath);
   };
+}
+
+/**
+ * The project's modules holding an inline `"use server"` function, scanned once per generation
+ * (a fresh walk: a file created since the last generation counts). The native render loads them through compiled copies,
+ * and an action request whose id no rendered module registered (a page posted after a restart)
+ * loads them to register their actions.
+ *
+ * @param st The dev state.
+ */
+export function devInlineActionModules(st: DevState): Promise<string[]> {
+  if (st.inlineActionScan?.gen !== st.generation) {
+    const modules = projectInlineServerActionModules(st.paths.projectDir);
+    st.inlineActionScan = { gen: st.generation, modules };
+  }
+  return st.inlineActionScan!.modules;
 }

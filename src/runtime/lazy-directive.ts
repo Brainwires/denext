@@ -120,6 +120,23 @@ function directiveOf(
   return null;
 }
 
+/**
+ * The attributes of an isomorphic island's wrapper (iso-island-server.ts and the client's
+ * iso-island.ts render the same element, so the page hydrates around it).
+ */
+export function isoIslandProps(
+  strategy: HydrationStrategy,
+  param: string | undefined,
+): Record<string, string> {
+  const p: Record<string, string> = {
+    [ISLAND_MARKER_ATTR]: "",
+    [ISLAND_STRATEGY_ATTR]: strategy,
+    style: "display:contents",
+  };
+  if (param !== undefined) p[ISLAND_PARAM_ATTR] = param;
+  return p;
+}
+
 /** Read a strategy the server stamped under {@link STRATEGY_PROP}, if valid. */
 export function readStampedStrategy(props: Record<string, unknown>): HydrationStrategy | null {
   const v = props[STRATEGY_PROP];

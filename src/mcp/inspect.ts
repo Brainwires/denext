@@ -40,8 +40,9 @@ function clampHtml(html: string, max = 8000): string {
  * @returns A text report: status line, any redirect, and the rendered HTML (truncated).
  */
 export async function renderRoute(dir: string, path: string): Promise<string> {
-  const client = createTestClient(await createTestApp(dir));
-  const res = await client.get(path);
+  // The app's plugins run too (a Pages Router route renders); their teardowns run on return.
+  await using app = await createTestApp(dir);
+  const res = await createTestClient(app).get(path);
   const redirect = res.location ? `\n→ redirect: ${res.location}` : "";
   const note = res.status >= 500
     ? "\n(500 — the route threw while rendering. Run `denext dev` and use denext_dev_logs for " +

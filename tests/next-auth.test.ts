@@ -22,83 +22,12 @@ import {
   type AuthJsUserExtension,
   fromAuthJsAdapter,
 } from "../src/compat/next-auth/adapter.ts";
-import { requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
+import { auth as denextAuth, requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
 import type { OAuthProvider } from "../src/server/auth/types.ts";
-import {
-  createRequestContext,
-  runDeferred,
-  runWithContext,
-} from "../src/server/request-context.ts";
+import { type CallInit, inRequest, Jar, ORIGIN, request } from "./helpers/next-auth-harness.ts";
 import { isRedirect } from "../src/runtime/error-boundary.ts";
 
-const ORIGIN = "https://app.test";
 const SECRET = "next-auth-shim-test-secret-at-least-32-chars";
-
-/** A cookie jar over `Set-Cookie` headers. */
-class Jar {
-  cookies = new Map<string, string>();
-  take(headers: Headers): void {
-    for (const line of headers.getSetCookie()) {
-      const [pair, ...attrs] = line.split(";");
-      const at = pair.indexOf("=");
-      const name = pair.slice(0, at).trim();
-      const value = pair.slice(at + 1).trim();
-      const expired = attrs.some((a) => /^\s*max-age=0\s*$/i.test(a)) || value === "";
-      if (expired) this.cookies.delete(name);
-      else this.cookies.set(name, value);
-    }
-  }
-  header(): string {
-    return [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-}
-
-interface CallInit {
-  method?: string;
-  form?: Record<string, string>;
-  json?: unknown;
-  origin?: string | null;
-  headers?: Record<string, string>;
-}
-
-/** Run `fn` inside a request context for `request`, merging its cookies into the answer. */
-async function inRequest<T>(
-  request: Request,
-  jar: Jar,
-  fn: () => Promise<T>,
-): Promise<{ value?: T; error?: unknown; cookies: Headers }> {
-  const ctx = createRequestContext(request);
-  let value: T | undefined;
-  let error: unknown;
-  try {
-    value = await runWithContext(ctx, fn);
-  } catch (err) {
-    error = err;
-  }
-  await runDeferred(ctx);
-  jar.take(ctx.outgoingHeaders);
-  return { value, error, cookies: ctx.outgoingHeaders };
-}
-
-/** A request body and its content type. */
-function bodyOf(init: CallInit): { type?: string; body?: BodyInit } {
-  if (init.form) {
-    return { type: "application/x-www-form-urlencoded", body: new URLSearchParams(init.form) };
-  }
-  if (init.json === undefined) return {};
-  return { type: "application/json", body: JSON.stringify(init.json) };
-}
-
-/** Build a request to the app. */
-function request(jar: Jar, path: string, init: CallInit = {}): Request {
-  const headers = new Headers({ host: "app.test", ...(init.headers ?? {}) });
-  if (jar.cookies.size) headers.set("cookie", jar.header());
-  const { type, body } = bodyOf(init);
-  if (type) headers.set("content-type", type);
-  const method = init.method ?? (body ? "POST" : "GET");
-  if (method !== "GET" && init.origin !== null) headers.set("origin", init.origin ?? ORIGIN);
-  return new Request(`${ORIGIN}${path}`, { method, headers, body });
-}
 
 /** A NextAuth instance plus a browser (cookie jar) that talks to its handlers. */
 function app(config: Partial<NextAuthConfig> = {}) {
@@ -503,6 +432,29 @@ Deno.test("next-auth: a jwt callback returning null signs the session out", asyn
   allow = false;
   assertEquals(await (await a.call("/api/auth/session")).json(), null);
   assert(!a.jar.cookies.has("__Host-denext_auth"), "the cookie was cleared");
+});
+
+Deno.test("next-auth security: a jwt callback returning null at sign-in signs nobody in", async () => {
+  // Auth.js's deny pattern: `if (user?.banned) return null` in `jwt`.
+  const a = app({ callbacks: { jwt: ({ token, user }) => (user ? null : token) } });
+  await signInWithPassword(a);
+  assertEquals(await (await a.call("/api/auth/session")).json(), null);
+  assertEquals((await a.run(() => a.result.auth())).value, null);
+  // denext's own session reads (its auth endpoints, `requireSession`) see no session either.
+  assertEquals((await a.run(() => denextAuth())).value, null);
+});
+
+Deno.test("next-auth security: an Object.prototype name in ?error= is an unknown code, not a 500", async () => {
+  const { translateErrorLocation } = await import("../src/compat/next-auth/flows.ts");
+  const a = app();
+  for (const code of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    for (const path of [`/api/auth/error?error=${code}`, `/api/auth/signin?error=${code}`]) {
+      const res = await a.call(path);
+      assert(res.status < 500, `${path}: ${res.status}`);
+      assert((await res.text()).includes("Unable to sign in."), path);
+    }
+    assertEquals(translateErrorLocation(`/x?error=${code}`), `/x?error=${code}`);
+  }
 });
 
 Deno.test("next-auth: providers, csrf and the built-in pages", async () => {

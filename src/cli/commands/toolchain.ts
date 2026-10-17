@@ -13,6 +13,9 @@ import {
   spawnDenoExplainedAndExit,
 } from "../shared.ts";
 import { RAW_FLAG } from "../explain-output.ts";
+import { join } from "@std/path";
+import { denoExecutable } from "../../build/deno-executable.ts";
+import { clearCoverageProfiles, coverageDir, findVitestFiles, planTestRun } from "./test-passes.ts";
 import { rawDiagnostics } from "../../build/explain/mod.ts";
 
 /**
@@ -46,30 +49,54 @@ function runDenoExplained(sub: string, ctx: CommandContext, json = false): Promi
   return spawnDenoExplainedAndExit(args, commandCwd(ctx));
 }
 
+export { coverageDir };
+
+/** Whether this Deno is denext's toolchain build (`2.9.7-denext.N`: Vitest's API in `deno test`). */
+function onToolchain(): boolean {
+  return /-denext\.\d+$/.test(Deno.version.deno);
+}
+
+/** Run one `deno` argument list in `cwd`, inheriting the terminal; its exit code. */
+async function runDenoStep(args: string[], cwd: string): Promise<number> {
+  const child = new Deno.Command(denoExecutable(), {
+    args,
+    cwd,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  return (await child.status).code;
+}
+
 /**
- * The directory `deno test --coverage[=<dir>]` writes (`coverage` when the flag has no value),
- * or undefined without the flag.
- *
- * @param args The forwarded `deno test` arguments.
- * @returns The coverage directory, or undefined.
+ * `denext test`: one `deno test -A`, or, in a project with Vitest files and no paths named, the
+ * `Deno.test` pass then the Vitest pass, with one coverage report over both (see
+ * `test-passes.ts`). Exits non-zero when any pass or the report failed. Never returns.
  */
-export function coverageDir(args: readonly string[]): string | undefined {
-  for (const arg of args) {
-    if (arg === "--") break;
-    if (arg === "--coverage") return "coverage";
-    if (arg.startsWith("--coverage=")) return arg.slice("--coverage=".length) || "coverage";
+async function runTests(ctx: CommandContext): Promise<never> {
+  const cwd = commandCwd(ctx);
+  const args = [...denoGlobalArgs(ctx), ...ctx.rest];
+  const plan = planTestRun(args, await findVitestFiles(cwd), onToolchain());
+  if (plan.note) console.error(`denext test: ${plan.note}`);
+  if (plan.passes.length === 1 && plan.report.length === 0) {
+    return spawnDenoAndExit(plan.passes[0], cwd);
   }
-  return undefined;
+  if (plan.clean) await clearCoverageProfiles(join(cwd, plan.clean)).catch(() => {});
+  let code = 0;
+  for (const pass of plan.passes) code = (await runDenoStep(pass, cwd)) || code;
+  for (const report of plan.report) code = (await runDenoStep(report, cwd)) || code;
+  Deno.exit(code);
 }
 
 export const testCommand: CommandSpec = {
   name: "test",
   summary: "Run the app's tests (deno test)",
   passthrough: true,
-  usage: "Forwards to `deno test -A`. Extra args/paths pass through:\n" +
-    "  denext test                  Run every test\n" +
+  usage: "Forwards to `deno test -A`. Extra args/paths pass through. With no path named, the\n" +
+    "project's `*.vitest.ts` files run as a second pass, and --coverage reports both as one.\n" +
+    "  denext test                  Run every test (Deno.test files, then *.vitest.ts)\n" +
     "  denext test --watch          Re-run on change (deno test --watch)\n" +
-    "  denext test --coverage=cov   Collect coverage, then `deno coverage cov`\n" +
+    "  denext test --coverage=cov   Collect coverage from both passes into one report\n" +
     "  denext test --filter Auth    Forward deno test flags\n" +
     "  denext test routes/          Restrict to a path",
   positionals: [{ name: "paths", help: "Test files/dirs (default: all)" }],
@@ -79,7 +106,7 @@ export const testCommand: CommandSpec = {
     const dir = coverageDir(ctx.rest);
     return dir === undefined ? undefined : { projectDir: commandCwd(ctx), outputDirs: [dir] };
   },
-  run: (ctx) => runDeno("test", ctx, ["-A"]),
+  run: runTests,
 };
 
 export const lintCommand: CommandSpec = {

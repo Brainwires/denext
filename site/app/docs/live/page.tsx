@@ -352,7 +352,25 @@ const { data: event } = useChannel(orderEvents, \`user:\${userId}\`);`}
           At-most-once; latest-wins per subscription under back-pressure (the last held frame
           replays when the socket drains — no recompute) and within a 16 ms publisher burst; no
           replay on reconnect (compute a cold-start value during SSR and pass it as{" "}
-          <code>initial</code>); <code>seq</code> orders frames from one instance only.
+          <code>initial</code>); <code>seq</code>{" "}
+          orders frames from one instance only — unless the channel keeps a log (below).
+        </li>
+        <li>
+          <strong>Message log &amp; replay.</strong>{" "}
+          <code>createChannel({"{ …, history: 50 }"})</code> (or{" "}
+          <code>{"{ size, ttlSeconds }"}</code>; up to 1,000 per key, 24 hours by default) logs each
+          key&apos;s publishes with a cursor. A late subscriber passes{" "}
+          <code>useChannel(ch, key, {'{ since: "0", onMessage }'})</code>{" "}
+          and receives the key&apos;s retained history once <code>authorize</code>{" "}
+          allows it (only its own key, never a refused one), then live pushes; each frame carries a
+          {" "}
+          <code>cursor</code>, a reconnect resumes after the last one, a back-pressured socket
+          resumes from the log when it drains, and a burst is delivered whole. The log is this
+          instance&apos;s, in memory (bounded by keys and bytes, the least recently published key
+          evicted first) unless the transport brings a shared one:{" "}
+          <code>redisChannelTransport()</code>{" "}
+          keeps it in Redis (a sorted set per key, trimmed and expiring), so a subscriber on any
+          replica replays every replica&apos;s publishes.
         </li>
         <li>
           <strong>Instances.</strong> Channel events, tag-driven pushes and <code>usePresence</code>

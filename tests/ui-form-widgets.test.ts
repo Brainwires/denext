@@ -164,12 +164,14 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     compress: "union", // `boolean | CompressConfig`: a toggle branch + an options group
     nodeResolve: "toggle",
     cacheComponents: "toggle",
+    cacheLife: "map",
     reactCompiler: "toggle",
     asyncContext: "toggle",
     features: "map",
     optimizePackageImports: "union", // `string[] | false`: a chips branch + a `false` branch
     resolveAlias: "map",
     momentumSafeScroll: "toggle",
+    nextScriptWorkers: "toggle", // <Script strategy="worker"> through the app's Partytown
     lists: "segmented",
     platformExtensions: "union", // `boolean | PlatformExtensionsConfig`: a toggle + an options group
     reactNative: "union", // `boolean | ReactNativeConfig`: a toggle branch + an options group
@@ -211,6 +213,7 @@ Deno.test("every row property of the eight list fields gets a typed control", ()
     help: "text",
     valueName: "text",
     repeatable: "toggle",
+    optionalValue: "toggle",
   });
   assertRowKinds(["commands", "0", "positionals"], {
     name: "text",

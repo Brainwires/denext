@@ -2,7 +2,7 @@
 // interpolation, number/date/time, plural/select/selectordinal with offset and #,
 // spellout/ordinal/duration, apostrophe escaping, and edge/fallback branches.
 
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { formatIcu } from "../src/compat/next-intl/icu.ts";
 
 Deno.test("plain interpolation and a missing value keep the placeholder", () => {
@@ -118,9 +118,9 @@ Deno.test("unknown arg type falls back to the raw value; nested submessages rend
   assertEquals(formatIcu(nested, { count: 1, g: "male" }, "en"), "his item");
 });
 
-Deno.test("a pathologically deep message is rejected (stack-overflow guard)", () => {
+Deno.test("a pathologically deep message renders (an iterative parser: no stack to overflow)", () => {
   const deep = "{n, plural, other {".repeat(70) + "x" + "}}".repeat(70);
-  assertThrows(() => formatIcu(deep, { n: 1 }, "en"), Error, "nesting too deep");
+  assertEquals(formatIcu(deep, { n: 1 }, "en"), "x");
 });
 
 Deno.test("the parse cache serves repeated messages (same output on re-format)", () => {

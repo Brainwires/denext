@@ -8,6 +8,711 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-10-17
+
+### Added
+
+- **Inline Server Actions (`async function save() { "use server"; … }` inside a Server Component)
+  work on the native App Router, as they do on next-compat.** The server render hoists each one to
+  a server reference registered when its module loads, under the same id on both paths, so
+  `<form action={save}>` renders its endpoint and runs with JavaScript off (a 303 back to the page)
+  or on (the hydrated client submits it), under `denext dev` (bundled and unbundled), `denext
+  start` and `denext export`. A declaration is hoisted to the top of its block, as JavaScript
+  hoists it, so a use above it works.
+- **Bound Server Actions: an inline action that reads its component's values, and
+  `action.bind(null, value)`.** As in Next.js, an inline `"use server"` function may read a prop or
+  a local of the component that declares it, and `.bind(null, …)` on any server action binds
+  leading arguments; the values travel with the form, encrypted, and come back first when it posts.
+  They are sealed with AES-GCM (the action's id as additional data, so a token never opens for
+  another action) under a key `denext build` generates per build, or
+  `DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (Next.js's `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` is read
+  too) for replicas built separately; an edited or forged token is an unknown action. Nothing
+  changes in the browser: the values ride the action's reference id. Before, an inline action that
+  read a local was a build error.
+- **Type checking on the native TypeScript 7 compiler.** From the Deno toolchain release that ships
+  it, `denext check`, the dev type-check overlay, `denext test` and every other command that
+  type-checks run TypeScript 7.0.2's native compiler (`tsgo`), carried in the toolchain archive's
+  `typescript-check/` beside `deno`: installed only when its binary and every file of the directory hash to the
+  pin (`deno-toolchain-pin.json`'s `tsgo`), never downloaded from npm, and listed by
+  `denext toolchain status`. A cold check of denext's own entry points takes about half the time
+  of the in-process TypeScript 6.0.3; an unchanged project still hits Deno's check cache.
+  `DENEXT_NATIVE_CHECK=0` (or Deno's `DENO_CHECK_ENGINE=tsc` / `--check-engine=tsc`) keeps the
+  in-process checker, and denext picks it by itself, with one warning, when the toolchain's
+  compiler failed verification. The explanations of type errors read the native output, related
+  information included.
+- **React 19.3's Fragment refs.** `<Fragment ref={r}>` puts a `FragmentInstance` in `r.current`,
+  with React's API over the fragment's host children (the nearest elements and text nodes, portaled
+  ones included, content a hidden `<Activity>` holds excluded): `addEventListener` /
+  `removeEventListener` (with `once` and `signal` scoped to the fragment), `dispatchEvent`,
+  `focus` / `focusLast` / `blur`, `observeUsing` / `unobserveUsing` (an IntersectionObserver keeps
+  a removed child until after the next paint, for its exit record), `getClientRects`,
+  `getRootNode`, `compareDocumentPosition` and `scrollIntoView`. Listeners and observers follow
+  children that mount or unmount later, and each element child records its fragments in
+  `reactFragments`. The ref is set and cleared at commit like any ref (the same instance every
+  time; a callback ref's cleanup runs on detach, when the ref changes or goes away, and when the
+  Fragment is hidden or deleted). The server render ignores the ref and hydration attaches it. The
+  instance ships as an on-demand `fragment-instance-*` chunk: the first render that reaches a
+  `<Fragment ref>` suspends until it has loaded, and an app without one carries 420 B of reconciler
+  hooks for it (the shared runtime measures 65,030 B, from 64,610 B).
+
+### Changed
+
+- **The compat layer reports React 19.3.1** (`React.version`, `ReactDOM.version`), and the
+  React/ReactDOM parity baseline moves to React 19.3.1 and `@types/react` 19.3: with Fragment refs
+  in, nothing holds it to 19.2 any more.
+- **`Fragment` is typed as a component** taking React's `FragmentProps` (`children`, and a `ref`
+  for a `FragmentInstance`), as React's `ExoticComponent` is, so `<Fragment key ref>` type-checks
+  as a JSX tag. At runtime it is still the fragment marker. `denext` exports the `FragmentProps`,
+  `FragmentComponent` and `FragmentInstance` types (`denext/react` the last), and
+  `denext/jsx-runtime` the first two with the marker's type, `FRAGMENT` (type-only).
+- **The React Native parity ledger is pinned to React Native 0.88.0 final** (from
+  `0.88.0-rc.5`): `deno task parity:native` checks React Native mode's `react-native` surface and
+  the list adapters against the release, with the same 97 expected names and no gaps, and
+  `Platform.constants.reactNativeVersion` / `ReactNativeVersion` report 0.88.0 (was 0.86.3).
+
+## [4.3.0] - 2026-10-17
+
+### Added
+
+- **`<Script strategy="worker">` runs off the main thread, through Partytown, as in Next.** With
+  `nextScriptWorkers: true` (Next's `experimental.nextScriptWorkers`, honored too; `denext migrate`
+  carries it) and `@qwik.dev/partytown` (or Next's `@builder.io/partytown`) in the app's
+  `node_modules`, a worker script renders as `type="text/partytown"` after a same-origin `boot.js`,
+  and runs in Partytown's web worker, reaching the page through its proxy. `denext dev`,
+  `denext build` (then `denext start`, a compiled binary included) and `denext export` publish
+  what Partytown needs under `/_denext/~partytown/`, below `basePath`, so it works under the strict
+  default CSP with no opt-in. Only denext's own worker scripts run: each carries a per-response
+  nonce the page's CSP lists, `boot.js` holds every `text/partytown` script inert until it has
+  checked that nonce, and the service worker serves Partytown's sandbox only to a tab a checked
+  boot announced, so an HTML injection gains nothing (see the
+  [security notes](/docs/security#script-strategyworker-partytown-and-html-injection)). App Router
+  pages are supported, and a worker script a client component renders after load, on a page that
+  loaded `boot.js`, is handed to Partytown too. Without the flag or the package the script still
+  runs on the main thread, and the dev warning names the fix. Nothing reaches a page that does not
+  render a worker script. `tests/e2e/script-worker.e2e.test.ts` checks it in Chromium.
+- **`denext migrate` wires Prisma on Postgres and MySQL.** The schema's `datasource` decides the
+  driver adapter: `postgresql` gets `@prisma/adapter-pg` (over npm `pg`), `mysql` gets
+  `@prisma/adapter-mariadb` (over npm `mariadb`, which takes a `mysql://` URL), read from the
+  variable the datasource's `url = env("…")` names. Neither needs the `links` shim the SQLite path
+  uses, and the `prisma:setup` task installs, generates and runs `prisma migrate deploy` (or
+  `db push`), refusing early when the URL is not set. A `sqlserver` or `mongodb` datasource is no
+  longer handed the SQLite adapter: its constructions are left as they are, with a note.
+  `tests/e2e/prisma-server-db.e2e.test.ts` runs a migrated app against live databases.
+- **`denext migrate --from remix` ports what `getLoadContext` read from Express.** Headers,
+  `req.get()`, the URL, query, params, cookies, `req.ip` (`clientIp()`), `req.session` (denext's
+  signed-cookie session, signed with the secret the server gave `express-session` /
+  `cookie-session`), `req.user` (`auth()`), and what an `app.use` middleware put on `res.locals` or
+  `req` (its own expression, recomputed per request) become working values in `load-context.ts`,
+  with the server's imports carried over. What has no equivalent is an `undefined` property under
+  a `TODO(denext migrate)` note naming its file, line and reason. A `getLoadContext(req, res)`
+  written as a method is read too (it was reported as unreadable).
+- **NextAuth.js v4 apps migrate with no code changes.** The `next-auth` shim now serves v4's
+  server API on the same instance as v5's: `NextAuth(authOptions)` is the route handler for the
+  App Router (`export { handler as GET, handler as POST }`) and a Pages API route (`export default
+  NextAuth(authOptions)`, or `NextAuth(req, res, authOptions)`), `getServerSession(authOptions)`
+  reads the session in Server Components and route handlers and `getServerSession(req, res,
+  authOptions)` in `getServerSideProps` and API routes (also from `next-auth/next`), and
+  `next-auth/middleware` gates `config.matcher` with its default export or `withAuth(middleware,
+  { callbacks: { authorized }, pages })` (`req.nextauth.token`). `next-auth/react` adds v4's
+  server-side `getSession({ req })` / `getSession(ctx)`, `getCsrfToken({ req })` and
+  `getProviders({ req })`, answered in-process; `signIn` with a provider the server doesn't list
+  opens the sign-in page; `authorize(credentials, req)` gets a `req` that also answers v4's
+  `req.headers[name]`, `req.query` and `req.body`; and `next-auth/adapters` exports the adapter
+  types. `denext migrate` aliases the v4 subpaths and reports the next-auth major, the v4 APIs and
+  the Auth.js adapters it found (`--check` lists what to review). The v4 endpoints keep every v5
+  rule: both CSRF checks, same-origin callback URLs and denext's cookie defaults.
+- **Auth.js adapters from the app's own dependencies, verified end to end.** `@auth/drizzle-adapter`
+  backs the shim's users, linked accounts, verification tokens and database sessions on SQLite
+  (`node:sqlite` through `drizzle-orm/sqlite-proxy`) and Postgres, and `@auth/prisma-adapter` on
+  the Prisma Deno client `denext migrate` wires.
+- **Deno Desktop runtime 2.9.7-denext.21, pinned** (the toolchain moves with it). What it brings to
+  denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
+  list the rest.
+- **Windows on Arm (`aarch64-pc-windows-msvc`) builds of the runtime, the toolchain and `denort`.**
+  The pin carries the release's Arm64 runtime archives (`webview` and `cef`), CLI and `denort`, so
+  the compiled `denext` binary on Windows on Arm runs its verbs on the toolchain,
+  `denext build --compile --target aarch64-pc-windows-msvc` builds onto the pinned `denort`, and
+  `desktop package --target-os windows --arch arm64` packages on the pinned runtime; denext's
+  `.msi` already declares Windows Installer schema 500, which an Arm64 package needs. Run on a
+  Windows 11 Arm64 VM (both backends, the desktop window test, the runtime's e2e suite, the
+  `.msi` and `build --compile`); KNOWN-LIMITATIONS lists what has not run there yet.
+- **Spellcheck in Linux CEF windows out of the box.** The runtime ships Chromium's Hunspell
+  dictionaries for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT and copies the ones the
+  profile uses on launch; an app adds other languages as `.bdic` files in `dictionaries/` beside
+  the host executable. The window still makes no network requests of its own.
+- **Lustre apps as islands: `lustreIsland` in `denext/gleam`.** A Lustre app (the Gleam UI
+  framework) becomes an island component: export `lustreIsland(lustre, counter.app(), { flags })`
+  from a `"use client"` module and render it from a Server Component, with any `client:*`
+  directive. The server renders the app's first view (`element.to_string`) inside the island's
+  root; in the browser Lustre starts on that root and adopts the server's markup (the same nodes,
+  focus and typed text), props become its flags (new flags restart it), and unmounting clears the
+  root. Lustre's code ships only in the chunks of the islands that use it. When the app's Gleam
+  project depends on Lustre, every Gleam build (the `gleam()` plugin, `denext add gleam:`) writes
+  `.denext/lustre.ts`, the app's own Lustre build wrapped as the kit these helpers take (one copy
+  of Lustre, typed from Gleam's `.d.mts`). `denext/gleam` can now be imported from client code: the
+  build plugin loads its own modules only when it is set up.
+- **Lustre custom elements in JSX: `lustreElement` in `denext/gleam`.**
+  `lustreElement(lustre, "my-counter", counter.component())`, exported from a `"use client"`
+  module, renders a Lustre component (`lustre.component`) as the custom element `<my-counter>`:
+  the server prerenders its shadow root with Lustre's `component.prerender` as Declarative Shadow
+  DOM (the attributes applied through the component's attribute decoders), so the first paint is
+  the component's view, and the browser registers the element lazily, once per tag, from the
+  island's chunk; Lustre then adopts the declarative shadow root instead of rendering a new one.
+  Props are the element's attributes. `LustreElementAttributes<{ start: string }>` types the tag
+  when an app declares it in `JSX.IntrinsicElements`.
+- **Lustre server components over Live: `defineLustreView` in `denext/gleam`.** A Lustre app runs
+  on the server, one runtime per mounted view per Live connection, beside `defineLiveView`: the
+  page renders its first view as HTML, the browser mounts it over the Live socket, Lustre's
+  messages (the whole view, then patches) ride the socket as `lustre` frames, and Lustre's own
+  reconciler applies them from the app's island chunk (no inline script; the strict CSP holds).
+  `authorize` runs at render, mount, resume and every `live.limits.channelAuthTtlSeconds`; client
+  events are checked (Lustre's `EventFired` only, a bounded path and name, small plain JSON, an
+  optional `events` schema) before Lustre's decoders see them; the view count, view size and
+  socket back-pressure (a fresh whole-view send on drain) are capped as for live views. A
+  reconnect to the same instance within `live.limits.viewResumeSeconds` reattaches the running
+  runtime (Lustre's model is not serialisable, so another instance runs `init`), and runtimes stop
+  on unmount, at the end of their resume window and on shutdown. denext builds Lustre's runtime
+  directly (`lustre.start_server_component` shifts its arguments in 5.7.1) and, after every Gleam
+  build, fixes the three lines of Lustre 5.7.1's `runtime.ffi.mjs` that throw
+  `Cannot access 'message' before initialization`: only that version's exact file, nothing else
+  in it, and anything else is left alone with one warning. The Gleam build writes
+  `.denext/lustre-server.ts` and `.denext/lustre-view.ts` for it. A `lustreIsland` root now gets a
+  `lustre:mount` event once Lustre runs it.
+- **Background audio with lock-screen controls (`denext mobile add background-audio`).**
+  `setNowPlaying({ title, artist, album, artwork, duration, position, playing, controls })`,
+  `clearNowPlaying()`, `onMediaControl(handler)` / `useMediaControl` and
+  `setAudioSession({ background, interruption })` from `denext/mobile` keep the page's audio
+  playing with the app backgrounded or the phone locked, show it on the lock screen, in Control
+  Center and in the media notification, and route play / pause / next / previous / seek back to
+  the page. In the shell, denext's `DenextNowPlaying` plugin: an `AVAudioSession` in `.playback`
+  with `MPNowPlayingInfoCenter` and `MPRemoteCommandCenter` (plus `UIBackgroundModes: audio`) on
+  iOS; a `MediaSession`, a media-style notification and a `mediaPlayback` foreground service
+  (`FOREGROUND_SERVICE_MEDIA_PLAYBACK`) on Android. Elsewhere, the Media Session API. In React
+  Native mode, expo-audio's `setAudioModeAsync({ shouldPlayInBackground, interruptionMode })`
+  and `AudioPlayer.setActiveForLockScreen` / `updateLockScreenMetadata` /
+  `clearLockScreenControls` run on it.
+- **Multi-select and video picks: `pickMedia` in `denext/mobile`.**
+  `pickMedia({ mediaTypes: "images" | "videos" | "all", multiple, selectionLimit, ordered })`
+  picks several photos and videos from the library (the Camera plugin's `chooseFromGallery`;
+  `@capawesome/capacitor-file-picker` for numbered, ordered picks) or records one video
+  (`source: "camera"`), and is a `multiple` file input on the web. Each item carries its type,
+  MIME type, size, dimensions and a video's duration where the picker reports them.
+  `expo-image-picker`'s `launchImageLibraryAsync` now honours `allowsMultipleSelection`,
+  `selectionLimit`, `mediaTypes` and `orderedSelection`, and `launchCameraAsync` records a video
+  with `mediaTypes: "videos"` (video assets carry `duration` in ms, web assets the `File`).
+- **`AccessibilityInfo.isBoldTextEnabled()` / `isGrayscaleEnabled()` read the OS** in React
+  Native mode, with their `boldTextChanged` / `grayscaleChanged` events. The `DenextAccessibility`
+  plugin (`denext mobile add accessibility`, template generation 3; re-run it to upgrade an
+  unedited copy) answers them: iOS's Bold Text and grayscale color filter, Android's Bold text
+  (Android 12+) and color correction in grayscale mode. Without the plugin, and on the web, they
+  read `false` as before.
+- **Stacks move focus to the new screen.** In `denext/navigation` (`StackView`, `StackLayout`,
+  `HistoryStack`, and React Native mode's React Navigation and Expo Router stacks) a push focuses
+  the new screen's header title (else the screen), and a pop gives focus back to the element that
+  had it when the screen was left, as VoiceOver and TalkBack do on a native screen change. Focus
+  in a field outside the stack is left alone, and the route announcement is skipped when the
+  focused heading already says the title. `focusOnNavigation: false` turns it off.
+- **`adjustsFontSizeToFit` shrinks nested `Text` too** in React Native mode. The fit probes
+  every element inside the fitting `Text` at its scaled size, and a nested `Text` with its own
+  `fontSize` draws it times the outer `Text`'s factor, as React Native does. It used to shrink
+  only the outer `Text`, so a nested one with its own size kept it and could keep the text from
+  fitting at all.
+- **React Native mode on the App Router.** `reactNative` no longer requires `mode: "spa"`: in an
+  App Router app it implies the compat pipeline, and the server bundle, the client islands and
+  the hydrated routes all resolve `react-native` to react-native-web (with `.web.*` first, JSX in
+  `.js`, the build-time globals, the `expo-*` shims, the lists and the community stand-ins), so
+  Server Components and `"use client"` components can both use React Native components.
+  react-native-web's style sheet is written into each server-rendered page's `<head>` as
+  `<style id="react-native-stylesheet">`, which its client adopts, so the first paint is styled.
+  `build`, `start`, `export` and `dev` (the bundled loop) do this. An `expo-router` import there
+  fails the build, naming the App Router's equivalents; `reactNative.fonts` and
+  `compatibilityMode: false` are refused on the App Router.
+- **`LayoutAnimation.configureNext` animates size changes** in React Native mode. A view whose
+  size the commit changed now grows or shrinks from its old size instead of snapping: the FLIP
+  transform carries a scale with the translation (still one compositor animation per view), and
+  each view's transform is computed against the one its ancestor plays, so a child of a resized
+  view starts at its own old place and size.
+- **denext's own Capacitor plugins for the Expo calls the pinned plugins have no call for.**
+  `denext mobile add calendar | contacts | print | brightness` still installs the pinned npm
+  plugin and now also writes denext's `DenextCalendar` / `DenextContacts` / `DenextPrint` /
+  `DenextBrightness` beside it (Swift registered by `DenextBridgeViewController`, Java registered
+  from `MainActivity`, upgraded in place while unedited). Through them, `denext/expo/calendar`
+  reads an event by id (`getEventAsync` without `instanceStartDate`, `ExpoCalendarEvent.get`),
+  reads attendees (`getAttendeesForEventAsync`, `ExpoCalendarEvent.getAttendees`) and on Android
+  adds, changes and removes them (`createAttendeeAsync`, `updateAttendeeAsync`,
+  `deleteAttendeeAsync`, `ExpoCalendarAttendee`), changes one occurrence (`updateEventAsync`
+  with `instanceStartDate`: `EKSpan.thisEvent` on iOS, an exception event on Android) and an
+  event's time zone, shows an event in the system viewer (`openEventInCalendarAsync`,
+  `ExpoCalendarEvent.openInCalendar`, Android's `openEventInCalendar`) and one occurrence in the
+  editor. `denext/expo/contacts` reads containers on iOS (`getContainersAsync`,
+  `getDefaultContainerIdAsync`, the `Container` class), fires `addContactsChangeListener` on
+  address-book changes, and on Android keeps the postal addresses, URLs, birthday and photo
+  through an update. `denext/expo/print` renders HTML to a PDF file (`printToFileAsync`:
+  UIMarkupTextPrintFormatter + UIPrintPageRenderer on iOS, a WebView's print adapter on Android)
+  and on iOS picks a printer (`selectPrinterAsync`) and prints to it without the dialog
+  (`printerUrl`). `denext/expo/brightness` reads and writes Android's system brightness and its
+  mode (`WRITE_SETTINGS`, asked for in the system settings screen by `requestPermissionsAsync`,
+  as Expo), reads the system level while the window follows it, and fires
+  `addBrightnessListener` on iOS. A shell from before these plugins keeps rejecting those calls
+  with `ERR_UNAVAILABLE`; run `denext mobile add <capability>` again to add them.
+- **`@denext/tanstack-start`: TanStack Start apps on denext.** A new plugin
+  (`plugins: [tanstackStart()]`) for a Start app (`src/router.tsx` exporting `getRouter()`, file
+  routes in `src/routes/`, `@tanstack/react-start` in its `package.json`): it generates the route
+  tree with TanStack's own generator (at build, and as route files change in dev) and answers
+  every request with Start's own handler. Pages stream through TanStack Router's matching and
+  match loaders (nested layouts, pending / error / not-found components, a deferred loader
+  promise streaming in when it settles); server functions (`createServerFn`, GET and POST,
+  validators, middleware) answer at `/_serverFn/<id>` in Start's RPC format; a route's
+  `server.handlers` serve as server routes. TanStack's own compiler builds the browser and server
+  bundles, so no server function body or server route handler reaches the browser, and denext's
+  own transforms run on what it compiles (`"use cache"` with `cacheComponents` on). Start's
+  import protection guards both builds, with Start's rules, semantics and messages: the browser
+  build refuses a `*.server.*` file, `@tanstack/react-start/server` and a module marked
+  `@tanstack/react-start/server-only`, the server build a `*.client.*` file and a module marked
+  `@tanstack/react-start/client-only`, each only when tree-shaking kept the import (an import
+  used only inside a `createServerFn` handler, `createServerOnlyFn` or `createClientOnlyFn` body is
+  compiled away first). The app's own rules come from the plugin's `importProtection` option, in
+  the shape Start's Vite plugin takes (`client` / `server` `specifiers`, `files`, `excludeFiles`,
+  `include`, `exclude`, `ignoreImporters`, `onViolation`, `enabled`). The browser build also
+  fails on denext's server-only scan (a `node:` import, the `server-only` marker or the `Deno`
+  global in a shipped module, read as compiled). `denext export` prerenders the app with Start's
+  own `prerender` and `pages` options (the listed pages, the route tree's static paths, the links
+  each page has, `filter`, `crawlLinks`, `failOnError`, …) into a static site that hydrates and
+  navigates on the client; the routes that need a server (server routes, pages that call a
+  server function, dynamic routes no page covered) are left out and listed with the reason. A `"use server"` module that
+  declares server functions ships only their RPC stubs; its other exports throw in the browser
+  and the rest of its source stays on the server. `denext build` builds the server bundle too, so
+  a build error surfaces at build and `denext start` serves the first request without building.
+  A server function called with a mutating method must come from the app's origin (the rule
+  Server Actions follow; 403 otherwise) and request bodies are capped. The browser hydrates with
+  Start's `StartClient`. `denext dev` / `build` / `start` accept a project whose only route tree
+  is `src/routes/__root.tsx`. See `examples/tanstack-start`.
+- **`renderToReadableStream` from `react-dom/server` writes an `<html>` root as a document,** as
+  React does: `<!DOCTYPE html>` first, streamed Suspense boundaries inside the body, and
+  `</body></html>` only once every boundary has streamed. It used to put its reveal script ahead
+  of `<html>` (the page rendered in quirks mode) and close the document before the boundaries.
+- **`buildNextCompatModules` (`@denext/denext/build/next-compat`) takes `extraPlugins` and
+  `define`** for the server bundle, as `buildNextCompatClientEntries` does for the client: what a
+  router plugin uses to supply its framework's virtual modules and compile-time constants. A
+  module one of those plugins compiles still goes through denext's `"use cache"` transform
+  (`useCache`) and `platform` fold afterwards, as every other app module does.
+  `buildNextCompatClientEntries` takes `serverModuleSource`, the browser source a router plugin
+  supplies for an app `"use server"` module it can serve (without it, such a module is stubbed
+  and the build refuses it, as before), and the module exports `findServerOnlyLeaks`, denext's
+  server-only scan over a bundle's shipped modules.
+- **`hydrateRoot(document, <App />)`** hydrates the whole document as React does: it adopts the
+  server's `<html>` past the doctype instead of appending a second one.
+- **A component that suspends with no Suspense boundary suspends the root,** as in React 19:
+  nothing commits, the server DOM of a hydration stays, and the root renders (or hydrates) again
+  once the promise settles. It used to throw out of the render. While hydrating, a class
+  component waiting for the on-demand class runtime suspends the same way, so the root hydrates
+  once the runtime loads instead of mounting fresh DOM.
+- **Per-island hydration on isomorphic routes.** A `client:*` directive now defers hydration on a
+  route without a Flight boundary too (the page hydrates as one client tree): the server renders
+  the component inside the island wrapper, the page hydrates around it leaving its server DOM
+  inert, and when the strategy fires the island's children hydrate against that DOM in the same
+  tree, so context, events and error boundaries work as without the directive. The click that
+  wakes a `client:interaction` island reaches its handler. The runtime ships only in an app whose
+  sources write a directive (a build scan).
+- **Islands on isomorphic routes split their code.** `denext build` and `denext export` move a
+  `client:*` island's component out of the page bundle into a chunk of its own when the component
+  is imported only for directive elements, and that chunk is fetched when the island's strategy
+  fires: a `client:visible` island below the fold loads no code until it nears the viewport. The
+  island still hydrates in the page's tree, with the page's context and its props. A
+  `client:interaction` island whose chunk is still loading holds the gesture and replays it once
+  hydrated, so the page's own handlers see it once. A `client:load` island's chunk is fetched
+  while the page hydrates. On a content-heavy page with six islands (headless Chromium, 4x CPU
+  throttle), the JavaScript loaded before the first interaction fell from 54.6 KB to 28.6 KB
+  gzipped (163 KB to 73 KB unpacked), and the first island became interactive after 243 ms
+  instead of 275 ms.
+- **A true JSX owner stack in development.** The dev builds compile JSX to `jsxDEV` (esbuild's
+  `jsxDev` in the unbundled dev loop, `react-jsxdev` in a dev `deno bundle`), which records each
+  element's owner and the file, line and column of its JSX. `captureOwnerStack()` and the
+  DevTools owner stack now follow React's owner chain (a component passed as `children` through
+  a wrapper is owned by the component that wrote it), each frame located where its owner wrote
+  the JSX. Production builds compile to `jsx` and carry none of it.
+- **Typed-API batching carries mutations.** The POST / PUT / PATCH / DELETE calls a page makes
+  in one tick ride the same `POST /_denext/api-batch` as its reads. The server runs reads
+  concurrently and each mutation alone — after every item before it has settled, before any
+  item after it starts — so a batch behaves like the calls made one by one in order; each
+  mutation item gets the batch's verified `Origin` (and `Host`) and may carry its own
+  `x-csrf-token`, so the route's `csrf()` (double submit included) checks it as a direct call.
+  `createApiClient({ batch: { mutations: false } })` and `apiBatch.mutations: false` keep
+  mutations out; a mutation with another custom header goes alone. Only GET/HEAD batched before.
+- **`useApi({ suspense: true })` seeds hydration on routes that don't use Flight.** An isomorphic
+  route (no `"use client"` boundary, hydrated as one client bundle) now records the signal state
+  its render produced — buffered or streamed — into `#__denext_state`, its route entry adopts it
+  before hydrating, and an isomorphic soft navigation's payload carries it (`signalState`). The
+  suspense result hydrates without a refetch, as on a Flight route; `useSignal` values resume
+  there too. It fetched on mount before.
+- **Typed clients in Python, Go, Swift and Kotlin (`@denext/openapi` 0.6.0, `@denext/graphql`
+  0.6.0).** `denext openapi client --lang python|go|swift|kotlin [--out] [--package]` writes one
+  file from the app's OpenAPI document with no dependency beyond the language's standard library:
+  every schema as a type (`TypedDict` / `Literal`, Go structs with `json` tags, `Codable` Swift
+  types, Kotlin data and enum classes), one method per operation (path, query and body typed, the
+  response decoded), and an error type carrying the status and the `ApiError` envelope.
+  `denext graphql client --lang …` does the same from the schema: its types plus an `execute`
+  helper. `emitClient()` / `modelFromOpenApi()` from `@denext/openapi/clients` script it. The
+  generated code is held to golden files, compiled and type-checked (mypy `--strict`, `go vet`,
+  `swiftc -typecheck` in Swift 6 mode, `kotlinc`) and run end to end against a server.
+- **`denext test` runs the `*.vitest.ts` files and reports coverage over both passes.** With no
+  path named, the files Deno's discovery skips (named `*.vitest.ts` so a plain `deno test` never
+  loads `vitest`) run as a second pass after the `Deno.test` files, on denext's Deno toolchain.
+  `denext test --coverage[=<dir>]` writes both passes into one directory and makes one report
+  (summary, `<dir>/lcov.info`, `<dir>/html/`); the toolchain's `deno coverage` maps each profile
+  back through the form its module was emitted in, so a line either pass ran counts as covered.
+  Before the passes it removes only the raw profiles (`<uuid>.json`) an earlier run left there,
+  never the directory: `--coverage=.` names the project itself.
+- **next-intl's ICU messages: every skeleton token `Intl` can express, and deep nesting.**
+  Number skeletons take the long and concise forms next-intl's formatter reads: units
+  (`unit/…`, `measure-unit/…` with `per-measure-unit/…`), `unit-width-*`, significant digits
+  (`@@#`), open and trailing-zero fraction forms (`.00+`, `.00/w`, `.##/@@#r`),
+  `precision-increment/…`, `rounding-mode-*`, `scale/N`, `%x100`, `numbering-system/…` and the
+  concise `K` / `KK` / `+!` / `()` / `,_` / `000` / `E0`. Date skeletons add the four hour
+  cycles (`h` / `H` / `K` / `k`), fractional seconds (`S`), day periods (`B`), the generic and
+  offset time-zone names (`v`, `O`, `Z`, `X`) and narrow eras; a quarter, week or day-of-year
+  field throws, as in next-intl, instead of rendering a date without it. The parser and
+  renderer are iterative, so `plural` / `select` / `selectordinal` nest 1,000 levels deep (up
+  from 64) with no stack to overflow. A hostile message stays bounded: one nested deeper, or
+  longer than 262,144 characters, throws a `SyntaxError`, and the parse cache holds at most
+  4 Mi characters of messages.
+- **`denext migrate` moves a Prisma app's seed and test tooling to the Deno client too.** The
+  seed (`prisma/seed.ts`, or the script `prisma.seed` names), `tests/` / `test/` / `e2e/`,
+  mocks, `scripts/` and root test-setup files get the same rewrite as the runtime source
+  (`@prisma/client` repointed at the generated client, the driver adapter injected at each
+  `new PrismaClient()`). The seed runs as `denext task prisma:seed`, and `prisma.seed` in
+  `package.json` / `prisma.config.ts` becomes `deno run -A <seed>`, so `prisma db seed` seeds
+  on Deno; the tests run under `denext test`. They used to keep the native client migrate
+  removes from `package.json`.
+- **`denext desktop dev --inspect-renderer[=<addr>]`** opens the window's page to a debugger: on
+  CEF (every OS) and WebView2 the Chrome DevTools Protocol on `http://127.0.0.1:<port>`, on
+  WebKitGTK WebKit's own inspector; WKWebView has no remote port (Safari > Develop). With no
+  address it picks a free loopback port, and it prints the endpoint and, once the page has loaded,
+  its `webSocketDebuggerUrl` and a `devtools://` URL. A non-loopback address is refused unless
+  `--inspect-renderer-allow-remote` is also given. See
+  [Debugging the window's page](https://denext.dev/docs/desktop#desktop-inspect-renderer).
+- **`denext analyze` breaks the island chunks down per island.** After the role subtotals, each
+  island (an `island-*` chunk or a client component's lazily loaded module) is listed with what it
+  alone loads: its own module plus the chunks only it reaches, then the chunks several islands
+  share and which islands load each. `--md` carries the same section (`## By island`). The
+  framework's `flight-nav-stream-*` and `flight-value-holes-*` chunks now count as on-demand
+  runtime, not route entries.
+- **CLI flags with an optional value.** A command's flag can take `--flag` alone or
+  `--flag=value` (`optionalValue` on a `FlagSpec`); the bare form never takes the next argument
+  as its value.
+- **`"use cache: private"` and `"use cache: remote"` (Next.js 16).** A `"use cache: private"`
+  function may read `cookies()` and `headers()`: its result is never stored on the server,
+  matching calls within one request share one run, and the render is per request (a PPR prerender
+  makes it a hole). `connection()` and cookie writes inside it throw, as does nesting it in
+  `"use cache"` or `unstable_cache()` or calling it outside a request, with Next.js's messages.
+  `"use cache: remote"` (and any `"use cache: <name>"`) is a shared entry in the configured cache
+  store. The directive works on functions, methods and at the top of a module.
+- **`cacheLife` in `denext.config.ts`.** Named profiles for `cacheLife("name")`, as in Next.js 16's
+  config (a name matching a built-in overrides it), validated at load with Next.js's messages;
+  Next 15's `experimental.cacheLife` is read and warns that it moved, and `denext migrate`
+  carries either from `next.config` (`Infinity` included).
+- **`navigation()` and `prefetch()` from `next/cache` (Next.js 16.4).** In a request they resolve
+  at once and keep the content below them cacheable; outside a request or inside a cached
+  function they throw, as in Next.js. Next 16.4 canary's `unstable_navigation` /
+  `unstable_prefetch` are kept as aliases, so an app that adopted them links. `io()` now returns
+  a promise, as Next's does.
+- **The `next-auth` parity check covers NextAuth.js v4.** `next-auth`, `next-auth/next`,
+  `next-auth/middleware`, `next-auth/react`, `next-auth/jwt`, `next-auth/adapters` and the
+  providers are now held to `next-auth@4` as well as `next-auth@beta` (v5), both installed side by
+  side by `deno task parity:refresh`. `Twitter()` accepts v4's `version: "2.0"`. v4's OAuth 1.0a
+  `TwitterLegacy` is not provided, since denext signs in to X through OAuth 2.0 only
+  (KNOWN-DIFFERENCES).
+- **`createTestApp` runs the config's plugins.** The `plugins` in `denext.config.ts` are set up as
+  under `denext dev`: their prepare steps run once, their route synthesizers shape the scanned
+  routes, and their request handlers answer what the App Router doesn't match, so a Pages Router
+  app (`@denext/pages-router`) and a plugin-served route can be tested in process. Each call gets
+  its own plugin set. The handler gains `close()` and `Symbol.asyncDispose` (`await using app =
+  await createTestApp(dir)`) to run the plugins' teardowns, and is still a plain request handler.
+  `probeApp` (`denext doctor`) runs the plugins too. `scanRoutes(appDir, { synthesizers })` takes
+  per-scan synthesizers.
+- **A cached function that calls another carries its tags and lifetime.** An outer
+  `"use cache"` entry now holds the tags of the cached functions it called, so
+  `revalidateTag(innerTag)` refreshes it too, and lives no longer than they do unless it sets
+  `cacheLife()` itself.
+
+### Changed
+
+- **`cacheLife()` follows Next.js 16.** The built-in `seconds` profile keeps a 30-second
+  `stale` and `max` expires after a year (it never expired); several calls keep the lowest value
+  of each field instead of the last call's; an unknown profile name, an invalid inline profile
+  (`false`, a non-number, `expire` below `revalidate`) and a call outside a `"use cache"` or
+  `"use cache: private"` function (an `unstable_cache()` loader included) throw with Next.js's
+  messages instead of falling back or being ignored. `revalidateTag(tag, profile)` checks its
+  profile the same way.
+- **`revalidateTag()`, `revalidatePath()` and `updateTag()` throw inside a cached function**, as
+  in Next.js: a cached body that revalidates would skip the call whenever it is served from cache.
+- **`useEffectEvent` follows React 19.2.** Calling the returned function during a render throws
+  React's error, and the handler it forwards to changes when the render commits (before layout
+  effects), so a render that never commits leaves the previous one.
+- **The React / Next.js parity baseline moved to Next.js 16.4.1 and React 19.2.9**
+  (`deno task parity:refresh`), with no open gaps; `React.version` reports 19.2.9. The baseline
+  keeps to React's 19.2 line until React 19.3's Fragment refs land (see KNOWN-LIMITATIONS);
+  19.3 adds no export denext lacks, and `deno task parity:drift` still compares against it.
+- **The React Native parity ledger moved to React Native 0.88.** `deno task parity:native`
+  checks React Native mode's `react-native` surface and the list adapters against 0.88's types
+  (captured from `0.88.0-rc.5`) instead of 0.86.3, and reports no gaps.
+- **Channel message log and replay.** `createChannel({ history: 50 })` (or
+  `{ size, ttlSeconds }`) logs each key's publishes with a cursor: a late subscriber passing
+  `useChannel(ch, key, { since: "0" })` receives the key's retained history once `authorize`
+  allows it, then live pushes (`onMessage` sees every payload); frames carry a `cursor`, a
+  reconnect resumes after the last one, a back-pressured socket resumes from the log when it
+  drains, and a burst is delivered whole instead of latest-wins. The log is bounded: `size` per
+  key (up to 1,000), a TTL (24 hours by default), and in memory a cap on keys and bytes.
+  `redisChannelTransport()` brings a shared log in Redis (`log: false` keeps each instance's
+  own), so a subscriber on any replica replays every replica's publishes; `inMemoryChannelLog`
+  / `redisChannelLog` and a transport's `log` are the seam for another store.
+- **Gleam interop.** Gleam compiled to JavaScript imports into a denext app typed, under the
+  `@gleam/` import-map prefix (`import { greet } from "@gleam/app/app.mjs"`).
+  `denext add gleam:<package>` creates a `gleam/` project when the app has none (JavaScript
+  target, TypeScript declarations on), runs `gleam add` and `gleam build --target javascript`,
+  and maps `@gleam/` in `deno.json`. The optional `gleam()` plugin (`denext/gleam`) recompiles
+  at `denext dev` startup, on `.gleam` / `gleam.toml` changes and at build. The compiler is
+  managed like denext's Deno toolchain: one pinned Gleam release (1.18.1) with a SHA-256 per
+  platform (macOS and Windows on arm64 / x64, Linux arm64 / x64 as the static musl builds),
+  downloaded on first need into `<DENO_DIR>/denext-deno/gleam/`, verified before it is
+  extracted and installed atomically under the toolchain's cache lock. No Erlang is needed for
+  the JavaScript target. `denext toolchain install --with gleam` fetches it ahead for offline
+  work, and `denext toolchain status` reports it. `DENEXT_GLEAM=<path>` (or the plugin's `gleam`
+  option) runs another `gleam`, unverified; a `gleam` on `PATH` is never picked up on its own.
+  Offline before the first download, `denext add gleam:` and the plugin stop with an error naming
+  the prefetch command (the plugin keeps a project's existing compiled output, with one warning).
+  After each build denext adds the type reference Gleam leaves off `prelude.mjs` and each
+  `gleam.mjs`, without which Deno types Gleam's `List` / `Result` from the JavaScript and
+  reports its declarations as duplicates. `denext add gleam:` takes only Hex package names
+  (`gleam:lustre@5`), so nothing else reaches `gleam add`'s command line, and in an app configured
+  by a `deno.jsonc` it prints the `@gleam/` entry to add rather than create a `deno.json` that
+  would take the `deno.jsonc`'s place. The Lustre kits take Lustre's version only when it reads as
+  a version, and `deno task gleam:pin` refuses an asset GitHub records no digest for. See
+  [Gleam](https://denext.dev/docs/gleam).
+- **Every app's shared client runtime is 2.7 KB smaller (raw), with no change in behaviour.** The
+  soft-navigation commit (the view-transition wrapper, history, scroll, the data-island writes and
+  the isomorphic / full-HTML paths) is an on-demand `nav-document-*` chunk: a Link prefetch warms
+  it, and a navigation loads it alongside its route fetch, so a first page load carries none of
+  it. The error for a class component whose runtime is off (or failed to load) is reconciler code
+  5 in a production bundle, its full text installed with the dev warnings and by
+  `denext/testing`. `examples/hello`'s shared chunks went from 67,032 B to 64,341 B, and the
+  build-smoke budget moves from 67,100 B to 65,500 B.
+- **`denext mobile add brightness` declares `android.permission.WRITE_SETTINGS`** (special
+  access the user grants in the system settings screen), for Android's system brightness. With
+  `DenextBrightness`, `denext/expo/brightness`'s `getPermissionsAsync` on Android answers whether
+  the app may write the system settings (`denied`, askable again, until the user allows it)
+  instead of always `granted`, and `updateEventAsync` / `getEventAsync` in
+  `denext/expo/calendar` and `selectPrinterAsync` / `printToFileAsync` in `denext/expo/print`
+  name the missing plugin when they reject.
+
+### Fixed
+
+- **A Server Component's `<form action={serverAction}>` works on a next-compat page whose app has
+  no `"use client"` module.** The build bundled `"use server"` modules into the compat server
+  bundle only when some route reached a client island; otherwise the page rendered its own copy of
+  the action module while the server registered another, so the form had no `action` and a
+  JavaScript-free submit did nothing, and an action module importing `next/*` stopped the server
+  at startup.
+- **A root layout's `<html>`, `<head>` and `<body>` are the document's own tags.** The page render
+  emitted them inside the page container (`<div id="__denext"><html>…`), invalid HTML the browser
+  repaired by dropping them. Their content is now rendered in the container and their attributes
+  (`lang`, `className`, …) are on the document's tags, on every route (Flight, hydrated, streamed,
+  PPR, `generateMetadata`), native and next-compat alike.
+- **Inline Server Actions (`async function save() { "use server"; … }` inside a Server
+  Component) work.** next-compat builds hoist each one to a server reference registered when its
+  module loads, so `<form action={save}>` renders its endpoint and runs with JavaScript off or on.
+  Before, the form had no `action`. One that reads a local of an enclosing function is a build
+  error naming the variables (denext does not bind closed-over values).
+- **An inline `"use server"` function never ships to the browser.** In a `"use client"` module, or
+  any module a client bundle reaches, it now fails the build with Next.js's error ("It is not
+  allowed to define inline "use server" annotated Server Actions in Client Components"), on the
+  native and next-compat bundles alike, and the unbundled dev server serves that error instead of
+  the module. Before, the function's body, and what it closed over, was bundled into the client
+  JavaScript.
+- **`revalidatePath()` in a Server Action updates the calling page.** As in Next.js, the client
+  that ran the action re-renders its route; before, a form submitted through the hydrated client
+  ran the action but left the page showing the old data until a reload.
+- **An in-process API call reaches a route a plugin serves.** The typed client's SSR call
+  (`createApiClient` inside a request) and a typed-API batch item run as sub-requests through the
+  pipeline, but one for a route only a plugin handles (a Pages Router API route, a plugin's own
+  endpoint) answered 404. An unmatched sub-request now goes to the plugins' request handlers, as a
+  real request does, still in process; an App Router route keeps precedence, and a path nothing
+  claims is still the JSON 404.
+- **`denext build` and `denext export` exit when they are done** even when an app module keeps the
+  event loop alive at its top level (a database pool that connects when it is created, such as
+  Prisma's MariaDB adapter, a Redis client, an interval). They used to finish and then wait forever.
+- **A page that reaches a database driver no longer ships as a hydrated route.** The static-route
+  check read `const onError = …` and `this.onClose = …` in a driver's code (Prisma's
+  `@prisma/adapter-pg`) as JSX event props, so the page was bundled for the browser and the build
+  failed on the driver's `node:` imports. Only a JSX prop counts now.
+- **The `generic-host` deploy preset checks the options it writes into the systemd unit and the
+  nginx / Caddy files.** `domain`, `directory`, `deno`, `user`, `port` and `maxConnections` went
+  in verbatim, so a value with a newline or a `;` (from a config built from the environment, say)
+  added its own directives — an `ExecStartPre=`, a `location` block. A value that is not a host
+  name, an absolute path, a user name or a number is now refused with the option named. The `fly`
+  preset writes `app`, `region` and `memory` as escaped TOML strings, and the `docker` and `fly`
+  presets check `port` and `denoTag` as `generate docker --port / --deno-tag` does.
+- **A deploy adapter's name must be a plain file name.** Its output directory,
+  `.denext/deploy/<name>/`, is emptied before every `prepare`, so a plugin adapter named `../..`
+  emptied the project. Any name but letters, digits and `._-` is refused.
+- A binary from `denext build --compile` no longer prints Deno's `request.signal` legacy-abort
+  notice on its first request, nor aborts `request.signal` after every response: on the toolchain
+  it is compiled with `--unstable-no-legacy-abort`, as `denext start` runs, and the 2.9.7-denext.21
+  `denort` keeps that setting (an older one dropped it).
+- A Deno Desktop app no longer prints that notice either: on denext's pinned runtime,
+  `denext desktop run` / `dev` and the package scripts build with `--unstable-no-legacy-abort`,
+  which the 2.9.7-denext.21 runtime keeps. The Linux and Windows scripts get it from
+  `denext/desktop` as they are; an existing `scripts/package-macos.ts` gets it from
+  `denext desktop package --regenerate-scripts` (`desktopRuntimeDenoFlags` from `denext/desktop`
+  adds it to a script of your own). A stock-runtime build passes nothing new.
+- `denext dev`, `start` and `profile` no longer print that notice when the CLI is started on
+  denext's Deno toolchain itself (the `deno` that `denext toolchain link` puts on PATH, or a
+  `deno task` step running it) rather than switched onto it: only the switch passed
+  `--unstable-no-legacy-abort`. Such a server now checks whether `Deno.serve` runs the legacy
+  abort (one loopback request, a few milliseconds) and, when it does, re-runs once on the same
+  binary with the flag. A run without `--allow-run`, or with the flag already on (on the command
+  line or in the config's `"unstable"` list), keeps serving in-process; stock Deno is unaffected.
+  `denext desktop package` now warns about an existing `scripts/package-macos.ts` that does not
+  call `desktopRuntimeDenoFlags`, and says to run `--regenerate-scripts`.
+- A new app's least-privilege `start` task (no `--allow-run`, so it cannot re-run itself) no longer
+  prints that notice on denext's toolchain either: the `deno.json` that `denext create` writes, for
+  every template, and the one `denext migrate` writes carry `"unstable": ["no-legacy-abort"]`.
+  Re-running `migrate` over its own `deno.json` keeps the `unstable` entries added to it since, and
+  `denext ui`'s Setup page adds the entry to an existing project's list without dropping the
+  others. Stock Deno 2.9 accepts the key without a warning (2.9.0 ignores it).
+- A Windows Arm64 package built on Windows on Arm no longer ships an x64 `vcruntime140_1.dll`.
+  The app-local VC++ runtime is now `bundleDesktopVcRuntime` in `denext/desktop`: each arch gets only
+  the DLLs its runtime imports (`vcruntime140.dll` and `msvcp140.dll` for Arm64; x64 adds
+  `vcruntime140_1.dll`), and each must be a PE image of the target's machine. When one is missing
+  or built for another machine, nothing is bundled, and the warning names that arch's VC++
+  redistributable (`vc_redist.arm64.exe` for an Arm64 bundle, no longer always the x64 one).
+  An existing `scripts/package-windows.ts` copies the DLLs itself:
+  `denext desktop package --regenerate-scripts` replaces it, and `denext desktop package` now
+  warns about a script that still does.
+- Quitting a macOS CEF app takes about 0.65 s instead of about 5.2 s: the host no longer waits out
+  a 5-second bound for Chromium's code-sign clone cleanup helper (runtime 2.9.7-denext.21).
+- A Live socket frame whose `type` names an `Object.prototype` key (`"__proto__"`, `"constructor"`, …) is ignored
+  instead of reaching a prototype function.
+- **Hydration keeps a `dangerouslySetInnerHTML` element's server markup, as React does.** On any
+  page that hydrates, an element rendered with `dangerouslySetInnerHTML` (in a Server Component
+  or a client component) was emptied: hydration re-applied the HTML, then pruned the element's
+  children as nodes no fiber owned. A re-render then re-created the markup, because the prop was
+  compared by object identity rather than by its `__html`. Hydration now adopts the parser's own
+  nodes as-is, and, as in React 19, markup that differs from `__html` (beyond re-serialization,
+  such as `<br/>` and `<br>`) is kept, not patched up: development logs a `console.error`
+  (`suppressHydrationWarning` silences it), and a production build carries no comparison. A
+  fresh client mount, a keyed move and a switch to `dangerouslySetInnerHTML` no longer drop the
+  injected markup either, and a re-render with the same `__html` leaves its nodes alone.
+- **`denext/testing`'s DOM parses `innerHTML` into nodes, as a browser does.** Assigning
+  `innerHTML` (what `dangerouslySetInnerHTML` does) stored the markup as a string with no child
+  nodes, so a component test could neither query the injected markup (`getByText`, `getByRole`)
+  nor catch a render that pruned or re-created it. The markup is now parsed into elements and
+  text: attributes, character references, void elements, the unparsed text of `<script>` /
+  `<style>` / `<textarea>` / `<title>`, and comments dropped. Tags are tokenized as a browser
+  tokenizes them, in one pass over the markup, so hostile markup cannot stall a test (an unclosed
+  run of attributes took minutes per 200 KB with a pattern-matched tag), and elements nest at most
+  512 deep, as in Blink's parser, so the parsed tree always serializes.
+- **A source checkout's `denext start` resolves an app's own import-map entries.** From a
+  checkout (`deno run -A <denext>/cli.ts start`), a server module importing a specifier only the
+  app's `deno.json` maps, such as a `"@gleam/"` prefix for compiled Gleam, failed with "not a
+  dependency and not in import map": the CLI switched to the merged framework and app config only
+  for a manual `node_modules` or an `npm:` import. Any app entry the running CLI cannot resolve
+  now switches too, asked of Deno's own resolver, so an app that maps only what the CLI's config
+  resolves still starts in one process: denext's own entries, the framework's packages, and every
+  key of an app whose config is passed with `--config` (a scaffolded app's least-privilege `start`
+  task, which has no `--allow-run` for a second process). A switch the CLI may not make, with no
+  `--allow-run`, now fails naming the keys and the fixes instead of with `NotCapable`.
+- **`denext analyze` reports a chunk only islands load as an island chunk.** It labelled every
+  `chunk-*` file as shared runtime, so a library chunk that only client components import (and
+  that a page without them never loads) was counted in the shared-runtime subtotal. `analyze`,
+  `analyze --md` and `doctor --report` now follow the chunks' imports: a chunk no route entry
+  imports is listed under islands, or under the on-demand runtime when only the framework's
+  on-demand chunks import it. `analyze --json` lists each chunk's `imports` and `lazyImports`.
+- **`denext analyze`'s by-role sizes line up in one column.** The 17-character "on-demand
+  runtime" label was padded to 16, so it ran straight into its size.
+- **A library's `"use client"` components hydrate under `nodeResolve: false` too.** The server
+  bundle now resolves the packages on the import paths to a library's own `"use client"` /
+  `"use server"` files from `node_modules`, the way the build found those files, so the component
+  a page imports is the registered island. They used to resolve through Deno's `npm:` loader in
+  that mode, often to another build of the package, and render on the server only.
+- **`nodeResolve: false` keeps the app's own npm imports on Deno's `npm:` loader in a pnpm
+  workspace.** With `catalog:` / `workspace:` dependencies, the resolver that reads those
+  packages from `node_modules` also took every other bare import in the app's own code that it
+  found there, so the import map's version of a package could be passed over for whatever
+  `node_modules` held. It now claims only the `catalog:` / `workspace:` packages from app code.
+  Their own dependencies, and a workspace package's source, still resolve from `node_modules`.
+- **A live view resumed on another instance stops the copy parked on the first.** A reconnect
+  that resumed a parked `defineLiveView` from the shared view store on another instance left the
+  original instance running its parked copy (effects, subscriptions, snapshot rewrites) until the
+  park window ended. The resuming instance now announces it on the channel transport, and the
+  instance holding the parked copy stops it at once and drops its pending store writes.
+- **A channel replay (`createChannel({ history })`) no longer loses history to a live publish.**
+  A publish fanned out while a `since` replay was still reading the log (a Redis round trip, say)
+  went out first and moved the subscriber's cursor past the entries the read then returned, so
+  they were skipped. A logged publish that lands during the read is now left to the replay, which
+  reads again from where it got to; the subscriber gets the history in order, then the live
+  publish, each once.
+- **A channel with `history` releases every publish it held during a re-authorization.** When
+  the auth TTL lapsed, the publishes that arrived while `authorize` ran again were held as the
+  latest one only; they now resume from the log, as a back-pressured subscriber's already did
+  (which now also covers a subscriber that had not received a logged publish yet).
+- **A channel's live publishes are no longer dropped across replicas without a shared log.**
+  Under a transport with no shared log (the in-memory or `broadcastChannelTransport`), another
+  instance's cursor was compared with this instance's, so a replica whose clock ran ahead made the
+  next local publishes look already seen. A cursor now travels only from the log that issued it.
+- **Security: the Redis replay log keeps channels apart.** Its sorted sets were named
+  `<prefix>:<channel>:<key>`, so channel `orders:admin` key `x` and channel `orders` key `admin:x`
+  shared one log, and a subscriber `authorize` allowed on one could replay the other's history.
+  The channel id is now length-prefixed (`<prefix>:<length>:<channel>:<key>`). `history.ttlSeconds`
+  must be finite, and a fractional-millisecond TTL no longer makes Redis refuse the expiry.
+- **Security: next-intl's ICU engine stays linear and bounded on a hostile message.** The
+  `integer-width/…` and `precision-increment/…` skeleton tokens matched with patterns that
+  backtracked quadratically, so one long digit run held the thread for seconds (minutes at the
+  262,144-character cap); they are now counted and length-checked. A `#` repeated through a plural
+  branch rendered the formatted count each time, so a message could expand to hundreds of
+  megabytes; output past 16 Mi characters is now a `RangeError`. `t.rich` / `t.markup` parsed
+  tags recursively with no bound, so a deeply nested message overflowed the stack; they now take
+  the ICU caps (1,000 levels, 262,144 characters) and throw a `SyntaxError` past them.
+- **A `select` value named like an `Object.prototype` key picks the `other` branch.** A select
+  on user data (`{g, select, male {…} other {…}}` with `g: "constructor"` / `"hasOwnProperty"`)
+  threw a `TypeError`, and `"toString"` rendered an empty string; branches, plural categories,
+  values, styles and renderers are now looked up as own keys only, and a branch named
+  `__proto__` is an ordinary branch. `t.rich` / `t.markup` look up tag handlers the same way, so
+  `<toString>` is a tag without a handler. An `integer-width` past 21 digits (more than `Intl`
+  allows) is ignored instead of throwing.
+- **Security: a batch from another origin reaches only routes whose own policy allows it.** A
+  cookieless API batch from an origin the app's `cors` allows ran every item, mutations included,
+  even on a route whose own `cors()` (or `export const cors`) leaves that origin out, and handed
+  back the answer — what that route's preflight refuses on a direct call. Such an item is now a
+  403 `cors_forbidden` and its handler does not run; a same-origin batch is unchanged.
+- **A batched mutation whose answer is over the item cap keeps its status.** It was reported as
+  a 500 although the write had run, so a client that retries a 5xx applied it twice. It now
+  carries the route's own status with no body and `x-denext-batch-dropped: response too large`;
+  an oversized read is still a 500.
+- **Security: `next-auth`'s `jwt` callback returning `null` at sign-in signs nobody in.** Auth.js
+  treats it as a veto (`if (user.banned) return null`); denext sealed an empty token, so the
+  user got a session whose `auth()` was `{ user: {} }` and passed an `authorized` check. The
+  sign-in now mints no live session — next-auth's `auth()` and denext's own session reads both
+  answer `null`. A session whose sealed Auth.js token no longer decodes (its secret retired, its
+  `exp` passed) is signed out, as in Auth.js, instead of reading as the user without the app's
+  claims.
+- **`next-auth`'s built-in pages answer an `?error=` named like an `Object.prototype` key.**
+  `/api/auth/error?error=constructor` (or `toString`, on the sign-in page too) was a 500 with an
+  error logged on every request; it is now an unknown code ("Unable to sign in.").
+- **Security: plain-http auth cookie names are for loopback hosts and `denext dev` only.**
+  Outside production, any host served over http dropped the `__Host-` prefix (and `Secure`)
+  from the session, transaction and CSRF cookies — a staging server behind a TLS proxy that
+  sends no `x-forwarded-proto` among them, where a sibling subdomain could then plant those
+  cookies. Another host keeps the prefix unless the server is `denext dev` (a phone on the LAN).
+- **A Lustre view's `include` path can't write onto `Object.prototype` in the browser.** A
+  handler's `include` path naming `__proto__` (or `constructor.prototype`) copied the event's data
+  onto every object's prototype; such a path now copies nothing.
+- **`denext desktop run` / `dev` say why a Windows window exits at once with nothing printed.**
+  The unpackaged window loads the VC++ 2015-2022 runtime from System32 (only a packaged bundle
+  carries it app-local), so on a machine without the redistributable for its architecture — a
+  fresh Windows on Arm one, say — it exited with `0xC0000135` and the verb ended silently. The
+  verb now names the missing DLLs and the redistributable to install for the host's architecture.
+
 ## [4.2.0] - 2026-10-16
 
 ### Added
@@ -15623,7 +16328,9 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.2.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.3.1...development
+[4.3.1]: https://jsr.io/@denext/denext@4.3.1
+[4.3.0]: https://jsr.io/@denext/denext@4.3.0
 [4.2.0]: https://jsr.io/@denext/denext@4.2.0
 [4.1.0]: https://jsr.io/@denext/denext@4.1.0
 [4.0.0]: https://jsr.io/@denext/denext@4.0.0

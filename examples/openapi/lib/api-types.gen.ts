@@ -120,6 +120,24 @@ export interface paths {
             });
           };
         };
+        "401": {
+          content: {
+            "application/json": (components["schemas"]["ApiError"] & {
+              error?: {
+                code?: "unauthorized";
+              };
+            });
+          };
+        };
+        "403": {
+          content: {
+            "application/json": (components["schemas"]["ApiError"] & {
+              error?: {
+                code?: "forbidden";
+              };
+            });
+          };
+        };
         "409": {
           content: {
             "application/json": (components["schemas"]["ApiError"] & {
@@ -197,6 +215,24 @@ export interface paths {
             });
           };
         };
+        "401": {
+          content: {
+            "application/json": (components["schemas"]["ApiError"] & {
+              error?: {
+                code?: "unauthorized";
+              };
+            });
+          };
+        };
+        "403": {
+          content: {
+            "application/json": (components["schemas"]["ApiError"] & {
+              error?: {
+                code?: "forbidden";
+              };
+            });
+          };
+        };
         "404": {
           content: {
             "application/json": (components["schemas"]["ApiError"] & {
@@ -242,6 +278,24 @@ export interface paths {
             "application/json": (components["schemas"]["ApiError"] & {
               error?: {
                 code?: "validation" | "bad_request";
+              };
+            });
+          };
+        };
+        "401": {
+          content: {
+            "application/json": (components["schemas"]["ApiError"] & {
+              error?: {
+                code?: "unauthorized";
+              };
+            });
+          };
+        };
+        "403": {
+          content: {
+            "application/json": (components["schemas"]["ApiError"] & {
+              error?: {
+                code?: "forbidden";
               };
             });
           };
@@ -317,7 +371,7 @@ export type ApiSchema = {
         species: "cat" | "dog" | "bird";
         adopted: boolean;
       };
-      errors: "validation" | "bad_request" | "duplicate";
+      errors: "validation" | "bad_request" | "unauthorized" | "forbidden" | "duplicate";
     };
   };
   "/api/pets/[id]": {
@@ -337,7 +391,7 @@ export type ApiSchema = {
       params: {
         id: string;
       };
-      errors: "validation" | "not_found";
+      errors: "validation" | "unauthorized" | "forbidden" | "not_found";
     };
     PATCH: {
       params: {
@@ -352,8 +406,7 @@ export type ApiSchema = {
         species: "cat" | "dog" | "bird";
         adopted: boolean;
       };
-      errors: "validation" | "bad_request" | "not_found";
+      errors: "validation" | "bad_request" | "unauthorized" | "forbidden" | "not_found";
     };
   };
 };
-

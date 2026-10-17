@@ -3,7 +3,7 @@
 All notable changes to this package are documented here. It follows its own
 semver, independent of `@denext/denext`.
 
-## [Unreleased]
+## [0.4.0] - 2026-10-16
 
 - **Route typegen.** Each scan writes React Router's `+types/<route>.ts` modules under
   `.react-router/types/` (as `react-router typegen` does), and `denext typegen` writes them on

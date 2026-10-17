@@ -4,7 +4,12 @@
 import { type Platform, platformResolution } from "../platform-extensions.ts";
 import { devBuildTarget, devPlatformImports, devStylesheetImports } from "./platform.ts";
 import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
-import { domListsEnabled, featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
+import {
+  domListsEnabled,
+  featureFlags,
+  momentumSafeScrollEnabled,
+  reactNativeOptions,
+} from "../../server/config.ts";
 import { domListAliases } from "../dom-lists.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
@@ -24,7 +29,7 @@ import { boundaryRefLoader } from "../next-compat-loader.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { getCss, getTransformMaps } from "./assets.ts";
 import { compatBuildOf, ensureCompatBuilt, isCompat } from "./compat.ts";
-import { createDevLoader } from "./loaders.ts";
+import { createDevLoader, devInlineActionModules } from "./loaders.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { DevBoundary, DevState } from "./state.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
@@ -98,7 +103,11 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
 async function resolveUnbundledMode(st: DevState): Promise<void> {
   st.unbundledCompat = await isCompat(st);
   const transformMaps = await getTransformMaps(st);
-  st.unbundledActive = st.unbundledOptIn && Object.keys(transformMaps).length === 0;
+  // React Native mode keeps the bundled compat loop too: the unbundled loop's React Native
+  // dependency bundle is built from an SPA entry (and expo-router's routes), not from the App
+  // Router's islands and route entries, so its client modules would miss react-native-web.
+  st.unbundledActive = st.unbundledOptIn && Object.keys(transformMaps).length === 0 &&
+    reactNativeOptions(st.paths.config) === null;
 }
 
 /** The current route manifest, with the boundary, CSS and dev-loop mode brought up to date. */
@@ -339,6 +348,11 @@ export async function devActionScope(
   } catch (err) {
     if (!request || !resolveAction(request, platform)) throw err;
     console.error('[denext] a "use server" module failed to load:', err);
+  }
+  // An inline action registers when its module loads: a form posted from a page this server
+  // has not rendered (it restarted since) finds it once the modules holding one are loaded.
+  if (request && !resolveAction(request, platform) && !(await isCompat(st))) {
+    await Promise.all((await devInlineActionModules(st)).map((file) => load(file)));
   }
   return platform;
 }

@@ -1,6 +1,6 @@
 // The 2.11 platform capabilities of `denext mobile add`: app-review, app-update,
 // screen-orientation, media-library, privacy-screen, tracking, background, restore,
-// accessibility, storage, background-location and application. Kept
+// accessibility, storage, background-location, background-audio and application. Kept
 // apart from the main table in ./mobile-capabilities.ts (which spreads them in) so each
 // capability's plugin pin, plist keys and native wiring sit together. Every plugin below was
 // checked against its published package: a `@capacitor/core` peer range admitting 8 and (for
@@ -8,7 +8,7 @@
 
 import type { CapabilityConfig, MobileCapability, NativeEdit } from "./mobile-capabilities.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
-import { withPlistStringArray } from "./mobile-native-config.ts";
+import { withManifestApplicationBlock, withPlistStringArray } from "./mobile-native-config.ts";
 import {
   capacitorConfigFile,
   readCapacitorConfig,
@@ -20,6 +20,7 @@ import { ACCESSIBILITY_INSTALL } from "./mobile-accessibility-install.ts";
 import { CONTEXT_MENU_INSTALL, SYSTEM_ICONS_INSTALL } from "./mobile-context-menu-install.ts";
 import { STORAGE_INSTALL } from "./mobile-storage-install.ts";
 import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
+import { NOW_PLAYING_INSTALL, NOW_PLAYING_SERVICE } from "./mobile-now-playing-install.ts";
 import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** The Capacitor major these pins target. */
@@ -314,6 +315,39 @@ function configureBackgroundLocation(): CapabilityConfig {
   };
 }
 
+// ---- background-audio -------------------------------------------------------------------------
+
+/**
+ * `background-audio`: `UIBackgroundModes: audio` (with the `.playback` session the plugin sets,
+ * the page's audio keeps playing in the background and with the phone locked), the Android
+ * media-playback foreground service's declaration, and denext's `DenextNowPlaying` plugin.
+ */
+function configureBackgroundAudio(): CapabilityConfig {
+  return {
+    infoPlist: [{
+      label: "UIBackgroundModes: audio",
+      apply: (text) => withPlistStringArray(text, "UIBackgroundModes", ["audio"]),
+    }],
+    manifest: [{
+      label: `<service ${NOW_PLAYING_SERVICE}> (foregroundServiceType mediaPlayback)`,
+      apply: (text) =>
+        withManifestApplicationBlock(text, NOW_PLAYING_SERVICE, [
+          `<service android:name="${NOW_PLAYING_SERVICE}" android:exported="false" ` +
+          'android:foregroundServiceType="mediaPlayback" />',
+        ]),
+    }],
+    install: NOW_PLAYING_INSTALL,
+    manual: [
+      "call setAudioSession({ background: true }) before playing, and setNowPlaying() once " +
+      "playback starts: the iOS lock screen shows the controls only for a non-mixing session " +
+      "that is playing, and Android starts the media service only while playing",
+      "App Store review: the audio background mode must serve audio the user hears (music, " +
+      "podcasts, audiobooks, navigation prompts); Google Play: declare the mediaPlayback " +
+      "foreground service type in the Play Console (App content > Foreground service permissions)",
+    ],
+  };
+}
+
 /** The platform capabilities, spread into `MOBILE_CAPABILITIES`. */
 export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   "app-review": {
@@ -391,7 +425,8 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
     notes: "isScreenReaderEnabled() / onScreenReaderChange(cb) / useScreenReader() (VoiceOver, " +
       "TalkBack; React Native mode's AccessibilityInfo reads it too) and getFontScale() / " +
       "useFontScale() / applyFontScale() (Dynamic Type, Android's font scale; React Native " +
-      "mode's PixelRatio.getFontScale() and Text)",
+      "mode's PixelRatio.getFontScale() and Text), plus the OS's bold text and grayscale " +
+      "settings (React Native mode's AccessibilityInfo.isBoldTextEnabled / isGrayscaleEnabled)",
     configure: () => ({ install: ACCESSIBILITY_INSTALL }),
   },
   storage: {
@@ -412,6 +447,18 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
     notes: '<SystemIcon name="square.and.arrow.up" android="share" /> (the SF Symbol ' +
       "rendered natively on iOS; Material Symbols on Android and the web)",
     configure: () => ({ install: SYSTEM_ICONS_INSTALL }),
+  },
+  "background-audio": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    androidPermissions: [
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+    ],
+    notes: "setAudioSession({ background }) / setNowPlaying({ title, artist, album, artwork, " +
+      "duration, position, playing, controls }) / onMediaControl(cb) / useMediaControl / " +
+      "clearNowPlaying() (lock screen, Control Center and the media notification; the Media " +
+      "Session API on the web)",
+    configure: configureBackgroundAudio,
   },
   "background-location": {
     npm: "@capgo/background-geolocation",

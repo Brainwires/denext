@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.2.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.3.1**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
 ## Deno toolchain
@@ -27,9 +27,6 @@
   them, drop the runtime download, the Deno 2.9.7 pin and the cross-host backend directory
   (2.9.7's CLI looks a prebuilt backend up under the host's executable name), and archive the
   forks.
-- **A Windows arm64 runtime** (none is built today).
-- **A `deno desktop --inspect-renderer` spike** for `denext desktop dev`: CDP into the window,
-  which `src/profile/browser.ts` already knows how to drive.
 
 ## Mobile and React Native
 
@@ -43,45 +40,37 @@
   No Android parity claim before that.
 - **iPhone validation still to run:** the bottom safe-area inset and the example's button-row
   layout, biometrics with Face ID enrolled, native social login, a sandbox purchase, Sentry,
-  background tasks and location, native modules, context menus, `<SystemIcon>`, font scale, the
+  background tasks and location, native modules, context menus, `<SystemIcon>`, font scale, bold
+  text and grayscale (iOS and Android), the stacks' focus move under VoiceOver / TalkBack, the
   maps / video / symbols wiring of the Expo and community packages, and a migrated React Native
   app larger than `examples/expo-app` (a large real-world one).
+- **The Expo SDK plugins on a device (iPhone and Android):** `DenextCalendar` (attendees, an
+  event by id, one occurrence's changes and time zone, the event viewer and editor),
+  `DenextContacts` (containers, change events, Android's full updates), `DenextPrint` (HTML to
+  PDF, the printer picker, printing to a picked printer) and `DenextBrightness` (Android's system
+  brightness and the `WRITE_SETTINGS` screen, iOS's change events) are compiled and type-checked
+  only. Then: splitting a repeating Android event from one occurrence on (`futureEvents` with
+  `instanceStartDate`, refused today).
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **Accessibility:** move focus to the new screen on navigation; read bold text and grayscale
-  from the OS (both read `false` today).
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
   the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
-- **Capabilities:** background audio with lock-screen controls, multi-select and video image
-  picking, file transfer with progress, a notification service extension and badges, SQLite
-  encryption, a PowerSync recipe.
-- **React Native 0.88 in the parity ledger:** the baseline is React Native 0.86.3; move it to
-  0.88 once that is final (`REACT_NATIVE_PIN` in `scripts/parity/native/spec.ts`, the lists'
-  `PINS`, `REACT_NATIVE_VERSION` in `src/react-native/platform.ts`), then refresh the baselines.
-  Against `0.88.0-rc.4` the core and lists diffs already report no gaps.
+- **Capabilities:** file transfer with progress, a notification service extension and badges,
+  SQLite encryption, a PowerSync recipe.
+- **On a device:** background audio with the lock-screen / notification controls
+  (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
+  the controls reaching the page, the Android foreground service), and `pickMedia`'s
+  multi-select and video picks, on an iPhone and an Android phone.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 
-## Server, ops and API surface
-
-Each is documented as a manual recipe today (the
-[production checklist](https://denext.dev/docs/production-checklist),
-[multi-instance](https://denext.dev/docs/multi-instance) and
-[route handler recipes](https://denext.dev/docs/route-handler-recipes) pages).
-
-- **Generated clients in other languages** from the OpenAPI / GraphQL documents (TypeScript is
-  served by `denext openapi types`).
-
 ## `denext ui` and DevTools
-
-- **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
 
 ## Router plugins
 
-- **TanStack Start depth:** Start-style SSR through `plugin-kit`, as `@denext/react-router` did.
-  The named unknown is the route tree, which TanStack generates with its Vite plugin; a Start
-  plugin must own that generation. (Library mode already runs in SPA mode with no plugin.) A
-  missing primitive goes into `plugin-kit` as a tested semver addition, never private surface.
+- **TanStack Start, the rest:** `@denext/tanstack-start` runs a Start app (server functions,
+  server routes, streamed pages); `denext export` prerendering of Start routes, Start's import
+  protection, and `denext migrate` recognizing a Start app are next.
 
 ## Build toolchain: waiting on `deno bundle`
 

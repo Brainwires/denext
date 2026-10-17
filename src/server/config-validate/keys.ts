@@ -62,8 +62,10 @@ const MOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, { to: string; honored: boolea
   ["streaming", { to: "streaming", honored: false }], // alias removed in 2.0
   ["live", { to: "live", honored: false }], // alias removed in 2.0
   ["cacheComponents", { to: "cacheComponents", honored: true }], // Next 16's spelling
+  ["cacheLife", { to: "cacheLife", honored: true }], // Next 15's spelling
   ["reactCompiler", { to: "reactCompiler", honored: true }], // Next 15's spelling
   ["optimizePackageImports", { to: "optimizePackageImports", honored: true }], // Next's spelling
+  ["nextScriptWorkers", { to: "nextScriptWorkers", honored: true }], // Next's spelling
 ]);
 
 /**

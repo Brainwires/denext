@@ -132,3 +132,32 @@ Deno.test("live views over the socket: patches, the frame-size cap, connection c
     await server.shutdown();
   }
 });
+
+Deno.test("live socket: a frame type naming an Object.prototype key is ignored, not dispatched", async () => {
+  installLiveHub({
+    appHandler: () => Promise.resolve(new Response("not used")),
+    originAllowed: () => true,
+  });
+  const server = Deno.serve({ port: 0, onListen: () => {} }, (req) => handleLiveUpgrade(req));
+  const errors: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  const props = JSON.stringify({ start: 5 });
+  const token = await signLiveViewToken("socket-counter", props);
+  try {
+    const c = new Client(`ws://localhost:${(server.addr as Deno.NetAddr).port}/_denext/live`);
+    await c.opened;
+    for (const type of ["__proto__", "constructor", "toString", "hasOwnProperty"]) c.send({ type });
+    // The socket still serves real frames after them, and nothing reached a prototype function.
+    c.send({ type: "view-mount", view: "socket-counter", props, token, vid: "p1" });
+    const render = await c.next((f) => f.type === "view-render");
+    assertEquals(render.flight[0].c[0].c, ["n=5"]);
+    assertEquals(errors, [], "no frame type reached Object.prototype");
+    c.ws.close();
+    await c.closed;
+  } finally {
+    console.error = realError;
+    await server.shutdown();
+    uninstallLiveHub();
+  }
+});

@@ -13,7 +13,9 @@
 // entry-only redirect would load the *original* helper and silently miss the
 // cache. A module whose subtree contains no `use cache` is left untouched (its
 // effective URL is the original), so the pass only materializes copies where
-// caching actually occurs.
+// caching actually occurs. The same copies compile inline `"use server"` functions into
+// registered server references (./inline-server-action.ts), so a Server Component's
+// `<form action={inlineAction}>` renders its endpoint on the native App Router.
 //
 // Copies are written under a caller-provided cache dir and memoized per loader instance. In dev
 // (`dev`, a {@linkcode DevCopies}) a module edited since the server started is copied too, with
@@ -34,6 +36,11 @@ import {
   relativizeFileSpecifiers,
 } from "./swc-ast.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
+import {
+  hasInlineServerActions,
+  InlineServerActionError,
+  transformInlineServerActions,
+} from "./inline-server-action.ts";
 import { foldBuildConstants, PLATFORM_SPECIFIER } from "./feature-transform.ts";
 import {
   type ImportAliases,
@@ -59,7 +66,8 @@ export interface UseCacheLoaderOptions {
   redirects?: Readonly<Record<string, string>>;
   /**
    * Compile `"use cache"` directives (default true). `false` copies modules only to apply
-   * {@link redirects} (Cache Components off), leaving every directive as written.
+   * {@link redirects} (Cache Components off), leaving `"use cache"` as written. Inline
+   * `"use server"` functions are compiled either way (a module holding one is always copied).
    */
   useCache?: boolean;
   /**
@@ -244,6 +252,11 @@ interface ModuleNode {
   readonly imports: readonly LocalImport[];
   /** Whether it has a `"use cache"` directive to compile. */
   readonly useCache: boolean;
+  /**
+   * Whether it holds an inline `"use server"` function, compiled into a registered server
+   * reference (./inline-server-action.ts) so its `<form action>` renders the endpoint.
+   */
+  readonly inlineActions?: boolean;
   /** Whether it reads `platform` (denext/platform) and the compiler folds it. */
   readonly foldsPlatform?: boolean;
 }
@@ -340,7 +353,8 @@ class UseCacheCompiler {
     const imports = await localImports(source, moduleUrl, aliases, this.opts.redirects ?? {});
     const useCache = this.opts.useCache !== false && source.includes("use cache");
     const foldsPlatform = this.#foldTarget() !== undefined && source.includes(PLATFORM_SPECIFIER);
-    return { source, imports, useCache, foldsPlatform };
+    const inlineActions = await hasInlineServerActions(source);
+    return { source, imports, useCache, foldsPlatform, inlineActions };
   }
 
   /** Every project module reachable from `entry` (itself included), parsed. */
@@ -372,8 +386,8 @@ class UseCacheCompiler {
   #decide(graph: Map<string, ModuleNode>): void {
     const open = [...graph].filter(([u]) => !this.#needs.has(u));
     for (const [u, n] of open) {
-      const direct = n.useCache || !!n.foldsPlatform || n.imports.some((i) => i.target !== i.url) ||
-        !!this.opts.dev?.isEdited(u);
+      const direct = n.useCache || !!n.foldsPlatform || !!n.inlineActions ||
+        n.imports.some((i) => i.target !== i.url) || !!this.opts.dev?.isEdited(u);
       this.#needs.set(u, n.source !== null && direct);
     }
     for (let grew = true; grew;) {
@@ -397,7 +411,7 @@ class UseCacheCompiler {
   #write(moduleUrl: string, node: ModuleNode): Promise<void> {
     let done = this.#written.get(moduleUrl);
     if (!done) {
-      done = this.#writeCopy(moduleUrl, node.source!, node.imports);
+      done = this.#writeCopy(moduleUrl, node.source!, node.imports, !!node.inlineActions);
       this.#written.set(moduleUrl, done);
     }
     return done;
@@ -407,6 +421,7 @@ class UseCacheCompiler {
     moduleUrl: string,
     source: string,
     imports: readonly LocalImport[],
+    inlineActions: boolean,
   ): Promise<void> {
     const childMap = new Map<string, string>();
     const bareMap = new Map<string, string>();
@@ -422,13 +437,18 @@ class UseCacheCompiler {
     const folded = target === undefined
       ? source
       : (await foldBuildConstants(source, { platform: target })).code;
-    const { code } = this.opts.useCache === false
+    const { code: rewritten } = this.opts.useCache === false
       ? await rewriteLocalImports(folded, moduleUrl, resolveSpecifier, resolveBare)
       : await transformUseCache(folded, moduleUrl, {
         resolveSpecifier,
         resolveBare,
         alwaysRewriteImports: true,
       });
+    // Inline `"use server"` functions become server references keyed by the module's own URL
+    // (the ids next-compat's server bundle mints for the same module).
+    const code = inlineActions
+      ? (await transformInlineServerActions(rewritten, moduleUrl)).code
+      : rewritten;
     await (this.#dir ??= Deno.mkdir(this.opts.cacheDir, { recursive: true }));
     // The copy lives in the cache dir; its `import.meta` keeps naming the module it stands in for,
     // and a non-literal `import()` resolves a relative specifier against that module too.
@@ -487,7 +507,11 @@ export async function compileServerCopies(
   const out: Record<string, string> = {};
   for (const file of files) {
     const url = toUrl(file);
-    const eff = await compiler.effectiveUrl(url).catch(() => url);
+    const eff = await compiler.effectiveUrl(url).catch((err) => {
+      // An inline action denext can't compile fails the build (it would render no `action`).
+      if (err instanceof InlineServerActionError) throw err;
+      return url;
+    });
     if (eff !== url) out[url] = eff;
   }
   return out;
@@ -531,8 +555,10 @@ export function createUseCacheLoaders(
     try {
       // A module loaded by its plain path (a boundary ref being tagged) loads its variant too.
       eff = await compiler.effectiveUrl(opts.redirects?.[url] ?? url);
-    } catch {
-      eff = url; // any transform failure → load the original (never break loading)
+    } catch (err) {
+      // An inline action denext can't compile is the app's error, reported as the module's own.
+      if (err instanceof InlineServerActionError) throw err;
+      eff = url; // any other transform failure → load the original (never break loading)
     }
     return base(eff);
   });

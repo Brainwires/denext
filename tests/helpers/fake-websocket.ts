@@ -53,3 +53,10 @@ export class FakeWebSocket {
     return this.sent.map((s) => (JSON.parse(s) as { type: string }).type);
   }
 }
+
+/** The page `location` the Live client builds its socket URL from, for `vi.stubGlobal`. */
+export const LIVE_TEST_LOCATION = {
+  protocol: "http:",
+  host: "localhost:8000",
+  href: "http://localhost:8000/",
+};

@@ -15,6 +15,8 @@
 // imported by name (default or named) is rewritten; correctness first: an unparseable module, a
 // name an inner scope re-binds, and a member tag (`<UI.Chart client:visible />`) are left as
 // written (the directive then reaches the component as a plain prop and it mounts eagerly).
+// The isomorphic routes' island split (./iso-islands.ts) shares this rewrite
+// ({@linkcode rewriteIslandElements}).
 
 import { fromFileUrl, relative, SEPARATOR, toFileUrl } from "@std/path";
 import {
@@ -174,42 +176,68 @@ function loaderSpecifier(spec: string, moduleUrl: string | undefined): string {
   return moduleUrl && isRelativeSpecifier(spec) ? new URL(spec, moduleUrl).href : spec;
 }
 
+/**
+ * How a pass rewrites directive elements: SPA mode's deferred mount here, the isomorphic routes'
+ * split islands in ./iso-islands.ts. Each rewritten binding gets a loader
+ * (`() => import(spec).then((m) => m[name])`).
+ */
+export interface IslandRewrite {
+  /** Rewrite only the elements whose import is dropped (their component splits off). */
+  readonly splitOnly: boolean;
+  /** The runtime import the rewritten module starts with. */
+  readonly runtime: string;
+  /** The module-level declaration of binding `i`, given its loader expression. */
+  declare(i: number, loader: string): string;
+  /** The opening tag name (with any added attribute) of an element of binding `i`. */
+  open(i: number): string;
+  /** The closing tag name of an element of binding `i`. */
+  close(i: number): string;
+}
+
+/** SPA mode: a `SpaIsland` handed the binding's loader. */
+const SPA_REWRITE: IslandRewrite = {
+  splitOnly: false,
+  runtime: `import { SpaIsland as __DnxSpaIsland } from "${SPA_ISLAND_SPECIFIER}";\n`,
+  declare: (i, loader) => `const __dnxLoad${i} = ${loader};\n`,
+  open: (i) => `__DnxSpaIsland __dnxLoad={__dnxLoad${i}}`,
+  close: () => "__DnxSpaIsland",
+};
+
 /** The header the rewritten module starts with: the runtime import and one loader per binding. */
 function header(
   used: readonly string[],
   bindings: Map<string, Binding>,
   moduleUrl: string | undefined,
+  rewrite: IslandRewrite,
 ): string {
   const loaders = used.map((local, i) => {
     const b = bindings.get(local)!;
     const spec = JSON.stringify(loaderSpecifier(b.spec, moduleUrl));
-    return `const __dnxLoad${i} = () => import(${spec}).then((m) => m[${
-      JSON.stringify(b.imported)
-    }]);\n`;
+    return rewrite.declare(
+      i,
+      `() => import(${spec}).then((m) => m[${JSON.stringify(b.imported)}])`,
+    );
   });
-  return `\nimport { SpaIsland as __DnxSpaIsland } from "${SPA_ISLAND_SPECIFIER}";\n` +
-    loaders.join("");
+  return `\n${rewrite.runtime}${loaders.join("")}`;
 }
 
-/** The edits that turn each directive element into a `SpaIsland` with its binding's loader. */
+/** The edits that point each directive element at its binding's rewrite. */
 function elementEdits(
   ctx: Ctx,
   elements: readonly DirectiveElement[],
   used: readonly string[],
+  rewrite: IslandRewrite,
 ): Edit[] {
   const edits: Edit[] = [];
   for (const { el, local } of elements) {
     const name = el.opening.name;
-    edits.push({
-      start: startOf(ctx, name),
-      end: endOf(ctx, name),
-      text: `__DnxSpaIsland __dnxLoad={__dnxLoad${used.indexOf(local)}}`,
-    });
+    const i = used.indexOf(local);
+    edits.push({ start: startOf(ctx, name), end: endOf(ctx, name), text: rewrite.open(i) });
     if (el.closing) {
       edits.push({
         start: startOf(ctx, el.closing.name),
         end: endOf(ctx, el.closing.name),
-        text: "__DnxSpaIsland",
+        text: rewrite.close(i),
       });
     }
   }
@@ -229,9 +257,26 @@ function inside(edit: Edit, ranges: readonly [number, number][]): boolean {
  *   (the `deno bundle` path), so its relative specifiers are made absolute.
  * @returns The rewritten module and what was deferred.
  */
-export async function transformSpaIslands(
+export function transformSpaIslands(
   source: string,
   opts: { moduleUrl?: string } = {},
+): Promise<SpaIslandResult> {
+  return rewriteIslandElements(source, opts, SPA_REWRITE);
+}
+
+/**
+ * Rewrite a module's `client:*` component elements as `rewrite` says, dropping each import only
+ * directive elements reference (see the module header).
+ *
+ * @param source The module source (TSX/JSX).
+ * @param opts.moduleUrl The module's URL, when the output is written elsewhere.
+ * @param rewrite What a directive element becomes.
+ * @returns The rewritten module and what was deferred.
+ */
+export async function rewriteIslandElements(
+  source: string,
+  opts: { moduleUrl?: string },
+  rewrite: IslandRewrite,
 ): Promise<SpaIslandResult> {
   const identity: SpaIslandResult = { code: source, changed: false, islands: 0, split: [] };
   if (!MAYBE.test(source)) return identity;
@@ -240,19 +285,22 @@ export async function transformSpaIslands(
   const { ctx, body } = parsed;
   const bindings = importBindings(body);
   for (const name of shadowedNames(body, new Set(bindings.keys()))) bindings.delete(name);
-  const elements = directiveElements(body, bindings);
+  const all = directiveElements(body, bindings);
+  const dropped = droppableImports(body, bindings, all);
+  const elements = rewrite.splitOnly
+    ? all.filter((e) => dropped.has(bindings.get(e.local)!.decl))
+    : all;
   if (elements.length === 0) return identity;
   const used = [...new Set(elements.map((e) => e.local))];
-  const dropped = droppableImports(body, bindings, elements);
   const removed: [number, number][] = [...dropped].map((d) => [startOf(ctx, d), endOf(ctx, d)]);
   const edits: Edit[] = [
     {
       start: prologueEnd(ctx, body),
       end: prologueEnd(ctx, body),
-      text: header(used, bindings, opts.moduleUrl),
+      text: header(used, bindings, opts.moduleUrl, rewrite),
     },
     ...removed.map(([start, end]) => ({ start, end, text: "" })),
-    ...elementEdits(ctx, elements, used),
+    ...elementEdits(ctx, elements, used, rewrite),
   ];
   if (opts.moduleUrl) {
     const relocated: Edit[] = [];

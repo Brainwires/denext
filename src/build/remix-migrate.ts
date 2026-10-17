@@ -51,7 +51,8 @@ import {
   usedImports,
 } from "./remix-codegen.ts";
 export { analyzeModule, rewriteRemixImports, selectHelpers } from "./remix-codegen.ts";
-import { type Ctx, type Node, txt, walkAst } from "./swc-ast.ts";
+import { loadContextModule } from "./remix-load-context.ts";
+import { txt } from "./swc-ast.ts";
 
 /** What {@link transformRemixApp} did, for the CLI to print (assisted-migration report). */
 export interface RemixMigrateInfo {
@@ -744,167 +745,17 @@ ${imports.length > 0 ? imports.join("\n") + "\n\n" : ""}${body}
 
 // ── The custom server's `getLoadContext` → `load-context.ts` ─────────────────
 
-/** Where a Remix app's custom server (Express/Hono) lives, most common first. */
-const SERVER_ENTRIES = [
-  "server/index.ts",
-  "server/index.js",
-  "server/index.mjs",
-  "server.ts",
-  "server.js",
-  "server.mjs",
-  "server/app.ts",
-  "server/app.js",
-];
-
-/** A `getLoadContext` key with a denext-side equivalent: the expression + why. */
-const LOAD_CONTEXT_KEYS: Record<string, { expr: string; note: string; lazy?: true }> = {
-  // A getter: the O(routes) synthesize runs only when a loader reads it, and a rejection
-  // surfaces where it is awaited instead of as an unhandled promise per request.
-  serverBuild: {
-    expr: "remixServerBuild()",
-    note: "the Remix-shaped route manifest (`.routes`) — what remix-seo's sitemap reads",
-    lazy: true,
-  },
-  build: {
-    expr: "remixServerBuild()",
-    note: "the Remix-shaped route manifest (`.routes`) — what remix-seo's sitemap reads",
-    lazy: true,
-  },
-  cspNonce: {
-    expr: "undefined",
-    note: "denext's CSP is hash-based — there is no per-request nonce",
-  },
-  nonce: {
-    expr: "undefined",
-    note: "denext's CSP is hash-based — there is no per-request nonce",
-  },
-};
-
-/** One key of the object `getLoadContext` returns, with the source text of its value. */
-interface LoadContextKey {
-  name: string;
-  source: string;
-  spread?: boolean;
-}
-
-/** The name of a property key node (identifier or string), or null when computed. */
-function propertyKeyName(key: Node): string | null {
-  if (!key) return null;
-  if (key.type === "Identifier" || key.type === "StringLiteral") return key.value as string;
-  return null;
-}
-
-/** The function node bound to `getLoadContext` (an object property, a const, a declaration). */
-function findLoadContextFn(items: Node[]): Node | null {
-  let found: Node | null = null;
-  for (const item of items) {
-    walkAst(item, (n) => {
-      if (found) return;
-      if (n.type === "KeyValueProperty" && propertyKeyName(n.key) === "getLoadContext") {
-        found = n.value;
-      } else if (n.type === "MethodProperty" && propertyKeyName(n.key) === "getLoadContext") {
-        found = n;
-      } else if (n.type === "VariableDeclarator" && n.id?.value === "getLoadContext" && n.init) {
-        found = n.init;
-      } else if (n.type === "FunctionDeclaration" && n.identifier?.value === "getLoadContext") {
-        found = n;
-      }
-    });
-    if (found) break;
-  }
-  return found;
-}
-
-/** The object literal a function returns (an arrow's expression body or a `return {…}`). */
-function returnedObject(fn: Node): Node | null {
-  const body = fn.type === "MethodProperty" ? fn.function?.body : fn.body;
-  if (!body) return null;
-  const unwrap = (
-    n: Node,
-  ): Node => (n?.type === "ParenthesisExpression" ? unwrap(n.expression) : n);
-  const direct = unwrap(body);
-  if (direct?.type === "ObjectExpression") return direct;
-  let ret: Node | null = null;
-  walkAst(body, (n) => {
-    if (!ret && n.type === "ReturnStatement" && unwrap(n.argument)?.type === "ObjectExpression") {
-      ret = unwrap(n.argument);
-    }
-  });
-  return ret;
-}
-
-/** The keys of an object literal, with each value's source text. */
-function objectKeys(ctx: Ctx, obj: Node): LoadContextKey[] {
-  const keys: LoadContextKey[] = [];
-  for (const p of obj.properties ?? []) {
-    if (p.type === "Identifier") keys.push({ name: p.value, source: p.value });
-    else if (p.type === "SpreadElement") {
-      keys.push({ name: "...", source: txt(ctx, p.arguments), spread: true });
-    } else {
-      const name = propertyKeyName(p.key);
-      if (name) keys.push({ name, source: p.value ? txt(ctx, p.value) : "<method>" });
-    }
-  }
-  return keys;
-}
-
-/** One generated property of `load-context.ts` for a `getLoadContext` key. */
-function loadContextProperty(key: LoadContextKey): string {
-  if (key.spread) {
-    return `  // TODO: was \`...${key.source}\` — spread its fields here\n`;
-  }
-  const known = LOAD_CONTEXT_KEYS[key.name];
-  const name = /^[A-Za-z_$][\w$]*$/.test(key.name) ? key.name : JSON.stringify(key.name);
-  if (known?.lazy) {
-    return `  // was: ${key.source} — ${known.note}\n  get ${name}() {\n    return ${known.expr};\n  },\n`;
-  }
-  if (known) return `  // was: ${key.source} — ${known.note}\n  ${name}: ${known.expr},\n`;
-  return `  // TODO: was \`${key.source}\` — provide it here\n  ${name}: undefined,\n`;
-}
-
 /**
- * The custom server's `getLoadContext` → `load-context.ts`. A Remix server hands every
- * loader/action a `context` (the Epic Stack: `{ cspNonce, serverBuild }`); denext replaces
- * that server, so the returned object's keys are re-created in a `defineLoadContext` module:
- * keys with a denext equivalent are wired (`serverBuild` → `remixServerBuild()`), the rest
- * are stubs to fill in. Returns whether the module was planned.
+ * The custom server's `getLoadContext` → `load-context.ts` (see ./remix-load-context.ts): the
+ * returned object's keys re-derived per request in a `defineLoadContext` module. Returns
+ * whether the module was planned.
  */
 async function planLoadContext(plan: RemixPlan, dir: string): Promise<boolean> {
-  const rel = await firstExisting(dir, SERVER_ENTRIES);
-  if (!rel) return false;
-  const source = await mfs.readTextFile(join(dir, rel)).catch(() => null);
-  if (source === null || !source.includes("getLoadContext")) return false;
-  const parsed = await parseRouteModule(source);
-  const fn = parsed ? findLoadContextFn(parsed.items) : null;
-  if (!fn) return false;
-  const dest = join(dir, "load-context.ts");
-  if (await exists(dest)) {
-    plan.info.warnings.push(`${rel}: getLoadContext NOT ported — load-context.ts already exists`);
-    return false;
-  }
-  const obj = returnedObject(fn);
-  const keys = obj ? objectKeys(parsed!.ctx, obj) : null;
-  const props = keys?.map(loadContextProperty).join("") ??
-    `  // TODO: could not read the object getLoadContext returns — port it from ${rel} by hand\n`;
-  const usesBuild = props.includes("remixServerBuild()");
-  const runtime = usesBuild ? "defineLoadContext, remixServerBuild" : "defineLoadContext";
-  const code =
-    `${GEN_HEADER}// What ${rel}'s \`getLoadContext\` gave every loader/action as \`context\`. denext replaced
-// that server, so each value is re-derived here: keys with a denext equivalent are wired,
-// the rest are stubs — fill them in from what the server computed.
-import { ${runtime} } from "denext/remix/server";
-
-export default defineLoadContext(() => ({
-${props}}));
-`;
-  plan.planned.push({ dest, code });
-  const summary = keys
-    ? keys.map((k) => {
-      const known = LOAD_CONTEXT_KEYS[k.name];
-      return `${k.spread ? "..." + k.source : k.name} → ${known ? known.expr : "TODO"}`;
-    }).join(", ")
-    : "TODO";
-  plan.info.warnings.push(`${rel}: getLoadContext → load-context.ts (${summary})`);
+  const result = await loadContextModule(dir);
+  if (!result) return false;
+  plan.info.warnings.push(...result.warnings);
+  if (!result.module) return false;
+  plan.planned.push(result.module);
   return true;
 }
 

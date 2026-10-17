@@ -229,22 +229,42 @@ function reportEffect(r: MigrateResult): void {
   );
 }
 
-/** The Prisma rewiring (ESM/Deno client + better-sqlite3 driver adapter). */
+/** The Prisma rewiring (ESM/Deno client + the datasource's driver adapter). */
 function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
   console.log(
-    "  ▸ Prisma detected — wired to the ESM/Deno client + better-sqlite3 driver adapter " +
-      "(no native Rust engine).",
+    `  ▸ Prisma detected (${p.provider}) — wired to the ESM/Deno client` +
+      (p.adapter ? ` + ${p.adapter} driver adapter` : "") + " (no native Rust engine).",
   );
   console.log(
     `    schema generator → prisma-client (deno) · ${p.refsRewritten.length} @prisma/client ` +
       `import(s) repointed · adapter injected in ${p.clientModules.length} module(s)` +
       (p.packageJsonEdited ? " · dropped @prisma/client+prisma from package.json" : ""),
   );
+  if (p.toolingRewritten.length > 0) {
+    console.log(
+      `    seed + test tooling on the Deno client too: ${p.toolingRewritten.length} file(s)` +
+        (p.seedTask ? ` · seed with \`denext task ${p.seedTask}\`` : ""),
+    );
+  }
   printReviewNotes(p.warnings, 8);
   console.log(
-    `    ‼️  run \`denext task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
-      "`prisma generate` + `db push`) before `denext task build`/`dev`.",
+    `    ‼️  run \`denext task ${p.setupTask}\` ONCE (` +
+      (p.provider === "sqlite" ? "bundles the compat, installs" : "installs") +
+      ", `prisma generate` + `migrate deploy` / `db push`) before `denext task build`/`dev`.",
   );
+}
+
+/** The `next-auth` wiring: the major, the v4 APIs and adapters found, and what to check. */
+function reportNextAuth(n: NonNullable<MigrateResult["nextAuth"]>): void {
+  const label = n.version === "v4" ? "NextAuth.js v4" : "Auth.js v5";
+  console.log(
+    `  ▸ ${label} detected — next-auth and its subpaths run on denext's shim (no edits).`,
+  );
+  if (n.v4Apis.length > 0) console.log(`    v4 APIs: ${n.v4Apis.join(", ")}`);
+  if (n.adapters.length > 0) {
+    console.log(`    adapters (from your dependencies): ${n.adapters.join(", ")}`);
+  }
+  printReviewNotes(n.notes, 4);
 }
 
 /** The Expo app config's static reading: where from, what it could not read. */
@@ -737,6 +757,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       reportFramework(r, desktop);
       if (r.effect) reportEffect(r);
       if (r.prisma) reportPrisma(r.prisma);
+      if (r.nextAuth) reportNextAuth(r.nextAuth);
       await capacitorSteps(r, run ?? terminalRunner(false), false);
 
       if (r.denoJsonExists) {

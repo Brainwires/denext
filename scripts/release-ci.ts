@@ -39,6 +39,15 @@ export const DESKTOP_CI_JOBS: readonly string[] = [
   "scaffold + package-script drift",
 ];
 
+/**
+ * desktop-ci.yml jobs a release does not wait on: one that fails does not refuse the release, and
+ * one that is missing is fine. Windows on Arm (`windows-11-arm`) is here until its runs are
+ * reliably green; then it moves to {@linkcode DESKTOP_CI_JOBS}.
+ */
+export const DESKTOP_CI_OPTIONAL_JOBS: readonly string[] = [
+  "windows on arm (windows-11-arm — desktop tests, install.ps1, Arm64 .msi)",
+];
+
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
 const HEAVY_JOBS = ["integration", "next-compat", "coverage", "backend-integration"];
 
@@ -154,7 +163,8 @@ async function runJobs(run: CiRun, gh: GhJson): Promise<CiJob[]> {
 
 /**
  * Check desktop-ci.yml on `sha`: its newest run there (a push or a dispatch) must have finished
- * with every {@linkcode DESKTOP_CI_JOBS} job green and no other job failed.
+ * with every {@linkcode DESKTOP_CI_JOBS} job green and no other job failed (but those of
+ * {@linkcode DESKTOP_CI_OPTIONAL_JOBS}).
  *
  * @param sha The commit to release (HEAD).
  * @param gh How `gh` is reached (default: the GitHub CLI).
@@ -167,7 +177,8 @@ export async function desktopCiVerdict(sha: string, gh: GhJson = ghJson): Promis
   }
   const jobs = await runJobs(run, gh);
   const others = jobs.filter((j) =>
-    !DESKTOP_CI_JOBS.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
+    !DESKTOP_CI_JOBS.includes(j.name) && !DESKTOP_CI_OPTIONAL_JOBS.includes(j.name) &&
+    j.conclusion !== "success" && j.conclusion !== "skipped"
   ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
   const unmet = [...unmetCiJobs(jobs, DESKTOP_CI_JOBS), ...others];
   return unmet.length === 0

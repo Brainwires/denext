@@ -1,0 +1,22 @@
+TS2322: Type mismatch at `query.page`
+  at use-api-query.tsx:8:73
+
+    7 |   const query = { page: "2" };
+  > 8 |   const { data } = useApi("/api/posts", "POST", { body: { title: "x" }, query });
+                                                                                ^^^^^
+    9 |   return <p>{data?.id}</p>;
+
+  The typed API client checks every request against the route's own types: the `POST /api/posts` route expects `query.page` to be `number`, but this passes `string`.
+
+  Fix: Pass `query.page` as `number` — or change the route's schema if `string` is intended.
+
+  Original (deno check):
+  │ TS2322 [ERROR]: Type '{ page: string; }' is not assignable to type '{ page: number; }'.
+  │   Types of property 'page' are incompatible.
+  │     Type 'string' is not assignable to type 'number'.
+  │   const { data } = useApi("/api/posts", "POST", { body: { title: "x" }, query });
+  │                                                                         ~~~~~
+  │     at file:///app/use-api-query.tsx:8:73
+
+error: Type checking failed.
+

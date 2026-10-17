@@ -3,9 +3,10 @@
  * `getEventsAsync`, `createEventAsync`, …, the enums and the permission calls), the entry SDK 58
  * keeps for apps that have not moved to the object API. It is the same implementation
  * `denext/expo/calendar` exports from its main entry (where Expo 58's legacy functions throw and
- * denext's work), over `@ebarooni/capacitor-calendar` (`denext mobile add calendar`), with the
- * same limits: attendees, opening an event in the calendar app and editing a single occurrence
- * reject with `ERR_UNAVAILABLE`, and off the shell every data call does too.
+ * denext's work), over `@ebarooni/capacitor-calendar` and denext's `DenextCalendar` (`denext
+ * mobile add calendar`), with the same behaviour: attendees, an event by id, single-occurrence
+ * changes, time zones and the event viewer through `DenextCalendar`, and off the shell every
+ * data call rejects with `ERR_UNAVAILABLE`.
  *
  * @example
  * ```ts

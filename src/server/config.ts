@@ -6,7 +6,7 @@ import type { DeployConfig } from "../deploy/adapter.ts";
 import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
-import type { CacheStore } from "./cache.ts";
+import type { CacheLifeProfile, CacheStore } from "./cache.ts";
 import type { JobHistoryStore } from "./job-history.ts";
 import { envGet } from "../runtime/env-safe.ts";
 import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
@@ -701,6 +701,16 @@ export interface ApiBatchConfig {
    * @default true
    */
   enabled?: boolean;
+  /**
+   * Batch mutations too (default true): the client sends the POST / PUT / PATCH / DELETE calls a
+   * page makes in one tick in the same batch as its reads, and the server runs each one alone,
+   * in call order, with its route's CSRF checks. `false` refuses mutation items (the whole
+   * batch is a 400), so the client must send them as their own requests
+   * (`createApiClient({ batch: { mutations: false } })`).
+   *
+   * @default true
+   */
+  mutations?: boolean;
   /**
    * Max items per batch (default 20, at most 100).
    *
@@ -1917,8 +1927,9 @@ export interface DenextConfig {
    * imposed on apps that never asked. When off, every `"use cache"` directive is inert
    * (a plain no-op string statement) and rendering is unchanged.
    *
-   * Documented bounds (see KNOWN-LIMITATIONS): reading request data
-   * (`cookies()`/`headers()`) inside `use cache` throws; a streamed hole can't add an
+   * Documented bounds (see KNOWN-LIMITATIONS): as in Next.js, reading request data
+   * (`cookies()`/`headers()`) inside `use cache` throws (`"use cache: private"` may read
+   * them); a streamed hole can't add an
    * inline `<style>`/`<script>` or hoist an in-boundary `<title>`/`<meta>` into the
    * already-flushed head; and `searchParams` read outside a Suspense boundary with
    * `cacheKeyParams` can reflect one request's value.
@@ -1927,6 +1938,15 @@ export interface DenextConfig {
    * migrated Next apps (see {@linkcode resolveCacheComponents}); this top-level field wins.
    */
   cacheComponents?: boolean;
+  /**
+   * Named `cacheLife()` profiles (Next.js 16's `cacheLife` key), each `{ stale, revalidate,
+   * expire }` in seconds (`Infinity` for never): `cacheLife("biweekly")` inside a
+   * `"use cache"` function picks one. A name that matches a built-in profile (`default`,
+   * `seconds`, `minutes`, `hours`, `days`, `weeks`, `max`) overrides it; a field left out of
+   * a custom profile falls back to the `default` profile's. Validated at load as Next.js does
+   * (`false` is refused, `expire` must be at least `revalidate`).
+   */
+  cacheLife?: Record<string, CacheLifeProfile>;
   /**
    * The build-time auto-memoization compiler (a React-Compiler-style pass), an opt-in
    * optimization that is off by default. Conservative by construction: it bails to
@@ -2003,6 +2023,16 @@ export interface DenextConfig {
    * package from the automatic mode too, and `"!*"` turns the automatic mode off.
    */
   optimizePackageImports?: string[] | false;
+  /**
+   * Run `<Script strategy="worker">` in a web worker through Partytown, as Next.js does (its
+   * `experimental.nextScriptWorkers`, honored with a dev warning when this field is absent).
+   * The app installs Partytown itself — `@qwik.dev/partytown`, or Next's
+   * `@builder.io/partytown`, in `node_modules` — and `denext dev` / `build` / `export` serve its
+   * files from the app's own origin under `/_denext/~partytown/`, so the strict default CSP
+   * needs no opt-in. Off (the default), or with no Partytown installed, worker scripts run on
+   * the main thread as `afterInteractive`, with a dev warning naming the fix.
+   */
+  nextScriptWorkers?: boolean;
   /**
    * Module aliases for the esbuild bundles, optionally sensitive to the importing file, as
    * Metro's `resolveRequest` and Vite's `resolve.alias` express them. A key is an import
@@ -2096,8 +2126,9 @@ export interface DenextConfig {
    */
   deploy?: DeployConfig;
   /**
-   * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
-   * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.
+   * Build a React Native / Expo app's source for the web through `react-native-web`, in SPA
+   * mode (`mode: "spa"`) or on the App Router. `true` turns on the defaults; an object sets
+   * options.
    *
    * - `react-native` (and every `react-native/…` subpath) resolves to the installed
    *   `react-native-web`, for every importer, even when a real `react-native` is installed.
@@ -2110,9 +2141,15 @@ export interface DenextConfig {
    *   `process.env.EXPO_OS` → `"web"` are defined at build time.
    * - The SPA shell gets Expo web's root style (see {@link ReactNativeConfig.rootStyle}).
    *
-   * The build always takes the esbuild (compat) path, and `denext dev` defaults to the
-   * bundled loop, which applies the same resolution. Install `react-native-web` in the
+   * The build always takes the esbuild (compat) path. Install `react-native-web` in the
    * project; native-only modules still need web shims of your own.
+   *
+   * On the App Router, the server bundle, the client islands and the hydrated routes all
+   * resolve this way, so Server Components and `"use client"` components can both import
+   * `react-native`; react-native-web's style sheet is written into each server-rendered
+   * `<head>` (`<style id="react-native-stylesheet">`). `expo-router` imports fail there (`app/`
+   * is the App Router's), `dev` uses the bundled loop, and `fonts` and
+   * `compatibilityMode: false` are refused.
    */
   reactNative?: boolean | ReactNativeConfig;
   /**
@@ -2375,6 +2412,16 @@ export interface ExperimentalConfig {
    * alias for migrated Next apps. The top-level field wins.
    */
   cacheComponents?: boolean;
+  /**
+   * @deprecated Next.js 15's spelling of the top-level `cacheLife`, kept as an obsolete alias
+   * for migrated Next apps. The top-level field wins.
+   */
+  cacheLife?: Record<string, CacheLifeProfile>;
+  /**
+   * @deprecated Next.js's spelling of the top-level `nextScriptWorkers`, kept as an obsolete
+   * alias for migrated Next apps. The top-level field wins.
+   */
+  nextScriptWorkers?: boolean;
 }
 
 /**
@@ -2460,6 +2507,16 @@ export function resolveStreaming(config: DenextConfig | null | undefined): boole
  */
 export function resolveLive(config: DenextConfig | null | undefined): LiveConfig | undefined {
   return config?.live;
+}
+
+/**
+ * The effective named `cacheLife` profiles: the top-level `cacheLife`, else Next.js 15's
+ * `experimental.cacheLife` spelling (the validator warns that it moved).
+ */
+export function resolveCacheLifeProfiles(
+  config: DenextConfig | null | undefined,
+): Record<string, CacheLifeProfile> | undefined {
+  return config?.cacheLife ?? config?.experimental?.cacheLife;
 }
 
 /**

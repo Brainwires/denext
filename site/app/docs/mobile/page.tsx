@@ -57,9 +57,13 @@ export default function Mobile() {
         keyboard, and the top safe-area inset applied after first paint. Built and unit-tested but
         not yet run on the phone: native modules, native context menus,{" "}
         <code>SystemIcon</code>, font scaling, biometrics, native sign-in, in-app purchases, crash
-        reporting, background tasks and background location, and the bottom safe-area inset. Android
-        is compiled and unit-tested, not run on a device: its halves of <code>denext/mobile</code>
-        {" "}
+        reporting, background tasks and background location,{" "}
+        <a href="#background-audio">
+          background audio
+        </a>{" "}
+        and its lock-screen controls, multi-select and video picks (<code>pickMedia</code>), and the
+        bottom safe-area inset. Android is compiled and unit-tested, not run on a device: its halves
+        of <code>denext/mobile</code>{" "}
         and of the generators have not run on Android at all, and a whole-app comparison ran on an
         emulator only. The details, and every open limit, are in{" "}
         <a href="/docs/limitations">Known limitations</a> (Mobile) and the open work in the{" "}
@@ -604,6 +608,22 @@ denext mobile add haptics share network secure-store`}
           strings; the microphone one is for video recorded in the page) and{" "}
           <code>pickDocument({"{ types }"})</code> (<code>document-picker</code>): resolve{" "}
           <code>null</code> when the user cancels; a hidden file input on the web.
+        </li>
+        <li id="pick-media">
+          <code>
+            pickMedia({"{ mediaTypes, multiple, selectionLimit, ordered, source }"})
+          </code>{" "}
+          (<code>camera</code>): several photos and videos from the library through the Camera
+          plugin&apos;s gallery picker (<code>selectionLimit</code>{" "}
+          enforced on iOS and Android 13+), or one video recorded with{" "}
+          <code>{'{ source: "camera", mediaTypes: "videos" }'}</code>. Each item has its{" "}
+          <code>type</code>, <code>webPath</code>, <code>mimeType</code>{" "}
+          and, where the picker reports them, size, dimensions and a video&apos;s{" "}
+          <code>duration</code> in seconds. <code>ordered: true</code>{" "}
+          numbers the picks (iOS 15+) through <code>@capawesome/capacitor-file-picker</code>{" "}
+          (<code>document-picker</code>). On the web it is{" "}
+          <code>{'<input type="file" multiple accept="image/*,video/*">'}</code>, cut to the limit,
+          with the picked <code>File</code> on each item.
         </li>
         <li id="picked-files-and-folders">
           Picked files and folders: in a Deno Desktop window and in browsers with the File System
@@ -2026,6 +2046,61 @@ const stop = watchPositionInBackground((p) => route.push([p.longitude, p.latitud
         in the Capacitor config, or updates stop after about five minutes in the background.
       </Callout>
 
+      <h2 id="background-audio">Background audio and lock-screen controls</h2>
+      <p>
+        <code>denext mobile add background-audio</code> installs denext&apos;s{" "}
+        <code>DenextNowPlaying</code> plugin, adds the <code>audio</code>{" "}
+        background mode to Info.plist, and declares Android&apos;s media-playback foreground service
+        (<code>FOREGROUND_SERVICE_MEDIA_PLAYBACK</code>). The page still plays the audio (an{" "}
+        <code>{"<audio>"}</code>{" "}
+        element, Web Audio, expo-audio&apos;s player); these calls keep it playing with the app in
+        the background or the phone locked, show it on the lock screen, in Control Center and in the
+        media notification, and hand the OS&apos;s commands back. iOS: an{" "}
+        <code>AVAudioSession</code> in the <code>.playback</code> category,{" "}
+        <code>MPNowPlayingInfoCenter</code> and <code>MPRemoteCommandCenter</code>. Android: a{" "}
+        <code>MediaSession</code>, a media-style notification, and the foreground service while it
+        plays. Elsewhere (the web, a Deno Desktop window, a shell without the plugin) the same calls
+        use the Media Session API (<code>navigator.mediaSession</code>).
+      </p>
+      <Code lang="tsx">
+        {`import { clearNowPlaying, onMediaControl, setAudioSession, setNowPlaying } from "denext/mobile";
+
+await setAudioSession({ background: true }); // iOS: .playback; "exclusive" by default
+const audio = new Audio("/episodes/42.mp3");
+onMediaControl(({ action, position, offset }) => {
+  if (action === "play") audio.play();
+  else if (action === "pause") audio.pause();
+  else if (action === "seek") audio.currentTime = position!;
+  else if (action === "seekForward") audio.currentTime += offset!;
+  else if (action === "next") queue.next();
+});
+audio.addEventListener("play", () =>
+  setNowPlaying({
+    title: "Episode 42", artist: "The Show", album: "Season 3", artwork: "/covers/42.jpg",
+    duration: audio.duration, position: audio.currentTime, playing: true,
+    controls: ["play", "pause", "seek", "seekForward", "next"],
+  }));
+audio.addEventListener("pause", () => setNowPlaying({ playing: false, position: audio.currentTime }));
+audio.addEventListener("ended", () => clearNowPlaying());`}
+      </Code>
+      <p>
+        Each <code>setNowPlaying</code>{" "}
+        merges into the last, so send what changed; an update that only restates the clock is not
+        sent on (the OS runs the position from the rate). An app-relative <code>artwork</code>{" "}
+        is read by the page and handed over as a <code>data:</code> URL.{" "}
+        <code>useMediaControl(handler)</code>{" "}
+        is the hook form. In React Native mode, expo-audio&apos;s{" "}
+        <code>setAudioModeAsync({"{ shouldPlayInBackground, interruptionMode }"})</code> and{" "}
+        <code>player.setActiveForLockScreen(true, metadata, options)</code> run on these calls.
+      </p>
+      <Callout kind="warn">
+        <strong>Store review.</strong> The App Store accepts the <code>audio</code>{" "}
+        background mode for audio the user hears (music, podcasts, audiobooks, navigation prompts);
+        Google Play wants the <code>mediaPlayback</code>{" "}
+        foreground service type declared in the Play Console. The iOS lock screen shows the controls
+        only for a non-mixing session (<code>interruption: "exclusive"</code>) that is playing.
+      </Callout>
+
       <h2 id="screen-readers">Screen readers</h2>
       <p>
         <code>accessibility</code> has no npm package: it writes denext&apos;s{" "}
@@ -2356,6 +2431,26 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         <code>expo-brightness</code>) and <code>intent-launcher</code>{" "}
         (<code>@capgo/capacitor-intent-launcher</code>,{" "}
         <code>expo-intent-launcher</code>, Android only).
+      </p>
+      <p>
+        <code>calendar</code>, <code>contacts</code>, <code>print</code> and <code>brightness</code>
+        {" "}
+        also write denext's own plugin beside the pinned one, for the Expo calls that plugin has no
+        call for (Swift registered by <code>DenextBridgeViewController</code>, Java registered from
+        {" "}
+        <code>MainActivity</code>, upgraded in place while unedited): <code>DenextCalendar</code>
+        {" "}
+        (attendees, an event by id, one occurrence's changes and its time zone, the system event
+        viewer), <code>DenextContacts</code>{" "}
+        (containers on iOS, change events, and the postal addresses, URLs, birthday and photo an
+        Android update would drop), <code>DenextPrint</code>{" "}
+        (<code>printToFileAsync</code>: HTML to a PDF file; on iOS the printer picker and printing
+        to a picked printer) and <code>DenextBrightness</code>{" "}
+        (Android's system brightness and its mode, behind <code>WRITE_SETTINGS</code>, which{" "}
+        <code>requestPermissionsAsync</code>{" "}
+        asks for in the system settings screen; iOS's brightness change events). A project that
+        added the capability before these plugins existed gets them by running the same{" "}
+        <code>denext mobile add</code> again.
       </p>
       <p>
         <code>app-config</code>{" "}

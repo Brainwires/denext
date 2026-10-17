@@ -85,6 +85,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
       classRuntime: ctx.classRuntime,
       usesActivity: ctx.usesActivity,
       usesViewTransition: ctx.usesViewTransition,
+      usesIsoIslands: ctx.usesIsoIslands,
       usesSingletons: ctx.usesSingletons,
     }),
   }));

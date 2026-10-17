@@ -8,13 +8,14 @@ import { join } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "../../server/app.ts";
 import { applyPlugins, getPluginRequestHandler, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
-import { resolveDefaultCacheStore } from "../../server/cache.ts";
+import { installCacheLifeProfiles, resolveDefaultCacheStore } from "../../server/cache.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import {
   type HeaderRule,
   type RedirectRule,
   resolveCacheComponents,
+  resolveCacheLifeProfiles,
   resolveConfigRules,
   resolveLive,
   resolveServerOptions,
@@ -102,6 +103,7 @@ function startInstrumentation(st: DevState, onLoaded: () => void): void {
  * the db lives in THIS project's .denext (not the launcher's cwd). Fails safe to in-memory.
  */
 function installDefaultCacheStore(st: DevState): void {
+  installCacheLifeProfiles(resolveCacheLifeProfiles(st.paths.config));
   const cache = st.paths.config?.cache;
   void resolveDefaultCacheStore(
     cache?.path ? cache : { ...cache, path: join(st.paths.outDir, "cache.db") },

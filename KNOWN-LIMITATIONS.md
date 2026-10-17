@@ -7,58 +7,75 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ## React / Next.js surface
 
-- **`<Script strategy="worker">` runs on the main thread** (as `afterInteractive`). denext ships
-  no Partytown-style DOM-proxying worker runtime; self-host Partytown if you need one.
-- **A library's npm `"use client"` files are found by resolving its packages as the server bundle
-  does** (`node_modules`, `nodeResolve` on, the default). With `nodeResolve: false` the server
-  bundle resolves packages differently, so a package's own client components may render on the
-  server only.
+- **`<Script strategy="worker">` runs off the main thread only through the app's own
+  Partytown**, as in Next: it needs `nextScriptWorkers` (Next's `experimental.nextScriptWorkers`)
+  and `@qwik.dev/partytown` (or `@builder.io/partytown`) in `node_modules`, else it runs on the
+  main thread as `afterInteractive`. It needs service workers (Partytown's atomics mode, its
+  debug build and the iframes a worker script creates get no Partytown, so an injection cannot
+  use them either), and a worker script inside a `"use cache"` body or a PPR shell runs on the
+  main thread, since that output cannot carry the response's nonce. Partytown's trade-offs
+  apply: a cross-origin script is fetched by the worker and needs CORS, and what a worker script
+  loads is outside the page's `scriptSrc`. SPA mode always uses the main-thread fallback.
 - **`next/og` renders satori's subset** (flexbox, inline `style`, `tw`): the same engine and
   limits as Next. Arbitrary CSS would need a layout engine or a headless browser.
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
   `AsyncContext`, so an unrelated urgent update raised outside an event handler while an async
   transition is pending is treated as a transition. `asyncContext: true` scopes by identity (it
   instruments every client `await`; `yield*` delegation and top-level `await` are not).
-- **`next-intl` formats the common ICU subset.** An unknown number/date skeleton token is
-  ignored, and deeply nested `plural`/`select` is depth-capped (an error, not a wrong render).
-- **`captureOwnerStack()` reports the render-parent chain** (the DevTools panel's), not React's
-  JSX-owner chain: a component passed as `children` through a wrapper is listed under the wrapper.
-  Each frame's location is where the component was declared, and during a server render it
-  returns `null`.
-- **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config
-  (React's `experimental_taint*` are enforced), and Next canary's navigation-stage APIs
-  (`unstable_navigation` / `unstable_prefetch` from `next/cache`; an import fails the build).
+- **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
+  `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
+  a server render it returns `null`.
+- **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
+  (React's `experimental_taint*` are enforced).
 
 ## denext features: scope
 
 ### denext's Deno toolchain
 
-- **Built for five targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
-  Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
-  Vitest/Jest compatibility in `deno test`. That includes Windows on Arm: the `denext` binary
-  is built for it, but its Deno verbs run on the `deno` on your `Path` (the x64 binary, which
-  runs under emulation, gets the x64 toolchain).
+- **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
+  arm64). Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
+  Vitest/Jest compatibility in `deno test`.
+- **Windows on Arm has run on a VM, not yet on Arm64 hardware** (toolchain 2.9.7-denext.21). On
+  a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
+  no GPU) these pass: `denext toolchain install` (`deno --version` reports `2.9.7-denext.21`,
+  `aarch64-pc-windows-msvc`); `desktop run` and `desktop dev` windows on WebView2 and CEF (the page
+  renders and hydrates, closing the window quits the verb cleanly); the desktop kitchen sink's
+  window test on both backends with unsigned builds, the full-app update install, trial and
+  rollback included; the runtime's own e2e suite on both backends, the menu accelerator and
+  context-menu keyboard checks included; a `desktop package --arch arm64` `.msi`, installed per
+  user and per machine, upgraded, launched and uninstalled; and a server binary from
+  `denext build --compile --target aarch64-pc-windows-msvc` (an Arm64 executable that serves
+  pages). Not yet run there: a physical Arm64 PC (GPU rendering), Authenticode-signed builds and
+  the trusted-update checks, and denext's own test suites (CI's `windows-11-arm` job is still
+  optional). A `desktop run` / `dev` window loads the VC++ runtime
+  from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
+  bundle carries the runtime next to its `.exe`.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline
   before either has happened fails to load. The compiled binary embeds every verb.
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
-- **Coverage from a Vitest run doesn't merge with a plain run's.** The Vitest layer changes the
-  code a module emits, so `deno coverage` under-reports a module whose profiles from both kinds
-  of run it merges; report a Vitest run's coverage on its own.
 
 ### Islands, resumability and Cache Components
 
-- **Per-island hydration is a Flight-route feature.** The isomorphic path and SPA mode hydrate
-  as one root; `client:only` skips SSR by definition. In SPA mode the directives defer the
-  component's mount and split its code instead (no server HTML to keep inert): only for a
+- **On an isomorphic route an island hydrates in the page's tree, after the page.** Context
+  reaches it from the page, so the page's own tree hydrates first. Its code splits into a chunk of
+  its own only when the component is imported for directive elements alone, in a module that no
+  Flight route, `global-error` or `instrumentation-client` also reaches, and only in
+  `denext build` / `export`; otherwise (and in `denext dev` and a next-compat drop-in) it stays in
+  the page bundle. A module-level `hydrate` default is not read (only the usage-site directive). A
+  class or `lazy()` component renders eagerly; when split, it holds the page's hydration until its
+  chunk lands, and a `useId` below it may differ from the server's. An `on*Capture` handler in a
+  `client:interaction` island misses the event that woke it. While a split island's chunk loads,
+  the gesture is held at its wrapper and replayed: a capture-phase listener above the island sees
+  it twice. `client:only` skips SSR by definition.
+- **In SPA mode the directives defer the mount, not hydration.** There is no server HTML to keep
+  inert, so the directives defer the component's mount and split its code instead: only for a
   component imported by name, not a member tag or a module-level `hydrate` default; a component
   also used without a directive stays in the main bundle; `client:interaction` needs a
   `client:placeholder` to interact with, and replays the triggering gesture on the element at the
   same position in the component's DOM (its first element when the placeholder's shape differs).
-- **`use cache` can't read request data** (`cookies()`/`headers()`/`connection()`): read it
-  outside and pass the value in.
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have
   flushed); its late `<title>`/`<meta>` stays inline.
 - **`searchParams` read outside a hole with `cacheKeyParams` set** can reflect another request;
@@ -76,17 +93,37 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   function, a class instance) stays in its process. A view resumed elsewhere carries on from the
   model as last stored, while the parked copy runs on where it was until its window ends. With
   JavaScript disabled only the first render works.
-- **Channels carry state, not a log:** no replay on reconnect, at-most-once, latest-wins, 16 ms
-  coalescing, `seq` ordered per instance. Re-authorization is lazy (`authTtlSeconds`;
+- **Channels carry state unless they keep a log:** without `history`, no replay on reconnect,
+  at-most-once, latest-wins, 16 ms coalescing, `seq` ordered per instance. A log replays what
+  it retains (`size` per key, `ttlSeconds`); the in-memory one is per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
-- **Only GET/HEAD calls batch; `useApi({ suspense: true })` seeds hydration on Flight routes
-  only** (elsewhere it fetches on mount).
+- **A batched call carries no custom headers but `x-csrf-token`** (one that needs another goes as
+  its own request), and **`useApi({ suspense: true })` is not seeded from a Cache Components
+  (PPR) shell of a non-Flight route** (it fetches on mount there).
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
   custom middleware's responses appear only as `default` until it is tagged with
   `documentsErrors`; `scalar` loads from a CDN (`swagger` is vendored).
 - **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
   `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
   dev-server restart after an edit (a module-path `schema` always reloads).
+
+### Gleam and Lustre (`denext/gleam`)
+
+- **A Lustre server component (`defineLustreView`) resumes only on the instance that ran it:**
+  Lustre's model is an arbitrary Gleam value, so it is never written to the shared view store. A
+  reconnect to the same instance within `live.limits.viewResumeSeconds` reattaches the running
+  runtime; a reconnect to another instance, or a later one, runs `init` again. The page's first
+  paint is replaced by Lustre's own render when the view mounts (not adopted), and Lustre's
+  contexts (`provide` / `subscribe`) and client-sent attribute or property changes are not
+  carried over Live.
+- **A stopped Lustre app's own effects keep running:** Lustre gives no way to cancel an app's
+  timers or subscriptions from outside. A stopped server component drops what they dispatch;
+  `lustreIsland` clears its root on unmount, but `lustre.shutdown()` does nothing for a client app
+  in Lustre 5.7.1, so they still dispatch into the detached runtime.
+- **denext fixes Lustre 5.7.1's server runtime only:** the post-build fix applies to that version's
+  exact file; another Lustre version or a changed file is left as it is, with a warning.
+- **The Lustre helpers need the App Router without `compatibilityMode`:** in a compat build
+  `denext/gleam` is a server-only subpath.
 
 ### First-party auth (`denextAuth`)
 
@@ -123,7 +160,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   has no id, so an IdP's LogoutRequest naming one SessionIndex ends all of that user's sessions
   signed in before it (a `sessionStore` ends exactly the named one).
 
-### `next-auth` (Auth.js v5) compat
+### `next-auth` (Auth.js v5 and NextAuth.js v4) compat
 
 - **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, GitLab, X (Twitter),
   LinkedIn, Facebook, Slack, Twitch, Spotify, Okta, Auth0, Keycloak, Cognito, Zoom, Notion,
@@ -137,8 +174,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   warning and `revokeAllSessions()` can't end its database sessions. Password hashes are not
   stored through it, and database sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
   adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
-- **v4 APIs** (`next-auth/next`, `getServerSession`, `next-auth/middleware`'s `withAuth`) are
-  not shipped.
+- **NextAuth.js v4:** `next-auth/middleware` reads the JWT strategy's token only, as v4 does, so
+  with `session: { strategy: "database" }` every gated request is sent to sign in. A Pages API
+  route's `NextAuth(req, res, …)` takes the body the Pages Router already parsed (string fields
+  only). v4's `next-auth/client` (v3's API) and the `next-auth/providers/*` modules this list
+  doesn't name are not shipped.
 
 ### Backend (`@denext/backend`)
 
@@ -182,9 +222,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI. next-compat builds and the Pages Router are untested in a
-  binary. The binary prints Deno's one-line `request.signal` legacy-abort notice on the first
-  request: a compiled binary does not take `--unstable-no-legacy-abort`, the toolchain's `denort`
-  included (it is cosmetic: denext handles both abort behaviours).
+  binary.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -194,6 +232,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
+- **`createTestApp` runs plugins as `denext dev` does, not as `denext start` does:** plugin
+  build steps don't run, so a route served from build output renders on demand (a Pages Router
+  `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
+  on first use). `jobs/` and `services/` are not started.
 - **The first-party Markdown renderer escapes raw HTML** (it is not passed through). Use an `.mdx`
   entry for raw HTML or components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
@@ -204,11 +246,28 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Remix and React Router
 
-- **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
-  `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
+- **Some `getLoadContext` values stay `TODO(denext migrate)` notes after migration.** Request reads,
+  cookies, the client address, `req.session`, `req.user` and what an Express middleware set are
+  mapped, but a value built from a top-level declaration of the server file or a middleware's local
+  variable, a request field with no Fetch equivalent, and `req` / `res` passed on whole are left as
+  located notes. A session the old server's store held does not carry over, `cspNonce` is
+  `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **Prisma auto-migration rewrites runtime source only** (seed and test tooling keep the native
-  client); non-SQLite datasources need their own driver adapter.
+- **Prisma auto-migration wires SQLite, Postgres and MySQL only:** a `sqlserver`, `mongodb` or
+  `cockroachdb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
+  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). Postgres runs over npm
+  `pg`, not denext's `Deno.SQL`, whose results carry no column types for a Prisma adapter.
+
+### TanStack Start
+
+- **`@denext/tanstack-start`:** an import-protection violation always fails the build, in
+  `denext dev` too, where Start's dev server mocks the import and warns (Start's `behavior`,
+  `mockAccess`, `log` and `maxTraceDepth` options are not applied). `denext export` writes no
+  sitemap (Start's `sitemap` and `spa` options are not applied), and with
+  `generateRouteTree: false` it prerenders only the `pages` listed and their links, refusing no
+  route by kind. The deploy manifest lists App Router routes only, so the `static` deploy preset
+  does not refuse a Start app's server routes; `denext export` lists them. The server render and the client bundle are compiled onto denext's React, so an
+  app's own `react` import must resolve to denext (`compatibilityMode`).
 
 ## Mobile (Capacitor shell)
 
@@ -237,6 +296,15 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Native context menus differ per OS:** iOS lifts a preview only for a bound element
   (`useContextMenu`); Android's `PopupMenu` flattens submenus into groups and draws no icons or
   title; the Deno Desktop menu draws no destructive style or icons.
+- **Background audio (`denext mobile add background-audio`) and `pickMedia`** are compiled and
+  unit-tested, not yet run on a device (background playback, the lock-screen and notification
+  controls, multi-select and video picks). `setAudioSession`'s `interruption` applies on iOS only
+  (Android's WebView takes audio focus itself); the iOS lock screen shows controls only for a
+  non-mixing session; Android starts the media foreground service only with the app in the
+  foreground (Android 12+) and keeps it until `clearNowPlaying()`. expo-audio's other audio-mode
+  fields (silent mode, earpiece routing, background recording) are accepted without effect. A
+  native `selectionLimit` holds on iOS and Android 13+ (elsewhere, and on the web, the result is
+  cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+.
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
@@ -265,27 +333,32 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.
-- **`LayoutAnimation` animates positions, not sizes**, takes the next DOM change as the commit,
-  and skips pages over 3,000 elements. Snap props are CSS scroll snap.
-- **`adjustsFontSizeToFit` shrinks the outer `Text` only** (a nested `Text` with its own
-  `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size).
+- **`LayoutAnimation` resizes by scaling** (FLIP: a resized view's content is drawn stretched
+  while the animation plays, where React Native lays it out at each size), takes the next DOM
+  change as the commit, and skips pages over 3,000 elements. Snap props are CSS scroll snap.
+- **`adjustsFontSizeToFit` needs a box to overflow** (`numberOfLines` or a fixed size).
   `ellipsizeMode="head"` / `"middle"` work on one plain-text line only, and `onTextLayout`'s font
   metrics are estimated from the font size. An `Image` with `crossOrigin` / `referrerPolicy` is
   drawn as an `<img>`, which doesn't draw `tintColor`.
-- **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
-  added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
+- Fast Refresh reloads on a new dependency import, an added or removed route or a lockfile
+  change. Resolution variants (`@2x`) are picked at load.
+- **On the App Router** (`reactNative` without `mode: "spa"`): expo-router is not available (it
+  is a router, and `app/` is the App Router's; an import fails the build). react-native-web's
+  server style sheet holds every style the process has created, and a module first loaded inside
+  a streamed Suspense boundary adds its rules on the client only. `dev` uses the bundled loop
+  (rebuild and reload, no per-module hot swap). `fonts`, `rootStyle` and uniwind are the SPA
+  shell's; `compatibilityMode: false` cannot be combined with it.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
   (`getWorkletContext` is undefined) and camera textures (`createCameraTextureAsync` rejects):
   `GLView` is the page's WebGL 2. Barometer and pedometer readings, the carrier facts of
   `expo-cellular`, Low Power Mode, and attachments on `expo-sms` / `expo-mail-composer` (an
   `sms:` / `mailto:` URL cannot carry them) are not available.
-- **Can't (the pinned plugin has no call for it):** `expo-calendar` attendees, looking an event
-  up by id, opening one in the calendar app, changing a single occurrence or setting its time
-  zone; `expo-contacts` containers and change events, and on Android an update keeps only names,
-  company, job title, note, emails and phones (addresses, URLs, the birthday and the photo are
-  dropped); `expo-print`'s `printToFileAsync` (HTML to PDF) and `selectPrinterAsync`; Android's
-  system brightness and brightness mode in `expo-brightness` (no `WRITE_SETTINGS`; brightness
-  listeners never fire). These reject with `ERR_UNAVAILABLE`.
+- **Not verified on a device yet:** the `DenextCalendar`, `DenextContacts`, `DenextPrint` and
+  `DenextBrightness` plugins `denext mobile add calendar | contacts | print | brightness` write
+  are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
+  yet run on a phone. On Android, splitting a repeating event from one occurrence on
+  (`updateEventAsync` with `instanceStartDate` and `futureEvents`) is refused, and
+  `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web
@@ -340,10 +413,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **CEF on Linux has no spellcheck unless the app ships its dictionaries** (runtime
-  2.9.7-denext.11): the runtime makes no network requests of its own, so it no longer downloads
-  Hunspell dictionaries from Google. Put the `.bdic` files in `<data dir>/CEF/Dictionaries` to
-  turn spellcheck on for those languages. Windows and macOS use the OS spellchecker, unchanged.
+- **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
+  runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
+  ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
+  the `.bdic` files in `dictionaries/` beside the host executable. Windows and macOS use the OS
+  spellchecker, unchanged.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are

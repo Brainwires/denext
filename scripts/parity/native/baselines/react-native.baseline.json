@@ -1,58 +1,113 @@
 {
   "versions": {
-    "react-native": "0.86.3"
+    "react-native": "0.88.0"
   },
-  "capturedAt": "2026-09-25T04:23:38.211Z",
+  "capturedAt": "2026-10-17T14:13:02.069Z",
   "surfaces": [
     {
       "specifier": "react-native",
       "resolved": true,
       "symbols": {
-        "NativeComponentRegistry": {
-          "name": "NativeComponentRegistry",
-          "kind": "value",
+        "unstable_batchedUpdates": {
+          "name": "unstable_batchedUpdates",
+          "kind": "function",
           "isValue": true,
           "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "ActivityIndicator": {
+          "name": "ActivityIndicator",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Button": {
+          "name": "Button",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "DrawerLayoutAndroid": {
+          "name": "DrawerLayoutAndroid",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
           "members": [
-            "get",
-            "getWithFallback_DEPRECATED",
-            "setRuntimeConfigProvider",
-            "unstable_hasStaticViewConfig"
+            "prototype"
           ]
         },
-        "Systrace": {
-          "name": "Systrace",
-          "kind": "value",
+        "FlatList": {
+          "name": "FlatList",
+          "kind": "class",
           "isValue": true,
-          "isType": false,
+          "isType": true,
           "members": [
-            "beginAsyncEvent",
-            "beginEvent",
-            "counterEvent",
-            "endAsyncEvent",
-            "endEvent",
-            "isEnabled",
-            "setEnabled"
+            "prototype"
           ]
         },
-        "TurboModuleRegistry": {
-          "name": "TurboModuleRegistry",
-          "kind": "value",
+        "Image": {
+          "name": "Image",
+          "kind": "function",
           "isValue": true,
-          "isType": false,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ImageBackground": {
+          "name": "ImageBackground",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
           "members": [
-            "get",
-            "getEnforcing"
+            "prototype"
           ]
         },
-        "CodegenTypes": {
-          "name": "CodegenTypes",
-          "kind": "value",
+        "InputAccessoryView": {
+          "name": "InputAccessoryView",
+          "kind": "typeAlias",
           "isValue": true,
-          "isType": false
+          "isType": true
         },
-        "codegenNativeCommands": {
-          "name": "codegenNativeCommands",
+        "KeyboardAvoidingView": {
+          "name": "KeyboardAvoidingView",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "experimental_LayoutConformance": {
+          "name": "experimental_LayoutConformance",
           "kind": "function",
           "isValue": true,
           "isType": false,
@@ -63,21 +118,304 @@
               "restParam": false
             }
           ],
-          "typeParamCount": 1
+          "typeParamCount": 0
         },
-        "codegenNativeComponent": {
-          "name": "codegenNativeComponent",
+        "Modal": {
+          "name": "Modal",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Pressable": {
+          "name": "Pressable",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ProgressBarAndroid": {
+          "name": "ProgressBarAndroid",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "RefreshControl": {
+          "name": "RefreshControl",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "SafeAreaView": {
+          "name": "SafeAreaView",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ScrollView": {
+          "name": "ScrollView",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "SectionList": {
+          "name": "SectionList",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "StatusBar": {
+          "name": "StatusBar",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "currentHeight",
+            "popStackEntry",
+            "prototype",
+            "pushStackEntry",
+            "replaceStackEntry",
+            "setBarStyle",
+            "setHidden"
+          ]
+        },
+        "Switch": {
+          "name": "Switch",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Text": {
+          "name": "Text",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_NativeText": {
+          "name": "unstable_NativeText",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_TextAncestorContext": {
+          "name": "unstable_TextAncestorContext",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true
+        },
+        "TextInput": {
+          "name": "TextInput",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "TouchableHighlight": {
+          "name": "TouchableHighlight",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "TouchableNativeFeedback": {
+          "name": "TouchableNativeFeedback",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Ripple",
+            "SelectableBackground",
+            "SelectableBackgroundBorderless",
+            "canUseNativeForeground",
+            "prototype"
+          ]
+        },
+        "TouchableOpacity": {
+          "name": "TouchableOpacity",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "TouchableWithoutFeedback": {
+          "name": "TouchableWithoutFeedback",
           "kind": "function",
           "isValue": true,
           "isType": false,
           "callSignatures": [
             {
-              "arity": 2,
+              "arity": 1,
               "requiredArity": 1,
               "restParam": false
             }
           ],
-          "typeParamCount": 1
+          "typeParamCount": 0
+        },
+        "View": {
+          "name": "View",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_NativeView": {
+          "name": "unstable_NativeView",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "VirtualizedList": {
+          "name": "VirtualizedList",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "getDerivedStateFromProps",
+            "prototype"
+          ]
+        },
+        "VirtualizedSectionList": {
+          "name": "VirtualizedSectionList",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "AccessibilityInfo": {
+          "name": "AccessibilityInfo",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addEventListener",
+            "announceForAccessibility",
+            "announceForAccessibilityWithOptions",
+            "getRecommendedTimeoutMillis",
+            "isAccessibilityServiceEnabled",
+            "isBoldTextEnabled",
+            "isDarkerSystemColorsEnabled",
+            "isGrayscaleEnabled",
+            "isHighTextContrastEnabled",
+            "isInvertColorsEnabled",
+            "isReduceMotionEnabled",
+            "isReduceTransparencyEnabled",
+            "isScreenReaderEnabled",
+            "prefersCrossFadeTransitions",
+            "sendAccessibilityEvent",
+            "setAccessibilityFocus"
+          ]
         },
         "ActionSheetIOS": {
           "name": "ActionSheetIOS",
@@ -92,12 +430,13 @@
         },
         "Alert": {
           "name": "Alert",
-          "kind": "typeAlias",
+          "kind": "class",
           "isValue": true,
           "isType": true,
           "members": [
             "alert",
-            "prompt"
+            "prompt",
+            "prototype"
           ]
         },
         "Animated": {
@@ -106,19 +445,12 @@
           "isValue": true,
           "isType": true,
           "members": [
-            "Animated",
-            "AnimatedAddition",
-            "AnimatedColor",
-            "AnimatedDiffClamp",
-            "AnimatedDivision",
-            "AnimatedInterpolation",
-            "AnimatedModulo",
-            "AnimatedMultiplication",
-            "AnimatedNode",
-            "AnimatedSubtraction",
-            "AnimatedWithChildren",
+            "Color",
+            "Event",
             "FlatList",
             "Image",
+            "Interpolation",
+            "Node",
             "ScrollView",
             "SectionList",
             "Text",
@@ -126,12 +458,14 @@
             "ValueXY",
             "View",
             "add",
+            "attachNativeEvent",
             "createAnimatedComponent",
             "decay",
             "delay",
             "diffClamp",
             "divide",
             "event",
+            "forkEvent",
             "loop",
             "modulo",
             "multiply",
@@ -140,52 +474,183 @@
             "spring",
             "stagger",
             "subtract",
-            "timing"
+            "timing",
+            "unforkEvent"
           ]
         },
-        "_View": {
-          "name": "_View",
-          "kind": "value",
+        "Appearance": {
+          "name": "Appearance",
+          "kind": "namespace",
           "isValue": true,
-          "isType": false,
+          "isType": true,
           "members": [
-            "forceTouchAvailable",
-            "prototype"
+            "addChangeListener",
+            "getColorScheme",
+            "setColorScheme"
           ]
         },
-        "_Image": {
-          "name": "_Image",
-          "kind": "value",
+        "AppRegistry": {
+          "name": "AppRegistry",
+          "kind": "namespace",
           "isValue": true,
-          "isType": false,
+          "isType": true,
           "members": [
-            "abortPrefetch",
-            "getSize",
-            "getSizeWithHeaders",
-            "prefetch",
-            "prefetchWithMetadata",
+            "cancelHeadlessTask",
+            "getAppKeys",
+            "getRegistry",
+            "getRunnable",
+            "getSectionKeys",
+            "getSections",
+            "registerCancellableHeadlessTask",
+            "registerComponent",
+            "registerConfig",
+            "registerHeadlessTask",
+            "registerRunnable",
+            "registerSection",
+            "runApplication",
+            "setComponentProviderInstrumentationHook",
+            "setRootViewStyleProvider",
+            "setSurfaceProps",
+            "setWrapperComponentProvider",
+            "startHeadlessTask",
+            "unmountApplicationComponentAtRootTag"
+          ]
+        },
+        "AppState": {
+          "name": "AppState",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addEventListener",
+            "currentState",
+            "isAvailable"
+          ]
+        },
+        "AssetRegistry": {
+          "name": "AssetRegistry",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "getAssetByID",
+            "registerAsset"
+          ]
+        },
+        "BackHandler": {
+          "name": "BackHandler",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addEventListener",
+            "exitApp"
+          ]
+        },
+        "Clipboard": {
+          "name": "Clipboard",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "getString",
+            "setString"
+          ]
+        },
+        "codegenNativeComponent": {
+          "name": "codegenNativeComponent",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "codegenNativeCommands": {
+          "name": "codegenNativeCommands",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "DeviceEventEmitter": {
+          "name": "DeviceEventEmitter",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addListener",
+            "emit",
+            "listenerCount",
+            "removeAllListeners"
+          ]
+        },
+        "DeviceInfo": {
+          "name": "DeviceInfo",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "getConstants"
+          ]
+        },
+        "DevMenu": {
+          "name": "DevMenu",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "show"
+          ]
+        },
+        "DevSettings": {
+          "name": "DevSettings",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addMenuItem",
+            "onFastRefresh",
+            "reload"
+          ]
+        },
+        "Dimensions": {
+          "name": "Dimensions",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addEventListener",
+            "get",
             "prototype",
-            "queryCache",
-            "resolveAssetSource"
+            "set"
           ]
         },
-        "_Text": {
-          "name": "_Text",
-          "kind": "value",
+        "DynamicColorIOS": {
+          "name": "DynamicColorIOS",
+          "kind": "function",
           "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "_ScrollView": {
-          "name": "_ScrollView",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         },
         "Easing": {
           "name": "Easing",
@@ -210,6 +675,420 @@
             "sin",
             "step0",
             "step1"
+          ]
+        },
+        "findNodeHandle": {
+          "name": "findNodeHandle",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "I18nManager": {
+          "name": "I18nManager",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "allowRTL",
+            "doLeftAndRightSwapInRTL",
+            "forceRTL",
+            "getConstants",
+            "isRTL",
+            "swapLeftAndRightInRTL"
+          ]
+        },
+        "Keyboard": {
+          "name": "Keyboard",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addListener",
+            "dismiss",
+            "isVisible",
+            "metrics",
+            "removeAllListeners",
+            "scheduleLayoutAnimation"
+          ]
+        },
+        "LayoutAnimation": {
+          "name": "LayoutAnimation",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Presets",
+            "Properties",
+            "Types",
+            "checkConfig",
+            "configureNext",
+            "create",
+            "easeInEaseOut",
+            "linear",
+            "setEnabled",
+            "spring"
+          ]
+        },
+        "Linking": {
+          "name": "Linking",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addEventListener",
+            "addListener",
+            "canOpenURL",
+            "emit",
+            "getInitialURL",
+            "listenerCount",
+            "openSettings",
+            "openURL",
+            "removeAllListeners",
+            "sendIntent"
+          ]
+        },
+        "LogBox": {
+          "name": "LogBox",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addConsoleLog",
+            "addException",
+            "addLog",
+            "clearAllLogs",
+            "ignoreAllLogs",
+            "ignoreLogs",
+            "install",
+            "isInstalled",
+            "uninstall"
+          ]
+        },
+        "NativeAppEventEmitter": {
+          "name": "NativeAppEventEmitter",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "addListener",
+            "emit",
+            "listenerCount",
+            "removeAllListeners"
+          ]
+        },
+        "NativeComponentRegistry": {
+          "name": "NativeComponentRegistry",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "get",
+            "getWithFallback_DEPRECATED",
+            "setRuntimeConfigProvider",
+            "unstable_hasStaticViewConfig"
+          ]
+        },
+        "NativeEventEmitter": {
+          "name": "NativeEventEmitter",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "NativeModules": {
+          "name": "NativeModules",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true
+        },
+        "Networking": {
+          "name": "Networking",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "abortRequest",
+            "addListener",
+            "clearCookies",
+            "sendRequest"
+          ]
+        },
+        "PanResponder": {
+          "name": "PanResponder",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "create"
+          ]
+        },
+        "PermissionsAndroid": {
+          "name": "PermissionsAndroid",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "PERMISSIONS",
+            "RESULTS",
+            "check",
+            "checkPermission",
+            "request",
+            "requestMultiple",
+            "requestPermission"
+          ]
+        },
+        "PixelRatio": {
+          "name": "PixelRatio",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "get",
+            "getFontScale",
+            "getPixelSizeForLayoutSize",
+            "prototype",
+            "roundToNearestPixel",
+            "startDetecting"
+          ]
+        },
+        "Platform": {
+          "name": "Platform",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "OS",
+            "Version",
+            "constants",
+            "isDisableAnimations",
+            "isTV",
+            "isTesting",
+            "select"
+          ]
+        },
+        "PlatformColor": {
+          "name": "PlatformColor",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PushNotificationIOS": {
+          "name": "PushNotificationIOS",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "FetchResult",
+            "abandonPermissions",
+            "addEventListener",
+            "cancelAllLocalNotifications",
+            "cancelLocalNotifications",
+            "checkPermissions",
+            "getApplicationIconBadgeNumber",
+            "getAuthorizationStatus",
+            "getDeliveredNotifications",
+            "getInitialNotification",
+            "getScheduledLocalNotifications",
+            "presentLocalNotification",
+            "prototype",
+            "removeAllDeliveredNotifications",
+            "removeDeliveredNotifications",
+            "removeEventListener",
+            "requestPermissions",
+            "scheduleLocalNotification",
+            "setApplicationIconBadgeNumber"
+          ]
+        },
+        "processColor": {
+          "name": "processColor",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "registerCallableModule": {
+          "name": "registerCallableModule",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requireNativeComponent": {
+          "name": "requireNativeComponent",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "ReactNativeVersion": {
+          "name": "ReactNativeVersion",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "getVersionString",
+            "major",
+            "minor",
+            "patch",
+            "prerelease",
+            "prototype"
+          ]
+        },
+        "RootTagContext": {
+          "name": "RootTagContext",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true
+        },
+        "Settings": {
+          "name": "Settings",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "clearWatch",
+            "get",
+            "set",
+            "watchKeys"
+          ]
+        },
+        "Share": {
+          "name": "Share",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "dismissedAction",
+            "prototype",
+            "share",
+            "sharedAction"
+          ]
+        },
+        "StyleSheet": {
+          "name": "StyleSheet",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "absoluteFill",
+            "compose",
+            "create",
+            "flatten",
+            "hairlineWidth",
+            "setStyleAttributePreprocessor"
+          ]
+        },
+        "Systrace": {
+          "name": "Systrace",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "beginAsyncEvent",
+            "beginEvent",
+            "counterEvent",
+            "endAsyncEvent",
+            "endEvent",
+            "isEnabled",
+            "setEnabled",
+            "trace"
+          ]
+        },
+        "ToastAndroid": {
+          "name": "ToastAndroid",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BOTTOM",
+            "CENTER",
+            "LONG",
+            "SHORT",
+            "TOP",
+            "show",
+            "showWithGravity",
+            "showWithGravityAndOffset"
+          ]
+        },
+        "TurboModuleRegistry": {
+          "name": "TurboModuleRegistry",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "get",
+            "getEnforcing"
+          ]
+        },
+        "UIManager": {
+          "name": "UIManager",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "blur",
+            "clearJSResponder",
+            "configureNextLayoutAnimation",
+            "createView",
+            "dispatchViewManagerCommand",
+            "findSubviewIn",
+            "focus",
+            "getConstants",
+            "getConstantsForViewManager",
+            "getDefaultEventTypes",
+            "getViewManagerConfig",
+            "hasViewManagerConfig",
+            "lazilyLoadView",
+            "manageChildren",
+            "measure",
+            "measureInWindow",
+            "measureLayout",
+            "measureLayoutRelativeToParent",
+            "sendAccessibilityEvent",
+            "setChildren",
+            "setJSResponder",
+            "setLayoutAnimationEnabledExperimental",
+            "updateView",
+            "viewIsDescendantOf"
           ]
         },
         "useAnimatedValue": {
@@ -254,807 +1133,8 @@
           ],
           "typeParamCount": 0
         },
-        "AppState": {
-          "name": "AppState",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "addEventListener",
-            "currentState",
-            "isAvailable"
-          ]
-        },
-        "NativeModules": {
-          "name": "NativeModules",
-          "kind": "value",
-          "isValue": true,
-          "isType": false
-        },
-        "AccessibilityInfo": {
-          "name": "AccessibilityInfo",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "addEventListener",
-            "announceForAccessibility",
-            "announceForAccessibilityWithOptions",
-            "getRecommendedTimeoutMillis",
-            "isAccessibilityServiceEnabled",
-            "isBoldTextEnabled",
-            "isDarkerSystemColorsEnabled",
-            "isGrayscaleEnabled",
-            "isHighTextContrastEnabled",
-            "isInvertColorsEnabled",
-            "isReduceMotionEnabled",
-            "isReduceTransparencyEnabled",
-            "isScreenReaderEnabled",
-            "prefersCrossFadeTransitions",
-            "sendAccessibilityEvent",
-            "setAccessibilityFocus"
-          ]
-        },
-        "ActivityIndicatorComponent": {
-          "name": "ActivityIndicatorComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ActivityIndicatorBase": {
-          "name": "ActivityIndicatorBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ActivityIndicator": {
-          "name": "ActivityIndicator",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "Clipboard": {
-          "name": "Clipboard",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "getString",
-            "setString"
-          ]
-        },
-        "DrawerLayoutAndroidComponent": {
-          "name": "DrawerLayoutAndroidComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "DrawerLayoutAndroidBase": {
-          "name": "DrawerLayoutAndroidBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "DrawerLayoutAndroid": {
-          "name": "DrawerLayoutAndroid",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "Keyboard": {
-          "name": "Keyboard",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "addListener",
-            "dismiss",
-            "emit",
-            "isVisible",
-            "listenerCount",
-            "metrics",
-            "removeAllListeners",
-            "scheduleLayoutAnimation"
-          ]
-        },
-        "KeyboardAvoidingViewComponent": {
-          "name": "KeyboardAvoidingViewComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "KeyboardAvoidingViewBase": {
-          "name": "KeyboardAvoidingViewBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "KeyboardAvoidingView": {
-          "name": "KeyboardAvoidingView",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "experimental_LayoutConformance": {
-          "name": "experimental_LayoutConformance",
-          "kind": "value",
-          "isValue": true,
-          "isType": false
-        },
-        "Pressable": {
-          "name": "Pressable",
-          "kind": "value",
-          "isValue": true,
-          "isType": false
-        },
-        "ProgressBarAndroidComponent": {
-          "name": "ProgressBarAndroidComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ProgressBarAndroidBase": {
-          "name": "ProgressBarAndroidBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ProgressBarAndroid": {
-          "name": "ProgressBarAndroid",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "RefreshControlComponent": {
-          "name": "RefreshControlComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "RefreshControlBase": {
-          "name": "RefreshControlBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "RefreshControl": {
-          "name": "RefreshControl",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "SIZE",
-            "prototype"
-          ]
-        },
-        "SafeAreaViewComponent": {
-          "name": "SafeAreaViewComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "SafeAreaViewBase": {
-          "name": "SafeAreaViewBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "SafeAreaView": {
-          "name": "SafeAreaView",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ScrollViewComponent": {
-          "name": "ScrollViewComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ScrollViewBase": {
-          "name": "ScrollViewBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ScrollView": {
-          "name": "ScrollView",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "StatusBar": {
-          "name": "StatusBar",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "currentHeight",
-            "popStackEntry",
-            "prototype",
-            "pushStackEntry",
-            "replaceStackEntry",
-            "setBackgroundColor",
-            "setBarStyle",
-            "setHidden",
-            "setNetworkActivityIndicatorVisible",
-            "setTranslucent"
-          ]
-        },
-        "SwitchComponent": {
-          "name": "SwitchComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "SwitchBase": {
-          "name": "SwitchBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "Switch": {
-          "name": "Switch",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "InputAccessoryView": {
-          "name": "InputAccessoryView",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TextInputComponent": {
-          "name": "TextInputComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TextInputBase": {
-          "name": "TextInputBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TextInput": {
-          "name": "TextInput",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "State",
-            "prototype"
-          ]
-        },
-        "ToastAndroid": {
-          "name": "ToastAndroid",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "BOTTOM",
-            "CENTER",
-            "LONG",
-            "SHORT",
-            "TOP",
-            "show",
-            "showWithGravity",
-            "showWithGravityAndOffset"
-          ]
-        },
-        "Touchable": {
-          "name": "Touchable",
-          "kind": "interface",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "TOUCH_TARGET_DEBUG",
-            "renderDebugView"
-          ]
-        },
-        "TouchableHighlight": {
-          "name": "TouchableHighlight",
-          "kind": "value",
-          "isValue": true,
-          "isType": false
-        },
-        "TouchableNativeFeedbackComponent": {
-          "name": "TouchableNativeFeedbackComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TouchableNativeFeedbackBase": {
-          "name": "TouchableNativeFeedbackBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TouchableNativeFeedback": {
-          "name": "TouchableNativeFeedback",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "Ripple",
-            "SelectableBackground",
-            "SelectableBackgroundBorderless",
-            "canUseNativeForeground",
-            "prototype"
-          ]
-        },
-        "TouchableOpacity": {
-          "name": "TouchableOpacity",
-          "kind": "value",
-          "isValue": true,
-          "isType": false
-        },
-        "TouchableWithoutFeedbackComponent": {
-          "name": "TouchableWithoutFeedbackComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TouchableWithoutFeedbackBase": {
-          "name": "TouchableWithoutFeedbackBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TouchableWithoutFeedback": {
-          "name": "TouchableWithoutFeedback",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ViewComponent": {
-          "name": "ViewComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ViewBase": {
-          "name": "ViewBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "View": {
-          "name": "View",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "forceTouchAvailable",
-            "prototype"
-          ]
-        },
-        "Button": {
-          "name": "Button",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "registerCallableModule": {
-          "name": "registerCallableModule",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 2,
-              "requiredArity": 2,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "NativeEventEmitter": {
-          "name": "NativeEventEmitter",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "DeviceEventEmitter": {
-          "name": "DeviceEventEmitter",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "addListener",
-            "emit",
-            "listenerCount",
-            "removeAllListeners",
-            "sharedSubscriber"
-          ]
-        },
-        "NativeAppEventEmitter": {
-          "name": "NativeAppEventEmitter",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "addListener",
-            "emit",
-            "listenerCount",
-            "removeAllListeners",
-            "sharedSubscriber"
-          ]
-        },
-        "ImageComponent": {
-          "name": "ImageComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ImageBase": {
-          "name": "ImageBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "Image": {
-          "name": "Image",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "abortPrefetch",
-            "getSize",
-            "getSizeWithHeaders",
-            "prefetch",
-            "prefetchWithMetadata",
-            "prototype",
-            "queryCache",
-            "resolveAssetSource"
-          ]
-        },
-        "ImageBackgroundComponent": {
-          "name": "ImageBackgroundComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ImageBackgroundBase": {
-          "name": "ImageBackgroundBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "ImageBackground": {
-          "name": "ImageBackground",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "InteractionManager": {
-          "name": "InteractionManager",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "Events",
-            "addListener",
-            "clearInteractionHandle",
-            "createInteractionHandle",
-            "runAfterInteractions",
-            "setDeadline"
-          ]
-        },
-        "PanResponder": {
-          "name": "PanResponder",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "create"
-          ]
-        },
-        "LayoutAnimation": {
-          "name": "LayoutAnimation",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "Presets",
-            "Properties",
-            "Types",
-            "configChecker",
-            "configureNext",
-            "create",
-            "easeInEaseOut",
-            "linear",
-            "spring"
-          ]
-        },
-        "Linking": {
-          "name": "Linking",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "addEventListener",
-            "addListener",
-            "canOpenURL",
-            "emit",
-            "getInitialURL",
-            "listenerCount",
-            "openSettings",
-            "openURL",
-            "removeAllListeners",
-            "sendIntent"
-          ]
-        },
-        "FlatListComponent": {
-          "name": "FlatListComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "FlatList": {
-          "name": "FlatList",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "SectionListComponent": {
-          "name": "SectionListComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "SectionList": {
-          "name": "SectionList",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "VirtualizedList": {
-          "name": "VirtualizedList",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "LogBox": {
-          "name": "LogBox",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "ignoreAllLogs",
-            "ignoreLogs",
-            "install",
-            "uninstall"
-          ]
-        },
-        "Modal": {
-          "name": "Modal",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "PermissionsAndroid": {
-          "name": "PermissionsAndroid",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "PERMISSIONS",
-            "RESULTS",
-            "check",
-            "checkPermission",
-            "request",
-            "requestMultiple",
-            "requestPermission"
-          ]
-        },
-        "PushNotificationIOS": {
-          "name": "PushNotificationIOS",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "FetchResult",
-            "abandonPermissions",
-            "addEventListener",
-            "cancelAllLocalNotifications",
-            "cancelLocalNotifications",
-            "checkPermissions",
-            "getApplicationIconBadgeNumber",
-            "getDeliveredNotifications",
-            "getInitialNotification",
-            "getScheduledLocalNotifications",
-            "presentLocalNotification",
-            "removeAllDeliveredNotifications",
-            "removeDeliveredNotifications",
-            "removeEventListener",
-            "requestPermissions",
-            "scheduleLocalNotification",
-            "setApplicationIconBadgeNumber"
-          ]
-        },
-        "AppRegistry": {
-          "name": "AppRegistry",
-          "kind": "namespace",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "cancelHeadlessTask",
-            "getAppKeys",
-            "getRegistry",
-            "getRunnable",
-            "getSectionKeys",
-            "getSections",
-            "registerCancellableHeadlessTask",
-            "registerComponent",
-            "registerConfig",
-            "registerHeadlessTask",
-            "registerRunnable",
-            "registerSection",
-            "runApplication",
-            "setComponentProviderInstrumentationHook",
-            "setRootViewStyleProvider",
-            "setSurfaceProps",
-            "setWrapperComponentProvider",
-            "startHeadlessTask",
-            "unmountApplicationComponentAtRootTag"
-          ]
-        },
-        "I18nManager": {
-          "name": "I18nManager",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "allowRTL",
-            "doLeftAndRightSwapInRTL",
-            "forceRTL",
-            "getConstants",
-            "isRTL",
-            "swapLeftAndRightInRTL"
-          ]
-        },
-        "findNodeHandle": {
-          "name": "findNodeHandle",
+        "usePressability": {
+          "name": "usePressability",
           "kind": "function",
           "isValue": true,
           "isType": false,
@@ -1066,153 +1146,6 @@
             }
           ],
           "typeParamCount": 0
-        },
-        "RootTagContext": {
-          "name": "RootTagContext",
-          "kind": "value",
-          "isValue": true,
-          "isType": false
-        },
-        "UIManager": {
-          "name": "UIManager",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "dispatchViewManagerCommand",
-            "getViewManagerConfig",
-            "hasViewManagerConfig",
-            "measure",
-            "measureInWindow",
-            "measureLayout",
-            "setLayoutAnimationEnabledExperimental"
-          ]
-        },
-        "requireNativeComponent": {
-          "name": "requireNativeComponent",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 1
-        },
-        "Settings": {
-          "name": "Settings",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "clearWatch",
-            "get",
-            "set",
-            "watchKeys"
-          ]
-        },
-        "Share": {
-          "name": "Share",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "dismissedAction",
-            "share",
-            "sharedAction"
-          ]
-        },
-        "DynamicColorIOS": {
-          "name": "DynamicColorIOS",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "PlatformColor": {
-          "name": "PlatformColor",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 0,
-              "restParam": true
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "StyleSheet": {
-          "name": "StyleSheet",
-          "kind": "namespace",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "absoluteFill",
-            "compose",
-            "create",
-            "flatten",
-            "hairlineWidth",
-            "setStyleAttributePreprocessor"
-          ]
-        },
-        "processColor": {
-          "name": "processColor",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 0,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "TextComponent": {
-          "name": "TextComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "TextBase": {
-          "name": "TextBase",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "prototype"
-          ]
-        },
-        "Text": {
-          "name": "Text",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "prototype"
-          ]
-        },
-        "unstable_TextAncestorContext": {
-          "name": "unstable_TextAncestorContext",
-          "kind": "value",
-          "isValue": true,
-          "isType": false
         },
         "useColorScheme": {
           "name": "useColorScheme",
@@ -1228,50 +1161,6 @@
           ],
           "typeParamCount": 0
         },
-        "Appearance": {
-          "name": "Appearance",
-          "kind": "namespace",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "addChangeListener",
-            "getColorScheme",
-            "setColorScheme"
-          ]
-        },
-        "BackHandler": {
-          "name": "BackHandler",
-          "kind": "typeAlias",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "addEventListener",
-            "exitApp"
-          ]
-        },
-        "DevMenu": {
-          "name": "DevMenu",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "show"
-          ]
-        },
-        "DevSettings": {
-          "name": "DevSettings",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "addListener",
-            "addMenuItem",
-            "emit",
-            "listenerCount",
-            "reload",
-            "removeAllListeners"
-          ]
-        },
         "useWindowDimensions": {
           "name": "useWindowDimensions",
           "kind": "function",
@@ -1286,42 +1175,27 @@
           ],
           "typeParamCount": 0
         },
-        "Dimensions": {
-          "name": "Dimensions",
-          "kind": "interface",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "addEventListener",
-            "get",
-            "set"
-          ]
-        },
-        "PixelRatio": {
-          "name": "PixelRatio",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "get",
-            "getFontScale",
-            "getPixelSizeForLayoutSize",
-            "roundToNearestPixel",
-            "startDetecting"
-          ]
-        },
-        "Platform": {
-          "name": "Platform",
+        "UTFSequence": {
+          "name": "UTFSequence",
           "kind": "typeAlias",
           "isValue": true,
           "isType": true,
           "members": [
-            "OS",
-            "Version",
-            "constants",
-            "isTV",
-            "isTesting",
-            "select"
+            "BOM",
+            "BULLET",
+            "BULLET_SP",
+            "MDASH",
+            "MDASH_SP",
+            "MIDDOT",
+            "MIDDOT_KATAKANA",
+            "MIDDOT_SP",
+            "NBSP",
+            "NDASH",
+            "NDASH_SP",
+            "NEWLINE",
+            "PIZZA",
+            "TRIANGLE_LEFT",
+            "TRIANGLE_RIGHT"
           ]
         },
         "Vibration": {
@@ -1334,8 +1208,55 @@
             "vibrate"
           ]
         },
-        "unstable_batchedUpdates": {
-          "name": "unstable_batchedUpdates",
+        "EventEmitter": {
+          "name": "EventEmitter",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "unstable_VirtualView": {
+          "name": "unstable_VirtualView",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "VirtualViewMode": {
+          "name": "VirtualViewMode",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Hidden",
+            "Prerender",
+            "Visible",
+            "cast",
+            "getName",
+            "isValid",
+            "members"
+          ]
+        },
+        "unstable_VirtualArray": {
+          "name": "unstable_VirtualArray",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "unstable_createVirtualCollectionView": {
+          "name": "unstable_createVirtualCollectionView",
           "kind": "function",
           "isValue": true,
           "isType": false,
@@ -1344,14 +1265,75 @@
               "arity": 2,
               "requiredArity": 2,
               "restParam": false
-            },
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "unstable_VirtualColumn": {
+          "name": "unstable_VirtualColumn",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
             {
               "arity": 1,
               "requiredArity": 1,
               "restParam": false
             }
           ],
-          "typeParamCount": 2
+          "typeParamCount": 1
+        },
+        "unstable_VirtualColumnGenerator": {
+          "name": "unstable_VirtualColumnGenerator",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "initial",
+            "next"
+          ]
+        },
+        "unstable_VirtualRow": {
+          "name": "unstable_VirtualRow",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "unstable_getScrollParent": {
+          "name": "unstable_getScrollParent",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_DEFAULT_INITIAL_NUM_TO_RENDER": {
+          "name": "unstable_DEFAULT_INITIAL_NUM_TO_RENDER",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
         }
       }
     }

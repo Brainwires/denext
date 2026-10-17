@@ -85,7 +85,7 @@ export class ReactNativeVersion {
   static prerelease: string | null = REACT_NATIVE_VERSION.prerelease;
 
   /**
-   * The version as text (`"0.86.3"`, or with `-<prerelease>`).
+   * The version as text (`"0.88.0"`, or with `-<prerelease>`).
    *
    * @returns The version string.
    */

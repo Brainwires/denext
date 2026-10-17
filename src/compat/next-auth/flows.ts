@@ -84,7 +84,7 @@ const ERROR_CODES: Record<string, string> = {
 export function translateErrorLocation(location: string): string {
   const url = new URL(location, "http://denext.invalid");
   const code = url.searchParams.get("error");
-  const mapped = code ? ERROR_CODES[code] : undefined;
+  const mapped = code && Object.hasOwn(ERROR_CODES, code) ? ERROR_CODES[code] : undefined;
   if (!mapped) return location;
   url.searchParams.set("error", mapped);
   return url.origin === "http://denext.invalid" ? url.pathname + url.search + url.hash : url.href;

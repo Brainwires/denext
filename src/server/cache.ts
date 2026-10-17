@@ -14,11 +14,18 @@
 // read via Date.now(); a shared store assumes a shared wall clock.
 
 import { liveDevtoolsEnabled, recordCacheEntry } from "./live-devtools.ts";
-import { type CacheLifeProfile, type CacheScope, cacheScopeStorage } from "./cache-scope.ts";
-import { currentContext } from "./request-context.ts";
+import {
+  type CacheLifeProfile,
+  type CacheScope,
+  type CacheScopeKind,
+  cacheScopeStorage,
+  LIFE_FIELDS,
+  validateCacheLifeProfile,
+} from "./cache-scope.ts";
+import { currentContext, type RequestContext } from "./request-context.ts";
 import { inRootContext } from "./root-context.ts";
 import { raceAbort } from "./abort.ts";
-import { withoutPostpone } from "../runtime/prerender.ts";
+import { postponeDynamic, shouldPostpone, withoutPostpone } from "../runtime/prerender.ts";
 import type { CspSetting, SegmentConfig } from "./segment-config.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
@@ -27,8 +34,8 @@ import type { CacheConfig } from "./config.ts";
 // The cache-scope primitives now live in `./cache-scope.ts` (to break the cache ⇄
 // request-context cycle), but were exposed from here — re-export them so the
 // `denext/server` surface and existing import paths stay unchanged.
-export type { CacheLifeProfile, CacheScope };
-export { currentCacheScope } from "./cache-scope.ts";
+export type { CacheLifeProfile, CacheScope, CacheScopeKind };
+export { currentCacheScope, validateCacheLifeProfile } from "./cache-scope.ts";
 
 const now = (): number => Date.now();
 
@@ -498,44 +505,92 @@ function collectTags(tags: string[]): void {
 
 // ---- cacheLife profiles + cache scope (Cache Components) --------------------
 
-/** Built-in cacheLife profiles (seconds), matching Next.js's defaults. */
+/** Built-in cacheLife profiles (seconds), matching Next.js 16's defaults. */
 const BUILTIN_CACHE_LIFE: Record<string, CacheLifeProfile> = {
   default: { stale: 300, revalidate: 900, expire: Infinity },
-  seconds: { stale: 0, revalidate: 1, expire: 60 },
+  seconds: { stale: 30, revalidate: 1, expire: 60 },
   minutes: { stale: 300, revalidate: 60, expire: 3600 },
   hours: { stale: 300, revalidate: 3600, expire: 86400 },
   days: { stale: 300, revalidate: 86400, expire: 604800 },
   weeks: { stale: 300, revalidate: 604800, expire: 2592000 },
-  max: { stale: 300, revalidate: 2592000, expire: Infinity },
+  max: { stale: 300, revalidate: 2592000, expire: 31536000 },
 };
 
 /** Custom profiles registered from config, overlaid on (and overriding) the built-ins. */
 const customCacheLife = new Map<string, CacheLifeProfile>();
 
 /**
- * Register named cacheLife profiles (typically from `denext.config`). A custom
- * profile whose name collides with a built-in overrides it. Idempotent-ish: a later
- * call with the same name wins.
+ * Register named cacheLife profiles (the config's `cacheLife`, Next.js's `next.config`
+ * key). A custom profile whose name collides with a built-in overrides it, and a later call
+ * with the same name wins. Each profile is validated first.
  *
  * @param profiles A map of profile name to `{ stale, revalidate, expire }` seconds.
+ * @throws With Next.js's message when a profile has an invalid field.
  */
 export function registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void {
-  for (const [name, p] of Object.entries(profiles)) customCacheLife.set(name, p);
+  for (const [name, p] of Object.entries(profiles)) {
+    customCacheLife.set(name, validateCacheLifeProfile(p, { config: name }));
+  }
+}
+
+/**
+ * Install the app's configured `cacheLife` profiles, replacing any installed before (a dev
+ * server re-reads the config). Called at server start with the config's `cacheLife`.
+ *
+ * @param profiles The config's named profiles, or undefined for none.
+ */
+export function installCacheLifeProfiles(
+  profiles: Record<string, CacheLifeProfile> | undefined,
+): void {
+  customCacheLife.clear();
+  if (profiles) registerCacheLifeProfiles(profiles);
+}
+
+/** The `default` profile in effect: a configured `default` over the built-in one. */
+function effectiveDefault(): CacheLifeProfile {
+  const base = BUILTIN_CACHE_LIFE.default;
+  const custom = customCacheLife.get("default");
+  if (!custom) return base;
+  return {
+    stale: custom.stale ?? base.stale,
+    revalidate: custom.revalidate ?? base.revalidate,
+    expire: custom.expire ?? base.expire,
+  };
+}
+
+/** A configured or built-in profile by name, as written (fields may be absent). */
+function namedProfile(name: string): CacheLifeProfile {
+  if (name === "default") return effectiveDefault();
+  const p = customCacheLife.get(name) ?? BUILTIN_CACHE_LIFE[name];
+  if (p !== undefined) return p;
+  const trimmed = name.trim();
+  if (trimmed !== name && (customCacheLife.has(trimmed) || trimmed in BUILTIN_CACHE_LIFE)) {
+    throw new Error(
+      `Unknown \`cacheLife()\` profile "${name}" is not configured in denext.config.ts\n` +
+        `Did you mean "${trimmed}" without the spaces?`,
+    );
+  }
+  throw new Error(
+    `Unknown \`cacheLife()\` profile "${name}" is not configured in denext.config.ts\n` +
+      `export default {\n  cacheLife: {\n    "${name}": ...\n  }\n}`,
+  );
 }
 
 /**
  * Resolve a cacheLife argument — a built-in/custom profile name or an inline
- * profile object — to a concrete {@link CacheLifeProfile}. An unknown name falls
- * back to the `default` profile. Missing fields inherit from `default`.
+ * profile object — to a concrete {@link CacheLifeProfile}. Missing fields inherit from the
+ * `default` profile (a configured `default` included).
  *
  * @param profile A profile name or an inline `{ stale, revalidate, expire }`.
  * @returns The resolved profile with every field populated.
+ * @throws When the name is not a built-in or configured profile, or the inline profile is
+ *   invalid (Next.js's messages).
  */
 export function resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile {
-  const base = BUILTIN_CACHE_LIFE.default;
   const raw = typeof profile === "string"
-    ? (customCacheLife.get(profile) ?? BUILTIN_CACHE_LIFE[profile] ?? base)
-    : profile;
+    ? namedProfile(profile)
+    : validateCacheLifeProfile(profile);
+  const base = effectiveDefault();
   return {
     stale: raw.stale ?? base.stale,
     revalidate: raw.revalidate ?? base.revalidate,
@@ -543,15 +598,30 @@ export function resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeP
   };
 }
 
+/** Field-wise minimum of two partial profiles (an absent field takes the other's). */
+function minLife(a: CacheLifeProfile | undefined, b: CacheLifeProfile): CacheLifeProfile {
+  if (!a) return { ...b };
+  const out: CacheLifeProfile = { ...a };
+  for (const key of LIFE_FIELDS) {
+    const v = b[key];
+    if (v !== undefined && (out[key] === undefined || v < out[key]!)) out[key] = v;
+  }
+  return out;
+}
+
 /**
  * Run `fn` inside a fresh cache scope and return both its value and the scope it
  * accrued (the chosen `cacheLife` + `cacheTag`s). The `use cache` executor uses
  * this to learn an entry's lifetime/tags after running its body.
+ *
+ * @param fn The cached body.
+ * @param kind The scope's kind (`"public"` for `"use cache"`, the default).
  */
 export function withCacheScope<T>(
   fn: () => T | Promise<T>,
+  kind: CacheScopeKind = "public",
 ): Promise<{ value: T; scope: CacheScope }> {
-  const scope: CacheScope = { tags: [] };
+  const scope: CacheScope = kind === "public" ? { tags: [] } : { kind, tags: [] };
   // A `use cache` body is static: reads inside it must not postpone during a PPR
   // prerender (the cached value stands in for the request-independent result).
   return withoutPostpone(() => Promise.resolve(cacheScopeStorage.run(scope, fn)))
@@ -559,14 +629,35 @@ export function withCacheScope<T>(
 }
 
 /**
- * Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`).
- * A no-op when called outside a cached scope. The last call wins.
+ * The lifetime a finished cache scope's entry gets: per field, the `cacheLife()` value when
+ * the body set one, else the lower of the fallback profile and the nested cached calls'
+ * (Next.js's rule).
+ */
+function scopeLife(scope: CacheScope, fallback: CacheLifeProfile): CacheLifeProfile {
+  const implicit = scope.nested ? minLife(fallback, scope.nested) : fallback;
+  return {
+    stale: scope.life?.stale ?? implicit.stale,
+    revalidate: scope.life?.revalidate ?? implicit.revalidate,
+    expire: scope.life?.expire ?? implicit.expire,
+  };
+}
+
+const CACHE_LIFE_OUTSIDE =
+  '`cacheLife()` can only be called inside a `"use cache"` or `"use cache: private"` function.';
+
+/**
+ * Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`). When it
+ * is called more than once, each field keeps the lowest value set (as in Next.js).
  *
  * @param profile A built-in/custom profile name, or an inline `{ stale, revalidate, expire }`.
+ * @throws Outside a `"use cache"` / `"use cache: private"` function (an `unstable_cache()`
+ *   loader included), for an unknown profile name, or for an invalid inline profile.
  */
 export function cacheLife(profile: string | CacheLifeProfile): void {
   const scope = cacheScopeStorage.getStore();
-  if (scope) scope.life = resolveCacheLife(profile);
+  if (!scope || scope.kind === "unstable") throw new Error(CACHE_LIFE_OUTSIDE);
+  const p = typeof profile === "string" ? namedProfile(profile) : validateCacheLifeProfile(profile);
+  scope.life = minLife(scope.life, p);
 }
 
 /**
@@ -582,6 +673,24 @@ export function cacheTag(...tags: string[]): void {
   const scope = cacheScopeStorage.getStore();
   if (scope) scope.tags.push(...tags);
   collectTags(tags);
+}
+
+/**
+ * A nested cached call finished inside an outer `"use cache"` body: the outer entry carries
+ * the inner entry's tags (so `revalidateTag(innerTag)` reaches the outer entry too) and lives
+ * no longer than what remains of the inner entry, unless the outer body set `cacheLife()`.
+ */
+function propagateToOuter(entry: DataEntry): void {
+  const outer = cacheScopeStorage.getStore();
+  if (!outer || outer.kind === "unstable") return;
+  for (const t of entry.tags) if (!outer.tags.includes(t)) outer.tags.push(t);
+  const t = now();
+  const left = (at: number | undefined) =>
+    at == null || at === Infinity ? Infinity : Math.max(0, (at - t) / 1000);
+  outer.nested = minLife(outer.nested, {
+    revalidate: left(entry.staleAt),
+    expire: left(entry.expiresAt),
+  });
 }
 
 // The cache is best-effort: a backing-store error (e.g. a disk/IO failure, or a
@@ -728,7 +837,7 @@ export function unstable_cache<A extends unknown[], R>(
       if (isStaleHit(hit)) {
         reviveStaleData(
           key,
-          () => withCacheScope(() => fn(...args)).then((r) => r.value),
+          () => withCacheScope(() => fn(...args), "unstable").then((r) => r.value),
           options.revalidate,
           tags,
         );
@@ -823,7 +932,7 @@ async function computeData<R>(
   revalidate: number | false | undefined,
   tags: string[],
 ): Promise<R> {
-  const { value, scope } = await withCacheScope(run);
+  const { value, scope } = await withCacheScope(run, "unstable");
   await storeData(key, {
     value,
     expiresAt: ttlToExpiry(revalidate),
@@ -910,7 +1019,7 @@ async function runCachedBody<R>(
   fallback?: string | CacheLifeProfile,
 ): Promise<{ entry: DataEntry; value: R }> {
   const { value, scope } = await withCacheScope(run);
-  const life = scope.life ?? resolveCacheLife(fallback ?? "default");
+  const life = scopeLife(scope, resolveCacheLife(fallback ?? "default"));
   const { expiresAt, staleAt } = lifeTiming(life);
   const tags = dedupeTags([...staticTags, ...scope.tags]);
   return { value, entry: { value, expiresAt, staleAt, tags } };
@@ -981,56 +1090,136 @@ export function __useCache<A extends unknown[], R>(
     profile?: string | CacheLifeProfile;
     tags?: string[];
     bound?: () => unknown[];
+    /**
+     * The directive's handler kind: absent for `"use cache"`, `"private"` for
+     * `"use cache: private"`, or the name of `"use cache: remote"` / any other handler (each a
+     * shared entry in the configured cache store).
+     */
+    kind?: string;
   } = {},
 ): (...args: A) => Promise<R> {
+  if (options.kind === "private") return privateCache(id, fn, options.bound);
   const staticTags = options.tags ?? [];
   const bound = options.bound;
+  // Next.js lets a shared function be called from a `"use cache: private"` one: it runs in
+  // its own public scope, where `cookies()` and `headers()` throw again, so nothing private
+  // reaches the shared entry.
   return async (...args: A): Promise<R> => {
-    // Arguments that don't survive JSON (a component's `children` element tree, a
-    // function prop) can't key an entry: their serialization drops exactly what tells two
-    // calls apart, so every page under a cached layout would share one entry. React keys
-    // those as opaque references; here the call runs uncached (its `cacheTag`s still
-    // reach the page) — the cheap-and-correct choice until reference keys exist.
-    const keyArgs = cachedCallKeyArgs(args, bound);
-    if (!isJsonSafe(keyArgs)) {
-      if (debugCache()) console.error(`[cache] ${id} BYPASS (non-serializable arguments)`);
-      const { value, entry } = await runCachedBody(() => fn(...args), staticTags, options.profile);
-      collectTags(entry.tags);
-      return value;
-    }
-    const key = safeKey([id, ...keyArgs]);
-    collectTags(staticTags);
-    const hit = lookupLive(key) ?? await lookupData(key);
-    if (debugCache()) {
-      console.error(`[cache] ${id} ${hit ? "HIT" : "MISS"} key=${key.length}b`);
-    }
-    if (hit) {
-      // The body didn't run on a hit, so replay its tag propagation to the page
-      // from the stored tags.
-      collectTags(hit.tags);
-      if (isStaleHit(hit)) {
-        reviveStaleUseCache(key, () => fn(...args), staticTags, options.profile);
-      }
-      return hit.value as R;
-    }
-    // Single-flight: coalesce concurrent misses so the body runs once.
-    const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
-    if (inFlight) {
-      // A follower didn't run the body, so it never saw the body-declared
-      // `cacheTag()`s. Replay them onto THIS request's page (mirroring the hit
-      // path) so `revalidateTag` invalidates the follower's page too — otherwise
-      // the coalesced page under-invalidates and serves stale content forever.
-      const entry = await awaitLeader(inFlight);
-      collectTags(entry.tags);
-      return entry.value as R;
-    }
-    // The leader collected the body's tags during `runCachedBody` (in its own
-    // request scope), so it returns the value directly.
-    const entry = await leadFlight(
-      key,
-      computeUseCache(key, () => fn(...args), staticTags, options.profile),
-    );
+    const entry = await sharedCacheEntry(id, fn, args, staticTags, bound, options.profile);
+    propagateToOuter(entry);
     return entry.value as R;
+  };
+}
+
+/** A shared (`"use cache"` / `"use cache: remote"`) entry for one call: a hit, a follower's or a fresh fill. */
+async function sharedCacheEntry<A extends unknown[], R>(
+  id: string,
+  fn: (...args: A) => R | Promise<R>,
+  args: A,
+  staticTags: string[],
+  bound: (() => unknown[]) | undefined,
+  profile: string | CacheLifeProfile | undefined,
+): Promise<DataEntry> {
+  // Arguments that don't survive JSON (a component's `children` element tree, a
+  // function prop) can't key an entry: their serialization drops exactly what tells two
+  // calls apart, so every page under a cached layout would share one entry. React keys
+  // those as opaque references; here the call runs uncached (its `cacheTag`s still
+  // reach the page) — the cheap-and-correct choice until reference keys exist.
+  const keyArgs = cachedCallKeyArgs(args, bound);
+  if (!isJsonSafe(keyArgs)) {
+    if (debugCache()) console.error(`[cache] ${id} BYPASS (non-serializable arguments)`);
+    const { entry } = await runCachedBody(() => fn(...args), staticTags, profile);
+    collectTags(entry.tags);
+    return entry;
+  }
+  const key = safeKey([id, ...keyArgs]);
+  collectTags(staticTags);
+  const hit = lookupLive(key) ?? await lookupData(key);
+  if (debugCache()) {
+    console.error(`[cache] ${id} ${hit ? "HIT" : "MISS"} key=${key.length}b`);
+  }
+  if (hit) {
+    // The body didn't run on a hit, so replay its tag propagation to the page
+    // from the stored tags.
+    collectTags(hit.tags);
+    if (isStaleHit(hit)) reviveStaleUseCache(key, () => fn(...args), staticTags, profile);
+    return hit;
+  }
+  // Single-flight: coalesce concurrent misses so the body runs once.
+  const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
+  if (inFlight) {
+    // A follower didn't run the body, so it never saw the body-declared
+    // `cacheTag()`s. Replay them onto THIS request's page (mirroring the hit
+    // path) so `revalidateTag` invalidates the follower's page too — otherwise
+    // the coalesced page under-invalidates and serves stale content forever.
+    const entry = await awaitLeader(inFlight);
+    collectTags(entry.tags);
+    return entry;
+  }
+  // The leader collected the body's tags during `runCachedBody` (in its own
+  // request scope), so it returns the entry directly.
+  return await leadFlight(key, computeUseCache(key, () => fn(...args), staticTags, profile));
+}
+
+const PRIVATE_IN_PUBLIC =
+  '`"use cache: private"` can\'t be nested inside `"use cache"` because a shared cached ' +
+  'function can\'t depend on private request data. Nest it only inside another `"use cache: private"`.';
+const PRIVATE_IN_UNSTABLE =
+  '`"use cache: private"` can\'t be used inside `unstable_cache()` because `unstable_cache()` ' +
+  "uses a shared cache that can't contain private request data. Call the private cached " +
+  "function outside `unstable_cache()`.";
+const PRIVATE_OUTSIDE_REQUEST =
+  '`"use cache: private"` needs an active request, so it can\'t be used outside one (a build ' +
+  "step, a job). Move it to a request-time component or function.";
+
+/** The per-request memo of `"use cache: private"` results, keyed by function id + arguments. */
+const PRIVATE_MEMO = Symbol("denext.privateCache");
+
+/**
+ * The request a `"use cache: private"` call belongs to, after Next.js's checks: not inside a
+ * shared cache scope, inside a request, and not in a PPR prerender (where it postpones). The
+ * render becomes dynamic: its output is per request and never page-cached.
+ */
+function privateCallContext(): RequestContext {
+  const outer = cacheScopeStorage.getStore();
+  if (outer && outer.kind !== "private") {
+    throw new Error(outer.kind === "unstable" ? PRIVATE_IN_UNSTABLE : PRIVATE_IN_PUBLIC);
+  }
+  const ctx = currentContext();
+  if (!ctx) throw new Error(PRIVATE_OUTSIDE_REQUEST);
+  if (shouldPostpone()) postponeDynamic('"use cache: private"');
+  ctx.usedDynamicApi = true;
+  return ctx;
+}
+
+/** `run` once per `key` within `ctx`'s request; a failed run isn't reused (the next call retries). */
+function memoInRequest<R>(ctx: RequestContext, key: string, run: () => Promise<R>): Promise<R> {
+  let memo = ctx.memo.get(PRIVATE_MEMO) as Map<string, Promise<unknown>> | undefined;
+  if (!memo) ctx.memo.set(PRIVATE_MEMO, memo = new Map());
+  const hit = memo.get(key) as Promise<R> | undefined;
+  if (hit) return hit;
+  const pending = run();
+  memo.set(key, pending);
+  pending.catch(() => memo.delete(key));
+  return pending;
+}
+
+/**
+ * The `"use cache: private"` executor (Next.js 16): the body may read `cookies()` and
+ * `headers()`, its result is never stored on the server — matching calls within one request
+ * share one run — and the render is dynamic (a PPR prerender postpones it to a hole).
+ */
+function privateCache<A extends unknown[], R>(
+  id: string,
+  fn: (...args: A) => R | Promise<R>,
+  bound: (() => unknown[]) | undefined,
+): (...args: A) => Promise<R> {
+  return async (...args: A): Promise<R> => {
+    const ctx = privateCallContext();
+    const run = () => withCacheScope(() => fn(...args), "private").then((r) => r.value);
+    const keyArgs = cachedCallKeyArgs(args, bound);
+    if (!isJsonSafe(keyArgs)) return await run();
+    return await memoInRequest(ctx, safeKey([id, ...keyArgs]), run);
   };
 }
 
@@ -1359,6 +1548,9 @@ export function __setFetchBaseForTests(fn: typeof fetch): typeof fetch {
  * @param profile Optional `cacheLife` profile for stale-while-revalidate behavior.
  */
 export function revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void> {
+  assertNotRevalidatingInCache(`revalidateTag(${JSON.stringify(tag)})`);
+  // Next.js 16 deprecates the one-argument form (it warns); in denext it stays the hard purge
+  // that Live, `useApi({ tags })` and the backend's realtime build on, so it doesn't warn.
   if (profile === undefined) return invalidate("tag", tag); // hard purge
   const life = resolveCacheLife(profile);
   const expireSecs = life.expire;
@@ -1377,13 +1569,19 @@ export function revalidateTag(tag: string, profile?: string | CacheLifeProfile):
 
 /**
  * Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the
- * returned promise when using an async store.
+ * returned promise when using an async store. Inside a Server Action the client that called it
+ * also re-renders its current route.
  *
  * @param path The pathname to purge.
  * @param type Next's optional hint (`"layout"` | `"page"`) for dynamic paths. denext
  *   purges by pathname regardless, so it is accepted for signature parity and unused.
  */
 export function revalidatePath(path: string, _type?: "layout" | "page"): Promise<void> {
+  assertNotRevalidatingInCache(`revalidatePath(${JSON.stringify(path)})`);
+  // As in Next.js, a Server Action that revalidates a path updates the UI at once: its response
+  // tells the client router to re-render the current route (only an action response reads it).
+  const ctx = currentContext();
+  if (ctx) ctx.refreshRequested = true;
   return invalidate("path", path);
 }
 
@@ -1400,6 +1598,7 @@ export function revalidatePath(path: string, _type?: "layout" | "page"): Promise
  * @param tag The tag to expire.
  */
 export function updateTag(tag: string): Promise<void> {
+  assertNotRevalidatingInCache(`updateTag(${JSON.stringify(tag)})`);
   const ctx = currentContext();
   if (ctx) (ctx.updatedTags ??= new Set<string>()).add(tag);
   return invalidate("tag", tag); // hard purge for other requests/replicas
@@ -1415,6 +1614,18 @@ export function updateTag(tag: string): Promise<void> {
 export function refresh(): void {
   const ctx = currentContext();
   if (ctx) ctx.refreshRequested = true;
+}
+
+/**
+ * Revalidating from inside a cached function is a bug (the call would be skipped whenever the
+ * entry is served from cache): Next.js throws, and so does denext.
+ */
+function assertNotRevalidatingInCache(expression: string): void {
+  if (!cacheScopeStorage.getStore()) return;
+  throw new Error(
+    `\`${expression}\` can't be called inside a cached function. Call it from a Server Action ` +
+      `or Route Handler instead.`,
+  );
 }
 
 /** True if any of `tags` was expired via {@link updateTag} earlier this request. */

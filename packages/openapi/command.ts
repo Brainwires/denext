@@ -11,6 +11,9 @@
  * - `denext openapi types [--out <file>]` — TypeScript types for ANOTHER project (a separate
  *   frontend): openapi-typescript-style `paths`/`components` plus denext's `ApiSchema`, so
  *   `createApiClient<ApiSchema>({ base })` from `jsr:@denext/denext` is a typed client there.
+ * - `denext openapi client --lang python|go|swift|kotlin [--out <file>] [--package <name>]` — a
+ *   typed client in another language, one file with no dependency beyond its standard library
+ *   (see `@denext/openapi/clients`).
  *
  * @module
  */
@@ -19,6 +22,7 @@ import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
 import { diffSpecs, type OpenApiBuild, type OpenApiDocument, type OpenApiWarning } from "./spec.ts";
 import { emitTypes } from "./types.ts";
+import { CLIENT_LANGUAGES, emitClient, isClientLanguage } from "./clients/mod.ts";
 
 // The denext CLI types this entrypoint's public API references (doc completeness).
 export type {
@@ -87,9 +91,11 @@ export function createOpenapiCommand(
       "  diff <file>           Compare against a committed spec; exit 1 on any change",
       "  lint [--strict]       List what could not be described; --strict exits 1 if any",
       "  types [--out <file>]  TypeScript types (paths/components + a denext ApiSchema) for another project",
+      "  client --lang <lang> [--out <file>] [--package <name>]",
+      `                        A typed client in another language (${CLIENT_LANGUAGES.join(", ")})`,
     ].join("\n"),
     positionals: [
-      { name: "action", help: "emit | diff | lint | types" },
+      { name: "action", help: "emit | diff | lint | types | client" },
       { name: "file", help: "the committed spec to diff against" },
     ],
     flags: [
@@ -100,6 +106,18 @@ export function createOpenapiCommand(
         valueName: "<file>",
       },
       { name: "strict", type: "boolean", help: "lint: exit 1 when there are findings" },
+      {
+        name: "lang",
+        type: "string",
+        help: `client: the language (${CLIENT_LANGUAGES.join(" | ")})`,
+        valueName: "<lang>",
+      },
+      {
+        name: "package",
+        type: "string",
+        help: "client: the Go / Kotlin package name (default client)",
+        valueName: "<name>",
+      },
     ],
     run: (ctx) => runOpenapi(ctx, build, io),
   };
@@ -115,7 +133,10 @@ async function runOpenapi(
   if (action === "lint") return lint(await build(), ctx, io);
   if (action === "diff") return diff(await build(), ctx, io);
   if (action === "types") return types(await build(), ctx, io);
-  io.error(`Unknown action "${action}". Try: denext openapi emit | diff <file> | lint | types`);
+  if (action === "client") return client(await build(), ctx, io);
+  io.error(
+    `Unknown action "${action}". Try: denext openapi emit | diff <file> | lint | types | client`,
+  );
   throw new Error(`unknown openapi action: ${action}`);
 }
 
@@ -171,6 +192,28 @@ async function types(
       `${opaque} opaque schema(s) emitted as \`unknown\` — run \`denext openapi lint\` for where`,
     );
   }
+}
+
+/** `client`: a typed client in `--lang`, to stdout or `--out`. */
+async function client(
+  result: OpenApiBuild,
+  ctx: CommandContext,
+  io: OpenapiCommandIo,
+): Promise<void> {
+  const lang = ctx.flags.lang;
+  if (!isClientLanguage(lang)) {
+    io.error(`denext openapi client needs --lang ${CLIENT_LANGUAGES.join(" | ")}`);
+    throw new Error(`unknown client language: ${String(lang)}`);
+  }
+  const pkg = typeof ctx.flags.package === "string" ? ctx.flags.package : undefined;
+  const { source } = emitClient(result.document, lang, { packageName: pkg });
+  await output(
+    source,
+    result.document,
+    ctx,
+    io,
+    (n) => `${lang} client, ${n} operation${n === 1 ? "" : "s"}`,
+  );
 }
 
 function operationCount(document: OpenApiDocument): number {

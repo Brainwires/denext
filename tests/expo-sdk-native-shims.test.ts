@@ -94,8 +94,14 @@ Deno.test("expo-brightness: the screen's level on iOS, the window's on Android",
     assertEquals(await Brightness.isUsingSystemBrightnessAsync(), true);
     await Brightness.setBrightnessAsync(0.8);
     await Brightness.restoreSystemBrightnessAsync();
-    await assertRejects(() => Brightness.setSystemBrightnessAsync(0.5), Error, "WRITE_SETTINGS");
-    await assertRejects(() => Brightness.getSystemBrightnessModeAsync(), Error, "not readable");
+    // Without DenextBrightness (a shell from before denext added it) the system setting is
+    // unavailable (tests/expo-native-plugins.test.ts drives it with the plugin).
+    await assertRejects(() => Brightness.setSystemBrightnessAsync(0.5), Error, "DenextBrightness");
+    await assertRejects(
+      () => Brightness.getSystemBrightnessModeAsync(),
+      Error,
+      "DenextBrightness",
+    );
     // UNKNOWN is a no-op on Android too, as in Expo.
     await Brightness.setSystemBrightnessModeAsync(Brightness.BrightnessMode.UNKNOWN);
     assertEquals(android.calls.filter(([m]) => m === "setBrightness").map(([, a]) => a), [
@@ -194,7 +200,7 @@ Deno.test("expo-print: the printer plugin in the shell; an iframe on the web", a
   // print() on it) but never run script in the page's origin.
   assertEquals(appended[0].attributes.sandbox, "allow-modals allow-same-origin");
   assert(!appended[0].attributes.sandbox.includes("allow-scripts"));
-  await assertRejects(() => Print.printToFileAsync({ html: "x" }), Error, "No PDF renderer");
+  await assertRejects(() => Print.printToFileAsync({ html: "x" }), Error, "DenextPrint");
   await assertRejects(() => Print.selectPrinterAsync(), Error, "not available");
   assertEquals(Print.Orientation, { portrait: "portrait", landscape: "landscape" });
 });

@@ -47,7 +47,9 @@ ignoreDependencies = [
   "@clerk/nextjs", # examples/clerk/deno.json + package.json: npm:@clerk/nextjs (Clerk's Next.js SDK, run unchanged)
   "@clerk/electron", # examples/clerk/deno.json + package.json: @clerk/electron/passkeys in the desktop preload
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
-  "@tanstack/react-router", # examples/tanstack-router/package.json: installed into that example's manual node_modules
+  "@tanstack/react-router", # examples/tanstack-router + tanstack-start package.json: installed into each example's manual node_modules
+  "@tanstack/router-generator", # examples/tanstack-start/package.json devDependency: the route generator @denext/tanstack-start loads from the app
+  "@tanstack/react-start", # examples/tanstack-start/package.json: Start's runtime + compiler (@tanstack/start-plugin-core) @denext/tanstack-start loads from the app
   # examples/scroll-bench/web/package.json: the list libraries the scroll bench compares, installed
   # into that app's manual node_modules (`react-native` resolves to react-native-web through
   # denext's `reactNative: true` mode).
@@ -60,6 +62,10 @@ ignoreDependencies = [
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
   "tailwindcss", # examples/tailwind/styles/tailwind.css `@import "tailwindcss"` (Tailwind CLI)
+  # examples/lustre/deno.json: "@gleam/" maps the example's Gleam build (gleam/build/dev/javascript),
+  # which `gleam build` writes and git ignores; `@gleam/app` is the example's own Gleam package.
+  "@gleam/app",
+  "@gleam/lustre",
   # tests/e2e/fixtures/reanimated/package.json: installed into the e2e's temp copy of the fixture
   "react-native-reanimated",
   "react-native-gesture-handler",
@@ -121,6 +127,9 @@ entry = [
   "src/cli/run-verb.ts",
   "src/cli/plugin-commands.ts",
   "src/cli/cli-cache.ts",
+  # The native templates' readable sources: scripts/gen-native-templates.ts imports each by a
+  # computed path and packs its exports into src/build/native-templates.packed.ts.
+  "src/build/native-templates/*.ts",
   # Build/codegen scripts run via `deno task`, not imported — declare them so they
   # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
   "scripts/*.ts",
@@ -159,6 +168,10 @@ entry = [
   # TanStack Router file-based routes (examples/tanstack-router): every module under
   # src/routes/ is wired by the generated src/routeTree.gen.ts (the TanStack Router CLI).
   "examples/tanstack-router/src/routes/**",
+  # TanStack Start (@denext/tanstack-start plugin, examples/tanstack-start): the router module is
+  # imported by the plugin's generated entries, the routes by the generated route tree.
+  "examples/tanstack-start/src/router.tsx",
+  "examples/tanstack-start/src/routes/**",
   # React Native mode's community-package stand-ins: prebuilt runtime entries
   # (`denext/react-native-compat/<name>`, src/build/react-native-aliases.ts) that an app reaches by
   # importing the npm package they stand in for, so each export is that package's public API
@@ -187,6 +200,9 @@ entry = [
   "tests/e2e/fixtures/rn-expo-router/app/**",
   "tests/e2e/fixtures/rn-expo-router-ui/index.web.ts",
   "tests/e2e/fixtures/rn-expo-router-ui/app/**",
+  # The App Router React Native e2e fixture: React Native mode resolves `./label` to its
+  # `.web.tsx` variant (the `.web.*` extensions are probed first), which fallow cannot see.
+  "tests/e2e/fixtures/rn-app-router/components/*.web.tsx",
   # Static assets served verbatim from public/ (fallow analyzes the .css files there), and
   # the Tailwind source stylesheet named by `tailwind.input` in denext.config.ts.
   "**/public/**",
@@ -380,6 +396,13 @@ exports = ["redirect"]
 [[ignoreExports]]
 file = "src/compat/remix/responses.ts"
 exports = ["redirect"]
+
+# nav-document.ts is the on-demand soft-navigation commit: navigation.ts loads it through a
+# cached `import()` and calls these on the loaded module (handing the module to flight-nav.ts's
+# navigator too) — member accesses fallow cannot trace back to the exports.
+[[ignoreExports]]
+file = "src/client/nav-document.ts"
+exports = ["applyHtmlNav", "applyIsoNav", "scrollAfterNav", "updateHistory", "writeDataIsland"]
 
 # `ensureBundleSupport` is exercised by tests/integration/build-smoke.test.ts through a
 # `deno eval` SUBPROCESS (each probe needs a fresh process so the cached verdict resets),

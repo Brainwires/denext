@@ -5,10 +5,14 @@
  *
  * Provided: `useAudioPlayer` / `createAudioPlayer` / `useAudioPlayerStatus`,
  * `useAudioRecorder` / `useAudioRecorderState`, the recording presets and the permission
- * calls. The audio-session calls (`setAudioModeAsync`, `setIsAudioActiveAsync`) have no web
- * counterpart and resolve without effect. Playlists, streams, sample listeners and preloading
- * are not provided (see the manifest). A recording's `uri` is a `blob:` URL of a WebM (or
- * MP4, on Safari) file.
+ * calls. Background playback and the lock-screen controls run on `denext/mobile`'s now-playing
+ * API: `setAudioModeAsync({ shouldPlayInBackground, interruptionMode })` sets the shell's audio
+ * session ({@linkcode setAudioSession}), and `player.setActiveForLockScreen(true, metadata,
+ * options)` shows the player on the lock screen / in the media notification with its controls
+ * routed back to it ({@linkcode setNowPlaying}; `denext mobile add background-audio` in the
+ * shell, the Media Session API on the web). `setIsAudioActiveAsync` resolves without effect.
+ * Playlists, streams, sample listeners and preloading are not provided (see the manifest). A
+ * recording's `uri` is a `blob:` URL of a WebM (or MP4, on Safari) file.
  *
  * @example
  * ```ts
@@ -36,6 +40,14 @@ import {
   webPermission,
 } from "./internal/common.ts";
 import { backing, displayUrl } from "./internal/fs.ts";
+import {
+  clearNowPlaying,
+  type MediaControlAction,
+  type MediaControlEvent,
+  onMediaControl,
+  setAudioSession,
+  setNowPlaying,
+} from "../mobile/now-playing.ts";
 
 export { PermissionStatus };
 export type { PermissionExpiration, PermissionResponse, Subscription };
@@ -79,6 +91,140 @@ export interface AudioStatus {
   playbackRate: number;
   /** Whether pitch is corrected at other rates. */
   shouldCorrectPitch: boolean;
+}
+
+/** What the lock screen shows for a player (expo-audio's shape). */
+export type AudioMetadata = {
+  /** The title. */
+  title?: string;
+  /** The artist. */
+  artist?: string;
+  /** The album. */
+  albumTitle?: string;
+  /** The artwork's URL. */
+  artworkUrl?: string;
+};
+
+/** Which lock-screen controls to show (expo-audio's shape). */
+export type AudioLockScreenOptions = {
+  /** Show the skip-forward button. */
+  showSeekForward?: boolean;
+  /** Show the skip-backward button. */
+  showSeekBackward?: boolean;
+  /** Show the next-track button (a player has no next track, as in expo-audio's web build). */
+  showNextTrack?: boolean;
+  /** Show the previous-track button (as `showNextTrack`). */
+  showPreviousTrack?: boolean;
+  /** A live stream: no duration, scrub bar or seeking. */
+  isLiveStream?: boolean;
+};
+
+/** How the app's audio meets other apps' audio. */
+export type InterruptionMode = "mixWithOthers" | "doNotMix" | "doNotMixPersistent" | "duckOthers";
+
+/** The audio mode (only `shouldPlayInBackground` and `interruptionMode` change anything here). */
+export type AudioMode = {
+  /** Play with the silent switch on (accepted). */
+  playsInSilentMode: boolean;
+  /** How the app's audio meets other apps' audio. */
+  interruptionMode: InterruptionMode;
+  /** The Android interruption mode (deprecated: `interruptionMode`). */
+  interruptionModeAndroid?: InterruptionMode;
+  /** Allow recording (accepted). */
+  allowsRecording: boolean;
+  /** Keep playing in the background and with the phone locked. */
+  shouldPlayInBackground: boolean;
+  /** Route through the earpiece (accepted). */
+  shouldRouteThroughEarpiece: boolean;
+  /** Keep recording in the background (accepted). */
+  allowsBackgroundRecording?: boolean;
+};
+
+/** The skip interval of the lock screen's seek buttons, in seconds (expo-audio's). */
+const LOCK_SCREEN_SKIP = 10;
+
+/** The player on the lock screen, with its metadata, options and subscriptions. */
+let lockScreen: {
+  player: AudioPlayer;
+  metadata: AudioMetadata | null;
+  options: AudioLockScreenOptions;
+  release: () => void;
+} | null = null;
+
+/** The controls the lock screen offers for `options`. */
+function lockScreenControls(options: AudioLockScreenOptions): MediaControlAction[] {
+  const live = options.isLiveStream === true;
+  return [
+    "play",
+    "pause",
+    ...(live ? [] : ["seek" as const]),
+    ...(!live && options.showSeekForward === true ? ["seekForward" as const] : []),
+    ...(!live && options.showSeekBackward === true ? ["seekBackward" as const] : []),
+  ];
+}
+
+/** Describe the lock-screen player's state to the OS (unchanged clock ticks are not sent on). */
+function pushLockScreen(): void {
+  if (!lockScreen) return;
+  const { player, metadata, options } = lockScreen;
+  const live = options.isLiveStream === true;
+  setNowPlaying({
+    title: metadata?.title,
+    artist: metadata?.artist,
+    album: metadata?.albumTitle,
+    artwork: metadata?.artworkUrl,
+    duration: live || player.duration <= 0 ? undefined : player.duration,
+    position: player.currentTime,
+    playbackRate: player.playbackRate,
+    playing: player.playing,
+    controls: lockScreenControls(options),
+    seekOffset: LOCK_SCREEN_SKIP,
+  }).catch(() => {});
+}
+
+/** Run a lock-screen command on `player`. */
+function controlPlayer(player: AudioPlayer, event: MediaControlEvent): void {
+  const offset = event.offset ?? LOCK_SCREEN_SKIP;
+  if (event.action === "play") player.play();
+  else if (event.action === "pause" || event.action === "stop") player.pause();
+  else if (event.action === "seek" && event.position !== undefined) player.seekTo(event.position);
+  else if (event.action === "seekForward") {
+    player.seekTo(Math.min(player.currentTime + offset, player.duration || Infinity));
+  } else if (event.action === "seekBackward") {
+    player.seekTo(Math.max(player.currentTime - offset, 0));
+  }
+  pushLockScreen();
+}
+
+/** Put `player` on the lock screen (taking it from any other player). */
+function activateLockScreen(
+  player: AudioPlayer,
+  metadata: AudioMetadata | null,
+  options: AudioLockScreenOptions,
+): void {
+  if (lockScreen?.player !== player) {
+    lockScreen?.release();
+    const status = player.addListener("playbackStatusUpdate", pushLockScreen);
+    const stopControls = onMediaControl((event) => controlPlayer(player, event));
+    lockScreen = {
+      player,
+      metadata,
+      options,
+      release: () => {
+        status.remove();
+        stopControls();
+      },
+    };
+  } else lockScreen = { ...lockScreen, metadata, options };
+  pushLockScreen();
+}
+
+/** Take `player` off the lock screen, if it is there. */
+function releaseLockScreen(player: AudioPlayer): void {
+  if (lockScreen?.player !== player) return;
+  lockScreen.release();
+  lockScreen = null;
+  clearNowPlaying().catch(() => {});
 }
 
 let nextId = 0;
@@ -258,6 +404,41 @@ export class AudioPlayer {
     this.#load(source);
   }
 
+  /**
+   * Show this player on the lock screen, in Control Center and in the media notification (or
+   * take it off with `false`), with play / pause / seek routed back to it. One player holds the
+   * lock screen at a time. In the shell this needs `denext mobile add background-audio`; on the
+   * web it uses the Media Session API.
+   *
+   * @param active Whether this player holds the lock-screen controls.
+   * @param metadata The title, artist, album and artwork to show.
+   * @param options Which extra controls to show, and whether it is a live stream.
+   */
+  setActiveForLockScreen(
+    active: boolean,
+    metadata?: AudioMetadata,
+    options?: AudioLockScreenOptions,
+  ): void {
+    if (active) activateLockScreen(this, metadata ?? null, options ?? {});
+    else releaseLockScreen(this);
+  }
+
+  /**
+   * Update what the lock screen shows, while this player holds it.
+   *
+   * @param metadata The title, artist, album and artwork.
+   */
+  updateLockScreenMetadata(metadata: AudioMetadata): void {
+    if (lockScreen?.player !== this) return;
+    lockScreen = { ...lockScreen, metadata };
+    pushLockScreen();
+  }
+
+  /** Take this player off the lock screen, if it holds it. */
+  clearLockScreenControls(): void {
+    releaseLockScreen(this);
+  }
+
   /** Listen for status updates. */
   addListener(
     _event: "playbackStatusUpdate",
@@ -267,8 +448,9 @@ export class AudioPlayer {
     return (this.#status ??= createEmitter()).subscribe(listener);
   }
 
-  /** Stop and release the element. */
+  /** Stop and release the element (and the lock screen, if this player holds it). */
   remove(): void {
+    releaseLockScreen(this);
     this.#element?.pause();
     this.#element?.removeAttribute("src");
     if (this.#objectUrl) URL.revokeObjectURL(this.#objectUrl);
@@ -621,14 +803,37 @@ export function useAudioRecorderState(recorder: AudioRecorder, interval = 500): 
   return state;
 }
 
+/** The mode set so far: expo-audio's defaults, then what `setAudioModeAsync` changed. */
+const audioMode: { background: boolean; interruption: InterruptionMode } = {
+  background: false,
+  interruption: "mixWithOthers",
+};
+
 /**
- * Set the audio session mode: there is no audio session on the web, so nothing changes.
+ * Set the audio mode. `shouldPlayInBackground` and `interruptionMode` set the shell's audio
+ * session through `denext/mobile`'s {@linkcode setAudioSession} (`denext mobile add
+ * background-audio`; the iOS `.playback` category keeps audio playing in the background and with
+ * the phone locked); the other fields are accepted. On the web, a browser decides itself, so
+ * nothing changes. Lock-screen controls on iOS need a `doNotMix` mode, as in expo-audio.
  *
- * @param _mode The mode.
- * @returns A promise that settles at once.
+ * @param mode The fields to change.
+ * @returns A promise that settles once the session is set.
  */
-export function setAudioModeAsync(_mode: Record<string, unknown>): Promise<void> {
-  return Promise.resolve();
+export async function setAudioModeAsync(mode: Partial<AudioMode>): Promise<void> {
+  const interruption = mode.interruptionMode ?? mode.interruptionModeAndroid;
+  if (mode.shouldPlayInBackground === undefined && interruption === undefined) return;
+  if (mode.shouldPlayInBackground !== undefined) {
+    audioMode.background = mode.shouldPlayInBackground;
+  }
+  if (interruption !== undefined) audioMode.interruption = interruption;
+  await setAudioSession({
+    background: audioMode.background,
+    interruption: audioMode.interruption === "mixWithOthers"
+      ? "mix"
+      : audioMode.interruption === "duckOthers"
+      ? "duck"
+      : "exclusive",
+  });
 }
 
 /**
@@ -769,7 +974,7 @@ export class NativeAudioModule {
   /** Activate or deactivate the audio session. */
   declare setIsAudioActiveAsync: (active: boolean) => Promise<void>;
   /** Set the audio mode. */
-  declare setAudioModeAsync: (mode: Record<string, unknown>) => Promise<void>;
+  declare setAudioModeAsync: (mode: Partial<AudioMode>) => Promise<void>;
   /** Request the recording permission. */
   declare requestRecordingPermissionsAsync: () => Promise<PermissionResponse>;
   /** Request the notification permission (lock-screen controls). */

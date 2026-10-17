@@ -5,6 +5,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   ERR_ASYNC_COMPONENT,
+  ERR_CLASS_DISABLED,
   ERR_MEMO_CLASS,
   ERR_MORE_HOOKS,
   ERR_UPDATE_DEPTH,
@@ -23,6 +24,10 @@ Deno.test("reconciler errors: the short form names the code and the component", 
     assertEquals(
       reconcilerError(ERR_MEMO_CLASS).message,
       "denext: error 4 (a dev build has the full message)",
+    );
+    assertEquals(
+      reconcilerError(ERR_CLASS_DISABLED, "Legacy").message,
+      "denext: error 5 in <Legacy> (a dev build has the full message)",
     );
   } finally {
     installErrorTexts();
@@ -44,6 +49,10 @@ Deno.test("reconciler errors: the installed texts are the full messages", () => 
   assertStringIncludes(
     reconcilerError(ERR_MEMO_CLASS).message,
     "memo() of a class component is unsupported",
+  );
+  assertStringIncludes(
+    reconcilerError(ERR_CLASS_DISABLED, "Legacy").message,
+    "class components are disabled",
   );
   assert(!depth.includes("a dev build"), "the full text replaces the short form");
 });

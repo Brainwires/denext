@@ -57,6 +57,7 @@ async function buildRouteBundle(
     // A whole-route bundle stubs the actions it imports, as the Flight bundle does.
     server: (await devBoundaryFor(st, platform)).manifest.server,
     dev: true, // emit Fast Refresh registration into the entry
+    usesIsoIslands: true, // dev installs the isomorphic island runtime unconditionally
     devMetaFooter: await routeDevMeta(st, route),
   });
   cacheChunks(st, bundle);

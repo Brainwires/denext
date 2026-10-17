@@ -89,7 +89,7 @@ jobs:
         run: deno task doc-lint
 
   # The client bundle budget on every event, pushes to `development` included: the shared-chunk
-  # total of examples/hello's production build (`assertBundleBudgets`, 67,100 B raw) and the
+  # total of examples/hello's production build (`assertBundleBudgets`, 65,500 B raw) and the
   # tripwires next to it (no Fast Refresh runtime, no Node built-ins, the import gates). It is the
   # one test of tests/integration/build-smoke.test.ts that needs no Node or browser, and the
   # `integration` job that runs the whole file is skipped on a push, so a bundle regression would
@@ -297,14 +297,14 @@ jobs:
         run: |
           # The files the backend-integration job runs: under coverage, none of their tests may be
           # ignored either (an ignored one means its service env is not wired into this job).
-          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend|redis-integration'
+          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend|redis-integration|next-auth-adapters-integration'
           awk -v files="^[.]/tests/($files)[.]test[.]ts$" '
             /^running [0-9]+ tests? from / { current = $NF; next }
             current ~ files && /\.\.\. ignored/ { print current ": " $0; bad = 1 }
             current ~ files && /\.\.\. ok/ { ran[current] = 1 }
             END {
               n = 0; for (f in ran) n++
-              if (n < 20) { print "only " n " of 20 backend-integration files ran"; bad = 1 }
+              if (n < 21) { print "only " n " of 21 backend-integration files ran"; bad = 1 }
               exit bad
             }
           ' "$RUNNER_TEMP/coverage.txt" || {
@@ -380,9 +380,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.20
-      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.20-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: f0c67c00573eb504f59691f61780a209817c69bd008b00c580a4ac08918221a3
+      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.21
+      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.21-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 1debf5762fbafdaacc4995225e13a7140b8d3f3d20f959e35f8e646ce5a8a471
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -449,7 +449,8 @@ jobs:
             tests/backend-auth-replicas-integration.test.ts \
             tests/backend-rest-reload-integration.test.ts \
             tests/doctor-backend.test.ts \
-            tests/redis-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/redis-integration.test.ts \
+            tests/next-auth-adapters-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |

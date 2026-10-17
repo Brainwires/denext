@@ -10,16 +10,19 @@ import {
   childToolchainMarker,
   entrypointArg,
   isStandaloneBinary,
+  legacyAbortActive,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
   mergeRunFlags,
   pinnedConfigArgs,
   pinnedDenextCli,
+  servesInProcess,
   toolchainApplies,
   toolchainConfigArgs,
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "../build/deno-toolchain.ts";
+import { applyNativeCheckEngine } from "../build/native-check.ts";
 import { denoPathEnv } from "./deno-path.ts";
 import { resolveProject } from "../build/paths.ts";
 import {
@@ -34,8 +37,11 @@ import { buildServesCss } from "../build/server-copies.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "../build/bundle.ts";
 import {
   configAnchorsResolution,
+  type DenoConfigView,
   ensureFrameworkNodeModules,
   readConfig,
+  resolvesInThisProcess,
+  unresolvedImportKeys,
   writeMergedModuleConfig,
 } from "../build/module-config.ts";
 import { loadEnv } from "../server/env.ts";
@@ -280,6 +286,19 @@ async function toolchainPermissionFlags(): Promise<string[]> {
   return flags;
 }
 
+/**
+ * Whether this process may start its own Deno binary again without asking: a least-privilege
+ * `start` (no `--allow-run`) keeps serving in-process rather than prompt or fail.
+ */
+function mayRespawnSelf(): boolean {
+  try {
+    return Deno.permissions.querySync({ name: "run", command: Deno.execPath() }).state ===
+      "granted";
+  } catch {
+    return false;
+  }
+}
+
 /** The pinned toolchain version, or `null` (none pinned, or an unreadable pin file override). */
 function pinnedToolchainVersion(): string | null {
   try {
@@ -310,7 +329,7 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
     pinnedVersion: pinnedToolchainVersion(),
     standalone: () => standalone,
     resolve: () => resolveDenoToolchain(),
-    spawn: async (deno, marker) =>
+    spawn: async (deno, marker, env = {}) =>
       spawnCliChild(
         deno,
         [
@@ -328,11 +347,18 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
           ),
         ],
         entrypointArg(entryUrl()),
-        { DENEXT_TOOLCHAIN_ACTIVE: marker },
+        { ...env, DENEXT_TOOLCHAIN_ACTIVE: marker },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
     pathEnv: (deno) => denoPathEnv(deno),
+    // Already on the toolchain but started without its runtime flags (`toolchain link`'s `deno`,
+    // a `deno task` step): a serving verb re-runs once with them.
+    legacyAbort: !standalone && servesInProcess(command) && mayRespawnSelf()
+      ? legacyAbortActive
+      : undefined,
+    execPath: Deno.execPath(),
+    pids: { pid: Deno.pid, ppid: Deno.ppid },
   });
 }
 
@@ -386,7 +412,8 @@ async function reexecWithConfig(
 /**
  * Re-exec module commands with a merged framework+app config when the project has
  * its own `deno.json` that anchors module resolution to itself — a manual
- * `node_modules` or a `npm:` import (server-side npm deps like an ORM driver).
+ * `node_modules`, a `npm:` import (server-side npm deps like an ORM driver), or an import-map
+ * entry the framework's config does not resolve (an app-only `"@gleam/"` prefix).
  *
  * Deno resolves a locally-run `cli.ts`'s imports against the framework's config, so
  * a bare `import "drizzle-orm"` in an app's server module would otherwise be "not a
@@ -400,12 +427,10 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
   const paths = await resolveProject(dir);
   if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
   const appCfg = await readConfig(paths.configPath);
-  if (!configAnchorsResolution(appCfg)) return false;
-  const configPath = await writeMergedModuleConfig(
-    paths.outDir,
-    paths.configPath,
-    join(frameworkRoot(), "deno.json"),
-  );
+  const frameworkConfig = join(frameworkRoot(), "deno.json");
+  if (!configAnchorsResolution(appCfg, resolvesInThisProcess)) return false;
+  await assertMayReexec(appCfg);
+  const configPath = await writeMergedModuleConfig(paths.outDir, paths.configPath, frameworkConfig);
   // Manual mode resolves the framework's own npm build deps (esbuild, …) from the
   // node_modules beside the merged config, which the app's tree does not carry;
   // supply the framework half. (A `npm:`-anchored app without a manual dir resolves
@@ -413,6 +438,30 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
   // deps resolve via its own config regardless — see {@link ensureFrameworkNodeModules}.
   if (appCfg.nodeModulesDir === "manual") await ensureFrameworkNodeModules(paths.outDir);
   return await reexecWithConfig(configPath, "DENEXT_MODULE_ACTIVE");
+}
+
+/**
+ * Refuse, with the way out, a module re-exec this process may not spawn: a least-privilege run
+ * (no `--allow-run`) of a source checkout's CLI whose app maps keys the CLI's config cannot
+ * resolve would otherwise die on an opaque `NotCapable` from `Deno.Command`.
+ */
+async function assertMayReexec(appCfg: DenoConfigView): Promise<void> {
+  const run = await Deno.permissions.query({ name: "run", command: denoExecutable() })
+    .then((s) => s.state, () => "denied");
+  // At a terminal Deno asks for an ungranted permission; only a refusal it cannot ask about is ours.
+  if (run === "granted" || (run === "prompt" && Deno.stdin.isTerminal())) return;
+  const keys = unresolvedImportKeys(appCfg, resolvesInThisProcess);
+  const why = appCfg.nodeModulesDir === "manual"
+    ? 'its `nodeModulesDir: "manual"`'
+    : keys.length > 0
+    ? `import-map keys this CLI's config does not resolve (${keys.join(", ")})`
+    : "`npm:` imports";
+  throw new Error(
+    `denext: this project's deno.json needs a merged framework+app config for ${why}, which ` +
+      "this source checkout's CLI applies by re-running itself, but it has no --allow-run. " +
+      "Pass the app's config to the CLI (`deno run --config <app>/deno.json … cli.ts`), grant " +
+      `--allow-run=${denoExecutable()}, or run the published CLI (jsr:@denext/denext/cli).`,
+  );
 }
 
 /**
@@ -511,6 +560,16 @@ export async function runVerb(
   entry = entryModuleUrl;
   const command = await materializeCommand(parsed);
   if (await toolchainGate(command, ctx)) return;
+  // On the toolchain now: its type checking runs natively unless the compiler is unverified or the
+  // project opts out (src/build/native-check.ts) — decided before the verb starts any Deno.
+  const standalone = isStandaloneBinary();
+  if (toolchainApplies(command, ctx.positionals[0], standalone)) {
+    // A compiled executable's children run the toolchain it handed them (its marker).
+    const running = standalone
+      ? Deno.env.get("DENEXT_TOOLCHAIN_ACTIVE") ?? Deno.version.deno
+      : Deno.version.deno;
+    await applyNativeCheckEngine({ running }).catch(() => {});
+  }
   if (await moduleGate(command, ctx)) return;
   await noticeShadow(command, cwd);
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —

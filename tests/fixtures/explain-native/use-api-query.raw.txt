@@ -1,0 +1,8 @@
+TS2322 [ERROR]: Type '{ page: string; }' is not assignable to type '{ page: number; }'.
+  Types of property 'page' are incompatible.
+    Type 'string' is not assignable to type 'number'.
+  const { data } = useApi("/api/posts", "POST", { body: { title: "x" }, query });
+                                                                        ~~~~~
+    at file:///app/use-api-query.tsx:8:73
+
+error: Type checking failed.

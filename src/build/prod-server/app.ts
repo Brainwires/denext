@@ -8,6 +8,7 @@ import type { RouteManifest } from "../../router/manifest.ts";
 import { type AppConfig, createApp } from "../../server/app.ts";
 import {
   cacheStoreKind,
+  installCacheLifeProfiles,
   PageCache,
   resolveDefaultCacheStore,
   sweepOtherBuildPages,
@@ -15,6 +16,7 @@ import {
 import {
   configuredDesktopAppOrigin,
   resolveCacheComponents,
+  resolveCacheLifeProfiles,
   resolveConfigRules,
   type ResolvedRules,
   resolveLive,
@@ -42,6 +44,7 @@ import type { ProjectPaths } from "../paths.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
 import { projectPlatformRedirects } from "../platform-extensions.ts";
 import { precompiledServerLoader } from "../server-copies.ts";
+import { projectInlineServerActionModules } from "../inline-server-action.ts";
 import type { AssetResolvers } from "./assets.ts";
 import type { BuildInfo, FlightBoundary } from "./manifest.ts";
 
@@ -74,7 +77,9 @@ export async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<
   const redirects = compat
     ? {}
     : await projectPlatformRedirects(paths.projectDir, paths.config, "web");
-  if (useCache || Object.keys(redirects).length > 0) {
+  // Inline `"use server"` functions compile into server references through the same copies.
+  const inline = !compat && (await projectInlineServerActionModules(paths.projectDir)).length > 0;
+  if (useCache || inline || Object.keys(redirects).length > 0) {
     const cacheDir = join(paths.outDir, "server-cache");
     await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
     load = createUseCacheLoader(load, {
@@ -203,6 +208,7 @@ async function bootProdServices(
     onServiceError: instrumentation.onServiceError,
   });
   const rules = await resolveConfigRules(paths.config);
+  installCacheLifeProfiles(resolveCacheLifeProfiles(paths.config));
   await resolveDefaultCacheStore(
     paths.config?.cache?.path
       ? paths.config.cache

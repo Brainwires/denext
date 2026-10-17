@@ -18,6 +18,7 @@ import type {
   TextareaHTMLAttributes,
 } from "../compat/react-types.ts";
 import type { ClientDirectives } from "../jsx-directives.ts";
+import type { FragmentInstance } from "../runtime/react-extras.ts";
 
 /** A stable identity for a VNode among its siblings, used to keep lists reconciled. */
 export type Key = string | number | bigint | null | undefined;
@@ -33,6 +34,23 @@ export type VNodeType = string | Component<any> | typeof FRAGMENT;
 
 /** Marker used as a VNode `type` to group children without a wrapping element. */
 export const FRAGMENT: unique symbol = Symbol.for("denext.fragment");
+/** `<Fragment>`'s props (React's `FragmentProps`): its children and, from React 19.3, a ref. */
+export interface FragmentProps {
+  /** The grouped children. */
+  children?: VNodeChildren;
+  /** Receives the fragment's {@linkcode FragmentInstance} at commit (`null` / its cleanup on detach). */
+  ref?:
+    | { current: FragmentInstance | null }
+    | ((instance: FragmentInstance | null) => void | (() => void))
+    | null;
+}
+
+/**
+ * The declared type of `Fragment`: callable for TypeScript, so `<Fragment key ref>` type-checks
+ * as React's `ExoticComponent<FragmentProps>` does; at runtime it is the {@linkcode FRAGMENT} marker.
+ */
+export type FragmentComponent = (props: FragmentProps) => VNode;
+
 /**
  * Marker used as a VNode `type` for a portal: its children mount into a separate
  * DOM `target` (carried in props) while keeping their position in the component

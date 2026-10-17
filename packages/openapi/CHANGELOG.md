@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.5.0
+## 0.6.0
+
+### Added
+
+- **Typed clients in other languages: `denext openapi client --lang python|go|swift|kotlin`**
+  (`--out <file>`, `--package <name>` for Go / Kotlin) and `@denext/openapi/clients`
+  (`emitClient(document | model, lang)`, `modelFromOpenApi`, the per-language `emitPython` /
+  `emitGo` / `emitSwift` / `emitKotlin`). One file each, standard library only: Python 3.11+
+  (`urllib` + `json`, `TypedDict` / `NotRequired` / `Literal`), Go (`net/http` + `encoding/json`,
+  gofmt-clean, `context.Context` methods, `*APIError`), Swift (`URLSession` async/await,
+  `Codable`, a self-containing type as a final class, `APIError`), Kotlin (`java.net.http` on
+  JVM 11+, data classes with `toJson` / `fromJson`, a small JSON reader/writer in the file,
+  `ApiException`; plain-http requests use HTTP/1.1, since the JDK's cleartext HTTP/2 upgrade is
+  refused by Deno). Component schemas and inline objects become named types (an `allOf` of
+  objects is one type), string enums enums, nullable schemas optional; the `ApiError` envelope
+  is each client's own error type.
+
+## 0.5.0 - 2026-10-16
 
 ### Added
 

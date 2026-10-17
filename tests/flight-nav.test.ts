@@ -14,13 +14,8 @@ import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { FlightNavPayload, IsoNavPayload } from "../src/server/document.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
-import {
-  Link,
-  navigate,
-  startClient,
-  useLinkStatus,
-  withViewTransition,
-} from "../src/client/navigation.ts";
+import { Link, navigate, startClient, useLinkStatus } from "../src/client/navigation.ts";
+import { withViewTransition } from "../src/client/nav-document.ts";
 import { setFlightParser } from "../src/client/flight-nav.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";

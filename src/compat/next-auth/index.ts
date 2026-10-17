@@ -17,6 +17,10 @@
  * export { auth as middleware } from "@/auth";
  * ```
  *
+ * NextAuth.js v4's server API runs on the same instance: `NextAuth(authOptions)` is also the
+ * route handler (`export { handler as GET, handler as POST }`, or a Pages API route's default
+ * export), and {@linkcode getServerSession} reads the session.
+ *
  * In production denext needs `AUTH_URL` (its `canonicalOrigin`): it never derives the OAuth
  * `redirect_uri` or its same-origin checks from the `Host` header. What else differs from Auth.js
  * is listed in KNOWN-DIFFERENCES.md.
@@ -27,10 +31,8 @@
 import { NextRequest } from "../next/request.ts";
 import { NextResponse } from "../next/server.ts";
 import { redirect } from "../../runtime/error-boundary.ts";
-import { bindAuthConfig, denextAuth } from "../../server/auth/mod.ts";
 import { inMemoryRateLimitStore, type RateLimitOptions } from "../../server/auth/rate-limit.ts";
 import { copyRemoteAddr } from "../../server/remote-addr.ts";
-import { translateConfig } from "./config.ts";
 import {
   type AuthorizationParamsInput,
   contextRequest,
@@ -40,9 +42,18 @@ import {
   safeCallbackUrl,
 } from "./flows.ts";
 import { createHandlers, type RouteHandler } from "./handlers.ts";
+import { bindInstance, instanceFor, instanceOf } from "./instance.ts";
 import { currentAuthJsSession } from "./session.ts";
-import { type ActiveNextAuth, bindActiveNextAuth, setActiveNextAuth } from "./state.ts";
+import type { ActiveNextAuth } from "./state.ts";
 import type { AuthorizedCallbackParams, Awaitable, NextAuthConfig, Session } from "./types.ts";
+import {
+  isNodeResponse,
+  type NextAuthV4Handler,
+  type NodeLikeRequest,
+  type NodeLikeResponse,
+  servePagesApi,
+  v4Handler,
+} from "./v4.ts";
 
 export type {
   Account,
@@ -70,6 +81,14 @@ export type {
   AuthJsVerificationToken as VerificationToken,
 } from "./adapter.ts";
 export type { RouteHandler } from "./handlers.ts";
+export {
+  getServerSession,
+  type GetServerSessionArgs,
+  type NextAuthV4Handler,
+  type NodeLikeRequest,
+  type NodeLikeResponse,
+} from "./v4.ts";
+export { getServerSession as unstable_getServerSession } from "./v4.ts";
 export type { AuthorizationParamsInput } from "./flows.ts";
 export type { NextRequest } from "../next/request.ts";
 
@@ -318,19 +337,9 @@ function serverSignOut(resolve: InstanceResolver): NextAuthResult["signOut"] {
   };
 }
 
-/** Translate `config` and validate it as denext's (which also makes it the process's active one). */
-function instanceOf(config: NextAuthConfig, rateLimit?: RateLimitOptions): ActiveNextAuth {
-  const active = translateConfig(config, undefined, rateLimit);
-  // Validates the translated config (secret, providers, origin) and makes it the one `auth()`
-  // reads. The plugin it returns is not needed: the handlers serve the endpoints.
-  denextAuth(active.denext);
-  setActiveNextAuth(active);
-  return active;
-}
-
-/** A static config: translated once, at `NextAuth()`. */
+/** A static config: translated once (the same instance `getServerSession(config)` reads). */
 function staticResolver(config: NextAuthConfig): InstanceResolver {
-  const active = instanceOf(config);
+  const active = instanceFor(config);
   return () => Promise.resolve(active);
 }
 
@@ -362,8 +371,7 @@ function lazyResolver(
     }
     let active = built.get(resolved);
     if (!active) built.set(resolved, active = instanceOf(resolved, rateLimit));
-    bindActiveNextAuth(active);
-    bindAuthConfig(active.denext);
+    bindInstance(active);
     return active;
   };
 }
@@ -378,20 +386,61 @@ function handlersOf(resolve: InstanceResolver): NextAuthResult["handlers"] {
 }
 
 /**
+ * What `NextAuth(config)` returns: Auth.js v5's `{ handlers, auth, signIn, signOut,
+ * unstable_update }`, which is also NextAuth.js v4's route handler — `const handler =
+ * NextAuth(authOptions); export { handler as GET, handler as POST }` in the App Router, `export
+ * default NextAuth(authOptions)` in a Pages API route.
+ */
+export type NextAuthInstance = NextAuthResult & NextAuthV4Handler;
+
+/** The v4 `authOptions` type (`NextAuthOptions` / `AuthOptions`): the same config v5 takes. */
+export type NextAuthOptions = NextAuthConfig;
+/** NextAuth.js v4's other name for {@linkcode NextAuthOptions}. */
+export type AuthOptions = NextAuthConfig;
+
+/**
+ * NextAuth.js v4, called straight from a Pages API route: answer `req` onto `res`.
+ *
+ * @param req The API route's request.
+ * @param res The API route's response.
+ * @param options The `authOptions`.
+ * @returns When the answer is written.
+ */
+export default function NextAuth(
+  req: NodeLikeRequest | Request,
+  res: NodeLikeResponse,
+  options: NextAuthConfig,
+): Promise<void>;
+/**
  * Set up Auth.js on denext.
  *
  * @param config The Auth.js config, or a function returning it (or a promise of it), called on
  *   every request — with the `NextRequest` for the route handlers and middleware, `undefined`
  *   for `auth()`, `signIn()`, `signOut()` and `unstable_update()`, as in Auth.js.
- * @returns `{ handlers, auth, signIn, signOut, unstable_update }`.
+ * @returns `{ handlers, auth, signIn, signOut, unstable_update }`, itself callable as v4's
+ *   route handler.
  */
 export default function NextAuth(
   config:
     | NextAuthConfig
     | ((request: NextRequest | undefined) => Awaitable<NextAuthConfig>),
-): NextAuthResult {
-  const resolve = typeof config === "function" ? lazyResolver(config) : staticResolver(config);
-  return {
+): NextAuthInstance;
+export default function NextAuth(
+  config:
+    | NextAuthConfig
+    | NodeLikeRequest
+    | Request
+    | ((request: NextRequest | undefined) => Awaitable<NextAuthConfig>),
+  res?: NodeLikeResponse,
+  options?: NextAuthConfig,
+): NextAuthInstance | Promise<void> {
+  if (isNodeResponse(res) && options) {
+    return servePagesApi(config as NodeLikeRequest | Request, res, options);
+  }
+  const resolve = typeof config === "function"
+    ? lazyResolver(config)
+    : staticResolver(config as NextAuthConfig);
+  const result: NextAuthResult = {
     handlers: handlersOf(resolve),
     auth: authFunction(resolve),
     signIn: serverSignIn(resolve),
@@ -399,4 +448,5 @@ export default function NextAuth(
     unstable_update: async (data) =>
       currentAuthJsSession(await resolve(undefined), { persist: true, update: { data } }),
   };
+  return Object.assign(v4Handler(resolve), result);
 }

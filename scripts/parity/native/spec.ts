@@ -28,7 +28,7 @@ export const REACT_NATIVE_SPECIFIER = "react-native";
 /** The React Native package whose bundled `.d.ts` defines the EXPECTED export names. */
 export const REACT_NATIVE_PACKAGE = "react-native";
 /** T3's pinned React Native version — the EXPECTED-surface source. */
-export const REACT_NATIVE_PIN = "0.86.3";
+export const REACT_NATIVE_PIN = "0.88.0";
 /** The package `src/build/react-native.ts` aliases every `react-native` import to (ACTUAL runtime). */
 export const REACT_NATIVE_WEB_PACKAGE = "react-native-web";
 /** The pinned react-native-web the ACTUAL bundle is built over (see bundle.ts). */

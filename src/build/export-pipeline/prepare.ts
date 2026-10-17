@@ -9,8 +9,9 @@ import {
   runPluginPrepareSteps,
 } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
-import { appUsesActivity, appUsesViewTransition } from "../bundle.ts";
-import { resolveCacheComponents } from "../../server/config.ts";
+import { appUsesActivity, appUsesIsoIslands, appUsesViewTransition } from "../bundle.ts";
+import { resolveCacheComponents, resolveCacheLifeProfiles } from "../../server/config.ts";
+import { installCacheLifeProfiles } from "../../server/cache.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { ProjectPaths } from "../paths.ts";
@@ -29,6 +30,7 @@ import {
   projectPlatformRedirects,
 } from "../platform-extensions.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { projectInlineServerActionModules } from "../inline-server-action.ts";
 import { assetUrlBase } from "../prod-server/assets.ts";
 import { platformImportMap } from "../platform-imports.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
@@ -137,8 +139,12 @@ async function exportLoader(
   redirects: Record<string, string>,
 ): Promise<ModuleLoader> {
   const useCache = resolveCacheComponents(paths.config);
+  installCacheLifeProfiles(resolveCacheLifeProfiles(paths.config));
   // A target other than `web` folds `platform` (denext/platform) in the copies it renders.
-  if (!useCache && Object.keys(redirects).length === 0 && platform === "web") {
+  if (
+    !useCache && Object.keys(redirects).length === 0 && platform === "web" &&
+    (await projectInlineServerActionModules(paths.projectDir)).length === 0
+  ) {
     return defaultLoader;
   }
   // Per target: Deno caches a module by URL for the life of the process, so two targets'
@@ -181,6 +187,7 @@ export async function prepareExport(
   const outside = await localModulesOutside(paths.projectDir, manifest.pages);
   const usesActivity = await appUsesActivity(paths.projectDir, outside);
   const usesViewTransition = await appUsesViewTransition(paths.projectDir, outside);
+  const usesIsoIslands = await appUsesIsoIslands(paths.projectDir, outside);
   const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -206,6 +213,7 @@ export async function prepareExport(
     transforms: {},
     usesActivity,
     usesViewTransition,
+    usesIsoIslands,
     pages: 0,
     skipped: [],
   };

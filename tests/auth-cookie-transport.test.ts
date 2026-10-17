@@ -69,7 +69,17 @@ Deno.test("auth cookies: the transport rule, case by case", () => {
   assertEquals(plainAt("http://localhost:3000/"), true);
   assertEquals(plainAt("http://dev.localhost:3000/"), true);
   assertEquals(plainAt("http://[::1]:3000/"), true);
-  assertEquals(plainAt("http://192.168.1.5:3000/"), true, "outside production, any host");
+  // Another host keeps the prefix unless this is `denext dev` (a phone on the LAN): a staging
+  // server behind a TLS proxy that sends no x-forwarded-proto must not drop it.
+  assertEquals(plainAt("http://192.168.1.5:3000/"), false, "not denext dev");
+  assertEquals(plainAt("http://staging.example.com/"), false, "not denext dev");
+  const g = globalThis as { __denextDev?: boolean };
+  g.__denextDev = true;
+  try {
+    assertEquals(plainAt("http://192.168.1.5:3000/"), true, "denext dev: any host");
+  } finally {
+    delete g.__denextDev;
+  }
   // An https canonicalOrigin means the app is served over TLS: always prefixed.
   assertEquals(
     plainAt("http://localhost:3000/", config({ canonicalOrigin: "https://app.test" })),

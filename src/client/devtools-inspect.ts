@@ -37,7 +37,7 @@ import { setDevtoolsHooks } from "./fiber/devtools-seam.ts";
 import { setInspectorBridge } from "./devtools.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
 import { componentMetaOf, type ResolvedHookName, resolveHookNames } from "./devtools-meta.ts";
-import { type SourceLocation, sourceOf } from "./owner-stack.ts";
+import { ownerFrames, type SourceLocation, sourceOf } from "./owner-stack.ts";
 
 export type { SourceLocation };
 import {
@@ -766,30 +766,34 @@ export function clearPropOverrides(fiberId: number): boolean {
 
 /** One component above a node in {@link getOwnerStack}. */
 export interface OwnerStackEntry {
-  /** The ancestor's display name. */
+  /** The owner's display name. */
   name: string;
   /** Where it was declared, when the family registry knows (see {@link SourceLocation}). */
   source?: SourceLocation;
+  /**
+   * Where this owner wrote the JSX of the element below it in the stack — recorded by a dev
+   * build's `jsxDEV`; absent when the chain is the render-parent fallback.
+   */
+  callSite?: SourceLocation;
 }
 
 /**
- * The component ancestor chain for a node — the names of the component fibers above
- * it (nearest first), each with its source when known. An approximation of React's
- * "owner stack": the render-parent path rather than the JSX-owner, which coincide for
- * the common case. `fiberId` comes from the most recent {@link getInspectorTree}.
- * Empty in production or for an unknown/stale id.
+ * A node's owner stack, nearest first: React's JSX-owner chain (the component whose render
+ * created each element, with the JSX call site) when the elements came from a dev build's
+ * `jsxDEV`, else the component fibers above it (an element made by `h()` / `createElement`
+ * records no owner). Each entry carries its declaration source when known. `fiberId` comes
+ * from the most recent {@link getInspectorTree}. Empty in production or for an unknown/stale id.
  */
 export function getOwnerStack(fiberId: number): OwnerStackEntry[] {
   if (!isDev()) return [];
   const fiber = idToFiber.get(fiberId);
   if (!fiber) return [];
-  const stack: OwnerStackEntry[] = [];
-  for (let f = fiber.return; f !== null; f = f.return) {
-    if (f.tag === "component") {
-      stack.push({ name: componentDisplayName(f.vnode.type), source: sourceOf(f.vnode.type) });
-    }
-  }
-  return stack;
+  return ownerFrames(fiber).map(({ fiber: owner, callSite }) => {
+    const type = owner.vnode.type;
+    const entry: OwnerStackEntry = { name: componentDisplayName(type), source: sourceOf(type) };
+    if (callSite) entry.callSite = callSite;
+    return entry;
+  });
 }
 
 // ---- Profiler --------------------------------------------------------------

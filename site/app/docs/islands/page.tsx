@@ -206,6 +206,37 @@ export default function Chart() { /* … */ }
         server HTML stays inert until its own strategy fires, and the enclosing island adopts the
         nested one's DOM without re-hydrating it.
       </Callout>
+      <h2>On an isomorphic route</h2>
+      <p>
+        A route with no <code>"use client"</code>{" "}
+        boundary whose page hydrates as one client tree (a page that calls a hook itself, as a
+        migrated app's often does) takes the same directives on any function component,{" "}
+        <code>"use client"</code>{" "}
+        or not. The server renders the element inside the island wrapper; the page hydrates around
+        it, adopting the wrapper and leaving its server DOM inert; and when the strategy fires, the
+        island's children hydrate against that DOM{" "}
+        <em>in the same tree</em>, so it reads the page's context, its events bubble to the page's
+        handlers, and an error reaches the page's error boundary, as without the directive. The
+        runtime ships only in an app whose sources write a directive (a build scan, like the other
+        gated runtimes). The click that wakes a <code>client:interaction</code>{" "}
+        island reaches its handler: the island hydrates while that event bubbles, before the page's
+        listener dispatches it (an <code>onClickCapture</code>{" "}
+        handler in the island misses it). A module-level <code>hydrate</code>{" "}
+        default is not read, and a class or lazy component renders eagerly.
+      </p>
+      <p>
+        The island's code leaves the page bundle too. When a component is imported only for
+        directive elements, <code>denext build</code> and <code>denext export</code>{" "}
+        move it (and what only it imports) into a chunk of its own, fetched when the strategy fires,
+        so a <code>client:visible</code>{" "}
+        island below the fold costs no JavaScript until it nears the viewport. A{" "}
+        <code>client:interaction</code>{" "}
+        island whose chunk is still loading holds the gesture at its wrapper and replays it once
+        hydrated. A component that is also used without a directive, or a module that a Flight route
+        also reaches, keeps the island's code in the page bundle; <code>denext dev</code>{" "}
+        always does.
+      </p>
+
       <h2>In SPA mode: deferred mounts</h2>
       <p>
         A <a href="/docs/spa">SPA</a>{" "}
@@ -303,9 +334,9 @@ declare module "react" { interface Attributes extends ClientDirectives<import("r
       </Code>
       <p>
         Islands are a <a href="/docs/rendering">rendering-strategy</a>{" "}
-        feature of the client/server (Flight) boundary — any App Router app with a{" "}
-        <code>"use client"</code> component. See <a href="/docs/rendering">Rendering strategies</a>
-        {" "}
+        feature: of the client/server (Flight) boundary in any App Router app with a{" "}
+        <code>"use client"</code> component, and of an isomorphic route's one client tree. See{" "}
+        <a href="/docs/rendering">Rendering strategies</a>{" "}
         for how islands sit alongside streaming, PPR, and the other strategies, and{" "}
         <a href="/docs/resumability">Resumability</a> for zero-up-front-hydration routes.
       </p>

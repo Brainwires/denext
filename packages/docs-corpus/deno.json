@@ -1,0 +1,9 @@
+{
+  "name": "@denext/docs-corpus",
+  "version": "4.3.1",
+  "exports": "./mod.ts",
+  "denext": { "catalog": { "kind": "library" } },
+  "publish": {
+    "include": ["mod.ts", "README.md", "CHANGELOG.md", "LICENSE", "deno.json"]
+  }
+}

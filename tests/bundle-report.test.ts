@@ -1,11 +1,18 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
 import {
   bundleAnalysisLines,
+  type BundleChunk,
+  bundleIslandLines,
   type BundleMetafile,
   bundleReportMarkdown,
   bundleRoleLines,
   bundleSummaryLines,
+  chunkImports,
+  chunkRoles,
   classifyChunk,
+  islandBreakdown,
+  readClientChunks,
 } from "../src/build/bundle-report.ts";
 
 Deno.test("bundleSummaryLines: a fully-static app reports 0 KB", () => {
@@ -61,6 +68,10 @@ Deno.test("classifyChunk: shared runtime, islands, and entries by name prefix", 
   assertEquals(classifyChunk("lazy-VUOUC2XY.js"), "on-demand");
   assertEquals(classifyChunk("class-runtime-Q2ZQ7A3B.js"), "on-demand");
   assertEquals(classifyChunk("momentum-scroll-DT2RLQSK.js"), "on-demand");
+  assertEquals(classifyChunk("nav-document-MLG7FNHP.js"), "on-demand");
+  // The framework's own lazily loaded modules are on-demand, never islands (`denext analyze`).
+  assertEquals(classifyChunk("flight-nav-stream-KUBQ2GO7.js"), "on-demand");
+  assertEquals(classifyChunk("flight-value-holes-LZ4ZSTDZ.js"), "on-demand");
 });
 
 Deno.test("bundleRoleLines: isolates the shared-runtime subtotal (the budget target)", () => {
@@ -124,4 +135,148 @@ Deno.test("bundleReportMarkdown: per-module breakdown when a metafile is given",
 
 Deno.test("bundleReportMarkdown: 0-JS app", () => {
   assertStringIncludes(bundleReportMarkdown([]).join("\n"), "ships **0 KB**");
+});
+
+// The Lustre spike's shape: a library chunk only client components (islands) import must not be
+// reported as the shared runtime every interactive route pays for.
+const ISLAND_GRAPH: BundleChunk[] = [
+  {
+    name: "__denext_flight__.js",
+    bytes: 4_000,
+    imports: ["chunk-RT.js"],
+    lazyImports: ["lustre-counter-AAAAAAAA.js", "register-counter-BBBBBBBB.js", "lazy-CCCCCCCC.js"],
+  },
+  { name: "chunk-RT.js", bytes: 59_000, imports: [] },
+  { name: "lustre-counter-AAAAAAAA.js", bytes: 900, imports: ["chunk-GLUE.js", "chunk-RT.js"] },
+  { name: "register-counter-BBBBBBBB.js", bytes: 700, imports: ["chunk-LUSTRE.js"] },
+  { name: "chunk-GLUE.js", bytes: 536, imports: ["chunk-LUSTRE.js"] },
+  { name: "chunk-LUSTRE.js", bytes: 55_210, imports: [] },
+  { name: "lazy-CCCCCCCC.js", bytes: 2_000, imports: ["chunk-LAZY.js"] },
+  { name: "chunk-LAZY.js", bytes: 800, imports: [] },
+];
+
+Deno.test("chunkRoles: a chunk only islands reach is an island chunk, not shared runtime", () => {
+  const roles = chunkRoles(ISLAND_GRAPH);
+  assertEquals(roles.get("chunk-RT.js"), "shared"); // the flight entry imports it
+  assertEquals(roles.get("chunk-LUSTRE.js"), "island"); // only client components reach it
+  assertEquals(roles.get("chunk-GLUE.js"), "island");
+  assertEquals(roles.get("chunk-LAZY.js"), "on-demand"); // only the framework's lazy- chunk
+  assertEquals(roles.get("__denext_flight__.js"), "entry");
+  assertEquals(roles.get("lustre-counter-AAAAAAAA.js"), "entry");
+  // A shared chunk an island also imports stays shared once any route entry reaches it.
+  const both = chunkRoles([
+    { name: "page.js", bytes: 1, imports: ["chunk-X.js"], lazyImports: ["isl-DDDDDDDD.js"] },
+    { name: "isl-DDDDDDDD.js", bytes: 1, imports: ["chunk-X.js"] },
+    { name: "chunk-X.js", bytes: 1, imports: [] },
+  ]);
+  assertEquals(both.get("chunk-X.js"), "shared");
+  // Without import data (sizes only), every chunk-* is still shared runtime by name.
+  const named = chunkRoles(ISLAND_GRAPH.map(({ name, bytes }) => ({ name, bytes })));
+  assertEquals(named.get("chunk-LUSTRE.js"), "shared");
+});
+
+Deno.test("bundleRoleLines / markdown: an island-only chunk is counted under islands", () => {
+  const lines = bundleRoleLines(ISLAND_GRAPH);
+  const shared = lines.find((l) => l.includes("shared runtime"))!;
+  assertStringIncludes(shared, "(1 chunk)");
+  assertStringIncludes(lines.find((l) => l.includes("islands"))!, "(2 chunks)");
+  const md = bundleReportMarkdown(ISLAND_GRAPH).join("\n");
+  assertStringIncludes(md, "| `chunk-LUSTRE.js` | islands |");
+  assertStringIncludes(md, "| `chunk-RT.js` | shared runtime |");
+});
+
+Deno.test("islandBreakdown: each island's exclusive chunks, and the chunks islands share", () => {
+  assertEquals(islandBreakdown(ISLAND_GRAPH), {
+    islands: [
+      // 900 B own + 536 B exclusive GLUE; register-counter has only its own 700 B.
+      { name: "lustre-counter-AAAAAAAA.js", exclusive: ["chunk-GLUE.js"] },
+      { name: "register-counter-BBBBBBBB.js", exclusive: [] },
+    ],
+    shared: [{
+      name: "chunk-LUSTRE.js",
+      islands: ["lustre-counter-AAAAAAAA.js", "register-counter-BBBBBBBB.js"],
+    }],
+  });
+  // An `island-*` chunk is an island too; shared runtime and on-demand chunks are never counted.
+  const named = islandBreakdown([
+    { name: "page.js", bytes: 1, imports: ["chunk-RT.js"], lazyImports: [] },
+    { name: "chunk-RT.js", bytes: 1, imports: [] },
+    { name: "island-A.js", bytes: 10, imports: ["chunk-RT.js", "chunk-A.js"] },
+    { name: "chunk-A.js", bytes: 5, imports: [] },
+  ]);
+  assertEquals(named, {
+    islands: [{ name: "island-A.js", exclusive: ["chunk-A.js"] }],
+    shared: [],
+  });
+  // A framework module loaded with import() is not an island.
+  const framework = islandBreakdown([
+    { name: "page.js", bytes: 1, imports: [], lazyImports: ["flight-nav-stream-KUBQ2GO7.js"] },
+    { name: "flight-nav-stream-KUBQ2GO7.js", bytes: 1, imports: [] },
+  ]);
+  assertEquals(framework, { islands: [], shared: [] });
+  // Sizes only (no import data), or no islands: nothing to split.
+  assertEquals(islandBreakdown(ISLAND_GRAPH.map(({ name, bytes }) => ({ name, bytes }))), {
+    islands: [],
+    shared: [],
+  });
+});
+
+Deno.test("bundleIslandLines / markdown: per-island rows, exclusive chunks, shared chunks", () => {
+  const lines = bundleIslandLines(ISLAND_GRAPH);
+  assertEquals(lines[0], "By island:");
+  const lustre = lines.findIndex((l) => l.trimStart().startsWith("lustre-counter-AAAAAAAA.js"));
+  assertStringIncludes(lines[lustre], "1.4 KB"); // 900 + 536 bytes
+  assertStringIncludes(lines[lustre], "(+1 exclusive chunk)");
+  assert(lines[lustre + 1].startsWith("    chunk-GLUE.js"), lines.join("\n"));
+  const sharedAt = lines.indexOf("  shared between islands:");
+  assert(sharedAt > lustre, lines.join("\n"));
+  assertStringIncludes(
+    lines[sharedAt + 1],
+    "lustre-counter-AAAAAAAA.js, register-counter-BBBBBBBB.js",
+  );
+  assertStringIncludes(lines[sharedAt + 1], "chunk-LUSTRE.js");
+  // Every size starts in one column.
+  const starts = lines.slice(1).filter((l) => /KB/.test(l)).map((l) => l.search(/\d+\.\d KB/));
+  assertEquals(new Set(starts).size, 1, lines.join("\n"));
+  const md = bundleReportMarkdown(ISLAND_GRAPH).join("\n");
+  assertStringIncludes(md, "## By island");
+  assertEquals(bundleIslandLines([{ name: "page.js", bytes: 1, imports: [] }]), []);
+});
+
+Deno.test("bundleRoleLines: every role's size starts in one column, a gap after the longest label", () => {
+  const lines = bundleRoleLines(ISLAND_GRAPH).slice(1);
+  assertEquals(lines.length, 4);
+  const starts = lines.map((l) => l.search(/\d/));
+  assertEquals(new Set(starts).size, 1, lines.join("\n"));
+  const onDemand = lines.find((l) => l.includes("on-demand runtime"))!;
+  assertStringIncludes(onDemand, "on-demand runtime  ");
+});
+
+Deno.test("chunkImports / readClientChunks: static and dynamic sibling imports from emitted code", async () => {
+  assertEquals(
+    chunkImports(
+      `import{a as b}from"./chunk-X.js";import"./chunk-Y.js";export*from './chunk-Z.js';` +
+        `const m=()=>import("./counter-ABCDEFGH.js");import"https://cdn/x.js";import"./sub/y.js";`,
+    ),
+    {
+      imports: ["chunk-X.js", "chunk-Y.js", "chunk-Z.js"],
+      lazyImports: ["counter-ABCDEFGH.js"],
+    },
+  );
+  const dir = await Deno.makeTempDir({ prefix: "denext_chunks_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "page.js"),
+      `import"./chunk-A.js";import("./isl-EEEEEEEE.js")`,
+    );
+    await Deno.writeTextFile(join(dir, "chunk-A.js"), "export const a=1;");
+    const chunks = (await readClientChunks(dir)).sort((x, y) => x.name.localeCompare(y.name));
+    assertEquals(chunks.map((c) => [c.name, c.imports, c.lazyImports]), [
+      ["chunk-A.js", [], []],
+      ["page.js", ["chunk-A.js"], ["isl-EEEEEEEE.js"]],
+    ]);
+    assertEquals(chunks[0].bytes, 17);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

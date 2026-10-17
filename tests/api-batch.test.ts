@@ -95,7 +95,7 @@ Deno.test("api batch: a malformed batch or item fails the WHOLE batch (nothing r
       ),
   });
   const bad: unknown[] = [
-    [{ id: 0, m: "POST", p: "/api/hello" }], // mutations never batch
+    [{ id: 0, m: "CONNECT", p: "/api/hello" }], // not a method a batch carries
     [{ id: 0, m: "GET", p: "//evil.example/x" }], // protocol-relative escape
     [{ id: 0, m: "GET", p: "http://evil.example/x" }], // absolute URL
     [{ id: 0, m: "GET", p: "/_denext/action/abc" }], // reserved endpoints
@@ -203,4 +203,26 @@ Deno.test("api batch: item Set-Cookies merge onto the batch response; a crashing
   } finally {
     console.error = errors;
   }
+});
+
+Deno.test("api batch: an item for a route a plugin serves (matchExternal) reaches the plugin", async () => {
+  const app = batchApp({
+    matchExternal: (req: Request) =>
+      Promise.resolve(
+        new URL(req.url).pathname === "/api/legacy"
+          ? Response.json({ legacy: true, cookie: req.headers.get("cookie") })
+          : null,
+      ),
+  });
+  const res = await app(batchRequest([
+    { id: 0, m: "GET", p: "/api/legacy" },
+    { id: 1, m: "GET", p: "/api/unclaimed" },
+  ]));
+  const { r } = await res.json();
+  const byId = Object.fromEntries(r.map((x: { id: number }) => [x.id, x]));
+  assertEquals(byId[0].s, 200);
+  assertEquals(JSON.parse(byId[0].t), { legacy: true, cookie: "session=abc" });
+  // Nothing claims it: the bare JSON 404 as before.
+  assertEquals(byId[1].s, 404);
+  assertEquals(JSON.parse(byId[1].t).error.code, "not_found");
 });

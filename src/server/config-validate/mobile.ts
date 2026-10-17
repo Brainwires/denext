@@ -158,7 +158,33 @@ export function validateReactNative(config: DenextConfig, fail: Fail): void {
   }
   if (isObject) validateReactNativeObject(value as Record<string, unknown>, fail);
   if (config.mode !== "spa") {
-    fail("reactNative", 'applies only in SPA mode — set `mode: "spa"` and `spa.entry`');
+    validateAppRouterReactNative(config, isObject ? value as Record<string, unknown> : {}, fail);
+  }
+}
+
+/**
+ * `reactNative` on the App Router: it builds through the compat (esbuild) pipeline, so it
+ * cannot sit beside `compatibilityMode: false`; `fonts` is the SPA shell's (its `@font-face`
+ * rules go in the shell document).
+ */
+function validateAppRouterReactNative(
+  config: DenextConfig,
+  options: Record<string, unknown>,
+  fail: Fail,
+): void {
+  if (config.compatibilityMode === false) {
+    fail(
+      "reactNative",
+      "builds through the compat (esbuild) pipeline on the App Router (its react-native → " +
+        "react-native-web resolvers live there) — remove `compatibilityMode: false`",
+    );
+  }
+  if (options.fonts !== undefined) {
+    fail(
+      "reactNative.fonts",
+      'applies only in SPA mode (`mode: "spa"`), whose shell declares the fonts — on the App ' +
+        "Router load them with `next/font/local` or an `@font-face` stylesheet",
+    );
   }
 }
 

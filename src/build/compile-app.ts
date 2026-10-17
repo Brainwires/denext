@@ -29,7 +29,7 @@ import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
-import { childToolchainMarker } from "../cli/self-exec.ts";
+import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
 import {
   denortTargetKey,
   type DenoToolchainPin,
@@ -44,6 +44,7 @@ export const COMPILE_TARGETS: readonly string[] = [
   "x86_64-apple-darwin",
   "aarch64-apple-darwin",
   "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
 ];
 
 /** Options for {@linkcode compileApp}. */
@@ -154,9 +155,19 @@ function toolchainVersion(): string | undefined {
   return marker !== undefined && marker !== "path" ? marker : undefined;
 }
 
-/** Whether the `deno` {@linkcode denoExecutable} resolves is denext's toolchain (a known build). */
-function onToolchain(): boolean {
-  return toolchainVersion() !== undefined;
+/**
+ * The flags only a toolchain compile gets (`version`: the toolchain's, `undefined` off it):
+ * `--exclude-unused-npm` embeds only the npm packages the server's graph reaches, not the whole
+ * lockfile snapshot (the framework's build tools are no part of the server), and the toolchain's
+ * runtime flags are baked into the binary's metadata (`--unstable-no-legacy-abort`: the server runs
+ * as under `denext start`; the toolchain's denort keeps it from 2.9.7-denext.21, so the first
+ * request prints no legacy-abort notice).
+ *
+ * @param version The toolchain version this process runs on, or `undefined`.
+ * @returns The flags (none off the toolchain).
+ */
+export function toolchainCompileFlags(version: string | undefined): string[] {
+  return version === undefined ? [] : ["--exclude-unused-npm", ...toolchainRuntimeFlags(version)];
 }
 
 /** How {@linkcode denortBinary} reaches the toolchain (tests pass fakes). */
@@ -356,9 +367,7 @@ export async function compileApp(
     "compile",
     "--no-check",
     "--unstable-sloppy-imports",
-    // The toolchain's: embed only the npm packages the server's graph reaches, not the whole
-    // lockfile snapshot (the framework's build tools are no part of the server).
-    ...(!options.deno && onToolchain() ? ["--exclude-unused-npm"] : []),
+    ...(options.deno ? [] : toolchainCompileFlags(toolchainVersion())),
     ...permissions,
     "--config",
     config,

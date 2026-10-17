@@ -4,6 +4,7 @@
 
 import type { PageContext, PageFlightShellResult } from "./render-page.ts";
 import { renderPageFlightShell, renderPageShell } from "./render-page.ts";
+import { beginSignalCollection } from "../runtime/signal-state.ts";
 import { pageCacheTiming } from "./cache.ts";
 import {
   renderDocument,
@@ -84,13 +85,22 @@ async function signalPageResponse(
 /** Stream an HTML route's shell + holes, or buffer it when the shell has no holes. */
 async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<Response> {
   const { request, ctx } = pr.state;
-  const shellResult = await renderPageShell(
-    pr.page,
-    request,
-    pr.pageLoad,
-    renderOptions(pr),
-    prepared,
-  );
+  // The route hydrates as one client bundle: the signal state its shell and holes record
+  // (`useApi({ suspense: true })` results, `useSignal` values) seeds that hydration.
+  const finishSignals = beginSignalCollection();
+  let shellResult: Awaited<ReturnType<typeof renderPageShell>>;
+  try {
+    shellResult = await renderPageShell(
+      pr.page,
+      request,
+      pr.pageLoad,
+      renderOptions(pr),
+      prepared,
+    );
+  } catch (err) {
+    finishSignals();
+    throw err;
+  }
   // Report the shell's boundary catches; a hole's (streamed after the response) is reported
   // as it is caught.
   await reportBoundaryErrors(pr, "server-rendering");
@@ -103,12 +113,14 @@ async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<
   const routeCsp = prepared.config.csp;
   const { shell } = shellResult;
   if (shell && shell.holes.size > 0) {
-    const stream = streamPageDocument({ ...doc, shell, signal: ctx.signal });
+    const stream = streamPageDocument({ ...doc, shell, signal: ctx.signal, finishSignals });
     const shellPrefix = renderHeadContent(doc.metadata, doc.viewport, doc.styles) + shell.shell;
     return streamedResponse(pr, stream, shellPrefix, routeCsp, shellResult.status);
   }
+  const collected = finishSignals();
+  const signalState = Object.keys(collected).length > 0 ? collected : undefined;
   if (shell) {
-    const buffered = renderDocument({ ...doc, bodyHtml: shell.shell });
+    const buffered = renderDocument({ ...doc, bodyHtml: shell.shell, signalState });
     return bufferedShellResponse(pr, buffered, routeCsp, shellResult.status);
   }
   const signalDoc = renderDocument({ ...doc, bodyHtml: shellResult.html ?? "" });

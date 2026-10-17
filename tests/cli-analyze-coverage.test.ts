@@ -3,7 +3,7 @@
 // human-readable chunk table, plus `readClientChunks` against a real `.denext/client`
 // output.
 
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { analyzeCommand } from "../src/cli/commands/analyze.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
@@ -51,4 +51,20 @@ Deno.test("analyze prints a human-readable chunk breakdown", async () => {
     await Deno.remove(dir, { recursive: true });
   }
   assertStringIncludes(cap.logs.join("\n"), "denext analyze");
+});
+
+Deno.test("analyze --md restores DENEXT_ANALYZE afterwards", async () => {
+  const dir = await minimalApp();
+  const cap = capture();
+  const prior = Deno.env.get("DENEXT_ANALYZE");
+  Deno.env.delete("DENEXT_ANALYZE");
+  try {
+    await analyzeCommand.run(makeCtx({ positionals: [dir], flags: { md: true } }));
+    assertEquals(Deno.env.get("DENEXT_ANALYZE"), undefined, "--md leaves no DENEXT_ANALYZE behind");
+  } finally {
+    cap.restore();
+    if (prior === undefined) Deno.env.delete("DENEXT_ANALYZE");
+    else Deno.env.set("DENEXT_ANALYZE", prior);
+    await Deno.remove(dir, { recursive: true });
+  }
 });

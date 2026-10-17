@@ -346,6 +346,25 @@ Deno.test("t.rich with a missing tag handler renders the children inline (SSR)",
   assert(html.includes("x y z"), html);
 });
 
+Deno.test("t.rich/t.markup: tag nesting is bounded and handlers are own keys only", async () => {
+  const { formatMarkup, formatRich } = await import("../src/compat/next-intl/rich.ts");
+  const { MAX_ICU_DEPTH } = await import("../src/compat/next-intl/icu.ts");
+  const deep = "<a>".repeat(200_000);
+  for (const format of [formatMarkup, formatRich]) {
+    let err: unknown;
+    try {
+      format(deep, {});
+    } catch (e) {
+      err = e;
+    }
+    assert(err instanceof SyntaxError, "a bounded refusal, not a stack overflow");
+  }
+  const ok = "<a>".repeat(MAX_ICU_DEPTH) + "x" + "</a>".repeat(MAX_ICU_DEPTH);
+  assertEquals(formatMarkup(ok, {}), "x");
+  // `<toString>` / `<constructor>` are tags without a handler, not Object.prototype methods.
+  assertEquals(formatMarkup("<toString>hi</toString> <constructor>yo</constructor>", {}), "hi yo");
+});
+
 Deno.test("t.rich/t.markup fall back to the key for a missing message", () => {
   const t = createTranslator({ locale: "en", messages: {} });
   assertEquals(t.markup("missing", {}), "missing");

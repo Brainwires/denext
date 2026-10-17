@@ -55,7 +55,7 @@ Deno.test("Script maps strategy to defer", async () => {
 });
 
 Deno.test("Script strategy=worker degrades to a deferred main-thread script", async () => {
-  // denext has no Partytown-style off-main-thread runtime, so `worker` is accepted
+  // Without `experimental.nextScriptWorkers` (no Partytown published), `worker` is accepted
   // (next/script parity) but renders as afterInteractive (deferred external script).
   const html = await renderToString(h(Script, { src: "/w.js", strategy: "worker" }));
   assertStringIncludes(html, `<script src="/w.js" defer="">`);

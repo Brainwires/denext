@@ -170,6 +170,11 @@ export interface LiveChannelSubscribe {
   channelId: string;
   /** The key within the channel. */
   key: string;
+  /**
+   * Replay the channel's log after this cursor (`"0"`: everything retained) before live pushes —
+   * a channel with `history` only.
+   */
+  since?: string;
 }
 
 /** Client → server: drop a {@link LiveChannelSubscribe}. */
@@ -202,6 +207,8 @@ export interface LiveChannel {
   value: unknown;
   /** `1` when `value` carries codec tags. */
   enc?: 1;
+  /** The payload's replay-log cursor (a channel with `history`); resume with `since`. */
+  cursor?: string;
 }
 
 // ---- Live views (`defineLiveView`) -------------------------------------------
@@ -286,11 +293,69 @@ export interface LiveViewPatch {
   ops: LiveViewOp[];
 }
 
+/**
+ * Client → server: start (or resume) a `defineLustreView` server component. The props and token
+ * are what the page carries, as for {@link LiveViewMount}.
+ */
+export interface LustreViewMount {
+  type: "lustre-mount";
+  /** Client-generated id for this view on this connection. */
+  vid: string;
+  /** The `defineLustreView` id. */
+  view: string;
+  /** The props, as the JSON text the server signed. */
+  props: string;
+  /** `1` when `props` carries wire-codec tags. */
+  enc?: 1;
+  /** The server's signature over `view` + `props`. */
+  token: string;
+  /** The instance id of a previous mount to resume (after a reconnect). */
+  resume?: string;
+}
+
+/** Client → server: a DOM event Lustre's reconciler bound (its `ServerMessage` as JSON). */
+export interface LustreViewEvent {
+  type: "lustre-event";
+  /** The view. */
+  vid: string;
+  /** Lustre's `EventFired` message (`{ kind: 1, path, name, event }`), validated on the server. */
+  msg: unknown;
+}
+
+/** Client → server: stop a Lustre view. */
+export interface LustreViewUnmount {
+  type: "lustre-unmount";
+  /** The view. */
+  vid: string;
+}
+
+/** Client → server: the client's DOM is out of step; send the whole view again (a fresh mount). */
+export interface LustreViewResync {
+  type: "lustre-resync";
+  /** The view. */
+  vid: string;
+}
+
+/** Server → client: one of a Lustre view's messages (Lustre's `ClientMessage` as JSON). */
+export interface LustreViewFrame {
+  type: "lustre";
+  /** The view. */
+  vid: string;
+  /** The message: `mount` (kind 0, the whole view), `reconcile` (kind 1, a patch), `emit`, …. */
+  msg: unknown;
+  /** The resumable instance id (on `mount`). */
+  iid?: string;
+}
+
 export type LiveClientMessage =
   | LiveViewMount
   | LiveViewEvent
   | LiveViewUnmount
   | LiveViewResync
+  | LustreViewMount
+  | LustreViewEvent
+  | LustreViewUnmount
+  | LustreViewResync
   | LiveSubscribe
   | LivePong
   | LiveDataSubscribe
@@ -361,6 +426,7 @@ export interface LiveError {
 export type LiveServerMessage =
   | LiveViewRender
   | LiveViewPatch
+  | LustreViewFrame
   | LivePatch
   | LiveRefresh
   | LivePing

@@ -84,7 +84,7 @@ Deno.test("C1: a `use cache` scope suppresses postpone and rejects dynamic reads
           err = e;
         }
         assert(err instanceof Error && !isPostpone(err), "dynamic read throws, not postpones");
-        assertStringIncludes((err as Error).message, 'cannot be read inside a "use cache"');
+        assertStringIncludes((err as Error).message, 'can\'t be read inside `"use cache"`');
         return "ok";
       });
       assertEquals(value, "ok");

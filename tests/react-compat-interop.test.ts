@@ -425,3 +425,31 @@ Deno.test("react-dom/server: renderToReadableStream honors identifierPrefix for 
   assert(prefixed.includes("pfx"), `prefix missing: ${prefixed}`);
   assert(!plain.includes("pfx"));
 });
+
+// React writes an `<html>` root as a document: `<!DOCTYPE html>` before it, the streamed
+// boundaries inside it, and `</body></html>` only once every boundary has streamed — so a
+// router that holds the document close to inject its own scripts (TanStack's stream transform)
+// sees a well-formed document with no runtime script ahead of `<html>`.
+Deno.test("react-dom/server: an <html> root streams as a document, the close held to the end", async () => {
+  let release!: (v: string) => void;
+  const read = createResource(() => new Promise<string>((r) => (release = r)));
+  const Late = () => h("p", { id: "late" }, read());
+  const stream = await renderToReadableStream(
+    h(
+      "html",
+      { lang: "en" },
+      h("head", null, h("title", null, "t")),
+      h("body", null, h(Suspense as Any, { fallback: h("i", null, "…") }, h(Late as Any, null))),
+    ),
+  );
+  setTimeout(() => release("done"), 5);
+  const html = await readAll(stream);
+  assert(html.startsWith('<!DOCTYPE html><html lang="en">'), html.slice(0, 80));
+  assert(html.endsWith("</body></html>"), html.slice(-80));
+  const late = html.indexOf('<p id="late">done</p>');
+  assert(late > 0 && late < html.indexOf("</body>"), "the boundary streams inside the body");
+  assert(html.indexOf("<script") > html.indexOf("<body>"), "the reveal runtime is in the body");
+  // A non-document root is unchanged.
+  const div = await readAll(await renderToReadableStream(h("div", null, "x")));
+  assert(!div.startsWith("<!DOCTYPE"), div);
+});

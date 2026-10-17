@@ -1,8 +1,8 @@
 // Render phase, part 2: completeWork creates or updates the host DOM for a finished
 // fiber and bubbles its flags and lanes.
 
-import { bubbleLanes, hostNamespace } from "./fiber-utils.ts";
-import { claimText, isHydrating, popHydrationCursor } from "./hydration.ts";
+import { bubbleLanes, hostNamespace, rawHtmlOf } from "./fiber-utils.ts";
+import { adoptServerHtml, claimText, isHydrating, popHydrationCursor } from "./hydration.ts";
 import { onErrorFor } from "./boundaries.ts";
 
 import { applyProps, initSelect, NO_PROPS } from "../dom-props.ts";
@@ -73,7 +73,7 @@ export function completeHostUpdate(wip: Fiber): boolean {
 }
 
 function completeHost(wip: Fiber): void {
-  if (isHydrating) popHydrationCursor();
+  if (isHydrating) popHydrationCursor(wip);
   if (completeHostUpdate(wip)) return;
   // Fresh mount (or a hydration-adopted node): build off-DOM. Apply every prop EXCEPT the ref
   // — a ref callback must fire at commit (after the node is placed), never during this render
@@ -81,11 +81,16 @@ function completeHost(wip: Fiber): void {
   const fresh = wip.stateNode == null;
   if (fresh) wip.stateNode = createHostInstance(wip);
   const props = wip.vnode.props ?? NO_PROPS;
-  applyProps(wip.stateNode as Element, wip, NO_PROPS, props, onErrorFor(wip), false);
+  const html = rawHtmlOf(props);
+  const el = wip.stateNode as Element;
+  // An adopted raw-HTML host keeps the server's markup (its prop reads as already applied).
+  const prev = fresh ? null : adoptServerHtml(wip, el, html);
+  applyProps(el, wip, prev ?? NO_PROPS, props, onErrorFor(wip), false);
   if (props.ref != null) wip.flags |= RefAttach;
   // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
-  // untouched, so a separate per-island hydrateRoot can own that DOM.
-  if (wip.vnode.props?.[FOREIGN_PROP] !== true) {
+  // untouched, so a separate per-island hydrateRoot can own that DOM. A raw-HTML host owns
+  // no reconciled children: syncing them would prune the markup it holds.
+  if (wip.vnode.props?.[FOREIGN_PROP] !== true && html === undefined) {
     syncChildren(wip.stateNode as Element, childrenDom(wip));
   }
   // A new `<select>` picks its option once the options are in it (hydration keeps the

@@ -1,0 +1,13 @@
+TS2307 [ERROR]: Cannot find module 'react' or its corresponding type declarations.
+import { useState } from "react";
+                         ~~~~~~~
+    at file:///app/react-import.tsx:3:26
+
+TS2307 [ERROR]: Cannot find module 'next/link' or its corresponding type declarations.
+import Link from "next/link";
+                 ~~~~~~~~~~~
+    at file:///app/react-import.tsx:4:18
+
+Found 2 errors.
+
+error: Type checking failed.

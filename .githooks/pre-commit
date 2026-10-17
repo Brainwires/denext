@@ -52,7 +52,15 @@ for generated in src/cli/command-table.generated.ts src/cli/lazy-modules.generat
   fi
 done
 
-# The generated docs corpus (src/mcp/docs-corpus.ts) and llms files (site/public/llms*.txt) are
+# The packed native templates (src/build/native-templates.packed.ts) are generated from the
+# readable sources under src/build/native-templates/. When the commit stages a source, repack
+# and stage it (tests/native-templates-packed.test.ts stays the backstop).
+if git diff --cached --name-only --diff-filter=ACMDR | grep -q '^src/build/native-templates/'; then
+  "$DENO" task gen:native-templates
+  git add -- src/build/native-templates.packed.ts
+fi
+
+# The generated docs corpus (packages/docs-corpus/mod.ts, `@denext/docs-corpus`) and llms files (site/public/llms*.txt) are
 # derived from the docs pages, the root guides, the example READMEs and their generators. Parallel
 # docs edits each leave them stale against the combined tip (CI: tests/mcp-docs-corpus.test.ts,
 # tests/docs-generated.test.ts). When the commit stages any input, regenerate both and stage them.
@@ -61,7 +69,7 @@ if git diff --cached --name-only --diff-filter=ACMDR \
   | grep -Eq '^(site/app/docs/|AGENTS\.md$|[^/]+\.md$|examples/[^/]+/README\.md$|site/lib/examples\.ts$|site/lib/markdown\.ts$|site/components/ui\.tsx$|scripts/(gen-docs-corpus|gen-llms-txt)\.ts$|scripts/lib/docs-corpus\.ts$|src/mcp/(guide|tools)\.ts$)'; then
   "$DENO" task docs:corpus
   "$DENO" task docs:llms
-  git add -- src/mcp/docs-corpus.ts site/public/llms.txt site/public/llms-full.txt
+  git add -- packages/docs-corpus/mod.ts site/public/llms.txt site/public/llms-full.txt
 fi
 
 # Fallow code-intelligence gate. `fallow audit` scopes dead-code + complexity +

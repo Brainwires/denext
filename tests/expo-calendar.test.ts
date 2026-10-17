@@ -268,7 +268,7 @@ Deno.test("expo-calendar: events list, map, and round-trip to the plugin's field
     await assertRejects(
       () => Calendar.updateEventAsync("E1", {}, { instanceStartDate: new Date(T0) }),
       Error,
-      "single occurrence",
+      "DenextCalendar",
     );
 
     await Calendar.deleteEventAsync("E1");

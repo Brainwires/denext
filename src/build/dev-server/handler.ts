@@ -2,6 +2,7 @@
 // black box, runtime script, unbundled modules, bundles, chunks, route CSS, health,
 // images), then the app itself with request timing recorded in the black box.
 
+import { join } from "@std/path";
 import { devPlatformOf, pinDevPlatform, type Platform } from "../platform-extensions.ts";
 import { withModuleGraphRedirects } from "../module-graph.ts";
 import { devBuildTarget, devStylesheetImports } from "./platform.ts";
@@ -34,6 +35,7 @@ import { broadcastError, explainForOverlay, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
 import { devErrorPage } from "./error-page.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
+import { preparePartytown, servePartytown } from "../partytown.ts";
 import {
   DEV_CACHE_PATH,
   DEV_INSPECT_PATH,
@@ -275,13 +277,34 @@ async function appResponse(
   return res;
 }
 
+/** Where the dev server publishes Partytown (`nextScriptWorkers`). */
+function devPartytownDir(st: DevState): string {
+  return join(st.paths.outDir, "partytown");
+}
+
+/** A Partytown file under `/_denext/~partytown/` (below `basePath`), or null. */
+function devPartytownResponse(st: DevState, request: Request, url: URL): Promise<Response> | null {
+  const base = st.paths.config?.basePath?.replace(/\/$/, "") ?? "";
+  const path = base && url.pathname.startsWith(base)
+    ? url.pathname.slice(base.length)
+    : url.pathname;
+  return servePartytown(devPartytownDir(st), path, request, false, undefined);
+}
+
 /** The dev server's request handler over `appHandler` (the createApp handler). */
 export function createDevHandler(st: DevState, appHandler: RequestHandler): RequestHandler {
   enableLiveDevtools(); // the DevTools' Live tabs: record view messages, pushes, cache writes
+  // `<Script strategy="worker">`: publish the app's Partytown (when it turned it on) before the
+  // first render, so no early page renders the main-thread fallback.
+  const partytown = preparePartytown(st.paths.config, st.paths.projectDir, devPartytownDir(st))
+    .catch((err) => console.warn(`denext: could not publish Partytown: ${err}`));
   const handle = devRequestHandler(st, appHandler);
   // A shell's `?__denext_platform=ios` is pinned in a cookie, so the page's module, Flight and
   // navigation requests resolve that target's platform files too.
-  return async (request) => pinDevPlatform(request, await handle(request));
+  return async (request) => {
+    await partytown;
+    return pinDevPlatform(request, await handle(request));
+  };
 }
 
 /** {@linkcode createDevHandler}'s routing, before the platform cookie. */
@@ -294,6 +317,8 @@ function devRequestHandler(st: DevState, appHandler: RequestHandler): RequestHan
     const gated = gatedDevEndpoint(st, request, url);
     if (gated) return gated;
     if (url.pathname === DEV_RELOAD_JS_PATH) return jsResponse(DEV_RELOAD_SCRIPT);
+    const partytown = devPartytownResponse(st, request, url);
+    if (partytown) return partytown;
     const unbundled = await unbundledResponse(st, request, url);
     if (unbundled) return unbundled;
     if (url.pathname === FLIGHT_BUNDLE_PATH) return flightBundleResponse(st, request);

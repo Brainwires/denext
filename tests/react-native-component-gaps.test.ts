@@ -187,6 +187,72 @@ Deno.test("withTextProps: adjustsFontSizeToFit draws the fitted size; without it
   await screen.unmount();
 });
 
+Deno.test("fitFontScale: a nested element shrinks with the text and is probed at its own size", () => {
+  // 10 chars at 14 px and a nested 10 chars at 28 px: 70 + 140 = 210 px at the factor 1.
+  const inner = { style: { fontSize: "28px" } };
+  const outer = { style: { fontSize: "" } };
+  const width = () =>
+    Math.ceil(10 * (parseFloat(outer.style.fontSize) || 14) * 0.5) +
+    Math.ceil(10 * parseFloat(inner.style.fontSize) * 0.5);
+  const el = {
+    style: outer.style,
+    get scrollWidth() {
+      return width();
+    },
+    clientWidth: 100,
+    scrollHeight: 20,
+    clientHeight: 20,
+  };
+  // Without the nested element, no factor of the outer size can fit (140 px stays).
+  assertEquals(fitFontScale(el, 14, 0), 4 / 14);
+  const scale = fitFontScale(el, 14, 0, [{ style: inner.style, base: 28 }]);
+  assert(scale > 0.44 && scale < 0.48, `about 100/210 (got ${scale})`);
+  assertEquals(inner.style.fontSize, "28px", "the nested probe is undone");
+});
+
+Deno.test("withTextProps: a nested Text with its own fontSize shrinks with adjustsFontSizeToFit", async () => {
+  const seen: Record<string, unknown>[] = [];
+  const inner = { style: { fontSize: "" } };
+  const outerStyle = { fontSize: "" };
+  const el = {
+    style: outerStyle,
+    get scrollWidth() {
+      return Math.ceil(10 * (parseFloat(outerStyle.fontSize) || 14) * 0.5) +
+        Math.ceil(10 * parseFloat(inner.style.fontSize) * 0.5);
+    },
+    clientWidth: 100,
+    scrollHeight: 20,
+    clientHeight: 20,
+    querySelectorAll: () => [inner],
+  };
+  /** The flattened fontSize a style prop draws. */
+  const sizeOf = (style: unknown): number | undefined =>
+    Array.isArray(style)
+      ? style.reduce((acc: number | undefined, s) => sizeOf(s) ?? acc, undefined)
+      : (style as { fontSize?: number } | undefined)?.fontSize;
+  function Base(props: Record<string, unknown>): VNode {
+    seen.push(props);
+    if (props.ref) (props.ref as (v: unknown) => void)(el);
+    else inner.style.fontSize = `${sizeOf(props.style)}px`; // the nested span's drawn size
+    return h("span", null, props.children as never);
+  }
+  const Text = withTextProps(Base as never) as unknown as (p: Record<string, unknown>) => VNode;
+  const screen = await render(
+    h(
+      Text,
+      { adjustsFontSizeToFit: true, numberOfLines: 1, style: { fontSize: 14 } },
+      "0123456789",
+      h(Text, { style: { fontSize: 28 } }, "abcdefghij"),
+    ),
+  );
+  await settle();
+  const outerSize = sizeOf(seen.findLast((p) => p.ref)!.style)!;
+  const innerSize = sizeOf(seen.findLast((p) => !p.ref)!.style)!;
+  assert(outerSize < 7, `the outer Text shrinks to about 6.7 px (got ${outerSize})`);
+  assert(Math.abs(innerSize / 28 - outerSize / 14) < 0.01, "the nested Text by the same factor");
+  await screen.unmount();
+});
+
 // ---- Pressable android_ripple -------------------------------------------------------------------
 
 Deno.test("rippleGeometry: from the touch or pointer, else the centre; to the farthest corner", () => {

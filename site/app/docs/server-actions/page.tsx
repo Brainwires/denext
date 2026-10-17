@@ -60,6 +60,48 @@ export default function NewNote() {
 }`}
       </Code>
 
+      <h2>Inline actions and bound values</h2>
+      <p>
+        A Server Component may declare the action inside itself, with <code>"use server"</code>{" "}
+        opening the function's body. The server render hoists it to a registered action, so its form
+        renders the endpoint and works with or without JavaScript. When it reads the component's
+        values (a prop, a local), they are bound to it: sealed with AES-GCM into the form's action,
+        so the browser can neither read nor change them, and handed back to the action when the form
+        posts. <code>action.bind(null, value)</code>{" "}
+        on an imported action binds values the same way.
+      </p>
+      <Code lang="tsx">
+        {`import { deleteNote } from "./actions.ts";
+
+export default async function Note({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  async function rename(formData: FormData) {
+    "use server";
+    await db.notes.rename(id, String(formData.get("title"))); // \`id\` is bound
+  }
+  return (
+    <>
+      <form action={rename}><input name="title" /><button>Rename</button></form>
+      <form action={deleteNote.bind(null, id)}><button>Delete</button></form>
+    </>
+  );
+}`}
+      </Code>
+      <p>
+        Bound values must be JSON-like (strings, numbers, arrays, plain objects, <code>Date</code>,
+        {" "}
+        <code>Map</code>, <code>Set</code>, <code>BigInt</code>,{" "}
+        <code>URL</code>); a function or class instance fails the render naming the action. The key
+        is new per <code>denext build</code>; replicas built separately share one through{" "}
+        <code>DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY</code> (base64 of 16, 24 or 32 bytes; Next.js's
+        {" "}
+        <code>NEXT_SERVER_ACTIONS_ENCRYPTION_KEY</code>{" "}
+        is read too). A token is sealed for its own action: it never opens for another one. An
+        inline action can't be declared in a <code>"use client"</code>{" "}
+        module (the build fails with Next.js's error), and anyone who has the page can still post
+        its form again — check who is calling inside the action.
+      </p>
+
       <Callout kind="note">
         Every action request is verified same-origin (Origin/Referer) before it runs, so an action
         can't be triggered cross-site — CSRF defense is built in. Actions are POST-only.

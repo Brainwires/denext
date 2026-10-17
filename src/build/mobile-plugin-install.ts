@@ -34,6 +34,11 @@ export interface RegisteredPluginSpec {
   readonly androidFiles: Readonly<Record<string, string>>;
   /** Where the Java files go, relative to the project root. */
   readonly androidDir: string;
+  /** More Java files and the folder (relative to the project root) they go in. */
+  readonly androidExtra?: {
+    readonly dir: string;
+    readonly files: Readonly<Record<string, string>>;
+  };
   /** The template family (marker line, pristine check). */
   readonly kind: TemplateKind;
   /** What the bridge view controller must call, and the manual step when it cannot. */
@@ -83,6 +88,10 @@ export async function installRegisteredPlugin(
   await installIos(inst, spec);
   if (await hasAndroidApp(inst)) {
     await writeTemplates(inst, nativeJoin(opts.dir, spec.androidDir), spec.androidFiles, spec.kind);
+    if (spec.androidExtra) {
+      const { dir, files } = spec.androidExtra;
+      await writeTemplates(inst, nativeJoin(opts.dir, dir), files, spec.kind);
+    }
     await registerInMainActivity(inst, spec.feature);
   }
   return report;

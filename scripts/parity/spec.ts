@@ -25,6 +25,9 @@ export const REAL_PACKAGES = [
   // Auth.js v5 for Next.js — what `denext/next-auth` (the `next-auth` shim) mirrors. v5 ships
   // under npm's `beta` tag (`latest` is still v4), see REAL_PACKAGE_TAGS.
   "next-auth",
+  // NextAuth.js v4 — the line most Next apps still run — installed beside v5 under an npm
+  // alias (REAL_PACKAGE_ALIASES), since the shim serves v4's server API too.
+  "next-auth-v4",
   "@types/react",
   "@types/react-dom",
   "@types/react-is",
@@ -34,7 +37,52 @@ export const REAL_PACKAGES = [
  * The npm dist-tag each real package installs at when it isn't `latest` — `next-auth`'s v5,
  * the line denext's shim mirrors, is published as `beta`.
  */
-export const REAL_PACKAGE_TAGS: Readonly<Record<string, string>> = { "next-auth": "beta" };
+export const REAL_PACKAGE_TAGS: Readonly<Record<string, string>> = {
+  "next-auth": "beta",
+  "next-auth-v4": "4",
+};
+
+/**
+ * Real packages installed under another name (`"<name>": "npm:<package>@<version>"`), so two
+ * release lines of one package sit side by side: `next-auth-v4` is `next-auth@4`.
+ */
+export const REAL_PACKAGE_ALIASES: Readonly<Record<string, string>> = {
+  "next-auth-v4": "next-auth",
+};
+
+/**
+ * The `package.json` dependency spec that installs `pkg` at `version` (a version, range or
+ * dist-tag): an aliased package becomes `npm:<package>@<version>`.
+ *
+ * @param pkg A {@linkcode REAL_PACKAGES} name.
+ * @param version The version, range or dist-tag to install.
+ * @returns The dependency spec.
+ */
+export function realDependencySpec(pkg: string, version: string): string {
+  const target = REAL_PACKAGE_ALIASES[pkg];
+  return target ? `npm:${target}@${version}` : version;
+}
+
+/**
+ * Release lines the committed BASELINE is held to (`parity:refresh`), while `parity:drift`
+ * still installs `latest` and reports what a newer release adds. Empty: the baseline follows
+ * each package's latest release. A line goes here (`react: "~19.2"`) only while denext lacks a
+ * behaviour the newer release ships, as React 19.3's Fragment refs once held React to 19.2.
+ */
+export const BASELINE_HOLDS: Readonly<Record<string, string>> = {};
+
+/**
+ * The NextAuth.js v4 subpaths an app imports, checked against `next-auth@4` (each against the
+ * shim file that serves it). A provider v4 doesn't ship resolves to nothing and requires nothing.
+ */
+export const NEXT_AUTH_V4_SUBPATHS: ReadonlyArray<readonly [subpath: string, file: string]> = [
+  ["", "index.ts"],
+  ["/next", "next.ts"],
+  ["/middleware", "middleware.ts"],
+  ["/react", "react.ts"],
+  ["/jwt", "jwt.ts"],
+  ["/adapters", "adapters.ts"],
+];
 
 /** The `next-auth/providers/*` modules the shim ships (each one's default export is checked). */
 export const NEXT_AUTH_PROVIDERS = [
@@ -71,7 +119,15 @@ export interface SpecEntry {
   /** denext's backing file, repo-root-relative (the `deno doc` input). */
   denext: string;
   /** Package family, for grouping the test output. */
-  group: "react" | "react-dom" | "next" | "next-intl" | "pages-router" | "remix" | "next-auth";
+  group:
+    | "react"
+    | "react-dom"
+    | "next"
+    | "next-intl"
+    | "pages-router"
+    | "remix"
+    | "next-auth"
+    | "next-auth-v4";
 }
 
 /**
@@ -283,6 +339,20 @@ export const CATALOG: SpecEntry[] = [
     real: `next-auth/providers/${p}`,
     denext: `src/compat/next-auth/providers/${p}.ts`,
     group: "next-auth" as const,
+  })),
+  // NextAuth.js v4 (`next-auth@4`, installed as `next-auth-v4`): the same shim files, held to
+  // v4's surface. The specifier carries `@4` so the two lines stay separate in the baseline.
+  ...NEXT_AUTH_V4_SUBPATHS.map(([sub, file]) => ({
+    specifier: `next-auth@4${sub}`,
+    real: `next-auth-v4${sub}`,
+    denext: `src/compat/next-auth/${file}`,
+    group: "next-auth-v4" as const,
+  })),
+  ...NEXT_AUTH_PROVIDERS.map((p) => ({
+    specifier: `next-auth@4/providers/${p}`,
+    real: `next-auth-v4/providers/${p}`,
+    denext: `src/compat/next-auth/providers/${p}.ts`,
+    group: "next-auth-v4" as const,
   })),
 ];
 

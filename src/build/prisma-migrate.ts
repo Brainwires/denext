@@ -6,11 +6,20 @@
 // driver adapter, with the adapter's native `better-sqlite3` dependency substituted for a
 // bundled copy of denext's compat via deno.json `links`.
 //
+// A Postgres or MySQL datasource takes the same path with that database's driver adapter
+// instead: `@prisma/adapter-pg` (over the npm `pg` driver) or `@prisma/adapter-mariadb` (over
+// the npm `mariadb` driver, which speaks MySQL too). Those are pure-JS drivers on Deno's Node
+// compat, so they need no `links` substitution and no bundled compat. (Deno.SQL, denext's
+// built-in Postgres client, cannot back a Prisma adapter: its results carry neither the ordered
+// column names nor the type OIDs a driver adapter's result set must report.)
+//
 // This module makes `denext migrate` emit that whole path automatically: it (1) contributes
 // the deno.json wiring (manual node_modules + links + the adapter/client npm pins), (2)
 // rewrites the app's `prisma/schema.prisma` generator to the Deno client, (3) rewrites every
 // `@prisma/client` import to the generated client and injects the driver adapter at each
-// `new PrismaClient()` site, (4) drops the superseded `@prisma/client`/`prisma` entries from
+// `new PrismaClient()` site — in the runtime source AND the seed and test tooling, which then run
+// on Deno too (the seed as `deno task prisma:seed` / `prisma db seed`, tests under
+// `denext test`) — (4) drops the superseded `@prisma/client`/`prisma` entries from
 // package.json (they'd otherwise pin the native v5 client into node_modules and clash with
 // the v6 adapter), and (5) writes the `links` patch package + a one-shot `prisma:setup` task
 // (bundle the compat → install → `prisma generate` → `prisma migrate deploy`/`db push`). After setup the app
@@ -30,15 +39,114 @@ const GENERATED_CLIENT = "generated/client/client.ts";
 const PATCH_DIR = "patch/better-sqlite3";
 const SETUP_SCRIPT = "scripts/denext-prisma-setup.ts";
 const SETUP_TASK = "prisma:setup";
+const SEED_TASK = "prisma:seed";
+
+/** The datasource providers denext wires a driver adapter for. */
+export type PrismaProvider = "sqlite" | "postgresql" | "mysql";
+
+/** One datasource provider's driver adapter, as the transform injects it. */
+interface DriverAdapter {
+  provider: PrismaProvider;
+  /** The npm package (pinned to {@link PRISMA_VERSION}). */
+  pkg: string;
+  /** The adapter factory class the package exports. */
+  className: string;
+  /** The injected factory (`__denextPrismaAdapter`), reading the URL from `envVar`. */
+  helper(envVar: string): string;
+}
+
+const SQLITE_ADAPTER: DriverAdapter = {
+  provider: "sqlite",
+  pkg: "@prisma/adapter-better-sqlite3",
+  className: "PrismaBetterSQLite3",
+  helper: () =>
+    `import { PrismaBetterSQLite3 as __PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
+// Prisma resolves a sqlite \`file:\` path relative to the schema dir (prisma/); the runtime
+// adapter resolves it relative to CWD — so normalize to a prisma/-prefixed, CWD-relative path.
+const __denextDbUrl = (() => {
+  const p = (Deno.env.get("DATABASE_URL") ?? "file:./prisma/data.db").replace(/^file:/, "").replace(/\\?.*$/, "");
+  return \`file:\${p.startsWith("/") || /(^|\\/)prisma\\//.test(p) ? p : "./prisma/" + p.replace(/^\\.?\\//, "")}\`;
+})();
+const __denextPrismaAdapter = () => new __PrismaBetterSQLite3({ url: __denextDbUrl });`,
+};
+
+/** Postgres: Prisma's own adapter over the npm `pg` driver (pure JS on Deno's Node compat). */
+const PG_ADAPTER: DriverAdapter = {
+  provider: "postgresql",
+  pkg: "@prisma/adapter-pg",
+  className: "PrismaPg",
+  helper: (envVar) =>
+    `import { PrismaPg as __PrismaPg } from "@prisma/adapter-pg";
+// The datasource URL (\`${envVar}\`, as schema.prisma names it); a pool per client.
+const __denextPrismaAdapter = () =>
+  new __PrismaPg({ connectionString: Deno.env.get(${JSON.stringify(envVar)}) });`,
+};
+
+/** MySQL / MariaDB: Prisma's adapter over the npm `mariadb` driver (it takes `mysql://`). */
+const MYSQL_ADAPTER: DriverAdapter = {
+  provider: "mysql",
+  pkg: "@prisma/adapter-mariadb",
+  className: "PrismaMariaDb",
+  helper: (envVar) =>
+    `import { PrismaMariaDb as __PrismaMariaDb } from "@prisma/adapter-mariadb";
+// The datasource URL (\`${envVar}\`, as schema.prisma names it; \`mysql://\` or \`mariadb://\`).
+const __denextPrismaAdapter = () =>
+  new __PrismaMariaDb(Deno.env.get(${JSON.stringify(envVar)}) ?? "");`,
+};
+
+const ADAPTERS: Record<PrismaProvider, DriverAdapter> = {
+  sqlite: SQLITE_ADAPTER,
+  postgresql: PG_ADAPTER,
+  mysql: MYSQL_ADAPTER,
+};
+
+/** What `schema.prisma`'s `datasource` block declares. */
+export interface PrismaDatasource {
+  /** `provider = "…"` as written (`postgresql`, `sqlite`, …), or null when unreadable. */
+  provider: string | null;
+  /** The variable `url = env("…")` reads, or null for a literal / missing URL. */
+  envVar: string | null;
+}
+
+/** Read the `datasource` block of a Prisma schema (its provider and URL variable). */
+export function readDatasource(schema: string): PrismaDatasource {
+  const block = /datasource\s+\w+\s*\{([\s\S]*?)\n\s*\}/.exec(schema)?.[1] ?? "";
+  const provider = /^\s*provider\s*=\s*"([^"]+)"/m.exec(block)?.[1] ?? null;
+  const envVar = /^\s*url\s*=\s*env\(\s*"([^"]+)"\s*\)/m.exec(block)?.[1] ?? null;
+  return { provider, envVar };
+}
+
+/**
+ * The provider denext wires for a datasource `provider` (`postgres` is Prisma's alias of
+ * `postgresql`), or null for one it has no adapter path for (`sqlserver`, `mongodb`,
+ * `cockroachdb`). A schema without a readable provider is treated as SQLite, as before.
+ */
+export function wiredProvider(provider: string | null): PrismaProvider | null {
+  if (provider === null || provider === "sqlite") return "sqlite";
+  if (provider === "postgresql" || provider === "postgres") return "postgresql";
+  if (provider === "mysql") return "mysql";
+  return null;
+}
 
 /** Summary of what the Prisma transform did (for the CLI report). */
 export interface PrismaMigrateInfo {
+  /** The datasource provider as the schema declares it (`postgresql`, `sqlite`, …). */
+  provider: string;
+  /** The driver adapter package injected, or null when the provider has none denext wires. */
+  adapter: string | null;
   /** The `prisma/schema.prisma` (relative) whose generator was rewritten to the Deno client. */
   schemaPath: string;
   /** Modules (relative) where a `new PrismaClient()` was rewired to the driver adapter. */
   clientModules: string[];
   /** Files (relative) whose `@prisma/client` import was repointed at the generated client. */
   refsRewritten: string[];
+  /**
+   * Seed and test tooling (relative: `prisma/seed.ts`, `tests/…`, `scripts/…`) rewritten the
+   * same way, so it runs on Deno against the same client as the app.
+   */
+  toolingRewritten: string[];
+  /** The task that runs the seed on Deno (`prisma:seed`), when the app has a seed script. */
+  seedTask?: string;
   /** `@prisma/client`/`prisma` were removed from package.json (superseded by the deno.json pins). */
   packageJsonEdited: boolean;
   /** The task the user must run once before build/start. */
@@ -86,29 +194,67 @@ export async function detectPrismaWiring(
   const schemaAbs = join(dir, "prisma", "schema.prisma");
   const hasSchema = await fileExists(schemaAbs);
   if (!("@prisma/client" in deps) && !hasSchema) return null;
+  const seed = await findSeedScript(dir);
+  const datasource = hasSchema
+    ? readDatasource(await mfs.readTextFile(schemaAbs))
+    : { provider: null, envVar: null };
+  const wired = wiredProvider(datasource.provider);
+  const adapter = wired ? ADAPTERS[wired] : null;
+  const sqlite = wired === "sqlite";
+  const plan: TransformPlan = {
+    dir,
+    compatSpecifier,
+    schemaAbs,
+    hasSchema,
+    seed,
+    provider: datasource.provider ?? "sqlite",
+    adapter,
+    envVar: datasource.envVar ?? "DATABASE_URL",
+  };
 
   return {
     importsToAdd: {
       "@prisma/client": `npm:@prisma/client@${PRISMA_VERSION}`,
-      "@prisma/adapter-better-sqlite3": `npm:@prisma/adapter-better-sqlite3@${PRISMA_VERSION}`,
+      ...(adapter ? { [adapter.pkg]: `npm:${adapter.pkg}@${PRISMA_VERSION}` } : {}),
     },
-    importsToDelete: ["better-sqlite3"],
-    links: [`./${PATCH_DIR}`],
-    tasks: { [SETUP_TASK]: `deno run -A ${SETUP_SCRIPT}` },
+    importsToDelete: sqlite ? ["better-sqlite3"] : [],
+    links: sqlite ? [`./${PATCH_DIR}`] : [],
+    tasks: {
+      [SETUP_TASK]: `deno run -A ${SETUP_SCRIPT}`,
+      ...(seed ? { [SEED_TASK]: seedCommand(seed) } : {}),
+    },
     nodeModulesDir: "manual",
     handledDeps: Object.keys(deps).filter(isPrismaDep),
-    finalize: () => transformPrismaApp(dir, compatSpecifier, schemaAbs, hasSchema),
+    finalize: () => transformPrismaApp(plan),
   };
 }
 
+/** Everything the deferred transform needs (see {@link detectPrismaWiring}). */
+interface TransformPlan {
+  dir: string;
+  compatSpecifier: string;
+  schemaAbs: string;
+  hasSchema: boolean;
+  seed: string | null;
+  /** The datasource provider as written. */
+  provider: string;
+  /** Its driver adapter, or null when denext wires none for it. */
+  adapter: DriverAdapter | null;
+  /** The variable the datasource URL comes from. */
+  envVar: string;
+}
+
 /** The actual filesystem transform (deferred so it runs after deno.json is written). */
-async function transformPrismaApp(
-  dir: string,
-  compatSpecifier: string,
-  schemaAbs: string,
-  hasSchema: boolean,
-): Promise<PrismaMigrateInfo> {
+async function transformPrismaApp(plan: TransformPlan): Promise<PrismaMigrateInfo> {
+  const { dir, schemaAbs, hasSchema, seed, adapter } = plan;
   const warnings: string[] = [];
+  if (!adapter) {
+    warnings.push(
+      `the datasource provider "${plan.provider}" has no driver adapter denext wires (SQLite, ` +
+        "Postgres and MySQL do) — `new PrismaClient()` was left as is; pass the provider's " +
+        "driver adapter by hand (sqlserver: `@prisma/adapter-mssql`; MongoDB has none in Prisma 6).",
+    );
+  }
 
   // 1. Rewrite the schema generator to the ESM/Deno client (the query-compiler client with
   //    no Rust engine binary). Leave the datasource block untouched.
@@ -124,31 +270,52 @@ async function transformPrismaApp(
   }
 
   // 2 & 3. Rewrite `@prisma/client` imports across the app to the generated Deno client, and
-  //         inject the driver adapter at each construction site.
-  const { clientModules, refsRewritten } = await rewritePrismaSources(dir, warnings);
+  //         inject the driver adapter at each construction site — then the same for the seed
+  //         and test tooling (the native client they used is gone from package.json below).
+  const inject = adapter ? { adapter, envVar: plan.envVar } : null;
+  const runtime = await rewritePrismaSources(dir, await collectSourceFiles(dir), inject, warnings);
+  const tooling = await rewritePrismaSources(
+    dir,
+    await collectToolingFiles(dir, seed),
+    inject,
+    warnings,
+  );
 
   // 4. Drop the superseded prisma deps from package.json so `deno install` materializes the
-  //    v6 client/adapter (pinned in deno.json) rather than the native v5 client.
-  const packageJsonEdited = await stripPrismaFromPackageJson(join(dir, "package.json"));
+  //    v6 client/adapter (pinned in deno.json) rather than the native v5 client, and point
+  //    Prisma's seed command (package.json / prisma.config.ts) at Deno.
+  const packageJsonEdited = await stripPrismaFromPackageJson(join(dir, "package.json"), seed);
+  if (seed) await rewriteSeedInPrismaConfig(dir, seed);
 
-  // 5. The `links` patch package (its index.mjs is bundled by the setup script) + the setup
-  //    script + gitignore for the generated + bundled artifacts.
-  await writePatchPackage(dir);
-  await writeSetupScript(dir, compatSpecifier);
-  await appendGitignore(dir, ["generated/", `${PATCH_DIR}/index.mjs`]);
+  // 5. SQLite: the `links` patch package (its index.mjs is bundled by the setup script). Then
+  //    the setup script + gitignore for the generated (+ bundled) artifacts.
+  const sqlite = adapter?.provider === "sqlite";
+  if (sqlite) await writePatchPackage(dir);
+  await writeSetupScript(dir, sqlite ? plan.compatSpecifier : null, sqlite ? null : plan.envVar);
+  await appendGitignore(dir, ["generated/", ...(sqlite ? [`${PATCH_DIR}/index.mjs`] : [])]);
 
   return {
+    provider: plan.provider,
+    adapter: adapter?.pkg ?? null,
     schemaPath,
-    clientModules,
-    refsRewritten,
+    clientModules: runtime.clientModules,
+    refsRewritten: runtime.refsRewritten,
+    toolingRewritten: [...new Set([...tooling.refsRewritten, ...tooling.clientModules])].sort(),
+    ...(seed ? { seedTask: SEED_TASK } : {}),
     packageJsonEdited,
     setupTask: SETUP_TASK,
     warnings,
   };
 }
 
+/** The adapter to inject at each construction site and the variable its URL comes from. */
+interface Injection {
+  adapter: DriverAdapter;
+  envVar: string;
+}
+
 /**
- * Rewrite every runtime source module that references Prisma: repoint `@prisma/client` at the
+ * Rewrite every module of `files` that references Prisma: repoint `@prisma/client` at the
  * generated Deno client and inject the driver adapter at each `new PrismaClient(...)`.
  * Idempotent: a module already carrying the injected factory is fully transformed (its import
  * repointed and the adapter threaded), so a second migrate is a no-op (commit-parity), not a
@@ -156,11 +323,13 @@ async function transformPrismaApp(
  */
 async function rewritePrismaSources(
   dir: string,
+  files: readonly string[],
+  inject: Injection | null,
   warnings: string[],
 ): Promise<{ clientModules: string[]; refsRewritten: string[] }> {
   const clientModules: string[] = [];
   const refsRewritten: string[] = [];
-  for (const file of await collectSourceFiles(dir)) {
+  for (const file of files) {
     const original = await mfs.readTextFile(file);
     if (!original.includes("@prisma/client") && !original.includes("new PrismaClient")) continue;
     if (original.includes("__denextPrismaAdapter")) continue;
@@ -171,8 +340,8 @@ async function rewritePrismaSources(
       text = text.replace(/(["'])@prisma\/client\1/g, `"${rel}"`);
       refsRewritten.push(relFile);
     }
-    if (/new\s+PrismaClient\s*\(/.test(text)) {
-      text = injectAdapter(text, rel, warnings, relFile);
+    if (inject && /new\s+PrismaClient\s*\(/.test(text)) {
+      text = injectAdapter(text, rel, inject, warnings, relFile);
       clientModules.push(relFile);
     }
     if (text !== original) await mfs.writeTextFile(file, text);
@@ -216,18 +385,11 @@ async function rewriteSchema(schemaAbs: string, warnings: string[]): Promise<voi
 function injectAdapter(
   text: string,
   generatedRel: string,
+  inject: Injection,
   warnings: string[],
   relFile: string,
 ): string {
-  const helper =
-    `import { PrismaBetterSQLite3 as __PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
-// Prisma resolves a sqlite \`file:\` path relative to the schema dir (prisma/); the runtime
-// adapter resolves it relative to CWD — so normalize to a prisma/-prefixed, CWD-relative path.
-const __denextDbUrl = (() => {
-  const p = (Deno.env.get("DATABASE_URL") ?? "file:./prisma/data.db").replace(/^file:/, "").replace(/\\?.*$/, "");
-  return \`file:\${p.startsWith("/") || /(^|\\/)prisma\\//.test(p) ? p : "./prisma/" + p.replace(/^\\.?\\//, "")}\`;
-})();
-const __denextPrismaAdapter = () => new __PrismaBetterSQLite3({ url: __denextDbUrl });`;
+  const helper = inject.adapter.helper(inject.envVar);
 
   // Place the helper right after the import that pulls in PrismaClient (now repointed at the
   // generated client), so the factory's import is in scope; fall back to the top of the file.
@@ -254,41 +416,59 @@ const __denextPrismaAdapter = () => new __PrismaBetterSQLite3({ url: __denextDbU
   if (/new\s+PrismaClient\s*\(\s*[^){\s]/.test(text)) {
     warnings.push(
       `${relFile}: a \`new PrismaClient(<arg>)\` call takes a non-object argument — add ` +
-        "`adapter: new PrismaBetterSQLite3({ url })` to it by hand.",
+        `\`adapter: new ${inject.adapter.className}(…)\` to it by hand.`,
     );
   }
   return text;
 }
 
-/** Remove `@prisma/client` and `prisma` from package.json deps/devDeps. Returns whether it changed. */
-async function stripPrismaFromPackageJson(pkgPath: string): Promise<boolean> {
-  let raw: string;
-  try {
-    raw = await mfs.readTextFile(pkgPath);
-  } catch {
-    return false;
+/**
+ * Remove `@prisma/client` and `prisma` from package.json deps/devDeps, and point a
+ * `prisma.seed` command at Deno (`prisma db seed` / `migrate reset` then seed through the
+ * rewritten script). Returns whether the Prisma deps were removed.
+ */
+async function stripPrismaFromPackageJson(pkgPath: string, seed: string | null): Promise<boolean> {
+  const pkg = await readPackageJson(pkgPath);
+  if (!pkg) return false;
+  const seedChanged = seed !== null && pointSeedAtDeno(pkg, seed);
+  const depsDropped = dropPrismaDeps(pkg);
+  if (seedChanged || depsDropped) {
+    // Preserve the file's indentation style where obvious (2-space default).
+    await mfs.remove(pkgPath).catch(() => {}); // unlink a possible symlink (cloned repos)
+    await mfs.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   }
-  let pkg: Record<string, unknown>;
+  return depsDropped;
+}
+
+/** package.json as an object, or null when it is missing or not JSON. */
+async function readPackageJson(pkgPath: string): Promise<Record<string, unknown> | null> {
   try {
-    pkg = JSON.parse(raw);
+    const pkg = JSON.parse(await mfs.readTextFile(pkgPath));
+    return pkg && typeof pkg === "object" ? pkg : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Point `prisma.seed` at the seed on Deno; whether it changed. */
+function pointSeedAtDeno(pkg: Record<string, unknown>, seed: string): boolean {
+  const block = pkg.prisma as Record<string, unknown> | undefined;
+  if (typeof block?.seed !== "string" || block.seed === seedCommand(seed)) return false;
+  block.seed = seedCommand(seed);
+  return true;
+}
+
+/** Delete `@prisma/client` and `prisma` from deps/devDeps; whether any was there. */
+function dropPrismaDeps(pkg: Record<string, unknown>): boolean {
   let changed = false;
   for (const field of ["dependencies", "devDependencies"]) {
     const block = pkg[field] as Record<string, string> | undefined;
-    if (!block) continue;
-    for (const name of Object.keys(block)) {
-      if (name === "@prisma/client" || name === "prisma") {
+    for (const name of ["@prisma/client", "prisma"]) {
+      if (block && name in block) {
         delete block[name];
         changed = true;
       }
     }
-  }
-  if (changed) {
-    // Preserve the file's indentation style where obvious (2-space default).
-    await mfs.remove(pkgPath).catch(() => {}); // unlink a possible symlink (cloned repos)
-    await mfs.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   }
   return changed;
 }
@@ -312,18 +492,58 @@ async function writePatchPackage(dir: string): Promise<void> {
   );
 }
 
-/** Write the one-shot setup script (bundle compat → install → generate → migrate deploy / db push). */
-async function writeSetupScript(dir: string, compatSpecifier: string): Promise<void> {
-  const script =
-    `// generated by \`denext migrate\` — safe to edit; re-running migrate may overwrite.
-// One-time Prisma setup for denext: substitute denext's node:sqlite compat for the adapter's
+/**
+ * Write the one-shot setup script: (SQLite) bundle the compat → install → generate → migrate
+ * deploy / db push. `compatSpecifier` is the compat to bundle into the `links` package (SQLite
+ * only, else null); `envVar` the server database's URL variable (Postgres / MySQL, else null),
+ * which the script checks is set before it runs the Prisma CLI against it.
+ */
+async function writeSetupScript(
+  dir: string,
+  compatSpecifier: string | null,
+  envVar: string | null,
+): Promise<void> {
+  const intro = compatSpecifier !== null
+    ? `// One-time Prisma setup for denext: substitute denext's node:sqlite compat for the adapter's
 // native \`better-sqlite3\` (bundled into the \`links\` package), install, then generate the
-// ESM/Deno Prisma client and create the database schema. Run: \`deno task ${SETUP_TASK}\`.
-
-const DENO = Deno.execPath();
+// ESM/Deno Prisma client and create the database schema. Run: \`deno task ${SETUP_TASK}\`.`
+    : `// One-time Prisma setup for denext: install (the driver adapter and its pure-JS driver), then
+// generate the ESM/Deno Prisma client and create the database schema in the server ${envVar}
+// names. Run: \`deno task ${SETUP_TASK}\` with ${envVar} set (or in .env).`;
+  const urlSetup = compatSpecifier !== null
+    ? `const DATABASE_URL = Deno.env.get("DATABASE_URL") ?? "file:./data.db";
+const PRISMA_ENV: Record<string, string> = { DATABASE_URL };`
+    : `const URL_VAR = ${JSON.stringify(envVar)};
+// The Prisma CLI reads .env itself; the check only fails fast when neither has the URL.
+const HAS_URL = Deno.env.get(URL_VAR) !== undefined ||
+  (await Deno.readTextFile(".env").catch(() => "")).split("\\n").some((l) =>
+    l.trimStart().startsWith(URL_VAR + "=")
+  );
+if (!HAS_URL) {
+  console.error(\`✗ set \${URL_VAR} (the datasource URL in prisma/schema.prisma) first.\`);
+  Deno.exit(1);
+}
+const PRISMA_ENV: Record<string, string> = {};`;
+  const bundle = compatSpecifier !== null
+    ? `
 const COMPAT_SRC = ${JSON.stringify(compatSpecifier)};
 const SHIM_OUT = ${JSON.stringify(`${PATCH_DIR}/index.mjs`)};
-const DATABASE_URL = Deno.env.get("DATABASE_URL") ?? "file:./data.db";
+// 1. Bundle the node:sqlite-backed compat into the links package (node:sqlite stays external —
+//    it's a Deno builtin). \`--no-config\` avoids the app's manual node_modules (not installed yet).
+await run("bundle the better-sqlite3 compat", [
+  "bundle", "--no-config", "--format", "esm", "--external", "node:sqlite", "-o", SHIM_OUT, COMPAT_SRC,
+]);
+// 2. Install deps + apply the link (materializes the compat as \`better-sqlite3\`).
+await run("install deps + apply the link", ["install"]);`
+    : `
+// 1–2. Install deps (the generated client's runtime, the driver adapter and its driver).
+await run("install deps", ["install"]);`;
+  const script =
+    `// generated by \`denext migrate\` — safe to edit; re-running migrate may overwrite.
+${intro}
+
+const DENO = Deno.execPath();
+${urlSetup}
 
 async function run(step: string, args: string[], env?: Record<string, string>): Promise<void> {
   console.log(\`\\n▸ \${step}\`);
@@ -334,33 +554,73 @@ async function run(step: string, args: string[], env?: Record<string, string>): 
     Deno.exit(1);
   }
 }
-
-// 1. Bundle the node:sqlite-backed compat into the links package (node:sqlite stays external —
-//    it's a Deno builtin). \`--no-config\` avoids the app's manual node_modules (not installed yet).
-await run("bundle the better-sqlite3 compat", [
-  "bundle", "--no-config", "--format", "esm", "--external", "node:sqlite", "-o", SHIM_OUT, COMPAT_SRC,
-]);
-// 2. Install deps + apply the link (materializes the compat as \`better-sqlite3\`).
-await run("install deps + apply the link", ["install"]);
+${bundle}
 // 3. Generate the ESM/Deno Prisma client + create the schema. Both run the prisma CLI with
 //    \`--no-config\` so Deno resolves it from the global cache and ignores this app's deno.json
 //    (its \`links\` field would otherwise force npm linking on every \`deno run\`, and the CLI
 //    isn't in the manual node_modules). The generated client + adapter still use the app config.
-await run("prisma generate", ["run", "-A", "--no-config", "npm:prisma@${PRISMA_VERSION}", "generate"], {
-  DATABASE_URL,
-});
+await run("prisma generate", ["run", "-A", "--no-config", "npm:prisma@${PRISMA_VERSION}", "generate"], PRISMA_ENV);
 // An app with SQL migrations (\`prisma/migrations/\`) gets them APPLIED — they often carry
 // seed rows (the Epic Stack's roles/permissions) that \`db push\` (schema only) would skip.
 const HAS_MIGRATIONS = await Deno.stat("prisma/migrations").then(() => true, () => false);
 await run(HAS_MIGRATIONS ? "prisma migrate deploy" : "prisma db push", [
   "run", "-A", "--no-config", "npm:prisma@${PRISMA_VERSION}",
   ...(HAS_MIGRATIONS ? ["migrate", "deploy"] : ["db", "push", "--skip-generate", "--accept-data-loss"]),
-], { DATABASE_URL });
+], PRISMA_ENV);
 
 console.log("\\n✓ Prisma setup complete — run \`denext task build\` (or dev).");
 `;
   await mfs.mkdir(join(dir, "scripts"), { recursive: true });
   await mfs.writeTextFile(join(dir, SETUP_SCRIPT), script);
+}
+
+/** A seed script's run command on Deno. */
+function seedCommand(seed: string): string {
+  return `deno run -A ${seed}`;
+}
+
+/** A script path inside a seed command (`tsx prisma/seed.ts`, `node --loader ts-node/esm x.mts`). */
+const SEED_PATH = /(?:^|\s)((?:\.\/)?[\w./-]+\.(?:[cm]?[jt]s))(?=\s|$)/;
+
+/**
+ * The app's seed script (relative, `/`-separated): the script `prisma.seed` in package.json (or
+ * `migrations.seed` in `prisma.config.ts`) runs, else `prisma/seed.{ts,mts,js,mjs}`; null when
+ * there is none.
+ */
+async function findSeedScript(dir: string): Promise<string | null> {
+  for (const command of await seedCommands(dir)) {
+    const path = SEED_PATH.exec(command)?.[1]?.replace(/^\.\//, "");
+    if (path && await fileExists(join(dir, path))) return path;
+  }
+  for (const ext of ["ts", "mts", "js", "mjs"]) {
+    if (await fileExists(join(dir, "prisma", `seed.${ext}`))) return `prisma/seed.${ext}`;
+  }
+  return null;
+}
+
+/** The seed commands the app declares (package.json `prisma.seed`, `prisma.config.ts`). */
+async function seedCommands(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  try {
+    const pkg = JSON.parse(await mfs.readTextFile(join(dir, "package.json")));
+    if (typeof pkg?.prisma?.seed === "string") out.push(pkg.prisma.seed);
+  } catch { /* no package.json */ }
+  const config = await mfs.readTextFile(join(dir, "prisma.config.ts")).catch(() => "");
+  const m = /\bseed\s*:\s*(["'`])([^"'`]+)\1/.exec(config);
+  if (m) out.push(m[2]);
+  return out;
+}
+
+/** Point `prisma.config.ts`'s `migrations.seed` command at Deno. */
+async function rewriteSeedInPrismaConfig(dir: string, seed: string): Promise<void> {
+  const path = join(dir, "prisma.config.ts");
+  const config = await mfs.readTextFile(path).catch(() => null);
+  if (config === null) return;
+  const next = config.replace(
+    /(\bseed\s*:\s*)(["'`])[^"'`]+\2/,
+    (_m, key: string, q: string) => `${key}${q}${seedCommand(seed)}${q}`,
+  );
+  if (next !== config) await mfs.writeTextFile(path, next);
 }
 
 /** The relative specifier from `file`'s directory to the generated client entry. */
@@ -370,16 +630,50 @@ function relToGenerated(dir: string, file: string): string {
   return rel;
 }
 
-/**
- * App RUNTIME source roots — the code denext actually bundles/serves. Deliberately excludes
- * `prisma/` (the Node seed script), plus `cypress/`, `test/`, `mocks/`, `scripts/` (test + tooling),
- * and the like: those legitimately use the native `@prisma/client` under the app's own Node
- * toolchain, which denext doesn't run, so rewriting them to the Deno client would corrupt them.
- */
+/** App RUNTIME source roots — the code denext actually bundles/serves. */
 const RUNTIME_ROOTS = ["app", "src", "lib", "components", "pages", "server", "routes"];
 
+/**
+ * Seed and test tooling roots: the seed and its helpers (`prisma/`), test suites and their
+ * fixtures and mocks, and project scripts. migrate drops the native client from package.json,
+ * so these move to the generated Deno client too and run on Deno (`denext test`,
+ * `deno task prisma:seed`).
+ */
+const TOOLING_ROOTS = [
+  "prisma",
+  "tests",
+  "test",
+  "__tests__",
+  "e2e",
+  "mocks",
+  "__mocks__",
+  "cypress",
+  "playwright",
+  "scripts",
+];
+
+/** Root-level test setup and seed files (`vitest.setup.ts`, `jest.setup.js`, `seed.ts`, …). */
+const ROOT_TOOLING_FILE =
+  /^(?:(?:vitest|jest|playwright)[.-][\w.-]*|[\w.-]*setup[\w.-]*|seed)\.[cm]?[jt]sx?$/i;
+
 /** Collect runtime source files under {@link RUNTIME_ROOTS} (skips node_modules/dist/.denext/generated/out). */
-async function collectSourceFiles(dir: string): Promise<string[]> {
+function collectSourceFiles(dir: string): Promise<string[]> {
+  return collectUnder(dir, RUNTIME_ROOTS);
+}
+
+/** Collect the seed and test tooling files (see {@link TOOLING_ROOTS}), the seed script included. */
+async function collectToolingFiles(dir: string, seed: string | null): Promise<string[]> {
+  const files = new Set(await collectUnder(dir, TOOLING_ROOTS));
+  for await (const e of mfs.readDir(dir)) {
+    if (e.isFile && ROOT_TOOLING_FILE.test(e.name)) files.add(join(dir, e.name));
+  }
+  if (seed) files.add(join(dir, seed));
+  const runtime = new Set(await collectSourceFiles(dir));
+  return [...files].filter((f) => !runtime.has(f)).sort();
+}
+
+/** Source files under `roots` of `dir` (skips node_modules/dist/.denext/generated/out). */
+async function collectUnder(dir: string, roots: readonly string[]): Promise<string[]> {
   const out: string[] = [];
   const walk = async (root: string): Promise<void> => {
     let entries: Deno.DirEntry[];
@@ -400,7 +694,7 @@ async function collectSourceFiles(dir: string): Promise<string[]> {
       }
     }
   };
-  for (const sub of RUNTIME_ROOTS) await walk(join(dir, sub));
+  for (const sub of roots) await walk(join(dir, sub));
   return out;
 }
 

@@ -48,9 +48,11 @@ import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop
 import {
   DESKTOP_RUNTIME_ATTEST_ENV,
   DESKTOP_RUNTIME_VERIFY_ENV,
+  projectDesktopBackend,
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { desktopWindowExitHint } from "../../build/desktop-vc-runtime.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
 import {
   desktopAppName,
@@ -58,6 +60,11 @@ import {
 } from "../../build/desktop-package-script.ts";
 import { desktopPackageMeta } from "../../build/desktop-installers.ts";
 import { desktopNpmArgsFor } from "../../build/desktop-capabilities.ts";
+import {
+  announceCdpPages,
+  inspectRendererLaunch,
+  type InspectRendererPlan,
+} from "../../build/desktop-inspect-renderer.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -81,6 +88,20 @@ async function exportSpa(dir: string): Promise<void> {
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
 
+/** The `denext desktop <action>` handlers. */
+const DESKTOP_ACTIONS: Record<
+  string,
+  (ctx: CommandContext, dir: string, entry: string) => Promise<void>
+> = {
+  build: (_ctx, dir) => exportSpa(dir),
+  run: (_ctx, dir, entry) => runDesktop(dir, entry),
+  dev: (ctx, dir, entry) => runDesktopDevSession(ctx, dir, entry),
+  package: (ctx, dir) => packageDesktop(ctx, dir),
+  add: (ctx) => desktopAdd(ctx),
+  "publish-update": (ctx, dir) => desktopPublishUpdate(ctx, dir),
+  doctor: async (ctx, dir) => void await desktopDoctor(ctx, dir),
+};
+
 export const desktopCommand: CommandSpec = {
   name: "desktop",
   summary: "Build/run/package the app as a native desktop app",
@@ -97,6 +118,8 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop build                   Export the SPA to out/\n" +
     "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
+    "  denext desktop dev --inspect-renderer  …and open the window's renderer to a debugger (CDP on\n" +
+    "                                         a free loopback port; --inspect-renderer=127.0.0.1:9229)\n" +
     "  denext desktop package                 Build a distributable bundle for the host OS\n" +
     "  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n" +
     "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
@@ -150,6 +173,20 @@ export const desktopCommand: CommandSpec = {
       help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
     },
     {
+      name: "inspect-renderer",
+      type: "string",
+      optionalValue: true,
+      valueName: "[=<addr>]",
+      help: "dev: open the window's renderer to a debugger — the Chrome DevTools Protocol on CEF " +
+        "and WebView2, WebKit's inspector on WebKitGTK (default: 127.0.0.1 and a free port)",
+    },
+    {
+      name: "inspect-renderer-allow-remote",
+      type: "boolean",
+      help: "dev: let --inspect-renderer take a non-loopback address (the port is full control " +
+        "of the page)",
+    },
+    {
       name: "format",
       type: "string",
       valueName: "<list>",
@@ -187,13 +224,11 @@ export const desktopCommand: CommandSpec = {
     if (ctx.flags["attest-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_ATTEST_ENV, "1");
     const dir = desktopDir(ctx);
     const entry = (ctx.flags.entry as string | undefined) ?? "desktop.ts";
-    if (action === "build") return await exportSpa(dir);
-    if (action === "run") return await runDesktop(dir, entry);
-    if (action === "dev") return await runDesktopDevSession(ctx, dir, entry);
-    if (action === "package") return await packageDesktop(ctx, dir);
-    if (action === "add") return await desktopAdd(ctx);
-    if (action === "publish-update") return await desktopPublishUpdate(ctx, dir);
-    if (action === "doctor") return void await desktopDoctor(ctx, dir);
+    if (action !== "dev" && ctx.flags["inspect-renderer"] !== undefined) {
+      fail("denext desktop: --inspect-renderer applies to `denext desktop dev` only.");
+    }
+    const handler = Object.hasOwn(DESKTOP_ACTIONS, action) ? DESKTOP_ACTIONS[action] : undefined;
+    if (handler) return await handler(ctx, dir, entry);
     console.error(
       `denext desktop: unknown action "${action}" (expected run | build | dev | package | add | ` +
         `publish-update | doctor).`,
@@ -308,6 +343,7 @@ async function buildDesktopWindow(
       config: launch.config,
       os,
       denoFlags: launch.denoFlags,
+      runtimeEnv: launch.buildEnv,
       entry,
       dev: opts.dev,
       netHosts: opts.netHosts,
@@ -359,7 +395,11 @@ function launchDesktopWindow(
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const code = child.status.then((s) => s.code);
+  const code = child.status.then((s) => {
+    const hint = desktopWindowExitHint(s.code);
+    if (hint) console.error(hint);
+    return s.code;
+  });
   return {
     code,
     finished: code.then(() => {}),
@@ -393,18 +433,11 @@ async function runDesktopDevSession(
         "  Scaffold one with `denext create --desktop`, or pass --entry <file>.",
     );
   }
-  let target: { host: string; url: string };
-  try {
-    target = desktopDevTarget({
-      lan: ctx.flags.lan === true,
-      host: typeof ctx.flags.host === "string" ? ctx.flags.host : undefined,
-      port: typeof ctx.flags.port === "number" ? ctx.flags.port : 3000,
-    });
-  } catch (err) {
-    fail(err instanceof Error ? err.message : String(err));
-  }
+  const target = devTargetOrFail(ctx);
   let launch: DesktopWindowLaunch;
+  let inspect: InspectRendererPlan | undefined;
   try {
+    inspect = await inspectRendererFor(ctx, dir);
     launch = await prepareDesktopWindow(dir, true);
   } catch (err) {
     fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
@@ -413,25 +446,89 @@ async function runDesktopDevSession(
   try {
     await runDesktopDev({
       startServer: () => startOrAttachDevServer(dir, target.host, target.url),
-      spawnWindow: async (devUrl) => {
-        const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, entry);
-        const built = await buildDesktopWindow(dir, devEntry, launch, {
-          dev: true,
-          // The window's runtime reaches a LAN dev server over the network.
-          netHosts: lan ? [new URL(devUrl).hostname] : [],
-        });
-        return launchDesktopWindow(built, dir, {
-          ...launch.env,
-          [DESKTOP_DEV_URL_ENV]: devUrl,
-          ...(lan ? { [DESKTOP_DEV_LAN_ENV]: "1" } : {}),
-        });
-      },
+      spawnWindow: (devUrl) => spawnDevWindow({ dir, entry, launch, devUrl, lan, inspect }),
       waitForStop: waitForShutdownSignal,
       log: (line) => console.log(line),
     });
   } catch (err) {
     fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** The `desktop dev` server target from `--lan` / `--host` / `--port`, or exit with why not. */
+function devTargetOrFail(ctx: CommandContext): { host: string; url: string } {
+  try {
+    return desktopDevTarget({
+      lan: ctx.flags.lan === true,
+      host: typeof ctx.flags.host === "string" ? ctx.flags.host : undefined,
+      port: typeof ctx.flags.port === "number" ? ctx.flags.port : 3000,
+    });
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** One `desktop dev` window: build the generated dev entry, then open it on the dev server. */
+async function spawnDevWindow(o: {
+  dir: string;
+  entry: string;
+  launch: DesktopWindowLaunch;
+  devUrl: string;
+  lan: boolean;
+  inspect: InspectRendererPlan | undefined;
+}): Promise<DesktopWindow> {
+  const { dir, launch, devUrl, lan, inspect } = o;
+  const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, o.entry);
+  const built = await buildDesktopWindow(dir, devEntry, launch, {
+    dev: true,
+    // The window's runtime reaches a LAN dev server over the network.
+    netHosts: lan ? [new URL(devUrl).hostname] : [],
+  });
+  const window = launchDesktopWindow(built, dir, {
+    ...launch.env,
+    ...inspect?.env,
+    [DESKTOP_DEV_URL_ENV]: devUrl,
+    ...(lan ? { [DESKTOP_DEV_LAN_ENV]: "1" } : {}),
+  });
+  return inspect?.protocol === "cdp" && inspect.endpoint
+    ? announceRendererPages(window, inspect.endpoint)
+    : window;
+}
+
+/**
+ * `--inspect-renderer[=<addr>]`: the launch env for the project's backend on this OS (a free
+ * loopback port for a bare flag; a non-loopback address only with
+ * `--inspect-renderer-allow-remote`), with the endpoint printed. `undefined` without the flag.
+ */
+async function inspectRendererFor(
+  ctx: CommandContext,
+  dir: string,
+): Promise<InspectRendererPlan | undefined> {
+  const value = ctx.flags["inspect-renderer"];
+  if (value === undefined || value === false) return undefined;
+  const { plan, lines } = inspectRendererLaunch({
+    value: value === true ? true : String(value),
+    allowRemote: ctx.flags["inspect-renderer-allow-remote"] === true,
+    backend: await projectDesktopBackend(dir),
+    os: hostDesktopOs(),
+    inherited: Deno.env.toObject(),
+  });
+  for (const line of lines) console.log(line);
+  return plan;
+}
+
+/** Print the window's CDP page targets once they appear; stops polling when the window stops. */
+function announceRendererPages<W extends DesktopWindow>(window: W, endpoint: string): W {
+  const ac = new AbortController();
+  void announceCdpPages(endpoint, { log: (l) => console.log(l), signal: ac.signal });
+  void window.finished.then(() => ac.abort());
+  return {
+    ...window,
+    stop: async () => {
+      ac.abort();
+      await window.stop();
+    },
+  };
 }
 
 /**
@@ -527,6 +624,17 @@ export interface PackageScriptAge {
   readonly runtime: boolean;
   /** It takes `--format` (parses its arguments with `parseDesktopPackageArgs`). */
   readonly formats: boolean;
+  /**
+   * It passes the pinned runtime's flags (`--unstable-no-legacy-abort`): it calls
+   * `desktopRuntimeDenoFlags` itself, or builds through `buildDesktopBundle`, which does.
+   */
+  readonly runtimeFlags: boolean;
+  /**
+   * It leaves the app-local VC++ runtime to `bundleDesktopVcRuntime` (only the DLLs the target
+   * arch imports, machine-checked). A Windows script that copies System32's `vcruntime140_1.dll`
+   * itself ships the x64 one into an Arm64 bundle on Windows on Arm.
+   */
+  readonly vcRuntime: boolean;
 }
 
 /**
@@ -539,12 +647,17 @@ export function packageScriptAge(text: string): PackageScriptAge {
   return {
     runtime: /\b(desktopRuntimeEnv|buildDesktopBundle)\b/.test(text),
     formats: /\bparseDesktopPackageArgs\b/.test(text),
+    runtimeFlags: /\b(desktopRuntimeDenoFlags|buildDesktopBundle)\b/.test(text),
+    vcRuntime: !text.includes('"vcruntime140_1.dll"'),
   };
 }
 
 /**
- * The warnings for a packaging script that predates denext 3.1: it builds on the stock runtime,
- * and a `--format` is not passed to a script that cannot read it.
+ * The warnings for a stale packaging script: one predating denext 3.1 builds on the stock runtime,
+ * one predating the 2.9.7-denext.21 pin (a macOS script calling `deno desktop` itself) builds without the pinned
+ * runtime's `--unstable-no-legacy-abort`, one copying the VC++ runtime itself (a Windows script
+ * predating `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, and a `--format` is
+ * not passed to a script that cannot read it.
  *
  * @param name The script's file name (`package-linux.ts`).
  * @param age What it supports.
@@ -561,6 +674,22 @@ export function packageScriptWarnings(
     out.push(
       `  ⚠ scripts/${name} predates denext 3.1: it builds with the stock Deno Desktop runtime ` +
         "and none of the default installers.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  } else if (!age.runtimeFlags) {
+    out.push(
+      `  ⚠ scripts/${name} does not pass the pinned runtime's flags (desktopRuntimeDenoFlags): ` +
+        "the app is built without --unstable-no-legacy-abort, so it aborts request.signal after " +
+        "each response and prints Deno.serve's legacy-abort notice.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  }
+  if (!age.vcRuntime) {
+    out.push(
+      `  ⚠ scripts/${name} copies the VC++ runtime from System32 itself: on Windows on Arm it ` +
+        "ships the x64 vcruntime140_1.dll, a DLL of the wrong architecture, in an Arm64 bundle.\n" +
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );

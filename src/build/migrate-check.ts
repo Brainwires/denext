@@ -200,6 +200,7 @@ function transformFindings(r: MigrateResult): MigrateFinding[] {
     });
     for (const w of r.prisma.warnings) out.push({ item: "prisma", reason: w });
   }
+  for (const note of r.nextAuth?.notes ?? []) out.push({ item: "next-auth", reason: note });
   return out;
 }
 
