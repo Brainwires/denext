@@ -26,6 +26,17 @@ export interface FlyPresetOptions {
 /** The kill timeout: above the default 10 s drain, so `SIGTERM` lets in-flight requests finish. */
 const KILL_TIMEOUT = "30s";
 
+/** The port, checked: it goes into fly.toml unquoted. */
+function flyPort(port: unknown): number {
+  if (Number.isInteger(port) && (port as number) >= 1 && (port as number) <= 65535) {
+    return port as number;
+  }
+  throw new Error(`denext: deploy (fly) option port ${JSON.stringify(port)} is not a TCP port`);
+}
+
+/** A TOML basic string (JSON's escapes are TOML's), so an option can't end its line. */
+const toml = (value: string): string => JSON.stringify(String(value));
+
 /** Whether anything must keep running between requests (schedules, services). */
 function alwaysOn(manifest: DeployManifest): boolean {
   return manifest.schedules.length > 0 || manifest.services.length > 0;
@@ -42,12 +53,12 @@ function renderFlyToml(
   manifest: DeployManifest,
   options: FlyPresetOptions & { app: string },
 ): string {
-  const port = options.port ?? manifest.server.port;
+  const port = flyPort(options.port ?? manifest.server.port);
   const secrets = requiredSecrets(manifest);
   const on = alwaysOn(manifest);
   return `${header("fly", "#")}
-app = "${options.app}"
-primary_region = "${options.region ?? "iad"}"
+app = ${toml(options.app)}
+primary_region = ${toml(options.region ?? "iad")}
 kill_signal = "SIGTERM"
 kill_timeout = "${KILL_TIMEOUT}"
 ${
@@ -85,7 +96,7 @@ ${
     timeout = "3s"
 
 [[vm]]
-  memory = "${options.memory ?? "512mb"}"
+  memory = ${toml(options.memory ?? "512mb")}
 `;
 }
 

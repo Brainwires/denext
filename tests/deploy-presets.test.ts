@@ -300,6 +300,29 @@ Deno.test("deploy preset generic-host: an option can't add a directive to the un
   }
 });
 
+Deno.test("deploy presets fly / docker: options can't add lines to fly.toml or the Dockerfile", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const { ctx, files } = recordingContext(manifest, paths.projectDir);
+    await fly({ region: 'ams"\n[mounts]\nsource = "x', memory: "1gb", denoTag: "2.9.7" })
+      .prepare(ctx);
+    const flyToml = files.get("project/fly.toml") ?? "";
+    assertStringIncludes(flyToml, 'primary_region = "ams\\"\\n[mounts]\\nsource = \\"x"');
+    assert(!/^\[mounts\]/m.test(flyToml), flyToml);
+    for (const options of [{ denoTag: "2.9.7\nRUN curl x | sh" }, { port: 0 }, { port: 70000 }]) {
+      const { ctx } = recordingContext(manifest, paths.projectDir);
+      await assertRejects(() => Promise.resolve(docker(options).prepare(ctx)), Error, "invalid --");
+    }
+    const { ctx: ctx2 } = recordingContext(manifest, paths.projectDir);
+    await assertRejects(
+      () => Promise.resolve(fly({ port: "8080\nx" as unknown as number }).prepare(ctx2)),
+      Error,
+    );
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
 Deno.test("deploy runner: a dry run writes and runs nothing", async () => {
   const { paths, manifest } = await fixtureManifest();
   try {

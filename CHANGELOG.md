@@ -272,7 +272,9 @@ and this project adheres to
   nginx / Caddy files.** `domain`, `directory`, `deno`, `user`, `port` and `maxConnections` went
   in verbatim, so a value with a newline or a `;` (from a config built from the environment, say)
   added its own directives — an `ExecStartPre=`, a `location` block. A value that is not a host
-  name, an absolute path, a user name or a number is now refused with the option named.
+  name, an absolute path, a user name or a number is now refused with the option named. The `fly`
+  preset writes `app`, `region` and `memory` as escaped TOML strings, and the `docker` and `fly`
+  presets check `port` and `denoTag` as `generate docker --port / --deno-tag` does.
 - **A deploy adapter's name must be a plain file name.** Its output directory,
   `.denext/deploy/<name>/`, is emptied before every `prepare`, so a plugin adapter named `../..`
   emptied the project. Any name but letters, digits and `._-` is refused.
