@@ -31,7 +31,7 @@ import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
-import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno } from "./scaffold.ts";
+import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
@@ -819,7 +819,7 @@ async function writeAppRouterDenoJson(
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
     minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     ...(prismaWiring?.links.length ? { links: prismaWiring.links } : {}),
-    unstable: ["sloppy-imports"],
+    unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "react",
@@ -885,9 +885,25 @@ async function writeDenoJsonUnlessAuthored(
 ): Promise<boolean> {
   const denoJsonPath = join(dir, "deno.json");
   if (!(await writable(denoJsonPath))) return true;
-  await mfs.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+  // A re-run over its own earlier output keeps the unstable features added to it since.
+  const before = await previousUnstable(denoJsonPath);
+  const merged = {
+    ...denoJson,
+    unstable: withDenextUnstable(before, denoJson.unstable as string[]),
+  };
+  await mfs.writeTextFile(denoJsonPath, denoJsonText(merged));
   written.unshift(denoJsonPath);
   return false;
+}
+
+/** The `unstable` value of a `deno.json` migrate wrote before (`undefined` when none, or unparsable). */
+async function previousUnstable(path: string): Promise<unknown> {
+  try {
+    const cur = await mfs.readTextFile(path);
+    return (JSON.parse(cur) as { unstable?: unknown }).unstable;
+  } catch {
+    return undefined;
+  }
 }
 
 async function writable(path: string): Promise<boolean> {
@@ -2747,7 +2763,7 @@ function spaDenoJson(
     tasks,
     nodeModulesDir,
     minimumDependencyAge: DENEXT_MIN_DEP_AGE,
-    unstable: ["sloppy-imports"],
+    unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "react",

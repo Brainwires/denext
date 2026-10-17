@@ -11,24 +11,11 @@
 // without it.
 
 import { assert, assertEquals } from "@std/assert";
-import { dirname, fromFileUrl, join } from "@std/path";
-import { denoToolchainCacheRoot, loadDenoToolchainPin } from "../../src/build/deno-toolchain.ts";
+import { fromFileUrl, join } from "@std/path";
+import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 
 const ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "cli.ts");
-
-/** The pinned toolchain binary in the cache, or null (not installed, or no pin). */
-function cachedToolchain(): string | null {
-  try {
-    const { version } = loadDenoToolchainPin();
-    if (!version) return null;
-    const exe = Deno.build.os === "windows" ? "deno.exe" : "deno";
-    const bin = join(denoToolchainCacheRoot(), version, `${Deno.build.os}-${Deno.build.arch}`, exe);
-    return Deno.statSync(bin).isFile ? bin : null;
-  } catch {
-    return null;
-  }
-}
 
 const TOOLCHAIN = cachedToolchain();
 
@@ -38,20 +25,6 @@ function freePort(): number {
   const { port } = l.addr as Deno.NetAddr;
   l.close();
   return port;
-}
-
-/** The environment a `toolchain link`ed shell gives the CLI: the toolchain first on PATH. */
-function linkedEnv(deno: string): Record<string, string> {
-  const sep = Deno.build.os === "windows" ? ";" : ":";
-  return {
-    PATH: `${dirname(deno)}${sep}${Deno.env.get("PATH") ?? ""}`,
-    NO_COLOR: "1",
-    // Nothing this suite's own process carries may decide the CLI's path.
-    DENEXT_TOOLCHAIN_ACTIVE: "",
-    DENEXT_RUNTIME_FLAGS_FOR: "",
-    DENEXT_DENO: "",
-    DENO_BIN: "",
-  };
 }
 
 Deno.test({

@@ -429,6 +429,12 @@ and this project adheres to
   line or in the config's `"unstable"` list), keeps serving in-process; stock Deno is unaffected.
   `denext desktop package` now warns about an existing `scripts/package-macos.ts` that does not
   call `desktopRuntimeDenoFlags`, and says to run `--regenerate-scripts`.
+- A new app's least-privilege `start` task (no `--allow-run`, so it cannot re-run itself) no longer
+  prints that notice on denext's toolchain either: the `deno.json` that `denext create` writes, for
+  every template, and the one `denext migrate` writes carry `"unstable": ["no-legacy-abort"]`.
+  Re-running `migrate` over its own `deno.json` keeps the `unstable` entries added to it since, and
+  `denext ui`'s Setup page adds the entry to an existing project's list without dropping the
+  others. Stock Deno 2.9 accepts the key without a warning (2.9.0 ignores it).
 - A Windows Arm64 package built on Windows on Arm no longer ships an x64 `vcruntime140_1.dll`.
   The app-local VC++ runtime is now `bundleDesktopVcRuntime` in `denext/desktop`: each arch gets only
   the DLLs its runtime imports (`vcruntime140.dll` and `msvcp140.dll` for Arm64; x64 adds

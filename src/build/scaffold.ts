@@ -296,10 +296,37 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  */
 export const DENEXT_MIN_DEP_AGE = { exclude: ["jsr:@denext/*"] } as const;
 
+/**
+ * The unstable features a generated `deno.json` turns on. `no-legacy-abort`: Deno.serve's
+ * `request.signal` aborts only when a response is NOT delivered, and Deno prints no legacy-abort
+ * notice on the first request — what `denext start` / `dev` get from the toolchain's
+ * `--unstable-no-legacy-abort`, here for every `deno` that reads the config (a least-privilege
+ * `start` task included, which cannot re-run itself with the flag). Stock Deno 2.9 accepts the key
+ * without a warning.
+ */
+export const DENEXT_UNSTABLE: readonly string[] = ["no-legacy-abort"];
+
+/**
+ * A `deno.json` `unstable` list: the entries already there (when `existing` is an array of
+ * strings), then `extra`, then {@linkcode DENEXT_UNSTABLE}, each once, in that order — so a
+ * regenerated config keeps the features its author added.
+ *
+ * @param existing The config's current `unstable` value (anything; non-strings are dropped).
+ * @param extra Features the writer needs besides denext's own (`sloppy-imports`).
+ * @returns The merged list.
+ */
+export function withDenextUnstable(existing: unknown, extra: readonly string[] = []): string[] {
+  const current = Array.isArray(existing)
+    ? existing.filter((v): v is string => typeof v === "string")
+    : [];
+  return [...new Set([...current, ...extra, ...DENEXT_UNSTABLE])];
+}
+
 export function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
     tasks: scaffoldTasks(opts),
     minimumDependencyAge: DENEXT_MIN_DEP_AGE,
+    unstable: withDenextUnstable(undefined),
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "denext",

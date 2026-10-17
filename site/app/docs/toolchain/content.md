@@ -77,8 +77,10 @@ aborts only when a response is not delivered, and Deno prints no legacy-abort no
 request. A server verb (`dev`, `start`, `profile`) started on the toolchain directly (the `deno`
 that `toolchain link` puts on PATH, or a `deno task` step running it) checks whether it has that
 flag, with one loopback request, and re-runs once on the same binary with it when it does not.
-Without `--allow-run` it keeps serving in-process; put `"unstable": ["no-legacy-abort"]` in the
-project's `deno.json` to have the flag there too.
+Without `--allow-run` it keeps serving in-process, so the `deno.json` that `denext create` and
+`denext migrate` write carries `"unstable": ["no-legacy-abort"]`, which turns the flag on for every
+`deno` that reads the config (a least-privilege `start` task included). Add it to an older
+project's `deno.json` (the Setup page of `denext ui` offers to), beside any features already listed.
 
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
