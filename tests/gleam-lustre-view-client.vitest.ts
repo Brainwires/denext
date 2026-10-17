@@ -148,7 +148,8 @@ describe("Lustre view client", () => {
     });
     expect(pick({ type: "click", clientX: 4 }, ["clientX"])).toEqual({ clientX: 4 });
     expect(pick({ type: "click" })).toEqual({});
-    expect(pick({ type: "toString" })).toEqual({}, "no prototype lookups");
+    // No prototype lookups: a type named like an Object.prototype key picks nothing.
+    expect(pick({ type: "toString" })).toEqual({});
     // An `include` path through a prototype key copies nothing (and pollutes nothing).
     const input = { type: "input", target: { type: "text", value: "x" } };
     expect(pick(input, ["__proto__.polluted", "constructor.prototype.polluted"])).toEqual({
