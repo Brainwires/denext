@@ -9,11 +9,18 @@
  * @module
  */
 
-import type { Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
+import type { FragmentComponent, Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
 import { FRAGMENT } from "./types.ts";
 import { REACT_ELEMENT_TYPE } from "../runtime/react-brands.ts";
 
-export { FRAGMENT as Fragment };
+/**
+ * Groups children without a wrapping element (`<>…</>` / `<Fragment key ref>`). The value is the
+ * {@linkcode FRAGMENT} marker; it is typed as a component so `<Fragment>` type-checks as a JSX tag
+ * with React's `FragmentProps`, a `ref` receiving a `FragmentInstance` included.
+ */
+export const Fragment: FragmentComponent = FRAGMENT as unknown as FragmentComponent;
+// `Fragment`'s declared type, and the marker `VNodeType` names (type-only: no runtime export).
+export type { FRAGMENT, FragmentComponent, FragmentProps } from "./types.ts";
 // The automatic JSX runtime resolves element typing from this namespace; `VNode`
 // and other types are exported from the `denext` entrypoint, not duplicated here.
 export type { JSX } from "./types.ts";

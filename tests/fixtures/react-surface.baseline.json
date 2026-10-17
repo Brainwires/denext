@@ -1,19 +1,19 @@
 {
   "versions": {
-    "react": "19.2.9",
-    "react-dom": "19.2.9",
-    "react-is": "19.2.9",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-is": "19.3.1",
     "next": "16.4.1",
     "next-intl": "4.14.9",
     "@remix-run/react": "2.17.5",
     "@remix-run/node": "2.17.5",
     "next-auth": "5.0.0-beta.32",
     "next-auth-v4": "4.24.15",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.7",
-    "@types/react-is": "19.2.0"
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/react-is": "19.3.0"
   },
-  "capturedAt": "2026-10-17T08:52:33.352Z",
+  "capturedAt": "2026-10-17T10:18:39.869Z",
   "surfaces": [
     {
       "specifier": "react",
@@ -553,6 +553,20 @@
           ],
           "typeParamCount": 0
         },
+        "addTransitionType": {
+          "name": "addTransitionType",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "captureOwnerStack": {
           "name": "captureOwnerStack",
           "kind": "function",
@@ -731,34 +745,6 @@
           ],
           "typeParamCount": 0
         },
-        "unstable_useCacheRefresh": {
-          "name": "unstable_useCacheRefresh",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 0,
-              "requiredArity": 0,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "addTransitionType": {
-          "name": "addTransitionType",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
         "ViewTransition": {
           "name": "ViewTransition",
           "kind": "function",
@@ -768,6 +754,20 @@
             {
               "arity": 1,
               "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_useCacheRefresh": {
+          "name": "unstable_useCacheRefresh",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
               "restParam": false
             }
           ],
@@ -1111,6 +1111,20 @@
           ],
           "typeParamCount": 0
         },
+        "browser": {
+          "name": "browser",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "version": {
           "name": "version",
           "kind": "value",
@@ -1169,20 +1183,6 @@
             "trimStart",
             "valueOf"
           ]
-        },
-        "browser": {
-          "name": "browser",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 0,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
         }
       }
     },

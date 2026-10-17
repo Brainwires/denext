@@ -65,23 +65,11 @@ export function realDependencySpec(pkg: string, version: string): string {
 
 /**
  * Release lines the committed BASELINE is held to (`parity:refresh`), while `parity:drift`
- * still installs `latest` and reports what a newer release adds.
- *
- * React stays on its 19.2 line: 19.3 adds no export denext lacks (`ViewTransition` and
- * `addTransitionType` lose their `unstable_` prefix; denext has both), but it ships Fragment
- * refs (`<Fragment ref>` → a `FragmentInstance`), which denext's reconciler does not implement
- * yet (KNOWN-LIMITATIONS). The compat layer reports the version whose behaviour it mirrors
- * (`REACT_COMPAT_VERSION`), so a library that feature-detects 19.3 by version doesn't hand a
- * ref to a Fragment.
+ * still installs `latest` and reports what a newer release adds. Empty: the baseline follows
+ * each package's latest release. A line goes here (`react: "~19.2"`) only while denext lacks a
+ * behaviour the newer release ships, as React 19.3's Fragment refs once held React to 19.2.
  */
-export const BASELINE_HOLDS: Readonly<Record<string, string>> = {
-  react: "~19.2",
-  "react-dom": "~19.2",
-  "react-is": "~19.2",
-  "@types/react": "~19.2",
-  "@types/react-dom": "~19.2",
-  "@types/react-is": "~19.2",
-};
+export const BASELINE_HOLDS: Readonly<Record<string, string>> = {};
 
 /**
  * The NextAuth.js v4 subpaths an app imports, checked against `next-auth@4` (each against the

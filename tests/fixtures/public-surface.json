@@ -58,6 +58,9 @@
     "ForwardRefExoticComponent:interface",
     "ForwardedRef:typeAlias",
     "Fragment:variable",
+    "FragmentComponent:typeAlias",
+    "FragmentInstance:interface",
+    "FragmentProps:interface",
     "FreeQuery:interface",
     "FunctionComponent:interface",
     "GoogleFontOptions:interface",
@@ -503,7 +506,10 @@
     "widgetFor:function"
   ],
   "denext/jsx-runtime": [
+    "FRAGMENT:variable",
     "Fragment:variable",
+    "FragmentComponent:typeAlias",
+    "FragmentProps:interface",
     "JSX:namespace",
     "h:function",
     "jsx:function",
@@ -511,7 +517,10 @@
     "jsxs:function"
   ],
   "denext/jsx-dev-runtime": [
+    "FRAGMENT:variable",
     "Fragment:variable",
+    "FragmentComponent:typeAlias",
+    "FragmentProps:interface",
     "JSX:namespace",
     "h:function",
     "jsx:function",
@@ -4897,6 +4906,7 @@
     "ForwardRefRenderFunction:typeAlias",
     "ForwardedRef:typeAlias",
     "Fragment:variable",
+    "FragmentInstance:interface",
     "FunctionComponent:interface",
     "HTMLAttributes:interface",
     "HTMLProps:typeAlias",
@@ -5111,7 +5121,10 @@
     "default:variable"
   ],
   "denext/react/jsx-runtime": [
+    "FRAGMENT:variable",
     "Fragment:variable",
+    "FragmentComponent:typeAlias",
+    "FragmentProps:interface",
     "JSX:namespace",
     "h:function",
     "jsx:function",
@@ -5119,7 +5132,10 @@
     "jsxs:function"
   ],
   "denext/react/jsx-dev-runtime": [
+    "FRAGMENT:variable",
     "Fragment:variable",
+    "FragmentComponent:typeAlias",
+    "FragmentProps:interface",
     "JSX:namespace",
     "h:function",
     "jsx:function",

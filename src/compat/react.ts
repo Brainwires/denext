@@ -140,6 +140,8 @@ export { experimental_taintObjectReference, experimental_taintUniqueValue };
 
 /** `React.cache`, `React.Activity`, `React.ViewTransition` — see `src/runtime/react-extras.ts`. */
 export { Activity, cache, ViewTransition };
+/** `React.FragmentInstance` — what `<Fragment ref>` receives (React 19.3). */
+export type { FragmentInstance } from "../runtime/react-extras.ts";
 
 /**
  * `React.cacheSignal` — during a server render, an `AbortSignal` that aborts when the render's

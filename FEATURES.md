@@ -137,6 +137,13 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   and the transition types once it is ready, and a returned cleanup runs when it
   finishes (a boundary that persists across a soft navigation runs `onUpdate` when its
   content changed or it moved); a `ref` receives the same instance; import-gated.
+- **Fragment refs** (React 19.3) — `<Fragment ref={r}>` puts a `FragmentInstance` in
+  `r.current`: `addEventListener` / `removeEventListener` / `dispatchEvent`, `focus` /
+  `focusLast` / `blur`, `observeUsing` / `unobserveUsing`, `getClientRects`, `getRootNode`,
+  `compareDocumentPosition` and `scrollIntoView` over the fragment's host children, kept on
+  children that mount later and taken off ones that unmount; set and cleared at commit like any
+  ref (a callback ref's cleanup included), ignored by the server render and attached by hydration.
+  Loaded on first use, so apps that don't use it pay nothing.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping

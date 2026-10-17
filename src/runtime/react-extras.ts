@@ -90,6 +90,46 @@ export interface ViewTransitionInstance {
   new: ViewTransitionPseudoElement;
 }
 
+/**
+ * What `<Fragment ref={r}>` puts in `r.current` (React 19.3's `FragmentInstance`): DOM-like
+ * methods applied to the Fragment's host children — the nearest elements and text nodes below
+ * it, not descending into an element — kept current as children mount and unmount.
+ */
+export interface FragmentInstance {
+  /** Remove focus from the active element when it is (or is inside) one of the children. */
+  blur(): void;
+  /** Focus the first focusable element in the fragment (depth first). */
+  focus(focusOptions?: FocusOptions): void;
+  /** Focus the last focusable element in the fragment (depth first). */
+  focusLast(focusOptions?: FocusOptions): void;
+  /** Observe every element child, including ones added later, until `unobserveUsing`. */
+  observeUsing(observer: IntersectionObserver | ResizeObserver): void;
+  /** Stop observing the children with an observer `observeUsing` attached. */
+  unobserveUsing(observer: IntersectionObserver | ResizeObserver): void;
+  /** The client rects of every child, in order (a text child's through a `Range`). */
+  getClientRects(): DOMRect[];
+  /** The parent host's root node; the instance itself once its parent is gone. */
+  getRootNode(getRootNodeOptions?: GetRootNodeOptions): Document | ShadowRoot | FragmentInstance;
+  /** Add a listener to every child, including ones added later (`once` / `signal` are per fragment). */
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    optionsOrUseCapture?: boolean | AddEventListenerOptions,
+  ): void;
+  /** Remove a listener `addEventListener` added (matched by type, listener and capture). */
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    optionsOrUseCapture?: boolean | EventListenerOptions,
+  ): void;
+  /** Dispatch `event` from the fragment's position: its own listeners, then up from the parent. */
+  dispatchEvent(event: Event): boolean;
+  /** `Node.compareDocumentPosition`, with the fragment's children standing for the fragment. */
+  compareDocumentPosition(otherNode: Node): number;
+  /** Scroll the children (or, with none, the nearest sibling or parent) into view. */
+  scrollIntoView(alignToTop?: boolean): void;
+}
+
 /** A `<ViewTransition>`'s honored config, JSON-encoded into {@link DNX_VT_ATTR} on its host child. */
 export interface ViewTransitionMarker {
   /** Pairs an outgoing and incoming element by this `view-transition-name` (shared-element morph). */

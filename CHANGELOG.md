@@ -38,9 +38,31 @@ and this project adheres to
   in-process checker, and denext picks it by itself, with one warning, when the toolchain's
   compiler failed verification. The explanations of type errors read the native output, related
   information included.
+- **React 19.3's Fragment refs.** `<Fragment ref={r}>` puts a `FragmentInstance` in `r.current`,
+  with React's API over the fragment's host children (the nearest elements and text nodes, portaled
+  ones included, content a hidden `<Activity>` holds excluded): `addEventListener` /
+  `removeEventListener` (with `once` and `signal` scoped to the fragment), `dispatchEvent`,
+  `focus` / `focusLast` / `blur`, `observeUsing` / `unobserveUsing` (an IntersectionObserver keeps
+  a removed child until after the next paint, for its exit record), `getClientRects`,
+  `getRootNode`, `compareDocumentPosition` and `scrollIntoView`. Listeners and observers follow
+  children that mount or unmount later, and each element child records its fragments in
+  `reactFragments`. The ref is set and cleared at commit like any ref (the same instance every
+  time; a callback ref's cleanup runs on detach, when the ref changes or goes away, and when the
+  Fragment is hidden or deleted). The server render ignores the ref and hydration attaches it. The
+  instance ships as an on-demand `fragment-instance-*` chunk: the first render that reaches a
+  `<Fragment ref>` suspends until it has loaded, and an app without one carries 420 B of reconciler
+  hooks for it (the shared runtime measures 65,030 B, from 64,610 B).
 
 ### Changed
 
+- **The compat layer reports React 19.3.1** (`React.version`, `ReactDOM.version`), and the
+  React/ReactDOM parity baseline moves to React 19.3.1 and `@types/react` 19.3: with Fragment refs
+  in, nothing holds it to 19.2 any more.
+- **`Fragment` is typed as a component** taking React's `FragmentProps` (`children`, and a `ref`
+  for a `FragmentInstance`), as React's `ExoticComponent` is, so `<Fragment key ref>` type-checks
+  as a JSX tag. At runtime it is still the fragment marker. `denext` exports the `FragmentProps`,
+  `FragmentComponent` and `FragmentInstance` types (`denext/react` the last), and
+  `denext/jsx-runtime` the first two with the marker's type, `FRAGMENT` (type-only).
 - **The React Native parity ledger is pinned to React Native 0.88.0 final** (from
   `0.88.0-rc.5`): `deno task parity:native` checks React Native mode's `react-native` surface and
   the list adapters against the release, with the same 97 expected names and no gaps, and

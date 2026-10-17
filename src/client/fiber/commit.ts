@@ -18,6 +18,7 @@ import { getClassSupport } from "./class-support.ts";
 import { profilerCommit, takeOffscreen } from "./state.ts";
 import { getActivitySupport } from "./activity-support.ts";
 import { getSingletonSupport } from "./singleton-support.ts";
+import { fragmentRefs } from "./fragment-ref-support.ts";
 import {
   ChildDeletion,
   ChildrenChanged,
@@ -196,9 +197,14 @@ function clearFiberFlags(f: Fiber, hidden = false): void {
   for (let c = f.child; c !== null; c = c.sibling) clearFiberFlags(c, hideKids);
 }
 
-/** Attach a fresh mount's ref — unless it mounted under a hidden `<Activity>`. */
+/**
+ * Attach a fresh mount's ref — unless it mounted under a hidden `<Activity>`. A ref'd Fragment
+ * (flagged on every render it takes part in) commits through the Fragment-ref runtime, which
+ * attaches or swaps its ref and syncs its children (fragment-ref-support.ts).
+ */
 function attachMountRef(f: Fiber, hidden: boolean): void {
-  if (!hidden) updateRef(f, undefined, f.vnode.props?.ref, f.stateNode as Element);
+  if (f.tag === "fragment") fragmentRefs!(f, !hidden);
+  else if (!hidden) updateRef(f, undefined, f.vnode.props?.ref, f.stateNode as Element);
 }
 
 /** An `<Activity>` that is hidden (its subtree is offscreen). */
@@ -425,6 +431,7 @@ function setFiberVisible(fiber: Fiber, reveal: boolean): void {
     setClassVisible(fiber, reveal);
   }
   if (fiber.tag === "host") setRefVisible(fiber, reveal);
+  else if (fiber.tag === "fragment") fragmentRefs?.(fiber, reveal);
 }
 
 /** A class's `componentWillUnmount` (hide) / `componentDidMount` (reveal); a throw is routed. */
@@ -619,6 +626,8 @@ export function commitDeletion(fiber: Fiber): void {
   // Drop any not-yet-run passive effects so the scheduled flush never runs an
   // effect for an unmounted component (its cleanups run below via the hook cells).
   fiber.passiveEffects = undefined;
+  // A ref'd Fragment detaches ahead of its children, as React's deletion does.
+  if (fiber.tag === "fragment") fragmentRefs?.(fiber, false);
   // Destroy children BEFORE this fiber's own cleanups — React's unmount order is
   // child-before-parent, so a parent effect's cleanup can rely on its children's
   // having already run. Capture the next sibling before recursing, since we sever

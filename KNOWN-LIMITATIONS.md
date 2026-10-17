@@ -25,12 +25,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
   `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
   a server render it returns `null`.
-- **React 19.3's Fragment refs are not implemented.** `<Fragment ref={…}>` gets no
-  `FragmentInstance` (event listeners, focus, observers and rects over the fragment's children);
-  attach the ref to an element instead. React 19.3's other additions — `ViewTransition` and
-  `addTransitionType` without the `unstable_` prefix — are in, but the compat layer reports React
-  19.2.9 (`React.version`) until Fragment refs land, so a library that checks for 19.3 keeps its
-  19.2 path.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 

@@ -85,6 +85,7 @@
 // via `denext/jsx-runtime`; they are not part of the hand-written API, so this
 // entrypoint exports only `h` and `Fragment`.
 export { Fragment, h } from "./src/jsx/jsx-runtime.ts";
+export type { FragmentComponent, FragmentProps } from "./src/jsx/jsx-runtime.ts";
 export type {
   Component,
   JSX,
@@ -281,6 +282,7 @@ export { StrictMode } from "./src/runtime/strict-mode.ts";
 // an app written against `denext` never needs the `react` / `next/*` aliases for them.
 export { Activity, cache, ViewTransition } from "./src/runtime/react-extras.ts";
 export type {
+  FragmentInstance,
   ViewTransitionCallback,
   ViewTransitionInstance,
   ViewTransitionPseudoElement,

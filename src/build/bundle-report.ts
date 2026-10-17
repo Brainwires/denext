@@ -215,13 +215,15 @@ const ON_DEMAND_PREFIXES = [
   "nav-document-",
   "flight-nav-stream-",
   "flight-value-holes-",
+  "fragment-instance-",
 ];
 
 /**
  * Classify a chunk by its content-hashed name prefix. `lazy-*` (deferred island hydration),
  * `class-runtime-*` (the class-component runtime), `momentum-scroll-*` (the iOS scroll shim) and
  * `nav-document-*` (the soft-navigation commit), `flight-nav-stream-*` (a streamed soft
- * navigation's reader) and `flight-value-holes-*` (a streamed Flight payload's value holes) are the
+ * navigation's reader), `flight-value-holes-*` (a streamed Flight payload's value holes) and
+ * `fragment-instance-*` (React 19.3's Fragment refs, loaded by the first `<Fragment ref>`) are the
  * framework's on-demand chunks: fetched only by a page that needs them, so they count against
  * neither the shared runtime nor the route entries, and are not islands.
  */

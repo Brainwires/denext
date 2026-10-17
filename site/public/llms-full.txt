@@ -1230,7 +1230,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ForwardedRef<T> = parenthesized | MutableRefObject<T | null> | null` — The ref a forwardRef render fn receives.
 - `forwardRef<T, P>(render: (props: P, ref: ForwardedRef<T>) => ReactNode): ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>` — React.forwardRef — best-effort. denext threads ref through props, so the render function receives (props, props.ref).
 - `interface ForwardRefExoticComponent<P>` — The result of forwardRef — callable, ref-forwarding, with a settable name.
-- `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `Fragment: FragmentComponent` — Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.
+- `type FragmentComponent = (props: FragmentProps) => VNode` — The declared type of Fragment: callable for TypeScript, so <Fragment key ref> type-checks as React's ExoticComponent<FragmentProps> does; at runtime it is the FRAGMENT marker.
+- `interface FragmentInstance` — What <Fragment ref={r}> puts in r.current (React 19.3's FragmentInstance): DOM-like methods applied to the Fragment's host children — the nearest elements and text nodes below it, not descending into an element — kept current as children mount and unmount.
+- `interface FragmentProps` — <Fragment>'s props (React's FragmentProps): its children and, from React 19.3, a ref.
 - `interface FreeQuery` — Free-form query strings (an endpoint without a query schema).
 - `interface FunctionComponent<P>` — A function component.
 - `getImageProps(props: ImageProps): object` — next/image's getImageProps — resolve ImageProps to the concrete <img> attributes without rendering, for spreading onto your own element (e.g. a background, a <picture> source, or a custom <img>). Mirrors Next's { props } return shape; srcSet is exposed under both srcSet and srcset for convenience.
@@ -2396,7 +2399,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `flushSync<T>(fn?: () => T): T | undefined` — Run fn (if given) and then synchronously flush all pending state updates — including any pending transition work — before returning. Matches React's flushSync(fn).
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
-- `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `Fragment: FragmentComponent` — Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.
 - `interface FreeQuery` — Free-form query strings (an endpoint without a query schema).
 - `h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
 - `type HandlerBody<H> = conditional` — The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).
@@ -3414,7 +3417,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `createBottomTabNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createBottomTabNavigator for React Native mode, drawn by TabsView: visited tabs stay mounted (hidden with <Activity>), tabBarBadge / tabBarIcon / tabBarLabel / title and lazy / popToTopOnBlur / unmountOnBlur are honoured, and a press on the active tab emits tabPress (a nested stack pops to its root) then scrolls it to the top.
 - `createNativeStackNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createNativeStackNavigator for React Native mode, drawn by StackView.
-- `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `Fragment: FragmentComponent` — Groups children without a wrapping element (<>…</> / <Fragment key ref>). The value is the FRAGMENT marker; it is typed as a component so <Fragment> type-checks as a JSX tag with React's FragmentProps, a ref receiving a FragmentInstance included.
 - `interface HistoryLocation` — A location as the history bindings read it.
 - `interface HistoryScreen` — One screen of a HistoryStack's table.
 - `interface HistorySource` — A history-based router, as HistoryStack and HistoryTabs use it: read the location, hear it change, and navigate. browserHistory, tanstackHistory and reactRouterHistory build one; any router whose location lives in the URL history can implement it in a few lines.

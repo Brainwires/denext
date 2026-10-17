@@ -17,7 +17,7 @@ Deno.test("jsx lifts an explicit key argument onto the node", () => {
 });
 
 Deno.test("Fragment is the shared fragment symbol", () => {
-  assertEquals(Fragment, FRAGMENT);
+  assertEquals(Fragment as unknown, FRAGMENT);
 });
 
 Deno.test("h() collects variadic children", () => {

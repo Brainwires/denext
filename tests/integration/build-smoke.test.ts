@@ -202,6 +202,10 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * A hydrated `dangerouslySetInnerHTML` mismatch is then kept, as React 19 keeps it: the `__html`
  * comparison rides the dev hydration warning and production neither compares nor patches
  * (−160 B: 64,770 → 64,610 B, Deno 2.9.7), with no budget change.
+ * React 19.3's Fragment refs then added the reconciler's seam and its load-on-first-use (+420 B:
+ * 64,610 → 65,030 B), with no budget change: the FragmentInstance itself is the on-demand
+ * `fragment-instance-*` chunk, which imports no shared module (one that did split this graph into
+ * more chunks, +2.5 KB). Its gate is asserted in {@link assertGatedRuntimeAbsent}.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -272,6 +276,10 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["class components are disabled", "reconciler error texts"],
     // `<Script strategy="worker">`'s Partytown markup rides <Script> (0 bytes unless imported).
     ["text/partytown", "the Script worker strategy"],
+    // React 19.3's FragmentInstance is the on-demand fragment-instance chunk, loaded by the first
+    // `<Fragment ref>` a render reaches (fragment-ref-support.ts).
+    ["reactFragments", "Fragment-ref runtime (fragment-instance.ts)"],
+    ["observeUsing", "Fragment-ref runtime (fragment-instance.ts)"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

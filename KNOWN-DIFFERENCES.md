@@ -57,6 +57,13 @@ internal design choice with no observable difference lives in
   normally; inside a Suspense boundary it shows the fallback instead. Deliberate — it is
   what keeps a function-only app from paying for class support — and `classComponents:
   true` in `denext.config.ts` opts out by always importing the runtime statically.
+- **Fragment refs load on first use.** React 19.3's `FragmentInstance` (`<Fragment ref>`) ships
+  as its own `fragment-instance-*` chunk, not in the shared runtime. The first render that
+  reaches a `<Fragment ref>` on a page suspends until the chunk has loaded — its nearest
+  `<Suspense>` shows its fallback for that round trip, or, with none above, what is on screen
+  (the server's HTML, while hydrating) stays — then commits with the ref attached, so layout
+  effects see it as in React. Later renders never wait. Deliberate: an app that uses no Fragment
+  ref pays nothing for one.
 - **`useId` values encode the component's tree position, not a counter.** denext emits
   `_d{path}_{n}_` (e.g. `_d0-2-1_0_`) where React 19.2 emits `_r_{n}_`. Both use the same
   character class — a valid CSS identifier, XML 1.0 name and `view-transition-name`, so
