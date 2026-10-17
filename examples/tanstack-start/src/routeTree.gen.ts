@@ -11,6 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root.tsx'
 import { Route as IndexRouteImport } from './routes/index.tsx'
 import { Route as AboutRouteImport } from './routes/about.tsx'
+import { Route as BoomRouteImport } from './routes/boom.tsx'
+import { Route as DeferredRouteImport } from './routes/deferred.tsx'
+import { Route as NotesRouteImport } from './routes/notes.tsx'
+import { Route as PostsRouteRouteImport } from './routes/posts/route.tsx'
+import { Route as ApiHelloRouteImport } from './routes/api/hello.ts'
 import { Route as PostsIndexRouteImport } from './routes/posts/index.tsx'
 import { Route as PostsPostIdRouteImport } from './routes/posts/$postId.tsx'
 
@@ -24,49 +29,118 @@ const AboutRoute = AboutRouteImport.update({
   path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PostsIndexRoute = PostsIndexRouteImport.update({
-  id: '/posts/',
-  path: '/posts/',
+const BoomRoute = BoomRouteImport.update({
+  id: '/boom',
+  path: '/boom',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PostsPostIdRoute = PostsPostIdRouteImport.update({
-  id: '/posts/$postId',
-  path: '/posts/$postId',
+const DeferredRoute = DeferredRouteImport.update({
+  id: '/deferred',
+  path: '/deferred',
   getParentRoute: () => rootRouteImport,
+} as any)
+const NotesRoute = NotesRouteImport.update({
+  id: '/notes',
+  path: '/notes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PostsRouteRoute = PostsRouteRouteImport.update({
+  id: '/posts',
+  path: '/posts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHelloRoute = ApiHelloRouteImport.update({
+  id: '/api/hello',
+  path: '/api/hello',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PostsIndexRoute = PostsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PostsRouteRoute,
+} as any)
+const PostsPostIdRoute = PostsPostIdRouteImport.update({
+  id: '/$postId',
+  path: '/$postId',
+  getParentRoute: () => PostsRouteRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/posts': typeof PostsRouteRouteWithChildren
   '/about': typeof AboutRoute
+  '/boom': typeof BoomRoute
+  '/deferred': typeof DeferredRoute
+  '/notes': typeof NotesRoute
+  '/api/hello': typeof ApiHelloRoute
   '/posts/$postId': typeof PostsPostIdRoute
   '/posts/': typeof PostsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/boom': typeof BoomRoute
+  '/deferred': typeof DeferredRoute
+  '/notes': typeof NotesRoute
+  '/api/hello': typeof ApiHelloRoute
   '/posts/$postId': typeof PostsPostIdRoute
   '/posts': typeof PostsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/posts': typeof PostsRouteRouteWithChildren
   '/about': typeof AboutRoute
+  '/boom': typeof BoomRoute
+  '/deferred': typeof DeferredRoute
+  '/notes': typeof NotesRoute
+  '/api/hello': typeof ApiHelloRoute
   '/posts/$postId': typeof PostsPostIdRoute
   '/posts/': typeof PostsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/about' | '/posts/$postId' | '/posts/'
+  fullPaths:
+    | '/'
+    | '/posts'
+    | '/about'
+    | '/boom'
+    | '/deferred'
+    | '/notes'
+    | '/api/hello'
+    | '/posts/$postId'
+    | '/posts/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/about' | '/posts/$postId' | '/posts'
-  id: '__root__' | '/' | '/about' | '/posts/$postId' | '/posts/'
+  to:
+    | '/'
+    | '/about'
+    | '/boom'
+    | '/deferred'
+    | '/notes'
+    | '/api/hello'
+    | '/posts/$postId'
+    | '/posts'
+  id:
+    | '__root__'
+    | '/'
+    | '/posts'
+    | '/about'
+    | '/boom'
+    | '/deferred'
+    | '/notes'
+    | '/api/hello'
+    | '/posts/$postId'
+    | '/posts/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PostsRouteRoute: typeof PostsRouteRouteWithChildren
   AboutRoute: typeof AboutRoute
-  PostsPostIdRoute: typeof PostsPostIdRoute
-  PostsIndexRoute: typeof PostsIndexRoute
+  BoomRoute: typeof BoomRoute
+  DeferredRoute: typeof DeferredRoute
+  NotesRoute: typeof NotesRoute
+  ApiHelloRoute: typeof ApiHelloRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -85,28 +159,80 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/boom': {
+      id: '/boom'
+      path: '/boom'
+      fullPath: '/boom'
+      preLoaderRoute: typeof BoomRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/deferred': {
+      id: '/deferred'
+      path: '/deferred'
+      fullPath: '/deferred'
+      preLoaderRoute: typeof DeferredRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notes': {
+      id: '/notes'
+      path: '/notes'
+      fullPath: '/notes'
+      preLoaderRoute: typeof NotesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/posts': {
+      id: '/posts'
+      path: '/posts'
+      fullPath: '/posts'
+      preLoaderRoute: typeof PostsRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hello': {
+      id: '/api/hello'
+      path: '/api/hello'
+      fullPath: '/api/hello'
+      preLoaderRoute: typeof ApiHelloRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/posts/': {
       id: '/posts/'
-      path: '/posts'
+      path: '/'
       fullPath: '/posts/'
       preLoaderRoute: typeof PostsIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof PostsRouteRoute
     }
     '/posts/$postId': {
       id: '/posts/$postId'
-      path: '/posts/$postId'
+      path: '/$postId'
       fullPath: '/posts/$postId'
       preLoaderRoute: typeof PostsPostIdRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof PostsRouteRoute
     }
   }
 }
 
-const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AboutRoute: AboutRoute,
+interface PostsRouteRouteChildren {
+  PostsPostIdRoute: typeof PostsPostIdRoute
+  PostsIndexRoute: typeof PostsIndexRoute
+}
+
+const PostsRouteRouteChildren: PostsRouteRouteChildren = {
   PostsPostIdRoute: PostsPostIdRoute,
   PostsIndexRoute: PostsIndexRoute,
+}
+
+const PostsRouteRouteWithChildren = PostsRouteRoute._addFileChildren(
+  PostsRouteRouteChildren,
+)
+
+const rootRouteChildren: RootRouteChildren = {
+  IndexRoute: IndexRoute,
+  PostsRouteRoute: PostsRouteRouteWithChildren,
+  AboutRoute: AboutRoute,
+  BoomRoute: BoomRoute,
+  DeferredRoute: DeferredRoute,
+  NotesRoute: NotesRoute,
+  ApiHelloRoute: ApiHelloRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

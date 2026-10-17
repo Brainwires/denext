@@ -145,14 +145,27 @@ and this project adheres to
   `addBrightnessListener` on iOS. A shell from before these plugins keeps rejecting those calls
   with `ERR_UNAVAILABLE`; run `denext mobile add <capability>` again to add them.
 
-- **`@denext/tanstack-start`: Start-style server rendering for TanStack Router.** A new plugin
-  (`plugins: [tanstackStart()]`) for an app with Start's layout (`src/router.tsx` exporting
-  `getRouter()`, file routes in `src/routes/`): it generates the route tree with TanStack's own
-  generator (at build, and as route files change in dev), renders every page through TanStack
-  Router's SSR (loaders on the server, the root route's `shellComponent` as the document, the
-  router state dehydrated into it), and hydrates it in the browser with `RouterClient` from a
-  client bundle it builds. `denext dev` / `build` / `start` accept a project whose only route
-  tree is `src/routes/__root.tsx`. See `examples/tanstack-start`.
+- **`@denext/tanstack-start`: TanStack Start apps on denext.** A new plugin
+  (`plugins: [tanstackStart()]`) for a Start app (`src/router.tsx` exporting `getRouter()`, file
+  routes in `src/routes/`, `@tanstack/react-start` in its `package.json`): it generates the route
+  tree with TanStack's own generator (at build, and as route files change in dev) and answers
+  every request with Start's own handler. Pages stream through TanStack Router's matching and
+  match loaders (nested layouts, pending / error / not-found components, a deferred loader
+  promise streaming in when it settles); server functions (`createServerFn`, GET and POST,
+  validators, middleware) answer at `/_serverFn/<id>` in Start's RPC format; a route's
+  `server.handlers` serve as server routes. TanStack's own compiler builds the browser and server
+  bundles, so no server function body or server route handler reaches the browser. A server
+  function called with a mutating method must come from the app's origin (the rule Server
+  Actions follow; 403 otherwise) and request bodies are capped. The browser hydrates with Start's
+  `StartClient`. `denext dev` / `build` / `start` accept a project whose only route tree is
+  `src/routes/__root.tsx`. See `examples/tanstack-start`.
+- **`renderToReadableStream` from `react-dom/server` writes an `<html>` root as a document,** as
+  React does: `<!DOCTYPE html>` first, streamed Suspense boundaries inside the body, and
+  `</body></html>` only once every boundary has streamed. It used to put its reveal script ahead
+  of `<html>` (the page rendered in quirks mode) and close the document before the boundaries.
+- **`buildNextCompatModules` (`@denext/denext/build/next-compat`) takes `extraPlugins` and
+  `define`** for the server bundle, as `buildNextCompatClientEntries` does for the client: what a
+  router plugin uses to supply its framework's virtual modules and compile-time constants.
 - **`hydrateRoot(document, <App />)`** hydrates the whole document as React does: it adopts the
   server's `<html>` past the doctype instead of appending a second one.
 - **A component that suspends with no Suspense boundary suspends the root,** as in React 19:

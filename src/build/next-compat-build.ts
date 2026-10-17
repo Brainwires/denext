@@ -208,6 +208,15 @@ export interface BuildNextCompatModulesOptions {
   resolveAlias?: ResolveAliasConfig;
   /** React Native mode's additions (see {@link CompatReactNativeOptions}). */
   reactNative?: CompatReactNativeOptions;
+  /**
+   * Extra esbuild plugins (`esbuild.Plugin[]`), inserted BEFORE the built-ins so their
+   * `onResolve`/`onLoad` win (after React Native mode's resolvers) — what a router plugin uses to
+   * supply its framework's virtual modules and compile its server-function calls. Typed as
+   * `unknown[]` so the public API does not expose esbuild's types.
+   */
+  extraPlugins?: unknown[];
+  /** Compile-time `define` replacements merged into the server bundle's esbuild build. */
+  define?: Record<string, string>;
 }
 
 /**
@@ -288,8 +297,12 @@ export async function buildNextCompatModules(
     buildTarget: options.buildTarget,
     resolveAlias: options.resolveAlias,
     assets: options.assets,
-    ...(rn ? { extraPlugins: rn.plugins as esbuild.Plugin[] } : {}),
-    ...reactNativeBundlerOptions(rn, undefined),
+    extraPlugins: [
+      ...(rn?.plugins as esbuild.Plugin[] | undefined ?? []),
+      ...(options.extraPlugins as esbuild.Plugin[] | undefined ?? []),
+    ],
+    define: options.define,
+    ...reactNativeBundlerOptions(rn, options.define),
   });
 
   const bundle = join(outRoot, `${SERVER_BUNDLE_NAME}.js`);

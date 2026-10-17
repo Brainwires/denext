@@ -74,9 +74,9 @@
 
 ## Router plugins
 
-- **TanStack Start, the rest:** `@denext/tanstack-start` server-renders and hydrates a Start
-  app; Start's server functions (`createServerFn`), server routes, streaming SSR and
-  `denext export` prerendering are next, and `denext migrate` should recognize a Start app.
+- **TanStack Start, the rest:** `@denext/tanstack-start` runs a Start app (server functions,
+  server routes, streamed pages); `denext export` prerendering of Start routes, Start's import
+  protection, and `denext migrate` recognizing a Start app are next.
 
 ## Build toolchain: waiting on `deno bundle`
 

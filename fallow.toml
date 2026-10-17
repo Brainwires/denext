@@ -49,6 +49,7 @@ ignoreDependencies = [
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
   "@tanstack/react-router", # examples/tanstack-router + tanstack-start package.json: installed into each example's manual node_modules
   "@tanstack/router-generator", # examples/tanstack-start/package.json devDependency: the route generator @denext/tanstack-start loads from the app
+  "@tanstack/react-start", # examples/tanstack-start/package.json: Start's runtime + compiler (@tanstack/start-plugin-core) @denext/tanstack-start loads from the app
   # examples/scroll-bench/web/package.json: the list libraries the scroll bench compares, installed
   # into that app's manual node_modules (`react-native` resolves to react-native-web through
   # denext's `reactNative: true` mode).

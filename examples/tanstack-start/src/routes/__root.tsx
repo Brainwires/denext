@@ -35,6 +35,7 @@ function RootLayout() {
     <>
       <nav aria-label="Main">
         <Link to="/" activeOptions={{ exact: true }}>Home</Link> <Link to="/posts">Posts</Link>{" "}
+        <Link to="/notes">Notes</Link> <Link to="/deferred">Deferred</Link>{" "}
         <Link to="/about">About</Link>
       </nav>
       <main>

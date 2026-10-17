@@ -227,11 +227,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### TanStack Start
 
-- **`@denext/tanstack-start` renders each page whole and serves no server functions.** Pages go
-  through TanStack Router's `defaultRenderHandler` (no streaming); `createServerFn`, server
-  routes and `denext export` prerendering are not provided (a denext route handler under
-  `app/api` serves endpoints). The server render and the client bundle are compiled onto
-  denext's React, so an app's own `react` import must resolve to denext (`compatibilityMode`).
+- **`@denext/tanstack-start` does not prerender, and does not protect imports.** `denext export`
+  writes no TanStack Start routes (`denext start` serves them), and a `*.server.*` module reached
+  from client code is not refused at build as Start's import protection does (TanStack's compiler
+  still drops server function bodies, server route handlers and `createServerOnlyFn` bodies from
+  the browser bundle). The server render and the client bundle are compiled onto denext's React,
+  so an app's own `react` import must resolve to denext (`compatibilityMode`).
 
 ## Mobile (Capacitor shell)
 

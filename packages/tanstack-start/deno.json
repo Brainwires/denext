@@ -18,7 +18,9 @@
       "configKeys": [
         "srcDirectory",
         "router",
-        "generateRouteTree"
+        "generateRouteTree",
+        "maxBodyBytes",
+        "allowedOrigins"
       ]
     }
   },
