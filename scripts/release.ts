@@ -727,6 +727,9 @@ async function publish(version: string, tag: string, branch: string): Promise<vo
           `  git tag -a ${tag} -m "denext ${version}" && git push origin ${tag}`,
       );
     }
+    // Listed is not enough: what JSR serves must be this tree's corpus (checkCorpus aborts on
+    // another source hash), or v<version> would pin a corpus nobody checked.
+    await checkCorpus(version);
   }
   const refusal = pinRefusal(await missingPins(), tag);
   if (refusal) {

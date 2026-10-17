@@ -116,6 +116,11 @@ jobs:
           echo "config=$cfg" >> "$GITHUB_OUTPUT"
           echo "Publishing package configured by $cfg"
 
+      # JSR takes the version from the config, not the tag: a tag on the wrong commit must not
+      # publish another version under its name.
+      - name: Check the tag names the config's version
+        run: deno run --allow-read=. scripts/publish-tag.ts "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.config }}"
+
       # The whole suite runs only when CI hasn't already passed it: on the tagged commit itself
       # (fmt + lint only), or on the parent of the release script's own `release: denext <v>`
       # commit (the release's delta gate). Anything else, a failure to ask CI included, runs the
