@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-10-17
+
 ### Added
 
 - **Inline Server Actions (`async function save() { "use server"; … }` inside a Server Component)
@@ -16326,7 +16328,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.3.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.3.1...development
+[4.3.1]: https://jsr.io/@denext/denext@4.3.1
 [4.3.0]: https://jsr.io/@denext/denext@4.3.0
 [4.2.0]: https://jsr.io/@denext/denext@4.2.0
 [4.1.0]: https://jsr.io/@denext/denext@4.1.0
