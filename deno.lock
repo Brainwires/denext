@@ -61,7 +61,7 @@
     "npm:@sqlite.org/sqlite-wasm@3.53.4-build1": "3.53.4-build1",
     "npm:@supabase/supabase-js@2.117.2": "2.117.2",
     "npm:@tanstack/router-plugin@1.168.42": "1.168.42_esbuild@0.24.2",
-    "npm:drizzle-orm@0.45.3": "0.45.3",
+    "npm:drizzle-orm@0.45.3": "0.45.3_postgres@3.4.7",
     "npm:effect@*": "3.22.1",
     "npm:effect@^3.22.0": "3.22.1",
     "npm:graphql-ws@6.3.0": "6.3.0_graphql@16.14.2_ws@8.21.3",
@@ -1117,8 +1117,14 @@
     "diff@8.0.4": {
       "integrity": "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="
     },
-    "drizzle-orm@0.45.3": {
-      "integrity": "sha512-CAloER21cDdcgZ1OmjrZX82EeRNsdP+y0onX/eyoYDaYzki/adrAa91lzM5jWh7zZPK4qUbw/6LGv9J+A+uizA=="
+    "drizzle-orm@0.45.3_postgres@3.4.7": {
+      "integrity": "sha512-CAloER21cDdcgZ1OmjrZX82EeRNsdP+y0onX/eyoYDaYzki/adrAa91lzM5jWh7zZPK4qUbw/6LGv9J+A+uizA==",
+      "dependencies": [
+        "postgres"
+      ],
+      "optionalPeers": [
+        "postgres"
+      ]
     },
     "effect@3.22.1": {
       "integrity": "sha512-TNoXushmPOBAjJlthF5d2QwnX2xBPEtcNJr5XKNKbRLbDvBcOYkXlYDfvGfSA0zriwLFuCll5MDtNMAdZL17PQ==",
@@ -2276,7 +2282,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@astral/astral@~0.5.3",
-      "jsr:@denext/docs-corpus@4.2.0",
+      "jsr:@denext/docs-corpus@4.3.0",
       "jsr:@denext/lightningcss@^1.0.0-rc.72",
       "jsr:@denext/swc@76",
       "jsr:@luca/esbuild-deno-loader@0.11",
@@ -2303,13 +2309,13 @@
     "members": {
       "packages/backend": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/content-collections": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
@@ -2318,13 +2324,13 @@
       },
       "packages/effect": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "npm:effect@^3.22.0"
         ]
       },
       "packages/graphql": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@denext/openapi@0.6",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
@@ -2333,32 +2339,32 @@
       },
       "packages/htmx": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/openapi": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/pages-router": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/react-router": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
       },
       "packages/tanstack-start": {
         "dependencies": [
-          "jsr:@denext/denext@^4.2.0",
+          "jsr:@denext/denext@^4.3.0",
           "jsr:@std/path@1"
         ]
       }

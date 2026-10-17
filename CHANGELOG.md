@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-10-17
+
 ### Added
 
 - **`<Script strategy="worker">` runs off the main thread, through Partytown, as in Next.** With
@@ -114,7 +116,6 @@ and this project adheres to
   in it, and anything else is left alone with one warning. The Gleam build writes
   `.denext/lustre-server.ts` and `.denext/lustre-view.ts` for it. A `lustreIsland` root now gets a
   `lustre:mount` event once Lustre runs it.
-
 - **Background audio with lock-screen controls (`denext mobile add background-audio`).**
   `setNowPlaying({ title, artist, album, artwork, duration, position, playing, controls })`,
   `clearNowPlaying()`, `onMediaControl(handler)` / `useMediaControl` and
@@ -137,27 +138,23 @@ and this project adheres to
   `expo-image-picker`'s `launchImageLibraryAsync` now honours `allowsMultipleSelection`,
   `selectionLimit`, `mediaTypes` and `orderedSelection`, and `launchCameraAsync` records a video
   with `mediaTypes: "videos"` (video assets carry `duration` in ms, web assets the `File`).
-
 - **`AccessibilityInfo.isBoldTextEnabled()` / `isGrayscaleEnabled()` read the OS** in React
   Native mode, with their `boldTextChanged` / `grayscaleChanged` events. The `DenextAccessibility`
   plugin (`denext mobile add accessibility`, template generation 3; re-run it to upgrade an
   unedited copy) answers them: iOS's Bold Text and grayscale color filter, Android's Bold text
   (Android 12+) and color correction in grayscale mode. Without the plugin, and on the web, they
   read `false` as before.
-
 - **Stacks move focus to the new screen.** In `denext/navigation` (`StackView`, `StackLayout`,
   `HistoryStack`, and React Native mode's React Navigation and Expo Router stacks) a push focuses
   the new screen's header title (else the screen), and a pop gives focus back to the element that
   had it when the screen was left, as VoiceOver and TalkBack do on a native screen change. Focus
   in a field outside the stack is left alone, and the route announcement is skipped when the
   focused heading already says the title. `focusOnNavigation: false` turns it off.
-
 - **`adjustsFontSizeToFit` shrinks nested `Text` too** in React Native mode. The fit probes
   every element inside the fitting `Text` at its scaled size, and a nested `Text` with its own
   `fontSize` draws it times the outer `Text`'s factor, as React Native does. It used to shrink
   only the outer `Text`, so a nested one with its own size kept it and could keep the text from
   fitting at all.
-
 - **React Native mode on the App Router.** `reactNative` no longer requires `mode: "spa"`: in an
   App Router app it implies the compat pipeline, and the server bundle, the client islands and
   the hydrated routes all resolve `react-native` to react-native-web (with `.web.*` first, JSX in
@@ -196,7 +193,6 @@ and this project adheres to
   as Expo), reads the system level while the window follows it, and fires
   `addBrightnessListener` on iOS. A shell from before these plugins keeps rejecting those calls
   with `ERR_UNAVAILABLE`; run `denext mobile add <capability>` again to add them.
-
 - **`@denext/tanstack-start`: TanStack Start apps on denext.** A new plugin
   (`plugins: [tanstackStart()]`) for a Start app (`src/router.tsx` exporting `getRouter()`, file
   routes in `src/routes/`, `@tanstack/react-start` in its `package.json`): it generates the route
@@ -431,6 +427,21 @@ and this project adheres to
   would take the `deno.jsonc`'s place. The Lustre kits take Lustre's version only when it reads as
   a version, and `deno task gleam:pin` refuses an asset GitHub records no digest for. See
   [Gleam](https://denext.dev/docs/gleam).
+- **Every app's shared client runtime is 2.7 KB smaller (raw), with no change in behaviour.** The
+  soft-navigation commit (the view-transition wrapper, history, scroll, the data-island writes and
+  the isomorphic / full-HTML paths) is an on-demand `nav-document-*` chunk: a Link prefetch warms
+  it, and a navigation loads it alongside its route fetch, so a first page load carries none of
+  it. The error for a class component whose runtime is off (or failed to load) is reconciler code
+  5 in a production bundle, its full text installed with the dev warnings and by
+  `denext/testing`. `examples/hello`'s shared chunks went from 67,032 B to 64,341 B, and the
+  build-smoke budget moves from 67,100 B to 65,500 B.
+- **`denext mobile add brightness` declares `android.permission.WRITE_SETTINGS`** (special
+  access the user grants in the system settings screen), for Android's system brightness. With
+  `DenextBrightness`, `denext/expo/brightness`'s `getPermissionsAsync` on Android answers whether
+  the app may write the system settings (`denied`, askable again, until the user allows it)
+  instead of always `granted`, and `updateEventAsync` / `getEventAsync` in
+  `denext/expo/calendar` and `selectPrinterAsync` / `printToFileAsync` in `denext/expo/print`
+  name the missing plugin when they reject.
 
 ### Fixed
 
@@ -639,24 +650,6 @@ and this project adheres to
   carries it app-local), so on a machine without the redistributable for its architecture — a
   fresh Windows on Arm one, say — it exited with `0xC0000135` and the verb ended silently. The
   verb now names the missing DLLs and the redistributable to install for the host's architecture.
-
-### Changed
-
-- **Every app's shared client runtime is 2.7 KB smaller (raw), with no change in behaviour.** The
-  soft-navigation commit (the view-transition wrapper, history, scroll, the data-island writes and
-  the isomorphic / full-HTML paths) is an on-demand `nav-document-*` chunk: a Link prefetch warms
-  it, and a navigation loads it alongside its route fetch, so a first page load carries none of
-  it. The error for a class component whose runtime is off (or failed to load) is reconciler code
-  5 in a production bundle, its full text installed with the dev warnings and by
-  `denext/testing`. `examples/hello`'s shared chunks went from 67,032 B to 64,341 B, and the
-  build-smoke budget moves from 67,100 B to 65,500 B.
-- **`denext mobile add brightness` declares `android.permission.WRITE_SETTINGS`** (special
-  access the user grants in the system settings screen), for Android's system brightness. With
-  `DenextBrightness`, `denext/expo/brightness`'s `getPermissionsAsync` on Android answers whether
-  the app may write the system settings (`denied`, askable again, until the user allows it)
-  instead of always `granted`, and `updateEventAsync` / `getEventAsync` in
-  `denext/expo/calendar` and `selectPrinterAsync` / `printToFileAsync` in `denext/expo/print`
-  name the missing plugin when they reject.
 
 ## [4.2.0] - 2026-10-16
 
@@ -16273,7 +16266,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.2.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.3.0...development
+[4.3.0]: https://jsr.io/@denext/denext@4.3.0
 [4.2.0]: https://jsr.io/@denext/denext@4.2.0
 [4.1.0]: https://jsr.io/@denext/denext@4.1.0
 [4.0.0]: https://jsr.io/@denext/denext@4.0.0
