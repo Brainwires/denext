@@ -1,7 +1,8 @@
 // The two bundles a Start app runs as, both compiled onto denext's React with
 // `@denext/denext/build/next-compat` and TanStack's own compiler as an extra esbuild plugin: the
-// server bundle (Start's handler and the app, built on first use) and the client bundle (built at
-// `denext build`, or on first use in dev).
+// server bundle (Start's handler and the app) and the client bundle. `denext build` builds both
+// and records where the server bundle is (`server.json`), so `denext start` loads it without
+// building; dev builds each on first use and again after an edit.
 
 import type { PluginContext } from "@denext/denext/server";
 import {
@@ -9,7 +10,8 @@ import {
   buildNextCompatModules,
   createNextCompatServerLoader,
 } from "@denext/denext/build/next-compat";
-import { startBuildPlugin } from "./compile.ts";
+import { join, relative } from "@std/path";
+import { startBuild } from "./compile.ts";
 import { clientEntrySource } from "./entries.ts";
 import { CLIENT_ENTRY, CLIENT_PREFIX, routerManifest, SERVER_FN_SEGMENT } from "./handler.ts";
 import { coversServerFns, scanServerFns } from "./server-fns.ts";
@@ -47,6 +49,10 @@ export interface StartBundles {
   client(): Promise<string>;
   /** Build the client bundle. */
   bundle(): Promise<void>;
+  /** Build the server bundle and record it for `denext start` (`server.json`). */
+  prebuildServer(): Promise<void>;
+  /** Drop the record of a previous build's server bundle (a failed build leaves none). */
+  forgetServerBuild(): Promise<void>;
   /** Forget both bundles: the next request builds them again (an edit in dev). */
   reset(): void;
 }
@@ -88,12 +94,12 @@ export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
     resolveAllNodeModules: ctx.config.nodeResolve !== false,
     define: startDefines(app.basePath),
   };
-  const plugin = async (
+  const startOf = async (
     env: StartEnv,
     knownServerFns: Record<string, ServerFnInfo>,
     onServerFns?: (fns: Record<string, ServerFnInfo>) => void,
   ) =>
-    startBuildPlugin({
+    startBuild({
       env,
       toolchain: await toolchain(),
       projectRoot: app.root,
@@ -111,29 +117,43 @@ export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
     let known = await scanServerFns(await toolchain(), app.root, app.src);
     for (let attempt = 0;; attempt++) {
       const seen: Record<string, ServerFnInfo> = {};
+      const start = await startOf("server", known, (fns) => Object.assign(seen, fns));
       const moduleMap = await buildNextCompatModules({
         ...compat,
         modules: [app.serverEntry],
-        extraPlugins: [await plugin("server", known, (fns) => Object.assign(seen, fns))],
+        extraPlugins: [start.plugin],
+        // `"use cache"` in the app's server code, Start-compiled modules included.
+        useCache: cacheComponents(ctx),
       });
       if (coversServerFns(known, seen) || attempt > 0) return moduleMap;
       known = { ...known, ...seen };
     }
   };
-  const bundle = async () =>
-    buildNextCompatClientEntries({
+  const bundle = async () => {
+    const start = await startOf("client", {});
+    await buildNextCompatClientEntries({
       ...compat,
       clientDir: app.clientDir,
       entries: [{ id: "client", source: clientEntrySource(app.boot) }],
       momentumSafeScroll: ctx.config.momentumSafeScroll !== false,
-      extraPlugins: [await plugin("client", {})],
+      extraPlugins: [start.plugin],
+      // A `"use server"` module that declares server functions: Start's RPC stubs, no source.
+      serverModuleSource: (path) => start.serverModuleSource(path),
     });
+  };
+
+  const serverRecord = join(app.outDir, SERVER_RECORD);
+  // `denext start` loads what `denext build` built; anything else (and a build with no record)
+  // builds it.
+  const serverModules = async () =>
+    (ctx.mode === "prod" ? await readServerRecord(serverRecord, app) : null) ??
+      await buildServer();
 
   let server: Promise<(path: string) => Promise<unknown>> | undefined;
   let built: Promise<string> | undefined;
   return {
     async loadServerEntry() {
-      server ??= buildServer().then((moduleMap) =>
+      server ??= serverModules().then((moduleMap) =>
         createNextCompatServerLoader(ctx.load, { moduleMap })
       ).catch((err) => {
         server = undefined; // a failed build is retried by the next request
@@ -144,9 +164,70 @@ export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
     client: () =>
       built ??= (ctx.mode === "prod" ? Promise.resolve() : bundle()).then(() => app.clientDir),
     bundle,
+    forgetServerBuild: () => Deno.remove(serverRecord).catch(() => {}),
+    async prebuildServer() {
+      const moduleMap = await buildServer();
+      await writeServerRecord(serverRecord, app, moduleMap.get(app.serverEntry));
+    },
     reset() {
       server = undefined;
       built = undefined;
     },
   };
+}
+
+/** The record of the built server bundle, in the plugin's output directory. */
+export const SERVER_RECORD = "server.json";
+
+/** `cacheComponents` (or Next's `experimental.cacheComponents` spelling) is on. */
+function cacheComponents(ctx: PluginContext): boolean {
+  const config = ctx.config as {
+    cacheComponents?: boolean;
+    experimental?: Record<string, unknown>;
+  };
+  return (config.cacheComponents ?? config.experimental?.cacheComponents) === true;
+}
+
+/**
+ * Record where the server entry's bundle is (`<bundle>#<key>`), relative to the output
+ * directory, so a build moved to another directory (a container image) still finds it.
+ */
+async function writeServerRecord(path: string, app: StartApp, ref: string | undefined) {
+  if (!ref) throw new Error("@denext/tanstack-start: the server bundle has no entry");
+  const at = ref.lastIndexOf("#");
+  const bundle = relative(app.outDir, ref.slice(0, at)).replace(/\\/g, "/");
+  await Deno.writeTextFile(path, JSON.stringify({ bundle, key: ref.slice(at + 1) }) + "\n");
+}
+
+/** The server bundle `denext build` recorded, or `null` when there is none. */
+async function readServerRecord(path: string, app: StartApp): Promise<Map<string, string> | null> {
+  let record: { bundle?: unknown; key?: unknown };
+  try {
+    record = JSON.parse(await Deno.readTextFile(path));
+  } catch {
+    return null;
+  }
+  if (typeof record.bundle !== "string" || typeof record.key !== "string") return null;
+  return new Map([[app.serverEntry, `${join(app.outDir, record.bundle)}#${record.key}`]]);
+}
+
+/**
+ * `denext build`'s step: the client bundle, then the server bundle, so a build error in either
+ * fails the build and `denext start`'s first request builds nothing. A static export serves no
+ * Start routes.
+ *
+ * @param mode The plugin context's mode.
+ * @param bundles The app's bundles.
+ */
+export async function buildStep(mode: PluginContext["mode"], bundles: StartBundles): Promise<void> {
+  if (mode === "export") {
+    console.warn(
+      "[@denext/tanstack-start] a static export does not server-render TanStack routes; " +
+        "`denext start` serves them.",
+    );
+    return;
+  }
+  await bundles.forgetServerBuild();
+  await bundles.bundle();
+  await bundles.prebuildServer();
 }

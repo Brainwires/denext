@@ -421,9 +421,12 @@ scales to a full framework router, not just aliasing.
 takes the claiming path: a **prepare step** runs TanStack's own route generator over
 `src/routes/`, a **request handler** answers every request with TanStack Start's own handler
 (streamed pages, server functions in Start's RPC format, server routes) after denext's
-same-origin check and body cap, and a **build step** builds the client bundle — both halves
+same-origin check and body cap, and a **build step** builds the client and server bundles — both
 compiled onto denext's React with `@denext/denext/build/next-compat`, as `pages-router` does for
-an npm-React app, with TanStack's own compiler run over them as extra esbuild plugins.
+an npm-React app, with TanStack's own compiler run over them as extra esbuild plugins (denext's
+`"use cache"` transform still runs on what it compiles). The client build fails on Start's import
+protection and on denext's server-only scan (`findServerOnlyLeaks`), and `serverModuleSource`
+lets it serve a `"use server"` module's server functions as RPC stubs.
 
 ## The first-party catalog
 

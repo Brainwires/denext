@@ -2315,7 +2315,7 @@
       },
       "packages/tanstack-start": {
         "dependencies": [
-          "jsr:@denext/denext@^4.1.0",
+          "jsr:@denext/denext@^4.2.0",
           "jsr:@std/path@1"
         ]
       }

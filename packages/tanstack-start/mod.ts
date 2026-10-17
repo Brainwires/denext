@@ -15,7 +15,13 @@
  *   `server.handlers` answer as a server route.
  * - **TanStack's own compiler** (`@tanstack/start-plugin-core`) builds both sides: in the
  *   browser a server function is an RPC stub and server-only code is dropped; on the server a
- *   function's handler is split into the module the RPC resolves.
+ *   function's handler is split into the module the RPC resolves. denext's own transforms run on
+ *   what it compiles (`"use cache"` with `cacheComponents` on); a `"use server"` module ships to
+ *   the browser as its server functions' RPC stubs alone.
+ * - **The browser build is guarded:** Start's import protection (a `*.server.*` file,
+ *   `@tanstack/react-start/server`, a module marked server-only) and denext's server-only scan
+ *   fail the build, naming the import chain. `denext build` builds the server bundle too, so
+ *   `denext start` serves its first request without building.
  * - **denext's rules:** a server function called with a mutating method must come from the
  *   app's origin (the check Server Actions use; a cross-site call is a 403), and request bodies
  *   are capped (`maxBodyBytes`, default `actionMaxBodyBytes` or 1 MiB).
@@ -41,7 +47,7 @@
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import type { OriginCheckOptions } from "@denext/denext/plugin-kit";
 import { join, relative } from "@std/path";
-import { createBundles, type StartApp, type StartBundles } from "./src/bundles.ts";
+import { buildStep, createBundles, type StartApp } from "./src/bundles.ts";
 import { clientBootSource, entryPaths, serverEntrySource, writeIfChanged } from "./src/entries.ts";
 import { createHandler } from "./src/handler.ts";
 import { generateRouteTree } from "./src/route-tree.ts";
@@ -98,7 +104,7 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         maxBodyBytes: options.maxBodyBytes ?? ctx.config.actionMaxBodyBytes ?? 1024 * 1024,
         isStaticFile: (path) => isFile(join(publicDir, ...path.split("/"))),
       }));
-      ctx.addBuildStep(() => buildStep(ctx, bundles));
+      ctx.addBuildStep(() => buildStep(ctx.mode, bundles));
     },
   };
 }
@@ -144,18 +150,6 @@ function originOptions(ctx: PluginContext, options: TanStackStartOptions): Origi
     trustForwardedHeaders: ctx.config.trustForwardedHeaders ?? env("DENEXT_TRUST_PROXY") === "1",
     desktopAppOrigin: ctx.config.desktop?.app?.origin,
   };
-}
-
-/** `denext build` builds the client bundle; a static export serves no Start routes. */
-async function buildStep(ctx: PluginContext, bundles: StartBundles): Promise<void> {
-  if (ctx.mode === "export") {
-    console.warn(
-      "[@denext/tanstack-start] a static export does not server-render TanStack routes; " +
-        "`denext start` serves them.",
-    );
-    return;
-  }
-  await bundles.bundle();
 }
 
 const projectRelative = (ctx: PluginContext, path: string) =>

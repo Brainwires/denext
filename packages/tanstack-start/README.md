@@ -48,9 +48,20 @@ The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `packag
   `/_tss/` and named in the router manifest, so `<Scripts />` loads it. From there navigation is
   TanStack's.
 
+- **Refuses server code in the browser build,** naming the chain of imports that reached it:
+  Start's import protection (a `*.server.*` file, `@tanstack/react-start/server`, or a module
+  marked with `import "@tanstack/react-start/server-only"`, reached from client code) and denext's
+  own server-only scan (a `node:` import, the `server-only` marker or the `Deno` global in a
+  module the browser gets, read as TanStack's compiler left it).
+- **Keeps denext's directives:** `"use cache"` caches in the server bundle (with
+  `cacheComponents` on), Start-compiled modules included. A `"use server"` module's source never
+  reaches the browser: its server functions are RPC stubs there, and its other exports throw when
+  called.
+
 The server bundle and the client bundle are compiled onto denext's React (the app's npm packages
-import `react`), as a Pages Router app's are. In `denext dev` an edit under `src/` rebuilds both
-on the next request.
+import `react`), as a Pages Router app's are. `denext build` builds both, so a build error
+surfaces at build and `denext start` serves its first request without building. In `denext dev`
+an edit under `src/` rebuilds both on the next request.
 
 ## The app
 
@@ -96,7 +107,8 @@ export const addNote = createServerFn({ method: "POST" })
 
 ## Not yet
 
-`denext export` prerendering of Start routes and Start's import protection (a `*.server.*` module
-reached from client code is not refused at build) are not provided.
+`denext export` prerendering of Start routes is not provided. Import protection covers the client
+build with Start's default rules; custom rules (`importProtection` in Start's Vite options) and
+the server build's `*.client.*` rule are not applied.
 
 Licensed MIT. Part of the denext project.

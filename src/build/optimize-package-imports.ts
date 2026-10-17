@@ -42,6 +42,7 @@ import type * as esbuild from "./esbuild/mod.ts";
 import { dirname, extname, resolve } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
 import { applyEdits, type Edit, endOf, type Node, parseModule, startOf } from "./swc-ast.ts";
+import { wrapOnLoad } from "./onload-wrap.ts";
 
 /**
  * The packages optimized by default — Next.js's documented default list, trimmed to the
@@ -1052,17 +1053,7 @@ export function withOptimizedPackageImports(
 ): esbuild.Plugin[] {
   if (options.packages.length === 0 && !options.auto) return plugins;
   const ctx = rewriteContext(options);
-  const wrapped = plugins.map((plugin): esbuild.Plugin => ({
-    name: plugin.name,
-    setup(build) {
-      return plugin.setup({
-        ...build,
-        onLoad(opts, callback) {
-          build.onLoad(opts, async (args) => rewriteResult(await callback(args), args, ctx));
-        },
-      });
-    },
-  }));
+  const wrapped = wrapOnLoad(plugins, (result, args) => rewriteResult(result, args, ctx));
   const fallback: esbuild.Plugin = {
     name: "denext-optimize-package-imports",
     setup(build) {

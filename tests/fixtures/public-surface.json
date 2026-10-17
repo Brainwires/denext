@@ -5752,11 +5752,14 @@
     "NextCompatPageInput:interface",
     "NextCompatServerLoaderOptions:interface",
     "ProjectPaths:interface",
+    "ServerOnlyLeak:interface",
+    "ServerOnlySignal:typeAlias",
     "buildNextCompatClientEntries:function",
     "buildNextCompatFlightEntry:function",
     "buildNextCompatModules:function",
     "createNextCompatServerLoader:function",
-    "detectNextCompat:function"
+    "detectNextCompat:function",
+    "findServerOnlyLeaks:function"
   ],
   "denext/build/next-mdx": [
     "default:function",

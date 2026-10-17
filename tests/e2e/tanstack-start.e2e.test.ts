@@ -1,6 +1,7 @@
 // Networked e2e for examples/tanstack-start: a TanStack Start app run by the
 // `@denext/tanstack-start` plugin, end to end through the real CLI — `deno install` →
-// `denext build` → `denext start` — then a real (headless) Chromium. Start's own handler answers
+// `denext build` (the client and the server bundle) → `denext start` (which loads the server
+// bundle the build made) — then a real (headless) Chromium. Start's own handler answers
 // every request: pages stream through the matched routes (a nested layout, a deferred loader
 // promise streaming in after the shell, a route's error component), server routes answer with
 // their handlers, and server functions (`createServerFn`) are called over Start's RPC — from a
@@ -64,9 +65,23 @@ Deno.test({
   }
   const built = await runDeno(["run", "-A", CLI, "build", "."], EXAMPLE, 240_000);
   assert(built.ok, "denext build failed:\n" + built.out);
+  // `denext build` built the server bundle too, and recorded it for `denext start`.
+  const out = join(EXAMPLE, ".denext", "tanstack-start");
+  const record = JSON.parse(await Deno.readTextFile(join(out, "server.json")));
+  const serverBundle = join(out, record.bundle);
+  const builtAt = (await Deno.stat(serverBundle)).mtime?.getTime();
 
   const server = await startCliServer(EXAMPLE, 60_000);
   try {
+    await t.step("`denext start` serves the server bundle the build made", async () => {
+      assertEquals((await fetch(server.origin + "/")).status, 200);
+      assertEquals(
+        (await Deno.stat(serverBundle)).mtime?.getTime(),
+        builtAt,
+        "the first request did not build the server bundle again",
+      );
+    });
+
     await t.step("a page streams through its nested routes, with the client entry", async () => {
       const html = await (await fetch(server.origin + "/posts/3")).text();
       assert(html.startsWith("<!DOCTYPE html><html"), "the shellComponent is the document");

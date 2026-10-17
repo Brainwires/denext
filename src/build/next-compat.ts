@@ -57,6 +57,7 @@ import {
   SQLITE_WASM_BRIDGE,
 } from "./sqlite-wasm.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
+import { chainSourceTransforms, compatSourceTransform } from "./compat-chain.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "./esbuild/mod.ts";
 import {
@@ -2712,10 +2713,19 @@ async function compatPlugins(
   return plugins;
 }
 
-/** The caller's plugins, then `lists: "denext"`'s DOM list aliases (when on). */
+/**
+ * The caller's plugins, then `lists: "denext"`'s DOM list aliases (when on). A module a caller
+ * plugin answers still goes through the `"use cache"` transform and the `platform` fold that
+ * later plugins apply to every other app module (./compat-chain.ts).
+ */
 function leadingPlugins(options: BundleNextCompatModulesOptions): esbuild.Plugin[] {
   const lists = options.domLists ? [domListsPlugin(options.platform ?? "browser")] : [];
-  return [...(options.extraPlugins ?? []), ...lists];
+  const transform = compatSourceTransform({
+    useCache: options.platform === "deno" && options.useCache === true,
+    platform: options.buildTarget,
+    projectDir: options.absWorkingDir,
+  });
+  return [...chainSourceTransforms(options.extraPlugins ?? [], transform), ...lists];
 }
 
 /**
@@ -2902,10 +2912,14 @@ async function writeAnalyzeMeta(
  *
  * @param servers Map of stable module id → `{ url, exports }` (boundary manifest).
  * @param stubOf Generate the stub source for a `(moduleId, exports)` pair.
+ * @param unregistered The browser source for an app `"use server"` module the boundary does not
+ *   hold (see {@link BuildNextCompatClientOptions.serverModuleSource}); `null` stubs it and fails
+ *   the build.
  */
 export function serverStubPlugin(
   servers: Iterable<readonly [string, { url: string; exports: readonly string[] }]>,
   stubOf: (moduleId: string, exports: readonly string[]) => string,
+  unregistered?: (path: string) => Promise<string | null>,
 ): esbuild.Plugin {
   const byPath = new Map<string, { id: string; exports: readonly string[] }>();
   for (const [id, ref] of servers) {
@@ -2928,6 +2942,10 @@ export function serverStubPlugin(
           };
         }
         if ((await readDirective(args.path)) !== "server") return null;
+        const own = inNodeModules(args.path) ? null : await unregistered?.(args.path);
+        if (own != null) {
+          return { contents: own, loader: sourceLoader(args.path), resolveDir: dirname(args.path) };
+        }
         // A `"use server"` file inside an npm package that is not in the boundary — the other
         // build (ESM vs CJS) of a package whose action module the boundary holds: an app's
         // client code imports the package's ESM build while its islands are the server
@@ -2954,6 +2972,13 @@ export function serverStubPlugin(
       });
     },
   };
+}
+
+/** esbuild's loader for a JS/TS module path (`.mjs` / `.cjs` → `js`, `.mts` / `.cts` → `ts`). */
+function sourceLoader(path: string): esbuild.Loader {
+  const ext = extname(path).slice(1);
+  if (ext === "mjs" || ext === "cjs") return "js";
+  return (ext === "mts" || ext === "cts" ? "ts" : ext) as esbuild.Loader;
 }
 
 /**

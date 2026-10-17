@@ -10,10 +10,25 @@
 //   are dropped, as are `createMiddleware().server()`, `createServerOnlyFn` bodies and a route's
 //   `server` / `headers` / `ssr` options (so a server route's handlers and their imports never
 //   reach the client); on the server a caller gets `createSsrRpc(id)`, and the module behind it
-//   is compiled again as the function's provider (`<file>?tss-serverfn-split`).
+//   is compiled again as the function's provider (`<file>?tss-serverfn-split`). denext's own
+//   transforms (`"use cache"`, the `platform` fold) run on what it produced.
+// - **A `"use server"` module** in the browser build: its server functions stay RPC stubs and
+//   the rest of its source never ships (./use-server.ts), through denext's server-module stub.
+// - **The client bundle's guard** once it is built: Start's import protection and denext's
+//   server-only scan (./protect.ts) fail the build on server code the browser would get.
 
 import { dirname, extname } from "@std/path";
+import {
+  DENIED_SPECIFIER,
+  type DeniedImport,
+  deniedImport,
+  formatViolations,
+  importProtectionViolations,
+  type Metafile,
+  serverOnlyLeaks,
+} from "./protect.ts";
 import type { ServerFnInfo, StartCompilerLike, StartEnv, StartToolchain } from "./toolchain.ts";
+import { browserServerModule } from "./use-server.ts";
 
 /** The query naming a server-function provider module (Start's `TSS_SERVERFN_SPLIT_PARAM`). */
 export const SPLIT_SUFFIX = "?tss-serverfn-split";
@@ -60,6 +75,20 @@ interface EsbuildPluginBuild {
   ): Promise<
     { path: string; namespace: string; external: boolean; errors: unknown[]; suffix?: string }
   >;
+  initialOptions?: { metafile?: boolean; absWorkingDir?: string };
+  onEnd?(cb: (result: { errors: unknown[]; metafile?: Metafile }) => unknown): void;
+}
+
+/** One environment's build: the esbuild plugin, and the client's `"use server"` modules. */
+export interface StartBuild {
+  /** The esbuild plugin (an `esbuild.Plugin`). */
+  plugin: unknown;
+  /**
+   * The browser source of an app `"use server"` module that declares server functions, or
+   * `null` (no server function in it, or not the client build): denext's
+   * `serverModuleSource` hook.
+   */
+  serverModuleSource(path: string): Promise<string | null>;
 }
 
 const VIRTUAL_NS = "denext-tss";
@@ -170,11 +199,27 @@ function keyName(key: unknown): string {
  * @param opts The environment, TanStack's toolchain and the app's entry modules.
  */
 export function startBuildPlugin(opts: StartBuildOptions): unknown {
+  return startBuild(opts).plugin;
+}
+
+/**
+ * One environment of a Start build: its esbuild plugin and, for the browser, the source of the
+ * app's `"use server"` modules.
+ *
+ * @param opts The environment, TanStack's toolchain and the app's entry modules.
+ */
+export function startBuild(opts: StartBuildOptions): StartBuild {
   const tc = opts.toolchain;
-  return {
+  let compiler: StartCompilerLike | undefined;
+  // What the browser build compiled, by real path: the server-only scan reads these.
+  const emitted = new Map<string, string>();
+  const record = async (path: string, code: string) => {
+    if (opts.env === "client") emitted.set(await Deno.realPath(path).catch(() => path), code);
+  };
+  const plugin = {
     name: `@denext/tanstack-start:${opts.env}`,
     setup(build: EsbuildPluginBuild) {
-      const compiler = tc.createCompiler({
+      compiler = tc.createCompiler({
         env: opts.env,
         root: opts.projectRoot,
         onServerFnsById: (fns) => opts.onServerFns?.(fns),
@@ -182,7 +227,7 @@ export function startBuildPlugin(opts: StartBuildOptions): unknown {
         loadModule: async (id) => {
           const file = id.split("?")[0];
           const code = await Deno.readTextFile(file).catch(() => null);
-          if (code !== null) compiler.ingestModule({ code, id });
+          if (code !== null) compiler!.ingestModule({ code, id });
         },
         resolveId: async (source, importer) => {
           const from = importer?.split("?")[0];
@@ -220,13 +265,68 @@ export function startBuildPlugin(opts: StartBuildOptions): unknown {
         suffix: SPLIT_SUFFIX,
       }));
 
-      build.onLoad(
-        { filter: /\.[cm]?[jt]sx?$/, namespace: "file" },
-        (args) => transformModule(args.path, args.suffix === SPLIT_SUFFIX, compiler, opts),
-      );
+      build.onLoad({ filter: /\.[cm]?[jt]sx?$/, namespace: "file" }, async (args) => {
+        const out = await transformModule(args.path, args.suffix === SPLIT_SUFFIX, compiler!, opts);
+        if (out) await record(args.path, out.contents);
+        return out;
+      });
+      if (opts.env === "client") guardClientBundle(build, emitted);
+    },
+  };
+  return {
+    plugin,
+    async serverModuleSource(path) {
+      if (opts.env !== "client" || !compiler) return null;
+      const source = await Deno.readTextFile(path);
+      if (!tc.mayNeedCompile(source, "client")) return null;
+      const stripped = stripServerRouteOptions(source, path, tc) ?? source;
+      const compiled = await compileModule(stripped, path, false, compiler, opts);
+      if (compiled === stripped) return null; // no server function: denext refuses the module
+      const code = browserServerModule(compiled, path, tc);
+      await record(path, code);
+      return code;
     },
   };
 }
+
+/**
+ * Fail the browser build on server code it would ship: Start's import protection and denext's
+ * server-only scan over the bundle's metafile, each compiled module read as compiled.
+ */
+function guardClientBundle(build: EsbuildPluginBuild, emitted: Map<string, string>): void {
+  if (!build.initialOptions || !build.onEnd) return;
+  build.initialOptions.metafile = true;
+  const cwd = build.initialOptions.absWorkingDir ?? Deno.cwd();
+  // Start's server entry and server-only marker, imported by an app module: recorded, and an
+  // empty module in their place (CommonJS, so a named import still binds) until the end.
+  const denied: DeniedImport[] = [];
+  build.onResolve({ filter: DENIED_SPECIFIER }, (args) => {
+    const record = args.namespace === "file" ? deniedImport(args.path, args.importer) : null;
+    if (!record) return undefined;
+    denied.push(record);
+    return { path: args.path, namespace: DENIED_NS };
+  });
+  build.onLoad({ filter: /.*/, namespace: DENIED_NS }, () => ({
+    contents: "module.exports = {};",
+    loader: "js",
+    resolveDir: cwd,
+  }));
+  build.onEnd(async (result) => {
+    const found = denied.splice(0);
+    if (result.errors.length > 0 || !result.metafile) return;
+    const read = async (path: string) =>
+      emitted.get(await Deno.realPath(path).catch(() => path)) ?? await Deno.readTextFile(path);
+    const protection = importProtectionViolations(result.metafile, cwd, found);
+    const reported = new Set(protection.map((v) => v.module));
+    const leaks = (await serverOnlyLeaks(result.metafile, cwd, read))
+      .filter((leak) => !reported.has(leak.module)); // Start's marker is denext's marker too
+    const message = formatViolations([...protection, ...leaks], cwd);
+    if (message) throw new Error(message);
+  });
+}
+
+/** The namespace a denied import resolves into (an empty module; the build then fails). */
+const DENIED_NS = "denext-tss-denied";
 
 /**
  * One module through the plugin: an app module (or a package that builds on Start) the compiler

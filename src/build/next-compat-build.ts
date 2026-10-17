@@ -352,6 +352,13 @@ export interface BuildNextCompatClientOptions {
    * as its action stub. Any other app `"use server"` module a bundle reaches fails the build.
    */
   server?: Iterable<readonly [string, { url: string; exports: readonly string[] }]>;
+  /**
+   * The browser source for an app `"use server"` module {@link server} does not hold, or `null`
+   * to stub it and fail the build (the default). A router plugin whose own server calls live in
+   * such modules answers here (TanStack Start keeps its `createServerFn` RPC stubs). What it
+   * returns ships in the module's place, so it must carry none of the module's server code.
+   */
+  serverModuleSource?: (path: string) => Promise<string | null>;
   /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */
   momentumSafeScroll?: boolean;
   /** Minify the output bundles (production). */
@@ -478,7 +485,7 @@ export async function buildNextCompatClientEntries(
     // `unknown[]` (to not expose esbuild's types); the bundler expects real esbuild plugins,
     // which is what callers pass.
     extraPlugins: [
-      serverStubPlugin(options.server ?? [], generateServerStub),
+      serverStubPlugin(options.server ?? [], generateServerStub, options.serverModuleSource),
       ...(options.reactNative?.plugins as esbuild.Plugin[] | undefined ?? []),
       ...(options.extraPlugins as esbuild.Plugin[] | undefined ?? []),
     ],

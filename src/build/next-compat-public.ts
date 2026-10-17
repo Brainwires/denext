@@ -31,3 +31,8 @@ export type {
   NextCompatServerLoaderOptions,
   ProjectPaths,
 } from "./next-compat-build.ts";
+// denext's server-only guard over a browser bundle's shipped modules (`node:` imports, the
+// `server-only` marker, the `Deno` global), for a router plugin whose client bundle carries
+// modules it compiled itself (it passes their compiled source).
+export { findServerOnlyLeaks } from "./server-only-scan.ts";
+export type { ServerOnlyLeak, ServerOnlySignal } from "./server-only-scan.ts";

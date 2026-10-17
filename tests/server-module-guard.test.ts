@@ -101,3 +101,46 @@ Deno.test("serverStubPlugin: stubs a known action, refuses an unknown one", asyn
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("serverStubPlugin: a caller's source for an unregistered module ships in its place", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_guard_own_" }));
+  try {
+    await Deno.writeTextFile(
+      join(dir, "fns.ts"),
+      `"use server";\nexport const f = () => "F_SECRET";\n`,
+    );
+    await Deno.writeTextFile(join(dir, "plain.ts"), `"use server";\nexport const p = 1;\n`);
+    await Deno.writeTextFile(join(dir, "entry.ts"), `export * from "./fns.ts";\n`);
+    await Deno.writeTextFile(join(dir, "entry2.ts"), `export * from "./plain.ts";\n`);
+    const asked: string[] = [];
+    // The caller answers for fns.ts (as TanStack Start does for a module of server functions)
+    // and declines plain.ts.
+    const own = (path: string) => {
+      asked.push(path);
+      return Promise.resolve(
+        path.endsWith("fns.ts") ? `export const f = () => "STAND_IN";\n` : null,
+      );
+    };
+    const build = (entry: string) =>
+      esbuild.build({
+        entryPoints: [join(dir, entry)],
+        bundle: true,
+        write: false,
+        format: "esm",
+        absWorkingDir: dir,
+        logLevel: "silent",
+        plugins: [serverStubPlugin([], generateServerStub, own)],
+      });
+    const ok = await build("entry.ts");
+    const text = new TextDecoder().decode(ok.outputFiles[0].contents);
+    assertStringIncludes(text, "STAND_IN");
+    assertEquals(text.includes("F_SECRET"), false);
+    // Declined: the module is stubbed and the build refuses it, as with no caller at all.
+    const err = await assertRejects(() => build("entry2.ts"));
+    assertStringIncludes(String(err), `a "use server" module would ship to the browser`);
+    assertEquals(asked, [join(dir, "fns.ts"), join(dir, "plain.ts")]);
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

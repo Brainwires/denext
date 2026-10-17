@@ -170,18 +170,32 @@ and this project adheres to
   promise streaming in when it settles); server functions (`createServerFn`, GET and POST,
   validators, middleware) answer at `/_serverFn/<id>` in Start's RPC format; a route's
   `server.handlers` serve as server routes. TanStack's own compiler builds the browser and server
-  bundles, so no server function body or server route handler reaches the browser. A server
-  function called with a mutating method must come from the app's origin (the rule Server
-  Actions follow; 403 otherwise) and request bodies are capped. The browser hydrates with Start's
-  `StartClient`. `denext dev` / `build` / `start` accept a project whose only route tree is
-  `src/routes/__root.tsx`. See `examples/tanstack-start`.
+  bundles, so no server function body or server route handler reaches the browser, and denext's
+  own transforms run on what it compiles (`"use cache"` with `cacheComponents` on). The browser
+  build fails, naming the import chain, on Start's import protection (a `*.server.*` file,
+  `@tanstack/react-start/server` or a module marked `@tanstack/react-start/server-only` reached
+  from client code) and on denext's server-only scan (a `node:` import, the `server-only` marker
+  or the `Deno` global in a shipped module, read as compiled). A `"use server"` module that
+  declares server functions ships only their RPC stubs; its other exports throw in the browser
+  and the rest of its source stays on the server. `denext build` builds the server bundle too, so
+  a build error surfaces at build and `denext start` serves the first request without building.
+  A server function called with a mutating method must come from the app's origin (the rule
+  Server Actions follow; 403 otherwise) and request bodies are capped. The browser hydrates with
+  Start's `StartClient`. `denext dev` / `build` / `start` accept a project whose only route tree
+  is `src/routes/__root.tsx`. See `examples/tanstack-start`.
 - **`renderToReadableStream` from `react-dom/server` writes an `<html>` root as a document,** as
   React does: `<!DOCTYPE html>` first, streamed Suspense boundaries inside the body, and
   `</body></html>` only once every boundary has streamed. It used to put its reveal script ahead
   of `<html>` (the page rendered in quirks mode) and close the document before the boundaries.
 - **`buildNextCompatModules` (`@denext/denext/build/next-compat`) takes `extraPlugins` and
   `define`** for the server bundle, as `buildNextCompatClientEntries` does for the client: what a
-  router plugin uses to supply its framework's virtual modules and compile-time constants.
+  router plugin uses to supply its framework's virtual modules and compile-time constants. A
+  module one of those plugins compiles still goes through denext's `"use cache"` transform
+  (`useCache`) and `platform` fold afterwards, as every other app module does.
+  `buildNextCompatClientEntries` takes `serverModuleSource`, the browser source a router plugin
+  supplies for an app `"use server"` module it can serve (without it, such a module is stubbed
+  and the build refuses it, as before), and the module exports `findServerOnlyLeaks`, denext's
+  server-only scan over a bundle's shipped modules.
 - **`hydrateRoot(document, <App />)`** hydrates the whole document as React does: it adopts the
   server's `<html>` past the doctype instead of appending a second one.
 - **A component that suspends with no Suspense boundary suspends the root,** as in React 19:

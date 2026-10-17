@@ -111,3 +111,13 @@ Deno.test("plugin catalog: `denext migrate` pins come from the catalog", () => {
   assertEquals(PAGES_ROUTER_SPEC, pagesRouter?.spec, "migrate's pages-router pin is the catalog's");
   assert(PAGES_ROUTER_SPEC.startsWith("jsr:@denext/pages-router@^"), "a caret jsr: range");
 });
+
+Deno.test("plugin catalog: every package's @denext/denext range is the framework's own version", () => {
+  // `deno task bump` moves `^<old>` to `^<new>` in packages/*/deno.json, so a package pinned to
+  // anything else misses the release it needs (a plugin built on a new seam must not install
+  // against the denext before it).
+  const version = (JSON.parse(Deno.readTextFileSync("deno.json")) as { version: string }).version;
+  const ranged = entries.filter((e) => e.denext !== undefined);
+  assert(ranged.length >= 8, "the plugins carry their denext range");
+  for (const e of ranged) assertEquals(e.denext, `^${version}`, `${e.name}'s @denext/denext range`);
+});

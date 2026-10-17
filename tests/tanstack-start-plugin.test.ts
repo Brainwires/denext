@@ -1,10 +1,12 @@
 // @denext/tanstack-start: the request handler (the client bundle under /_tss/, denext's
 // same-origin rule on a mutating server-function call, the body cap, everything else handed to
 // Start's own handler), the generated entries, the esbuild side of a Start build (Start's virtual
-// modules, TanStack's compiler over the app's and Start's own modules, the provider split), the
-// server-function scan, Start's build-time constants, the server bundle's extra plugins and
-// defines, and a project without a Start router left alone. The browser half is
-// tests/e2e/tanstack-start.e2e.test.ts.
+// modules, TanStack's compiler over the app's and Start's own modules, the provider split),
+// denext's `"use cache"` transform after it, the client bundle's guard (Start's import protection,
+// denext's server-only scan), the browser half of a `"use server"` module, the server-function
+// scan, Start's build-time constants, the server bundle's extra plugins and defines, the server
+// bundle prebuilt by `denext build` and loaded by `denext start`, and a project without a Start
+// router left alone. The browser half is tests/e2e/tanstack-start.e2e.test.ts.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -21,10 +23,18 @@ import {
 } from "../packages/tanstack-start/src/entries.ts";
 import {
   SPLIT_SUFFIX,
+  startBuild,
   startBuildPlugin,
   stripServerRouteOptions,
   virtualModuleSource,
 } from "../packages/tanstack-start/src/compile.ts";
+import {
+  deniedImport,
+  formatViolations,
+  importProtectionViolations,
+  type Metafile,
+  serverOnlyLeaks,
+} from "../packages/tanstack-start/src/protect.ts";
 import { coversServerFns, scanServerFns } from "../packages/tanstack-start/src/server-fns.ts";
 import {
   loadStartToolchain,
@@ -33,8 +43,17 @@ import {
 } from "../packages/tanstack-start/src/toolchain.ts";
 import { generateRouteTree } from "../packages/tanstack-start/src/route-tree.ts";
 import { tanstackStart } from "../packages/tanstack-start/mod.ts";
-import { startDefines } from "../packages/tanstack-start/src/bundles.ts";
-import { buildNextCompatModules } from "../src/build/next-compat-build.ts";
+import {
+  buildStep,
+  createBundles,
+  SERVER_RECORD,
+  type StartApp,
+  startDefines,
+} from "../packages/tanstack-start/src/bundles.ts";
+import {
+  buildNextCompatClientEntries,
+  buildNextCompatModules,
+} from "../src/build/next-compat-build.ts";
 import { loadBundleRef } from "../src/build/next-compat-loader.ts";
 import { stopNextCompat } from "../src/build/next-compat.ts";
 import { defaultLoader } from "../src/server/mod.ts";
@@ -472,6 +491,281 @@ Deno.test("tanstack-start: TanStack's packages come from the app's own dependenc
   }
 });
 
+Deno.test({
+  name: 'tanstack-start server bundle: a module Start\'s compiler rewrote still gets "use cache"',
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_cache_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: {} }));
+    const fns = join(dir, "fns.ts");
+    await Deno.writeTextFile(
+      fns,
+      `async function stamp() { "use cache"; return crypto.randomUUID(); }\n` +
+        `export const getStamp = createServerFn().handler(() => stamp());\n`,
+    );
+    // Start's compiler (faked) rewrites the module; its output carries a marker.
+    const compiled: string[] = [];
+    const { tc } = fakeToolchain();
+    const toolchain: StartToolchain = {
+      ...tc,
+      createCompiler: () => ({
+        compile: (
+          { code, id },
+        ) => (compiled.push(id),
+          Promise.resolve({ code: code + `export const compiledBy = "START_COMPILER";\n` })),
+        ingestModule: () => undefined,
+      }),
+    };
+    const moduleMap = await buildNextCompatModules({
+      projectDir: dir,
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, ".denext"),
+      modules: [fns],
+      useCache: true,
+      extraPlugins: [startBuildPlugin({
+        env: "server",
+        toolchain,
+        projectRoot: dir,
+        routerFile: join(dir, "router.tsx"),
+        startFile: null,
+        knownServerFns: {},
+      })],
+    });
+    assertEquals(compiled, [fns], "Start's compiler answered the module");
+    const bundle = await Deno.readTextFile(moduleMap.get(fns)!.split("#")[0]);
+    assertStringIncludes(bundle, "START_COMPILER", "its output is what was bundled");
+    assertStringIncludes(bundle, "__useCache", "and denext's transform ran on it");
+  } finally {
+    await stopNextCompat().catch(() => {});
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+/** A metafile for the guard: `inputs` from an import list per module, all shipped. */
+function metafile(graph: Record<string, Array<string | [string, string]>>): Metafile {
+  const inputs: Metafile["inputs"] = {};
+  for (const [from, imports] of Object.entries(graph)) {
+    inputs[from] = {
+      imports: imports.map((i) =>
+        typeof i === "string" ? { path: i } : { path: i[0], original: i[1] }
+      ),
+    };
+  }
+  const shipped = Object.fromEntries(Object.keys(graph).map((p) => [p, { bytesInOutput: 10 }]));
+  return { inputs, outputs: { "client.js": { entryPoint: ".denext/entry.tsx", inputs: shipped } } };
+}
+
+Deno.test("tanstack-start import protection: *.server.* files, Start's server entry, the marker", () => {
+  const cwd = "/p";
+  const meta = metafile({
+    ".denext/entry.tsx": ["src/router.tsx"],
+    "src/router.tsx": ["src/routes/a.tsx", "node_modules/pkg/index.js"],
+    "src/routes/a.tsx": [
+      ["src/db.server.ts", "../db.server.ts"],
+      ["src/marked.ts", "../marked.ts"],
+    ],
+    "src/db.server.ts": [],
+    "src/marked.ts": [],
+    // A package may import what an app module may not.
+    "node_modules/pkg/index.js": ["node_modules/pkg/x.server.js"],
+    "node_modules/pkg/x.server.js": [],
+  });
+  const denied = [
+    deniedImport("@tanstack/react-start/server-only", "/p/src/marked.ts")!,
+    deniedImport("@tanstack/react-start/server", "/p/src/routes/a.tsx")!,
+  ];
+  assertEquals(deniedImport("@tanstack/react-start/server", "/p/node_modules/x/y.js"), null);
+  assertEquals(deniedImport("@tanstack/react-start", "/p/src/a.ts"), null);
+  const found = importProtectionViolations(meta, cwd, denied);
+  assertEquals(found.map((v) => [v.module, v.chain]), [
+    ["/p/src/marked.ts", ["/p/src/router.tsx", "/p/src/routes/a.tsx", "/p/src/marked.ts"]],
+    ["@tanstack/react-start/server", [
+      "/p/src/router.tsx",
+      "/p/src/routes/a.tsx",
+      "@tanstack/react-start/server",
+    ]],
+    ["/p/src/db.server.ts", ["/p/src/router.tsx", "/p/src/routes/a.tsx", "/p/src/db.server.ts"]],
+  ]);
+  const message = formatViolations(found, cwd)!;
+  assertStringIncludes(message, "src/db.server.ts — is a *.server.* file");
+  assertStringIncludes(
+    message,
+    "imported through src/router.tsx → src/routes/a.tsx → src/db.server.ts",
+  );
+  assertStringIncludes(message, "@tanstack/react-start/server — Start's server runtime");
+  assertStringIncludes(message, "createServerFn");
+  assertEquals(formatViolations([], cwd), null);
+  assertEquals(importProtectionViolations(meta, cwd, []).length, 1, "the file rule alone");
+});
+
+Deno.test("tanstack-start client guard: denext's server-only scan reads modules as compiled", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_leak_" }));
+  try {
+    await Deno.mkdir(join(dir, "src"));
+    await Deno.writeTextFile(
+      join(dir, "src", "fn.ts"),
+      `export const f = () => Deno.env.get("K");\n`,
+    );
+    await Deno.writeTextFile(join(dir, "src", "fs.ts"), `import "node:fs";\nexport const g = 1;\n`);
+    const meta = metafile({ "src/fn.ts": [], "src/fs.ts": [] });
+    const disk = await serverOnlyLeaks(meta, dir, (p) => Deno.readTextFile(p));
+    assertEquals(disk.map((l) => [l.module, l.rule]), [
+      [join(dir, "src", "fn.ts"), "uses the Deno global"],
+      [join(dir, "src", "fs.ts"), "imports a node: built-in"],
+    ]);
+    // Compiled for the browser (the handler that read Deno.env is an RPC stub now): no leak.
+    const compiled = await serverOnlyLeaks(
+      meta,
+      dir,
+      (p) =>
+        p.endsWith("fn.ts") ? Promise.resolve("export const f = rpc();") : Deno.readTextFile(p),
+    );
+    assertEquals(compiled.map((l) => l.module), [join(dir, "src", "fs.ts")]);
+    // A module tree-shaking dropped is not shipped.
+    meta.outputs["client.js"].inputs["src/fs.ts"].bytesInOutput = 0;
+    assertEquals((await serverOnlyLeaks(meta, dir, (p) => Deno.readTextFile(p))).length, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "tanstack-start client bundle: the build fails on server code the browser would get",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_guard_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: {} }));
+    await Deno.mkdir(join(dir, "src"));
+    const file = (name: string, code: string) => Deno.writeTextFile(join(dir, "src", name), code);
+    await file("db.server.ts", `export const db = () => "DB_SECRET";\n`);
+    await file(
+      "fns.ts",
+      `export const read = createServerFn().handler(() => Deno.env.get("K"));\n`,
+    );
+    await file("ok.ts", `import { read } from "./fns.ts";\nexport const run = () => read();\n`);
+    await file("bad.ts", `import { db } from "./db.server.ts";\nexport const run = () => db();\n`);
+    // The fake compiler turns a server function into an RPC stub in the browser.
+    const { tc } = fakeToolchain();
+    const toolchain: StartToolchain = {
+      ...tc,
+      createCompiler: () => ({
+        compile: ({ code }) =>
+          Promise.resolve({ code: code.replace(/\.handler\(.*\)\);/, ".handler(rpc());") }),
+        ingestModule: () => undefined,
+      }),
+    };
+    const build = (route: string) => {
+      const start = startBuild({
+        env: "client",
+        toolchain,
+        projectRoot: dir,
+        routerFile: join(dir, "router.tsx"),
+        startFile: null,
+        knownServerFns: {},
+      });
+      return buildNextCompatClientEntries({
+        projectDir: dir,
+        configPath: join(dir, "deno.json"),
+        outDir: join(dir, ".denext"),
+        clientDir: join(dir, ".denext", "client"),
+        entries: [{
+          id: "client",
+          source: `import { run } from ${JSON.stringify(join(dir, "src", route))};\nrun();\n`,
+        }],
+        extraPlugins: [start.plugin],
+        serverModuleSource: (path) => start.serverModuleSource(path),
+      });
+    };
+    // The server function's Deno.env read is gone from the browser build: it ships.
+    await build("ok.ts");
+    const js = await Deno.readTextFile(join(dir, ".denext", "client", "client.js"));
+    assert(!js.includes("Deno.env"), "the compiled module shipped, not the source");
+    const err = await assertRejects(() => build("bad.ts"));
+    assertStringIncludes(String(err), "server-only code would ship to the browser");
+    assertStringIncludes(String(err), "src/db.server.ts — is a *.server.* file");
+    assertStringIncludes(String(err), "imported through src/bad.ts → src/db.server.ts");
+  } finally {
+    await stopNextCompat().catch(() => {});
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+/** A Start app's layout under `dir`, as the plugin records it. */
+function startApp(dir: string): StartApp {
+  const outDir = join(dir, ".denext", "tanstack-start");
+  return {
+    projectRoot: dir,
+    root: dir,
+    src: join(dir, "src"),
+    routerFile: join(dir, "src", "router.tsx"),
+    startFile: null,
+    serverEntry: join(outDir, "server-entry.ts"),
+    boot: join(outDir, "client-boot.ts"),
+    outDir,
+    clientDir: join(outDir, "client"),
+    configPath: join(dir, "deno.json"),
+    basePath: "",
+  };
+}
+
+Deno.test("tanstack-start: `denext start` loads the server bundle `denext build` recorded", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_prod_" }));
+  try {
+    const app = startApp(dir);
+    await Deno.mkdir(app.outDir, { recursive: true });
+    await Deno.writeTextFile(
+      join(app.outDir, SERVER_RECORD),
+      JSON.stringify({ bundle: "server/app.js", key: "m0" }),
+    );
+    const loaded: string[] = [];
+    const entry = { fetch: () => Promise.resolve(new Response("from the build")) };
+    const ctx = (mode: string) =>
+      ({
+        projectRoot: dir,
+        config: {},
+        mode,
+        load: (path: string) => (loaded.push(path), Promise.resolve({ m0: entry })),
+      }) as unknown as PluginContext;
+    // Nothing is installed here: building would fail, so this proves nothing was built.
+    const served = await createBundles(ctx("prod"), app).loadServerEntry();
+    assertEquals(await (await served.fetch(new Request("http://x/"))).text(), "from the build");
+    assertEquals(loaded, [join(app.outDir, "server", "app.js")]);
+    // dev builds its own; so does `start` when no build recorded one.
+    await assertRejects(() => createBundles(ctx("dev"), app).loadServerEntry(), Error, "install");
+    await Deno.remove(join(app.outDir, SERVER_RECORD));
+    await assertRejects(() => createBundles(ctx("prod"), app).loadServerEntry(), Error, "install");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("tanstack-start: `denext build` builds the client, then the server bundle", async () => {
+  const calls: string[] = [];
+  const bundles = {
+    loadServerEntry: () => Promise.reject(new Error("not at build")),
+    client: () => Promise.reject(new Error("not at build")),
+    bundle: () => (calls.push("client"), Promise.resolve()),
+    prebuildServer: () => (calls.push("server"), Promise.resolve()),
+    forgetServerBuild: () => (calls.push("forget"), Promise.resolve()),
+    reset: () => {},
+  };
+  await buildStep("build", bundles);
+  assertEquals(calls, ["forget", "client", "server"], "a stale record never outlives a build");
+  calls.length = 0;
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await buildStep("export", bundles);
+  } finally {
+    console.warn = warn;
+  }
+  assertEquals(calls, [], "a static export builds neither");
+});
+
 // TanStack's real compiler, from the example app's install (`deno install` in
 // examples/tanstack-start; the e2e does it). Skipped when the example is not installed.
 const EXAMPLE = fromFileUrl(new URL("../examples/tanstack-start", import.meta.url));
@@ -505,4 +799,18 @@ Deno.test({
   assertEquals(r.ids.length, 1);
   assertStringIncludes(r.client, r.ids[0], "both sides name the function by the same id");
   assertStringIncludes(r.resolver, "/p/src/fns.ts" + SPLIT_SUFFIX);
+  // A "use server" module's browser half: its server functions stay RPC stubs, every other
+  // export throws, and nothing else of it ships.
+  const useServer = r.useServer as string;
+  assertEquals((useServer.match(/createClientRpc\(/g) ?? []).length, 2, useServer);
+  assertStringIncludes(useServer, "export const getStamp = createServerFn(");
+  assertStringIncludes(useServer, "export { hidden as renamed }");
+  assertStringIncludes(useServer, 'const plainAction = __denextUseServerExport("plainAction")');
+  assertStringIncludes(useServer, 'export default __denextUseServerExport("default")');
+  for (
+    const leak of ["SECRET", "readFileSync", "node:fs", "setup.server", "SIDE_EFFECT", "effect"]
+  ) {
+    assert(!useServer.includes(leak), `${leak} shipped:\n${useServer}`);
+  }
+  assert(!/^\s*["']use server["']/.test(useServer), "the directive is gone");
 });
