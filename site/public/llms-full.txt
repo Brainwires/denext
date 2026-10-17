@@ -2736,6 +2736,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopRunOptions` — Options for desktopRun.
 - `interface DesktopRuntime` — What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.
 - `interface DesktopRuntimeConfig` — What resolveDesktopCapabilities reads: the project config, or the JSON slice of it the desktop sync writes to .deno-desktop/config.json ({ desktop, spa: { proxy } }), which the generated desktop.ts imports so denext.config.ts (and every plugin it imports) stays out of the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.
+- `desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator): string[]` — The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it: --unstable-no-legacy-abort, which the runtime keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. The stock runtime (an empty env) gets none: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
 - `desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.
@@ -3508,8 +3509,32 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/gleam`
 
+- `defineLustreView<Flags, Props>(config: LustreViewConfig<Flags, Props>): LustreViewComponent<Props>` — Define a Lustre server component: a Lustre app whose state lives on the server, one runtime per mounted view per Live connection. Render the returned component from a Server Component.
 - `gleam(options?: GleamOptions): DenextPlugin` — The Gleam build plugin. Registers a prepare step that runs gleam build --target javascript in the Gleam project (gleam.toml at the app root, else gleam/, or options.dir).
 - `interface GleamOptions` — Options shared by the plugin and denext add gleam:.
+- `interface GleamResult` — A Gleam Result as Gleam's JavaScript output builds it (Ok / Error, the value at [0]).
+- `interface LustreApp<Flags>` — A Lustre application (lustre.App(flags, model, msg)), as Gleam's .d.mts declares it. Flags is inferred from it: counter.app() typed App$<number, Model$, Msg$> makes the flags a number.
+- `lustreElement<Attrs>(kit: LustreKit, tag: string, app: LustreApp<undefined>): (props: LustreElementAttributes<Attrs>) => VNode` — Turn a Lustre component into a denext component that renders it as the custom element tag. Export the result from a "use client" module.
+- `type LustreElementAttributes<Attrs> = Partial<Attrs> & object` — The props of a Lustre custom element in JSX: its attributes (each a string, the component's on_attribute_change decoders parse them), the usual global ones, and light-DOM children for the component's slots.
+- `interface LustreEventPayload` — A DOM event a Lustre view's client sent, after the built-in shape check.
+- `lustreIsland<Flags, Props>(kit: LustreKit, app: LustreApp<Flags>, options?: LustreIslandOptions<Flags, Props>): (props: Props) => VNode` — Turn a Lustre app into a denext island component. Export the result from a "use client" module.
+- `interface LustreIslandOptions<Flags, Props>` — How lustreIsland maps the component's props onto the app.
+- `lustreKit(modules: LustreModules): LustreKit` — Wrap the app's Lustre functions for denext/gleam. The generated .denext/lustre.ts calls this; app code imports the kit from there.
+- `interface LustreKit` — What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.
+- `interface LustreModules` — The functions lustreKit takes, imported from the app's Lustre build.
+- `interface LustreReconciler` — Lustre's client reconciler (lustre/vdom/reconciler.ffi.mjs), as far as this module uses it.
+- `type LustreReconcilerClass = (root: Element, decodeEvent: (event: Event, path: string, name: string, include?: string[]) => unknown, dispatch: (event: Event, data: unknown) => void) => LustreReconciler` — The Reconciler class: new Reconciler(root, decodeEvent, dispatch).
+- `type LustreRuntime = object` — A running client-side Lustre app (Lustre's Runtime).
+- `interface LustreRuntimeInstance` — A Lustre server Runtime as its constructor builds it (only send is used).
+- `lustreServerKit(modules: LustreServerModules): LustreServerKit` — Wrap the app's Lustre server-component functions for defineLustreView. The generated .denext/lustre-server.ts calls this.
+- `interface LustreServerKit` — What defineLustreView and the Live hub call: the app's Lustre server runtime, wrapped.
+- `interface LustreServerModules` — The functions lustreServerKit takes, imported from the app's Lustre build.
+- `type LustreServerRuntime = object` — A running Lustre server component.
+- `interface LustreViewComponent<Props>` — The component defineLustreView returns.
+- `interface LustreViewConfig<Flags, Props>` — What defineLustreView takes.
+- `lustreViewIsland(Reconciler: LustreReconcilerClass): (props: LustreViewIslandProps) => VNode` — The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.
+- `interface LustreViewIslandProps` — The island's props (written by defineLustreView's server render).
+- `interface PrerenderedShadow` — A custom element's prerendered shadow root (a <template shadowrootmode>).
 
 ### `denext/platform`
 

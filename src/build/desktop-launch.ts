@@ -31,6 +31,7 @@ import {
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
+import { desktopRuntimeDenoFlags } from "./desktop-runtime.ts";
 
 /** The file name of the generated `desktop dev` entry (written into the project's `.denext/`). */
 export const DESKTOP_DEV_ENTRY_FILE = "desktop-dev-entry.ts";
@@ -41,6 +42,8 @@ export interface DesktopLaunchBuildInput {
   readonly permissionFlags: readonly string[];
   /** `desktop.denoFlags`. */
   readonly denoFlags: readonly string[];
+  /** The pinned runtime's flags (`desktopRuntimeDenoFlags`; `--unstable-no-legacy-abort`). */
+  readonly runtimeFlags?: readonly string[];
   /** The extension `--include`s and the npm args (`desktopIncludeArgs` + `desktopNpmArgs`). */
   readonly extraArgs: readonly string[];
   /** `["--icon", path]` or `[]`. */
@@ -77,7 +80,7 @@ export function withNetHosts(flags: readonly string[], hosts: readonly string[])
 /**
  * The `deno desktop` args (after `deno`) that build the app for `desktop run` / `dev`: the same
  * flags, in the same order, as the scaffolded packaging scripts (`--no-prompt`, the permissions,
- * `desktop.denoFlags`, the export, the extensions and npm args, the icon), then the scratch
+ * `desktop.denoFlags`, the pinned runtime's flags, the export, the extensions and npm args, the icon), then the scratch
  * `--output` and the entry.
  *
  * @param input What to build.
@@ -90,6 +93,7 @@ export function desktopLaunchBuildArgs(input: DesktopLaunchBuildInput): string[]
     "--no-prompt",
     ...withNetHosts(input.permissionFlags, input.netHosts ?? []),
     ...input.denoFlags,
+    ...input.runtimeFlags ?? [],
     ...(input.includeOut ? ["--include", "out"] : []),
     ...input.extraArgs,
     ...input.iconArgs,
@@ -242,6 +246,11 @@ export interface DesktopLaunchPlanInput {
   readonly os: DesktopOs;
   /** `desktop.denoFlags`. */
   readonly denoFlags: readonly string[];
+  /**
+   * The build's runtime env (`resolveDesktopRuntimeEnv`): on the pinned runtime the build gets its
+   * flags (`--unstable-no-legacy-abort`), as the packaging scripts do; none when empty (stock).
+   */
+  readonly runtimeEnv?: Readonly<Record<string, string>>;
   /** The entry to build, relative to the project. */
   readonly entry: string;
   /** `desktop dev` (no export embedded) vs `desktop run`. */
@@ -280,6 +289,7 @@ export async function desktopLaunchBuildPlan(
   const args = desktopLaunchBuildArgs({
     permissionFlags: desktopBuildFlags(input.config, input.os),
     denoFlags: input.denoFlags,
+    runtimeFlags: desktopRuntimeDenoFlags(input.runtimeEnv ?? {}, input.denoFlags),
     extraArgs: [
       ...await desktopIncludeArgs(scriptUrl, input.os),
       ...await desktopNpmArgs(scriptUrl),

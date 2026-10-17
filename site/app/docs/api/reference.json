@@ -21303,6 +21303,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopRuntimeDenoFlags",
+          "slug": "desktopRuntimeDenoFlags",
+          "kind": "function",
+          "signature": "desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator): string[]",
+          "doc": "The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it: --unstable-no-legacy-abort, which the runtime keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. The stock runtime (an empty env) gets none: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.",
+          "docFull": "The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime\nbuild) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it:\n`--unstable-no-legacy-abort`, which the runtime keeps from the compiled app's metadata (from\n2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not\ndelivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under\n`denext start` and a `build --compile` binary. The stock runtime (an empty env) gets none: it\nignores the setting. A flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.",
+          "params": [
+            {
+              "name": "runtimeEnv",
+              "doc": "The deno desktop child's runtime env (DENORT_DESKTOP_BIN set: not stock)."
+            },
+            {
+              "name": "denoFlags",
+              "doc": "The flags the command already passes (desktop.denoFlags)."
+            }
+          ],
+          "returns": "The flags, to splice in before the entry.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopRuntimeEnv",
           "slug": "desktopRuntimeEnv",
           "kind": "function",
@@ -31947,6 +31968,25 @@
       "module": "denext/gleam",
       "symbols": [
         {
+          "name": "defineLustreView",
+          "slug": "defineLustreView",
+          "kind": "function",
+          "signature": "defineLustreView<Flags, Props>(config: LustreViewConfig<Flags, Props>): LustreViewComponent<Props>",
+          "doc": "Define a Lustre server component: a Lustre app whose state lives on the server, one runtime per mounted view per Live connection. Render the returned component from a Server Component.",
+          "docFull": "Define a Lustre server component: a Lustre app whose state lives on the server, one runtime per\nmounted view per Live connection. Render the returned component from a Server Component.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The view's id, the app's Lustre server kit, the app, how props become flags, and its gates (authorize, an events schema)."
+            }
+          ],
+          "returns": "A Server Component taking the props the flags come from.",
+          "examples": [
+            "```ts\nimport { defineLustreView } from \"denext/gleam\";\nimport { lustreServer } from \"../.denext/lustre-server.ts\";\nimport * as counter from \"@gleam/app/counter.mjs\";\n\nexport const CounterView = defineLustreView({\n  id: \"counter\",\n  kit: lustreServer,\n  app: counter.app(),\n  flags: (props: { start: number }) => props.start,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "gleam",
           "slug": "gleam",
           "kind": "function",
@@ -31970,6 +32010,329 @@
           "signature": "interface GleamOptions",
           "doc": "Options shared by the plugin and denext add gleam:.",
           "docFull": "Options shared by the plugin and `denext add gleam:`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GleamResult",
+          "slug": "GleamResult",
+          "kind": "interface",
+          "signature": "interface GleamResult",
+          "doc": "A Gleam Result as Gleam's JavaScript output builds it (Ok / Error, the value at [0]).",
+          "docFull": "A Gleam `Result` as Gleam's JavaScript output builds it (`Ok` / `Error`, the value at `[0]`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreApp",
+          "slug": "LustreApp",
+          "kind": "interface",
+          "signature": "interface LustreApp<Flags>",
+          "doc": "A Lustre application (lustre.App(flags, model, msg)), as Gleam's .d.mts declares it. Flags is inferred from it: counter.app() typed App$<number, Model$, Msg$> makes the flags a number.",
+          "docFull": "A Lustre application (`lustre.App(flags, model, msg)`), as Gleam's `.d.mts` declares it.\n`Flags` is inferred from it: `counter.app()` typed `App$<number, Model$, Msg$>` makes the flags\na `number`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreElement",
+          "slug": "lustreElement",
+          "kind": "function",
+          "signature": "lustreElement<Attrs>(kit: LustreKit, tag: string, app: LustreApp<undefined>): (props: LustreElementAttributes<Attrs>) => VNode",
+          "doc": "Turn a Lustre component into a denext component that renders it as the custom element tag. Export the result from a \"use client\" module.",
+          "docFull": "Turn a Lustre component into a denext component that renders it as the custom element `tag`.\nExport the result from a `\"use client\"` module.",
+          "params": [
+            {
+              "name": "kit",
+              "doc": "The app's Lustre build (import { lustre } from \"../.denext/lustre.ts\")."
+            },
+            {
+              "name": "tag",
+              "doc": "The custom element's name (it must contain a -)."
+            },
+            {
+              "name": "app",
+              "doc": "The Lustre component (lustre.component(…), flags Nil)."
+            }
+          ],
+          "returns": "The component; its props are the element's attributes.",
+          "examples": [
+            "```ts\n\"use client\";\nimport { lustreElement } from \"denext/gleam\";\nimport { lustre } from \"../.denext/lustre.ts\";\nimport * as counter from \"@gleam/app/counter.mjs\";\n\nexport const CounterElement = lustreElement<{ start: string }>(\n  lustre,\n  \"lustre-counter\",\n  counter.component(),\n);\n// In a Server Component: <CounterElement start=\"3\" />\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreElementAttributes",
+          "slug": "LustreElementAttributes",
+          "kind": "typeAlias",
+          "signature": "type LustreElementAttributes<Attrs> = Partial<Attrs> & object",
+          "doc": "The props of a Lustre custom element in JSX: its attributes (each a string, the component's on_attribute_change decoders parse them), the usual global ones, and light-DOM children for the component's slots.",
+          "docFull": "The props of a Lustre custom element in JSX: its attributes (each a string, the component's\n`on_attribute_change` decoders parse them), the usual global ones, and light-DOM children for the\ncomponent's slots.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\ndeclare module \"denext/jsx-runtime\" {\n  namespace JSX {\n    interface IntrinsicElements {\n      \"lustre-counter\": LustreElementAttributes<{ start: string }>;\n    }\n  }\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreEventPayload",
+          "slug": "LustreEventPayload",
+          "kind": "interface",
+          "signature": "interface LustreEventPayload",
+          "doc": "A DOM event a Lustre view's client sent, after the built-in shape check.",
+          "docFull": "A DOM event a Lustre view's client sent, after the built-in shape check.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreIsland",
+          "slug": "lustreIsland",
+          "kind": "function",
+          "signature": "lustreIsland<Flags, Props>(kit: LustreKit, app: LustreApp<Flags>, options?: LustreIslandOptions<Flags, Props>): (props: Props) => VNode",
+          "doc": "Turn a Lustre app into a denext island component. Export the result from a \"use client\" module.",
+          "docFull": "Turn a Lustre app into a denext island component. Export the result from a `\"use client\"`\nmodule.",
+          "params": [
+            {
+              "name": "kit",
+              "doc": "The app's Lustre build (import { lustre } from \"../.denext/lustre.ts\", written by the Gleam build when the app depends on Lustre)."
+            },
+            {
+              "name": "app",
+              "doc": "The Lustre app (counter.app()); its flags type comes from Gleam's .d.mts."
+            },
+            {
+              "name": "options",
+              "doc": "How props become flags, and the root element."
+            }
+          ],
+          "returns": "The island component.",
+          "examples": [
+            "```ts\n\"use client\";\nimport { lustreIsland } from \"denext/gleam\";\nimport { lustre } from \"../.denext/lustre.ts\";\nimport * as counter from \"@gleam/app/counter.mjs\";\n\nexport const Counter = lustreIsland(lustre, counter.app(), {\n  flags: (props: { start: number }) => props.start,\n});\n// In a Server Component: <Counter start={1} client:visible />\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreIslandOptions",
+          "slug": "LustreIslandOptions",
+          "kind": "interface",
+          "signature": "interface LustreIslandOptions<Flags, Props>",
+          "doc": "How lustreIsland maps the component's props onto the app.",
+          "docFull": "How {@link lustreIsland} maps the component's props onto the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreKit",
+          "slug": "lustreKit-fn",
+          "kind": "function",
+          "signature": "lustreKit(modules: LustreModules): LustreKit",
+          "doc": "Wrap the app's Lustre functions for denext/gleam. The generated .denext/lustre.ts calls this; app code imports the kit from there.",
+          "docFull": "Wrap the app's Lustre functions for denext/gleam. The generated `.denext/lustre.ts` calls this;\napp code imports the kit from there.",
+          "params": [
+            {
+              "name": "modules",
+              "doc": "The functions, imported from the app's @gleam/lustre/… build."
+            }
+          ],
+          "returns": "The kit lustreIsland / lustreElement take.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreKit",
+          "slug": "LustreKit-iface",
+          "kind": "interface",
+          "signature": "interface LustreKit",
+          "doc": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
+          "docFull": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreModules",
+          "slug": "LustreModules",
+          "kind": "interface",
+          "signature": "interface LustreModules",
+          "doc": "The functions lustreKit takes, imported from the app's Lustre build.",
+          "docFull": "The functions {@link lustreKit} takes, imported from the app's Lustre build.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreReconciler",
+          "slug": "LustreReconciler",
+          "kind": "interface",
+          "signature": "interface LustreReconciler",
+          "doc": "Lustre's client reconciler (lustre/vdom/reconciler.ffi.mjs), as far as this module uses it.",
+          "docFull": "Lustre's client reconciler (`lustre/vdom/reconciler.ffi.mjs`), as far as this module uses it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreReconcilerClass",
+          "slug": "LustreReconcilerClass",
+          "kind": "typeAlias",
+          "signature": "type LustreReconcilerClass = (root: Element, decodeEvent: (event: Event, path: string, name: string, include?: string[]) => unknown, dispatch: (event: Event, data: unknown) => void) => LustreReconciler",
+          "doc": "The Reconciler class: new Reconciler(root, decodeEvent, dispatch).",
+          "docFull": "The `Reconciler` class: `new Reconciler(root, decodeEvent, dispatch)`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreRuntime",
+          "slug": "LustreRuntime",
+          "kind": "typeAlias",
+          "signature": "type LustreRuntime = object",
+          "doc": "A running client-side Lustre app (Lustre's Runtime).",
+          "docFull": "A running client-side Lustre app (Lustre's `Runtime`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreRuntimeInstance",
+          "slug": "LustreRuntimeInstance",
+          "kind": "interface",
+          "signature": "interface LustreRuntimeInstance",
+          "doc": "A Lustre server Runtime as its constructor builds it (only send is used).",
+          "docFull": "A Lustre server `Runtime` as its constructor builds it (only `send` is used).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreServerKit",
+          "slug": "lustreServerKit-fn",
+          "kind": "function",
+          "signature": "lustreServerKit(modules: LustreServerModules): LustreServerKit",
+          "doc": "Wrap the app's Lustre server-component functions for defineLustreView. The generated .denext/lustre-server.ts calls this.",
+          "docFull": "Wrap the app's Lustre server-component functions for `defineLustreView`. The generated\n`.denext/lustre-server.ts` calls this.",
+          "params": [
+            {
+              "name": "modules",
+              "doc": "The functions, imported from the app's @gleam/lustre/… build."
+            }
+          ],
+          "returns": "The kit defineLustreView takes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreServerKit",
+          "slug": "LustreServerKit-iface",
+          "kind": "interface",
+          "signature": "interface LustreServerKit",
+          "doc": "What defineLustreView and the Live hub call: the app's Lustre server runtime, wrapped.",
+          "docFull": "What `defineLustreView` and the Live hub call: the app's Lustre server runtime, wrapped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreServerModules",
+          "slug": "LustreServerModules",
+          "kind": "interface",
+          "signature": "interface LustreServerModules",
+          "doc": "The functions lustreServerKit takes, imported from the app's Lustre build.",
+          "docFull": "The functions {@link lustreServerKit} takes, imported from the app's Lustre build.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreServerRuntime",
+          "slug": "LustreServerRuntime",
+          "kind": "typeAlias",
+          "signature": "type LustreServerRuntime = object",
+          "doc": "A running Lustre server component.",
+          "docFull": "A running Lustre server component.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreViewComponent",
+          "slug": "LustreViewComponent",
+          "kind": "interface",
+          "signature": "interface LustreViewComponent<Props>",
+          "doc": "The component defineLustreView returns.",
+          "docFull": "The component {@link defineLustreView} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreViewConfig",
+          "slug": "LustreViewConfig",
+          "kind": "interface",
+          "signature": "interface LustreViewConfig<Flags, Props>",
+          "doc": "What defineLustreView takes.",
+          "docFull": "What {@link defineLustreView} takes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "lustreViewIsland",
+          "slug": "lustreViewIsland",
+          "kind": "function",
+          "signature": "lustreViewIsland(Reconciler: LustreReconcilerClass): (props: LustreViewIslandProps) => VNode",
+          "doc": "The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.",
+          "docFull": "The browser island for `defineLustreView`, bound to Lustre's reconciler. The Gleam build calls\nthis in the generated `.denext/lustre-view.ts`; apps don't.",
+          "params": [
+            {
+              "name": "Reconciler",
+              "doc": "Reconciler from the app's @gleam/lustre/lustre/vdom/reconciler.ffi.mjs."
+            }
+          ],
+          "returns": "The island component.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreViewIslandProps",
+          "slug": "LustreViewIslandProps",
+          "kind": "interface",
+          "signature": "interface LustreViewIslandProps",
+          "doc": "The island's props (written by defineLustreView's server render).",
+          "docFull": "The island's props (written by `defineLustreView`'s server render).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PrerenderedShadow",
+          "slug": "PrerenderedShadow",
+          "kind": "interface",
+          "signature": "interface PrerenderedShadow",
+          "doc": "A custom element's prerendered shadow root (a <template shadowrootmode>).",
+          "docFull": "A custom element's prerendered shadow root (a `<template shadowrootmode>`).",
           "params": [],
           "returns": "",
           "examples": [],

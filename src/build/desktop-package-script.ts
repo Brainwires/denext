@@ -12,7 +12,7 @@ import {
 } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
-import { desktopRuntimeEnv } from "./desktop-runtime.ts";
+import { desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
 import {
   type DesktopInstallerPlan,
   desktopInstallerPlan,
@@ -522,20 +522,26 @@ export interface DesktopBundleOptions {
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
  * @param o The target, output and icon candidates.
+ * @param runtimeEnv The `deno desktop` child's runtime env ({@linkcode desktopRuntimeEnv}): on the
+ *   pinned runtime the build gets its flags ({@linkcode desktopRuntimeDenoFlags}); none when empty.
  * @returns The command line.
  */
 export async function desktopBundleCommand(
   entryUrl: string,
   os: "linux" | "windows",
   o: DesktopBundleOptions,
+  runtimeEnv: Readonly<Record<string, string>> = {},
 ): Promise<string[]> {
+  // `desktop.denoFlags`: the project's own allow-listed flags (`--node-modules-dir=none`, …).
+  const denoFlags = await desktopDenoFlagArgs(entryUrl);
   const cmd = [
     "deno",
     "desktop",
     "--no-prompt",
     ...await desktopPackageFlags(entryUrl, os),
-    // `desktop.denoFlags`: the project's own allow-listed flags (`--node-modules-dir=none`, …).
-    ...await desktopDenoFlagArgs(entryUrl),
+    ...denoFlags,
+    // The pinned runtime's own flags (`--unstable-no-legacy-abort`).
+    ...desktopRuntimeDenoFlags(runtimeEnv, denoFlags),
     "--include",
     "out",
     ...await desktopIncludeArgs(entryUrl, os),
@@ -589,9 +595,9 @@ export async function buildDesktopBundle(
   o: DesktopBundleOptions,
 ): Promise<string> {
   await Deno.remove(o.out, { recursive: true }).catch(() => {});
-  const cmd = await desktopBundleCommand(entryUrl, os, o);
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   const env = await desktopRuntimeEnv(entryUrl, o.target);
+  const cmd = await desktopBundleCommand(entryUrl, os, o, env);
   await desktopWithAppVersion(entryUrl, () => desktopRun(cmd, env));
   if (os === "windows") {
     await desktopWindowsCefLayout(

@@ -308,6 +308,7 @@ async function buildDesktopWindow(
       config: launch.config,
       os,
       denoFlags: launch.denoFlags,
+      runtimeEnv: launch.buildEnv,
       entry,
       dev: opts.dev,
       netHosts: opts.netHosts,

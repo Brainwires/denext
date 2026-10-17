@@ -161,7 +161,11 @@ Deno.test("scaffold: the macOS script passes desktop.denoFlags (regenerate-scrip
   const mac = scaffoldFiles({ dir: ".", desktop: true }).find((f) =>
     f.path === "scripts/package-macos.ts"
   )!;
-  assertStringIncludes(mac.content, "...await desktopDenoFlagArgs(import.meta.url),");
+  assertStringIncludes(
+    mac.content,
+    "const denoFlags = await desktopDenoFlagArgs(import.meta.url);",
+  );
+  assertStringIncludes(mac.content, "    ...denoFlags,\n");
 });
 
 Deno.test("a pnpm workspace member needs no desktop.denoFlags: deno desktop gets --node-modules-dir=none", async () => {

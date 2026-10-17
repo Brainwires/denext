@@ -1106,6 +1106,27 @@ export async function resolveDesktopRuntimeEnv(
 }
 
 /**
+ * The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime
+ * build) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it:
+ * `--unstable-no-legacy-abort`, which the runtime keeps from the compiled app's metadata (from
+ * 2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not
+ * delivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under
+ * `denext start` and a `build --compile` binary. The stock runtime (an empty env) gets none: it
+ * ignores the setting. A flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.
+ *
+ * @param runtimeEnv The `deno desktop` child's runtime env (`DENORT_DESKTOP_BIN` set: not stock).
+ * @param denoFlags The flags the command already passes (`desktop.denoFlags`).
+ * @returns The flags, to splice in before the entry.
+ */
+export function desktopRuntimeDenoFlags(
+  runtimeEnv: Readonly<Record<string, string>>,
+  denoFlags: readonly string[] = [],
+): string[] {
+  if (!runtimeEnv.DENORT_DESKTOP_BIN) return [];
+  return ["--unstable-no-legacy-abort"].filter((flag) => !denoFlags.includes(flag));
+}
+
+/**
  * The env a scaffolded `scripts/package-*.ts` adds to its `deno desktop` command so it builds on
  * denext's pinned Deno Desktop runtime: `DENORT_DESKTOP_BIN` + `LAUFEY_DEV_DIR` for `target`
  * (default: the host), downloaded and verified on first use. Empty under

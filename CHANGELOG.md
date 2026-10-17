@@ -266,6 +266,12 @@ and this project adheres to
   notice on its first request, nor aborts `request.signal` after every response: on the toolchain
   it is compiled with `--unstable-no-legacy-abort`, as `denext start` runs, and the 2.9.7-denext.21
   `denort` keeps that setting (an older one dropped it).
+- A Deno Desktop app no longer prints that notice either: on denext's pinned runtime,
+  `denext desktop run` / `dev` and the package scripts build with `--unstable-no-legacy-abort`,
+  which the 2.9.7-denext.21 runtime keeps. The Linux and Windows scripts get it from
+  `denext/desktop` as they are; an existing `scripts/package-macos.ts` gets it from
+  `denext desktop package --regenerate-scripts` (`desktopRuntimeDenoFlags` from `denext/desktop`
+  adds it to a script of your own). A stock-runtime build passes nothing new.
 - Quitting a macOS CEF app takes about 0.65 s instead of about 5.2 s: the host no longer waits out
   a 5-second bound for Chromium's code-sign clone cleanup helper (runtime 2.9.7-denext.21).
 - A Live socket frame whose `type` names an `Object.prototype` key (`"__proto__"`, `"constructor"`, …) is ignored
