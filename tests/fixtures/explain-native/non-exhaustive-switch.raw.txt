@@ -1,0 +1,7 @@
+TS2322 [ERROR]: Type '"archived" | "review"' is not assignable to type 'never'.
+  Type '"archived"' is not assignable to type 'never'.
+      const unhandled: never = status;
+            ~~~~~~~~~
+    at file:///app/non-exhaustive-switch.ts:11:13
+
+error: Type checking failed.

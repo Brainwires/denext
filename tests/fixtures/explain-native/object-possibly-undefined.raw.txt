@@ -1,0 +1,6 @@
+TS2532 [ERROR]: Object is possibly 'undefined'.
+export const userId = currentSession().user.id;
+                      ~~~~~~~~~~~~~~~~
+    at file:///app/object-possibly-undefined.ts:8:23
+
+error: Type checking failed.

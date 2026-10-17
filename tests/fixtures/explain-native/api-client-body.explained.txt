@@ -1,0 +1,23 @@
+TS2345: Type mismatch at `body.title`
+  at api-client-body.ts:7:33
+
+    6 | const input = { body: { title: 1 }, query: { page: 1 } };
+  > 7 | await api("/api/posts", "POST", input);
+                                        ^^^^^
+    8 | 
+
+  The typed API client checks every request against the route's own types: the `POST /api/posts` route expects `body.title` to be `string`, but this passes `number`.
+
+  Fix: Pass `body.title` as `string` — or change the route's schema if `number` is intended.
+
+  Original (deno check):
+  │ TS2345 [ERROR]: Argument of type '{ body: { title: number; }; query: { page: number; }; }' is not assignable to parameter of type 'RequestOf<NonNullable<InferEndpoint<ApiRouteHandler<{ readonly body: StandardSchemaV1<{ title: string; }> & { "~standard": { types: { input: { title: string; }; output: { title: string; }; }; }; }; readonly query: StandardSchemaV1<{ page: number; }> & { ...; }; readonly response: StandardSchemaV1<...> & { ...; }; },...'.
+  │   Type '{ body: { title: number; }; query: { page: number; }; }' is not assignable to type '{ body: { title: string; }; }'.
+  │     The types of 'body.title' are incompatible between these types.
+  │       Type 'number' is not assignable to type 'string'.
+  │ await api("/api/posts", "POST", input);
+  │                                 ~~~~~
+  │     at file:///app/api-client-body.ts:7:33
+
+error: Type checking failed.
+

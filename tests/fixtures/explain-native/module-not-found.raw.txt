@@ -1,0 +1,6 @@
+TS2307 [ERROR]: Cannot find module './utlis.ts' or its corresponding type declarations.
+import { formatDate } from "./utlis.ts";
+                           ~~~~~~~~~~~~
+    at file:///app/module-not-found.ts:2:28
+
+error: Type checking failed.

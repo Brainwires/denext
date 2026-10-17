@@ -1,0 +1,11 @@
+TS2322 [ERROR]: Type '"blue"' is not assignable to type '"dark" | "light"'.
+  theme: { mode: "blue", accent: "#0af" },
+           ~~~~
+    at file:///app/assignable-object.ts:8:12
+
+    The expected type comes from property 'mode' which is declared here on type '{ mode: "dark" | "light"; accent: string; }'
+      theme: { mode: "light" | "dark"; accent: string };
+               ~~~~
+        at file:///app/assignable-object.ts:3:12
+
+error: Type checking failed.

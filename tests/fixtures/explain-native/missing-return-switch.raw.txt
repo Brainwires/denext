@@ -1,0 +1,6 @@
+TS2366 [ERROR]: Function lacks ending return statement and return type does not include 'undefined'.
+export function area(shape: Shape): number {
+                                    ~~~~~~
+    at file:///app/missing-return-switch.ts:8:37
+
+error: Type checking failed.

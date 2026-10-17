@@ -1,0 +1,26 @@
+TS18047: `heading` may be `null`
+  at possibly-null.ts:4:10
+
+    3 |   const heading = document.querySelector("h1");
+  > 4 |   return heading.textContent ?? "";
+                 ^^^^^^^
+    5 | }
+
+  `heading` can be `null` here — `querySelector` returns `null` when nothing matches. TypeScript won't let you read from it until the code rules that out.
+
+  Fix: Narrow it first:
+    if (heading === null) {
+      throw new Error("heading is missing"); // or return a fallback
+    }
+    return heading.textContent ?? "";
+  Or, when a missing value may flow on as `undefined`:
+  return heading?.textContent ?? "";
+
+  Original (deno check):
+  │ TS18047 [ERROR]: 'heading' is possibly 'null'.
+  │   return heading.textContent ?? "";
+  │          ~~~~~~~
+  │     at file:///app/possibly-null.ts:4:10
+
+error: Type checking failed.
+

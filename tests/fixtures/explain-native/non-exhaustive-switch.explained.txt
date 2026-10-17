@@ -1,0 +1,25 @@
+TS2322: Switch is not exhaustive — unhandled: "archived", "review"
+  at non-exhaustive-switch.ts:11:13
+
+    10 |     default: {
+  > 11 |       const unhandled: never = status;
+                     ^^^^^^^^^
+    12 |       return unhandled;
+
+  The `never` check only compiles once every member of the union has a `case`. `status` can still be "archived", "review" when it reaches it, so those cases are missing.
+
+  Fix: Add a case for each missing member above the `default`:
+    case "archived":
+      // …
+    case "review":
+      // …
+
+  Original (deno check):
+  │ TS2322 [ERROR]: Type '"archived" | "review"' is not assignable to type 'never'.
+  │   Type '"archived"' is not assignable to type 'never'.
+  │       const unhandled: never = status;
+  │             ~~~~~~~~~
+  │     at file:///app/non-exhaustive-switch.ts:11:13
+
+error: Type checking failed.
+
