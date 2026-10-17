@@ -88,7 +88,8 @@ The binary is cached beside Deno's own cache:
 
 `DENO_DIR` defaults to `~/Library/Caches/deno` on macOS, `~/.cache/deno` on Linux and
 `%LOCALAPPDATA%\deno` on Windows. The pinned platforms are `darwin-aarch64`, `darwin-x86_64`,
-`linux-x86_64`, `linux-aarch64` and `windows-x86_64`.
+`linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-aarch64` (Windows on Arm, from
+`2.9.7-denext.21`).
 
 - The download goes to a temporary file in that same directory. Its SHA-256 is checked against
   the pin before it is extracted, made executable or renamed. A mismatch deletes the file
@@ -271,10 +272,11 @@ review what Deno's main branch has gained and take the fixes that matter: `2.9.7
 read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
 skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update, and
 `2.9.7-denext.19` took deno_core's fix for an intermittent crash at exit. From `2.9.7-denext.20`
-(the build denext pins today) each release also ships its own `denort` per platform (the
-standalone runtime `deno compile` builds onto), pinned and verified beside the CLI, so a binary
-from `denext build --compile` (or the toolchain's own `deno compile`) carries the same patches,
-`Deno.SQL` included. Each new Deno
+each release also ships its own `denort` per platform (the standalone runtime `deno compile`
+builds onto), pinned and verified beside the CLI, so a binary from `denext build --compile` (or
+the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` included.
+`2.9.7-denext.21` (the build denext pins today) adds Windows on Arm (`aarch64-pc-windows-msvc`)
+builds of the CLI and `denort`, and a compiled program keeps `--unstable-no-legacy-abort`. Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 

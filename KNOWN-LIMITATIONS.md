@@ -26,11 +26,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### denext's Deno toolchain
 
-- **Built for five targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
-  Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
-  Vitest/Jest compatibility in `deno test`. That includes Windows on Arm: the `denext` binary
-  is built for it, but its Deno verbs run on the `deno` on your `Path` (the x64 binary, which
-  runs under emulation, gets the x64 toolchain).
+- **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
+  arm64). Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
+  Vitest/Jest compatibility in `deno test`.
+- **Windows on Arm is pinned, not yet run** (toolchain 2.9.7-denext.21): the Arm64 CLI, `denort`
+  and runtime archives are pinned and verified like the others (the fork builds and tests them on
+  a Windows on Arm runner), but denext's own suites have not run on a Windows on Arm machine yet:
+  the toolchain there, `denext build --compile --target aarch64-pc-windows-msvc`, and a
+  `desktop package --arch arm64` window and its `.msi` are pending that run.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline
@@ -196,9 +199,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI. next-compat builds and the Pages Router are untested in a
-  binary. The binary prints Deno's one-line `request.signal` legacy-abort notice on the first
-  request: a compiled binary does not take `--unstable-no-legacy-abort`, the toolchain's `denort`
-  included (it is cosmetic: denext handles both abort behaviours).
+  binary.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -376,10 +377,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **CEF on Linux has no spellcheck unless the app ships its dictionaries** (runtime
-  2.9.7-denext.11): the runtime makes no network requests of its own, so it no longer downloads
-  Hunspell dictionaries from Google. Put the `.bdic` files in `<data dir>/CEF/Dictionaries` to
-  turn spellcheck on for those languages. Windows and macOS use the OS spellchecker, unchanged.
+- **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
+  runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
+  ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
+  the `.bdic` files in `dictionaries/` beside the host executable. Windows and macOS use the OS
+  spellchecker, unchanged.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are

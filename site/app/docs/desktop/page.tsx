@@ -855,6 +855,11 @@ denext desktop package --target-os windows --format msi,zip`}
           is set. Without WiX 5 (an installed WiX 6 does not count), or when <code>wix build</code>
           {" "}
           fails, the default <code>.msi</code> falls back to the <code>.zip</code> with a warning.
+          {" "}
+          <code>--arch arm64</code> (or{" "}
+          <code>both</code>) builds Windows on Arm bundles on the pinned runtime&apos;s{" "}
+          <code>aarch64-pc-windows-msvc</code> archives (runtime 2.9.7-denext.21); their{" "}
+          <code>.msi</code> declares Windows Installer schema 500, which an Arm64 package needs.
         </li>
       </ul>
       <p>
@@ -3053,10 +3058,11 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           requests a CEF window makes are the app&apos;s
           (<a href="/docs/desktop-runtime#no-network-requests-from-the-cef-backend">
             what it turns off
-          </a>). So a Linux CEF app has no spellcheck unless it ships Hunspell dictionaries: put the
-          {" "}
-          <code>.bdic</code> files in <code>&lt;data dir&gt;/CEF/Dictionaries</code>{" "}
-          (Windows and macOS use the OS spellchecker).
+          </a>). So a Linux CEF window never downloads Hunspell dictionaries: from runtime
+          2.9.7-denext.21 the runtime ships them for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and
+          it-IT, and an app adds other languages by putting their <code>.bdic</code> files in{" "}
+          <code>dictionaries/</code>{" "}
+          beside the host executable in its bundle (Windows and macOS use the OS spellchecker).
         </li>
         <li>
           <code>denext doctor</code>{" "}

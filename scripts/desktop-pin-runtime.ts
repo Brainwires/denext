@@ -44,13 +44,17 @@ const OUT = fromFileUrl(new URL("../src/build/desktop-runtime-pin.json", import.
 const TOOLCHAIN_OUT = fromFileUrl(
   new URL("../src/build/deno-toolchain-pin.json", import.meta.url),
 );
-/** The release's Rust target triple → the toolchain pin's `<os>-<arch>` key (`Deno.build`). */
+/**
+ * The release's Rust target triple → the toolchain pin's `<os>-<arch>` key (`Deno.build`). Windows
+ * on Arm (`aarch64-pc-windows-msvc`) ships from 2.9.7-denext.21.
+ */
 const TOOLCHAIN_TARGETS: Readonly<Record<string, string>> = {
   "aarch64-apple-darwin": "darwin-aarch64",
   "x86_64-apple-darwin": "darwin-x86_64",
   "aarch64-unknown-linux-gnu": "linux-aarch64",
   "x86_64-unknown-linux-gnu": "linux-x86_64",
   "x86_64-pc-windows-msvc": "windows-x86_64",
+  "aarch64-pc-windows-msvc": "windows-aarch64",
 };
 /** A CLI archive's name prefix (the rest is `<version>-<target>.zip`). */
 const CLI_PREFIX = "deno-cli-";

@@ -385,6 +385,9 @@ Deno.test({
             if (!stopped) output = await app.stop();
           }
           assert(!output.includes("Module not found"), output);
+          // Compiled with --unstable-no-legacy-abort, which the toolchain's denort keeps
+          // (2.9.7-denext.21): no legacy-abort notice on the first request.
+          if (ON_TOOLCHAIN) assert(!output.includes("(legacy behavior)"), output);
           // The run-time state went to the working directory, not into the binary.
           await Deno.stat(join(runDir, ".denext", "cache.db"));
           await Deno.stat(join(runDir, ".storage", "files", "greeting.txt"));

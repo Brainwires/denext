@@ -186,7 +186,8 @@ Deno.test("denortTargetKey: deno compile's triples to the pin's keys", () => {
   assertEquals(denortTargetKey("x86_64-unknown-linux-gnu"), "linux-x86_64");
   assertEquals(denortTargetKey("aarch64-apple-darwin"), "darwin-aarch64");
   assertEquals(denortTargetKey("x86_64-pc-windows-msvc"), "windows-x86_64");
-  assertEquals(denortTargetKey("aarch64-pc-windows-msvc"), undefined);
+  assertEquals(denortTargetKey("aarch64-pc-windows-msvc"), "windows-aarch64");
+  assertEquals(denortTargetKey("riscv64gc-unknown-linux-gnu"), undefined);
 });
 
 Deno.test("pin selection: no pin yet, an unpinned host — each a clear unavailable error", async () => {

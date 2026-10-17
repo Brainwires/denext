@@ -10,6 +10,20 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop runtime 2.9.7-denext.21, pinned** (the toolchain moves with it). What it brings to
+  denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
+  list the rest.
+- **Windows on Arm (`aarch64-pc-windows-msvc`) builds of the runtime, the toolchain and `denort`.**
+  The pin carries the release's Arm64 runtime archives (`webview` and `cef`), CLI and `denort`, so
+  the compiled `denext` binary on Windows on Arm runs its verbs on the toolchain,
+  `denext build --compile --target aarch64-pc-windows-msvc` builds onto the pinned `denort`, and
+  `desktop package --target-os windows --arch arm64` packages on the pinned runtime; denext's
+  `.msi` already declares Windows Installer schema 500, which an Arm64 package needs. Not yet run
+  on a Windows on Arm machine by denext's own suites (see KNOWN-LIMITATIONS).
+- **Spellcheck in Linux CEF windows out of the box.** The runtime ships Chromium's Hunspell
+  dictionaries for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT and copies the ones the
+  profile uses on launch; an app adds other languages as `.bdic` files in `dictionaries/` beside
+  the host executable. The window still makes no network requests of its own.
 - **Lustre apps as islands: `lustreIsland` in `denext/gleam`.** A Lustre app (the Gleam UI
   framework) becomes an island component: export `lustreIsland(lustre, counter.app(), { flags })`
   from a `"use client"` module and render it from a Server Component, with any `client:*`
@@ -248,6 +262,12 @@ and this project adheres to
 
 ### Fixed
 
+- A binary from `denext build --compile` no longer prints Deno's `request.signal` legacy-abort
+  notice on its first request, nor aborts `request.signal` after every response: on the toolchain
+  it is compiled with `--unstable-no-legacy-abort`, as `denext start` runs, and the 2.9.7-denext.21
+  `denort` keeps that setting (an older one dropped it).
+- Quitting a macOS CEF app takes about 0.65 s instead of about 5.2 s: the host no longer waits out
+  a 5-second bound for Chromium's code-sign clone cleanup helper (runtime 2.9.7-denext.21).
 - A Live socket frame whose `type` names an `Object.prototype` key (`"__proto__"`, `"constructor"`, …) is ignored
   instead of reaching a prototype function.
 - **Hydration keeps a `dangerouslySetInnerHTML` element's server markup, as React does.** On any

@@ -3,7 +3,12 @@
 
 import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { compileBuildFlags, denortBinary, neverEmbedded } from "../src/build/compile-app.ts";
+import {
+  compileBuildFlags,
+  denortBinary,
+  neverEmbedded,
+  toolchainCompileFlags,
+} from "../src/build/compile-app.ts";
 import type { DenoToolchainPin } from "../src/build/deno-toolchain.ts";
 import { runStandalone, standaloneArgv } from "../src/standalone/mod.ts";
 import { runtimeStateDir, standaloneState } from "../src/server/standalone.ts";
@@ -42,6 +47,14 @@ Deno.test("compileBuildFlags: --allow-all only when the app opts in", () => {
   assertEquals(compileBuildFlags({ permissions: "all" }), ["--allow-all"]);
 });
 
+Deno.test("toolchainCompileFlags: the toolchain's npm pruning and runtime flags, none off it", () => {
+  assertEquals(toolchainCompileFlags(undefined), []);
+  assertEquals(toolchainCompileFlags("2.9.7-denext.21"), [
+    "--exclude-unused-npm",
+    "--unstable-no-legacy-abort",
+  ]);
+});
+
 Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere", async () => {
   const artifact = { file: "deno-denort-x.zip", url: "https://example.invalid/x", sha256: "0" };
   const pin: DenoToolchainPin = {
@@ -59,6 +72,10 @@ Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere",
   assertEquals(await denortBinary("x86_64-unknown-linux-gnu", deps("2.9.7-denext.20")), "/d");
   assertEquals(await denortBinary("aarch64-apple-darwin", deps("2.9.7-denext.20")), "/d");
   assertEquals(asked, ["linux-x86_64", "darwin-aarch64"]);
+  // Windows on Arm (2.9.7-denext.21 on): its own key, when the pin names it.
+  const arm = { ...pin, denort: { ...pin.denort, "windows-aarch64": artifact } };
+  assertEquals(await denortBinary("aarch64-pc-windows-msvc", deps("2.9.7-denext.20", arm)), "/d");
+  assertEquals(asked.splice(2), ["windows-aarch64"]);
   // Off the toolchain, on another toolchain version, an unpinned target or a pin without denort:
   // deno compile picks its own.
   assertEquals(await denortBinary("x86_64-unknown-linux-gnu", deps(undefined)), undefined);
