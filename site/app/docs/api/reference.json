@@ -20408,6 +20408,31 @@
           "denextOnly": true
         },
         {
+          "name": "bundleDesktopVcRuntime",
+          "slug": "bundleDesktopVcRuntime",
+          "kind": "function",
+          "signature": "bundleDesktopVcRuntime(dir: string, arch: DesktopWindowsArch, deps?: DesktopVcRuntimeDeps): Promise<boolean>",
+          "doc": "Ship the VC++ 2015-2022 runtime DLLs arch's deno desktop binaries import (DESKTOP_VC_RUNTIME_DLLS) next to the bundle's .exe, so the packaged app runs with NO redistributable installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32 (the installed redist) when packaging on Windows for the host's architecture, and each one must be a PE image of arch — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones. All or nothing: when any is missing or another machine's (or packaging off Windows, or for the other architecture), none is copied and a warning names the redistributable the target needs.",
+          "docFull": "Ship the VC++ 2015-2022 runtime DLLs `arch`'s `deno desktop` binaries import\n({@linkcode DESKTOP_VC_RUNTIME_DLLS}) next to the bundle's .exe, so the packaged app runs with\nNO redistributable installed on the target (otherwise it dies at launch with a silent\n0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32\n(the installed redist) when packaging on Windows for the host's architecture, and each one must\nbe a PE image of `arch` — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones.\nAll or nothing: when any is missing or another machine's (or packaging off Windows, or for the\nother architecture), none is copied and a warning names the redistributable the target needs.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "arch",
+              "doc": "The bundle's architecture."
+            },
+            {
+              "name": "deps",
+              "doc": "The host, file access and output sinks."
+            }
+          ],
+          "returns": "Whether the runtime was bundled.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "cefHelperEntitlements",
           "slug": "cefHelperEntitlements",
           "kind": "function",
@@ -20553,6 +20578,18 @@
           "signature": "DESKTOP_INSTALLER_FORMATS: object",
           "doc": "Every installer format, by the OS it is built for.",
           "docFull": "Every installer format, by the OS it is built for.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DESKTOP_VC_RUNTIME_DLLS",
+          "slug": "DESKTOP_VC_RUNTIME_DLLS",
+          "kind": "variable",
+          "signature": "DESKTOP_VC_RUNTIME_DLLS: Readonly<Record<DesktopWindowsArch, typeOperator>>",
+          "doc": "The VC++ 2015-2022 runtime DLLs each architecture's deno desktop binaries import (read from the pinned runtime's import tables). The x64 launcher also imports vcruntime140_1.dll, the FH4 exception-handling runtime; the Arm64 launcher does not. On Windows on Arm, System32's vcruntime140_1.dll (which the Arm64 redist installs there itself) is an x64 image, for x64 code under emulation, beside the Arm64 vcruntime140.dll and msvcp140.dll.",
+          "docFull": "The VC++ 2015-2022 runtime DLLs each architecture's `deno desktop` binaries import (read from\nthe pinned runtime's import tables). The x64 launcher also imports `vcruntime140_1.dll`, the\nFH4 exception-handling runtime; the Arm64 launcher does not. On Windows on Arm, System32's\n`vcruntime140_1.dll` (which the Arm64 redist installs there itself) is an x64 image, for x64\ncode under emulation, beside the Arm64 `vcruntime140.dll` and `msvcp140.dll`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -21193,6 +21230,23 @@
           "denextOnly": true
         },
         {
+          "name": "desktopPeMachine",
+          "slug": "desktopPeMachine",
+          "kind": "function",
+          "signature": "desktopPeMachine(head: Uint8Array): string | null",
+          "doc": "The machine a PE image is built for, read from its header (MZ, e_lfanew → PE\\0\\0, then the file header's Machine): \"x86_64\", \"arm64\", \"x86\", or 0x<hex> for another one. An Arm64X DLL reports \"arm64\".",
+          "docFull": "The machine a PE image is built for, read from its header (`MZ`, `e_lfanew` → `PE\\0\\0`, then\nthe file header's `Machine`): `\"x86_64\"`, `\"arm64\"`, `\"x86\"`, or `0x<hex>` for another one.\nAn Arm64X DLL reports `\"arm64\"`.",
+          "params": [
+            {
+              "name": "head",
+              "doc": "The file's first bytes (4 KiB is plenty)."
+            }
+          ],
+          "returns": "The machine, or null when head is not a PE image.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopPermissions",
           "slug": "DesktopPermissions",
           "kind": "interface",
@@ -21444,6 +21498,35 @@
           "denextOnly": true
         },
         {
+          "name": "desktopVcRedistUrl",
+          "slug": "desktopVcRedistUrl",
+          "kind": "function",
+          "signature": "desktopVcRedistUrl(arch: DesktopWindowsArch): string",
+          "doc": "The VC++ 2015-2022 redistributable installer for arch.",
+          "docFull": "The VC++ 2015-2022 redistributable installer for `arch`.",
+          "params": [
+            {
+              "name": "arch",
+              "doc": "The target architecture."
+            }
+          ],
+          "returns": "Its download URL.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopVcRuntimeDeps",
+          "slug": "DesktopVcRuntimeDeps",
+          "kind": "interface",
+          "signature": "interface DesktopVcRuntimeDeps",
+          "doc": "What bundleDesktopVcRuntime reads the machine and files through (tests stub them).",
+          "docFull": "What {@linkcode bundleDesktopVcRuntime} reads the machine and files through (tests stub them).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopVersionProblem",
           "slug": "desktopVersionProblem",
           "kind": "function",
@@ -21461,6 +21544,18 @@
             }
           ],
           "returns": "The reason, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowsArch",
+          "slug": "DesktopWindowsArch",
+          "kind": "typeAlias",
+          "signature": "type DesktopWindowsArch = x86_64 | arm64",
+          "doc": "A Windows bundle's architecture, as the package script names it.",
+          "docFull": "A Windows bundle's architecture, as the package script names it.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },

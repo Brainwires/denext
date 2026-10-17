@@ -1718,6 +1718,7 @@ if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
 const {
   buildDesktopBundle,
   buildDesktopMsi,
+  bundleDesktopVcRuntime,
   desktopCheckCefSignature,
   desktopHasTool: has,
   desktopMsiProblem,
@@ -1739,7 +1740,6 @@ const TARGETS: Record<string, string> = {
 // Underscore-free labels for output paths: \`deno desktop\` derives a reverse-DNS bundle id
 // from the output basename and rejects '_' (so a raw \`x86_64\` suffix drops resources).
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
-const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 const OS = "windows";
 
 /** Build a Windows bundle directory for \`arch\` at dist/<name>-<label> (.ico icon). */
@@ -1814,49 +1814,6 @@ async function zipBundle(
   return zip;
 }
 
-/** Ship the VC++ 2015-2022 runtime DLLs the deno desktop binary imports (VCRUNTIME140,
- * VCRUNTIME140_1, MSVCP140) next to the .exe, so the packaged app runs with NO redistributable
- * installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found).
- * Microsoft permits this app-local deployment. Sourced from System32 (the installed redist) when
- * packaging on Windows; a DLL that can't be found (e.g. packaging off Windows) is skipped with a
- * warning, and the target then needs the VC++ redist. System32 holds the HOST's architecture, so
- * a bundle for the other architecture gets none (its target needs the redist). */
-async function bundleVcRuntime(dir: string, arch: string): Promise<boolean> {
-  if (Deno.build.os !== "windows" || arch !== hostArch) {
-    console.warn(
-      "  not bundling the VC++ runtime (" + arch + " packaged on " +
-        Deno.build.os + "/" +
-        hostArch +
-        ") — the target must install the VC++ 2015-2022 redistributable: " +
-        "https://aka.ms/vs/17/release/vc_redist." +
-        (arch === "arm64" ? "arm64" : "x64") + ".exe",
-    );
-    return false;
-  }
-  const sys = \`\${Deno.env.get("SystemRoot") ?? "C:/Windows"}/System32\`;
-  const dlls = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
-  const missing: string[] = [];
-  for (const dll of dlls) {
-    try {
-      await Deno.copyFile(\`\${sys}/\${dll}\`, \`\${dir}/\${dll}\`);
-    } catch {
-      missing.push(dll);
-    }
-  }
-  if (missing.length === 0) {
-    console.log(
-      "  bundled the VC++ runtime app-local (the target needs no VC++ redistributable)",
-    );
-  } else {
-    console.warn(
-      "  could not bundle the VC++ runtime (" + missing.join(", ") +
-        ") — package on Windows with the VC++ 2015-2022 redistributable installed, or the target " +
-        "must install it: https://aka.ms/vs/17/release/vc_redist.x64.exe",
-    );
-  }
-  return missing.length === 0;
-}
-
 /** Build, sign and wrap one arch's bundle; returns what it wrote and whether the VC++ runtime
  * went in app-local. */
 async function packageArch(
@@ -1866,7 +1823,9 @@ async function packageArch(
   { plan, meta }: Awaited<ReturnType<typeof prepareDesktopPackage>>,
 ): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
-  const vcBundled = await bundleVcRuntime(dir, arch);
+  // The VC++ runtime app-local (only the DLLs this arch imports, each checked to be its machine
+  // type), so the target needs no redistributable; a warning names the one it needs otherwise.
+  const vcBundled = await bundleDesktopVcRuntime(dir, arch);
   if (signing) {
     await signBundle(dir, \`\${name}-\${LABELS[arch]}.exe\`, meta.backend);
   }

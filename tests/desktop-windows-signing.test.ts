@@ -149,7 +149,10 @@ Deno.test("package-windows.ts: signs the bundle's PE files before wrapping it, t
   const signBundle = body.indexOf("if (signing) {\n    await signBundle(dir, ");
   assert(signBundle > 0, "the bundle is signed");
   assertStringIncludes(script, "if (await sign(await desktopPeFiles(dir)) && "); // every PE file
-  assert(signBundle > body.indexOf("bundleVcRuntime(dir, arch)"), "after the VC++ runtime lands");
+  assert(
+    signBundle > body.indexOf("bundleDesktopVcRuntime(dir, arch)"),
+    "after the VC++ runtime lands",
+  );
   assert(signBundle < body.indexOf("await msi("), "before the .msi wraps it");
   assert(signBundle < body.indexOf("zipBundle("), "before the .zip wraps it");
   assert(body.indexOf("if (built && signing) await sign([built]);") > body.indexOf("await msi("));

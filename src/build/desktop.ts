@@ -218,6 +218,16 @@ export {
   type PreparedDesktopPackage,
   prepareDesktopPackage,
 } from "./desktop-package-script.ts";
+// scripts/package-windows.ts: the app-local VC++ runtime, only the DLLs the target arch imports,
+// each checked to be the target's machine type.
+export {
+  bundleDesktopVcRuntime,
+  DESKTOP_VC_RUNTIME_DLLS,
+  desktopPeMachine,
+  desktopVcRedistUrl,
+  type DesktopVcRuntimeDeps,
+  type DesktopWindowsArch,
+} from "./desktop-vc-runtime.ts";
 
 // A CEF app signed with a certificate Windows does not trust dies at launch (CEF's bootstrap runs
 // WinVerifyTrust on itself): the Windows package script checks the signed executable.

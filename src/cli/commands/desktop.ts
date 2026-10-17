@@ -624,6 +624,12 @@ export interface PackageScriptAge {
    * `desktopRuntimeDenoFlags` itself, or builds through `buildDesktopBundle`, which does.
    */
   readonly runtimeFlags: boolean;
+  /**
+   * It leaves the app-local VC++ runtime to `bundleDesktopVcRuntime` (only the DLLs the target
+   * arch imports, machine-checked). A Windows script that copies System32's `vcruntime140_1.dll`
+   * itself ships the x64 one into an Arm64 bundle on Windows on Arm.
+   */
+  readonly vcRuntime: boolean;
 }
 
 /**
@@ -637,14 +643,16 @@ export function packageScriptAge(text: string): PackageScriptAge {
     runtime: /\b(desktopRuntimeEnv|buildDesktopBundle)\b/.test(text),
     formats: /\bparseDesktopPackageArgs\b/.test(text),
     runtimeFlags: /\b(desktopRuntimeDenoFlags|buildDesktopBundle)\b/.test(text),
+    vcRuntime: !text.includes('"vcruntime140_1.dll"'),
   };
 }
 
 /**
  * The warnings for a stale packaging script: one predating denext 3.1 builds on the stock runtime,
  * one predating the 2.9.7-denext.21 pin (a macOS script calling `deno desktop` itself) builds without the pinned
- * runtime's `--unstable-no-legacy-abort`, and a `--format` is not passed to a script that cannot
- * read it.
+ * runtime's `--unstable-no-legacy-abort`, one copying the VC++ runtime itself (a Windows script
+ * predating `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, and a `--format` is
+ * not passed to a script that cannot read it.
  *
  * @param name The script's file name (`package-linux.ts`).
  * @param age What it supports.
@@ -669,6 +677,14 @@ export function packageScriptWarnings(
       `  ⚠ scripts/${name} does not pass the pinned runtime's flags (desktopRuntimeDenoFlags): ` +
         "the app is built without --unstable-no-legacy-abort, so it aborts request.signal after " +
         "each response and prints Deno.serve's legacy-abort notice.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  }
+  if (!age.vcRuntime) {
+    out.push(
+      `  ⚠ scripts/${name} copies the VC++ runtime from System32 itself: on Windows on Arm it ` +
+        "ships the x64 vcruntime140_1.dll, a DLL of the wrong architecture, in an Arm64 bundle.\n" +
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );

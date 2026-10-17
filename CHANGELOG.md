@@ -306,6 +306,15 @@ and this project adheres to
   adds it to a script of your own). A stock-runtime build passes nothing new.
   `denext desktop package` now warns about an existing `scripts/package-macos.ts` that does not
   call `desktopRuntimeDenoFlags`, and says to run `--regenerate-scripts`.
+- A Windows Arm64 package built on Windows on Arm no longer ships an x64 `vcruntime140_1.dll`.
+  The app-local VC++ runtime is now `bundleDesktopVcRuntime` in `denext/desktop`: each arch gets only
+  the DLLs its runtime imports (`vcruntime140.dll` and `msvcp140.dll` for Arm64; x64 adds
+  `vcruntime140_1.dll`), and each must be a PE image of the target's machine. When one is missing
+  or built for another machine, nothing is bundled, and the warning names that arch's VC++
+  redistributable (`vc_redist.arm64.exe` for an Arm64 bundle, no longer always the x64 one).
+  An existing `scripts/package-windows.ts` copies the DLLs itself:
+  `denext desktop package --regenerate-scripts` replaces it, and `denext desktop package` now
+  warns about a script that still does.
 - Quitting a macOS CEF app takes about 0.65 s instead of about 5.2 s: the host no longer waits out
   a 5-second bound for Chromium's code-sign clone cleanup helper (runtime 2.9.7-denext.21).
 - A Live socket frame whose `type` names an `Object.prototype` key (`"__proto__"`, `"constructor"`, …) is ignored

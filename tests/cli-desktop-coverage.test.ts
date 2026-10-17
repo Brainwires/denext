@@ -466,14 +466,14 @@ Deno.test("packageScriptAge reads the current templates as current", () => {
   for (const name of ["package-macos.ts", "package-linux.ts", "package-windows.ts"]) {
     assertEquals(
       packageScriptAge(templateFor(name)),
-      { runtime: true, formats: true, runtimeFlags: true },
+      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true },
       name,
     );
   }
   assertEquals(
     packageScriptWarnings(
       "package-linux.ts",
-      { runtime: true, formats: true, runtimeFlags: true },
+      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true },
       "deb",
     ),
     [],
@@ -489,7 +489,7 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
     .replace("    ...desktopRuntimeDenoFlags(env, denoFlags),\n", "");
   assert(stale !== current && !stale.includes("desktopRuntimeDenoFlags"), "template shape moved");
   const age = packageScriptAge(stale);
-  assertEquals(age, { runtime: true, formats: true, runtimeFlags: false });
+  assertEquals(age, { runtime: true, formats: true, runtimeFlags: false, vcRuntime: true });
   const lines = packageScriptWarnings("package-macos.ts", age, undefined);
   assertEquals(lines.length, 1);
   assertStringIncludes(
@@ -501,11 +501,28 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
   // A pre-3.1 script gets the older warning only (regenerating fixes both).
   const legacy = packageScriptWarnings(
     "package-macos.ts",
-    { runtime: false, formats: false, runtimeFlags: false },
+    { runtime: false, formats: false, runtimeFlags: false, vcRuntime: true },
     undefined,
   );
   assertEquals(legacy.length, 1);
   assertStringIncludes(legacy[0], "predates denext 3.1");
+});
+
+Deno.test("packageScriptAge flags a Windows script that copies the VC++ runtime itself", () => {
+  // The Windows template before bundleDesktopVcRuntime inlined the System32 copy of all three
+  // DLLs whatever the arch, so an Arm64 bundle on Windows on Arm got the x64 vcruntime140_1.dll.
+  const stale = templateFor("package-windows.ts").replace(
+    "async function main(",
+    'const dlls = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];\n' +
+      "async function main(",
+  );
+  const age = packageScriptAge(stale);
+  assertEquals(age, { runtime: true, formats: true, runtimeFlags: true, vcRuntime: false });
+  const lines = packageScriptWarnings("package-windows.ts", age, undefined);
+  assertEquals(lines.length, 1);
+  assertStringIncludes(lines[0], "scripts/package-windows.ts copies the VC++ runtime");
+  assertStringIncludes(lines[0], "vcruntime140_1.dll");
+  assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
 });
 
 Deno.test("desktop package --target-os macos is refused off macOS", async () => {
