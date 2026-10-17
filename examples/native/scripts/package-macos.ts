@@ -95,6 +95,7 @@ const {
   desktopNpmArgs,
   desktopPackageFlags,
   desktopRun: run,
+  desktopRuntimeDenoFlags,
   desktopRuntimeEnv,
   desktopWithAppVersion,
   macosSigningEntitlements,
@@ -115,6 +116,10 @@ type Opts = DesktopPackageArgs;
  * ad-hoc; the caller re-signs with the real identity afterwards. */
 async function buildApp(out: string, target?: string): Promise<void> {
   await Deno.remove(out, { recursive: true }).catch(() => {});
+  // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
+  const env = await desktopRuntimeEnv(import.meta.url, target);
+  // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
+  const denoFlags = await desktopDenoFlagArgs(import.meta.url);
   const cmd = [
     "deno",
     "desktop",
@@ -122,8 +127,9 @@ async function buildApp(out: string, target?: string): Promise<void> {
     // prompt the packaged GUI has no TTY to answer.
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
-    // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
-    ...await desktopDenoFlagArgs(import.meta.url),
+    ...denoFlags,
+    // The pinned runtime keeps --unstable-no-legacy-abort: no Deno.serve legacy-abort notice.
+    ...desktopRuntimeDenoFlags(env, denoFlags),
     "--include",
     "out",
     ...await desktopIncludeArgs(import.meta.url),
@@ -137,8 +143,6 @@ async function buildApp(out: string, target?: string): Promise<void> {
   // deno desktop appends ".app" to --output on macOS, so pass the base name (strip a trailing
   // ".app") to land exactly at `out` — else it writes `out.app` and sign/lipo/dmg miss it.
   cmd.push("--output", out.replace(/\.app$/, ""), "desktop.ts");
-  // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
-  const env = await desktopRuntimeEnv(import.meta.url, target);
   // deno.json's version, else package.json's (stamped into deno.json for the build, then put back),
   // compiled into the bundle: what the installers and publish-update go by.
   await desktopWithAppVersion(import.meta.url, () => run(cmd, env));
