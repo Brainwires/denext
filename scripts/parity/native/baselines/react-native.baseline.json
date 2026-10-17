@@ -1,8 +1,8 @@
 {
   "versions": {
-    "react-native": "0.88.0-rc.5"
+    "react-native": "0.88.0"
   },
-  "capturedAt": "2026-10-16T11:06:51.923Z",
+  "capturedAt": "2026-10-17T14:13:02.069Z",
   "surfaces": [
     {
       "specifier": "react-native",

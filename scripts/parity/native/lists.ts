@@ -3,7 +3,7 @@
 // runtime export names.
 //
 //   EXPECTED (frozen in baselines/lists.baseline.json by `parity:native:refresh -- lists`):
-//     • react-native FlatList / SectionList / VirtualizedList: the props React Native 0.86.3's
+//     • react-native FlatList / SectionList / VirtualizedList: the props React Native 0.88.0's
 //       `.d.ts` declares for each list (its own and `@react-native/virtualized-lists`', plus the
 //       ScrollView props in SCROLL_PROPS), and the public instance methods of the pinned
 //       react-native-web 0.21.2's classes (what apps call on the ref today);
@@ -34,7 +34,7 @@ const gapsPath = (root: string) => `${root}/${DIR}/lists.known-gaps.json`;
 
 /** The pinned versions (React Native: T3's; the packages: the manifest's). */
 const PINS: Record<string, string> = {
-  "react-native": "0.88.0-rc.5",
+  "react-native": "0.88.0",
   "react-native-web": "0.21.2",
   "@shopify/flash-list": LIST_PACKAGES["@shopify/flash-list"].pinned,
   "@legendapp/list": LIST_PACKAGES["@legendapp/list"].pinned,

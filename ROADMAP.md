@@ -61,12 +61,6 @@
   (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
   the controls reaching the page, the Android foreground service), and `pickMedia`'s
   multi-select and video picks, on an iPhone and an Android phone.
-- **React Native 0.88.0 final in the parity ledger:** the baselines are captured from
-  `0.88.0-rc.5` (97 expected names, no gaps; the lists too). 0.88.0 was published on
-  2026-10-15 and this machine's npm installs a version only two days after its release, so move
-  `REACT_NATIVE_PIN` (`scripts/parity/native/spec.ts`) and the lists' `PINS` to `0.88.0`,
-  refresh the baselines (`deno task parity:native:refresh -- react-native lists`), and set
-  `REACT_NATIVE_VERSION` in `src/react-native/platform.ts` (still 0.86.3) once it installs.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 

@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **The React Native parity ledger is pinned to React Native 0.88.0 final** (from
+  `0.88.0-rc.5`): `deno task parity:native` checks React Native mode's `react-native` surface and
+  the list adapters against the release, with the same 97 expected names and no gaps, and
+  `Platform.constants.reactNativeVersion` / `ReactNativeVersion` report 0.88.0 (was 0.86.3).
+
 ## [4.3.0] - 2026-10-17
 
 ### Added

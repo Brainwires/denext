@@ -108,8 +108,8 @@ export interface PlatformStatic {
 /** The React Native release React Native mode's surface is measured against. */
 export const REACT_NATIVE_VERSION: ReactNativeVersion = {
   major: 0,
-  minor: 86,
-  patch: 3,
+  minor: 88,
+  patch: 0,
   prerelease: null,
 };
 
