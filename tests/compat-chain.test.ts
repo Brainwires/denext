@@ -3,7 +3,7 @@
 // would otherwise skip denext's `"use cache"` transform and `platform` fold. The SSR bundle test
 // for a Start-compiled module is in tests/tanstack-start-plugin.test.ts.
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { chainSourceTransforms, compatSourceTransform } from "../src/build/compat-chain.ts";
@@ -38,6 +38,16 @@ Deno.test('compatSourceTransform: an inline "use server" function is hoisted (se
   const out = await hoist(src, "/p/app/page.tsx");
   assertStringIncludes(out ?? "unchanged", "const save = _dnxInlineAction0;");
   assertEquals(await hoist(`export const a = 1;\n`, "/p/app/a.ts"), null, "no directive");
+});
+
+Deno.test('compatSourceTransform: a client bundle refuses an inline "use server" function', async () => {
+  const refuse = compatSourceTransform({ refuseInlineActions: true, projectDir: "/p" })!;
+  const src =
+    `export function W() {\n  async function leak() { "use server"; }\n  return leak;\n}\n`;
+  const err = await assertRejects(() => refuse(src, "/p/app/w.tsx"));
+  assertStringIncludes(String(err), 'It is not allowed to define inline "use server"');
+  assertStringIncludes(String(err), "app/w.tsx:2:3");
+  assertEquals(await refuse(`export const a = "use server";\n`, "/p/app/a.ts"), null);
 });
 
 Deno.test("chainSourceTransforms: what a caller plugin answers goes through denext's transforms", async () => {

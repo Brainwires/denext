@@ -936,6 +936,88 @@ Deno.test({
 });
 
 Deno.test({
+  name:
+    'tanstack-start client bundle: an inline "use server" function in a route module never ships',
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_inline_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: {} }));
+    await Deno.mkdir(join(dir, "src"));
+    await Deno.writeTextFile(
+      join(dir, "src", "route.ts"),
+      `export const read = createServerFn().handler(() => "FN_SECRET");\n` +
+        `export async function act() {\n  "use server";\n  return "INLINE_SECRET";\n}\n` +
+        `export const run = () => [read(), act()];\n`,
+    );
+    // Start's compiler answers the module (an RPC stub for the server function); denext's
+    // transforms chained after it see the compiled module.
+    let compiled = (code: string) => code;
+    const { tc } = fakeToolchain();
+    const toolchain: StartToolchain = {
+      ...tc,
+      createCompiler: () => ({
+        compile: ({ code }) =>
+          Promise.resolve({
+            code: compiled(code.replace(/\.handler\(.*\)\);/, ".handler(rpc());")),
+          }),
+        ingestModule: () => undefined,
+      }),
+    };
+    const start = startBuild({
+      env: "client",
+      toolchain,
+      projectRoot: dir,
+      routerFile: join(dir, "router.tsx"),
+      startFile: null,
+      knownServerFns: {},
+    });
+    const build = () =>
+      buildNextCompatClientEntries({
+        projectDir: dir,
+        configPath: join(dir, "deno.json"),
+        outDir: join(dir, ".denext"),
+        clientDir: join(dir, ".denext", "client"),
+        entries: [{
+          id: "client",
+          source: `import { run } from ${JSON.stringify(join(dir, "src", "route.ts"))};\nrun();\n`,
+        }],
+        extraPlugins: [start.plugin],
+        serverModuleSource: (path) => start.serverModuleSource(path),
+      });
+    const refused = async (where: string) => {
+      const err = await assertRejects(build);
+      assertStringIncludes(
+        String(err),
+        'It is not allowed to define inline "use server" annotated Server Actions',
+      );
+      assertStringIncludes(String(err), where);
+    };
+    // As written in the source.
+    await refused("route.ts:2:8");
+    // Only in what Start's compiler emits (the source has none): denext's chained check sees it.
+    await Deno.writeTextFile(
+      join(dir, "src", "route.ts"),
+      `export const read = createServerFn().handler(() => "FN_SECRET");\n` +
+        `export const run = () => [read()];\n`,
+    );
+    compiled = (code) =>
+      code + `export async function act() {\n  "use server";\n  return "INLINE_SECRET";\n}\n`;
+    await refused("route.ts:3:8");
+    const client = join(dir, ".denext", "client");
+    const written = await Array.fromAsync(Deno.readDir(client)).catch(() => []);
+    for (const e of written) {
+      const js = await Deno.readTextFile(join(client, e.name)).catch(() => "");
+      assert(!js.includes("INLINE_SECRET"), `${e.name} ships no action body`);
+    }
+  } finally {
+    await stopNextCompat().catch(() => {});
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test({
   name: "tanstack-start server bundle: the build fails on browser code the server would run",
   sanitizeOps: false,
   sanitizeResources: false,

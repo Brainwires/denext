@@ -2743,6 +2743,7 @@ function leadingPlugins(options: BundleNextCompatModulesOptions): esbuild.Plugin
   const transform = compatSourceTransform({
     useCache: options.platform === "deno" && options.useCache === true,
     inlineActions: options.platform === "deno",
+    refuseInlineActions: options.platform !== "deno",
     platform: options.buildTarget,
     projectDir: options.absWorkingDir,
   });
