@@ -2,7 +2,8 @@
  * `next-auth/providers/twitter` on denext: X (Twitter), OAuth 2.0. The account is X's user id; X shares no email address here, so an X account is never linked to
  * an existing user by email. The token endpoint takes the client credentials as HTTP Basic, as X
  * requires for a confidential client. Credentials default to `AUTH_TWITTER_ID` /
- * `AUTH_TWITTER_SECRET`.
+ * `AUTH_TWITTER_SECRET`. NextAuth.js v4's `version: "2.0"` is accepted; v4's OAuth 1.0a flow (its
+ * default, and `TwitterLegacy`) is not provided: register an OAuth 2.0 client with X instead.
  *
  * ```ts
  * import Twitter from "next-auth/providers/twitter";
@@ -47,16 +48,25 @@ const TWITTER: ProviderSpec = {
 /** The Twitter profile, as the app's `profile()` callback receives it. */
 export type TwitterProfile = Record<string, unknown>;
 
+/** {@linkcode Twitter}'s options: the OAuth options, plus NextAuth.js v4's `version` switch. */
+export interface TwitterUserConfig extends OAuthUserConfig<TwitterProfile> {
+  /**
+   * NextAuth.js v4's switch to X's OAuth 2.0 (v4 defaults to OAuth 1.0a). OAuth 2.0 is the only
+   * flow denext runs, so `"2.0"` is accepted and changes nothing.
+   */
+  version?: "2.0";
+}
+
 /**
  * The Twitter provider.
  *
  * @param options Client credentials (default from the environment), an `id` / `name`
- *   override, `authorization.params`, a `profile()` mapper.
+ *   override, `authorization.params`, a `profile()` mapper, and v4's `version: "2.0"`.
  * @returns The provider descriptor for `NextAuth({ providers })`.
  */
 export default function Twitter(
-  options: OAuthUserConfig<TwitterProfile> = {},
-): ProviderDescriptor<OAuthUserConfig<TwitterProfile>> {
+  options: TwitterUserConfig = {},
+): ProviderDescriptor<TwitterUserConfig> {
   return oauthDescriptor(
     { id: "twitter", name: "Twitter", type: "oauth" },
     options,

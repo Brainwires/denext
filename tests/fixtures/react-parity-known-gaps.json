@@ -9,6 +9,7 @@
     "@remix-run/react": "2.17.5",
     "@remix-run/node": "2.17.5",
     "next-auth": "5.0.0-beta.32",
+    "next-auth-v4": "4.24.15",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@types/react-is": "19.2.0"

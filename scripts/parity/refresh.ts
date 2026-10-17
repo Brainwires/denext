@@ -15,7 +15,7 @@
 // the only part that touches npm/network; it installs into a throwaway temp dir (via
 // Deno's `--node-modules-dir=auto`) so the repo root stays clean.
 
-import { BASELINE_HOLDS, REAL_PACKAGE_TAGS, REAL_PACKAGES } from "./spec.ts";
+import { BASELINE_HOLDS, REAL_PACKAGE_TAGS, REAL_PACKAGES, realDependencySpec } from "./spec.ts";
 import type { Baseline, Surface } from "./types.ts";
 import { fromFileUrl } from "@std/path";
 
@@ -30,7 +30,10 @@ async function captureReal(
   holds: Readonly<Record<string, string>> = {},
 ): Promise<{ versions: Record<string, string>; surfaces: Surface[] }> {
   const deps = Object.fromEntries(
-    REAL_PACKAGES.map((p) => [p, pinned[p] ?? holds[p] ?? REAL_PACKAGE_TAGS[p] ?? "latest"]),
+    REAL_PACKAGES.map((p) => [
+      p,
+      realDependencySpec(p, pinned[p] ?? holds[p] ?? REAL_PACKAGE_TAGS[p] ?? "latest"),
+    ]),
   );
   // typescript is the extractor's own dependency; pin a major so resolution is stable.
   deps["typescript"] = "^5";

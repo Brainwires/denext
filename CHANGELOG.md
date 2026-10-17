@@ -331,6 +331,12 @@ and this project adheres to
   function they throw, as in Next.js. Next 16.4 canary's `unstable_navigation` /
   `unstable_prefetch` are kept as aliases, so an app that adopted them links. `io()` now returns
   a promise, as Next's does.
+- **The `next-auth` parity check covers NextAuth.js v4.** `next-auth`, `next-auth/next`,
+  `next-auth/middleware`, `next-auth/react`, `next-auth/jwt`, `next-auth/adapters` and the
+  providers are now held to `next-auth@4` as well as `next-auth@beta` (v5), both installed side by
+  side by `deno task parity:refresh`. `Twitter()` accepts v4's `version: "2.0"`. v4's OAuth 1.0a
+  `TwitterLegacy` is not provided, since denext signs in to X through OAuth 2.0 only
+  (KNOWN-DIFFERENCES).
 - **`createTestApp` runs the config's plugins.** The `plugins` in `denext.config.ts` are set up as
   under `denext dev`: their prepare steps run once, their route synthesizers shape the scanned
   routes, and their request handlers answer what the App Router doesn't match, so a Pages Router

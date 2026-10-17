@@ -474,6 +474,14 @@ it differs from v4 itself:
 - **`authorize(credentials, req)`'s `req` is a `Request`** that also answers v4's reads:
   `req.headers["user-agent"]` (lower-case names), `req.query` and `req.body` (the submitted
   fields). It has no body stream.
+- **Twitter signs in through OAuth 2.0 only.** v4's `Twitter()` defaults to OAuth 1.0a unless
+  given `version: "2.0"`, and `next-auth/providers/twitter` exports that flow as `TwitterLegacy`.
+  denext's auth runs OAuth 2.0 and OIDC only, so `TwitterLegacy` is not exported and `Twitter()`
+  always runs OAuth 2.0 (`version: "2.0"` is accepted). An app on OAuth 1.0a registers an OAuth
+  2.0 client with X and uses its client id and secret.
+
+The `next-auth` parity check (`tests/react-parity.test.ts`) holds these modules to both
+`next-auth@beta` (v5) and `next-auth@4`.
 
 ## Security posture — safe defaults
 

@@ -5451,6 +5451,7 @@
   ],
   "denext/next-auth/providers/twitter": [
     "TwitterProfile:typeAlias",
+    "TwitterUserConfig:interface",
     "default:function"
   ],
   "denext/next-auth/providers/zoom": [

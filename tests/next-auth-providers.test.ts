@@ -184,3 +184,11 @@ Deno.test("next-auth providers: a custom provider object may ask for client_secr
   }]);
   assertEquals(p.acme.tokenEndpointAuthMethod, "client_secret_basic");
 });
+
+Deno.test('next-auth providers: v4\'s Twitter({ version: "2.0" }) builds the same OAuth 2.0 provider', () => {
+  // NextAuth.js v4 apps opt in to X's OAuth 2.0 with `version: "2.0"`; denext runs nothing else.
+  const v4 = build([Twitter({ clientId: "v4-id", clientSecret: "v4-secret", version: "2.0" })]);
+  assertEquals(v4.twitter.clientId, "v4-id");
+  assertEquals(v4.twitter.tokenUrl, "https://api.x.com/2/oauth2/token");
+  assertEquals(v4.twitter.scopes, ["users.read", "tweet.read", "offline.access"]);
+});
