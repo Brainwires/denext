@@ -653,7 +653,7 @@
       ],
       "hasReadme": true,
       "category": "routers",
-      "run": "denext task install   # installs the TanStack packages into node_modules (once)\ndenext task dev       # http://localhost:3000\ndenext task build && denext task start",
+      "run": "denext task install   # installs the TanStack packages into node_modules (once)\ndenext task dev       # http://localhost:3000\ndenext task build && denext task start\ndenext export .       # a static site in out/ (Start's prerender)",
       "runFrom": "example"
     },
     {
