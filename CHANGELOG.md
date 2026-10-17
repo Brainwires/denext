@@ -8,6 +8,26 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Inline Server Actions (`async function save() { "use server"; … }` inside a Server Component)
+  work on the native App Router, as they do on next-compat.** The server render hoists each one to
+  a server reference registered when its module loads, under the same id on both paths, so
+  `<form action={save}>` renders its endpoint and runs with JavaScript off (a 303 back to the page)
+  or on (the hydrated client submits it), under `denext dev` (bundled and unbundled), `denext
+  start` and `denext export`. A declaration is hoisted to the top of its block, as JavaScript
+  hoists it, so a use above it works.
+- **Bound Server Actions: an inline action that reads its component's values, and
+  `action.bind(null, value)`.** As in Next.js, an inline `"use server"` function may read a prop or
+  a local of the component that declares it, and `.bind(null, …)` on any server action binds
+  leading arguments; the values travel with the form, encrypted, and come back first when it posts.
+  They are sealed with AES-GCM (the action's id as additional data, so a token never opens for
+  another action) under a key `denext build` generates per build, or
+  `DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (Next.js's `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` is read
+  too) for replicas built separately; an edited or forged token is an unknown action. Nothing
+  changes in the browser: the values ride the action's reference id. Before, an inline action that
+  read a local was a build error.
+
 ### Changed
 
 - **The React Native parity ledger is pinned to React Native 0.88.0 final** (from

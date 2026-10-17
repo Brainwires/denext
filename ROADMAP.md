@@ -64,17 +64,6 @@
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 
-## Server Actions
-
-- **Inline Server Actions on the native App Router.** next-compat builds hoist an inline
-  `"use server"` function to a server reference (`src/build/inline-server-action.ts`); the native
-  server loader imports source modules as written, so there the function stays a plain function
-  and its `<form>` renders no `action`. The use-cache loader (`use-cache-loader.ts`) and the
-  build's server copies (`server-copies.ts`) need the same transform.
-- **Bound values for inline actions and `action.bind(null, value)`:** encrypt the values an
-  inline action closes over into the form / Flight reference, as Next.js does, instead of
-  refusing the build.
-
 ## `denext ui` and DevTools
 
 ## Router plugins

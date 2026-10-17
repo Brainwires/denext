@@ -396,7 +396,12 @@ ceiling at the edge (see
 
 - Signed-cookie sessions (`getSession`, auth `strategy: "cookie"`) — shared
   secret, no state.
-- Server Actions, route handlers, rendering — stateless per request.
+- Server Actions, route handlers, rendering — stateless per request. One exception: an
+  action with bound values (an inline action that reads its component's values, or
+  `action.bind(null, value)`) carries them sealed under a key `denext build` generates per build.
+  Replicas started from one build share it; replicas built separately need
+  `DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (or Next.js's `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`) set
+  to the same base64 key (`openssl rand -base64 32`), or a form rendered by one fails on another.
 - `.env` files — each node reads its own; use the platform's secret store so
   they agree.
 - The client bundle — its chunks are content-hashed and served immutable, so a

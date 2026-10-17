@@ -148,11 +148,12 @@ internal design choice with no observable difference lives in
   back to the page (the `Referer`, same origin only). Both work without JavaScript; with it, the
   hydrated client intercepts the submit either way. The form carries no `encType`, so a no-JS file
   input posts its file name only.
-- **An inline Server Action can't close over a component's values.** Next.js binds the locals an
-  inline `"use server"` function reads (encrypted into the page) and supports `action.bind(null,
-  value)`; denext hoists the function to module scope with nothing bound, so one that reads a
-  local of an enclosing function or block is a build error naming the variables. Pass the value
-  in the form (a hidden input) or move the action to a `"use server"` module.
+- **A bound Server Action's values ride its action URL.** Next.js encrypts the values an inline
+  `"use server"` function closes over (and passes `action.bind(null, value)`'s arguments in the
+  clear) inside the action payload; denext seals both with AES-GCM into the action's reference id,
+  so the form posts to `/_denext/action/<id>.<token>`. Large bound values make a long URL: keep
+  them small (an id, not a record). `action.bind` values are encrypted too, and a value must be
+  one the wire codec carries (no functions, class instances or other actions).
 - **Config `rewrites` have one phase.** Next distinguishes `beforeFiles` /
   `afterFiles` / `fallback` rewrites; denext runs its single `rewrites` list after
   middleware and before the filesystem (Next's `beforeFiles` position). Middleware
