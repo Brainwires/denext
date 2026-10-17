@@ -33,7 +33,10 @@ Deno.test("parity extractor: no __@ members; type-only re-exports are types", as
       JSON.stringify({ name: "fake-pkg", version: "1.0.0", types: "index.d.ts" }),
     );
     await Deno.writeTextFile(join(pkg, "index.d.ts"), FAKE_DTS);
-    const [surface] = extractRealSurfacesFor(dir, [{ specifier: "fake-pkg", real: "fake-pkg" }]);
+    const [surface] = await extractRealSurfacesFor(dir, [{
+      specifier: "fake-pkg",
+      real: "fake-pkg",
+    }]);
     assert(surface.resolved, "the fake package resolves");
     const sym = surface.symbols;
 
