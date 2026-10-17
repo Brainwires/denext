@@ -38,6 +38,21 @@ const home = await client.get("/");`}
         app asserts progressive enhancement in CI: every flow runs with no hydration. If a flow
         needed JavaScript, the test would fail.
       </Callout>
+      <p>
+        The <code>plugins</code> in <code>denext.config.ts</code> run as they do under{" "}
+        <code>denext dev</code>: their prepare steps once, their route synthesizers over the scanned
+        routes, and their request handlers for what the App Router doesn't match. A Pages Router app
+        (<code>@denext/pages-router</code>), or a route a plugin serves, answers in the test the way
+        it does in the server. Each <code>createTestApp</code> call gets its own plugin set. Its
+        {" "}
+        <code>close()</code> runs the plugins' teardowns, and <code>await using</code>{" "}
+        calls it for you.
+      </p>
+      <Code lang="ts">
+        {`await using app = await createTestApp("./"); // pages/ + plugins: [pagesRouter()]
+const client = createTestClient(app);
+assertEquals((await client.get("/api/hello")).status, 200); // a Pages API route`}
+      </Code>
 
       <h2>Component testing</h2>
       <p>

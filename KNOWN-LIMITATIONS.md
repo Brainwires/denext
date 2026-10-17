@@ -225,6 +225,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
+- **`createTestApp` runs plugins as `denext dev` does, not as `denext start` does:** plugin
+  build steps don't run, so a route served from build output renders on demand (a Pages Router
+  `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
+  on first use). `jobs/` and `services/` are not started.
 - **The first-party Markdown renderer escapes raw HTML** (it is not passed through). Use an `.mdx`
   entry for raw HTML or components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,

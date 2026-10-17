@@ -34,7 +34,9 @@ import type { AppConfig } from "../server/app-config.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { fillPattern, type RouteParams } from "../router/segments.ts";
 import { enumerateStaticParams } from "../server/static-params.ts";
-import { resolveProject } from "../build/paths.ts";
+import { type ProjectPaths, resolveProject } from "../build/paths.ts";
+import { withBuildDirLock } from "../build/project-locks.ts";
+import { type AppPlugins, setupAppPlugins } from "../plugin/mod.ts";
 import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
@@ -144,23 +146,81 @@ function recordRenderErrors(errors: RenderErrors) {
   };
 }
 
+/** What {@linkcode buildTestHandler} builds. */
+export interface BuiltTestHandler {
+  /** The in-process request handler. */
+  handler: TestHandler;
+  /** The scanned route manifest (plugin synthesizers applied). */
+  manifest: RouteManifest;
+  /** The App Router directory. */
+  appDir: string;
+  /** Run the app's plugin teardowns (a no-op when it has no plugins). */
+  close(): Promise<void>;
+}
+
 /**
  * Build the in-process handler `createTestApp` returns AND the manifest (the probe needs
  * both): the production request pipeline with the "use client"/"use server" boundary
  * discovered by crawling the import graph, no build and no client bundle.
  *
+ * The config's `plugins` are set up the way `denext dev` sets them up (mode `"dev"`, so a
+ * plugin needs no build output): their prepare steps run once, their route synthesizers shape
+ * the manifest, their request handlers claim what the App Router does not match, and `close()`
+ * runs their teardowns. The registrations are this handler's own — two apps built in one
+ * process never share a plugin.
+ *
  * @param projectDir The app directory.
  * @param load The module loader.
  * @param onRequestError The app's `onRequestError` (the probe records render errors with it).
- * @returns The handler, the route manifest and the app directory.
+ * @returns The handler, the route manifest, the app directory and the plugin teardown.
  */
 export async function buildTestHandler(
   projectDir: string,
   load: ModuleLoader,
   onRequestError?: AppConfig["onRequestError"],
-): Promise<{ handler: TestHandler; manifest: RouteManifest; appDir: string }> {
+): Promise<BuiltTestHandler> {
   const paths = await resolveProject(resolve(projectDir));
-  const manifest = await scanRoutes(paths.appDir);
+  const plugins = await testAppPlugins(paths, load);
+  try {
+    const manifest = await scanRoutes(paths.appDir, { synthesizers: plugins?.synthesizers });
+    const handler = await testAppHandler(paths, manifest, load, {
+      onRequestError,
+      matchExternal: plugins?.requestHandler,
+    });
+    const close = () => plugins?.teardown() ?? Promise.resolve();
+    return { handler, manifest, appDir: paths.appDir, close };
+  } catch (error) {
+    await plugins?.teardown();
+    throw error;
+  }
+}
+
+/** The project's plugins set up for one test app, their prepare steps run; `null` without any. */
+async function testAppPlugins(paths: ProjectPaths, load: ModuleLoader): Promise<AppPlugins | null> {
+  const config = paths.config ?? {};
+  if (!config.plugins?.length) return null;
+  const base = { projectRoot: paths.projectDir, appDir: paths.appDir, config };
+  const plugins = await setupAppPlugins({ ...base, mode: "dev", load });
+  try {
+    // The codegen the app imports (e.g. content-collections), as `denext dev` runs it at startup.
+    await withBuildDirLock(
+      paths.projectDir,
+      () => plugins.runPrepareSteps({ ...base, outDir: paths.outDir }),
+    );
+  } catch (error) {
+    await plugins.teardown();
+    throw error;
+  }
+  return plugins;
+}
+
+/** `createApp` over `manifest`, with middleware and the boundary discovered from the graph. */
+async function testAppHandler(
+  paths: ProjectPaths,
+  manifest: RouteManifest,
+  load: ModuleLoader,
+  hooks: Pick<AppConfig, "onRequestError" | "matchExternal">,
+): Promise<TestHandler> {
   let getMiddleware: (() => ReturnType<typeof createMiddlewareRunner>) | undefined;
   if (paths.middlewarePath) {
     const mod = await import(toFileUrl(resolve(paths.middlewarePath)).href);
@@ -174,7 +234,7 @@ export async function buildTestHandler(
   );
   await tagServerModules(boundary.server);
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
-  const handler = createApp({
+  return createApp({
     getManifest: () => manifest,
     load,
     publicDir: paths.publicDir,
@@ -187,9 +247,8 @@ export async function buildTestHandler(
     flightRoutes,
     flightClients: boundary.client,
     flightServers: boundary.server,
-    onRequestError,
+    ...hooks,
   });
-  return { handler, manifest, appDir: paths.appDir };
 }
 
 /** Concrete pathnames to probe for one route (dynamic → param-expanded). */
@@ -267,16 +326,31 @@ export async function probeApp(
 ): Promise<ConformanceReport> {
   const load = options.load ?? defaultLoader;
   const renderErrors: RenderErrors = new Map();
-  const { handler, manifest } = await buildTestHandler(
+  const { handler, manifest, close } = await buildTestHandler(
     projectDir,
     load,
     recordRenderErrors(renderErrors),
   );
+  try {
+    return await probeRoutes(handler, manifest, load, renderErrors, options);
+  } finally {
+    await close();
+  }
+}
+
+/** Probe every manifest route (and `options.extraPaths`) through `handler`. */
+async function probeRoutes(
+  handler: TestHandler,
+  manifest: RouteManifest,
+  load: ModuleLoader,
+  renderErrors: RenderErrors,
+  options: ProbeOptions,
+): Promise<ConformanceReport> {
   const client = createTestClient(handler, {
     origin: options.origin,
     followRedirects: false,
   });
-  const probe = (route: PageRoute, path: string, interactive: boolean) =>
+  const probe: RouteProber = (route, path, interactive) =>
     probePath(client, renderErrors, route, path, interactive, options.expect?.[path]);
 
   const routes: RouteProbe[] = [];
@@ -289,18 +363,7 @@ export async function probeApp(
     if (options.include && !options.include(route.routePath)) continue;
     // Intercepting routes only match during soft nav; skip them on a hard probe.
     if (route.intercept) continue;
-
-    const interactive = await routeNeedsHydration(route);
-    const { paths, skipped } = await pathsForRoute(route, load, options.params?.[route.routePath]);
-
-    if (skipped) {
-      record(skippedProbe(route.routePath, interactive));
-      continue;
-    }
-
-    for (const path of paths) {
-      record(await probe(route, path, interactive));
-    }
+    await probeRoute(route, load, options, probe, record);
   }
 
   for (const path of options.extraPaths ?? []) {
@@ -308,6 +371,23 @@ export async function probeApp(
   }
 
   return summarize(routes);
+}
+
+/** Probes one concrete path of a route. */
+type RouteProber = (route: PageRoute, path: string, interactive: boolean) => Promise<RouteProbe>;
+
+/** Record one manifest route's probes as each finishes: each concrete path, or one skipped entry. */
+async function probeRoute(
+  route: PageRoute,
+  load: ModuleLoader,
+  options: ProbeOptions,
+  probe: RouteProber,
+  record: (probe: RouteProbe) => void,
+): Promise<void> {
+  const interactive = await routeNeedsHydration(route);
+  const { paths, skipped } = await pathsForRoute(route, load, options.params?.[route.routePath]);
+  if (skipped) return record(skippedProbe(route.routePath, interactive));
+  for (const path of paths) record(await probe(route, path, interactive));
 }
 
 /** The probe recorded for a dynamic route with no params to render. */

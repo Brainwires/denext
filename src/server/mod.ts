@@ -200,7 +200,7 @@ export {
 // Plugin contract (Workstream C): the semver-stable surface a plugin (e.g. a Pages
 // Router) extends. `RouteSynthesizer` + the route/convention registrars are the
 // route seam; the plugin types + registrars below are the request/build seams.
-export type { RouteSynthesizer } from "../router/manifest.ts";
+export type { RouteSynthesizer, ScanRoutesOptions } from "../router/manifest.ts";
 export { scanRoutes } from "../router/manifest.ts";
 export type {
   DenextPlugin,

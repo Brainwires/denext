@@ -372,8 +372,26 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-/** Scan `appDir` recursively and produce a sorted route manifest. */
-export async function scanRoutes(appDir: string): Promise<RouteManifest> {
+/** Options for {@linkcode scanRoutes}. */
+export interface ScanRoutesOptions {
+  /**
+   * More synthesizers to run over this scan only, after the registered ones — one app's own
+   * plugins (`createTestApp`), kept out of the process-wide registry.
+   */
+  synthesizers?: readonly RouteSynthesizer[];
+}
+
+/**
+ * Scan `appDir` recursively and produce a sorted route manifest.
+ *
+ * @param appDir The App Router directory.
+ * @param options Per-scan synthesizers.
+ * @returns The manifest, most-specific routes first.
+ */
+export async function scanRoutes(
+  appDir: string,
+  options: ScanRoutesOptions = {},
+): Promise<RouteManifest> {
   const out: WalkOut = { pages: [], api: [] };
   // No `app/` tree → no App Router routes. A Pages Router app (served by the
   // `@denext/pages-router` plugin) has only `pages/`, so return an empty manifest
@@ -396,7 +414,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no
   // hooks registered this is a no-op on already-sorted arrays. Hooks may be async
   // (a plugin scanning its own tree), so await each in registration order.
-  for (const synth of synthesizers) await synth(manifest);
+  for (const synth of [...synthesizers, ...(options.synthesizers ?? [])]) await synth(manifest);
   manifest.pages.sort(bySpecificity);
   manifest.api.sort(bySpecificity);
   manifest.directives = await scanDirectives(manifest);

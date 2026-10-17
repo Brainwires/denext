@@ -13639,9 +13639,30 @@
           "name": "scanRoutes",
           "slug": "scanRoutes",
           "kind": "function",
-          "signature": "scanRoutes(appDir: string): Promise<RouteManifest>",
+          "signature": "scanRoutes(appDir: string, options?: ScanRoutesOptions): Promise<RouteManifest>",
           "doc": "Scan appDir recursively and produce a sorted route manifest.",
           "docFull": "Scan `appDir` recursively and produce a sorted route manifest.",
+          "params": [
+            {
+              "name": "appDir",
+              "doc": "The App Router directory."
+            },
+            {
+              "name": "options",
+              "doc": "Per-scan synthesizers."
+            }
+          ],
+          "returns": "The manifest, most-specific routes first.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ScanRoutesOptions",
+          "slug": "ScanRoutesOptions",
+          "kind": "interface",
+          "signature": "interface ScanRoutesOptions",
+          "doc": "Options for scanRoutes.",
+          "docFull": "Options for {@linkcode scanRoutes}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -19198,16 +19219,16 @@
           "name": "createTestApp",
           "slug": "createTestApp",
           "kind": "function",
-          "signature": "createTestApp(projectDir: string): Promise<TestHandler>",
+          "signature": "createTestApp(projectDir: string): Promise<TestApp>",
           "doc": "Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.",
-          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nconst client = createTestClient(await createTestApp(\"./\"));\n```",
+          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Call `close()` (or\n`await using`) to run the plugins' teardowns. Each call gets its own plugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\n```",
           "params": [
             {
               "name": "projectDir",
-              "doc": "The app directory (contains app/, optional middleware.ts)."
+              "doc": "The app directory (contains app/ or pages/, optional middleware.ts)."
             }
           ],
-          "returns": "A (Request) => Promise<Response> handler.",
+          "returns": "The in-process handler, with close() for the plugin teardowns.",
           "examples": [],
           "denextOnly": true
         },
@@ -19504,6 +19525,18 @@
           "signature": "type StoreFactory<S> = () => S | Promise<S>",
           "doc": "Makes a fresh, empty store for one case.",
           "docFull": "Makes a fresh, empty store for one case.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TestApp",
+          "slug": "TestApp",
+          "kind": "interface",
+          "signature": "interface TestApp",
+          "doc": "The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to run the teardowns of the app's denext.config.ts plugins. await using app = await createTestApp(dir) closes it at the end of the scope.",
+          "docFull": "The handler {@linkcode createTestApp} returns: still a plain `(Request) => Response` function\n(pass it to {@linkcode createTestClient} as before), plus `close()` to run the teardowns of the\napp's `denext.config.ts` plugins. `await using app = await createTestApp(dir)` closes it at\nthe end of the scope.",
           "params": [],
           "returns": "",
           "examples": [],

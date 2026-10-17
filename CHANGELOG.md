@@ -331,6 +331,14 @@ and this project adheres to
   function they throw, as in Next.js. Next 16.4 canary's `unstable_navigation` /
   `unstable_prefetch` are kept as aliases, so an app that adopted them links. `io()` now returns
   a promise, as Next's does.
+- **`createTestApp` runs the config's plugins.** The `plugins` in `denext.config.ts` are set up as
+  under `denext dev`: their prepare steps run once, their route synthesizers shape the scanned
+  routes, and their request handlers answer what the App Router doesn't match, so a Pages Router
+  app (`@denext/pages-router`) and a plugin-served route can be tested in process. Each call gets
+  its own plugin set. The handler gains `close()` and `Symbol.asyncDispose` (`await using app =
+  await createTestApp(dir)`) to run the plugins' teardowns, and is still a plain request handler.
+  `probeApp` (`denext doctor`) runs the plugins too. `scanRoutes(appDir, { synthesizers })` takes
+  per-scan synthesizers.
 - **A cached function that calls another carries its tags and lifetime.** An outer
   `"use cache"` entry now holds the tags of the cached functions it called, so
   `revalidateTag(innerTag)` refreshes it too, and lives no longer than they do unless it sets

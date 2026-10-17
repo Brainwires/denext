@@ -2170,7 +2170,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SamlProviderSp` — This service provider, as one SamlProvider presents itself to its IdP.
 - `interface SamlReplayCache` — Where assertion IDs are remembered so each is accepted once. Back it with something every replica shares (a database table, a KV store) when the SP runs on more than one process.
 - `interface SamlSpConfig` — This SAML 2.0 Service Provider.
-- `scanRoutes(appDir: string): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
+- `scanRoutes(appDir: string, options?: ScanRoutesOptions): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
+- `interface ScanRoutesOptions` — Options for scanRoutes.
 - `type SchemaInput<S> = conditional` — The value a Standard Schema accepts (what a client must send); its output when unknown.
 - `type SchemaOutput<S> = conditional` — The value a Standard Schema produces.
 - `scryptHasher(options?: HashPasswordOptions): Hasher` — The default Hasher: salted **scrypt** through node:crypto, encoded as scrypt$N=…,r=…,p=…$salt$hash. Pass it explicitly to raise the cost: ``ts denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }), … }) `` Hashes stay self-describing, so raising the cost never invalidates existing ones.
@@ -2591,7 +2592,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ConformanceReport` — The full report from probeApp.
 - `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.
 - `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).
-- `createTestApp(projectDir: string): Promise<TestHandler>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
+- `createTestApp(projectDir: string): Promise<TestApp>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
 - `createTestClient(handler: TestHandler, options?: TestClientOptions): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
 - `fireEvent: FireEvent` — Dispatch DOM events at rendered elements (bubbling), each wrapped in act.
 - `interface FireEvent` — A dispatched-event helper: callable, plus named shortcuts. All are async.
@@ -2613,6 +2614,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>` — The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.
 - `class StoreContractError` — A contract case that failed; its message names what the store got wrong.
 - `type StoreFactory<S> = () => S | Promise<S>` — Makes a fresh, empty store for one case.
+- `interface TestApp` — The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to run the teardowns of the app's denext.config.ts plugins. await using app = await createTestApp(dir) closes it at the end of the scope.
 - `interface TestClient` — A cookie-aware, no-JS test driver over a request handler.
 - `interface TestClientOptions` — Options for createTestClient.
 - `interface TestElement` — The read-only shape of a rendered element that query helpers return.

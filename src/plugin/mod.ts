@@ -238,39 +238,140 @@ export interface ApplyPluginsBase {
 export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
   const plugins = base.config.plugins ?? [];
   const startedUnder = generation;
+  const sinks: PluginSinks = {
+    synthesizer: (fn) => synthDisposers.push(registerRouteSynthesizer(fn)),
+    requestHandler: (handler) => requestHandlers.push(handler),
+    buildStep: (step) => buildSteps.push(step),
+    prepareStep: (entry) => prepareSteps.push(entry),
+    command: (command) => {
+      if (startedUnder === generation) pluginCommands.push(command);
+    },
+    deployAdapter: (adapter) => deployAdapters.push(adapter),
+    teardown: (teardown) => teardowns.push(teardown),
+  };
   for (const plugin of plugins) {
     if (startedUnder !== generation) return; // superseded by a resetPlugins() — stale run
     if (applied.has(plugin.name)) continue;
     applied.add(plugin.name);
-    const context: PluginContext = {
-      projectRoot: base.projectRoot,
-      appDir: base.appDir,
-      config: base.config,
-      mode: base.mode,
-      load: base.load,
-      addRouteSynthesizer: (fn) => synthDisposers.push(registerRouteSynthesizer(fn)),
-      addRequestHandler: (handler) => requestHandlers.push(handler),
-      addBuildStep: (step) => buildSteps.push(step),
-      addPrepareStep: (step, opts) => prepareSteps.push({ step, watch: opts?.watch ?? [] }),
-      // Stamped (on a copy — never mutate the plugin's own object) so the CLI can list
-      // plugin verbs under "Project commands" instead of among the built-ins.
-      addCommand: (command) => {
-        const reserved = [command.name, ...(command.aliases ?? [])].find(isReservedDenoVerb);
-        if (reserved !== undefined) {
-          throw new Error(
-            `denext: plugin "${plugin.name}" addCommand: ${reservedVerbError(reserved)}`,
-          );
-        }
-        if (startedUnder === generation) pluginCommands.push({ ...command, source: "plugin" });
-      },
-      addDeployAdapter: (adapter) => deployAdapters.push(adapter),
-      addTeardown: (teardown) => teardowns.push(teardown),
-    };
-    await plugin.setup(context);
+    await plugin.setup(pluginContext(base, plugin, sinks));
   }
   // DENEXT_BOOT_DDL=off: a server checks that every Postgres feature the config built (and each
   // plugin set up) finds its schema, and refuses to start without it.
   if (base.mode === "dev" || base.mode === "prod") await verifyBootSchemas();
+}
+
+/** Where a plugin's registrations land: the process registries, or one app's own set. */
+interface PluginSinks {
+  synthesizer(fn: RouteSynthesizer): void;
+  requestHandler(handler: PluginRequestHandler): void;
+  buildStep(step: PluginBuildStep): void;
+  prepareStep(entry: { step: PluginPrepareStep; watch: readonly string[] }): void;
+  command(command: CommandSpec): void;
+  deployAdapter(adapter: DeployAdapter): void;
+  teardown(teardown: PluginTeardown): void;
+}
+
+/** The {@linkcode PluginContext} one plugin's `setup` receives, writing into `sinks`. */
+function pluginContext(
+  base: ApplyPluginsBase,
+  plugin: DenextPlugin,
+  sinks: PluginSinks,
+): PluginContext {
+  return {
+    projectRoot: base.projectRoot,
+    appDir: base.appDir,
+    config: base.config,
+    mode: base.mode,
+    load: base.load,
+    addRouteSynthesizer: (fn) => sinks.synthesizer(fn),
+    addRequestHandler: (handler) => sinks.requestHandler(handler),
+    addBuildStep: (step) => sinks.buildStep(step),
+    addPrepareStep: (step, opts) => sinks.prepareStep({ step, watch: opts?.watch ?? [] }),
+    // Stamped (on a copy — never mutate the plugin's own object) so the CLI can list
+    // plugin verbs under "Project commands" instead of among the built-ins.
+    addCommand: (command) => {
+      const reserved = [command.name, ...(command.aliases ?? [])].find(isReservedDenoVerb);
+      if (reserved !== undefined) {
+        throw new Error(
+          `denext: plugin "${plugin.name}" addCommand: ${reservedVerbError(reserved)}`,
+        );
+      }
+      sinks.command({ ...command, source: "plugin" });
+    },
+    addDeployAdapter: (adapter) => sinks.deployAdapter(adapter),
+    addTeardown: (teardown) => sinks.teardown(teardown),
+  };
+}
+
+/**
+ * One app's own plugin set, from {@linkcode setupAppPlugins}: what its plugins registered, kept
+ * out of the process-wide registries so two apps in one process (a test suite's
+ * `createTestApp` calls) never see each other's handlers.
+ */
+export interface AppPlugins {
+  /** The route synthesizers to run over this app's scanned manifest. */
+  readonly synthesizers: readonly RouteSynthesizer[];
+  /** The combined request handler (first non-null wins), or `undefined` when none registered. */
+  readonly requestHandler: ((request: Request) => Promise<Response | null>) | undefined;
+  /** Run this app's prepare steps (each failure logged, never thrown). */
+  runPrepareSteps(context: PluginPrepareContext): Promise<void>;
+  /** Run this app's teardowns, most recent first (each failure logged, never thrown). */
+  teardown(): Promise<void>;
+}
+
+/**
+ * Set up `base.config.plugins` for ONE app, into a registry of its own: every plugin's `setup`
+ * runs (not de-duplicated against the process registries {@linkcode applyPlugins} fills), and
+ * the route synthesizers, request handlers, prepare steps and teardowns it registers come back
+ * on the result. Build steps, commands and deploy adapters are accepted and ignored — they
+ * belong to a build or the CLI, not to a running app.
+ *
+ * @param base The pipeline facts to expose to each plugin.
+ * @returns The app's plugin set.
+ */
+export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugins> {
+  const synthesizers: RouteSynthesizer[] = [];
+  const handlers: PluginRequestHandler[] = [];
+  const prepares: Array<{ step: PluginPrepareStep }> = [];
+  const own: PluginTeardown[] = [];
+  const ignore = () => {};
+  const sinks: PluginSinks = {
+    synthesizer: (fn) => synthesizers.push(fn),
+    requestHandler: (handler) => handlers.push(handler),
+    buildStep: ignore,
+    prepareStep: (entry) => prepares.push(entry),
+    command: ignore,
+    deployAdapter: ignore,
+    teardown: (teardown) => own.push(teardown),
+  };
+  try {
+    for (const plugin of base.config.plugins ?? []) {
+      await plugin.setup(pluginContext(base, plugin, sinks));
+    }
+  } catch (error) {
+    await runTeardowns(own); // a later plugin's setup failed: release what the earlier ones hold
+    throw error;
+  }
+  return {
+    synthesizers,
+    requestHandler: combineHandlers(handlers),
+    runPrepareSteps: (context) => runPrepares(prepares, context),
+    teardown: () => runTeardowns(own),
+  };
+}
+
+/** One handler over `handlers` (first non-null wins; the list is read per request), or `undefined`. */
+function combineHandlers(
+  handlers: readonly PluginRequestHandler[],
+): ((request: Request) => Promise<Response | null>) | undefined {
+  if (handlers.length === 0) return undefined;
+  return async (request: Request): Promise<Response | null> => {
+    for (const handler of handlers) {
+      const response = await handler(request);
+      if (response) return response;
+    }
+    return null;
+  };
 }
 
 /**
@@ -281,14 +382,7 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
 export function getPluginRequestHandler():
   | ((request: Request) => Promise<Response | null>)
   | undefined {
-  if (requestHandlers.length === 0) return undefined;
-  return async (request: Request): Promise<Response | null> => {
-    for (const handler of requestHandlers) {
-      const response = await handler(request);
-      if (response) return response;
-    }
-    return null;
-  };
+  return combineHandlers(requestHandlers);
 }
 
 /** Options for {@linkcode runPluginBuildSteps}: where emitted files go, and what the build knows. */
@@ -439,8 +533,16 @@ export async function runPluginBuildSteps(
  * once at `denext dev` startup. A step that throws is caught and logged so one plugin's codegen
  * failure can't abort the build or the dev boot.
  */
-export async function runPluginPrepareSteps(context: PluginPrepareContext): Promise<void> {
-  for (const { step } of prepareSteps) {
+export function runPluginPrepareSteps(context: PluginPrepareContext): Promise<void> {
+  return runPrepares(prepareSteps, context);
+}
+
+/** Run `steps` in order; a step that throws is logged and the rest still run. */
+async function runPrepares(
+  steps: readonly { step: PluginPrepareStep }[],
+  context: PluginPrepareContext,
+): Promise<void> {
+  for (const { step } of steps) {
     try {
       await step(context);
     } catch (error) {
@@ -526,15 +628,20 @@ export function getPluginCommands(): readonly CommandSpec[] {
  * dependencies unwind in reverse). A teardown that throws is caught and logged so
  * one failing plugin can't strand the others. Called when the server drains.
  */
-export async function runPluginTeardown(): Promise<void> {
-  for (let i = teardowns.length - 1; i >= 0; i--) {
+export function runPluginTeardown(): Promise<void> {
+  return runTeardowns(teardowns);
+}
+
+/** Run `list` most-recent-first (each failure logged), then empty it so a second call is a no-op. */
+async function runTeardowns(list: PluginTeardown[]): Promise<void> {
+  for (let i = list.length - 1; i >= 0; i--) {
     try {
-      await teardowns[i]();
+      await list[i]();
     } catch (error) {
       console.error(`denext: a plugin teardown failed:`, error);
     }
   }
-  teardowns.length = 0;
+  list.length = 0;
 }
 
 /**
