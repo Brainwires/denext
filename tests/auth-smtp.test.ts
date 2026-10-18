@@ -300,7 +300,9 @@ Deno.test("smtp: a server that never greets times out", async () => {
   await withServer({ silent: true }, async (server) => {
     const started = Date.now();
     await assertRejects(
-      () => mailerFor(server, { timeoutMs: 200 }).send(MESSAGE),
+      // 127.0.0.1, not localhost: on Windows "localhost" tries ::1 first, and a refused
+      // loopback connect there takes ~2 s of SYN retries, longer than this timeout.
+      () => mailerFor(server, { host: "127.0.0.1", timeoutMs: 200 }).send(MESSAGE),
       SmtpError,
       "the greeting timed out",
     );
@@ -360,7 +362,8 @@ Deno.test("smtp: connecting to a closed port fails without leaking the error tex
   probe.close();
   await assertRejects(
     () =>
-      smtpMailer({ host: "127.0.0.1", port, from: "a@example.test", timeoutMs: 2_000 }).send(
+      // A timeout well past Windows' ~2 s of SYN retries before it reports a refused connect.
+      smtpMailer({ host: "127.0.0.1", port, from: "a@example.test", timeoutMs: 10_000 }).send(
         MESSAGE,
       ),
     SmtpError,

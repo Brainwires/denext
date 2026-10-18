@@ -12,6 +12,11 @@ import { it, vi } from "vitest";
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 
 /** A fresh instance of the mobile file API and the bridge error guard (a page load). */
+// Each test re-imports the mobile and desktop client modules after `vi.resetModules()`, inside its
+// own timeout; the first import in a run evaluates the whole graph cold, which takes longer than
+// Vitest's 5 s default on a slow Windows runner.
+const LOAD_TIMEOUT_MS = 30_000;
+
 async function load() {
   vi.resetModules();
   const mobile = await import("../src/mobile/mod.ts");
@@ -114,34 +119,38 @@ async function withGlobals(
 
 const abort = () => Promise.reject(new DOMException("dismissed", "AbortError"));
 
-it("web picked: pickFolder registers the directory; read/write/list/delete through { picked }", async () => {
-  const { deleteFile, listDir, pickFolder, readFile, writeFile } = await load();
-  const root = new Node("directory", "Projects", perms());
-  const readme = await root.getFileHandle("readme.md", { create: true });
-  readme.text = "hi";
-  await withGlobals({ showDirectoryPicker: () => Promise.resolve(root) }, async () => {
-    const folder = await pickFolder();
-    assert(folder);
-    assertEquals(folder.name, "Projects");
-    assertEquals(folder.path, undefined);
-    assert(folder.handle.startsWith("web:"), folder.handle);
-    const directory = { picked: folder.handle };
-    assertEquals(await readFile("readme.md", { directory }), "hi");
-    await writeFile("notes/a.md", "A", { directory, recursive: true });
-    await writeFile("b.bin", btoa("xyz"), { directory, encoding: "base64" });
-    assertEquals(await readFile("b.bin", { directory }), "xyz");
-    assertEquals((await listDir("", { directory })).map((e) => e.name), [
-      "b.bin",
-      "notes",
-      "readme.md",
-    ]);
-    assertEquals((await listDir("notes", { directory })).map((e) => e.name), ["a.md"]);
-    await deleteFile("notes/a.md", { directory });
-    assertEquals(await listDir("notes", { directory }), []);
-    // A picked folder is not a file.
-    await assertRejects(() => readFile("", { directory }));
-  });
-});
+it(
+  "web picked: pickFolder registers the directory; read/write/list/delete through { picked }",
+  async () => {
+    const { deleteFile, listDir, pickFolder, readFile, writeFile } = await load();
+    const root = new Node("directory", "Projects", perms());
+    const readme = await root.getFileHandle("readme.md", { create: true });
+    readme.text = "hi";
+    await withGlobals({ showDirectoryPicker: () => Promise.resolve(root) }, async () => {
+      const folder = await pickFolder();
+      assert(folder);
+      assertEquals(folder.name, "Projects");
+      assertEquals(folder.path, undefined);
+      assert(folder.handle.startsWith("web:"), folder.handle);
+      const directory = { picked: folder.handle };
+      assertEquals(await readFile("readme.md", { directory }), "hi");
+      await writeFile("notes/a.md", "A", { directory, recursive: true });
+      await writeFile("b.bin", btoa("xyz"), { directory, encoding: "base64" });
+      assertEquals(await readFile("b.bin", { directory }), "xyz");
+      assertEquals((await listDir("", { directory })).map((e) => e.name), [
+        "b.bin",
+        "notes",
+        "readme.md",
+      ]);
+      assertEquals((await listDir("notes", { directory })).map((e) => e.name), ["a.md"]);
+      await deleteFile("notes/a.md", { directory });
+      assertEquals(await listDir("notes", { directory }), []);
+      // A picked folder is not a file.
+      await assertRejects(() => readFile("", { directory }));
+    });
+  },
+  LOAD_TIMEOUT_MS,
+);
 
 it("web picked: writes ask for write access once; a refusal is a typed forbidden", async () => {
   const { isDesktopBridgeError, listDir, pickFolder, writeFile } = await load();
@@ -166,36 +175,40 @@ it("web picked: writes ask for write access once; a refusal is a typed forbidden
     // Reading needs no write access.
     assertEquals(await listDir("", { directory: { picked: folder.handle } }), []);
   });
-});
+}, LOAD_TIMEOUT_MS);
 
-it('web picked: pickDocument uses showOpenFilePicker; the file is read with the path ""', async () => {
-  const { deleteFile, listDir, pickDocument, readFile } = await load();
-  const file = new Node("file", "a.txt", perms());
-  file.text = "abc";
-  const seen: unknown[] = [];
-  const showOpenFilePicker = (o: unknown) => {
-    seen.push(o);
-    return Promise.resolve([file]);
-  };
-  await withGlobals({ showOpenFilePicker }, async () => {
-    const doc = await pickDocument({ types: ["text/plain", ".txt"] });
-    assert(doc?.handle?.startsWith("web:"));
-    const { handle } = doc as { handle: string };
-    assertEquals(doc?.name, "a.txt");
-    assertEquals(doc?.mimeType, "text/plain");
-    assertEquals(doc?.data, btoa("abc"));
-    assertEquals(seen, [{ multiple: false, types: [{ accept: { "text/plain": [] } }] }]);
-    const directory = { picked: handle };
-    assertEquals(await readFile("", { directory }), "abc");
-    await assertRejects(() => readFile("x.txt", { directory }), TypeError, "takes the path");
-    await assertRejects(() => listDir("", { directory }), TypeError, "not a folder");
-    await deleteFile("", { directory });
-    assert(file.removed);
-  });
-  await withGlobals({ showOpenFilePicker: abort }, async () => {
-    assertEquals(await pickDocument(), null);
-  });
-});
+it(
+  'web picked: pickDocument uses showOpenFilePicker; the file is read with the path ""',
+  async () => {
+    const { deleteFile, listDir, pickDocument, readFile } = await load();
+    const file = new Node("file", "a.txt", perms());
+    file.text = "abc";
+    const seen: unknown[] = [];
+    const showOpenFilePicker = (o: unknown) => {
+      seen.push(o);
+      return Promise.resolve([file]);
+    };
+    await withGlobals({ showOpenFilePicker }, async () => {
+      const doc = await pickDocument({ types: ["text/plain", ".txt"] });
+      assert(doc?.handle?.startsWith("web:"));
+      const { handle } = doc as { handle: string };
+      assertEquals(doc?.name, "a.txt");
+      assertEquals(doc?.mimeType, "text/plain");
+      assertEquals(doc?.data, btoa("abc"));
+      assertEquals(seen, [{ multiple: false, types: [{ accept: { "text/plain": [] } }] }]);
+      const directory = { picked: handle };
+      assertEquals(await readFile("", { directory }), "abc");
+      await assertRejects(() => readFile("x.txt", { directory }), TypeError, "takes the path");
+      await assertRejects(() => listDir("", { directory }), TypeError, "not a folder");
+      await deleteFile("", { directory });
+      assert(file.removed);
+    });
+    await withGlobals({ showOpenFilePicker: abort }, async () => {
+      assertEquals(await pickDocument(), null);
+    });
+  },
+  LOAD_TIMEOUT_MS,
+);
 
 it("web picked: saveFile uses showSaveFilePicker, writes, and returns a handle", async () => {
   const { downloadToFile, readFile, saveFile, writeFile } = await load();
@@ -225,7 +238,7 @@ it("web picked: saveFile uses showSaveFilePicker, writes, and returns a handle",
   await withGlobals({ showSaveFilePicker: abort }, async () => {
     assertEquals(await saveFile("x"), null);
   });
-});
+}, LOAD_TIMEOUT_MS);
 
 it("web picked: unknown handles are forbidden; no FSA keeps the old fallbacks", async () => {
   const { isDesktopBridgeError, listDir, pickFolder, readFile } = await load();
@@ -260,4 +273,4 @@ it("web picked: unknown handles are forbidden; no FSA keeps the old fallbacks", 
     assert(isDesktopBridgeError(err));
     assertEquals(err.code, "unavailable");
   });
-});
+}, LOAD_TIMEOUT_MS);

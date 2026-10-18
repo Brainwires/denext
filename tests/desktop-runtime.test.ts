@@ -11,6 +11,7 @@ import {
   stripDesktopCredentials,
 } from "../src/build/desktop.ts";
 import { isLoopbackHost } from "../src/utils/loopback.ts";
+import { symlinkDir } from "./helpers/temp.ts";
 
 Deno.test("isLoopbackHost: strict — a `127.`-prefix / `.localhost`-suffix DNS name is NOT loopback", () => {
   // Genuine loopback.
@@ -268,7 +269,7 @@ Deno.test("desktop handler: a multi-page export's routes load their own page, no
       "<!doctype html><head></head><main>ABOUT</main>",
     );
     await Deno.writeTextFile(join(outside, "index.html"), "<main>OUTSIDE</main>");
-    await Deno.symlink(outside, join(dir, "leak"));
+    await symlinkDir(outside, join(dir, "leak"));
     const handle = createDesktopHandler({}, dir, undefined, "tok-pages");
     const get = (path: string, headers: Record<string, string>) =>
       handle(
