@@ -759,7 +759,9 @@ export function streamPprFlightDocument(
     // All holes drained: fill the cached shell Flight, merge islands + signal state.
     const flight = fillFlightHoles(opts.shellFlight, holeFlights);
     const islands = [...opts.shellIslands, ...opts.resume.islands];
-    const signalState = { ...opts.shellSignalState, ...finish() };
+    // The cached shell's values win over the resume's re-walk of the same components: they are
+    // what the shell's HTML was rendered from, so hydration must adopt them.
+    const signalState = { ...finish(), ...opts.shellSignalState };
     const tailOpts: DocumentOptions = {
       ...docOpts,
       flight,

@@ -123,6 +123,11 @@ and this project adheres to
   compile's stylesheet redirects are now relative to its config). Both shapes now serve their
   pages, API routes and static assets from the binary, with the project deleted.
 
+- **A Flight PPR response hydrates with the signal state its cached shell was rendered from.**
+  The resume re-walks the static shell to find the holes and could record a fresher value under
+  a shell component's id (a `useApi({ suspense: true })` answer that changed since the shell was
+  cached); that value replaced the shell's in `#__denext_state`, so hydration disagreed with the
+  HTML. The shell's state now wins on an id both recorded, as on an HTML route.
 - **An ISR page's cached document keeps its islands map and its signal state.** The document
   stored for a `revalidate` route was built without `#__denext_islands` and `#__denext_state`,
   so every response from the page cache — the first one included — shipped a Flight route's
