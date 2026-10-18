@@ -11389,6 +11389,30 @@
           "denextOnly": true
         },
         {
+          "name": "PluginDeployAssets",
+          "slug": "PluginDeployAssets",
+          "kind": "typeAlias",
+          "signature": "type PluginDeployAssets = () => typeOperator | Promise<typeOperator>",
+          "doc": "A plugin's asset groups for the deploy manifest (PluginContext.addDeployAssets): files it serves as they are, each group with the Cache-Control the plugin sends for them.",
+          "docFull": "A plugin's asset groups for the deploy manifest ({@linkcode PluginContext.addDeployAssets}):\nfiles it serves as they are, each group with the `Cache-Control` the plugin sends for them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PluginDeployRoutes",
+          "slug": "PluginDeployRoutes",
+          "kind": "typeAlias",
+          "signature": "type PluginDeployRoutes = () => typeOperator | Promise<typeOperator>",
+          "doc": "A plugin's routes for the deploy manifest (PluginContext.addDeployRoutes).",
+          "docFull": "A plugin's routes for the deploy manifest ({@linkcode PluginContext.addDeployRoutes}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PluginMode",
           "slug": "PluginMode",
           "kind": "typeAlias",
@@ -34595,6 +34619,30 @@
           "signature": "interface PluginContext",
           "doc": "The seams a plugin's DenextPlugin.setup may extend.",
           "docFull": "The seams a plugin's {@linkcode DenextPlugin.setup} may extend.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PluginDeployAssets",
+          "slug": "PluginDeployAssets",
+          "kind": "typeAlias",
+          "signature": "type PluginDeployAssets = () => typeOperator | Promise<typeOperator>",
+          "doc": "A plugin's asset groups for the deploy manifest (PluginContext.addDeployAssets): files it serves as they are, each group with the Cache-Control the plugin sends for them.",
+          "docFull": "A plugin's asset groups for the deploy manifest ({@linkcode PluginContext.addDeployAssets}):\nfiles it serves as they are, each group with the `Cache-Control` the plugin sends for them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PluginDeployRoutes",
+          "slug": "PluginDeployRoutes",
+          "kind": "typeAlias",
+          "signature": "type PluginDeployRoutes = () => typeOperator | Promise<typeOperator>",
+          "doc": "A plugin's routes for the deploy manifest (PluginContext.addDeployRoutes).",
+          "docFull": "A plugin's routes for the deploy manifest ({@linkcode PluginContext.addDeployRoutes}).",
           "params": [],
           "returns": "",
           "examples": [],
