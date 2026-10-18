@@ -26,6 +26,12 @@ import {
   stampDenoJsonVersion,
 } from "./desktop-installers.ts";
 import { peVersionWords, stampPeResources } from "./pe-resources.ts";
+import {
+  DEFAULT_TIMESTAMP_URL,
+  signtoolArgs,
+  windowsCertificate,
+  windowsCertificateSecrets,
+} from "./code-signing.ts";
 import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 
 /** A package script's parsed command line. */
@@ -709,8 +715,6 @@ export function desktopWindowsTargetNote(
 
 /** How many files one `signtool sign` call takes (keeps the command line short on Windows). */
 const SIGN_BATCH = 32;
-/** The RFC-3161 timestamp server used when `DENEXT_SIGN_TIMESTAMP_URL` is unset. */
-const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
 
 /**
  * Whether `path` holds a PE image: `MZ`, then `PE\0\0` at the offset the DOS header's
@@ -792,7 +796,9 @@ export async function desktopSignWindows(
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   if (files.length === 0) return false;
   const what = files.length === 1 ? files[0] : `${files.length} files`;
-  const cert = env("DENEXT_WINDOWS_CERT");
+  // The shared certificate settings (./code-signing.ts); a store thumbprint is the compiled
+  // binary's option only, so this path keeps reading the .pfx alone.
+  const cert = windowsCertificate(env, false);
   if (!cert) {
     warn(`  no DENEXT_WINDOWS_CERT set — ${what} not Authenticode-signed.`);
     return false;
@@ -802,13 +808,10 @@ export async function desktopSignWindows(
     return false;
   }
   const timestamp = env("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
-  const args = ["sign", "/f", cert, "/fd", "sha256", "/tr", timestamp, "/td", "sha256"];
-  const pass = env("DENEXT_WINDOWS_CERT_PASSWORD");
-  if (pass) args.push("/p", pass);
   const run = deps.run ?? desktopRun;
   for (let i = 0; i < files.length; i += SIGN_BATCH) {
-    await run(["signtool", ...args, ...files.slice(i, i + SIGN_BATCH)], undefined, {
-      secrets: pass ? [pass] : [],
+    await run(signtoolArgs(files.slice(i, i + SIGN_BATCH), cert, timestamp), undefined, {
+      secrets: windowsCertificateSecrets(cert),
     });
   }
   return true;

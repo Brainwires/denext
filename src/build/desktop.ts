@@ -189,6 +189,14 @@ export {
   type MacosSigningEntitlementsOptions,
   V8_ENTITLEMENTS,
 } from "./desktop-macos-signing.ts";
+// The code-signing argv and credentials the package scripts and `denext build --compile --sign`
+// share.
+export {
+  macosCodesignArgs,
+  type MacosCodesignOptions,
+  type NotaryCredentials,
+  notarytoolSubmitArgs,
+} from "./code-signing.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
   buildDesktopBundle,
