@@ -717,8 +717,9 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
 
 /** The scaffold's `.gitignore`: generated / build outputs to keep out of version control. */
 function scaffoldGitignore(opts: ScaffoldOptions, appBase: string): string {
-  // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
-  const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
+  // `.denext/` (build output), `out/` (`denext export`), `.deno/` (the native TypeScript 7
+  // check's and the tsgo language server's project cache), env files with secrets.
+  const ignore = [".denext/", "out/", ".deno/", ".env*.local", "*.local", "patches/.work/"];
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);

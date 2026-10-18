@@ -30,6 +30,9 @@ Deno.test("scaffoldFiles: plain project", () => {
   assertStringIncludes(denoJson, "jsr:@denext/denext");
   assertStringIncludes(denoJson, '"jsxImportSource": "denext"');
   assert(!files.some((f) => f.path === "denext.config.ts"), "no config without options");
+  // The native TypeScript 7 check and the tsgo language server cache into `.deno/`.
+  const gitignore = files.find((f) => f.path === ".gitignore")!.content.split("\n");
+  assert(gitignore.includes(".deno/"), gitignore.join("\n"));
 });
 
 Deno.test("scaffoldFiles: the page is a Server Component and the counter is a 'use client' island", () => {

@@ -2656,13 +2656,19 @@ function desktopTask(hasIcon: boolean): string {
  * @param entries `.gitignore` lines to ensure (e.g. `.denext/`, `out/`).
  * @param written Accumulator the `.gitignore` path is pushed onto when modified.
  */
+/**
+ * The project-local cache Deno's native TypeScript 7 check and the tsgo language server write,
+ * ignored in every migrated project (once: {@link appendGitignore} skips a present line).
+ */
+const DENO_PROJECT_CACHE = ".deno/";
+
 /** Append `.gitignore` entries (shared, symlink-safe), tracking the path in `written`. */
 async function ensureGitignore(
   dir: string,
   entries: string[],
   written: string[],
 ): Promise<void> {
-  const path = await appendGitignore(dir, entries);
+  const path = await appendGitignore(dir, [...entries, DENO_PROJECT_CACHE]);
   if (path) written.push(path);
 }
 
