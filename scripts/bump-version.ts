@@ -34,7 +34,7 @@
 // section — this tool deliberately stays limited to the version-string pins.
 
 import { walk } from "@std/fs";
-import { dirname, fromFileUrl, join } from "@std/path";
+import { dirname, fromFileUrl, join, SEPARATOR } from "@std/path";
 
 const ROOT = dirname(dirname(fromFileUrl(import.meta.url)));
 
@@ -72,7 +72,7 @@ async function targetFiles(): Promise<string[]> {
   for await (
     const entry of walk(join(ROOT, "packages"), {
       includeDirs: false,
-      match: [/packages\/[^/]+\/deno\.json$/],
+      match: [/packages[\\/][^\\/]+[\\/]deno\.json$/], // `\` on Windows
       maxDepth: 2,
     })
   ) {
@@ -83,7 +83,7 @@ async function targetFiles(): Promise<string[]> {
   for await (
     const entry of walk(join(ROOT, "examples"), {
       includeDirs: false,
-      match: [/examples\/[^/]+\/deno\.json$/],
+      match: [/examples[\\/][^\\/]+[\\/]deno\.json$/],
       maxDepth: 2,
     })
   ) {
@@ -99,7 +99,7 @@ const DOC_SPEC_ROOTS = ["README.md", "site/app/docs", "examples"];
 const DOC_SPEC_EXTS = [".md", ".mdx", ".ts", ".tsx", ".json", ".yml", ".yaml"];
 
 /** Never descend into installed or generated trees. */
-const DOC_SPEC_SKIP = /(^|\/)(node_modules|\.denext|out|dist|ios|android)(\/|$)/;
+const DOC_SPEC_SKIP = /(^|[\\/])(node_modules|\.denext|out|dist|ios|android)([\\/]|$)/;
 
 /**
  * The docs' prerelease specifiers to rewrite for `newVersion`: `^<core>-<anything>` where
@@ -170,7 +170,7 @@ export async function bumpVersion(
   if (docSpec) {
     const done = new Set(results.map((r) => r.file));
     for (const file of await docSpecifierFiles()) {
-      if (done.has(file.slice(ROOT.length + 1))) continue;
+      if (done.has(file.slice(ROOT.length + 1).replaceAll(SEPARATOR, "/"))) continue;
       const r = await bumpFile(file, docSpec, newVersion, opts.dry === true);
       if (r && r.hits > 0) results.push(r);
     }
@@ -188,7 +188,7 @@ export async function bumpVersion(
 
 /** The docs corpus's version and denext's exact import of it (scripts/lib/docs-corpus-package.ts). */
 const CORPUS_SPOTS: Array<[file: string, re: RegExp]> = [
-  [join("packages", "docs-corpus", "deno.json"), /(?<="version":\s*")[^"]*(?=")/],
+  ["packages/docs-corpus/deno.json", /(?<="version":\s*")[^"]*(?=")/],
   ["deno.json", /(?<="jsr:@denext\/docs-corpus@)[^"]*(?=")/],
 ];
 
@@ -224,7 +224,8 @@ async function bumpFile(
   if (text === null) return null; // a listed file may not exist in every checkout
   const hits = text.match(re)?.length ?? 0;
   if (hits > 0 && !dry) await Deno.writeTextFile(file, text.replace(re, newVersion));
-  return { file: file.slice(ROOT.length + 1), hits };
+  // Reported repo-relative with `/` on every OS (Windows paths carry `\\`).
+  return { file: file.slice(ROOT.length + 1).replaceAll(SEPARATOR, "/"), hits };
 }
 
 async function readOrNull(file: string): Promise<string | null> {
