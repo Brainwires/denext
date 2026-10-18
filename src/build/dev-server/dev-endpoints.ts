@@ -10,6 +10,7 @@ import { customSchemeOrigin, liveCorsAllowed } from "../../server/origin-check.t
 import type { CorsPolicy } from "../../server/cors.ts";
 import { enrichFrame, explainForOverlay, explainForTerminal, pushError } from "./reload.ts";
 import type { DevState } from "./state.ts";
+import { isDevTokenHeaderClient } from "./dev-token.ts";
 
 /**
  * Is `request` allowed to reach a dev-only endpoint? Defeats a cross-origin page a
@@ -43,7 +44,9 @@ export function devOriginAllowed(request: Request, url: URL, allowed: string[]):
   // Reached by a LAN / bound address, a bare client (no Sec-Fetch-Site, no Origin) is another
   // machine on the network, not the developer's browser: the Host alone is whatever it sent, so
   // it proves nothing. Every browser that loads the dev app over the LAN stamps Sec-Fetch-Site.
-  if (!isLoopbackDevHost(url.hostname)) return false;
+  // The one bare client admitted is a dev client that presented the per-run session token in its
+  // header (the desktop dev proxy, which relays a window that sends neither header).
+  if (!isLoopbackDevHost(url.hostname)) return isDevTokenHeaderClient(request);
   if (!origin) return true; // curl / tests on this machine — no cross-origin risk
   let host: string;
   try {

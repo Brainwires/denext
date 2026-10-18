@@ -415,9 +415,15 @@ ws.onopen = () =>
         In proxy mode the runtime injects its <code>globalThis.__denext</code>{" "}
         marker into the HTML the dev server returns, so <code>runtimePlatform()</code> reports{" "}
         <code>"desktop"</code> as in a real window, and <code>openAuthSession</code>{" "}
-        and the OTA boot beacon work against the local runtime. With <code>--lan</code>{" "}
-        the per-launch token is not injected (the page comes from another machine), so those
-        token-gated features are refused; live-reloading the UI itself is unaffected.
+        and the OTA boot beacon work against the local runtime. The per-launch token rides the page
+        too, so the capability bridge (<code>secureStore</code>, <code>fs</code>, …) works. With
+        {" "}
+        <code>--lan</code>{" "}
+        it does so only when the dev URL carries the dev server&apos;s per-run session token (<code>
+          ?__denext_dev=…
+        </code>, which <code>desktop dev --lan</code>{" "}
+        passes the window), so the page comes from a server that refuses every other peer on the
+        network; the token itself never leaves the machine.
       </Callout>
 
       <h2>Building for one or more architectures (macOS)</h2>

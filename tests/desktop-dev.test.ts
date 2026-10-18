@@ -10,6 +10,7 @@ import {
   type DesktopWindow,
   runDesktopDev,
 } from "../src/build/desktop-dev.ts";
+import { devChildEnv, REEXEC_GUARD_ENV } from "../src/cli/dev-attach.ts";
 
 // ---- the target: loopback-only unless --lan (invariant 3) ------------------------------------
 
@@ -124,4 +125,25 @@ Deno.test("desktop dev stops a started dev server when the window closes itself"
   await runDesktopDev(deps);
   assertEquals(f.windowStopped(), 1);
   assertEquals(f.serverStopped(), 1);
+});
+
+// ---- the dev server child: never the parent's re-exec guards --------------------------------
+
+Deno.test("devChildEnv: the dev server child drops the CSS / module re-exec guards", () => {
+  // `desktop dev` itself runs under its CSS config (DENEXT_CSS_ACTIVE set). A `denext dev` child
+  // that inherited the guard skipped its own re-exec and failed every stylesheet project's page
+  // with `Import "denext/…" not a dependency`.
+  const parent = {
+    PATH: "/usr/bin",
+    DENEXT_CSS_ACTIVE: "1",
+    DENEXT_MODULE_ACTIVE: "1",
+    DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.21",
+  };
+  const env = devChildEnv(parent, { DENEXT_DEV_TOKEN: "ab".repeat(32) });
+  for (const name of REEXEC_GUARD_ENV) assertEquals(env[name], undefined, name);
+  assertEquals(env.PATH, "/usr/bin");
+  assertEquals(env.DENEXT_TOOLCHAIN_ACTIVE, "2.9.7-denext.21");
+  assertEquals(env.DENEXT_DEV_TOKEN, "ab".repeat(32));
+  assertEquals(parent.DENEXT_CSS_ACTIVE, "1", "the parent's environment is not changed");
+  assertEquals(devChildEnv({ A: "1" }), { A: "1" });
 });

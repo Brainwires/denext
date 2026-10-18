@@ -22,7 +22,14 @@ denext task desktop            # export + open the window (denext's pinned runti
 denext task desktop:package    # write scripts/package-*.ts from the scaffold, then package
 denext task test:window        # package, launch and assert every check (exits 1 on a failure)
 denext task drive start        # launch the last build in drive mode (the manual checks, scripted)
+denext task test:lan-dev       # `desktop dev --lan`: the proxied page keeps its bridge (secureStore)
 ```
+
+`test:lan-dev` runs `denext desktop dev --lan` against a `denext dev` on this machine's LAN address
+and asserts that the live-reload window's page holds the per-launch desktop token and round-trips
+`secureStore`, and that the dev server still refuses a LAN request without its per-run session
+token. It needs a LAN IPv4 address and, on Linux, a session with a Secret Service:
+`e2e/wm-session.sh --wayland sway -- deno task test:lan-dev` runs it headless.
 
 ### `test:window` flags
 

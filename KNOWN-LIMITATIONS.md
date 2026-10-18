@@ -469,5 +469,4 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   ([checklist](https://denext.dev/docs/contributing#manual-desktop-checks-before-a-final-release)).
 - **No Touch Bar.** `react-native-windows` / `-macos` native
   modules don't run (write a desktop extension); their extra components are DOM stand-ins.
-- **`denext desktop dev` runs under the `deno` CLI only;** with `--lan` the per-launch token is
-  not injected, so token-gated features are refused.
+- **`denext desktop dev` runs under the `deno` CLI only.**

@@ -48,6 +48,22 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop dev --lan` hands the window its per-launch desktop token**, so the capability
+  bridge (`secureStore`, `fs`, the OAuth sheet, the boot beacon) works against a dev server bound
+  to the LAN address. The token rides the proxied page only when the dev URL carries that server's
+  per-run session token (`?__denext_dev=…`, which `desktop dev --lan` passes the window), it still
+  goes only into a top-level document, and it is stripped from every request before the proxy
+  forwards it. The dev server still refuses any LAN request without its per-run token; a bare
+  client (no `Origin`, no `Sec-Fetch-Site`, as the window's proxy relays it) now reaches the dev
+  assets on a LAN address only when it presents that token in the `x-denext-dev-token` header.
+- **`denext desktop dev` pages hydrate and keep the desktop global.** Three faults kept a
+  live-reload window's page from ever reaching the bridge, with or without `--lan`: the `denext dev`
+  child inherited the CLI's CSS re-exec guard and loaded the app without its import map
+  (`Import "denext/desktop/…" not a dependency` in any project with a stylesheet); the dev server's
+  strict `Content-Security-Policy` header blocked the injected `globalThis.__denext` script (it
+  now carries the script's hash); and unbundled dev had no `@dep` bundle for `denext/desktop/client`,
+  `/window`, `/app` or `/clerk`, so a page importing one never hydrated. The desktop kitchen sink's
+  `test:lan-dev` drives it end to end.
 - **`cachedFetch(url, { revalidate, tags })` applies its options to the cached body.** The
   helper passed them to its loader as an argument, so every entry was stored without expiry or
   tags: `revalidateTag` never purged a cached body, and a `"use cache"` function reading one
