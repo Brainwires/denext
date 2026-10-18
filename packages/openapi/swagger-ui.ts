@@ -12,20 +12,12 @@
  * @module
  */
 
+import { readVerified, type VendoredAsset } from "./vendored.ts";
+
 /** The `swagger-ui-dist` version vendored under `vendor/swagger-ui/` (Apache-2.0). */
 export const SWAGGER_UI_VERSION = "5.32.15";
 
-/** One vendored asset: its file, content type and recorded digest. */
-export interface VendoredAsset {
-  /** The file under `vendor/swagger-ui/`. */
-  file: string;
-  /** Its `content-type`. */
-  contentType: string;
-  /** SHA-256 (hex) of the exact upstream bytes. */
-  sha256: string;
-  /** Its byte length (a cheap first check). */
-  bytes: number;
-}
+export type { VendoredAsset } from "./vendored.ts";
 
 /** The assets the docs page loads, by the name it requests them under. */
 export const SWAGGER_UI_ASSETS: Readonly<Record<string, VendoredAsset>> = {
@@ -54,14 +46,6 @@ window.addEventListener("load", function () {
 });
 `;
 
-/** Hex SHA-256 of `bytes`. */
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-const cache = new Map<string, Promise<Uint8Array>>();
-
 /**
  * Read one vendored asset and check it against its recorded digest. `fetch` of the
  * module-relative URL works from a checkout (`file:`) and from JSR (`https:`).
@@ -71,25 +55,13 @@ const cache = new Map<string, Promise<Uint8Array>>();
  * @throws {Error} When the bytes do not match the recorded SHA-256.
  */
 export function readSwaggerAsset(name: string): Promise<Uint8Array> {
-  const asset = SWAGGER_UI_ASSETS[name];
-  if (!asset) return Promise.reject(new Error(`no vendored Swagger UI asset ${name}`));
-  let pending = cache.get(name);
-  if (!pending) {
-    pending = (async () => {
-      const res = await fetch(new URL(`./vendor/swagger-ui/${asset.file}`, import.meta.url));
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      const digest = bytes.byteLength === asset.bytes ? await sha256Hex(bytes) : "";
-      if (digest !== asset.sha256) {
-        throw new Error(
-          `[@denext/openapi] vendor/swagger-ui/${asset.file} does not match its recorded SHA-256 ` +
-            `(swagger-ui-dist ${SWAGGER_UI_VERSION}); refusing to serve it`,
-        );
-      }
-      return bytes;
-    })();
-    // A failed read is not cached: the next request tries again.
-    pending.catch(() => cache.delete(name));
-    cache.set(name, pending);
+  if (!Object.hasOwn(SWAGGER_UI_ASSETS, name)) {
+    return Promise.reject(new Error(`no vendored Swagger UI asset ${name}`));
   }
-  return pending;
+  const asset = SWAGGER_UI_ASSETS[name];
+  return readVerified(
+    new URL(`./vendor/swagger-ui/${asset.file}`, import.meta.url),
+    asset,
+    `swagger-ui-dist ${SWAGGER_UI_VERSION}`,
+  );
 }

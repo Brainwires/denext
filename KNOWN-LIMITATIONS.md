@@ -103,7 +103,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   (PPR) shell of a non-Flight route** (it fetches on mount there).
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
   custom middleware's responses appear only as `default` until it is tagged with
-  `documentsErrors`; `scalar` loads from a CDN (`swagger` is vendored).
+  `documentsErrors`.
 - **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
   `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
   dev-server restart after an edit (a module-path `schema` always reloads).

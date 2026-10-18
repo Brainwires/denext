@@ -91,13 +91,15 @@ This is a demo store — the account is hardcoded and the adapter is in-memory, 
 
 `denext.config.ts` sets `ui: "swagger"`. Three renderers are available — swap the one line:
 
-- `"swagger"` — Swagger UI, loaded from unpkg (interactive "try it").
-- `"scalar"` — Scalar API Reference, loaded from jsDelivr (interactive).
+- `"swagger"` — Swagger UI, vendored in `@denext/openapi` and served from the app's origin
+  (interactive "try it").
+- `"scalar"` — Scalar API Reference, vendored and served from the app's origin the same way
+  (interactive).
 - `"builtin"` — a server-rendered, zero-JavaScript reference page (the default; strict-CSP
   clean, no CDN). `examples/typed-api` shows this one.
 
-denext ships **no CSP by default**, so the CDN-loaded UIs work as-is. Under `csp: "strict"` allow
-the CDN host (and prefer `builtin`, whose page needs no CDN and no inline styles).
+Each docs page answers with its own CSP, and none of the three names another origin: nothing
+loads from a CDN unless `cdn` asks for one (`builtin` also needs no inline styles).
 
 ## Why Zod
 

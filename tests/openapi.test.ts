@@ -20,11 +20,13 @@ import {
   buildOpenApi,
   createOpenapiCommand,
   diffSpecs,
+  DOCS_CDN,
   emitTypes,
   openapi,
   type OpenApiDocument,
   pathVariants,
   renderDocsHtml,
+  SCALAR_BUNDLE_NAME,
   toJsonSchema,
 } from "../packages/openapi/mod.ts";
 import type { CommandContext } from "../src/cli/command.ts";
@@ -461,7 +463,7 @@ Deno.test("diffSpecs: added / removed / changed operations and shared schemas", 
 
 // ── Docs renderers ───────────────────────────────────────────────────────────
 
-Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar loads the CDN; swagger a given base", async () => {
+Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar the vendored bundle; swagger a given base", async () => {
   const { document } = await buildOpenApi({ manifest, load, info: { title: "<T&Cs>" } });
   const html = renderDocsHtml(document, {
     ui: "builtin",
@@ -479,10 +481,17 @@ Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar loads the 
 
   const scalar = renderDocsHtml(document, { ui: "scalar", specUrl: "/openapi.json" });
   assertStringIncludes(scalar, 'data-url="/openapi.json"');
+  assertStringIncludes(scalar, `src="/docs/scalar/${SCALAR_BUNDLE_NAME}"`);
+  assert(!/https?:\/\//.test(scalar), "nothing loads from a CDN");
+  const scalarCdn = renderDocsHtml(document, {
+    ui: "scalar",
+    specUrl: "/openapi.json",
+    cdn: DOCS_CDN.scalar,
+  });
   assertStringIncludes(
-    scalar,
-    'src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.67.0/dist/browser/standalone.min.js"',
-    "pinned to an exact version",
+    scalarCdn,
+    'src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.4/dist/browser/standalone.min.js"',
+    "an opted-in CDN is pinned to an exact version",
   );
   const swagger = renderDocsHtml(document, { ui: "swagger", specUrl: "/spec", cdn: "/vendor/sw/" });
   assertStringIncludes(swagger, 'src="/vendor/sw/swagger-ui-bundle.js"');

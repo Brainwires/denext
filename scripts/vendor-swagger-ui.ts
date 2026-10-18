@@ -11,9 +11,8 @@
  *
  * @module
  */
-import { encodeBase64 } from "@std/encoding/base64";
-import { encodeHex } from "@std/encoding/hex";
 import { dirname, fromFileUrl, join } from "@std/path";
+import { digestHex, downloadTarball, withUnpacked } from "./lib/npm-tarball.ts";
 
 const ROOT = join(dirname(fromFileUrl(import.meta.url)), "..");
 const PACKAGE = join(ROOT, "packages", "openapi");
@@ -27,34 +26,12 @@ const FILES = [
   "swagger-ui-bundle.js.LICENSE.txt",
 ];
 
-/** Hex SHA-256 of `bytes`. */
-const digestHex = async (bytes: Uint8Array) =>
-  encodeHex(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
-
-/** The tarball's bytes, checked against the registry's `dist.integrity`. */
-async function download(version: string): Promise<Uint8Array> {
-  const meta = await (await fetch(`https://registry.npmjs.org/swagger-ui-dist/${version}`)).json();
-  const tarball = new Uint8Array(await (await fetch(meta.dist.tarball)).arrayBuffer());
-  const integrity = "sha512-" +
-    encodeBase64(await crypto.subtle.digest("SHA-512", tarball as BufferSource));
-  if (integrity !== meta.dist.integrity) {
-    throw new Error(`tarball integrity ${integrity} != registry ${meta.dist.integrity}`);
-  }
-  return tarball;
-}
-
-/** Unpack {@linkcode FILES} from the tarball into the vendor directory. */
+/** Copy {@linkcode FILES} out of the verified tarball into the vendor directory. */
 async function unpack(tarball: Uint8Array): Promise<void> {
-  const work = await Deno.makeTempDir({ prefix: "denext_swagger_" });
-  try {
-    await Deno.writeFile(join(work, "pkg.tgz"), tarball);
-    const tar = await new Deno.Command("tar", { args: ["xzf", "pkg.tgz"], cwd: work }).output();
-    if (!tar.success) throw new Error(new TextDecoder().decode(tar.stderr));
+  await withUnpacked(tarball, async (pkg) => {
     await Deno.mkdir(VENDOR, { recursive: true });
-    for (const file of FILES) await Deno.copyFile(join(work, "package", file), join(VENDOR, file));
-  } finally {
-    await Deno.remove(work, { recursive: true });
-  }
+    for (const file of FILES) await Deno.copyFile(join(pkg, file), join(VENDOR, file));
+  });
 }
 
 /** Rewrite the version, digests and lengths recorded in `swagger-ui.ts`. */
@@ -78,7 +55,7 @@ async function main(version: string | undefined): Promise<void> {
       "usage: deno run -A scripts/vendor-swagger-ui.ts <exact version, e.g. 5.32.15>",
     );
   }
-  await unpack(await download(version));
+  await unpack((await downloadTarball("swagger-ui-dist", version)).tarball);
   await record(version);
   console.log(`vendored swagger-ui-dist ${version} into ${VENDOR}`);
 }

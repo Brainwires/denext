@@ -31,6 +31,7 @@ import { join } from "@std/path";
 import { createOpenapiCommand } from "./command.ts";
 import { DOCS_CSS, docsCsp, type DocsUi, renderDocsHtml } from "./docs-ui.ts";
 import { readSwaggerAsset, SWAGGER_UI_ASSETS, SWAGGER_UI_INIT } from "./swagger-ui.ts";
+import { readScalarBundle, SCALAR_ASSET, SCALAR_BUNDLE_NAME } from "./scalar-ui.ts";
 import {
   buildOpenApi,
   type OpenApiBuild,
@@ -82,7 +83,15 @@ export {
   SWAGGER_UI_VERSION,
 } from "./swagger-ui.ts";
 export type { VendoredAsset } from "./swagger-ui.ts";
-export type { DocsHtmlOptions, DocsUi } from "./docs-ui.ts";
+export {
+  readScalarBundle,
+  SCALAR_ASSET,
+  SCALAR_BOOT,
+  SCALAR_BOOT_HASH,
+  SCALAR_BUNDLE_NAME,
+  SCALAR_VERSION,
+} from "./scalar-ui.ts";
+export type { DocsCspOptions, DocsHtmlOptions, DocsUi } from "./docs-ui.ts";
 export { createOpenapiCommand, formatWarning } from "./command.ts";
 export type { OpenapiCommandIo } from "./command.ts";
 export { emitTypes } from "./types.ts";
@@ -182,13 +191,15 @@ export interface OpenApiOptions {
    * The docs renderer: `builtin` (server-rendered, no JavaScript — the default), `swagger`
    * (interactive Swagger UI, vendored and served from the app's own origin under
    * `<docs>/swagger-ui/`, each file checked against its recorded SHA-256) or `scalar`
-   * (interactive, loaded from a CDN). Each page answers with its own strict CSP; only Scalar's
-   * names a CDN host.
+   * (interactive Scalar API reference, vendored the same way and served under `<docs>/scalar/`,
+   * configured to call none of Scalar's own services). Each page answers with its own strict
+   * CSP naming no other origin.
    */
   ui?: DocsUi;
   /**
-   * Override the CDN URL for `scalar` (script URL), or load `swagger` from a CDN dist base URL
-   * (e.g. `DOCS_CDN.swagger`) instead of the vendored copy.
+   * Load `scalar` from a CDN script URL (e.g. `DOCS_CDN.scalar`), or `swagger` from a CDN dist
+   * base URL (e.g. `DOCS_CDN.swagger`), instead of the vendored copy. The page's CSP then names
+   * that origin.
    */
   cdn?: string;
   /** The document's `info` (defaults: the project directory's name, version `0.0.0`). */
@@ -267,6 +278,7 @@ export function openapi(options: OpenApiOptions = {}): DenextPlugin {
         build,
         authorize: options.authorize,
         cdn: options.cdn,
+        servers: (options.servers ?? []).map((s) => s.url),
       };
       ctx.addRequestHandler((request) => exposed ? serveDocs(request, routes) : null);
 
@@ -311,6 +323,8 @@ interface Endpoints {
   build: () => Promise<OpenApiBuild>;
   authorize?: (request: Request) => boolean | Promise<boolean>;
   cdn?: string;
+  /** The configured `servers` URLs ("try it" may call the absolute ones). */
+  servers: readonly string[];
 }
 
 /** The vendored Swagger UI file a request names (`<docs>/swagger-ui/<file>`), if any. */
@@ -322,6 +336,16 @@ function swaggerAssetOf(pathname: string, e: Endpoints): string | null {
   return name === "init.js" || Object.hasOwn(SWAGGER_UI_ASSETS, name) ? name : null;
 }
 
+/**
+ * The vendored file a request names, if any: one of Swagger UI's (`<docs>/swagger-ui/<file>`),
+ * or the Scalar bundle (`<docs>/scalar/standalone.<hash>.js`, unless the app loads it from a CDN).
+ */
+function vendoredAssetOf(pathname: string, e: Endpoints): string | null {
+  if (e.ui !== "scalar") return swaggerAssetOf(pathname, e);
+  const bundle = `${e.docsPath}/scalar/${SCALAR_BUNDLE_NAME}`;
+  return !e.cdn && pathname === bundle ? SCALAR_BUNDLE_NAME : null;
+}
+
 /** Which of the plugin's endpoints a path names, if any. */
 type Target = { kind: "spec" | "docs" | "css" } | { kind: "asset"; name: string };
 
@@ -330,7 +354,7 @@ function targetOf(pathname: string, e: Endpoints): Target | null {
   if (e.docsPath === null) return null;
   if (pathname === e.docsPath) return { kind: "docs" };
   if (e.ui === "builtin" && pathname === e.docsPath + ".css") return { kind: "css" };
-  const name = swaggerAssetOf(pathname, e);
+  const name = vendoredAssetOf(pathname, e);
   return name ? { kind: "asset", name } : null;
 }
 
@@ -341,10 +365,15 @@ async function serveDocs(request: Request, e: Endpoints): Promise<Response | nul
   if (e.authorize && !(await e.authorize(request))) return null;
   if (target.kind === "spec") return specResponse(request, await e.build());
   if (target.kind === "docs") return docsPageResponse(request, e);
-  if (target.kind === "asset") return await swaggerAssetResponse(request, target.name);
+  if (target.kind === "asset") return await vendoredAssetResponse(request, target.name, e);
   return new Response(DOCS_CSS, {
     headers: { "content-type": "text/css; charset=utf-8", "cache-control": "public, max-age=3600" },
   });
+}
+
+/** A vendored file: the Scalar bundle, or one of Swagger UI's. */
+function vendoredAssetResponse(request: Request, name: string, e: Endpoints): Promise<Response> {
+  return e.ui === "scalar" ? scalarBundleResponse(request) : swaggerAssetResponse(request, name);
 }
 
 /** One of Swagger UI's vendored files (verified against its SHA-256), or its start-up script. */
@@ -364,6 +393,25 @@ async function swaggerAssetResponse(request: Request, name: string): Promise<Res
   return new Response(request.method === "HEAD" ? null : body as BodyInit, { headers });
 }
 
+/**
+ * The vendored Scalar bundle (verified against its SHA-256). Its URL carries the digest, so it
+ * is cached for a year as `immutable`: a re-vendor changes the URL.
+ */
+async function scalarBundleResponse(request: Request): Promise<Response> {
+  const etag = `"scalar-${SCALAR_ASSET.sha256.slice(0, 16)}"`;
+  const headers = {
+    "content-type": SCALAR_ASSET.contentType,
+    "cache-control": "public, max-age=31536000, immutable",
+    "x-content-type-options": "nosniff",
+    etag,
+  };
+  if (request.headers.get("if-none-match") === etag) {
+    return new Response(null, { status: 304, headers });
+  }
+  const body = await readScalarBundle();
+  return new Response(request.method === "HEAD" ? null : body as BodyInit, { headers });
+}
+
 /** The rendered docs page for the configured renderer, under its own CSP. */
 async function docsPageResponse(request: Request, e: Endpoints): Promise<Response> {
   const html = renderDocsHtml((await e.build()).document, {
@@ -371,13 +419,13 @@ async function docsPageResponse(request: Request, e: Endpoints): Promise<Respons
     ui: e.ui,
     cdn: e.cdn,
     styleUrl: e.ui === "builtin" ? e.basePath + e.docsPath + ".css" : undefined,
-    assetBase: e.basePath + e.docsPath + "/swagger-ui",
+    assetBase: e.basePath + e.docsPath + (e.ui === "scalar" ? "/scalar" : "/swagger-ui"),
   });
   return new Response(request.method === "HEAD" ? null : html, {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-cache",
-      "content-security-policy": docsCsp(e.ui, e.cdn),
+      "content-security-policy": docsCsp(e.ui, e.cdn, { connect: e.servers }),
       "x-content-type-options": "nosniff",
     },
   });

@@ -7,12 +7,16 @@
 //   swagger  — Swagger UI, vendored (`vendor/swagger-ui/`, its SHA-256 recorded in
 //              `swagger-ui.ts`) and served from the app's own origin with a start-up script
 //              of its own: no CDN, and a strict `script-src 'self'` CSP holds.
-//   scalar   — Scalar's API reference loaded from a CDN (the default `cdn` is jsDelivr).
+//   scalar   — Scalar's API reference, vendored (`vendor/scalar/`, its SHA-256 recorded in
+//              `scalar-ui.ts`) and served from the app's own origin: its inline start-up
+//              script is admitted by hash, and it is configured to call none of Scalar's own
+//              services.
 //
 // The interactive variants offer "try it". Every page answers with its own CSP
-// (`docsCsp`); Scalar's names its CDN host.
+// (`docsCsp`); only an explicit `cdn` adds another origin to it.
 
 import type { JsonSchema, OpenApiDocument, OpenApiOperation } from "./spec.ts";
+import { SCALAR_BOOT, SCALAR_BOOT_HASH, SCALAR_BUNDLE_NAME } from "./scalar-ui.ts";
 
 /** Which docs renderer to serve. */
 export type DocsUi = "builtin" | "scalar" | "swagger";
@@ -24,13 +28,13 @@ export interface DocsHtmlOptions {
   /** The renderer. */
   ui: DocsUi;
   /**
-   * Override the CDN script URL (scalar), or load Swagger UI from a CDN dist base URL instead
-   * of the vendored copy (swagger).
+   * Load Scalar from this script URL, or Swagger UI from this dist base URL, instead of the
+   * vendored copy.
    */
   cdn?: string;
   /**
-   * Where the vendored Swagger UI and its start-up script are served (default
-   * `/docs/swagger-ui`; the plugin passes `<docs path>/swagger-ui`).
+   * Where the vendored renderer's files are served (default `/docs/swagger-ui` for swagger,
+   * `/docs/scalar` for scalar; the plugin passes `<docs path>/swagger-ui` / `<docs path>/scalar`).
    */
   assetBase?: string;
   /** The stylesheet URL for the builtin renderer. */
@@ -38,14 +42,14 @@ export interface DocsHtmlOptions {
 }
 
 /**
- * CDN locations for the interactive renderers: Scalar's default, and the Swagger UI dist an
- * app may opt into with `cdn: DOCS_CDN.swagger` (by default it is served from the vendored copy).
+ * CDN locations an app may opt into with `cdn: DOCS_CDN.scalar` / `cdn: DOCS_CDN.swagger`
+ * instead of the vendored copies both renderers are served from by default.
  */
 export const DOCS_CDN: Record<Exclude<DocsUi, "builtin">, string> = {
   // Pinned to an exact version: a floating tag would run whatever the CDN serves next on the
   // app's own origin. Bump deliberately; or self-host and point `cdn` at your copy.
   scalar:
-    "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.67.0/dist/browser/standalone.min.js",
+    "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.4/dist/browser/standalone.min.js",
   swagger: "https://unpkg.com/swagger-ui-dist@5.32.15",
 };
 
@@ -56,11 +60,17 @@ export function renderDocsHtml(doc: OpenApiDocument, options: DocsHtmlOptions): 
   const title = esc(doc.info.title);
   const head =
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>`;
-  if (options.ui === "scalar") {
-    const src = esc(options.cdn ?? DOCS_CDN.scalar);
+  if (options.ui === "scalar" && options.cdn) {
     return `<!doctype html><html lang="en"><head>${head}</head><body>` +
       `<script id="api-reference" data-url="${esc(options.specUrl)}"></script>` +
-      `<script src="${src}"></script></body></html>`;
+      `<script src="${esc(options.cdn)}" crossorigin></script></body></html>`;
+  }
+  if (options.ui === "scalar") {
+    const base = esc((options.assetBase ?? "/docs/scalar").replace(/\/$/, ""));
+    return `<!doctype html><html lang="en"><head>${head}</head><body>` +
+      `<div id="scalar-docs" data-url="${esc(options.specUrl)}"></div>` +
+      `<script src="${base}/${SCALAR_BUNDLE_NAME}"></script>` +
+      `<script>${SCALAR_BOOT}</script></body></html>`;
   }
   if (options.ui === "swagger") {
     const local = (options.assetBase ?? "/docs/swagger-ui").replace(/\/$/, "");
@@ -76,17 +86,30 @@ export function renderDocsHtml(doc: OpenApiDocument, options: DocsHtmlOptions): 
     renderReference(doc, options.specUrl) + `</body></html>`;
 }
 
+/** What {@linkcode docsCsp} needs beyond the renderer. */
+export interface DocsCspOptions {
+  /**
+   * Other origins "try it" may call (the document's absolute `servers`); the page's own origin
+   * is always allowed.
+   */
+  connect?: readonly string[];
+}
+
 /**
  * The `content-security-policy` a docs page answers with. The builtin reference loads only its
  * stylesheet; Swagger UI its vendored bundle, stylesheet and start-up script (all `'self'`,
  * plus the `cdn` origin when one is set), and fetches the document (`connect-src 'self'`,
- * which "try it" uses too); Scalar its CDN script, which injects its own styles and fonts.
+ * which "try it" uses too); the vendored Scalar its bundle (`'self'`) and its start-up script
+ * (by hash). Scalar styles its components with injected `<style>` elements and `style`
+ * attributes, so its `style-src` allows inline styles (never inline script). Only a `cdn` names
+ * another origin: Scalar loaded from one also injects styles and fonts from it.
  *
  * @param ui The renderer.
  * @param cdn The `cdn` override, if any.
+ * @param options The API origins "try it" may call (Scalar).
  * @returns The policy.
  */
-export function docsCsp(ui: DocsUi, cdn?: string): string {
+export function docsCsp(ui: DocsUi, cdn?: string, options: DocsCspOptions = {}): string {
   const fixed = "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
   if (ui === "builtin") return `default-src 'none'; style-src 'self'; img-src 'self'; ${fixed}`;
   const from = (url: string) => new URL(url, "https://app.invalid").origin;
@@ -95,9 +118,30 @@ export function docsCsp(ui: DocsUi, cdn?: string): string {
     return `default-src 'none'; script-src 'self'${remote}; style-src 'self'${remote}; ` +
       `img-src 'self' data:; font-src 'self'; connect-src 'self'; ${fixed}`;
   }
-  const host = from(cdn ?? DOCS_CDN.scalar);
-  return `default-src 'none'; script-src ${host}; style-src 'unsafe-inline' ${host}; ` +
-    `img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https:; ${fixed}`;
+  if (cdn) {
+    const host = from(cdn);
+    return `default-src 'none'; script-src ${host}; style-src 'unsafe-inline' ${host}; ` +
+      `img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https:; ${fixed}`;
+  }
+  const connect = [...new Set((options.connect ?? []).map(absoluteOrigin).filter(Boolean))];
+  return `default-src 'none'; script-src 'self' ${SCALAR_BOOT_HASH}; style-src 'self' 'unsafe-inline'; ` +
+    `img-src 'self' data: blob:; font-src 'self' data:; ` +
+    `connect-src 'self'${connect.map((o) => " " + o).join("")}; ${fixed}`;
+}
+
+/**
+ * The origin of an absolute `http(s)` URL, or `""` for a relative or unparsable one, or one with
+ * `{variables}` in its host. Only the canonical `URL.origin` of a plain host reaches the policy.
+ */
+function absoluteOrigin(url: string): string {
+  if (!/^https?:\/\//i.test(url)) return "";
+  try {
+    const { origin } = new URL(url);
+    // Only a plain host (name, IPv4, [IPv6]) and port: never a `{variable}` a parser let through.
+    return /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/.test(origin) ? origin : "";
+  } catch {
+    return "";
+  }
 }
 
 // ── builtin ──────────────────────────────────────────────────────────────────

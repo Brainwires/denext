@@ -176,8 +176,8 @@ backend({ postgres: {}, rest: { openapi: false } }); // keep auto-REST out`}
       </p>
       <Code lang="ts">
         {`openapi({ ui: "swagger" });                             // Swagger UI, vendored, from your origin
-openapi({ ui: "scalar" });                              // Scalar API Reference, from cdn.jsdelivr.net
-openapi({ ui: "scalar", cdn: "/vendor/scalar.js" });   // self-hosted bundle`}
+openapi({ ui: "scalar" });                              // Scalar API Reference, vendored, from your origin
+openapi({ ui: "scalar", cdn: DOCS_CDN.scalar });        // opt back into a CDN`}
       </Code>
       <p>
         <code>ui: "swagger"</code>{" "}
@@ -188,10 +188,23 @@ openapi({ ui: "scalar", cdn: "/vendor/scalar.js" });   // self-hosted bundle`}
         its own <code>content-security-policy</code>; the builtin and Swagger pages allow{" "}
         <code>'self'</code> only.
       </p>
-      <Callout kind="note">
-        Scalar still loads from a CDN by default, and its page's CSP names that host. Self-host its
-        bundle and point <code>cdn</code> at it to keep everything on your origin.
-      </Callout>
+      <p>
+        <code>ui: "scalar"</code>{" "}
+        serves Scalar's API reference (@scalar/api-reference 1.72.4, MIT) the same way: its
+        standalone bundle (about 4.4 MB, 1.3 MB gzipped) is vendored in the package, checked against
+        its recorded SHA-256, and served from{" "}
+        <code>&lt;docs&gt;/scalar/standalone.&lt;hash&gt;.js</code> with a year-long{" "}
+        <code>immutable</code>{" "}
+        cache (a new version is a new URL). The page's CSP names no other origin: the bundle is{" "}
+        <code>'self'</code>, its inline start-up script is admitted by its SHA-256 hash (never{" "}
+        <code>'unsafe-inline'</code>{" "}
+        script), and the start-up turns off every call Scalar would make to its own services (web
+        fonts, telemetry, the agent chat, the hosted request proxy), so "try it" sends requests
+        straight to your API. The document's absolute <code>servers</code>{" "}
+        are the only other origins its <code>connect-src</code>{" "}
+        lists. Scalar styles its components inline, so that page's <code>style-src</code>{" "}
+        allows inline styles.
+      </p>
 
       <h2>CI</h2>
       <Code lang="sh">
@@ -273,8 +286,8 @@ const { document, warnings } = await buildOpenApi({
         </li>
         <li>
           <code>ui</code>, <code>cdn</code>{" "}
-          — the renderer and where its bundle comes from (Swagger UI: the vendored copy unless{" "}
-          <code>cdn</code> names one).
+          — the renderer and where its bundle comes from (Swagger UI and Scalar: the vendored copy
+          unless <code>cdn</code> names one).
         </li>
         <li>
           <code>info</code>, <code>servers</code>{" "}

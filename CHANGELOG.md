@@ -40,6 +40,18 @@ and this project adheres to
   fallback showed. Each page is now written with every boundary's content in place, the same DOM
   the script produces, so it still hydrates.
 
+### Changed
+
+- **`@denext/openapi`'s `ui: "scalar"` docs page loads nothing from a CDN.** Scalar's API
+  reference (`@scalar/api-reference` 1.72.4, MIT, licence and notice beside it) is vendored in
+  the package like Swagger UI, checked against its recorded SHA-256 and served from
+  `<docs>/scalar/standalone.<hash>.js` with a year-long `immutable` cache. The page's CSP names no
+  other origin (`script-src 'self'` plus the hash of its inline start-up script, which turns off
+  Scalar's web fonts, telemetry, agent chat and hosted proxy), and a headless e2e
+  (`tests/e2e/openapi-scalar.e2e.test.ts`) holds it to zero third-party requests while Scalar
+  renders. `cdn: DOCS_CDN.scalar` opts back into jsDelivr. The package grows by about 4.4 MB
+  (1.3 MB gzipped).
+
 ### Fixed
 
 - **The deployment guide's Dockerfile is the one `denext generate docker` writes.** The guide had
