@@ -32,6 +32,7 @@ import { type LiveViewContext, signLiveViewToken } from "../runtime/live-view.ts
 import { prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import type { LustreApp } from "./kit.ts";
 import type { LustreServerKit } from "./server-kit.ts";
+import { processShared } from "../runtime/process-shared.ts";
 
 /** A DOM event a Lustre view's client sent, after the built-in shape check. */
 export interface LustreEventPayload {
@@ -76,16 +77,8 @@ export interface LustreViewComponent<Props> {
 /** What the hub needs from a registered view (the config, untyped). */
 export type LustreViewDef = LustreViewConfig<unknown, unknown>;
 
-/**
- * The process's registry of Lustre views, shared by every copy of this module: a compat build
- * prebuilds `denext/gleam` into its own runtime graph, so the app's `defineLustreView` and the
- * server's Live hub can each load a copy, and both must see one registry.
- */
-function views(): Map<string, LustreViewDef> {
-  const slot = globalThis as unknown as Record<symbol, Map<string, LustreViewDef> | undefined>;
-  return slot[VIEWS_SLOT] ??= new Map();
-}
-const VIEWS_SLOT = Symbol.for("denext.lustreViews");
+/** Every Lustre view by id, shared by every copy of this module (see process-shared.ts). */
+const views = /* @__PURE__ */ processShared("lustreViews", () => new Map<string, LustreViewDef>());
 
 /**
  * The Lustre view registered under `id` (the hub mounts by it).
@@ -94,7 +87,7 @@ const VIEWS_SLOT = Symbol.for("denext.lustreViews");
  * @returns The definition, or `undefined` when no module defining it has loaded.
  */
 export function getLustreView(id: string): LustreViewDef | undefined {
-  return views().get(id);
+  return views.get(id);
 }
 
 /**
@@ -153,7 +146,7 @@ export function defineLustreView<Flags, Props = { flags: Flags }>(
     throw new TypeError("defineLustreView: `id` must be a non-empty string of at most 128 chars");
   }
   const def = config as unknown as LustreViewDef;
-  views().set(config.id, def);
+  views.set(config.id, def);
   const component = async (raw: Props): Promise<VNode | null> => {
     const props = ownProps(raw as Record<string, unknown>) as Props;
     if (config.authorize && !(await config.authorize(props, { connection: null }))) return null;

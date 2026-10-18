@@ -9,14 +9,22 @@
 // place (React documents the same). When nothing is tainted, the check is two empty-map
 // lookups per serialized value.
 
+import { processShared } from "./process-shared.ts";
+
 const DEFAULT_MESSAGE =
   "A tainted value was about to be sent to the client. Do not pass it across the " +
   "server/client boundary.";
 
 /** Object references that must not be serialized to the client. Weak → auto-released. */
-const taintedObjects = new WeakMap<object, string>();
+const taintedObjects = /* @__PURE__ */ processShared(
+  "taintedObjects",
+  () => new WeakMap<object, string>(),
+);
 /** Unique secret values (string/bigint) that must not be serialized to the client. */
-const taintedValues = /* @__PURE__ */ new Map<string | bigint, string>();
+const taintedValues = /* @__PURE__ */ processShared(
+  "taintedValues",
+  () => new Map<string | bigint, string>(),
+);
 /** Release a tainted value when its `lifetime` object is garbage-collected. */
 const lifetimeRegistry = /* @__PURE__ */ new FinalizationRegistry<string | bigint>((value) => {
   taintedValues.delete(value);

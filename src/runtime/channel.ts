@@ -40,6 +40,7 @@ import {
 } from "./define-action.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 import { CHANNEL_BRAND, setChannelRegistrar } from "./channel-brand.ts";
+import { processShared } from "./process-shared.ts";
 import {
   type ChannelHistory,
   type ChannelLog,
@@ -195,7 +196,7 @@ export interface ChannelEvent {
  * loops back to the publisher (and which some cross-instance transports also do).
  */
 export function isForeignEvent(ev: ChannelEvent): boolean {
-  return ev.instance !== INSTANCE;
+  return ev.instance !== shared.instance;
 }
 
 /**
@@ -205,7 +206,7 @@ export function isForeignEvent(ev: ChannelEvent): boolean {
  * @returns The id.
  */
 export function channelInstanceId(): string {
-  return INSTANCE;
+  return shared.instance;
 }
 
 /**
@@ -215,7 +216,7 @@ export function channelInstanceId(): string {
  * @param ev The event.
  */
 export function publishChannelEvent(ev: ChannelEvent): void {
-  void Promise.resolve(transport.publish(ev)).catch(() => {});
+  void Promise.resolve(currentTransport().publish(ev)).catch(() => {});
 }
 
 /** Carries {@link ChannelEvent}s to every hub that should deliver them (across instances). */
@@ -255,11 +256,27 @@ export interface ChannelInternals {
 export { isChannel } from "./channel-brand.ts";
 const DEFAULT_KEY = /^[A-Za-z0-9_:.\-]{1,128}$/;
 
-/** This process's instance id (orders `seq` within one instance). */
-const INSTANCE = crypto.randomUUID();
-
-const channels = new Map<string, ChannelInternals>();
-const seqs = new Map<string, number>();
+/**
+ * The process's channel state, shared by every copy of this module (see process-shared.ts): the
+ * registry, sequence counters, the installed transport and its settings.
+ */
+const shared = /* @__PURE__ */ processShared("channels", () => ({
+  /** This process's instance id (orders `seq` within one instance). */
+  instance: crypto.randomUUID(),
+  channels: new Map<string, ChannelInternals>(),
+  seqs: new Map<string, number>(),
+  transportListeners: new Set<(t: ChannelTransport) => void>(),
+  /** Channel ids a tap warned about (once each). */
+  warnedUnknown: new Set<string>(),
+  payloadCap: 16 * 1024,
+  /** The default lazy re-authorization TTL (seconds) — the hub applies `live.limits.channelAuthTtlSeconds`. */
+  authTtlSeconds: 300,
+  transport: null as ChannelTransport | null,
+  /** The in-memory replay log (used while the transport brings none). */
+  memoryLog: null as ChannelLog | null,
+  /** Warned that the replay log failed (once per process). */
+  warnedLog: false,
+}));
 /** Cap on remembered (channel, key) sequence counters (each is one short string + number). */
 const MAX_SEQ_KEYS = 10_000;
 
@@ -271,14 +288,15 @@ function deliverTo(fn: (ev: ChannelEvent) => void, ev: ChannelEvent): void {
     console.error("denext channels: a subscriber threw", err);
   }
 }
-let payloadCap = 16 * 1024;
-/** The default lazy re-authorization TTL (seconds) — the hub applies `live.limits.channelAuthTtlSeconds`. */
-let authTtlSeconds = 300;
-let transport: ChannelTransport = inMemoryChannelTransport();
-/** The in-memory replay log (used while the transport brings none). */
-let memoryLog: ChannelLog = inMemoryChannelLog();
-/** Warned that the replay log failed (once per process). */
-let warnedLog = false;
+/** The installed transport (in-memory until one is set). */
+function currentTransport(): ChannelTransport {
+  return shared.transport ??= inMemoryChannelTransport();
+}
+
+/** The in-memory replay log. */
+function currentMemoryLog(): ChannelLog {
+  return shared.memoryLog ??= inMemoryChannelLog();
+}
 
 /**
  * Create a channel. Export it from a `"use server"` module (or give it an `id`).
@@ -384,7 +402,7 @@ function registerChannel(id: string, channel: Channel<unknown>): void {
     enumerable: true,
     configurable: true,
   });
-  channels.set(id, internals);
+  shared.channels.set(id, internals);
 }
 
 // Let the brand module (what `server-action.ts`'s export tagging imports) reach the registry
@@ -398,7 +416,7 @@ setChannelRegistrar(registerChannel);
  * @returns Its internals, or `undefined`.
  */
 export function getChannel(id: string): ChannelInternals | undefined {
-  return channels.get(id);
+  return shared.channels.get(id);
 }
 
 /**
@@ -408,11 +426,9 @@ export function getChannel(id: string): ChannelInternals | undefined {
  * @param t The transport.
  */
 export function setChannelTransport(t: ChannelTransport): void {
-  transport = t;
-  for (const fn of transportListeners) fn(t);
+  shared.transport = t;
+  for (const fn of shared.transportListeners) fn(t);
 }
-
-const transportListeners = new Set<(t: ChannelTransport) => void>();
 
 /**
  * The replay log in use: the transport's own, else this instance's in-memory one.
@@ -420,7 +436,7 @@ const transportListeners = new Set<(t: ChannelTransport) => void>();
  * @returns The log.
  */
 export function channelLog(): ChannelLog {
-  return transport.log ?? memoryLog;
+  return currentTransport().log ?? currentMemoryLog();
 }
 
 /**
@@ -430,7 +446,7 @@ export function channelLog(): ChannelLog {
  * @returns Whether the log is shared.
  */
 export function channelLogShared(): boolean {
-  return transport.log !== undefined;
+  return currentTransport().log !== undefined;
 }
 
 /**
@@ -443,8 +459,8 @@ export function channelLogShared(): boolean {
 export function watchChannelTransport(
   fn: (t: ChannelTransport) => void,
 ): { current: ChannelTransport; stop: () => void } {
-  transportListeners.add(fn);
-  return { current: transport, stop: () => transportListeners.delete(fn) };
+  shared.transportListeners.add(fn);
+  return { current: currentTransport(), stop: () => shared.transportListeners.delete(fn) };
 }
 
 /**
@@ -453,7 +469,7 @@ export function watchChannelTransport(
  * @param bytes The cap.
  */
 export function setChannelPayloadCap(bytes: number): void {
-  payloadCap = bytes;
+  shared.payloadCap = bytes;
 }
 
 /**
@@ -463,7 +479,7 @@ export function setChannelPayloadCap(bytes: number): void {
  * @param seconds The TTL.
  */
 export function setChannelAuthTtl(seconds: number): void {
-  authTtlSeconds = seconds;
+  shared.authTtlSeconds = seconds;
 }
 
 /**
@@ -474,7 +490,7 @@ export function setChannelAuthTtl(seconds: number): void {
  * @returns The TTL in milliseconds.
  */
 export function channelAuthTtlMs(id: string): number {
-  return (channels.get(id)?.authTtlSeconds ?? authTtlSeconds) * 1000;
+  return (shared.channels.get(id)?.authTtlSeconds ?? shared.authTtlSeconds) * 1000;
 }
 
 /**
@@ -483,18 +499,15 @@ export function channelAuthTtlMs(id: string): number {
  * like `resetPlugins`).
  */
 export function resetChannels(): void {
-  channels.clear();
-  seqs.clear();
-  warnedUnknown.clear();
-  payloadCap = 16 * 1024;
-  authTtlSeconds = 300;
-  memoryLog = inMemoryChannelLog();
-  warnedLog = false;
+  shared.channels.clear();
+  shared.seqs.clear();
+  shared.warnedUnknown.clear();
+  shared.payloadCap = 16 * 1024;
+  shared.authTtlSeconds = 300;
+  shared.memoryLog = inMemoryChannelLog();
+  shared.warnedLog = false;
   setChannelTransport(inMemoryChannelTransport());
 }
-
-/** Channel ids a tap warned about (once each). */
-const warnedUnknown = new Set<string>();
 
 async function publish<T>(
   ch: ChannelInternals,
@@ -511,26 +524,26 @@ async function publish<T>(
   const value = schema ? await validate(schema, payload) : payload;
   const p = prepareWire(value);
   const encoded = JSON.stringify(p.value);
-  if (new TextEncoder().encode(encoded).byteLength > payloadCap) {
-    throw new RangeError(`channel.publish: payload exceeds ${payloadCap} bytes`);
+  if (new TextEncoder().encode(encoded).byteLength > shared.payloadCap) {
+    throw new RangeError(`channel.publish: payload exceeds ${shared.payloadCap} bytes`);
   }
   const seqKey = `${ch.id}\0${key}`;
-  const seq = (seqs.get(seqKey) ?? 0) + 1;
+  const seq = (shared.seqs.get(seqKey) ?? 0) + 1;
   // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
-  seqs.delete(seqKey);
-  if (seqs.size >= MAX_SEQ_KEYS) seqs.delete(seqs.keys().next().value!);
-  seqs.set(seqKey, seq);
+  shared.seqs.delete(seqKey);
+  if (shared.seqs.size >= MAX_SEQ_KEYS) shared.seqs.delete(shared.seqs.keys().next().value!);
+  shared.seqs.set(seqKey, seq);
   const ev: ChannelEvent = {
     kind: "publish",
     channelId: ch.id,
     key,
     encoded,
     seq,
-    instance: INSTANCE,
+    instance: shared.instance,
   };
   if (p.tagged) ev.enc = WIRE_ENC;
   if (ch.history) await logPublish(ch.id, key, ev, ch.history);
-  await transport.publish(ev);
+  await currentTransport().publish(ev);
 }
 
 /**
@@ -546,8 +559,8 @@ async function logPublish(
   try {
     ev.cursor = await channelLog().append(id, key, { encoded: ev.encoded!, enc: ev.enc }, history);
   } catch (err) {
-    if (warnedLog) return;
-    warnedLog = true;
+    if (shared.warnedLog) return;
+    shared.warnedLog = true;
     console.warn("denext channels: the replay log could not record a publish", err);
   }
 }
@@ -565,9 +578,15 @@ async function validate<T>(schema: StandardSchemaV1<T>, payload: T): Promise<T> 
 
 function revoke(ch: ChannelInternals, key: string, peerId?: string): void {
   if (!ch.id) return;
-  const ev: ChannelEvent = { kind: "revoke", channelId: ch.id, key, seq: 0, instance: INSTANCE };
+  const ev: ChannelEvent = {
+    kind: "revoke",
+    channelId: ch.id,
+    key,
+    seq: 0,
+    instance: shared.instance,
+  };
   if (peerId) ev.peerId = peerId;
-  void transport.publish(ev);
+  void currentTransport().publish(ev);
 }
 
 /**
@@ -581,12 +600,12 @@ function revoke(ch: ChannelInternals, key: string, peerId?: string): void {
  */
 export function broadcastInvalidation(tags: readonly string[]): void {
   if (tags.length === 0) return;
-  void transport.publish({
+  void currentTransport().publish({
     kind: "invalidate",
     channelId: "",
     key: "",
     seq: 0,
-    instance: INSTANCE,
+    instance: shared.instance,
     tags,
   });
 }
@@ -624,7 +643,7 @@ export function broadcastChannelTransport(name = "denext-channels"): ChannelTran
   const local = inMemoryChannelTransport();
   bc.onmessage = (e: MessageEvent) => {
     const ev = e.data as ChannelEvent;
-    if (ev && typeof ev === "object" && ev.instance !== INSTANCE) local.publish(ev);
+    if (ev && typeof ev === "object" && ev.instance !== shared.instance) local.publish(ev);
   };
   return {
     publish(ev) {
@@ -678,8 +697,8 @@ export function tapChannel<T>(
   }
   // A tap on an id no channel registered yields nothing forever — a typo, not a subscriber
   // that has yet to appear; say so once (a programming error, so in production too).
-  if (!channels.has(id) && !warnedUnknown.has(id)) {
-    warnedUnknown.add(id);
+  if (!shared.channels.has(id) && !shared.warnedUnknown.has(id)) {
+    shared.warnedUnknown.add(id);
     console.warn(
       `denext channels: tapChannel(${JSON.stringify(id)}) — no channel is registered under that id`,
     );

@@ -113,6 +113,17 @@ and this project adheres to
 
 ### Fixed
 
+- **Live views, server actions, channels and taint work under `compatibilityMode: true`.** A
+  compat build prebuilds `denext`, `denext/live` and the React compat modules into a graph of
+  their own, so the app and the server could load two copies of the same runtime module, each
+  with its own registry: a `defineLiveView` the page rendered was unknown to the Live hub (the view
+  never mounted), a `serverAction` registered in one copy could be missing from the dispatch in
+  the other, and a value tainted with `experimental_taintUniqueValue` / `taintObjectReference` in
+  one copy could slip past a Flight serializer reading the other. The live-view registry, the
+  server-action registries (actions, bound-reference decorator, `liveReadable`, subscription
+  definitions, module tagging), the channel registry and transport settings, the taint tables and
+  the client-module tagging now live on `globalThis` (one per process), as the Live view signing
+  key already did.
 - **Tailwind builds on Windows on Arm.** The standalone Tailwind download asked for
   `tailwindcss-windows-arm64.exe`, which Tailwind does not publish (a 404 failed every build of a
   Tailwind app); Windows on Arm now takes the x64 build, which it runs under emulation.

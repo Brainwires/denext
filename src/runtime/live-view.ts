@@ -33,6 +33,7 @@ import type { StandardSchemaV1 } from "./define-action.ts";
 import type { EventBinding, EventPayload, MsgSource, MvuProgram, Send } from "./mvu.ts";
 import { prepareWire, WIRE_ENC } from "./wire-codec.ts";
 import { LiveViewIsland } from "../client/live-view-island.ts";
+import { processShared } from "./process-shared.ts";
 
 /** The connection a live view runs for (`null` for the server render of the page). */
 export interface LiveViewContext {
@@ -71,7 +72,8 @@ export interface LiveViewComponent<Props> {
 /** What the hub needs from a registered view (the config, untyped). */
 export type LiveViewDef = LiveViewConfig<unknown, unknown, unknown>;
 
-const views = /* @__PURE__ */ new Map<string, LiveViewDef>();
+/** Every live view by id, shared by every copy of this module (see process-shared.ts). */
+const views = /* @__PURE__ */ processShared("liveViews", () => new Map<string, LiveViewDef>());
 
 /**
  * The view registered under `id` (the hub mounts by it).
@@ -105,12 +107,6 @@ export function createHandlerTable<Msg>(): { send: Send<Msg>; table: MsgSource<M
 const TOKEN_DOMAIN = "denext.liveview.v1";
 
 /**
- * Where the per-process key lives: on `globalThis`, so every copy of this module in the process
- * (a compat build's prebuilt runtime graph beside the server's own) signs and checks with one key.
- */
-const SECRET_SLOT = Symbol.for("denext.liveViewSecret");
-
-/**
  * The key live-view tokens are signed with, and the shared view store's snapshots are sealed
  * under: `DENEXT_LIVE_VIEW_SECRET` (shared by every instance behind one load balancer), else a
  * random per-process one (a reconnect to another instance, or after a restart, re-renders the
@@ -124,12 +120,11 @@ export function liveViewSecret(): string {
     configured = (globalThis as { Deno?: typeof Deno }).Deno?.env.get("DENEXT_LIVE_VIEW_SECRET");
   } catch { /* no env permission: the per-process key */ }
   if (configured) return configured;
-  const slot = globalThis as unknown as Record<symbol, string | undefined>;
-  if (slot[SECRET_SLOT] === undefined) {
+  // One key per process, shared by every copy of this module (see process-shared.ts).
+  return processShared("liveViewSecret", () => {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
-    slot[SECRET_SLOT] = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  }
-  return slot[SECRET_SLOT];
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  });
 }
 
 const keys = /* @__PURE__ */ new Map<string, Promise<CryptoKey>>();

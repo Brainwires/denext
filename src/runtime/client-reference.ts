@@ -12,6 +12,7 @@
 
 import { isComponentType } from "./react-brands.ts";
 import { detachedFromRequest } from "./root-context-bridge.ts";
+import { processShared } from "./process-shared.ts";
 
 /** Symbol under which a client-reference id is stored on a tagged component. */
 export const CLIENT_REF: unique symbol = /* @__PURE__ */ Symbol.for("denext.clientRef");
@@ -86,10 +87,13 @@ export function clientRefOf(value: unknown): ClientRefInfo | null {
 // Client ids already imported + tagged this process (per tagging scope), so repeat renders
 // don't re-import. ES modules are singletons, so tagging the imported instance also tags the
 // very functions a server page imports transitively.
-const taggedClients = new Set<string>();
-// Bumped by forgetTaggedClients: a tagging pass that started before the bump must not mark its
-// (possibly pre-edit) module tagged after the set was cleared.
-let clientTagGeneration = 0;
+// Shared by every copy of this module in the process (see process-shared.ts).
+const clientTags = /* @__PURE__ */ processShared("clientTags", () => ({
+  tagged: new Set<string>(),
+  // Bumped by forgetTaggedClients: a tagging pass that started before the bump must not mark its
+  // (possibly pre-edit) module tagged after the set was cleared.
+  generation: 0,
+}));
 
 /**
  * Import each `"use client"` module and tag its exports as client references, so
@@ -107,9 +111,9 @@ export async function tagClientModules(
   scope = "",
 ): Promise<void> {
   const key = (clientId: string) => scope ? `${scope}\0${clientId}` : clientId;
-  const pending = [...clients].filter(([clientId]) => !taggedClients.has(key(clientId)));
+  const pending = [...clients].filter(([clientId]) => !clientTags.tagged.has(key(clientId)));
   if (pending.length === 0) return;
-  const generation = clientTagGeneration;
+  const generation = clientTags.generation;
   // With an app loader (compat: the keyed single server bundle) every ref costs one lookup;
   // bare `import()`s go through one barrel module instead (see importViaBarrel).
   const barrel = !load && pending.length > BARREL_MIN
@@ -125,7 +129,7 @@ export async function tagClientModules(
       tagClientExports(mod as Record<string, unknown>, clientId);
       // `forgetTaggedClients` ran while this module loaded: what loaded may be the pre-edit
       // instance, so leave it untagged and let the next pass tag the current one.
-      if (generation === clientTagGeneration) taggedClients.add(key(clientId));
+      if (generation === clientTags.generation) clientTags.tagged.add(key(clientId));
     }),
   );
 }
@@ -135,8 +139,8 @@ export async function tagClientModules(
  * island's new instance (an unchanged one loads the same instance; tagging it again is a no-op).
  */
 export function forgetTaggedClients(): void {
-  clientTagGeneration++;
-  taggedClients.clear();
+  clientTags.generation++;
+  clientTags.tagged.clear();
 }
 
 /** Above this many islands, {@link tagClientModules} imports through one barrel module. */
