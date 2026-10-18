@@ -58,6 +58,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/migrate-effect-fixture.test.ts",
   "tests/migrate-spa.test.ts",
   "tests/mobile-build.test.ts",
+  "tests/mobile-fastlane.test.ts",
   "tests/mobile-sentry.test.ts",
   "tests/next-auth-react-v4.test.ts",
   "tests/next-auth-v4-app.test.ts",
