@@ -16,6 +16,12 @@ The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `packag
 `@tanstack/router-generator` in `devDependencies`. The plugin loads them from the app's own
 `node_modules` and depends on no npm package itself.
 
+`denext migrate` sets a Start app up: it recognizes `@tanstack/react-start` with Start's Vite
+plugin (`tanstackStart()` in `vite.config.ts`) and writes this config, the Start options
+`vite.config.ts` passes (`srcDirectory`, `router`, `importProtection`, `prerender`, `pages`)
+carried into `tanstackStart({ … })`, and a `deno.json` that maps React to denext and loads
+TanStack from `node_modules`. `denext migrate --check` lists the options it leaves behind.
+
 ## What it does
 
 - **Owns the route tree.** A prepare step runs TanStack's own generator
@@ -45,6 +51,9 @@ The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `packag
   else `Referer`; `canonicalOrigin`, `trustForwardedHeaders` and `desktop.app.origin` apply) —
   or it is a 403 before Start sees it. Request bodies to server functions and server routes are
   read under a cap (413 over it).
+- **Emits Vite's asset imports** from both bundles under `/_tss/assets/`, content-hashed and the
+  same URL on both sides: an `app.css?url` link (a Tailwind input is compiled with the project's
+  Tailwind), images and fonts.
 - **Hydrates in the browser** with Start's `StartClient`, from a client bundle served under
   `/_tss/` and named in the router manifest, so `<Scripts />` loads it. From there navigation is
   TanStack's.

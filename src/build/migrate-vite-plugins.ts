@@ -55,7 +55,7 @@ export function balancedCall(text: string, open: number): string | null {
  * When a string literal or a comment starts at `i`, the index of its last character (the end
  * of the text when it is unterminated); otherwise `i` itself.
  */
-function skipNonCode(text: string, i: number): number {
+export function skipNonCode(text: string, i: number): number {
   const ch = text[i];
   if (ch === '"' || ch === "'" || ch === "`") return skipString(text, i);
   if (ch !== "/") return i;
@@ -78,7 +78,7 @@ function skipString(text: string, start: number): number {
 }
 
 /** `text` with its comments blanked out (string literals kept), offsets unchanged. */
-function withoutComments(text: string): string {
+export function withoutComments(text: string): string {
   let out = "";
   for (let i = 0; i < text.length; i++) {
     const end = skipNonCode(text, i);

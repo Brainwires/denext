@@ -1331,7 +1331,7 @@
           "name": "from",
           "type": "string",
           "valueName": "<framework>",
-          "description": "Force source: next | remix | vite | cra | generic | expo"
+          "description": "Force source: next | remix | react-router | vite | cra | generic | expo | tanstack-start"
         },
         {
           "name": "check",

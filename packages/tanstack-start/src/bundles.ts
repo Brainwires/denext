@@ -9,12 +9,19 @@ import type { PluginBuildContext, PluginContext } from "@denext/denext/server";
 import {
   buildNextCompatClientEntries,
   buildNextCompatModules,
+  compileCssAsset,
   createNextCompatServerLoader,
 } from "@denext/denext/build/next-compat";
 import { join, relative } from "@std/path";
 import { type ClientGraph, type StartBuild, startBuild } from "./compile.ts";
 import { clientEntrySource } from "./entries.ts";
-import { CLIENT_ENTRY, CLIENT_PREFIX, routerManifest, SERVER_FN_SEGMENT } from "./handler.ts";
+import {
+  ASSETS_DIR,
+  CLIENT_ENTRY,
+  CLIENT_PREFIX,
+  routerManifest,
+  SERVER_FN_SEGMENT,
+} from "./handler.ts";
 import {
   formatRefusals,
   PAGES_DIR,
@@ -116,6 +123,13 @@ export function createBundles(
     classComponents: ctx.config.classComponents !== false,
     resolveAllNodeModules: ctx.config.nodeResolve !== false,
     define: startDefines(app.basePath, ctx.mode === "export"),
+    // Vite's asset imports (`logo.svg`, `app.css?url`, a Tailwind input compiled): both bundles
+    // emit them into the client dir's `assets/` under the same content-hashed URL.
+    assets: {
+      publicPath: `${app.basePath}${CLIENT_PREFIX}`,
+      emitDir: app.clientDir,
+      compileCss: (path: string) => compileCssAsset(app.projectRoot, path, ctx.mode !== "dev"),
+    },
   };
   const startOf = async (
     env: StartEnv,
@@ -297,10 +311,9 @@ async function exportStep(
 ): Promise<void> {
   await Deno.remove(join(build.outDir, PAGES_DIR), { recursive: true }).catch(() => {});
   const clientDir = await bundles.client();
-  for await (const entry of Deno.readDir(clientDir)) {
-    if (!entry.isFile) continue;
-    const source = await Deno.readFile(join(clientDir, entry.name));
-    await build.emitFile({ fileName: `${CLIENT_PREFIX.slice(1)}${entry.name}`, source });
+  for (const name of await clientFiles(clientDir)) {
+    const source = await Deno.readFile(join(clientDir, name));
+    await build.emitFile({ fileName: `${CLIENT_PREFIX.slice(1)}${name}`, source });
   }
   const server = await bundles.loadServerEntry();
   const { written, refused } = await prerenderPages({
@@ -316,4 +329,19 @@ async function exportStep(
   console.log(`[@denext/tanstack-start] prerendered ${written.length} page(s)`);
   const report = formatRefusals(refused, plan.projectRoot);
   if (report) console.warn(report);
+}
+
+/** The client bundle's files, and the assets it emitted under `assets/` (`/`-separated). */
+async function clientFiles(clientDir: string): Promise<string[]> {
+  const names: string[] = [];
+  for (const dir of ["", ASSETS_DIR]) {
+    try {
+      for await (const entry of Deno.readDir(join(clientDir, dir))) {
+        if (entry.isFile) names.push(dir ? `${dir}/${entry.name}` : entry.name);
+      }
+    } catch (err) {
+      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    }
+  }
+  return names;
 }

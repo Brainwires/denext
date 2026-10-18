@@ -247,6 +247,20 @@ a `public/index.html` with React) and a **generic React SPA** (React plus a root
 > Migrating from Remix? That is a route-tree transform, not a SPA import — see
 > [Migrating from Remix](/docs/migrating-remix).
 
+### TanStack Start
+
+A **TanStack Start** app (`@tanstack/react-start` in `package.json`, Start's plugin
+`tanstackStart()` in `vite.config.ts`) runs on the
+[`@denext/tanstack-start`](/docs/plugins) plugin, sources untouched. `denext migrate` writes a
+`denext.config.ts` registering `tanstackStart()` with the Start options `vite.config.ts` passes
+(`srcDirectory`, `router`, `importProtection`, `prerender`, `pages`), as long as each reads
+nothing else from the file, and a `deno.json` that maps React to denext and leaves TanStack's
+packages to your `node_modules` (`nodeModulesDir: "manual"`). The options it leaves behind
+(`tsr`, which belongs in `tsr.config.json`, `server`, `spa`, a value built from an import) are
+in the summary and in `denext migrate --check`. A Vinxi-era app (`app.config.ts`) is detected
+too, with a note to move to Start's current layout first. Pass `--from tanstack-start` to force
+the path. An `app.css?url` link, a Tailwind input included, is compiled and served as in Vite.
+
 ---
 
 ## 3c. Adding an iOS / Android target (`--enable-capacitor`)

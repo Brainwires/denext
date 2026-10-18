@@ -23,6 +23,8 @@ emit correct denext instead of Next.js.
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
    plugin (`denext.config.ts` + `deno.json`) and rewrites
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
+   A **TanStack Start** app (`@tanstack/react-start` + `tanstackStart()` in vite.config) is wired
+   to the `@denext/tanstack-start` plugin, Start's options carried into `tanstackStart({ … })`.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform

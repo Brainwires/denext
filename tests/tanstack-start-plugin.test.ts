@@ -139,6 +139,34 @@ Deno.test("tanstack-start handler: requests go to Start's handler; the bundle is
   }
 });
 
+Deno.test("tanstack-start handler: the assets the bundles emit are served from assets/", async () => {
+  const { dir, handle, seen } = await handlerWithClient();
+  try {
+    await Deno.mkdir(join(dir, "assets"));
+    await Deno.writeTextFile(join(dir, "assets", "app-ABCDEFGH.css"), "body{color:red}");
+    await Deno.writeTextFile(join(dir, "assets", "logo-ABCDEFGH.svg"), "<svg/>");
+    await Deno.writeTextFile(join(dir, "assets", "data-ABCDEFGH.bin"), "x");
+    const css = await handle(new Request(ORIGIN + "/_tss/assets/app-ABCDEFGH.css"));
+    assertEquals(await css!.text(), "body{color:red}");
+    assertEquals(css!.headers.get("content-type"), "text/css; charset=utf-8");
+    assertStringIncludes(css!.headers.get("cache-control")!, "immutable");
+    const svg = await handle(new Request(ORIGIN + "/_tss/assets/logo-ABCDEFGH.svg"));
+    assertEquals(svg!.headers.get("content-type"), "image/svg+xml");
+    await svg!.body?.cancel();
+    const bin = await handle(new Request(ORIGIN + "/_tss/assets/data-ABCDEFGH.bin"));
+    assertEquals(bin!.headers.get("content-type"), "application/octet-stream");
+    await bin!.body?.cancel();
+    for (
+      const path of ["assets/nope.css", "assets/a/b.css", "assets/..%2F..%2Fdeno.json", "x.css"]
+    ) {
+      assertEquals((await handle(new Request(ORIGIN + "/_tss/" + path)))!.status, 404, path);
+    }
+    assertEquals(seen, [], "client files never reach Start's handler");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("tanstack-start handler: a cross-origin server function POST is refused before Start", async () => {
   const { dir, handle, seen } = await handlerWithClient();
   try {

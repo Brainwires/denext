@@ -505,6 +505,55 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name: "compat assets: a css?url named through a path alias (~/) is compiled like a relative one",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { bundleNextCompatModules } = await import("../src/build/next-compat.ts");
+  const { join } = await import("@std/path");
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_assets_alias_" }));
+  try {
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ imports: { "~/": "./src/" } }),
+    );
+    await Deno.mkdir(join(dir, "src", "styles"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "src", "styles", "app.css"), "body { color: red }\n");
+    await Deno.writeTextFile(
+      join(dir, "src", "entry.ts"),
+      `import css from "~/styles/app.css?url";\nexport const url = css;\n`,
+    );
+    const clientDir = join(dir, "client");
+    await bundleNextCompatModules({
+      entryPoints: { app: join(dir, "src", "entry.ts") },
+      outdir: join(dir, "out"),
+      configPath: join(dir, "deno.json"),
+      platform: "deno",
+      denextExternal: true,
+      denoLoader: false,
+      absWorkingDir: dir,
+      assets: {
+        publicPath: "/_tss/",
+        emitDir: clientDir,
+        compileCss: (p: string) =>
+          Deno.readTextFile(p).then((s) => new TextEncoder().encode(s.replace("red", "blue"))),
+      },
+    });
+    const code = await Deno.readTextFile(join(dir, "out", "app.js"));
+    const url = /"(\/_tss\/assets\/app-[A-Z2-7]{8}\.css)"/.exec(code)?.[1];
+    assert(url, `the alias import became the compiled stylesheet's URL:\n${code}`);
+    assertStringIncludes(
+      await Deno.readTextFile(join(clientDir, url.slice("/_tss/".length))),
+      "blue",
+    );
+  } finally {
+    const esbuild = await import("../src/build/esbuild/mod.ts");
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("css-url: isTailwindInput recognizes v3 directives and the v4 import", async () => {
   const { isTailwindInput } = await import("../src/build/css-url.ts");
   assert(isTailwindInput("@tailwind base;\n@tailwind utilities;"));

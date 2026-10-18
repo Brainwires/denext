@@ -1609,15 +1609,22 @@ export interface AssetOptions {
   compileCss?: (path: string) => Promise<Uint8Array>;
 }
 
-/** The absolute path of a `?url`-imported stylesheet to compile (null: not one, or unresolvable here). */
-function cssUrlPath(
+/**
+ * The absolute path of a `?url`-imported stylesheet to compile (null: not one, or unresolvable
+ * here): relative, absolute, or through one of the app's import-map path aliases
+ * (`~/styles/app.css?url`, where `~/` maps to `./src/`).
+ */
+async function cssUrlPath(
   assets: AssetOptions,
   base: string,
   args: esbuild.OnResolveArgs,
-): string | null {
+  aliases: () => Promise<LocalAliases | null>,
+): Promise<string | null> {
   if (!assets.emitDir || !assets.compileCss || !/\.css$/i.test(base)) return null;
   if (isAbsolute(base)) return base;
-  return base.startsWith(".") ? join(args.resolveDir || dirname(args.importer), base) : null;
+  if (base.startsWith(".")) return join(args.resolveDir || dirname(args.importer), base);
+  const local = await aliases();
+  return local ? aliasBase(base, local) : null;
 }
 
 /** Asset extensions {@link AssetOptions.emitDir} emits as URL-exporting modules. */
@@ -2430,7 +2437,12 @@ function workerStub(url: string): string {
 export function viteAssetPlugin(
   assets: AssetOptions,
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
+  configPath?: string,
 ): esbuild.Plugin {
+  // The app's path aliases (its deno.json), read once, for a `?url` stylesheet named through one.
+  let aliases: Promise<LocalAliases> | undefined;
+  const appAliases = () =>
+    configPath ? (aliases ??= readLocalAliases(configPath)) : Promise.resolve(null);
   const QUERY = /\?(url|raw|inline|worker)(&[^?]*)?$/;
   const workerCache = new Map<string, string>();
   /** Emit (once per resolved path) the worker's own bundle and return its public URL. */
@@ -2453,7 +2465,7 @@ export function viteAssetPlugin(
         const flag = args.path.slice(qIdx + 1).split("&")[0];
         // A stylesheet's `?url` wants the PROCESSED css file, not the css-shim module the
         // chain would resolve the sheet to: locate the file directly (relative/absolute).
-        const sheet = flag === "url" ? cssUrlPath(assets, base, args) : null;
+        const sheet = flag === "url" ? await cssUrlPath(assets, base, args, appAliases) : null;
         if (sheet) return { path: sheet, namespace: "vite-css-url" };
         // Resolve the real module through the full chain (skip our own plugin — the
         // query is stripped, so it can't re-match — avoiding recursion).
@@ -2802,7 +2814,7 @@ async function sourcePlugins(
     (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
   );
   return [
-    ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild)] : []),
+    ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild, options.configPath)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
     ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true })] : []),

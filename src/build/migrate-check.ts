@@ -23,7 +23,8 @@ export type MigrateSource =
   | "vite"
   | "cra"
   | "generic-react"
-  | "expo";
+  | "expo"
+  | "tanstack-start";
 
 /** Something the migration leaves to the user, with the reason. */
 export interface MigrateFinding {
@@ -139,6 +140,7 @@ function existingConfigFindings(r: MigrateResult): MigrateFinding[] {
   if (configKept) {
     const plugins = [
       ...(r.pagesRouter ? ['pagesRouter() from "@denext/pages-router"'] : []),
+      ...(r.tanstackStart ? ['tanstackStart() from "@denext/tanstack-start"'] : []),
       ...(r.effect ? ['effect() from "@denext/effect"'] : []),
     ];
     out.push({
@@ -272,6 +274,16 @@ function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: Migra
   return { wont, review };
 }
 
+/** The Start options left behind, and the notes on the app's Start config. */
+function tanstackStartFindings(r: MigrateResult): MigrateFinding[] {
+  const t = r.tanstackStart;
+  if (!t) return [];
+  return [
+    ...t.dropped.map((d) => ({ item: `${t.file}: ${d.key}`, reason: d.note })),
+    ...t.notes.map((reason) => ({ item: t.file ?? "TanStack Start", reason })),
+  ];
+}
+
 /** A desktop proxy whose prefixes migrate could not read (built in code in vite.config). */
 function spaProxyFindings(r: MigrateResult): MigrateFinding[] {
   const file = r.spa?.proxyUnresolved;
@@ -347,6 +359,7 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...spaProxyFindings(r),
       ...viteEmitterFindings(r),
       ...transformFindings(r),
+      ...tanstackStartFindings(r),
       ...expo.review,
       ...appIconFindings(r),
       ...cap.review,

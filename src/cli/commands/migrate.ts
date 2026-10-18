@@ -465,6 +465,27 @@ function reportExpoDesktop(packages: readonly string[]): void {
   }
 }
 
+/** A TanStack Start app's section: the plugin wiring and the Start options carried over. */
+function reportTanstackStart(r: MigrateResult): void {
+  const t = r.tanstackStart;
+  if (!t) return;
+  console.log("  ▸ TanStack Start detected — wired the @denext/tanstack-start plugin.");
+  if (r.pagesConfigWritten) {
+    const carried = t.carried.map((o) => o.key);
+    console.log(
+      "    wrote denext.config.ts with `plugins: [tanstackStart()]`" +
+        (carried.length ? ` (from ${t.file}: ${carried.join(", ")}).` : "."),
+    );
+  } else {
+    console.log(
+      "    ⚠️  denext.config.ts already exists — add `tanstackStart()` from " +
+        '"@denext/tanstack-start" to its `plugins` array (and `compatibilityMode: true`).',
+    );
+  }
+  for (const d of t.dropped) console.log(`    ⚠️  ${t.file}: ${d.key} not carried — ${d.note}`);
+  for (const note of t.notes) console.log(`    ⚠️  ${note}`);
+}
+
 /** The framework-specific section of the report, if any. */
 function reportFramework(r: MigrateResult, desktop: boolean): void {
   if (r.kind === "expo" && r.expo) {
@@ -679,7 +700,8 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         name: "from",
         type: "string",
         valueName: "<framework>",
-        help: "Force source: next | remix | vite | cra | generic | expo",
+        help: "Force source: next | remix | react-router | vite | cra | generic | expo | " +
+          "tanstack-start",
       },
       {
         name: "check",
@@ -763,6 +785,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       }
       reportDeps(r);
       reportFramework(r, desktop);
+      reportTanstackStart(r);
       if (r.effect) reportEffect(r);
       if (r.prisma) reportPrisma(r.prisma);
       if (r.nextAuth) reportNextAuth(r.nextAuth);

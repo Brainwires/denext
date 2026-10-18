@@ -43,6 +43,12 @@ import {
 } from "./mobile-icon-source.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
+  isTanstackStartApp,
+  readTanstackStartOptions,
+  tanstackStartConfigSource,
+  type TanstackStartMigrateInfo,
+} from "./migrate-tanstack-start.ts";
+import {
   capacitorConfigSource,
   capacitorIdentity,
   expoApiUsage,
@@ -143,6 +149,8 @@ const RR_TYPES_DIR = ".react-router/types";
 
 /** The `@denext/react-router` package the RR7 framework-mode plugin path pins. */
 const REACT_ROUTER_SPEC = catalogSpec("@denext/react-router");
+/** The `@denext/tanstack-start` package a TanStack Start app runs on. */
+const TANSTACK_START_SPEC = catalogSpec("@denext/tanstack-start");
 /**
  * The `@denext/effect` bridge specifier, mapped (and its `effect()` plugin wired into the
  * generated `denext.config.ts`) whenever the app depends on the npm `effect` package. The
@@ -428,7 +436,7 @@ export interface AppIconReport {
 
 /** Result of a migration run (for the CLI to print). */
 export interface MigrateResult {
-  kind: "next" | "spa" | "cra" | "generic" | "remix" | "expo";
+  kind: "next" | "spa" | "cra" | "generic" | "remix" | "expo" | "tanstack-start";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -461,6 +469,8 @@ export interface MigrateResult {
   nextAuth?: NextAuthMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
+  /** Present when {@link kind} is `"tanstack-start"` — the Start options carried and dropped. */
+  tanstackStart?: TanstackStartMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
   nextConfig?: NextConfigReport;
   /** Present with `--enable-capacitor`: the Capacitor target written and the steps to run. */
@@ -602,6 +612,11 @@ interface DenextResolver {
   /** The `@denext/effect` bridge import-map entry (single `.` export — no subpaths). */
   effectEntry: () => Record<string, string>;
   /**
+   * The `@denext/tanstack-start` entry, and in local-path mode the plugin's own bare imports
+   * (`@denext/denext/*`, `@std/path`), which a `file://` package cannot resolve itself.
+   */
+  tanstackStartEntries: () => Record<string, string>;
+  /**
    * denext's OWN `jsr:`/`npm:` deps (`@std/*`, `ws`, esbuild, …), for **local-path mode
    * only**. A `file://` denext is not a self-contained package, so tools that follow its
    * modules — notably `deno desktop`, which compiles `denext/desktop`'s graph and can't
@@ -637,6 +652,7 @@ function jsrResolver(V: string): DenextResolver {
       "@denext/react-router/dom": REACT_ROUTER_SPEC + "/dom",
     }),
     effectEntry: () => ({ "@denext/effect": EFFECT_SPEC }),
+    tanstackStartEntries: () => ({ "@denext/tanstack-start": TANSTACK_START_SPEC }),
     frameworkDeps: () => ({}),
   };
 }
@@ -736,6 +752,12 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
   const efDir = join(abs, "packages", "effect");
   const efExp = await packageExports(efDir);
   const rrExp = await packageExports(join(abs, "packages", "react-router"));
+  const tssEntries = await localPluginEntries(
+    "@denext/tanstack-start",
+    join(abs, "packages", "tanstack-start"),
+    local,
+    fileFor,
+  );
   return {
     base: local(""),
     sub: local,
@@ -771,8 +793,39 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
     effectEntry: () => ({
       "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts"),
     }),
+    tanstackStartEntries: () => tssEntries,
     frameworkDeps: () => frameworkDeps,
   };
+}
+
+/**
+ * A workspace plugin's import-map entries in local-path mode: the package itself, and its own
+ * bare imports (a `file://` module resolves them through the APP's import map): every
+ * `@denext/denext[/<sub>]` its source imports to the checkout (a `jsr:` entry would cover the
+ * subpaths, a file does not), the rest (`jsr:`/`npm:`) as the package pins them.
+ */
+async function localPluginEntries(
+  name: string,
+  dir: string,
+  local: (sub: string) => string,
+  fileFor: (root: string, rel: string) => string,
+): Promise<Record<string, string>> {
+  const cfg = (await readJson(join(dir, "deno.json"))) ?? {};
+  const exp = (cfg.exports ?? {}) as Record<string, string>;
+  const out: Record<string, string> = { [name]: fileFor(dir, exp["."] ?? "./mod.ts") };
+  for (const [key, target] of Object.entries((cfg.imports ?? {}) as Record<string, string>)) {
+    if (!key.startsWith("@denext/denext")) out[key] = target;
+  }
+  const denextSpecs = new Set<string>();
+  const scan = (text: string) => {
+    for (const m of text.matchAll(/["'](@denext\/denext(?:\/[\w./-]+)?)["']/g)) {
+      denextSpecs.add(m[1]);
+    }
+  };
+  scan(await mfs.readTextFile(join(dir, "mod.ts")).catch(() => ""));
+  await walkCode(join(dir, "src"), scan);
+  for (const spec of denextSpecs) out[spec] = local(spec.slice("@denext/denext/".length));
+  return out;
 }
 
 /**
@@ -1123,6 +1176,10 @@ async function migrateNonNextProject(
   if (from === "expo" || (!from && await isExpoApp(dir, deps))) {
     return await migrateExpoProject(dir, deps, options);
   }
+  // Before the SPA family: a Start app has a vite.config too.
+  if (from === "tanstack-start" || (!from && await isTanstackStartApp(dir, deps))) {
+    return await migrateTanstackStartProject(dir, deps, options);
+  }
   return (await migrateRemixFamily(dir, deps, options)) ??
     (await migrateSpaFamily(dir, deps, options));
 }
@@ -1352,6 +1409,8 @@ function capacitorOptionsOf(options: MigrateOptions): CapacitorOptions {
 function capacitorSkipReason(r: MigrateResult): string {
   const what = r.kind === "remix"
     ? "a Remix / React Router app (its loaders and actions need a server)"
+    : r.kind === "tanstack-start"
+    ? "a TanStack Start app (its server functions need a server)"
     : "a Pages Router app";
   return `--enable-capacitor covers SPA, Next App Router and Expo apps; this is ${what}, ` +
     "which it does not cover yet";
@@ -1727,6 +1786,64 @@ async function migrateRemixProject(
     denoJsonExists,
     remix,
     prisma,
+  };
+}
+
+/**
+ * TanStack Start → the `@denext/tanstack-start` plugin. The app's sources stay as they are:
+ * migrate writes a `deno.json` whose import map points React at denext (the plugin compiles the
+ * app onto denext's React) and maps the plugin, and a `denext.config.ts` registering
+ * `tanstackStart()` with the Start options its vite.config passed. TanStack's packages load
+ * from the app's own `node_modules` (`nodeModulesDir: "manual"`), so they are not pinned.
+ */
+async function migrateTanstackStartProject(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const { pnp } = await detectPackageManager(dir);
+  if (pnp) throw pnpUnsupported(dir);
+  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const imports = await buildAppRouterImports(dir, R, deps);
+  const classified = classifyDeps(deps, imports, { pin: false });
+  Object.assign(imports, R.tanstackStartEntries());
+  const written: string[] = [];
+  const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, {
+    tasks: spaTasks(false, R.cli, false, "manual"),
+    nodeModulesDir: "manual",
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
+    // Start apps import extensionless (`./routeTree.gen`), as Vite resolves them.
+    unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
+    compilerOptions: {
+      jsx: "react-jsx",
+      jsxImportSource: "react",
+      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+      strict: true,
+      skipLibCheck: true,
+    },
+    // The plugin generates the route tree; the formatter and linter leave it alone.
+    fmt: { exclude: ["src/routeTree.gen.ts"] },
+    lint: { exclude: ["src/routeTree.gen.ts"] },
+    imports,
+  }, written);
+  await ensureGitignore(dir, [".denext/", "out/"], written);
+  await ensureVscodeDeno(dir, written);
+  const tanstackStart = await readTanstackStartOptions(dir);
+  const configExists = !(await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => tanstackStartConfigSource(GEN_MARKER, tanstackStart),
+    written,
+  ));
+  return {
+    kind: "tanstack-start",
+    wrote: written,
+    ...classified,
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: !configExists,
+    pagesConfigExists: configExists,
+    denoJsonExists,
+    tanstackStart,
   };
 }
 

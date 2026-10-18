@@ -32,6 +32,12 @@ of `@denext/denext`.
   the handler's body. The example keeps its notes in `notes.server.ts`, and its static export is
   checked with JavaScript off: the pages render from their HTML and a link loads the next
   exported file.
+- **Vite's asset imports work in both bundles:** `import appCss from "~/styles/app.css?url"` (a
+  Tailwind input compiled with the project's Tailwind), images and fonts are emitted under
+  `/_tss/assets/` with content-hashed names, the same URL on the server and in the browser, and
+  `denext export` publishes them. Requires `@denext/denext`'s `compileCssAsset` (the release
+  after 4.3.1).
+- **`denext migrate` wires the plugin into a Start app** (see the denext CHANGELOG).
 
 ## [0.1.0] - 2026-10-17
 

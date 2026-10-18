@@ -15,7 +15,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { killTree, startCliServer } from "../e2e/harness.ts";
+import { killTree, launchBrowser, pollFor, startCliServer } from "../e2e/harness.ts";
 
 /** One route to render-assert after the migrated app is built and served. */
 interface BedRoute {
@@ -27,6 +27,19 @@ interface BedRoute {
   contains: string;
   /** For a redirect: a substring the `Location` header must contain (redirects are not followed). */
   location?: string;
+}
+
+/**
+ * A page to open in headless Chromium after the route assertions: it must hydrate, and with
+ * `navigate`, a click must navigate on the client (the document stays the same one).
+ */
+interface BedBrowserCheck {
+  /** Path to open. */
+  path: string;
+  /** A JS expression, polled in the page until truthy: the app hydrated. */
+  hydrated: string;
+  /** A link to click (a CSS selector) and an expression that is truthy once it navigated. */
+  navigate?: { click: string; until: string };
 }
 
 /**
@@ -69,6 +82,8 @@ export interface Bed {
   allowFlagged?: string[];
   /** Routes to render-assert. */
   routes: BedRoute[];
+  /** A page to hydrate (and navigate from) in headless Chromium. */
+  browser?: BedBrowserCheck;
 }
 
 const REPO = fromFileUrl(new URL("../../", import.meta.url));
@@ -268,6 +283,10 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
         }
         assertEquals(failures, [], `${bed.name}: route assertions failed`);
       });
+      if (bed.browser) {
+        const check = bed.browser;
+        await t.step("the page hydrates in headless Chromium", () => browserCheck(server, check));
+      }
     } finally {
       await server.close();
     }
@@ -284,6 +303,25 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
     });
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+}
+
+/** Open `check.path`, wait for it to hydrate, then (optionally) navigate on the client. */
+async function browserCheck(server: { origin: string }, check: BedBrowserCheck): Promise<void> {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage(server.origin + check.path);
+    await pollFor(page, check.hydrated, READY_TIMEOUT_MS);
+    if (!check.navigate) return;
+    await page.evaluate("globalThis.__bedSameDocument = true");
+    await (await page.$(check.navigate.click))!.click();
+    await pollFor(page, check.navigate.until, READY_TIMEOUT_MS);
+    assert(
+      await page.evaluate("globalThis.__bedSameDocument === true"),
+      `${check.navigate.click} reloaded the page instead of navigating on the client`,
+    );
+  } finally {
+    await browser.close();
   }
 }
 

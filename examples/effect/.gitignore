@@ -1,3 +1,4 @@
 # denext generated build artifacts
 .denext/
 out/
+.deno/
