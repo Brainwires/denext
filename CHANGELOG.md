@@ -145,8 +145,19 @@ and this project adheres to
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,
   `theme(…)`, `important`), so a valid input such as a TanStack Start app's `src/styles/app.css`
   (compiled through its `?url` import) printed the warning on every build. The walk now drops
-  those options and keeps the import and the sheet's own rules, as it already did for a plain
-  `@import "tailwindcss"`; a sheet that does not parse still warns.
+  the Tailwind import itself, options and all, and keeps the sheet's own rules; a sheet that does
+  not parse still warns.
+
+- **A raw `@import "tailwindcss"` no longer ships in the build's stylesheets.** The stylesheet
+  walk passed a Tailwind import (`@import "tailwindcss"`, `@import "tailwindcss/…"`) through
+  into the CSS it emitted for a sheet the Tailwind step compiles separately (a `?url` import, or
+  a second sheet beside the `tailwind` config's input), so the browser requested a `tailwindcss`
+  stylesheet that does not exist. The walk drops it; the `tailwind` config's own input is still
+  compiled and served as its output.
+
+- **"could not compile stylesheet" always gives a reason.** The warning printed the thrown
+  value's `.message`, so a value without one read `(undefined)`; it now prints the message, or
+  what was thrown, and the line and column an error object carries.
 
 - **`denext doctor` passes an app whose routes come from a plugin.** A Pages Router or TanStack
   Start app has no `app/`; its routes come from the `@denext/pages-router` /

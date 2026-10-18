@@ -287,19 +287,74 @@ function readTextSync(path: string): string | null {
 }
 
 /**
- * Tailwind v4's options on its own import (`@import "tailwindcss" source("../") prefix(tw)`,
- * `theme(static)`, `important`) are Tailwind syntax, not CSS, and lightningcss refuses the whole
- * sheet over them. The walk passes a Tailwind import through as written (Tailwind itself compiles
- * the input: the `tailwind` config, or a `?url` import), so it drops those options and keeps the
- * import and the sheet's own rules. Any other stylesheet is returned unchanged.
+ * A Tailwind import (`@import "tailwindcss";`, `@import "tailwindcss/theme.css" theme(static);`,
+ * with or without Tailwind v4's own options) is Tailwind's input, not CSS a browser can load: the
+ * Tailwind step compiles such a sheet (the `tailwind` config's input, which the walk excludes and
+ * aliases to the compiled output, or a `?url` import, compiled on its own), so a copy left in the
+ * walk's output would only make the browser request a `tailwindcss` stylesheet that does not
+ * exist. The walk drops those imports (their options, which lightningcss refuses the whole sheet
+ * over, with them) and keeps the sheet's own rules. Any other stylesheet is returned unchanged.
  */
-function withoutTailwindImportOptions(css: string): string {
-  return css.replace(TAILWIND_IMPORT_OPTIONS, "$1");
+function withoutTailwindImports(css: string): string {
+  return css.replace(TAILWIND_IMPORT, "");
 }
 
-/** A `@import "tailwindcss[/…]"` followed by Tailwind's own import options, up to the `;`. */
-const TAILWIND_IMPORT_OPTIONS =
-  /(@import\s+(["'])tailwindcss(?:\/[^"']*)?\2)(?:\s+(?:(?:source|prefix|theme)\([^()]*\)|important))+(?=\s*;)/g;
+/**
+ * An `@import "tailwindcss[/…]"` statement, with any of Tailwind's own import options
+ * (`source()`, `prefix()`, `theme()`, `important`) and media / layer conditions, through its `;`.
+ */
+const TAILWIND_IMPORT =
+  /@import\s+(["'])tailwindcss(?:\/[^"']*)?\1(?:\s+(?:[\w-]+\([^()]*\)|[\w-]+))*\s*;[ \t]*\r?\n?/g;
+
+/**
+ * Why a stylesheet failed to compile, for the walk's warning: the thrown value's own message
+ * (lightningcss throws a string, Sass an `Error`), with the location an error object carries
+ * (`loc: { line, column }`) when its message does not already name one, and never a bare
+ * `undefined` / empty reason.
+ *
+ * @param err The thrown value.
+ * @param file The stylesheet's path (named in the location).
+ */
+export function cssFailureReason(err: unknown, file: string): string {
+  const reason = thrownMessage(err) || messagelessReason(err);
+  return /:\d+:\d+/.test(reason) ? reason : reason + thrownLocation(err, file);
+}
+
+/** The shape of a thrown error object the reason reads (all fields optional). */
+type ThrownObject = {
+  message?: unknown;
+  fileName?: unknown;
+  loc?: { line?: unknown; column?: unknown };
+};
+
+/** A thrown value as an object, or null when it is a primitive. */
+function thrownObject(err: unknown): ThrownObject | null {
+  return typeof err === "object" && err !== null ? err as ThrownObject : null;
+}
+
+/** A thrown string, or a thrown object's string `message`, trimmed; "" when there is none. */
+function thrownMessage(err: unknown): string {
+  if (typeof err === "string") return err.trim();
+  const message = thrownObject(err)?.message;
+  return typeof message === "string" ? message.trim() : "";
+}
+
+/** The reason for a thrown value with no message: an Error subclass's name, else the value. */
+function messagelessReason(err: unknown): string {
+  if (err instanceof Error && err.name && err.name !== "Error") return err.name;
+  const shown = thrownObject(err) ? Deno.inspect(err, { depth: 2, compact: true }) : String(err);
+  return `the compiler threw ${shown} with no message`;
+}
+
+/** ` at <file>:<line>[:<column>]` from a thrown object's `loc`, or "" without one. */
+function thrownLocation(err: unknown, file: string): string {
+  const obj = thrownObject(err);
+  const line = obj?.loc?.line;
+  if (typeof line !== "number") return "";
+  const column = obj?.loc?.column;
+  const where = typeof obj?.fileName === "string" && obj.fileName ? obj.fileName : file;
+  return ` at ${where}:${line}${typeof column === "number" ? `:${column}` : ""}`;
+}
 
 /** The generated CSS assets for a set of source files. */
 export interface CssAssets {
@@ -339,7 +394,7 @@ export async function generateCssAssets(
       // Sass files are compiled to CSS first (resolving their own @use/@import), then run
       // through lightningcss exactly like a `.css` file — so scoping/minify are unchanged.
       const source = isSass(file) ? await compileSass(file) : await Deno.readTextFile(file);
-      const t = await transformCss(withoutTailwindImportOptions(source), file, {
+      const t = await transformCss(withoutTailwindImports(source), file, {
         cssModules: isModule,
         minify: opts.minify,
       });
@@ -353,7 +408,7 @@ export async function generateCssAssets(
       // by name rather than as an unlabeled Promise.all rejection.
       console.warn(
         `denext: could not compile stylesheet ${file} (${
-          err instanceof Error ? err.message : String(err)
+          cssFailureReason(err, file)
         }); it is omitted from the build.`,
       );
     }

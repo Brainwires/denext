@@ -136,6 +136,8 @@ async function assertInputAliasedToOutput(dir: string, assets: CssAssets): Promi
     ".tw-generated",
     "importing the Tailwind input collects the compiled output CSS (not an unstyled build)",
   );
+  // The Tailwind step resolved the raw import: none reaches the route's stylesheet.
+  assert(!routeCss.includes("tailwindcss"), routeCss);
 }
 
 // A stub Tailwind binary: a tiny shell script that honors `-i`/`-o`, so the whole
