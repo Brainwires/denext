@@ -196,15 +196,28 @@ export function devStateResponse(st: DevLogHost, url: URL): Response {
   });
 }
 
-/** Run `deno check` on `files`; the stderr text when it fails, else null (or on spawn failure). */
-async function runTypeCheck(st: DevState, files: string[]): Promise<string | null> {
+/**
+ * Run `deno check` on `files`; the stderr text when it fails, else null (or on spawn failure, or
+ * once the dev server stops: its signal kills the check, which would otherwise outlive the server
+ * in the project directory — on Windows that directory then cannot be removed).
+ *
+ * @param st The dev session (its project paths and stop signal).
+ * @param files The files to check.
+ * @returns The failure text, or null.
+ */
+export async function runTypeCheck(
+  st: Pick<DevState, "paths" | "options">,
+  files: string[],
+): Promise<string | null> {
   try {
     const { code, stderr } = await new Deno.Command(denoExecutable(), {
       args: typeCheckArgs(st, files),
       cwd: st.paths.projectDir,
       stdout: "null",
       stderr: "piped",
+      signal: st.options.signal,
     }).output();
+    if (st.options.signal?.aborted) return null;
     if (code === 0) return null;
     return new TextDecoder().decode(stderr).trim() || null;
   } catch {
@@ -213,7 +226,7 @@ async function runTypeCheck(st: DevState, files: string[]): Promise<string | nul
 }
 
 /** `deno check --quiet [--config <project config>] -- <files>`. */
-function typeCheckArgs(st: DevState, files: string[]): string[] {
+function typeCheckArgs(st: Pick<DevState, "paths">, files: string[]): string[] {
   const args = ["check", "--quiet"];
   if (st.paths.configPath.startsWith(st.paths.projectDir)) {
     args.push("--config", st.paths.configPath);
@@ -221,6 +234,17 @@ function typeCheckArgs(st: DevState, files: string[]): string[] {
   // `--` before the file list so a source path beginning with `-` can't be misparsed as a
   // flag (paths are watcher-sourced, not attacker-controlled, but this keeps the spawn robust).
   return [...args, "--", ...files];
+}
+
+/**
+ * The changed paths the dev loop type-checks: TypeScript sources, never build output under
+ * `.denext/` (with either separator — a Windows watcher reports backslash paths).
+ *
+ * @param changedPaths The paths of one change set.
+ * @returns The files to check.
+ */
+export function typeCheckFiles(changedPaths: readonly string[]): string[] {
+  return changedPaths.filter((p) => /\.(ts|tsx)$/.test(p) && !/[\\/]\.denext[\\/]/.test(p));
 }
 
 /**
@@ -232,7 +256,7 @@ function typeCheckArgs(st: DevState, files: string[]): string[] {
  */
 export function typeCheck(st: DevState, changedPaths: string[]): void {
   if (Deno.env.get("DENEXT_DEV_TYPECHECK") === "0") return;
-  const files = changedPaths.filter((p) => /\.(ts|tsx)$/.test(p) && !p.includes("/.denext/"));
+  const files = typeCheckFiles(changedPaths);
   if (files.length === 0) return;
   const token = ++st.typeCheckToken;
   void (async () => {

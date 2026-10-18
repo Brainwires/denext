@@ -8,6 +8,7 @@ import { join } from "@std/path";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -116,7 +117,7 @@ Deno.test("denext dev: an edit to a nested Server Component reaches the server r
     assertStringIncludes(await dev.html(), "LABEL_TWO", "the earlier edit stays applied");
   } finally {
     await dev.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -157,7 +158,7 @@ Deno.test("denext dev: many edits keep the server copies bounded", async () => {
     assert(n <= 4, `${n} server copies after ${EDITS} edits`);
   } finally {
     await dev.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -191,7 +192,7 @@ Deno.test("denext dev: an edited action runs its new implementation", async () =
     assertEquals((await dev.call(id)).result, "GREET_TWO");
   } finally {
     await dev.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -216,6 +217,6 @@ Deno.test("denext dev: each target's session runs its own action variant", async
     assertEquals((await dev.call(webId)).result, "WEB_WHO", "web still runs its own");
   } finally {
     await dev.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
