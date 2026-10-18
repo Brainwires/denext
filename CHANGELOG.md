@@ -73,6 +73,31 @@ and this project adheres to
   a server component over Live (`defineLustreView`). The first `dev` / `build` downloads denext's
   pinned Gleam, then Lustre from Hex.
 
+- **`denext migrate` takes TanStack Start apps.** An app with `@tanstack/react-start` and Start's
+  Vite plugin (`tanstackStart()` in `vite.config.ts`; a Vinxi-era `app.config.ts` is recognized
+  too, with a note) is wired to the `@denext/tanstack-start` plugin, sources untouched: a
+  `denext.config.ts` registering `tanstackStart()` with the Start options `vite.config.ts` passes
+  (`srcDirectory`, `router`, `importProtection`, `prerender`, `pages`) carried over as written
+  when they read nothing else from the file, and a `deno.json` mapping React to denext with
+  TanStack loaded from the app's `node_modules`. `migrate --check` names the source
+  (`tanstack-start`) and lists the options left behind (`tsr`, `server`, `spa`, a value built
+  from an import); `--from tanstack-start` forces the path. TanStack's own `start-basic` example
+  is a migration bed: migrated, built, served and hydrated in headless Chromium.
+- **`@denext/tanstack-start` emits Vite's asset imports:** an `app.css?url` link (a Tailwind
+  input compiled with the project's Tailwind), images and fonts land under `/_tss/assets/` with
+  content-hashed names, the same URL from both bundles, and `denext export` publishes them.
+  `compileCssAsset` joins `denext/build/next-compat` for router plugins.
+- **`denext migrate --from expo` names `@react-native-firebase/*`, `react-native-iap` and
+  `@stripe/stripe-react-native`**, one note per package with what replaces it on denext and a
+  link to the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes), in the summary
+  and in `migrate --check`'s won't-migrate list.
+- **Prisma `cockroachdb` datasources** go through the Postgres adapter path:
+  `@prisma/adapter-pg` injected at each `new PrismaClient()`, pinned, and set up by
+  `prisma:setup`. The server-database e2e runs against a live CockroachDB when
+  `DENEXT_E2E_COCKROACH_URL` is set.
+- **`denext create` and `denext migrate` ignore `.deno/`,** where the native TypeScript 7 check
+  and the tsgo language server keep their project cache; migrate adds the line once.
+
 ### Fixed
 
 - **`denext build --compile` compiles next-compat (drop-in) and Pages Router apps.** A drop-in's
@@ -144,6 +169,10 @@ and this project adheres to
   view registry and the per-process Live view signing key are shared by every copy of their
   modules in the process, so a view the app defines in the prebuilt graph mounts through the
   server's Live hub. The Lustre example's e2e runs both ways.
+
+- **A `?url` stylesheet named through a path alias** (`~/styles/app.css?url`, `~/` mapped to
+  `./src/` in `deno.json`) is compiled and emitted like a relative one; before, the compat build
+  emitted an empty module in its place.
 
 ### Changed
 
