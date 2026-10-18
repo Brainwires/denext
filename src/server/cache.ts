@@ -428,6 +428,21 @@ export async function chooseCacheStore(
   }
 }
 
+/**
+ * Close the durable default store {@linkcode resolveDefaultCacheStore} opened, and go back to
+ * the in-memory store with nothing set — so the next server in this process resolves its own
+ * default again. A server calls it once it has drained: the `node:sqlite` handle would otherwise
+ * stay open for the life of the process (Windows then refuses to remove the project's
+ * `.denext/`). A store the app set itself (or passed as `cache.store`) is left alone.
+ */
+export function releaseDefaultCacheStore(): void {
+  const store = currentCacheStore;
+  if (storeKinds.get(store) !== "sqlite") return;
+  currentCacheStore = inMemoryCacheStore();
+  storeExplicitlySet = false;
+  (store as { close?: () => void }).close?.();
+}
+
 /** What backs the active {@link CacheStore}: the built-in memory or sqlite store, or the app's own. */
 export type CacheStoreKind = "memory" | "sqlite" | "custom";
 

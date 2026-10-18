@@ -9,6 +9,7 @@ import { staticExport } from "../src/build/export.ts";
 import { build } from "../src/build/build.ts";
 import { startProdServer } from "../src/build/prod-server.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 /** Scaffold a throwaway app in `dir`: a deno.json aliasing `denext` to this checkout + files. */
 async function scaffoldApp(
@@ -289,7 +290,7 @@ Deno.test("staticExport: a module with no file for the target fails naming its v
     const ok = await staticExport(dir, { platform: "ios" });
     assertStringIncludes(await Deno.readTextFile(join(ok.outDir, "index.html")), "IOS");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -307,7 +308,7 @@ Deno.test("staticExport: `platformExtensions: false` resolves the plain files on
     };
     assertOnly(got, "PLAIN_BADGE", LABELS);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -345,7 +346,7 @@ Deno.test("denext build + start: the web target's `.web` variant reaches the bun
   } finally {
     controller.abort();
     await new Promise((r) => setTimeout(r, 50));
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -401,7 +402,7 @@ Deno.test("denext build + start: start renders the build's server copies from a 
       for await (const e of Deno.readDir(p)) if (e.isDirectory) await restore(join(p, e.name));
     };
     await restore(outDir).catch(() => {});
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -442,7 +443,7 @@ Deno.test("denext build: a module reaching a variant through an alias keeps the 
     assert(/\{let [\w$]+=[\w$]+\(\d+\),/.test(island), "the copy is not the compiled module");
     assert(/\([\w$]+,0,\(\)=>/.test(island), "the <Child> element is not memoized");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -508,7 +509,7 @@ Deno.test("denext build: reactCompiler compiles a module imported through an ali
     assertCompiled(js, "PANE_MARK");
     assertCompiled(js, "NOTE_MARK");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -599,7 +600,7 @@ Deno.test("denext build: a copied island's dynamic imports reach the variant", a
       assert(!js.includes(plain), `${plain} was bundled`);
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -654,7 +655,7 @@ Deno.test("denext build: a client copy keeps import.meta as written", async () =
     }
     assertMetaKept(js, "web");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 

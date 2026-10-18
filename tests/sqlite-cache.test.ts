@@ -303,3 +303,30 @@ Deno.test("sqlite: a store that can't initialize surfaces the error (caller then
   // uncached read at the call site (covered in production-hardening.test.ts).
   assertThrows(() => store.getPage("k"), Error, "disk I/O");
 });
+
+Deno.test("sqlite: close() releases the handle, and the next access reopens it", () => {
+  let opened = 0;
+  let closed = 0;
+  const store = sqliteCacheStore({
+    path: ":memory:",
+    openDb: () => {
+      opened++;
+      return { exec: () => {}, query: () => [], close: () => void closed++ };
+    },
+  });
+  store.close(); // never opened: nothing to close
+  assertEquals(closed, 0);
+  store.getData("k");
+  store.close();
+  assertEquals([opened, closed], [1, 1], "the open handle is closed");
+  store.getData("k");
+  assertEquals(opened, 2, "used again after close(), the store reopens");
+});
+
+Deno.test("sqlite: a closed store's file can be removed (Windows refuses an open one)", () => {
+  const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-cache-close-" });
+  const store = sqliteCacheStore({ path: `${dir}/cache.db` });
+  store.setData("k", dataEntry({ v: 1 }, [], soon()));
+  store.close();
+  Deno.removeSync(dir, { recursive: true });
+});

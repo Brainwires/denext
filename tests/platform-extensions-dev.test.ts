@@ -12,6 +12,7 @@ import { resolveProject } from "../src/build/paths.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
 import { platformResolution } from "../src/build/platform-extensions.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -77,7 +78,7 @@ Deno.test("unbundled dev: each target's module rewrite names its own platform fi
     assert(!(await served({ cookie: "__denext_platform=nope" })).includes("label.ios.ts"));
   } finally {
     await dev.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -127,7 +128,7 @@ Deno.test("denext dev: ?__denext_platform pins the target; SSR and the Flight is
   } finally {
     controller.abort();
     await new Promise((r) => setTimeout(r, 100));
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -191,7 +192,7 @@ for (const unbundled of [true, false]) {
       assert(!flight.includes("PLAIN_BADGE") && !flight.includes("PLAIN_PILL"));
     } finally {
       await dev.stop();
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }
@@ -218,7 +219,7 @@ Deno.test("denext dev: a platform session's Flight boundary is its own", async (
     assert(!web.includes("/_denext/flight.js"), "web has no island on this route");
   } finally {
     await dev.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -241,7 +242,7 @@ Deno.test("denext dev (bundled): a hydrated route's bundle is the session's", as
     assert(!web.includes("IOS_LABEL"));
   } finally {
     await dev.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -287,7 +288,7 @@ for (const unbundled of [true, false]) {
       assert(!js.includes("PLAIN_LABEL") && !js.includes("PLAIN_TAG"), "no plain file");
     } finally {
       await dev.stop();
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }
@@ -341,7 +342,7 @@ Deno.test("denext dev: a platform file created or removed mid-session outside ap
   } finally {
     controller.abort();
     await new Promise((r) => setTimeout(r, 100));
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -379,7 +380,7 @@ Deno.test("denext dev: a stylesheet only a platform file imports reaches that se
   } finally {
     controller.abort();
     await new Promise((r) => setTimeout(r, 100));
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -452,7 +453,7 @@ Deno.test("denext dev: an edit to a component outside app/ updates the page", as
   } finally {
     controller.abort();
     await new Promise((r) => setTimeout(r, 100));
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -532,7 +533,7 @@ for (const unbundled of [true, false]) {
       assert(!names.some((n) => n.endsWith("-android")), `Android shares web's: ${names}`);
     } finally {
       await dev.stop();
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }

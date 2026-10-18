@@ -340,6 +340,19 @@ and this project adheres to
   the project's own modules however their paths are spelled** (a `/` or `\` separator), by
   `relative()` rather than a string prefix with the host separator.
 
+- **A stopped server closes its durable cache.** `denext dev` and `denext start` opened the
+  default `node:sqlite` cache (`.denext/cache.db`) and kept the handle for the life of the
+  process, so an in-process server left the file open after it drained (Windows then refuses to
+  remove the project's `.denext/`), and the next server started in the same process kept using
+  the first one's database. The drain now closes it and lets the next server resolve its own;
+  `sqliteCacheStore()` gains `close()` (its next call reopens the file), like the Postgres,
+  Redis and Deno KV stores.
+
+- **The dev server's background type check stops with the server.** The `deno check` a source
+  edit starts ran on after `denext dev` stopped, in the project directory; it is now cancelled
+  by the server's stop signal. Its filter also skips `.denext/` output on Windows, where the
+  watcher reports backslash paths.
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,

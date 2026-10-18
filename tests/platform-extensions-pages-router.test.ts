@@ -8,6 +8,7 @@ import { build } from "../src/build/build.ts";
 import { startProdServer } from "../src/build/prod-server.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -82,7 +83,7 @@ for (const mode of ["build + start", "dev"] as const) {
     } finally {
       controller.abort();
       await new Promise((r) => setTimeout(r, 100));
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }

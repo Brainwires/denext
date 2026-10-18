@@ -11,6 +11,7 @@ import {
   type DataEntry,
   getCacheStore,
   inMemoryCacheStore,
+  releaseDefaultCacheStore,
   resolveDefaultCacheStore,
   setCacheStore,
 } from "../src/server/cache.ts";
@@ -194,5 +195,31 @@ Deno.test("/_denext/health: a failing readiness check (the backend's database) i
   } finally {
     unregister();
     setCacheStore(saved);
+  }
+});
+
+Deno.test("releaseDefaultCacheStore: a drained server closes the durable default and unlatches", async () => {
+  const tmp = Deno.makeTempDirSync({ prefix: "denext-cache-release-" });
+  try {
+    const durable = await chooseCacheStore({ path: `${tmp}/cache.db` });
+    setCacheStore(durable); // what resolveDefaultCacheStore installs
+    assertEquals(cacheStoreKind(), "sqlite");
+    releaseDefaultCacheStore();
+    assert(getCacheStore() !== durable, "back on a fresh store");
+    assertEquals(cacheStoreKind(), "memory");
+    // The handle is closed: the file can go (Windows refuses to remove an open one).
+    Deno.removeSync(`${tmp}/cache.db`);
+    // Unlatched: the next server in this process resolves its own default.
+    const next = inMemoryCacheStore();
+    await resolveDefaultCacheStore({ store: next });
+    assertEquals(getCacheStore(), next);
+
+    // A store the app set itself is never released.
+    const own = inMemoryCacheStore();
+    setCacheStore(own);
+    releaseDefaultCacheStore();
+    assertEquals(getCacheStore(), own);
+  } finally {
+    removeTempDirSync(tmp);
   }
 });

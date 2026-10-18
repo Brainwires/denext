@@ -6,6 +6,7 @@
 // watcher, and the request handler over the `createApp` handler.
 
 import { runPluginTeardown } from "../plugin/mod.ts";
+import { releaseDefaultCacheStore } from "../server/cache.ts";
 import { stopServices } from "../server/service-loader.ts";
 import { configuredDesktopAppOrigin } from "../server/config.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
@@ -65,6 +66,7 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
   // The supervised services stop first (reverse start order), then the plugin teardowns.
   server.finished.then(() => stopServices()).then(() => {
     runPluginTeardown();
+    releaseDefaultCacheStore();
     cleanup();
   });
   return server;

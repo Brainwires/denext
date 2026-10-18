@@ -126,11 +126,13 @@ export function openSqliteFile(
  * of hard-expired rows.
  *
  * @param options File path, row caps, and an optional open hook.
- * @returns A store to pass to {@linkcode setCacheStore}.
+ * @returns A store to pass to {@linkcode setCacheStore}; its `close()` closes the database
+ *   handle (the next call reopens it), so the file can be moved or removed — Windows refuses
+ *   to delete a file that is still open.
  */
 export function sqliteCacheStore(
   options: SqliteCacheStoreOptions = {},
-): CacheStore {
+): CacheStore & { close(): void } {
   return new SqliteCache(options);
 }
 
@@ -258,6 +260,13 @@ class SqliteCache implements CacheStore {
     // access retries rather than permanently disabling the cache.
     this.#db = d;
     return d;
+  }
+
+  /** Close the database handle, if open; the next call opens it again. */
+  close(): void {
+    const d = this.#db;
+    this.#db = undefined;
+    d?.close();
   }
 
   // Proactively reclaim hard-expired rows (finite expires_at in the past). Throttled so a

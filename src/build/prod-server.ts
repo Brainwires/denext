@@ -9,6 +9,7 @@ import { uninstallLiveHub } from "../server/live.ts";
 import { envGet } from "../runtime/env-safe.ts";
 import { join } from "@std/path";
 import { applyPlugins, runPluginTeardown } from "../plugin/mod.ts";
+import { releaseDefaultCacheStore } from "../server/cache.ts";
 import { stopServices } from "../server/service-loader.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
@@ -150,6 +151,7 @@ export async function startProdServer(options: ProdServerOptions): Promise<Deno.
   const shutdown = async () => {
     await stopServices();
     await runPluginTeardown();
+    releaseDefaultCacheStore();
     if (loaded.instrumentation) await runShutdownHook(loaded.instrumentation);
   };
   try {
