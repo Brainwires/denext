@@ -563,7 +563,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `writeClipboard`, `share`, `deviceInfo`, `networkStatus` /
   `useNetworkStatus`, `useKeepAwake`, `hideSplash`, `secureStore` (Keychain /
   Keystore; IndexedDB, not secret, on the web), the file API (`readFile` /
-  `writeFile` / `deleteFile` / `listDir` / `downloadToFile`; OPFS on the web),
+  `writeFile` / `deleteFile` / `listDir`; OPFS on the web), file transfers with progress
+  (`downloadToFile` / `uploadFile`, pause / resume / cancel; a `URLSession` background session
+  and WorkManager with `denext mobile add file-transfer`, `fetch` streams on the web),
   `pickImage` / `pickMedia` (several photos and videos, or a recorded video) /
   `pickDocument`, `scanBarcode` (`BarcodeDetector` on the web),
   `setQuickActions` / `onQuickAction`, `openSqlite` / `deleteSqlite`

@@ -468,7 +468,7 @@ The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit
 Safari included, whenever `momentumSafeScroll` is on (the default).
 
 More `denext mobile add` capabilities (a pinned Capacitor 8 plugin, or denext's own native plugin
-for `permissions`, `accessibility`, `storage` and `system-icons`; `system-bars` uses Capacitor
+for `permissions`, `accessibility`, `storage`, `system-icons` and `file-transfer`; `system-bars` uses Capacitor
 core and `offline-screen` writes a page; web fallback where one exists): `keyboard`
 (`useKeyboard`, `<KeyboardAvoidingView>`, `<KeyboardStickyView>`), `back`
 (`onBack`/`useBackHandler`, `useBackProgress` for Android predictive back), `system-bars`
@@ -478,7 +478,11 @@ prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-no
 `biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
 `background-location`, `background-audio` (`setNowPlaying`/`onMediaControl`/`setAudioSession`:
-background playback with lock-screen / notification controls; the Media Session API on the web), `purchases` (RevenueCat), `app-review`, `app-update`,
+background playback with lock-screen / notification controls; the Media Session API on the web),
+`file-transfer` (`downloadToFile` / `uploadFile` with `onProgress`, `signal` and an `id` in a
+`URLSession` background session / WorkManager, outliving the app; `pauseFileTransfer` /
+`resumeFileTransfer` (range resume) / `cancelFileTransfer` / `fileTransfers` / `onFileTransfer`;
+`fetch` streams + `XMLHttpRequest` on the web), `purchases` (RevenueCat), `app-review`, `app-update`,
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
@@ -3027,6 +3031,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type BiometricType = face | fingerprint | iris` — A kind of biometric sensor.
 - `interface CalendarComponents` — The date components a calendar trigger matches.
 - `cancelAllNotifications(): Promise<void>` — Cancel every pending local notification. Outside the shell it does nothing.
+- `cancelFileTransfer(id: string): Promise<boolean>` — Cancel a running or paused transfer; a download's partial file is dropped. Its promise rejects with a FileTransferError of code "CANCELLED".
 - `cancelNotification(ids: number | typeOperator): Promise<void>` — Cancel pending local notifications (and remove delivered ones with those ids on Android). An id that is not pending is ignored. Outside the shell it does nothing.
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `checkPermission(name: PermissionName): Promise<PermissionState>` — The current status of a permission, without prompting (see PermissionState for what each status means).
@@ -3058,7 +3063,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DeliveredNotificationSelector` — Which delivered notifications removeDeliveredNotifications removes. The criteria given narrow each other (a notification must match every one); { all: true } alone removes every delivered notification.
 - `deviceInfo(): Promise<DeviceInfo>` — Facts about the device the page runs on.
 - `interface DeviceInfo` — What deviceInfo reports. Only platform is always known.
-- `downloadToFile(url: string, path: string, options?: FileLocationOptions): Promise<object>` — Download a URL straight into a file (missing parent folders are created).
+- `downloadToFile(url: string, path: string, options?: DownloadToFileOptions): Promise<object>` — Download a URL straight into a file (missing parent folders are created), with progress.
+- `interface DownloadToFileOptions` — Options for downloadToFile: the folder, and the transfer's id, progress and signal.
 - `endLiveActivity(id: string, options?: EndLiveActivityOptions): Promise<void>` — End a Live Activity.
 - `interface EndLiveActivityOptions` — Options for endLiveActivity.
 - `interface EntitlementInfo` — One entitlement's state.
@@ -3067,7 +3073,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FileEncoding = utf8 | base64` — How text is carried: "utf8" (plain text, the default) or "base64" (binary data).
 - `interface FileEntry` — One entry of a listDir listing.
 - `interface FileLocationOptions` — Options for deleteFile, listDir and downloadToFile.
+- `class FileTransferError` — A transfer that failed: the code, and for an HTTP failure the status and the body.
+- `type FileTransferErrorCode = HTTP | NETWORK | IO | INVALID | NOT_FOUND | EXISTS | CANCELLED` — The codes a FileTransferError carries.
+- `interface FileTransferEvent` — One transfer event, for onFileTransfer.
+- `interface FileTransferInfo` — A transfer as fileTransfers reports it.
+- `type FileTransferKind = download | upload` — A transfer's direction.
+- `interface FileTransferOptions` — Options every transfer takes (with directory, the file's folder).
+- `interface FileTransferProgress` — Bytes moved so far, for an onProgress callback.
+- `fileTransfers(): Promise<FileTransferInfo[]>` — Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); on the web, the ones this page started.
+- `type FileTransferState = running | paused | done | failed | cancelled` — Where a transfer is: running, paused, or settled (done, failed, cancelled).
 - `interface FlexibleUpdateProgress` — A flexible update's progress, from onFlexibleUpdateProgress.
+- `forgetFileTransfer(id: string): Promise<boolean>` — Drop a settled transfer's record (done, failed or cancelled), once the app has dealt with it.
 - `interface GeolocationError` — A failed location read.
 - `type GeolocationErrorCode = denied | unavailable | timeout | unsupported` — Why a location read failed, as GeolocationError's code reports it.
 - `interface GeoPosition` — A position fix.
@@ -3168,6 +3184,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onBack(handler: BackHandler): () => void` — Register handler for the system back action, on top of the handlers already registered (a LIFO stack, like React Native's BackHandler). On a back action the newest handler runs first; returning true consumes it. When no handler consumes it, the default runs: history back when there is somewhere to go back to, else the app leaves the foreground (@capacitor/app's minimizeApp, exitApp where that is missing).
 - `onBackProgress(cb: (event: BackProgressEvent) => void): () => void` — Call cb with each predictive-back event: the back gesture's start, its progress (0…1, with the edge it started from), then cancel or commit. Only the Android shell with denext mobile add back reports them (Android 14+ animates the gesture; earlier versions report only the commit). Elsewhere cb never runs.
 - `onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void` — Call callback for every link that opens the app, and (by default) navigate to it.
+- `onFileTransfer(listener: (event: FileTransferEvent) => void): () => void` — Receive every transfer's events — those started from this page and, in the shell, those running natively from before a reload or a relaunch — until the returned function is called.
 - `onFlexibleUpdateProgress(cb: (progress: FlexibleUpdateProgress) => void): () => void` — Android: follow a flexible update's download and install. Off Android, or without the plugin, the callback never runs.
 - `onFontScaleChange(callback: (scale: number) => void): () => void` — Call callback with the new factor when the user changes the OS text size; returns a function that stops listening. Without the plugin it never fires.
 - `onKeyboardChange(cb: (state: KeyboardState) => void): () => void` — Call cb each time the on-screen keyboard shows, hides or changes height.
@@ -3211,6 +3228,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with a nativeFingerprint (and a sequence) uses the v3 format, one with a sequence but no fingerprint v2, one without a sequence v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
 - `interface OtaStatus` — What the native side reports about the UI versions on this device.
+- `pauseFileTransfer(id: string): Promise<boolean>` — Pause a running download: the bytes so far are kept, and resumeFileTransfer continues from them where the server allows a range (else it starts over). Its downloadToFile promise stays pending until then. Uploads cannot pause.
 - `pendingNotifications(): Promise<ScheduledLocalNotification[]>` — The local notifications still waiting to fire (none outside the shell).
 - `performImmediateUpdate(): Promise<AppUpdateOutcome>` — Android: start Play's immediate update, a full-screen flow the user completes before using the app again (Play restarts the app when it finishes). Call getAppUpdateInfo first: Play refuses (info-missing) otherwise, and immediateAllowed says whether it may.
 - `interface PermissionError` — A failed checkPermission / requestPermission / openAppSettings.
@@ -3278,6 +3296,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `restorePurchases(): Promise<CustomerInfo>` — Restore the user's earlier purchases (the "Restore purchases" button App Review expects on a paywall).
 - `restoreRouteOnRelaunch(options?: RestoreRouteOptions): Promise<string | null>` — Opt in to returning to the last route after the OS killed the app in the background.
 - `interface RestoreRouteOptions` — Options for restoreRouteOnRelaunch.
+- `resumeFileTransfer(id: string): Promise<boolean>` — Resume a paused download, or retry a failed transfer (a download from its bytes so far when it is resumable).
 - `revealInFileManager(item: ShellItem): Promise<void>` — Show a file or folder selected in Finder, Explorer or the Linux file manager.
 - `type ReviewRequestResult = requested | unsupported` — What requestReview did: "requested" (the system was asked to show its review sheet; whether it did is the OS's call and is never reported) or "unsupported" (not in the native shell, or no review plugin installed).
 - `runBackgroundTask(name: string, details?: Record<string, unknown>): Promise<boolean>` — Run one background task now, from the page, in the runner's engine (for example after a sign-in, to warm the cache a later background run will extend). The task runs whatever its interval; its handler sees trigger: "dispatch" and details.
@@ -3352,6 +3371,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type TrackingStatus = authorized | denied | restricted | not-determined | unavailable` — The ATT status:
 - `unlockOrientation(): Promise<void>` — Release a lockOrientation lock (a no-op when nothing is locked, or on a browser without the API).
 - `updateLiveActivity(id: string, state: LiveActivityValues): Promise<void>` — Replace a running Live Activity's state.
+- `uploadFile(url: string, path: string, options?: UploadFileOptions): Promise<UploadFileResult>` — Upload a file to a URL, with progress.
+- `interface UploadFileOptions` — Options for uploadFile.
+- `interface UploadFileResult` — What an upload answered.
 - `useAppResume(cb: (awayMs: number) => void): void` — Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.
 - `useBackHandler(handler: BackHandler, enabled?: boolean): void` — Hook form of onBack: handler is registered while the component is mounted and enabled is true, and it always sees the latest props (re-renders do not re-register it, so its place in the stack stays put). A component mounted later sits above it.
 - `useBackProgress(): BackGesture | null` — Hook form of onBackProgress: the back gesture in flight (progress 0…1 and the edge it started from), or null when there is none, e.g. to drive a peek of the previous screen. Always null outside the Android shell with denext mobile add back.

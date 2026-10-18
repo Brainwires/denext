@@ -712,6 +712,30 @@ export function withSceneDelegateQuickActions(source: string): string | null {
   ]);
 }
 
+/** Where `denext mobile add file-transfer` hands the background session's events over. */
+const TRANSFER_EVENTS = "DenextTransferManager.handleEvents";
+
+/**
+ * `AppDelegate.swift` forwarding `application(_:handleEventsForBackgroundURLSession:…)` to
+ * denext's file-transfer manager, so a background transfer that finishes while the app is not
+ * running relaunches it to save the file (and the system's completion handler is called once the
+ * session's events are delivered). Unchanged when it already forwards; null when the class is
+ * missing or it implements that method itself (add the call to your method by hand).
+ */
+export function withAppDelegateBackgroundTransfers(source: string): string | null {
+  if (source.includes(TRANSFER_EVENTS)) return source;
+  if (source.includes("handleEventsForBackgroundURLSession")) return null;
+  return appendToSwiftClass(source, "AppDelegate", [
+    "",
+    "// denext file transfers: the system relaunches the app to finish a background transfer.",
+    "func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {",
+    `    if !${TRANSFER_EVENTS}(forBackgroundURLSession: identifier, completionHandler: completionHandler) {`,
+    "        completionHandler()",
+    "    }",
+    "}",
+  ]);
+}
+
 /**
  * `AppDelegate.swift` of an app without scenes forwarding home-screen quick actions to
  * `@capawesome/capacitor-app-shortcuts` through `application(_:performActionFor:…)`, which

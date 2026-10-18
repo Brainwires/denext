@@ -32,6 +32,24 @@ and this project adheres to
 
 ### Added
 
+- **File transfers with progress that outlive the app** (`denext/mobile`). `downloadToFile(url,
+  path, options)` gains `onProgress`, `signal`, `headers` and an `id`, and `uploadFile(url, path,
+  options)` sends a file as a `multipart/form-data` part (with text `fields`) or as the body
+  (`as: "binary"`, a presigned `PUT`). `denext mobile add file-transfer` installs denext's
+  `DenextTransfer` plugin: each transfer runs in a `URLSession` background session on iOS
+  (AppDelegate forwards `handleEventsForBackgroundURLSession`, so a transfer that finishes while
+  the app is suspended or terminated relaunches it to save the file) and as a WorkManager job on
+  Android (network-constrained, retried with backoff), and the plugin keeps each transfer's record.
+  `pauseFileTransfer` / `resumeFileTransfer` continue a download from its bytes so far (resume data
+  on iOS; a range request guarded by `If-Range` on Android and the web), `cancelFileTransfer` drops
+  it, and `fileTransfers()` / `onFileTransfer()` / `forgetFileTransfer()` report and clear them,
+  including those that finished while the page was gone. Without the plugin the page runs them:
+  `fetch` with the body streamed into OPFS, `XMLHttpRequest` for upload progress. Failures are a
+  `FileTransferError` with a `code` (`HTTP`, `NETWORK`, `CANCELLED`, …), the status and the body.
+  A new `native-plugins.yml` workflow builds examples/mobile with every denext plugin added (Gradle
+  and `xcodebuild`), and `tests/mobile-file-transfer-native.test.ts` runs the iOS manager on macOS
+  and the Android HTTP half on the JDK against a local server.
+
 - **expo-calendar: `futureEvents` on Android splits the series.** `updateEventAsync(id, details,
   { instanceStartDate, futureEvents: true })` no longer rejects on Android: `DenextCalendar`
   (calendar template generation 2; re-run `denext mobile add calendar`) ends the repeating event

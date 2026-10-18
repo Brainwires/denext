@@ -61,9 +61,10 @@ export default function Mobile() {
         <a href="#background-audio">
           background audio
         </a>{" "}
-        and its lock-screen controls, multi-select and video picks (<code>pickMedia</code>), and the
-        bottom safe-area inset. Android is compiled and unit-tested, not run on a device: its halves
-        of <code>denext/mobile</code>{" "}
+        and its lock-screen controls, multi-select and video picks (<code>pickMedia</code>),{" "}
+        <a href="#file-transfers">background file transfers</a>, and the bottom safe-area inset.
+        Android is compiled and unit-tested, not run on a device: its halves of{" "}
+        <code>denext/mobile</code>{" "}
         and of the generators have not run on Android at all, and a whole-app comparison ran on an
         emulator only. The details, and every open limit, are in{" "}
         <a href="/docs/limitations">Known limitations</a> (Mobile) and the open work in the{" "}
@@ -601,7 +602,11 @@ denext mobile add haptics share network secure-store`}
           (<code>filesystem</code>): the app's files in <code>"data"</code>,{" "}
           <code>"documents"</code> or{" "}
           <code>"cache"</code>, as text or base64; the Origin Private File System on the web (a
-          top-level folder per directory).
+          top-level folder per directory). <code>downloadToFile</code> and <code>uploadFile</code>
+          {" "}
+          report progress and, with{" "}
+          <code>file-transfer</code>, run in the OS&apos;s background transfer service: see{" "}
+          <a href="#file-transfers">file transfers</a>.
         </li>
         <li>
           <code>pickImage({"{ source }"})</code>{" "}
@@ -2100,6 +2105,82 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         Google Play wants the <code>mediaPlayback</code>{" "}
         foreground service type declared in the Play Console. The iOS lock screen shows the controls
         only for a non-mixing session (<code>interruption: "exclusive"</code>) that is playing.
+      </Callout>
+
+      <h2 id="file-transfers">File transfers with progress</h2>
+      <p>
+        <code>downloadToFile(url, path, options)</code> and{" "}
+        <code>uploadFile(url, path, options)</code>{" "}
+        move a file between a URL and the app&apos;s folders with an <code>onProgress</code>{" "}
+        callback, an <code>AbortSignal</code>, request <code>headers</code> and an <code>id</code>.
+        {" "}
+        <code>denext mobile add file-transfer</code> installs denext&apos;s{" "}
+        <code>DenextTransfer</code>{" "}
+        plugin, which runs each transfer in the OS&apos;s background transfer service: a{" "}
+        <code>URLSession</code>{" "}
+        background session on iOS (AppDelegate forwards its events, so a transfer that finishes
+        while the app is suspended or terminated relaunches it in the background to save the file),
+        and a WorkManager job on Android (it runs with the app in the background and after the
+        process is gone, whenever there is a network). The body never passes through the WebView,
+        and CORS does not apply. Without the plugin the page runs it: <code>fetch</code>{" "}
+        with the body streamed into the Origin Private File System for a download, and{" "}
+        <code>XMLHttpRequest</code>{" "}
+        (upload progress) for an upload, so it lasts as long as the page.
+      </p>
+      <Code lang="tsx">
+        {`import {
+  cancelFileTransfer, downloadToFile, fileTransfers, onFileTransfer, pauseFileTransfer,
+  resumeFileTransfer, uploadFile,
+} from "denext/mobile";
+
+await downloadToFile("https://cdn.example.com/maps/region.pmtiles", "maps/region.pmtiles", {
+  id: "region-map",
+  onProgress: ({ bytes, total }) => setProgress(total ? bytes / total : null),
+});
+
+const { status, body } = await uploadFile("https://api.example.com/photos", "camera/1.jpg", {
+  field: "photo", // multipart by default; as: "binary" sends the file as the body (a presigned PUT)
+  fields: { album: "trip" },
+  headers: { authorization: \`Bearer \${token}\` },
+});
+
+await pauseFileTransfer("region-map"); // a download keeps its bytes
+await resumeFileTransfer("region-map"); // a range request continues it where the server allows
+
+// After a relaunch: the plugin kept every transfer's record.
+for (const t of await fileTransfers()) if (t.state === "done") useFile(t.file);
+onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.total));`}
+      </Code>
+      <p>
+        A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
+        file on Android, the OPFS file on the web) and resumes with a range request guarded by the
+        response&apos;s <code>ETag</code> (or <code>Last-Modified</code>); a server that answers
+        {" "}
+        <code>200</code> to it starts the download over. Uploads cannot pause.{" "}
+        <code>cancelFileTransfer(id)</code>{" "}
+        drops a download&apos;s partial file and rejects its promise with a{" "}
+        <code>FileTransferError</code> of code <code>"CANCELLED"</code> (an aborted{" "}
+        <code>signal</code>{" "}
+        rejects with the signal&apos;s reason). A non-2xx answer rejects with code{" "}
+        <code>"HTTP"</code>, its <code>status</code> and <code>body</code>; a network failure with
+        {" "}
+        <code>"NETWORK"</code>, <code>resumable</code> when the bytes so far can be kept.{" "}
+        <code>fileTransfers()</code>{" "}
+        lists the plugin&apos;s records (running, paused, and finished ones the app has not dropped
+        with{" "}
+        <code>forgetFileTransfer(id)</code>), so a transfer that finished while the page was gone is
+        still reported. In a Deno Desktop window <code>downloadToFile</code>{" "}
+        fetches in the Deno process (no progress) and <code>uploadFile</code>{" "}
+        reads the file through the runtime and sends it from the page.
+      </p>
+      <Callout kind="note">
+        <strong>Android&apos;s limits.</strong>{" "}
+        WorkManager stops a job after about ten minutes; the next run resumes a download from its
+        {" "}
+        <code>.part</code>{" "}
+        file, but an upload starts over. A network error is retried with backoff (six runs in all)
+        before the transfer fails. iOS may defer a background transfer that starts while the app is
+        already in the background; one started in the foreground runs at once.
       </Callout>
 
       <h2 id="screen-readers">Screen readers</h2>

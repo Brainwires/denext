@@ -131,6 +131,7 @@ Deno.test("platform capabilities: each pins a Capacitor 8 package and says what 
     "context-menu": "(denext native plugin)",
     "system-icons": "(denext native plugin)",
     "background-audio": "(denext native plugin)",
+    "file-transfer": "(denext native plugin)",
     "background-location": "@capgo/background-geolocation@^8.4.7",
     application: "@capacitor/app@^8.1.1",
   });

@@ -1,0 +1,165 @@
+// Drives DenextTransferManager.swift (the iOS half of denext's file transfers) on macOS against
+// the local server tests/mobile-file-transfer-native.test.ts runs: downloads with progress, a
+// pause and a resume from resume data, multipart and binary uploads, an HTTP error, a cancel, the
+// saved records a new manager reads back, and the refusals. Foundation's URLSession is the same
+// API on iOS; the background session itself needs an app, so the harness uses the foreground one.
+// Prints `ok <check>` / `FAIL <check>: why`, then `done <failures>`.
+import Foundation
+
+let args = CommandLine.arguments
+let base = args[1]
+let work = URL(fileURLWithPath: args[2], isDirectory: true)
+DenextTransferManager.rootOverride = work.appendingPathComponent("root", isDirectory: true)
+let stateDir = work.appendingPathComponent("state", isDirectory: true)
+var failures = 0
+
+func check(_ name: String, _ ok: Bool, _ why: @autoclosure () -> String = "") {
+    if ok { print("ok \(name)") } else { failures += 1; print("FAIL \(name): \(why())") }
+}
+
+/// Run the main queue (the manager sends events there) until `cond` holds or `seconds` pass.
+func wait(_ seconds: TimeInterval, _ cond: () -> Bool) -> Bool {
+    let end = Date().addingTimeInterval(seconds)
+    while !cond() && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    return cond()
+}
+
+var events: [[String: Any]] = []
+func eventsFor(_ id: String) -> [[String: Any]] { events.filter { $0["id"] as? String == id } }
+func last(_ id: String, _ type: String) -> [String: Any]? { eventsFor(id).last { $0["type"] as? String == type } }
+func settled(_ id: String) -> Bool {
+    eventsFor(id).contains { ["done", "failed", "cancelled"].contains($0["type"] as? String ?? "") }
+}
+
+func record(_ id: String, _ kind: String, _ path: String, url: String, method: String = "GET",
+            multipart: DenextTransferRecord.Multipart? = nil, mimeType: String? = nil,
+            headers: [String: String] = [:]) -> DenextTransferRecord {
+    DenextTransferRecord(id: id, kind: kind, url: url, directory: "DATA", path: path, method: method,
+                         headers: headers, multipart: multipart, mimeType: mimeType, background: false,
+                         state: "running", bytes: 0, total: nil, status: nil, error: nil, code: nil,
+                         resumable: false, body: nil, responseHeaders: nil)
+}
+
+let manager = DenextTransferManager(identifier: "dev.denext.transfer.test", directory: stateDir)
+_ = manager.observe { events.append($0) }
+
+// 1. A download with progress lands in the app folder.
+do {
+    try manager.start(record("d1", "download", "files/big.bin", url: "\(base)/big"))
+    _ = wait(30) { settled("d1") }
+    let done = last("d1", "done")
+    check("a download finishes", done != nil, "\(eventsFor("d1"))")
+    let progress = eventsFor("d1").filter { $0["type"] as? String == "progress" }
+    check("a download reports progress with the total", !progress.isEmpty &&
+          (progress.last?["total"] as? Int64) == 1_048_576, "\(progress.count) \(String(describing: progress.last))")
+    let file = DenextTransferManager.rootOverride!.appendingPathComponent("DATA/files/big.bin")
+    let data = (try? Data(contentsOf: file)) ?? Data()
+    check("the downloaded file is complete", data.count == 1_048_576 && data.last == UInt8(1_048_575 % 251),
+          "\(data.count) bytes")
+    check("done carries the file path", (done?["file"] as? String) == file.path, "\(String(describing: done?["file"]))")
+} catch { check("a download finishes", false, "\(error)") }
+
+// 2. A pause keeps resume data and a resume continues with a range request.
+do {
+    try manager.start(record("d2", "download", "slow.bin", url: "\(base)/slow"))
+    _ = wait(20) { (eventsFor("d2").last { $0["type"] as? String == "progress" }?["bytes"] as? Int64 ?? 0) > 0 }
+    check("pause answers true for a running download", manager.pause("d2"))
+    _ = wait(10) { last("d2", "paused") != nil }
+    let paused = last("d2", "paused")
+    check("a paused download is resumable", paused?["resumable"] as? Bool == true, "\(String(describing: paused))")
+    check("resume answers true", (try? manager.resume("d2")) == true)
+    _ = wait(60) { settled("d2") }
+    check("the resumed download finishes", last("d2", "done") != nil, "\(eventsFor("d2").suffix(3))")
+    let file = DenextTransferManager.rootOverride!.appendingPathComponent("DATA/slow.bin")
+    let data = (try? Data(contentsOf: file)) ?? Data()
+    check("the resumed file is complete and in order", data.count == 524_288 &&
+          data.enumerated().allSatisfy { $0.element == UInt8($0.offset % 251) }, "\(data.count) bytes")
+}
+
+// 3. A multipart upload, its fields and its response.
+do {
+    let source = DenextTransferManager.rootOverride!.appendingPathComponent("DATA/up/photo.jpg")
+    try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data((0..<100_000).map { UInt8($0 % 256) }).write(to: source)
+    let part = DenextTransferRecord.Multipart(field: "photo", fileName: "photo.jpg", mimeType: "image/jpeg",
+                                              fields: ["album": "trip", "note": "a \"quoted\" one"])
+    try manager.start(record("u1", "upload", "up/photo.jpg", url: "\(base)/upload", method: "POST",
+                             multipart: part, headers: ["x-token": "t1"]))
+    _ = wait(30) { settled("u1") }
+    let done = last("u1", "done")
+    check("a multipart upload finishes", done != nil, "\(eventsFor("u1"))")
+    let body = done?["body"] as? String ?? ""
+    check("the server read the file part and the fields",
+          body.contains("\"photo\":100000") && body.contains("\"album\":\"trip\"") && body.contains("\"token\":\"t1\""), body)
+    check("an upload reports its status and headers", (done?["status"] as? Int) == 200 &&
+          ((done?["headers"] as? [String: String])?["x-echo"]) == "yes", "\(String(describing: done))")
+    check("an upload reports progress", eventsFor("u1").contains { $0["type"] as? String == "progress" })
+} catch { check("a multipart upload finishes", false, "\(error)") }
+
+// 4. A binary upload (PUT, the file as the body).
+do {
+    try manager.start(record("u2", "upload", "up/photo.jpg", url: "\(base)/raw", method: "PUT", mimeType: "image/jpeg"))
+    _ = wait(30) { settled("u2") }
+    let body = last("u2", "done")?["body"] as? String ?? ""
+    check("a binary upload sends the file as the body", body == "PUT image/jpeg 100000", body)
+} catch { check("a binary upload sends the file as the body", false, "\(error)") }
+
+// 5. An HTTP error fails the transfer with its status.
+do {
+    try manager.start(record("d3", "download", "missing.bin", url: "\(base)/missing"))
+    _ = wait(30) { settled("d3") }
+    let failed = last("d3", "failed")
+    check("a 404 fails with code HTTP and the status", failed?["code"] as? String == "HTTP" &&
+          failed?["status"] as? Int == 404, "\(String(describing: failed))")
+    let file = DenextTransferManager.rootOverride!.appendingPathComponent("DATA/missing.bin")
+    check("a failed download leaves no file", !FileManager.default.fileExists(atPath: file.path))
+} catch { check("a 404 fails with code HTTP and the status", false, "\(error)") }
+
+// 6. A cancel.
+do {
+    try manager.start(record("d4", "download", "cancelled.bin", url: "\(base)/slow"))
+    _ = wait(20) { (eventsFor("d4").last { $0["type"] as? String == "progress" }?["bytes"] as? Int64 ?? 0) > 0 }
+    check("cancel answers true", manager.cancel("d4"))
+    _ = wait(10) { settled("d4") }
+    check("a cancelled transfer says so", last("d4", "cancelled") != nil && last("d4", "failed") == nil,
+          "\(eventsFor("d4").suffix(2))")
+} catch { check("cancel answers true", false, "\(error)") }
+
+// 7. The refusals.
+do {
+    try manager.start(record("bad1", "download", "../escape.bin", url: "\(base)/big"))
+    check("a path with .. is refused", false)
+} catch { check("a path with .. is refused", "\(error)".contains("not a relative path"), "\(error)") }
+do {
+    try manager.start(record("bad2", "download", "x.bin", url: "file:///etc/hosts"))
+    check("a non-http URL is refused", false)
+} catch { check("a non-http URL is refused", "\(error)".contains("not an http(s) URL"), "\(error)") }
+do {
+    try manager.start(record("bad3", "upload", "nope.bin", url: "\(base)/upload", method: "POST"))
+    check("an upload of a missing file is refused", false)
+} catch { check("an upload of a missing file is refused", (error as? DenextTransferError)?.code == "NOT_FOUND", "\(error)") }
+
+// 8. The records outlive the manager; forget drops a finished one.
+let again = DenextTransferManager(identifier: "dev.denext.transfer.test2", directory: stateDir)
+let states = Dictionary(uniqueKeysWithValues: again.list().map { ($0["id"] as! String, $0["state"] as! String) })
+check("a new manager reads the saved records", states["d1"] == "done" && states["u1"] == "done" &&
+      states["d3"] == "failed" && states["d4"] == "cancelled", "\(states)")
+check("forget drops a finished record", again.forget("d1") && !again.list().contains { $0["id"] as? String == "d1" })
+check("pause refuses a finished transfer", !again.pause("u1"))
+
+// 9. The multipart body on its own.
+do {
+    let src = work.appendingPathComponent("part-src.txt")
+    try Data("hello".utf8).write(to: src)
+    let out = work.appendingPathComponent("part.body")
+    try DenextTransferManager.writeMultipartBody(source: src, to: out, boundary: "B", field: "f", fileName: "a\"b.txt",
+                                                 mimeType: "text/plain", fields: ["k": "v"])
+    let text = String(decoding: try Data(contentsOf: out), as: UTF8.self)
+    let expected = "--B\r\nContent-Disposition: form-data; name=\"k\"\r\n\r\nv\r\n" +
+        "--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a%22b.txt\"\r\nContent-Type: text/plain\r\n\r\n" +
+        "hello\r\n--B--\r\n"
+    check("the multipart body is framed as RFC 7578 asks", text == expected, text.debugDescription)
+} catch { check("the multipart body is framed as RFC 7578 asks", false, "\(error)") }
+
+print("done \(failures)")
+exit(failures == 0 ? 0 : 1)

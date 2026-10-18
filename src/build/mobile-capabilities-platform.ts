@@ -8,7 +8,11 @@
 
 import type { CapabilityConfig, MobileCapability, NativeEdit } from "./mobile-capabilities.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
-import { withManifestApplicationBlock, withPlistStringArray } from "./mobile-native-config.ts";
+import {
+  withAppDelegateBackgroundTransfers,
+  withManifestApplicationBlock,
+  withPlistStringArray,
+} from "./mobile-native-config.ts";
 import {
   capacitorConfigFile,
   readCapacitorConfig,
@@ -21,6 +25,7 @@ import { CONTEXT_MENU_INSTALL, SYSTEM_ICONS_INSTALL } from "./mobile-context-men
 import { STORAGE_INSTALL } from "./mobile-storage-install.ts";
 import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
 import { NOW_PLAYING_INSTALL, NOW_PLAYING_SERVICE } from "./mobile-now-playing-install.ts";
+import { TRANSFER_INSTALL } from "./mobile-transfer-install.ts";
 import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** The Capacitor major these pins target. */
@@ -348,6 +353,23 @@ function configureBackgroundAudio(): CapabilityConfig {
   };
 }
 
+// ---- file-transfer ----------------------------------------------------------------------------
+
+/**
+ * `file-transfer`: denext's `DenextTransfer` plugin (a background `URLSession` on iOS, WorkManager
+ * on Android) and AppDelegate forwarding the background session's events, so a transfer that
+ * finishes while the app is not running relaunches it to save the file.
+ */
+function configureFileTransfer(): CapabilityConfig {
+  return {
+    install: TRANSFER_INSTALL,
+    appDelegate: [{
+      label: "handleEventsForBackgroundURLSession → DenextTransferManager (background transfers)",
+      apply: withAppDelegateBackgroundTransfers,
+    }],
+  };
+}
+
 /** The platform capabilities, spread into `MOBILE_CAPABILITIES`. */
 export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   "app-review": {
@@ -459,6 +481,14 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
       "clearNowPlaying() (lock screen, Control Center and the media notification; the Media " +
       "Session API on the web)",
     configure: configureBackgroundAudio,
+  },
+  "file-transfer": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "downloadToFile / uploadFile with progress in the OS's background transfer service " +
+      "(URLSession background session on iOS, WorkManager on Android): pauseFileTransfer / " +
+      "resumeFileTransfer / cancelFileTransfer / fileTransfers / onFileTransfer (fetch and " +
+      "XMLHttpRequest in the page elsewhere)",
+    configure: configureFileTransfer,
   },
   "background-location": {
     npm: "@capgo/background-geolocation",

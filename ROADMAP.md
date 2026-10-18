@@ -52,9 +52,10 @@
   only, Android's split of a repeating event from one occurrence on (`futureEvents` with
   `instanceStartDate`) included.
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **Capabilities:** file transfer with progress, a notification service extension and badges,
-  SQLite encryption.
-- **On a device:** background audio with the lock-screen / notification controls
+- **Capabilities:** a notification service extension and badges, SQLite encryption.
+- **On a device:** background file transfers (`denext mobile add file-transfer`: a download that
+  finishes with the app suspended or terminated, a pause and a resume, Android's WorkManager runs),
+  background audio with the lock-screen / notification controls
   (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
   the controls reaching the page, the Android foreground service), and `pickMedia`'s
   multi-select and video picks, on an iPhone and an Android phone.

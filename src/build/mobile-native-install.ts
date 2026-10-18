@@ -74,6 +74,11 @@ import {
   NOW_PLAYING_TEMPLATE_VERSION,
   renderNowPlayingTemplate,
 } from "./now-playing-native-templates.ts";
+import {
+  isPristineTransferTemplate,
+  renderTransferTemplate,
+  TRANSFER_TEMPLATE_VERSION,
+} from "./transfer-native-templates.ts";
 import { nativeJoin } from "./capacitor-native-dirs.ts";
 import {
   EXPO_SDK_TEMPLATE_VERSIONS,
@@ -100,7 +105,8 @@ export type NativeFeature =
   | "contacts"
   | "print"
   | "brightness"
-  | "background-audio";
+  | "background-audio"
+  | "file-transfer";
 
 /** Every feature, in the order the bridge view controller registers them after OTA. */
 const ALL_FEATURES: readonly NativeFeature[] = [
@@ -121,6 +127,7 @@ const ALL_FEATURES: readonly NativeFeature[] = [
   "print",
   "brightness",
   "background-audio",
+  "file-transfer",
 ];
 
 /** The report fields every native installer fills, as project-relative paths and notes. */
@@ -216,6 +223,7 @@ const TEMPLATE_GENERATIONS: Readonly<Record<string, number>> = {
   storage: STORAGE_TEMPLATE_VERSION,
   ...EXPO_SDK_TEMPLATE_VERSIONS,
   "now-playing": NOW_PLAYING_TEMPLATE_VERSION,
+  transfer: TRANSFER_TEMPLATE_VERSION,
 };
 
 /** The manual step for a shared file a newer denext wrote that lacks `step`'s registration. */
@@ -281,6 +289,12 @@ export const CONTEXT_MENU_TEMPLATES: TemplateKind = {
 export const NOW_PLAYING_TEMPLATES: TemplateKind = {
   render: (template) => renderNowPlayingTemplate(template),
   isPristine: (_name, text) => isPristineNowPlayingTemplate(text),
+};
+
+/** The file-transfer templates (`DenextTransfer`): `// denext-transfer-template:`. */
+export const TRANSFER_TEMPLATES: TemplateKind = {
+  render: (template) => renderTransferTemplate(template),
+  isPristine: (_name, text) => isPristineTransferTemplate(text),
 };
 
 /** The SF Symbol renderer template (`DenextSystemIcon`): `// denext-system-icon-template:`. */
@@ -420,6 +434,7 @@ const IOS_FEATURE_FILES: Readonly<Record<NativeFeature, string>> = {
   print: "DenextPrintPlugin.swift",
   brightness: "DenextBrightnessPlugin.swift",
   "background-audio": "DenextNowPlayingPlugin.swift",
+  "file-transfer": "DenextTransferPlugin.swift",
 };
 
 /** Where the OTA bridge view controller registers its plugin; the others go after it. */
@@ -461,6 +476,9 @@ const IOS_REGISTRATIONS: Readonly<Record<Exclude<NativeFeature, "ota">, string>>
   "background-audio":
     "        // denext background audio: setNowPlaying() / onMediaControl() in denext/mobile.\n" +
     "        bridge?.registerPluginInstance(DenextNowPlayingPlugin())\n",
+  "file-transfer":
+    "        // denext file transfers: downloadToFile() / uploadFile() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextTransferPlugin())\n",
 };
 
 /** The registration lines of the non-OTA features in `features`, in their fixed order. */
@@ -749,6 +767,12 @@ const ANDROID_REGISTRATIONS: Readonly<
     "denext background audio: registers the DenextNowPlaying plugin (setNowPlaying in\n" +
       "        // denext/mobile)",
   ),
+  "file-transfer": pluginRegistration(
+    "dev.denext.transfer",
+    "DenextTransferPlugin",
+    "denext file transfers: registers the DenextTransfer plugin (downloadToFile / uploadFile\n" +
+      "        // in denext/mobile)",
+  ),
   storage: pluginRegistration(
     "dev.denext.storage",
     "DenextStoragePlugin",
@@ -829,6 +853,7 @@ const FEATURE_ORDER: readonly AndroidFeature[] = [
   "print",
   "brightness",
   "background-audio",
+  "file-transfer",
   "context-menu",
   "storage",
   "native-modules",

@@ -464,7 +464,7 @@ The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit
 Safari included, whenever `momentumSafeScroll` is on (the default).
 
 More `denext mobile add` capabilities (a pinned Capacitor 8 plugin, or denext's own native plugin
-for `permissions`, `accessibility`, `storage` and `system-icons`; `system-bars` uses Capacitor
+for `permissions`, `accessibility`, `storage`, `system-icons` and `file-transfer`; `system-bars` uses Capacitor
 core and `offline-screen` writes a page; web fallback where one exists): `keyboard`
 (`useKeyboard`, `<KeyboardAvoidingView>`, `<KeyboardStickyView>`), `back`
 (`onBack`/`useBackHandler`, `useBackProgress` for Android predictive back), `system-bars`
@@ -474,7 +474,11 @@ prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-no
 `biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
 `background-location`, `background-audio` (`setNowPlaying`/`onMediaControl`/`setAudioSession`:
-background playback with lock-screen / notification controls; the Media Session API on the web), `purchases` (RevenueCat), `app-review`, `app-update`,
+background playback with lock-screen / notification controls; the Media Session API on the web),
+`file-transfer` (`downloadToFile` / `uploadFile` with `onProgress`, `signal` and an `id` in a
+`URLSession` background session / WorkManager, outliving the app; `pauseFileTransfer` /
+`resumeFileTransfer` (range resume) / `cancelFileTransfer` / `fileTransfers` / `onFileTransfer`;
+`fetch` streams + `XMLHttpRequest` on the web), `purchases` (RevenueCat), `app-review`, `app-update`,
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),

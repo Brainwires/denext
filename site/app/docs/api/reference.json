@@ -25019,6 +25019,23 @@
           "denextOnly": true
         },
         {
+          "name": "cancelFileTransfer",
+          "slug": "cancelFileTransfer",
+          "kind": "function",
+          "signature": "cancelFileTransfer(id: string): Promise<boolean>",
+          "doc": "Cancel a running or paused transfer; a download's partial file is dropped. Its promise rejects with a FileTransferError of code \"CANCELLED\".",
+          "docFull": "Cancel a running or paused transfer; a download's partial file is dropped. Its promise\nrejects with a {@linkcode FileTransferError} of code `\"CANCELLED\"`.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The transfer's id."
+            }
+          ],
+          "returns": "Whether it was cancelled.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "cancelNotification",
           "slug": "cancelNotification",
           "kind": "function",
@@ -25474,9 +25491,9 @@
           "name": "downloadToFile",
           "slug": "downloadToFile",
           "kind": "function",
-          "signature": "downloadToFile(url: string, path: string, options?: FileLocationOptions): Promise<object>",
-          "doc": "Download a URL straight into a file (missing parent folders are created).",
-          "docFull": "Download a URL straight into a file (missing parent folders are created).\n\n- Inside the native shell with `@capacitor/filesystem` installed (`denext mobile add\n  filesystem`), the plugin's native download (`downloadFile`), which does not pass the body\n  through the WebView and is not subject to CORS. (A plugin without `downloadFile`, which\n  it deprecates, gets `fetch(url)` and the plugin's `writeFile` instead.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process and writes under the app's folder.\n- Otherwise `fetch(url)` (CORS applies), then a write to the Origin Private File System.",
+          "signature": "downloadToFile(url: string, path: string, options?: DownloadToFileOptions): Promise<object>",
+          "doc": "Download a URL straight into a file (missing parent folders are created), with progress.",
+          "docFull": "Download a URL straight into a file (missing parent folders are created), with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service downloads it (a `URLSession`\n  background session on iOS, WorkManager on Android): it carries on while the app is in the\n  background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it\n  where it stopped when the server allows a range. The body never passes through the WebView,\n  and CORS does not apply.\n- Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the\n  plugin's native download (`downloadFile`), without progress. (A plugin without\n  `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process and writes under the app's folder (no progress).\n- Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System\n  with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range\n  request (a server that answers 200 starts it over).",
           "params": [
             {
               "name": "url",
@@ -25488,13 +25505,25 @@
             },
             {
               "name": "options",
-              "doc": "directory (default \"data\")."
+              "doc": "directory (default \"data\"), and the transfer's id, headers, onProgress, signal and background (FileTransferOptions)."
             }
           ],
-          "returns": "{ path }: the native file path in the shell, the absolute path on desktop, the OPFS path (data/…) on the web. It rejects on a non-2xx response or a network error.",
+          "returns": "{ path }: the native file path in the shell, the absolute path on desktop, the OPFS path (data/…) on the web. It rejects on a non-2xx response or a network error (a FileTransferError with the status and code), and with the signal's reason when signal aborts it.",
           "examples": [
-            "```ts\nimport { downloadToFile } from \"denext/mobile\";\n\nawait downloadToFile(\"https://example.com/manual.pdf\", \"manuals/manual.pdf\", {\n  directory: \"documents\",\n});\n```"
+            "```ts\nimport { downloadToFile } from \"denext/mobile\";\n\nawait downloadToFile(\"https://example.com/manual.pdf\", \"manuals/manual.pdf\", {\n  directory: \"documents\",\n  onProgress: ({ bytes, total }) => setProgress(total ? bytes / total : null),\n});\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "DownloadToFileOptions",
+          "slug": "DownloadToFileOptions",
+          "kind": "interface",
+          "signature": "interface DownloadToFileOptions",
+          "doc": "Options for downloadToFile: the folder, and the transfer's id, progress and signal.",
+          "docFull": "Options for {@linkcode downloadToFile}: the folder, and the transfer's id, progress and signal.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -25605,6 +25634,114 @@
           "denextOnly": true
         },
         {
+          "name": "FileTransferError",
+          "slug": "FileTransferError",
+          "kind": "class",
+          "signature": "class FileTransferError",
+          "doc": "A transfer that failed: the code, and for an HTTP failure the status and the body.",
+          "docFull": "A transfer that failed: the code, and for an HTTP failure the status and the body.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileTransferErrorCode",
+          "slug": "FileTransferErrorCode",
+          "kind": "typeAlias",
+          "signature": "type FileTransferErrorCode = HTTP | NETWORK | IO | INVALID | NOT_FOUND | EXISTS | CANCELLED",
+          "doc": "The codes a FileTransferError carries.",
+          "docFull": "The codes a {@linkcode FileTransferError} carries.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileTransferEvent",
+          "slug": "FileTransferEvent",
+          "kind": "interface",
+          "signature": "interface FileTransferEvent",
+          "doc": "One transfer event, for onFileTransfer.",
+          "docFull": "One transfer event, for {@linkcode onFileTransfer}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileTransferInfo",
+          "slug": "FileTransferInfo",
+          "kind": "interface",
+          "signature": "interface FileTransferInfo",
+          "doc": "A transfer as fileTransfers reports it.",
+          "docFull": "A transfer as {@linkcode fileTransfers} reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileTransferKind",
+          "slug": "FileTransferKind",
+          "kind": "typeAlias",
+          "signature": "type FileTransferKind = download | upload",
+          "doc": "A transfer's direction.",
+          "docFull": "A transfer's direction.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileTransferOptions",
+          "slug": "FileTransferOptions",
+          "kind": "interface",
+          "signature": "interface FileTransferOptions",
+          "doc": "Options every transfer takes (with directory, the file's folder).",
+          "docFull": "Options every transfer takes (with `directory`, the file's folder).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileTransferProgress",
+          "slug": "FileTransferProgress",
+          "kind": "interface",
+          "signature": "interface FileTransferProgress",
+          "doc": "Bytes moved so far, for an onProgress callback.",
+          "docFull": "Bytes moved so far, for an `onProgress` callback.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "fileTransfers",
+          "slug": "fileTransfers",
+          "kind": "function",
+          "signature": "fileTransfers(): Promise<FileTransferInfo[]>",
+          "doc": "Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); on the web, the ones this page started.",
+          "docFull": "Every transfer this page knows: in the shell, the plugin's records (running, paused, and\nfinished ones not yet forgotten — those that finished while the page was gone included);\non the web, the ones this page started.",
+          "params": [],
+          "returns": "The transfers.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileTransferState",
+          "slug": "FileTransferState",
+          "kind": "typeAlias",
+          "signature": "type FileTransferState = running | paused | done | failed | cancelled",
+          "doc": "Where a transfer is: running, paused, or settled (done, failed, cancelled).",
+          "docFull": "Where a transfer is: running, paused, or settled (done, failed, cancelled).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlexibleUpdateProgress",
           "slug": "FlexibleUpdateProgress",
           "kind": "interface",
@@ -25613,6 +25750,23 @@
           "docFull": "A flexible update's progress, from {@linkcode onFlexibleUpdateProgress}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "forgetFileTransfer",
+          "slug": "forgetFileTransfer",
+          "kind": "function",
+          "signature": "forgetFileTransfer(id: string): Promise<boolean>",
+          "doc": "Drop a settled transfer's record (done, failed or cancelled), once the app has dealt with it.",
+          "docFull": "Drop a settled transfer's record (done, failed or cancelled), once the app has dealt with it.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The transfer's id."
+            }
+          ],
+          "returns": "Whether a record was dropped.",
           "examples": [],
           "denextOnly": true
         },
@@ -27033,6 +27187,25 @@
           "denextOnly": true
         },
         {
+          "name": "onFileTransfer",
+          "slug": "onFileTransfer",
+          "kind": "function",
+          "signature": "onFileTransfer(listener: (event: FileTransferEvent) => void): () => void",
+          "doc": "Receive every transfer's events — those started from this page and, in the shell, those running natively from before a reload or a relaunch — until the returned function is called.",
+          "docFull": "Receive every transfer's events — those started from this page and, in the shell, those\nrunning natively from before a reload or a relaunch — until the returned function is called.",
+          "params": [
+            {
+              "name": "listener",
+              "doc": "Called with each FileTransferEvent."
+            }
+          ],
+          "returns": "A function that stops listening.",
+          "examples": [
+            "```ts\nimport { fileTransfers, onFileTransfer } from \"denext/mobile\";\n\n// After a relaunch: pick up the transfers the plugin carried on with.\nfor (const t of await fileTransfers()) if (t.state === \"done\") showDone(t);\nconst stop = onFileTransfer((e) => {\n  if (e.type === \"progress\") setBar(e.id, e.total ? e.bytes / e.total : null);\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "onFlexibleUpdateProgress",
           "slug": "onFlexibleUpdateProgress",
           "kind": "function",
@@ -27757,6 +27930,23 @@
           "docFull": "What the native side reports about the UI versions on this device.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "pauseFileTransfer",
+          "slug": "pauseFileTransfer",
+          "kind": "function",
+          "signature": "pauseFileTransfer(id: string): Promise<boolean>",
+          "doc": "Pause a running download: the bytes so far are kept, and resumeFileTransfer continues from them where the server allows a range (else it starts over). Its downloadToFile promise stays pending until then. Uploads cannot pause.",
+          "docFull": "Pause a running download: the bytes so far are kept, and {@linkcode resumeFileTransfer}\ncontinues from them where the server allows a range (else it starts over). Its\n`downloadToFile` promise stays pending until then. Uploads cannot pause.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The transfer's id."
+            }
+          ],
+          "returns": "Whether it paused.",
           "examples": [],
           "denextOnly": true
         },
@@ -28694,6 +28884,23 @@
           "docFull": "Options for {@linkcode restoreRouteOnRelaunch}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "resumeFileTransfer",
+          "slug": "resumeFileTransfer",
+          "kind": "function",
+          "signature": "resumeFileTransfer(id: string): Promise<boolean>",
+          "doc": "Resume a paused download, or retry a failed transfer (a download from its bytes so far when it is resumable).",
+          "docFull": "Resume a paused download, or retry a failed transfer (a download from its bytes so far when it\nis `resumable`).",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The transfer's id."
+            }
+          ],
+          "returns": "Whether it resumed.",
           "examples": [],
           "denextOnly": true
         },
@@ -29796,6 +30003,57 @@
           "examples": [
             "```ts\nimport { updateLiveActivity } from \"denext/mobile\";\n\nawait updateLiveActivity(id, { title: \"Delivered\", progress: 1 });\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "uploadFile",
+          "slug": "uploadFile",
+          "kind": "function",
+          "signature": "uploadFile(url: string, path: string, options?: UploadFileOptions): Promise<UploadFileResult>",
+          "doc": "Upload a file to a URL, with progress.",
+          "docFull": "Upload a file to a URL, with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service sends it (a `URLSession` background\n  session on iOS, WorkManager on Android), straight from the file: it carries on while the\n  app is in the background, and CORS does not apply.\n- Otherwise the page sends it (`XMLHttpRequest`, for upload progress; `fetch` where there is\n  none), read from the app's storage (the native filesystem plugin, the desktop runtime, or\n  OPFS). CORS applies.\n\nUploads cannot pause; a cancelled or failed one starts over when resumed.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "The http(s) URL to send it to."
+            },
+            {
+              "name": "path",
+              "doc": "The file's path inside directory; no .. segments."
+            },
+            {
+              "name": "options",
+              "doc": "directory (default \"data\"), method (default \"POST\"), as (\"multipart\", the default, or \"binary\"), field, fileName, mimeType, fields, and the transfer's id, headers, onProgress, signal and background."
+            }
+          ],
+          "returns": "The response's status, headers and body. It rejects on a non-2xx response (a FileTransferError with the status and body), on a network error, and with the signal's reason when signal aborts it.",
+          "examples": [
+            "```ts\nimport { uploadFile } from \"denext/mobile\";\n\nconst { body } = await uploadFile(\"https://api.example.com/photos\", \"camera/1.jpg\", {\n  field: \"photo\",\n  fields: { album: \"trip\" },\n  headers: { authorization: `Bearer ${token}` },\n  onProgress: ({ bytes, total }) => setProgress(total ? bytes / total : null),\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "UploadFileOptions",
+          "slug": "UploadFileOptions",
+          "kind": "interface",
+          "signature": "interface UploadFileOptions",
+          "doc": "Options for uploadFile.",
+          "docFull": "Options for {@linkcode uploadFile}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UploadFileResult",
+          "slug": "UploadFileResult",
+          "kind": "interface",
+          "signature": "interface UploadFileResult",
+          "doc": "What an upload answered.",
+          "docFull": "What an upload answered.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {

@@ -310,6 +310,13 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   fields (silent mode, earpiece routing, background recording) are accepted without effect. A
   native `selectionLimit` holds on iOS and Android 13+ (elsewhere, and on the web, the result is
   cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+.
+- **File transfers (`denext mobile add file-transfer`)** are compiled and tested against a local
+  server (the iOS manager through macOS's `URLSession`, the Android HTTP half through the JDK), not
+  yet run on a device in the background. Android's WorkManager stops a job after about ten
+  minutes: a download resumes from its `.part` file on the next run, an upload starts over; uploads
+  cannot pause anywhere. iOS may defer a background transfer started while the app is already in
+  the background. On the web a transfer lasts as long as the page, and a Deno Desktop
+  `downloadToFile` reports no progress.
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame

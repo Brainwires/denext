@@ -886,6 +886,10 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  (setNowPlaying / onMediaControl / setAudioSession: lock-screen and notification\n" +
     "  controls), UIBackgroundModes audio, and Android's media-playback foreground service\n" +
     "  with FOREGROUND_SERVICE_MEDIA_PLAYBACK.\n" +
+    "  file-transfer has no npm package: it writes denext's DenextTransfer plugin\n" +
+    "  (downloadToFile / uploadFile with progress, pause, resume and cancel in a URLSession\n" +
+    "  background session on iOS and WorkManager on Android), AppDelegate's\n" +
+    "  handleEventsForBackgroundURLSession forwarding, and androidx.work:work-runtime.\n" +
     "  application adds @capacitor/app and @capacitor/device (expo-application). camera also\n" +
     "  adds NSMicrophoneUsageDescription (video recorded in the page has sound).\n" +
     "  text-to-speech adds @capacitor-community/text-to-speech (expo-speech on the OS speech\n" +
