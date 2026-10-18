@@ -290,6 +290,13 @@ export interface RequestContext {
    */
   subRequestDepth?: number;
   /**
+   * A self-call's handler read the request it inherited (`cookies()`, `headers()`, or the
+   * request's own headers) during a prerender: the dynamic API it postponed on. The caller's
+   * render postpones on it too (`runSubRequest`), so the boundary around the call becomes a
+   * per-request hole instead of baking the visitor's data into a shared shell.
+   */
+  postponedBy?: string;
+  /**
    * Set when the render read a dynamic request API (`cookies()`/`headers()`),
    * implying per-request output. The page cache checks this and refuses to cache
    * such a render even when the route opts in via `revalidate`.
@@ -960,6 +967,32 @@ function requireContext(who: string): RequestContext {
 }
 
 /**
+ * A read of the request during a prerender: postpone, and remember on the context which API
+ * did (a self-call's caller postpones on it in turn, see `runSubRequest`).
+ *
+ * @param ctx The request context that read.
+ * @param api The dynamic API (`cookies`, `headers`, …).
+ */
+function postponeRequestRead(ctx: RequestContext, api: string): never {
+  ctx.postponedBy ??= api;
+  return postponeDynamic(api);
+}
+
+/**
+ * A self-call's handler read the request it inherited from its caller: the caller's render
+ * is per-visitor from here on. During a prerender this postpones (the enclosing boundary
+ * becomes a hole); otherwise it marks the render dynamic, so the page cache never stores it.
+ *
+ * @param api What was read (named in a postpone).
+ */
+export function markInheritedRequestRead(api: string): void {
+  const ctx = storage.getStore();
+  if (!ctx) return;
+  if (shouldPostpone()) postponeRequestRead(ctx, api);
+  ctx.usedDynamicApi = true;
+}
+
+/**
  * Read the current request's headers. Read-only, as in Next.js: `set`/`append`/`delete`
  * throw (the request's headers are shared by middleware, auth and the rest of the pipeline).
  */
@@ -971,7 +1004,7 @@ export function headers(): AwaitableHeaders {
   if (isForceStatic(ctx)) return awaitable(readonlyHeaders(new Headers()));
   // PPR: reading request headers during a prerender (outside `use cache`) can't
   // be resolved — postpone so the enclosing Suspense becomes a dynamic hole.
-  if (shouldPostpone()) postponeDynamic("headers");
+  if (shouldPostpone()) postponeRequestRead(ctx, "headers");
   ctx.usedDynamicApi = true; // reading request headers makes the render dynamic
   return awaitable(ctx.readonlyHeaders ??= readonlyHeaders(ctx.request.headers));
 }
@@ -1211,7 +1244,7 @@ export function cookies(): AwaitableCookieStore {
   if (isForceStatic(ctx)) return awaitable(emptyCookieStore());
   // PPR: reading cookies during a prerender (outside `use cache`) postpones so
   // the enclosing Suspense boundary becomes a per-request dynamic hole.
-  if (shouldPostpone()) postponeDynamic("cookies");
+  if (shouldPostpone()) postponeRequestRead(ctx, "cookies");
   ctx.usedDynamicApi = true; // reading/writing cookies makes the render dynamic
   const incoming = effectiveCookies(ctx);
   // Secure-by-default: over HTTPS (directly or behind a TLS-terminating proxy that

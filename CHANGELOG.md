@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **A cached page no longer stores one visitor's answer from an in-process API call for every
+  visitor.** The typed client (`createApiClient` / `useApi`) called during a render runs the
+  route in-process under the visitor's cookie and authorization. A handler that read them
+  through `request.headers` (`get`, `has`, iteration, `forEach`) or a `NextRequest`'s
+  `cookies`, rather than `cookies()` / `headers()`, went untracked: an ISR page (`revalidate`)
+  or a Cache Components shell rendered for the first visitor was stored with their data and
+  served to everyone after. Any such read now makes the calling render per-visitor — an ISR
+  render is not stored, and a prerender postpones the enclosing `<Suspense>` into a per-request
+  hole (HTML and Flight routes alike). Reads the framework makes while routing don't count, and
+  a handler that reads no inherited header stays cacheable.
+
 ### Added
 
 - **expo-calendar: `futureEvents` on Android splits the series.** `updateEventAsync(id, details,

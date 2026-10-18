@@ -141,6 +141,12 @@ internal design choice with no observable difference lives in
   request, `createApiClient` / `useApi` run the call in-process through the full
   pipeline under the caller's identity (and through the tag-aware cache when `cache` /
   `next` options are passed); outside a request, or to a foreign `base`, it is a fetch.
+  Because the call carries the visitor's cookie and authorization (a Next `fetch` to your own
+  API carries none unless you pass them, which reads `cookies()`), a handler that reads any
+  header it inherited — `cookies()`, `headers()`, or `request.headers` / a `NextRequest`'s
+  `cookies` directly — makes the calling render per-visitor: an ISR page is not stored, and in
+  a Cache Components prerender the enclosing `<Suspense>` becomes a per-request hole. A handler
+  that reads none of them stays cacheable.
 - **`json()` from `denext/server` may add an `x-denext-wire: 1` header** when the body
   carried a Date / Map / Set / BigInt / URL / `undefined` / NaN / ±Infinity / -0 (the wire
   codec); a plain-JSON body
