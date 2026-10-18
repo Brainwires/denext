@@ -341,7 +341,12 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **No JSI, so nothing synchronous across the bridge:** native-module methods return Promises;
   Expo's `*Sync` APIs and `expo-secure-store`'s `getItem`/`setItem` are omitted
   (`denext/expo/manifest` lists each shim's omissions); `react-native-mmkv` reads an in-memory
-  copy and refuses encryption.
+  copy and refuses encryption (use `openKeyValueStore(name, { encrypted: true })`).
+- **SQLite encryption is native only, and expo-sqlite's keys share one passphrase.** SQLCipher
+  runs in the iOS / Android app; the web build (sqlite-wasm) and Deno Desktop refuse
+  `PRAGMA key` and encrypted stores rather than keep the data in the clear.
+  `@capacitor-community/sqlite` keeps one passphrase for all of an app's databases, so
+  `PRAGMA key` with a second, different passphrase is refused; `PRAGMA rekey` is not supported.
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.

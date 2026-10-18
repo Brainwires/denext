@@ -71,6 +71,26 @@ and this project adheres to
   and `xcodebuild`), and `tests/mobile-file-transfer-native.test.ts` runs the iOS manager on macOS
   and the Android HTTP half on the JDK against a local server.
 
+- **Encrypted key-value stores and SQLite databases (SQLCipher).**
+  `openKeyValueStore(name, { encrypted: true })` (`denext/mobile`) keeps a store in its own
+  SQLCipher database, keyed with a random 256-bit key created on first use and kept in
+  `secureStore`. `denext mobile add storage --encrypted` links SQLCipher (the SQLCipher Swift
+  package in the Xcode app target; `net.zetetic:sqlcipher-android` (with `androidx.sqlite`) and `DenextStorageCipher.java`
+  on Android; storage template generation 2, re-run `denext mobile add storage`). The first
+  encrypted open moves the store's plain rows in and deletes them from the plain database with
+  `secure_delete`, truncating its WAL. An encrypted store never falls back to a plain one: on the
+  web, on Deno Desktop, on the `@capacitor-community/sqlite` / IndexedDB / memory backings, in a
+  build without SQLCipher, or with a `secureStore` that is not secret, every call rejects with
+  `KeyValueStoreError` (`ENCRYPTION_UNAVAILABLE`) and nothing is written; a key that does not open
+  the file is `WRONG_KEY`. `openSqlite(name, { encryptionKey })` and `PRAGMA key = '…'` as the
+  first statement (expo-sqlite's way, so the shim's apps keep working) key a database in the shell
+  through `@capacitor-community/sqlite`. The web engine and Deno Desktop refuse with
+  `SqliteEncryptionError` and run nothing; before, sqlite-wasm ran `PRAGMA key` as a no-op and
+  left the data unencrypted. `PRAGMA rekey` / `hexkey` are refused.
+  `tests/mobile-storage-cipher-native.test.ts` runs the Swift store on macOS against the system
+  SQLite and against SQLCipher from the Swift package, and the native-plugins workflow builds
+  examples/mobile with `storage --encrypted`.
+
 - **expo-calendar: `futureEvents` on Android splits the series.** `updateEventAsync(id, details,
   { instanceStartDate, futureEvents: true })` no longer rejects on Android: `DenextCalendar`
   (calendar template generation 2; re-run `denext mobile add calendar`) ends the repeating event
@@ -189,6 +209,10 @@ and this project adheres to
   @denext/tanstack-start"). A plugin that only adds endpoints (`@denext/openapi`,
   `@denext/backend`) does not count, so a project with only such plugins and no `app/` still
   fails. Route conformance, which walks `app/`, is not probed for a plugin-routed app.
+
+- **`denext mobile add` lists a skipped platform once.** An installer that checks the Android
+  project after the shared plugin installer did (`file-transfer`, `storage --encrypted`) printed
+  "Android: no android/app/src/main" twice in an iOS-only project.
 
 - **A page whose only interactive part is a `defineLiveView` mounts in the browser.** The build
   counted a route as needing a client entry only when it reached a `"use client"` module, so a

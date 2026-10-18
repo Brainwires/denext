@@ -26440,6 +26440,42 @@
           "denextOnly": true
         },
         {
+          "name": "KeyValueStoreError",
+          "slug": "KeyValueStoreError",
+          "kind": "class",
+          "signature": "class KeyValueStoreError",
+          "doc": "A refusal from an encrypted store: ENCRYPTION_UNAVAILABLE (nothing here can encrypt it, so nothing was written) or WRONG_KEY (the key in secureStore does not open the store's file).",
+          "docFull": "A refusal from an encrypted store: `ENCRYPTION_UNAVAILABLE` (nothing here can encrypt it, so\nnothing was written) or `WRONG_KEY` (the key in secureStore does not open the store's file).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KeyValueStoreErrorCode",
+          "slug": "KeyValueStoreErrorCode",
+          "kind": "typeAlias",
+          "signature": "type KeyValueStoreErrorCode = ENCRYPTION_UNAVAILABLE | WRONG_KEY",
+          "doc": "Why an encrypted store refused a call (KeyValueStoreError.code).",
+          "docFull": "Why an encrypted store refused a call ({@linkcode KeyValueStoreError.code}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KeyValueStoreOptions",
+          "slug": "KeyValueStoreOptions",
+          "kind": "interface",
+          "signature": "interface KeyValueStoreOptions",
+          "doc": "Options for openKeyValueStore.",
+          "docFull": "Options for {@linkcode openKeyValueStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "LinkAccept",
           "slug": "LinkAccept",
           "kind": "typeAlias",
@@ -27732,18 +27768,22 @@
           "name": "openKeyValueStore",
           "slug": "openKeyValueStore",
           "kind": "function",
-          "signature": "openKeyValueStore(name?: string): KeyValueStore",
+          "signature": "openKeyValueStore(name?: string, options?: KeyValueStoreOptions): KeyValueStore",
           "doc": "Open the durable key-value store name (default \"default\"). Nothing is opened until the first call; every store shares one backing, and each has its own keys.",
-          "docFull": "Open the durable key-value store `name` (default `\"default\"`). Nothing is opened until the\nfirst call; every store shares one backing, and each has its own keys.\n\nInside the iOS / Android shell the data is written to a SQLite file in the app's data folder\nby denext's `DenextStorage` plugin (`denext mobile add storage`), which the OS does not evict\nthe way it may evict a WebView's `localStorage` and IndexedDB under storage pressure.\n`backend()` says where it went; see the module docs for the fallbacks.",
+          "docFull": "Open the durable key-value store `name` (default `\"default\"`). Nothing is opened until the\nfirst call; every store shares one backing, and each has its own keys.\n\nInside the iOS / Android shell the data is written to a SQLite file in the app's data folder\nby denext's `DenextStorage` plugin (`denext mobile add storage`), which the OS does not evict\nthe way it may evict a WebView's `localStorage` and IndexedDB under storage pressure.\n`backend()` says where it went; see the module docs for the fallbacks.\n\nWith `{ encrypted: true }` the store is encrypted at rest (SQLCipher, `denext mobile add\nstorage --encrypted`), its key kept in secureStore; anywhere that cannot encrypt it, every call\nrejects with a {@linkcode KeyValueStoreError} (`ENCRYPTION_UNAVAILABLE`) and nothing is written.",
           "params": [
             {
               "name": "name",
               "doc": "The store's name (its key space)."
+            },
+            {
+              "name": "options",
+              "doc": "encrypted (KeyValueStoreOptions)."
             }
           ],
           "returns": "The store.",
           "examples": [
-            "```ts\nimport { openKeyValueStore } from \"denext/mobile\";\n\nconst prefs = openKeyValueStore(\"prefs\");\nawait prefs.set(\"theme\", \"dark\");\nconst [theme, font] = await prefs.getMany([\"theme\", \"font\"]);\n```"
+            "```ts\nimport { openKeyValueStore } from \"denext/mobile\";\n\nconst prefs = openKeyValueStore(\"prefs\");\nawait prefs.set(\"theme\", \"dark\");\nconst [theme, font] = await prefs.getMany([\"theme\", \"font\"]);\n\nconst vault = openKeyValueStore(\"vault\", { encrypted: true });\nawait vault.set(\"pin\", \"4321\"); // SQLCipher in the app; refused on the web\n```"
           ],
           "denextOnly": true
         },
@@ -27780,7 +27820,7 @@
             },
             {
               "name": "options",
-              "doc": "Where the web engine is, when the build does not provide it."
+              "doc": "Where the web engine is, when the build does not provide it, and the encryptionKey."
             }
           ],
           "returns": "The open database.",
@@ -29780,6 +29820,30 @@
           "signature": "interface SqliteDatabase",
           "doc": "An open database (openSqlite).",
           "docFull": "An open database ({@linkcode openSqlite}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteEncryptionError",
+          "slug": "SqliteEncryptionError",
+          "kind": "class",
+          "signature": "class SqliteEncryptionError",
+          "doc": "A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' as the first statement, such as PRAGMA rekey).",
+          "docFull": "A refused encryption request: `ENCRYPTION_UNAVAILABLE` (this backing has no SQLCipher, or the\nplugin has encryption off; nothing ran), `WRONG_KEY` (another passphrase than the one the\nplugin keeps), `KEY_REQUIRED` (the database is encrypted: run `PRAGMA key` first) or\n`UNSUPPORTED` (a key pragma other than `PRAGMA key = '…'` as the first statement, such as\n`PRAGMA rekey`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteEncryptionErrorCode",
+          "slug": "SqliteEncryptionErrorCode",
+          "kind": "typeAlias",
+          "signature": "type SqliteEncryptionErrorCode = ENCRYPTION_UNAVAILABLE | WRONG_KEY | KEY_REQUIRED | UNSUPPORTED",
+          "doc": "Why SqliteEncryptionError was thrown.",
+          "docFull": "Why {@linkcode SqliteEncryptionError} was thrown.",
           "params": [],
           "returns": "",
           "examples": [],

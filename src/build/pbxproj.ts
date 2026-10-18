@@ -842,3 +842,118 @@ export function addTargetBuildSetting(
 export function applicationTargetName(text: string): string {
   return field(findTarget(parseObjects(text), undefined).body, "name") ?? "App";
 }
+
+// ---------------------------------------------------------------------------------------------
+// Swift packages: a remote package and one of its products linked into a target.
+
+/** A remote Swift package and the product a target links ({@linkcode addSwiftPackageProduct}). */
+export interface SwiftPackageProduct {
+  /** The package's git URL (`repositoryURL`). */
+  readonly url: string;
+  /** The lowest version accepted, up to the next major. */
+  readonly minimumVersion: string;
+  /** The library product the target links. */
+  readonly product: string;
+}
+
+/** The package's name as Xcode labels it: the URL's last path segment without `.git`. */
+function packageLabel(url: string): string {
+  return url.replace(/\/+$/, "").split("/").pop()!.replace(/\.git$/, "");
+}
+
+/** The insertion that adds `entry` to `key = ( … )` of `obj`, creating the list when missing. */
+function listInsertion(text: string, obj: PbxObject, key: string, entry: string): Insertion {
+  if (listSpan(obj.body, key)) {
+    const pos = listEnd(text, obj, key);
+    return { at: pos.at, text: listEntry(pos, entry) };
+  }
+  const isa = /\bisa\s*=\s*\w+\s*;\n?/.exec(obj.body)!;
+  return {
+    at: obj.open + 1 + isa.index + isa[0].length,
+    text: `\t\t\t${key} = (\n\t\t\t\t${entry},\n\t\t\t);\n`,
+  };
+}
+
+/**
+ * Link a remote Swift package's product into an app target, as Xcode's "Add Package
+ * Dependencies" does: an `XCRemoteSwiftPackageReference` (up to the next major version) listed in
+ * the project's `packageReferences`, an `XCSwiftPackageProductDependency` in the target's
+ * `packageProductDependencies`, and a `PBXBuildFile` for it in the target's Frameworks phase.
+ * A package already referenced (by URL) and a product already linked are reused, so running it
+ * twice changes nothing.
+ *
+ * @param text The `project.pbxproj` contents.
+ * @param pkg The package and product.
+ * @param options Target name (default: the app) and id generator.
+ * @returns The edited text, and whether anything was added.
+ */
+export function addSwiftPackageProduct(
+  text: string,
+  pkg: SwiftPackageProduct,
+  options: { target?: string; randomId?: () => string } = {},
+): { text: string; added: boolean } {
+  const out = withSection(
+    withSection(text, "XCRemoteSwiftPackageReference"),
+    "XCSwiftPackageProductDependency",
+  );
+  const newId = makeIdFactory(out, options.randomId ?? randomId);
+  const objects = parseObjects(out);
+  const byId = new Map(objects.map((o) => [o.id, o]));
+  const label = packageLabel(pkg.url);
+  const insertions: Insertion[] = [];
+  const ref = objects.find((o) =>
+    o.isa === "XCRemoteSwiftPackageReference" && field(o.body, "repositoryURL") === pkg.url
+  );
+  const refId = ref?.id ?? newId();
+  const refName = `${refId} /* XCRemoteSwiftPackageReference "${label}" */`;
+  if (!ref) {
+    insertions.push({
+      at: sectionEnd(out, "XCRemoteSwiftPackageReference"),
+      text: `\t\t${refName} = {\n\t\t\tisa = XCRemoteSwiftPackageReference;\n` +
+        `\t\t\trepositoryURL = ${quote(pkg.url)};\n\t\t\trequirement = {\n` +
+        `\t\t\t\tkind = upToNextMajorVersion;\n\t\t\t\tminimumVersion = ${
+          quote(pkg.minimumVersion)
+        };\n\t\t\t};\n\t\t};\n`,
+    });
+  }
+  const project = objects.find((o) => o.isa === "PBXProject");
+  if (!project) throw new Error("project.pbxproj: no PBXProject");
+  if (!listIds(project.body, "packageReferences").includes(refId)) {
+    insertions.push(listInsertion(out, project, "packageReferences", refName));
+  }
+  const dep = objects.find((o) =>
+    o.isa === "XCSwiftPackageProductDependency" && field(o.body, "productName") === pkg.product &&
+    field(o.body, "package") === refId
+  );
+  const depId = dep?.id ?? newId();
+  if (!dep) {
+    insertions.push({
+      at: sectionEnd(out, "XCSwiftPackageProductDependency"),
+      text:
+        `\t\t${depId} /* ${pkg.product} */ = {\n\t\t\tisa = XCSwiftPackageProductDependency;\n` +
+        `\t\t\tpackage = ${refName};\n\t\t\tproductName = ${quote(pkg.product)};\n\t\t};\n`,
+    });
+  }
+  const target = findTarget(objects, options.target);
+  if (!listIds(target.body, "packageProductDependencies").includes(depId)) {
+    insertions.push(
+      listInsertion(out, target, "packageProductDependencies", `${depId} /* ${pkg.product} */`),
+    );
+  }
+  const frameworks = phaseOf(target, byId, "PBXFrameworksBuildPhase", field(target.body, "name")!);
+  const linked = listIds(frameworks.body, "files").some((id) =>
+    field(byId.get(id)?.body ?? "", "productRef") === depId
+  );
+  if (!linked) {
+    const buildId = newId();
+    const entry = `${buildId} /* ${pkg.product} in Frameworks */`;
+    insertions.push({
+      at: sectionEnd(out, "PBXBuildFile"),
+      text: `\t\t${entry} = {isa = PBXBuildFile; productRef = ${depId} /* ${pkg.product} */; };\n`,
+    });
+    insertions.push(listInsertion(out, frameworks, "files", entry));
+  }
+  return insertions.length === 0
+    ? { text, added: false }
+    : { text: applyInsertions(out, insertions), added: true };
+}

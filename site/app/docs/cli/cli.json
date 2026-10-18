@@ -1610,6 +1610,11 @@
           "description": "add fastlane: also write .github/workflows/mobile-release.yml (fastlane in GitHub Actions)"
         },
         {
+          "name": "encrypted",
+          "type": "boolean",
+          "description": "add storage: also link SQLCipher, for openKeyValueStore(name, { encrypted: true }) (keys in secureStore)"
+        },
+        {
           "name": "scheme",
           "type": "string",
           "valueName": "<scheme[,scheme]>",

@@ -436,7 +436,8 @@ WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fall
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
 videos)/`pickDocument`/`scanBarcode` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
-app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` /
+app's own `@sqlite.org/sqlite-wasm` on OPFS on the web; `encryptionKey` / `PRAGMA key` is SQLCipher
+in the shell and refused on the web) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
 Deno Desktop included); `denext mobile add <capability...> [--dry-run] [--list]`
@@ -491,7 +492,9 @@ background playback with lock-screen / notification controls; the Media Session 
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
-`storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV),
+`storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV;
+`--encrypted` adds SQLCipher for `openKeyValueStore(name, { encrypted: true })`, its key in
+`secureStore`, refused with `ENCRYPTION_UNAVAILABLE` wherever it cannot encrypt, the web included),
 `system-icons` (`<SystemIcon>`: SF Symbols in the iOS shell, Material Symbols elsewhere),
 `sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing. An exported multi-page app in the shell needs `export-routes` (Capacitor serves the root `index.html` for every extensionless path; any denext native plugin includes it, and `denext mobile doctor --release` checks it).
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
@@ -3135,6 +3138,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type KeyboardViewStyle = Readonly<Record<string, string | number | undefined>>` — An inline style object, as the views accept and extend it.
 - `type KeyValueBackend = native | sqlite | desktop | indexeddb | memory` — Where a KeyValueStore keeps its data: "native" (the DenextStorage plugin), "sqlite" (@capacitor-community/sqlite in the shell), "desktop" (the Deno Desktop runtime's SQLite), "indexeddb" (the browser's; evictable inside a native shell) or "memory" (gone when the page closes).
 - `interface KeyValueStore` — A named, durable string store (openKeyValueStore).
+- `class KeyValueStoreError` — A refusal from an encrypted store: ENCRYPTION_UNAVAILABLE (nothing here can encrypt it, so nothing was written) or WRONG_KEY (the key in secureStore does not open the store's file).
+- `type KeyValueStoreErrorCode = ENCRYPTION_UNAVAILABLE | WRONG_KEY` — Why an encrypted store refused a call (KeyValueStoreError.code).
+- `interface KeyValueStoreOptions` — Options for openKeyValueStore.
 - `type LinkAccept = parenthesized | LinkAllowList` — Which incoming links to act on: a predicate over the parsed URL, or an allow-list.
 - `interface LinkAllowList` — An allow-list for incoming links.
 - `type LinkRoute = boolean | parenthesized` — How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).
@@ -3219,7 +3225,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>` — Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.
 - `interface OpenedFile` — A file the OS opened with the app.
 - `openExternal(url: string): Promise<void>` — Open a URL outside the app.
-- `openKeyValueStore(name?: string): KeyValueStore` — Open the durable key-value store name (default "default"). Nothing is opened until the first call; every store shares one backing, and each has its own keys.
+- `openKeyValueStore(name?: string, options?: KeyValueStoreOptions): KeyValueStore` — Open the durable key-value store name (default "default"). Nothing is opened until the first call; every store shares one backing, and each has its own keys.
 - `openPath(item: ShellItem): Promise<void>` — Open a file or folder with the OS default app (Finder / Explorer for a folder).
 - `openSqlite(name: string, options?: SqliteOptions): Promise<SqliteDatabase>` — Open (creating when missing) the SQLite database name.
 - `openStoreReview(options?: StoreListingOptions): Promise<void>` — Open the app's page in the App Store (on the "write a review" sheet) or Play Store, for a "Rate this app" button. Unlike requestReview it always opens something.
@@ -3360,6 +3366,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SqliteBackend = native | opfs | memory` — Where a database lives: the native plugin, OPFS in the browser, or memory.
 - `type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer` — A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.
 - `interface SqliteDatabase` — An open database (openSqlite).
+- `class SqliteEncryptionError` — A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' as the first statement, such as PRAGMA rekey).
+- `type SqliteEncryptionErrorCode = ENCRYPTION_UNAVAILABLE | WRONG_KEY | KEY_REQUIRED | UNSUPPORTED` — Why SqliteEncryptionError was thrown.
 - `interface SqliteOptions` — Options for openSqlite and deleteSqlite.
 - `type SqliteParams = typeOperator | Readonly<Record<string, SqliteBindValue>>` — A statement's parameters: positional (?), or named by their placeholder, prefix included ({ $id: 1 } for $id, { ":id": 1 } for :id).
 - `type SqliteRow = Record<string, SqliteValue>` — A row as an object keyed by column name.

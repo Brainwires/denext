@@ -43,8 +43,10 @@ env:
   DENEXT: deno run -A --node-modules-dir=none ../../cli.ts
   # Every plugin examples/mobile does not commit (it already carries OTA, auth sessions, the
   # share extension, widgets, Live Activities, settings, context menus and system icons).
+  # --encrypted: storage with SQLCipher (the Swift package, net.zetetic:sqlcipher-android).
   PLUGINS: >-
     file-transfer background-audio accessibility storage calendar contacts print brightness
+    --encrypted
 
 jobs:
   android:

@@ -365,6 +365,8 @@ export {
   type SqliteBackend,
   type SqliteBindValue,
   type SqliteDatabase,
+  SqliteEncryptionError,
+  type SqliteEncryptionErrorCode,
   type SqliteOptions,
   type SqliteParams,
   type SqliteRow,
@@ -575,7 +577,14 @@ export {
   useReducedMotion,
   useScreenReader,
 } from "./accessibility.ts";
-export { type KeyValueBackend, type KeyValueStore, openKeyValueStore } from "./kv-store.ts";
+export {
+  type KeyValueBackend,
+  type KeyValueStore,
+  KeyValueStoreError,
+  type KeyValueStoreErrorCode,
+  type KeyValueStoreOptions,
+  openKeyValueStore,
+} from "./kv-store.ts";
 export {
   nativeViewEmbedScroller,
   type NativeViewPlacement,

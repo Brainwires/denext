@@ -566,6 +566,7 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
       configurable: listFlag(ctx.flags.configurable),
       force: ctx.flags.force === true,
       ci: ctx.flags.ci === true,
+      encrypted: ctx.flags.encrypted === true,
     });
   } catch (err) {
     fail(`denext mobile add: ${err instanceof Error ? err.message : String(err)}`);
@@ -1110,6 +1111,12 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       type: "boolean",
       help:
         "add fastlane: also write .github/workflows/mobile-release.yml (fastlane in GitHub Actions)",
+    },
+    {
+      name: "encrypted",
+      type: "boolean",
+      help:
+        "add storage: also link SQLCipher, for openKeyValueStore(name, { encrypted: true }) (keys in secureStore)",
     },
     {
       name: "scheme",

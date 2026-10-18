@@ -432,7 +432,8 @@ WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fall
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
 videos)/`pickDocument`/`scanBarcode` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
-app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` /
+app's own `@sqlite.org/sqlite-wasm` on OPFS on the web; `encryptionKey` / `PRAGMA key` is SQLCipher
+in the shell and refused on the web) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
 Deno Desktop included); `denext mobile add <capability...> [--dry-run] [--list]`
@@ -487,7 +488,9 @@ background playback with lock-screen / notification controls; the Media Session 
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
-`storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV),
+`storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV;
+`--encrypted` adds SQLCipher for `openKeyValueStore(name, { encrypted: true })`, its key in
+`secureStore`, refused with `ENCRYPTION_UNAVAILABLE` wherever it cannot encrypt, the web included),
 `system-icons` (`<SystemIcon>`: SF Symbols in the iOS shell, Material Symbols elsewhere),
 `sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing. An exported multi-page app in the shell needs `export-routes` (Capacitor serves the root `index.html` for every extensionless path; any denext native plugin includes it, and `denext mobile doctor --release` checks it).
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy

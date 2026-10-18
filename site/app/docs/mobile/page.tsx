@@ -2318,8 +2318,8 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
       </Code>
       <p>
         Values are strings (<code>JSON.stringify</code>{" "}
-        anything else), not encrypted: tokens and passwords go in{" "}
-        <code>secureStore</code>. React Native mode&apos;s{" "}
+        anything else). A plain store is not encrypted: tokens and passwords go in{" "}
+        <code>secureStore</code>, or in an encrypted store (below). React Native mode&apos;s{" "}
         <code>@react-native-async-storage/async-storage</code> and <code>react-native-mmkv</code>
         {" "}
         run on this store (see <a href="/docs/react-native#durable-storage">React Native mode</a>).
@@ -2329,6 +2329,67 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
         {" "}
         / IndexedDB, and about AsyncStorage, MMKV or <code>openKeyValueStore</code>{" "}
         in a project without a durable native store.
+      </p>
+      <h3 id="encrypted-storage">Encrypted stores</h3>
+      <p>
+        <code>openKeyValueStore(name, {"{ encrypted: true }"})</code>{" "}
+        keeps the store encrypted at rest with SQLCipher.{" "}
+        <code>denext mobile add storage --encrypted</code>{" "}
+        links it into the app: the SQLCipher Swift package in the Xcode app target, and{" "}
+        <code>net.zetetic:sqlcipher-android</code> with a <code>DenextStorageCipher.java</code>{" "}
+        beside the plugin on Android. Each encrypted store is its own database file, keyed with a
+        random 256-bit key that is created on first use and kept in <code>secureStore</code>{" "}
+        (the Keychain / Keystore, so also run{" "}
+        <code>denext mobile add secure-store</code>). The first encrypted open moves the
+        store&apos;s rows out of the plain database, which deletes them with{" "}
+        <code>secure_delete</code>{" "}
+        and truncates its write-ahead log, so no plaintext copy stays behind.
+      </p>
+      <Code lang="ts">
+        {`import { KeyValueStoreError, openKeyValueStore } from "denext/mobile";
+
+const vault = openKeyValueStore("vault", { encrypted: true });
+try {
+  await vault.set("pin", pin);
+} catch (err) {
+  if (err instanceof KeyValueStoreError && err.code === "ENCRYPTION_UNAVAILABLE") {
+    // the browser, Deno Desktop, a build without --encrypted, or no secure-store:
+    // nothing was written
+  }
+}`}
+      </Code>
+      <p>
+        An encrypted store never falls back to a plain one. Where it cannot be encrypted, every call
+        rejects with a <code>KeyValueStoreError</code> whose code is{" "}
+        <code>ENCRYPTION_UNAVAILABLE</code>{" "}
+        and nothing is written. That covers the browser (IndexedDB), Deno Desktop, the{" "}
+        <code>@capacitor-community/sqlite</code> and memory backings, a build whose{" "}
+        <code>DenextStorage</code> has no SQLCipher (including one from an older denext), and a{" "}
+        <code>secureStore</code>{" "}
+        that is not secret, where the key would sit in plain WebView storage. If the key in{" "}
+        <code>secureStore</code> does not open the store&apos;s file, the call rejects with{" "}
+        <code>WRONG_KEY</code>.
+      </p>
+      <p>
+        <code>openSqlite(name, {"{ encryptionKey }"})</code>, and{" "}
+        <code>PRAGMA key = &apos;…&apos;</code>{" "}
+        as the first statement run on a database (the way the expo-sqlite shim&apos;s apps key
+        theirs), open a SQLCipher database in the shell through{" "}
+        <code>@capacitor-community/sqlite</code>. Encryption has to be on in{" "}
+        <code>capacitor.config.ts</code> (<code>plugins.CapacitorSQLite.iosIsEncryption</code> and
+        {" "}
+        <code>androidIsEncryption: true</code>). The plugin keeps a single passphrase for all of the
+        app&apos;s databases, so a different one is refused with{" "}
+        <code>WRONG_KEY</code>. A plain database is encrypted in place, and an encrypted one opened
+        without a key waits for its <code>PRAGMA key</code>{" "}
+        (<code>KEY_REQUIRED</code>). The web engine and Deno Desktop have no SQLCipher. On those,
+        {" "}
+        <code>PRAGMA key</code> and <code>encryptionKey</code> reject with a{" "}
+        <code>SqliteEncryptionError</code>{" "}
+        (<code>ENCRYPTION_UNAVAILABLE</code>) and nothing runs. sqlite-wasm would otherwise treat
+        the pragma as a no-op and leave the data unencrypted. <code>PRAGMA rekey</code>,{" "}
+        <code>hexkey</code>{" "}
+        and a key pragma that is not the first statement are refused (<code>UNSUPPORTED</code>).
       </p>
 
       <h2 id="in-app-purchases">In-app purchases</h2>

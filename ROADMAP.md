@@ -52,8 +52,11 @@
   only, Android's split of a repeating event from one occurrence on (`futureEvents` with
   `instanceStartDate`) included.
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **Capabilities:** a notification service extension and badges, SQLite encryption.
-- **On a device:** background file transfers (`denext mobile add file-transfer`: a download that
+- **Capabilities:** a notification service extension and badges.
+- **On a device:** encrypted key-value stores (`denext mobile add storage --encrypted`: SQLCipher
+  linked into the iOS and Android builds, a store moved out of the plain database, its key in the
+  Keychain / Keystore) and `PRAGMA key` through `@capacitor-community/sqlite`, background file
+  transfers (`denext mobile add file-transfer`: a download that
   finishes with the app suspended or terminated, a pause and a resume, Android's WorkManager runs),
   background audio with the lock-screen / notification controls
   (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
