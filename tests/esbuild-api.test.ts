@@ -15,7 +15,8 @@ import { fromFileUrl, join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 
-const MOD = fromFileUrl(new URL("../src/build/esbuild/mod.ts", import.meta.url));
+/** An import specifier (a URL: a Windows path is no module specifier). */
+const MOD = new URL("../src/build/esbuild/mod.ts", import.meta.url).href;
 const CONFIG = fromFileUrl(new URL("../deno.json", import.meta.url));
 
 Deno.test("esbuild API: version, and a plugin build that sees this module as build.esbuild", async () => {

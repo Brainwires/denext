@@ -53,11 +53,14 @@ export async function GET(req: Request) {
     const script = join(dir, "serve.ts");
     await Deno.writeTextFile(
       script,
-      `import { createApp } from ${JSON.stringify(src("src/server/app.ts"))};
+      `import { pathToFileURL } from "node:url";
+import { createApp } from ${JSON.stringify(src("src/server/app.ts"))};
 import { scanRoutes } from ${JSON.stringify(src("src/router/manifest.ts"))};
 import { serveWithPortFallback } from ${JSON.stringify(src("src/server/serve-utils.ts"))};
 const manifest = await scanRoutes(${JSON.stringify(join(dir, "app"))});
-const handler = createApp({ getManifest: () => manifest, load: (p) => import(p) });
+// The manifest holds paths; a Windows path is no module specifier.
+const load = (p) => import(pathToFileURL(p).href);
+const handler = createApp({ getManifest: () => manifest, load });
 const done = new AbortController();
 const server = serveWithPortFallback({
   port: 0, hostname: "127.0.0.1", strict: true, signal: done.signal, onListen() {},

@@ -4,7 +4,7 @@
 // profile back through the form its module was emitted in, then merges them line for line).
 
 import { assert, assertEquals, assertMatch } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   clearCoverageProfiles,
   coverageDir,
@@ -15,7 +15,7 @@ import {
 import { resolveDenoToolchain } from "../src/build/deno-toolchain.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
 
-const CLI = new URL("../cli.ts", import.meta.url).pathname;
+const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 
 Deno.test("splitTestArgs: flags with their values, paths, and the -- tail", () => {
   assertEquals(splitTestArgs(["--filter", "x", "a.test.ts", "--parallel", "--", "--y"]), {

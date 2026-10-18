@@ -4,7 +4,7 @@
 // e2e (tests/e2e/drizzle.e2e.test.ts) covers the live end-to-end path.
 
 import { assert, assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   acquireFwdepsInstall,
   configAnchorsResolution,
@@ -136,7 +136,7 @@ Deno.test("resolvesInThisProcess: asks Deno's resolver under the config this pro
 Deno.test("the source checkout's framework config does not anchor the repo's plain examples", async () => {
   // The startup-cost guard: an example that maps only what the framework config resolves must
   // not start re-exec'ing. examples/hello maps denext's own entries and nothing else.
-  const root = new URL("..", import.meta.url).pathname;
+  const root = fromFileUrl(new URL("..", import.meta.url));
   for (const example of ["hello", "htmx", "pages-router", "typed-api"]) {
     const cfg = await readConfig(join(root, "examples", example, "deno.json"));
     assertEquals(
@@ -207,7 +207,7 @@ Deno.test("a re-exec the CLI may not spawn fails with the way out, not NotCapabl
       JSON.stringify({ imports: { "@gleam/": "./gleam/" } }),
     );
     await Deno.writeTextFile(join(dir, "app", "page.tsx"), "export default () => null;\n");
-    const root = new URL("..", import.meta.url).pathname;
+    const root = fromFileUrl(new URL("..", import.meta.url));
     const out = await new Deno.Command(Deno.execPath(), {
       args: [
         "run",

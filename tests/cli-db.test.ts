@@ -3,6 +3,7 @@
 // `@denext/backend`'s hooks, and one end-to-end run of the verb through cli.ts. Postgres (and a
 // Supabase project's history) runs in tests/db-migrations-integration.test.ts.
 
+import { fromFileUrl } from "@std/path";
 import {
   assert,
   assertEquals,
@@ -375,7 +376,14 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
   try {
     const run = async (...args: string[]) => {
       const out = await new Deno.Command(Deno.execPath(), {
-        args: ["run", "-A", new URL("../cli.ts", import.meta.url).pathname, ...args, "--cwd", root],
+        args: [
+          "run",
+          "-A",
+          fromFileUrl(new URL("../cli.ts", import.meta.url)),
+          ...args,
+          "--cwd",
+          root,
+        ],
         stdout: "piped",
         stderr: "piped",
         env: { NO_COLOR: "1", DENEXT_DENO: "stock" },

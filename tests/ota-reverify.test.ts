@@ -15,7 +15,7 @@
 // iOS SDK). The fixtures live in tests/fixtures/ota-reverify/.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   OTA_ANDROID_FILES,
   OTA_IOS_FILES,
@@ -29,7 +29,7 @@ import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 
 const FIXTURES = new URL("./fixtures/ota-reverify/", import.meta.url);
-const fixture = (path: string) => new URL(path, FIXTURES).pathname;
+const fixture = (path: string) => fromFileUrl(new URL(path, FIXTURES));
 
 const IOS_STORE = OTA_IOS_FILES["DenextOtaStore.swift"];
 const IOS_PLUGIN = OTA_IOS_FILES["DenextOtaPlugin.swift"];

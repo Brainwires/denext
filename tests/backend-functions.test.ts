@@ -12,6 +12,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
+import { join } from "@std/path";
 import {
   defaultFunctionsUrl,
   discoverFunctions,
@@ -98,7 +99,7 @@ Deno.test("discoverFunctions: <name>.ts, <name>/index.ts; _shared, tests and bad
     await Deno.writeTextFile(`${dir}/bad name.ts`, "");
     const found = await discoverFunctions(dir);
     assertEquals([...found.keys()], ["hello", "js-one", "plain"]);
-    assertEquals(found.get("hello"), `${dir}/hello/index.ts`);
+    assertEquals(found.get("hello"), join(dir, "hello", "index.ts"));
     assertEquals((await discoverFunctions(`${dir}/missing`)).size, 0);
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -108,12 +109,12 @@ Deno.test("discoverFunctions: <name>.ts, <name>/index.ts; _shared, tests and bad
 Deno.test("functionsDir: configured, functions/, then supabase/functions/", async () => {
   const root = await Deno.makeTempDir();
   try {
-    assertEquals(await functionsDir(root, undefined), `${root}/functions`);
-    assertEquals(await functionsDir(root, "edge"), `${root}/edge`);
+    assertEquals(await functionsDir(root, undefined), join(root, "functions"));
+    assertEquals(await functionsDir(root, "edge"), join(root, "edge"));
     await Deno.mkdir(`${root}/supabase/functions`, { recursive: true });
-    assertEquals(await functionsDir(root, undefined), `${root}/supabase/functions`);
+    assertEquals(await functionsDir(root, undefined), join(root, "supabase", "functions"));
     await Deno.mkdir(`${root}/functions`);
-    assertEquals(await functionsDir(root, undefined), `${root}/functions`);
+    assertEquals(await functionsDir(root, undefined), join(root, "functions"));
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -462,7 +463,7 @@ Deno.test({
     try {
       const { generateArtifact } = await import("../src/build/generate.ts");
       const { written } = await generateArtifact(app.root, "function", "hello-world");
-      assertEquals(written, [`${app.root}/functions/hello-world/index.ts`]);
+      assertEquals(written, [join(app.root, "functions", "hello-world", "index.ts")]);
       await assertRejects(() => generateArtifact(app.root, "function", "a/b"), Error, "slug");
       const res = await app.call("/functions/v1/hello-world", {
         method: "POST",

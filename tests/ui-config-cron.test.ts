@@ -6,7 +6,7 @@
 // sparse schedule's horizon, and the noise a child writes around its document.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
@@ -919,17 +919,27 @@ Deno.test("a test project resolves denext/server through its own import map", as
 export default { jobs: { history: { store: sqliteJobHistoryStore({ path: ":memory:" }) } } };
 `);
   try {
-    const { stdout } = await new Deno.Command(Deno.execPath(), {
-      args: ["info", "--json", "--config", join(dir, "deno.json"), join(dir, "denext.config.ts")],
+    const { stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+      // A URL: `deno info` reads a Windows path (`c:\…`) as a specifier with a `c:` scheme.
+      args: [
+        "info",
+        "--json",
+        "--config",
+        join(dir, "deno.json"),
+        toFileUrl(join(dir, "denext.config.ts")).href,
+      ],
       cwd: dir,
       stdout: "piped",
-      stderr: "null",
+      stderr: "piped",
     }).output();
     const graph = JSON.parse(new TextDecoder().decode(stdout)) as {
       modules: { specifier: string; error?: string }[];
     };
     assertEquals(graph.modules.filter((m) => m.error).map((m) => m.error), []);
-    assert(graph.modules.some((m) => m.specifier.endsWith("/src/server/mod.ts")));
+    assert(
+      graph.modules.some((m) => m.specifier.endsWith("/src/server/mod.ts")),
+      new TextDecoder().decode(stderr) + graph.modules.map((m) => m.specifier).join("\n"),
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -962,8 +972,9 @@ Deno.test("an app's own history store is read and cleared through it, never open
   // The store is project code (a call in denext.config.ts), so the panel asks `denext job
   // --history` / `--clear-history` children; here the store is a SQLite file of the app's choosing.
   const config = `import { sqliteJobHistoryStore } from "denext/server";
+import { fileURLToPath } from "node:url";
 export default {
-  jobs: { history: { store: sqliteJobHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname }) } },
+  jobs: { history: { store: sqliteJobHistoryStore({ path: fileURLToPath(new URL("./custom.db", import.meta.url)) }) } },
 };
 `;
   const dir = await project(config, { cleanup: job() });
@@ -1003,7 +1014,8 @@ export default {
 
 Deno.test("--read-only reaches an app's own store: its history child reads with readOnly", async () => {
   const config = `import { sqliteJobHistoryStore } from "denext/server";
-const inner = sqliteJobHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
+import { fileURLToPath } from "node:url";
+const inner = sqliteJobHistoryStore({ path: fileURLToPath(new URL("./custom.db", import.meta.url)) });
 const note = (line) => Deno.writeTextFileSync(new URL("./calls.log", import.meta.url), line + "\\n", { append: true });
 export default { jobs: { history: { store: {
   record: (run) => inner.record(run),

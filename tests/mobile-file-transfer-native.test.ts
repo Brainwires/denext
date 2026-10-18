@@ -9,7 +9,7 @@
 // (never skipped under CI, tests/_jdk.ts).
 
 import { assert, assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   TRANSFER_ANDROID_FILES,
   TRANSFER_IOS_FILES,
@@ -17,7 +17,7 @@ import {
 import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 
 const FIXTURES = new URL("./fixtures/", import.meta.url);
-const fixture = (rel: string) => new URL(rel, FIXTURES).pathname;
+const fixture = (rel: string) => fromFileUrl(new URL(rel, FIXTURES));
 
 /** `size` bytes where byte i is i % 251 (the harnesses check the order). */
 function pattern(size: number, from = 0): Uint8Array<ArrayBuffer> {

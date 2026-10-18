@@ -19,6 +19,7 @@
 // Ignored without DENEXT_TEST_POSTGRES_URL or Deno.SQL; the protocol and the hub are unit-tested
 // in tests/backend-realtime-socket.test.ts.
 
+import { fromFileUrl } from "@std/path";
 import { assert, assertEquals } from "@std/assert";
 import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
 import { builtinSql } from "../src/server/postgres.ts";
@@ -119,8 +120,8 @@ async function replica(
   url: string,
   realtime: Record<string, unknown> = REALTIME,
 ): Promise<Replica> {
-  const script = new URL("./helpers/realtime-replica.ts", import.meta.url).pathname;
-  const config = new URL("../deno.json", import.meta.url).pathname;
+  const script = fromFileUrl(new URL("./helpers/realtime-replica.ts", import.meta.url));
+  const config = fromFileUrl(new URL("../deno.json", import.meta.url));
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", "--config", config, script],
     env: {
