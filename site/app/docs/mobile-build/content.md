@@ -345,14 +345,14 @@ denext's pinned gems, so `denext fastlane` warns when the Pluginfile lists plugi
 projects, use the generated `Gemfile`: `bundle install` (commit `Gemfile.lock`), then `bundle
 exec fastlane …` with your own Ruby (3.2 or newer).
 
-| File                                   | What it holds                                                                                                                                       |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fastlane/Appfile`                     | `app_identifier` / `package_name` from `capacitor.config` `appId`; the Apple team and the Play key file from the environment                        |
-| `fastlane/Fastfile`                    | `ios` and `android` lanes: `build`, `beta`, `release`                                                                                               |
-| `fastlane/Matchfile`                   | match's store (`MATCH_GIT_URL`, `MATCH_STORAGE_MODE`), type `appstore`, the app id                                                                  |
-| `fastlane/.gitignore`                  | what a run generates (`report.xml`, `README.md`, `Preview.html`, screenshots) and key files                                                         |
-| `Gemfile`                              | for `bundle exec` with your own Ruby (plugins): `gem "fastlane", "~> 2.240"` and fastlane's `Pluginfile` (`bundle exec fastlane add_plugin <name>`) |
-| `.github/workflows/mobile-release.yml` | `--ci` only, at the repository root: a manual dispatch running `denext fastlane <platform> <lane>` on Ubuntu (Android) and macOS (iOS)              |
+| File                                   | What it holds                                                                                                                                                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fastlane/Appfile`                     | `app_identifier` / `package_name` from `capacitor.config` `appId`; the Apple team and the Play key file from the environment                                                                                          |
+| `fastlane/Fastfile`                    | `ios` and `android` lanes: `build`, `beta`, `release`                                                                                                                                                                 |
+| `fastlane/Matchfile`                   | match's store (`MATCH_GIT_URL`, `MATCH_STORAGE_MODE`), type `appstore`, the app id                                                                                                                                    |
+| `fastlane/.gitignore`                  | what a run generates (`report.xml`, `README.md`, `Preview.html`, screenshots) and key files                                                                                                                           |
+| `Gemfile`                              | for `bundle exec` with your own Ruby (plugins): `gem "fastlane", "~> 2.240"` and fastlane's `Pluginfile` (`bundle exec fastlane add_plugin <name>`)                                                                   |
+| `.github/workflows/mobile-release.yml` | `--ci` only, at the repository root: a manual dispatch running `denext fastlane <platform> <lane>` on Ubuntu (Android) and macOS (iOS), the managed fastlane cached (`actions/cache`, keyed on denext's fastlane pin) |
 
 Every lane runs `denext mobile build <platform> --release --json` (export, the flavor's edits,
 `npx cap sync`, Xcode or Gradle) and reads the artifact record it prints, so the binary always

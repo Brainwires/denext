@@ -28,6 +28,7 @@
 // denext's pinned bundle, so `denext fastlane` warns when the project lists plugins.
 
 import { join, resolve } from "@std/path";
+import { createHash } from "node:crypto";
 import {
   type DenoToolchainArtifact,
   denoToolchainCacheRoot,
@@ -74,6 +75,17 @@ export const FASTLANE_ENV = "DENEXT_FASTLANE";
 
 /** The command that installs the managed fastlane ahead of time (for offline work). */
 export const FASTLANE_PREFETCH = "denext toolchain install --with fastlane";
+
+/**
+ * A short hash of the fastlane pin (the Ruby per host, the Gemfile and its lock): the generated CI
+ * workflow's cache key, so a pin bump starts a fresh cache.
+ *
+ * @param pin Defaults to {@linkcode FASTLANE_TOOLCHAIN}.
+ * @returns 16 hex characters.
+ */
+export function fastlanePinHash(pin: FastlaneToolchainPin = FASTLANE_TOOLCHAIN): string {
+  return createHash("sha256").update(JSON.stringify(pin)).digest("hex").slice(0, 16);
+}
 
 /** The stamp written last into an installed slot. */
 const STAMP = ".denext-fastlane.json";

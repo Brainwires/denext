@@ -53,7 +53,7 @@ and this project adheres to
   variables. `denext toolchain install --with fastlane` installs it ahead of time, `toolchain
   status` lists it, and `DENEXT_FASTLANE=<path>` runs another fastlane instead. The lanes and the
   `--ci` workflow `denext mobile add fastlane` writes now run `denext fastlane` (the workflow has
-  no Ruby setup step). The Gemfile stays for plugins (`fastlane/Pluginfile`), which need `bundle
+  no Ruby setup step, and caches the managed fastlane with `actions/cache`, keyed on the pin). The Gemfile stays for plugins (`fastlane/Pluginfile`), which need `bundle
   exec`; `denext fastlane` warns when it finds them. `denext create --fastlane` (an opt-in picker
   entry, which adds Capacitor) scaffolds the lanes into a new app. `denext mobile doctor
   --release` checks that the managed fastlane can run on the host: Windows, a `DENEXT_FASTLANE`

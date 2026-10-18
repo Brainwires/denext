@@ -3,7 +3,13 @@
 // Gemfile, .gitignore, the --ci workflow), idempotency / --force / --dry-run through
 // `mobile add`, and what `denext mobile doctor --release` reports about a fastlane/ folder.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { join } from "@std/path";
 import {
   addMobileCapabilities,
@@ -16,7 +22,11 @@ import {
   fastlaneFindings,
   type FastlaneHostProbe,
 } from "../src/build/mobile-fastlane.ts";
-import type { FastlaneToolchainStatus } from "../src/build/fastlane-toolchain.ts";
+import {
+  FASTLANE_TOOLCHAIN,
+  fastlanePinHash,
+  type FastlaneToolchainStatus,
+} from "../src/build/fastlane-toolchain.ts";
 import {
   appfileTemplate,
   fastfileTemplate,
@@ -275,6 +285,17 @@ Deno.test("add fastlane --ci: the workflow at the repository root, secrets by na
     assert(!yml.includes("bundle exec"));
     assertStringIncludes(yml, 'run: $DENEXT_CLI fastlane android "$LANE"');
     assertStringIncludes(yml, 'run: $DENEXT_CLI fastlane ios "$LANE"');
+    // The managed fastlane's install is cached per runner OS / arch, keyed on the pin.
+    const key = `key: denext-fastlane-\${{ runner.os }}-\${{ runner.arch }}-${fastlanePinHash()}`;
+    assertEquals(yml.split("uses: actions/cache@v4").length - 1, 2);
+    assertEquals(yml.split(key).length - 1, 2);
+    assertStringIncludes(yml, "path: ~/.cache/deno/denext-deno/fastlane\n");
+    assertStringIncludes(yml, "path: ~/Library/Caches/deno/denext-deno/fastlane\n");
+    // A pin bump is a new key.
+    assert(
+      fastlanePinHash({ ...FASTLANE_TOOLCHAIN, fastlane: "2.999.0" }) !== fastlanePinHash(),
+    );
+    assertMatch(fastlanePinHash(), /^[0-9a-f]{16}$/);
     assertStringIncludes(yml, "runs-on: macos-15");
     for (
       const secret of [

@@ -11,6 +11,8 @@
 // tracks, store metadata, its plugins. No credential is ever written into these files: they
 // name environment variables.
 
+import { fastlanePinHash } from "./fastlane-toolchain.ts";
+
 /** The fastlane release the Gemfile pins (`~>`: any 2.x from this one on). */
 export const FASTLANE_VERSION = "2.240";
 
@@ -485,6 +487,22 @@ function yamlPath(path: string): string {
 }
 
 /**
+ * The `actions/cache` step for denext's managed fastlane (the portable Ruby + the built gems) under
+ * the runner's Deno cache (`denoDir`: Linux and macOS defaults), keyed on the fastlane pin this
+ * workflow is written for, so a run after the first skips the install (minutes of C builds). A
+ * newer denext with another pin re-installs (the stamp no longer matches) until this file is
+ * regenerated with the new key.
+ */
+function fastlaneCacheStep(denoDir: string): string {
+  return "      # denext's managed fastlane (Ruby + gems), keyed on the pin it was written for.\n" +
+    "      - uses: actions/cache@v4\n" +
+    "        with:\n" +
+    `          path: ${denoDir}/denext-deno/fastlane\n` +
+    "          key: denext-fastlane-${{ runner.os }}-${{ runner.arch }}-" +
+    `${fastlanePinHash()}\n`;
+}
+
+/**
  * The GitHub Actions workflow: a manual dispatch that runs `denext fastlane <platform> <lane>`
  * (denext's managed fastlane) for Android on Ubuntu and iOS on macOS, with every credential a repository secret.
  *
@@ -506,7 +524,8 @@ export function workflowTemplate(opts: WorkflowOptions): string {
         "          distribution: temurin\n" +
         '          java-version: "21"\n'
       : "") +
-    installSteps(opts.install, opts.locked);
+    installSteps(opts.install, opts.locked) +
+    fastlaneCacheStep(java ? "~/.cache/deno" : "~/Library/Caches/deno");
   return `# Written by \`denext mobile add fastlane --ci\`: denext builds, fastlane ships.
 #   Actions → "Mobile release" → Run workflow: the lane (beta: TestFlight / a Play testing
 #   track; release: the App Store / Play production), a flavor (optional) and the platforms.
