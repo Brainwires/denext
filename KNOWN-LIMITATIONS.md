@@ -45,9 +45,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   context-menu keyboard checks included; a `desktop package --arch arm64` `.msi`, installed per
   user and per machine, upgraded, launched and uninstalled; and a server binary from
   `denext build --compile --target aarch64-pc-windows-msvc` (an Arm64 executable that serves
-  pages). Not yet run there: a physical Arm64 PC (GPU rendering), Authenticode-signed builds and
-  the trusted-update checks, and denext's own test suites (CI's `windows-11-arm` job is still
-  optional). A `desktop run` / `dev` window loads the VC++ runtime
+  pages). denext's unit and integration suites run there too; what fails on that VM fails the
+  same way on Windows x64, which no CI job runs those suites on. CI's `windows-11-arm` job (desktop
+  suites, `install.ps1`, the Arm64 `.msi`) is required for a release. Not yet run on Arm64: a
+  physical PC (GPU rendering), Authenticode-signed builds and the trusted-update checks. A
+  `desktop run` / `dev` window loads the VC++ runtime
   from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
   bundle carries the runtime next to its `.exe`.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install

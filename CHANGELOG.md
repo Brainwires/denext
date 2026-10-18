@@ -100,6 +100,9 @@ and this project adheres to
 
 ### Fixed
 
+- **Tailwind builds on Windows on Arm.** The standalone Tailwind download asked for
+  `tailwindcss-windows-arm64.exe`, which Tailwind does not publish (a 404 failed every build of a
+  Tailwind app); Windows on Arm now takes the x64 build, which it runs under emulation.
 - **`denext build --compile` compiles next-compat (drop-in) and Pages Router apps.** A drop-in's
   compile failed on the npm tree Deno writes beside the build's CSS config (`.denext/node_modules`
   is no longer embedded); a Pages Router app without `app/` was refused as unbuilt, its `pages/`
