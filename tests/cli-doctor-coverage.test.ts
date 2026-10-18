@@ -144,6 +144,67 @@ Deno.test("doctor --report on a project with no app dir explains the un-probed s
   assert(exit.calls.includes(1), "a failing critical check still exits non-zero under --report");
 });
 
+Deno.test("doctor counts the app directory as not needed when a plugin serves the routes", async () => {
+  // A Pages Router / TanStack Start shape: no `app/`, the routes come from a plugin's request
+  // handler (or route synthesizer). The plugin here is a stand-in with the same seams.
+  const dir = await Deno.makeTempDir({ prefix: "denext_doctor_plugin_" });
+  await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+  await Deno.writeTextFile(
+    join(dir, "denext.config.ts"),
+    `export default {\n` +
+      `  plugins: [{\n` +
+      `    name: "fixture-router",\n` +
+      `    setup(ctx) { ctx.addRequestHandler(() => new Response("routed")); },\n` +
+      `  }, { name: "fixture-inert", setup() {} }],\n` +
+      `};\n`,
+  );
+  const cap = capture();
+  const exit = stubExit();
+  try {
+    await doctorCommand.run(makeCtx({ positionals: [dir], global: { json: true } }));
+  } finally {
+    exit.restore();
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+  const checks = JSON.parse(cap.logs.join("\n")) as Array<
+    { name: string; ok: boolean; detail: string }
+  >;
+  const app = checks.find((c) => c.name === "app directory");
+  assert(app?.ok, `app directory passes: ${JSON.stringify(app)}`);
+  assertStringIncludes(app.detail, "fixture-router");
+  assert(!app.detail.includes("fixture-inert"), "a plugin that serves nothing is not named");
+  assert(!exit.calls.includes(1), "no critical failure for a plugin-routed app");
+});
+
+Deno.test("doctor still fails a missing app directory when no plugin serves routes", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_doctor_noroute_" });
+  await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+  await Deno.writeTextFile(
+    join(dir, "denext.config.ts"),
+    `export default {\n` +
+      `  plugins: [{ name: "fixture-inert", setup() {} }, {\n` +
+      `    name: "fixture-broken",\n` +
+      `    setup(ctx) { ctx.addRequestHandler(() => null); throw new Error("setup failed"); },\n` +
+      `  }],\n` +
+      `};\n`,
+  );
+  const cap = capture();
+  const exit = stubExit();
+  try {
+    await doctorCommand.run(makeCtx({ positionals: [dir], global: { json: true } }));
+  } catch (e) {
+    assertStringIncludes(String(e), "__exit__1");
+  } finally {
+    exit.restore();
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+  const checks = JSON.parse(cap.logs.join("\n")) as Array<{ name: string; ok: boolean }>;
+  assert(checks.find((c) => c.name === "app directory")?.ok === false);
+  assert(exit.calls.includes(1), "a plugin whose setup fails does not stand in for app/");
+});
+
 Deno.test("doctor reports a config-load failure as a failed critical check", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_doctor_bad_" });
   // A denext.config.ts that throws on import → resolveProject rejects → doctor turns it

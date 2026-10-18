@@ -14,7 +14,9 @@ import { VERSION } from "../../../mod.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
 import { runDenoPassthrough } from "./deno-toolchain.ts";
-import { resolveProject } from "../../build/paths.ts";
+import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
+import { type DenextPlugin, setupAppPlugins } from "../../plugin/mod.ts";
+import { defaultLoader } from "../../server/default-loader.ts";
 import { type ConformanceReport, probeApp } from "../../testing/conformance.ts";
 import {
   type BundleChunk,
@@ -154,6 +156,60 @@ async function appDirCheck(appDir: string): Promise<Check> {
     detail: ok ? appDir : `missing: ${appDir}`,
     critical: true,
   };
+}
+
+/**
+ * The names of the configured plugins that serve requests or synthesize routes — what routes an
+ * app with no `app/` (a Pages Router or TanStack Start app). Each plugin is set up in a registry of
+ * its own (as the route probe does), then torn down. Empty when none does, or when setup fails.
+ */
+async function routingPlugins(paths: ProjectPaths): Promise<string[]> {
+  const config = paths.config;
+  if (!config?.plugins?.length) return [];
+  const routing = new Set<string>();
+  const plugins = config.plugins.map((plugin): DenextPlugin => ({
+    name: plugin.name,
+    setup: (ctx) =>
+      plugin.setup({
+        ...ctx,
+        addRequestHandler: (handler) => {
+          routing.add(plugin.name);
+          ctx.addRequestHandler(handler);
+        },
+        addRouteSynthesizer: (fn) => {
+          routing.add(plugin.name);
+          ctx.addRouteSynthesizer(fn);
+        },
+      }),
+  }));
+  try {
+    const set = await setupAppPlugins({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      config: { ...config, plugins },
+      mode: "dev",
+      load: defaultLoader,
+    });
+    await set.teardown();
+  } catch {
+    return [];
+  }
+  return [...routing];
+}
+
+/**
+ * The app-directory check, satisfied without `app/` when a plugin serves the routes (the Pages
+ * Router and TanStack Start plugins route from their own trees).
+ */
+async function appOrPluginRoutesCheck(
+  paths: ProjectPaths,
+): Promise<{ check: Check; hasAppDir: boolean }> {
+  const check = await appDirCheck(paths.appDir);
+  if (check.ok) return { check, hasAppDir: true };
+  const routing = await routingPlugins(paths);
+  if (routing.length === 0) return { check, hasAppDir: false };
+  const detail = `not needed: routes come from ${routing.join(", ")}`;
+  return { check: { ...check, ok: true, detail }, hasAppDir: false };
 }
 
 /** The route-conformance check (the old `probe`), plus the full report it summarizes. */
@@ -439,9 +495,10 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   const isSpa = paths.config?.mode === "spa";
   let appOk = true;
   if (!isSpa) {
-    const appCheck = await appDirCheck(paths.appDir);
-    appOk = appCheck.ok;
-    checks.push(appCheck);
+    const { check, hasAppDir } = await appOrPluginRoutesCheck(paths);
+    // The route probe walks `app/`: a plugin-routed app has none to walk.
+    appOk = hasAppDir;
+    checks.push(check);
   }
   // Reaching here means the config loaded and passed validation → report correctness.
   checks.push({
@@ -489,7 +546,10 @@ function cell(s: string): string {
 /** The `## Routes` section body: a per-route table, or why routes weren't probed. */
 function routesSection(rep: ConformanceReport | null): string[] {
   if (!rep) {
-    return ["_Not probed — SPA mode, a missing app directory, or a config failure above._"];
+    return [
+      "_Not probed — SPA mode, a missing app directory, routes served by a plugin, or a config " +
+      "failure above._",
+    ];
   }
   if (rep.routes.length === 0) return ["_No routes found._"];
   const lines = [

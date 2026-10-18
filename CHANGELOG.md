@@ -140,6 +140,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext doctor` passes an app whose routes come from a plugin.** A Pages Router or TanStack
+  Start app has no `app/`; its routes come from the `@denext/pages-router` /
+  `@denext/tanstack-start` plugin. Doctor reported "app directory: FAIL" for it and exited 1. When
+  `app/` is missing, doctor now sets up the configured plugins in a registry of their own and
+  treats the check as satisfied when one of them serves requests or synthesizes routes, naming
+  it ("not needed: routes come from @denext/tanstack-start"). Route conformance, which walks
+  `app/`, is not probed for such an app.
+
 - **A page whose only interactive part is a `defineLiveView` mounts in the browser.** The build
   counted a route as needing a client entry only when it reached a `"use client"` module, so a
   live-view-only page shipped no client JS and the `denext#LiveView` island and the Live socket

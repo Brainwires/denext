@@ -21,7 +21,9 @@ entries a killed build left in `deno.json`, platform-specific files, the iOS pri
 (with an `ios/` folder), the files derived from `desktop.app.origin` (when it is set), the
 pinned Deno Desktop runtime (with a `desktop.ts` entry), and, for an app on
 `@denext/backend`, its keys, database, migrations and storage driver. An SPA-mode app skips
-the app directory and route conformance.
+the app directory and route conformance. An app with no `app/` whose routes come from a plugin
+(`@denext/pages-router`, `@denext/tanstack-start`: one that serves requests or synthesizes
+routes) passes the app directory check with that plugin named, and skips route conformance.
 `--report` prints a markdown health report — the checks, every route's
 conformance result, and the last build's client bundle by chunk and role, read
 from `.denext/client` without building; `--json` emits the same data
