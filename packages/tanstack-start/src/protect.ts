@@ -67,8 +67,8 @@ export interface ImportProtectionViolation {
   envType: ProtectionEnv;
   /** Which rule denied it. */
   type: "specifier" | "file" | "marker";
-  /** A violation always fails a denext build (Start's `error` behavior). */
-  behavior: "error";
+  /** What the violation does: fail the build (`"error"`), or a warning and a mock (`"mock"`). */
+  behavior: ImportProtectionBehavior;
   /** The pattern that matched (a specifier or file rule). */
   pattern?: Pattern;
   /** The import as written (for a marker: the marker's specifier). */
@@ -103,21 +103,28 @@ export interface ImportProtectionOptions {
     violation: ImportProtectionViolation,
   ) => boolean | void | Promise<boolean | void>;
   /**
-   * Start's violation behavior: `"error"`, `"mock"`, or one per command (`{ dev, build }`).
-   * Accepted so a Start config ports unchanged, but denext always fails on a violation (the
-   * build, and in dev the request that builds); a `"mock"` is warned about.
+   * Start's violation behavior: `"error"`, `"mock"`, or one per command (`{ dev, build }`, where
+   * `dev` defaults to `"mock"` and `build` to `"error"`, as in Start). Unset, every violation
+   * fails (the build, and in dev the request that builds). A `"mock"` in `denext dev` is Start's:
+   * a denied import resolves to Start's mock module, a denied file is replaced by one, and the
+   * violation is a warning. A build always fails; a `"mock"` there is warned about.
    */
   behavior?: ImportProtectionBehavior | {
     dev?: ImportProtectionBehavior;
     build?: ImportProtectionBehavior;
   };
-  /** Start's runtime diagnostics for a mocked import. Accepted; denext mocks none. */
+  /**
+   * Start's runtime diagnostics for a mocked import in the browser (dev `"mock"` only): using the
+   * mock logs Start's `[import-protection] Mocked import used in dev client` with
+   * `console.error` (`"error"`, the default) or `console.warn` (`"warn"`), or nothing (`"off"`).
+   */
   mockAccess?: "error" | "warn" | "off";
   /** How many importers a violation's trace walks up at most (default 20, as in Start). */
   maxTraceDepth?: number;
   /**
-   * Start's repetition of its warnings: `"once"` (default) warns about a `"mock"` behavior once
-   * per process, `"always"` on every build. Violations are reported on every build either way.
+   * Start's repetition of its warnings: `"once"` (default) warns about each mocked violation (and
+   * a build's `"mock"` behavior) once per process, `"always"` on every build. A violation that
+   * fails the build is reported on every build either way.
    */
   log?: "once" | "always";
 }
@@ -198,27 +205,58 @@ export interface ImportProtection {
   readonly maxTraceDepth: number;
   /** Warn that a `"mock"` behavior is not applied (per `log`); called as each build ends. */
   noticeBehavior(): void;
+  /** What a violation does in this command: `"mock"` only in `denext dev`, with Start's mocks. */
+  readonly behavior: ImportProtectionBehavior;
+  /** Start's `mockAccess`: the browser mock's runtime diagnostics. */
+  readonly mockAccess: "error" | "warn" | "off";
+  /**
+   * Whether a mocked violation is to be reported now (per `log`: once per process, or every
+   * build). Marks it reported.
+   */
+  reportsMocked(key: string): boolean;
+}
+
+/** Which command a build is for: `denext dev`, or a build (`build`, `export`, `start`). */
+export type ProtectionCommand = "dev" | "build";
+
+/**
+ * Start's behavior for a command (`importProtection.behavior` resolved as Start's plugin resolves
+ * it), except that unset it is `"error"` in both, and a build never mocks.
+ *
+ * @param options The app's `importProtection` options.
+ * @param command The command the build is for.
+ */
+export function effectiveBehavior(
+  options: ImportProtectionOptions | undefined,
+  command: ProtectionCommand,
+): ImportProtectionBehavior {
+  const behavior = options?.behavior;
+  if (command !== "dev" || behavior === undefined) return "error";
+  return typeof behavior === "string" ? behavior : behavior.dev ?? "mock";
 }
 
 /** Start's default `maxTraceDepth`. */
 const DEFAULT_MAX_TRACE_DEPTH = 20;
 
 /**
- * The warning for an app that asked for Start's `"mock"` behavior, or `null` when it did not
- * (or turned protection off).
+ * The warning for a build whose app asked for Start's `"mock"` behavior there (`"mock"`, or
+ * `{ build: "mock" }`), or `null` (it did not, protection is off, or the command is `dev`, where
+ * a `"mock"` applies).
  *
  * @param options The app's `importProtection` options.
+ * @param command The command the build is for (default `"build"`).
  */
-export function mockNotice(options: ImportProtectionOptions | undefined): string | null {
+export function mockNotice(
+  options: ImportProtectionOptions | undefined,
+  command: ProtectionCommand = "build",
+): string | null {
   const behavior = options?.behavior;
-  if (behavior === undefined || options?.enabled === false) return null;
-  const mocks = typeof behavior === "string"
-    ? behavior === "mock"
-    : behavior.dev === "mock" || behavior.build === "mock";
+  if (behavior === undefined || options?.enabled === false || command === "dev") return null;
+  const mocks = typeof behavior === "string" ? behavior === "mock" : behavior.build === "mock";
   if (!mocks) return null;
-  return '[@denext/tanstack-start] importProtection.behavior "mock" is not applied: denext ' +
-    "fails the build (and in dev the request that builds) on every import-protection violation, " +
-    "so a denied import never reaches the other side mocked.";
+  return '[@denext/tanstack-start] importProtection.behavior "mock" applies in `denext dev` ' +
+    "only: a build fails on every import-protection violation, so a denied import never ships " +
+    "mocked.";
 }
 
 /**
@@ -229,11 +267,13 @@ export function mockNotice(options: ImportProtectionOptions | undefined): string
  * @param root The project root.
  * @param srcDirectory The source directory (absolute): by default only importers under it are
  *   checked.
+ * @param command The command the build is for (default `"build"`): `"dev"` applies a `"mock"`.
  */
 export function compileImportProtection(
   options: ImportProtectionOptions | undefined,
   root: string,
   srcDirectory: string,
+  command: ProtectionCommand = "build",
 ): ImportProtection {
   const pick = (user: Pattern[] | undefined, fallback: Pattern[]) => [...(user ?? fallback)];
   const env = (name: ProtectionEnv): EnvMatchers => {
@@ -251,8 +291,9 @@ export function compileImportProtection(
     };
   };
   const rules = { client: env("client"), server: env("server") };
-  const notice = mockNotice(options);
+  const notice = mockNotice(options, command);
   let warned = false;
+  const reported = new Set<string>();
   const include = compileAll(options?.include ?? []);
   const exclude = compileAll([...(options?.exclude ?? []), ...(options?.ignoreImporters ?? [])]);
   return {
@@ -273,6 +314,13 @@ export function compileImportProtection(
       warned = true;
       console.warn(notice);
     },
+    behavior: options?.enabled === false ? "error" : effectiveBehavior(options, command),
+    mockAccess: options?.mockAccess ?? "error",
+    reportsMocked(key) {
+      if (reported.has(key) && options?.log !== "always") return false;
+      reported.add(key);
+      return true;
+    },
   };
 }
 
@@ -290,6 +338,8 @@ export interface DeniedImport {
   specifier: string;
   /** The specifier rule that denied it. */
   pattern: Pattern;
+  /** The metafile id of the module it resolved to (default: {@link deniedModulePath}). */
+  module?: string;
 }
 
 /** What one build recorded while it resolved. */
@@ -486,7 +536,9 @@ type Found = Omit<ImportProtectionViolation, "env" | "envType" | "behavior" | "t
 /** The recorded specifier denials whose importer and stand-in module the bundle kept. */
 function specifierViolations(graph: BundleGraph, record: ResolveRecord): Found[] {
   return record.denied
-    .filter((d) => graph.kept.has(d.importer) && graph.kept.has(deniedModulePath(d.specifier)))
+    .filter((d) =>
+      graph.kept.has(d.importer) && graph.kept.has(d.module ?? deniedModulePath(d.specifier))
+    )
     .map(({ importer, specifier, pattern }) => ({
       type: "specifier" as const,
       pattern,
@@ -495,14 +547,34 @@ function specifierViolations(graph: BundleGraph, record: ResolveRecord): Found[]
     }));
 }
 
+/** The `files` rule that denies `file` (absolute) unless `excludeFiles` exempts it. */
+function fileRuleMatch(rules: EnvMatchers, file: string, root: string): Matcher | undefined {
+  const rel = relativePath(file, root);
+  return matchesAny(rel, rules.excludeFiles) ? undefined : matchesAny(rel, rules.files);
+}
+
+/**
+ * The `files` pattern that denies the environment `file` (absolute), or `undefined`: Start's
+ * self-denial check, which in dev with a `"mock"` behavior replaces the file with a mock.
+ *
+ * @param protection The app's import protection.
+ * @param env The build's environment.
+ * @param file The module.
+ */
+export function deniedFilePattern(
+  protection: ImportProtection,
+  env: ProtectionEnv,
+  file: string,
+): Pattern | undefined {
+  if (!protection.enabled) return undefined;
+  return fileRuleMatch(protection.rules(env), file, protection.root)?.pattern;
+}
+
 /** The kept imports, from a checked importer, of a file the environment's `files` deny. */
 function fileViolations(graph: BundleGraph, protection: ImportProtection, rules: EnvMatchers) {
   const found: Found[] = [];
-  const denial = (to: string) => {
-    if (!isAbsolute(to) || !graph.kept.has(to)) return undefined;
-    const rel = relativePath(to, protection.root);
-    return matchesAny(rel, rules.excludeFiles) ? undefined : matchesAny(rel, rules.files);
-  };
+  const denial = (to: string) =>
+    isAbsolute(to) && graph.kept.has(to) ? fileRuleMatch(rules, to, protection.root) : undefined;
   for (const [from, edges] of graph.imports) {
     if (!graph.kept.has(from) || !protection.checksImporter(from)) continue;
     for (const { to, specifier } of edges) {
@@ -560,7 +632,7 @@ export async function importProtectionViolations(
     found.set(key, {
       env,
       envType: env,
-      behavior: "error",
+      behavior: protection.behavior,
       ...v,
       trace: traceTo(graph, v.importer, cwd, protection.maxTraceDepth),
     });

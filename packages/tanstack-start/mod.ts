@@ -21,8 +21,9 @@
  * - **Both builds are guarded** by Start's import protection, its rules, options
  *   (`importProtection`) and messages: in the browser a `*.server.*` file,
  *   `@tanstack/react-start/server` or a module marked server-only, on the server a `*.client.*`
- *   file or a module marked client-only, fails the build when tree-shaking kept the import; the
- *   browser build also runs denext's server-only scan. `denext build` builds the server bundle
+ *   file or a module marked client-only, fails the build when tree-shaking kept the import (in
+ *   `denext dev` with `behavior: "mock"`, the import is Start's mock module and the violation a
+ *   warning, as in Start's dev server); the browser build also runs denext's server-only scan. `denext build` builds the server bundle
  *   too, so `denext start` serves its first request without building.
  * - **`denext export` prerenders** the app's pages with Start's prerender (its `prerender` and
  *   `pages` options, the route tree's static paths, the links each page has), and leaves out and
@@ -62,7 +63,11 @@ import type {
   SpaOptions,
   StartPage,
 } from "./src/prerender.ts";
-import { compileImportProtection, type ImportProtectionOptions } from "./src/protect.ts";
+import {
+  compileImportProtection,
+  type ImportProtectionOptions,
+  type ProtectionCommand,
+} from "./src/protect.ts";
 import { clientBootSource, entryPaths, serverEntrySource, writeIfChanged } from "./src/entries.ts";
 import { createHandler } from "./src/handler.ts";
 import { deployRoutes } from "./src/deploy.ts";
@@ -120,9 +125,11 @@ export interface TanStackStartOptions {
   /**
    * Start's `importProtection` options (as `tanstackStart({ importProtection })` takes them in
    * Start's Vite plugin): extra denied specifiers and files per side, the importers checked,
-   * `onViolation`, `enabled`, `maxTraceDepth`. A violation always fails the build and the dev
-   * request (Start's `error` behavior); `behavior: "mock"` is warned about, once per process
-   * (`log: "once"`, the default) or on every build (`log: "always"`).
+   * `onViolation`, `enabled`, `maxTraceDepth`. A violation fails the build and the dev request
+   * (Start's `error` behavior), unless `behavior` asks for `"mock"` in dev: then, as Start's dev
+   * server does, the denied import is Start's mock module (`mockAccess` sets its browser
+   * diagnostics) and the violation a warning, once per process (`log: "once"`, the default) or
+   * on every build (`log: "always"`). A build always fails.
    */
   importProtection?: ImportProtectionOptions;
   /**
@@ -172,7 +179,13 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         }, { watch: [`${projectRelative(ctx, join(ctx.projectRoot, routesDirectory))}/**`] });
       }
       const app = await prepareApp(ctx, src, routerFile);
-      const protection = compileImportProtection(options.importProtection, app.projectRoot, src);
+      // `denext dev` applies Start's dev behavior (a `"mock"`); every other command is a build.
+      const protection = compileImportProtection(
+        options.importProtection,
+        app.projectRoot,
+        src,
+        protectionCommand(ctx.mode),
+      );
       const bundles = createBundles(ctx, app, protection);
       if (ctx.mode === "dev") {
         // An edit under the source directory: the next request builds both bundles again.
@@ -288,6 +301,10 @@ function originOptions(ctx: PluginContext, options: TanStackStartOptions): Origi
     desktopAppOrigin: ctx.config.desktop?.app?.origin,
   };
 }
+
+/** The command import protection applies its `behavior` for: `dev`, or a build. */
+const protectionCommand = (mode: PluginContext["mode"]): ProtectionCommand =>
+  mode === "dev" ? "dev" : "build";
 
 const projectRelative = (ctx: PluginContext, path: string) =>
   relative(ctx.projectRoot, path).replace(/\\/g, "/");

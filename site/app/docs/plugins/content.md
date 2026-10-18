@@ -465,7 +465,10 @@ compiled onto denext's React with `@denext/denext/build/next-compat`, as `pages-
 an npm-React app, with TanStack's own compiler run over them as extra esbuild plugins (denext's
 `"use cache"` transform still runs on what it compiles). Both builds fail on Start's import
 protection (its rules, the app's `importProtection` options, Start's messages), read from each
-bundle's esbuild metafile so only what tree-shaking kept counts; the client build also fails on
+bundle's esbuild metafile so only what tree-shaking kept counts; in `denext dev` a
+`behavior: "mock"` loads Start's own mock modules instead (a denied file as its self-denial
+module, a denied specifier as a mock-edge module, both resolved in an esbuild namespace of the
+plugin's) and turns each violation into a warning; the client build also fails on
 denext's server-only scan (`findServerOnlyLeaks`), and `serverModuleSource` lets it serve a
 `"use server"` module's server functions as RPC stubs. The plugin's options are checked when
 `tanstackStart()` is called, against the shapes Start's own plugin accepts (`router` as a filename

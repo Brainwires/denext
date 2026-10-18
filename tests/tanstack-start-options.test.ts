@@ -2,8 +2,9 @@
 // own shapes for `router`, `importProtection`, `prerender`, `pages`, `sitemap` and `spa`; unknown keys refused with a
 // suggestion), Start's object form of `router` mapped onto the plugin (an extensionless `entry`,
 // `basepath` against the app's `basePath`, the generator's options), and Start's remaining
-// `importProtection` keys: `maxTraceDepth` caps a violation's trace, `behavior: "mock"` is warned
-// about (per `log`) while every violation still fails.
+// `importProtection` keys: `maxTraceDepth` caps a violation's trace, a build's `behavior: "mock"`
+// is warned about (per `log`) while every build violation still fails (a dev "mock" is
+// tests/tanstack-start-mock.test.ts).
 
 import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
@@ -440,14 +441,17 @@ Deno.test("tanstack-start import protection: maxTraceDepth caps the trace (Start
   assertEquals(await trace(0), ["src/c.ts"]);
 });
 
-Deno.test('tanstack-start import protection: behavior "mock" is warned about; log sets how often', () => {
+Deno.test('tanstack-start import protection: a build\'s "mock" is warned about; log sets how often', () => {
   assertEquals(mockNotice(undefined), null);
   assertEquals(mockNotice({ behavior: "error" }), null);
   assertEquals(mockNotice({ behavior: { build: "error" } }), null);
   assertEquals(mockNotice({ behavior: "mock", enabled: false }), null);
+  // A dev "mock" applies in dev, and a build's behavior is then Start's default "error".
+  assertEquals(mockNotice({ behavior: { dev: "mock" } }), null);
+  assertEquals(mockNotice({ behavior: "mock" }, "dev"), null);
   assertStringIncludes(
-    mockNotice({ behavior: { dev: "mock" } })!,
-    'importProtection.behavior "mock" is not applied: denext fails the build',
+    mockNotice({ behavior: { build: "mock" } })!,
+    'importProtection.behavior "mock" applies in `denext dev` only: a build fails',
   );
   const warnings: string[] = [];
   const warn = console.warn;

@@ -162,11 +162,21 @@ tanstackStart({
 project (or specifiers as written), or regular expressions. `include`, `exclude` and
 `ignoreImporters` choose the importers checked; `onViolation` returning `false` waives a
 violation; `enabled: false` turns Start's rules off (denext's server-only scan still runs);
-`maxTraceDepth` (default 20) caps how far up a violation's trace walks. A violation always fails
-the build, and in `denext dev` the request that builds: Start's `behavior: "error"`. `behavior`
-and `mockAccess` are accepted so a Start config ports unchanged, but a `"mock"` is not applied and
-is warned about, once per process (`log: "once"`, the default) or on every build
-(`log: "always"`).
+`maxTraceDepth` (default 20) caps how far up a violation's trace walks. A violation fails the
+build, and in `denext dev` the request that builds: Start's `behavior: "error"`.
+
+`behavior: "mock"` (or `{ dev: "mock" }`; in the object form `dev` defaults to `"mock"` and
+`build` to `"error"`, as in Start) makes `denext dev` behave as Start's dev server: the build
+passes, a denied file is replaced by Start's self-denial module (its named exports over a mock),
+a denied specifier resolves to Start's mock-edge module (the names its importer uses), and each
+violation is a warning in Start's words, once per process (`log: "once"`, the default) or on every
+build (`log: "always"`). The mock is Start's own (loaded from the app's
+`@tanstack/start-plugin-core`): any property, call or `new` gives another mock, and in the browser
+its first use of each access logs Start's `[import-protection] Mocked import used in dev client`
+with `console.error` (`mockAccess: "error"`, the default), `console.warn` (`"warn"`) or nothing
+(`"off"`); on the server it is silent. A build never mocks: `denext build`, `start` and `export`
+fail on every violation, and a `"mock"` asked of them is warned about. With `behavior` unset a dev
+violation fails too, where Start's dev server would mock it.
 
 ### `router`
 

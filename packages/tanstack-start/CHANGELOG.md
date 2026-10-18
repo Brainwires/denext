@@ -27,9 +27,13 @@ of `@denext/denext`.
   be a string (a glob) or a RegExp``). A key that is not an option is refused with the closest
   one suggested, so a typo in a security rule (`cleint`, `ignoreImporter`) no longer turns it off.
 - **Start's remaining `importProtection` keys**: `maxTraceDepth` (default 20) caps how far up a
-  violation's trace walks, as Start's does; `behavior` and `mockAccess` are accepted, but every
-  violation still fails the build (and in dev the request that builds), so a `"mock"` behavior is
-  warned about, once per process or, with `log: "always"`, on every build.
+  violation's trace walks, as Start's does. **`behavior: "mock"` applies in `denext dev`**, as
+  in Start's dev server: a denied file is Start's self-denial module and a denied specifier
+  Start's mock-edge module (Start's own, loaded from the app's `@tanstack/start-plugin-core`), the
+  violation a warning in Start's words, once per process or, with `log: "always"`, on every build;
+  `mockAccess` sets the browser mock's runtime diagnostics (`console.error`, `console.warn` or
+  none). `{ dev, build }` resolves as Start resolves it. A build still fails on every violation,
+  and a `"mock"` asked of it is warned about.
 - **Start's object form of `router`**: `entry` (under `srcDirectory`, the extension optional),
   `basepath` (it must match the app's `basePath`; a different one is refused) and the route
   generator's options (`routesDirectory` and `generatedRouteTree` relative to `srcDirectory`, the
