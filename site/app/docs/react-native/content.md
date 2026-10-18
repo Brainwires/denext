@@ -93,6 +93,9 @@ The report then lists:
   modules without a web platform, and packages whose modules exist only as `.ios` / `.android`
   files. Their native parts do not exist in a WebView: some load and do nothing, others throw
   when used. Give each [a web replacement](#other-native-only-packages);
+- **native-only SDKs** the [native SDK recipes](/docs/native-sdk-recipes) cover
+  (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), each with what
+  replaces it and a link to the recipe (`migrate --check` lists them under what won't migrate);
 - modules only the app's Metro config provides (`resolver.extraNodeModules` names no installed
   package supplies) and a custom `resolveRequest`: map each in `deno.json` `imports`;
 - packages the web build still needs (`react-native-web`, and `@sqlite.org/sqlite-wasm` for

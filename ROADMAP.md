@@ -52,9 +52,6 @@
   only, Android's split of a repeating event from one occurrence on (`futureEvents` with
   `instanceStartDate`) included.
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **`denext migrate --from expo` advice** for the most-used native-only SDKs
-  (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
-  the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
 - **Capabilities:** file transfer with progress, a notification service extension and badges,
   SQLite encryption.
 - **On a device:** background audio with the lock-screen / notification controls

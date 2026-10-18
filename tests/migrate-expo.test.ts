@@ -476,6 +476,38 @@ Deno.test("migrate --from expo: a React Native macOS / Windows app gets reactNat
   });
 });
 
+Deno.test("migrate --from expo: the native SDKs the recipes cover are printed with their advice", async () => {
+  await withApp({
+    "package.json": {
+      name: "sdk",
+      main: "index.js",
+      dependencies: {
+        expo: "~57.0.18",
+        "react-native": "0.81.0",
+        "@react-native-firebase/app": "22.0.0",
+        "@stripe/stripe-react-native": "0.45.0",
+      },
+    },
+    "index.js": 'import { registerRootComponent } from "expo";\n',
+    "app.json": { expo: { name: "Sdk", slug: "sdk" } },
+  }, async (dir) => {
+    const cap = capture();
+    try {
+      await migrateCommand.run(makeCtx({
+        positionals: [dir],
+        flags: { from: "expo", "denext-local-path": Deno.cwd() },
+      }));
+    } finally {
+      cap.restore();
+    }
+    const out = cap.logs.join("\n");
+    assertStringIncludes(out, "native-only SDKs, no alias (2):");
+    assertStringIncludes(out, "@react-native-firebase/app — Firebase: push through");
+    assertStringIncludes(out, "@stripe/stripe-react-native — Stripe: Stripe.js");
+    assertStringIncludes(out, "https://denext.dev/docs/native-sdk-recipes");
+  });
+});
+
 Deno.test("expoMobilePlan: nothing to add → no command", () => {
   const plan = expoMobilePlan({ expo: "1" }, {
     source: null,

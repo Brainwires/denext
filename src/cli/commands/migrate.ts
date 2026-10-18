@@ -334,9 +334,17 @@ function reportExpoDeps(d: NonNullable<MigrateResult["expo"]>["deps"]): void {
         '.web.ts, or map the package to a web stub in deno.json "imports".',
     );
   }
+  reportNativeSdks(d.nativeSdks);
   if (d.notInstalled.length) {
     console.log(`    not installed, so not classified: ${d.notInstalled.join(", ")}`);
   }
+}
+
+/** The native-only SDKs the native SDK recipes cover, each with what replaces it. */
+function reportNativeSdks(sdks: NonNullable<MigrateResult["expo"]>["deps"]["nativeSdks"]): void {
+  if (!sdks.length) return;
+  console.log(`  ⚠️  native-only SDKs, no alias (${sdks.length}):`);
+  for (const p of sdks) console.log(`      ${p.name} — ${p.advice}`);
 }
 
 /** How many omitted exports a status line names before it counts the rest. */

@@ -392,6 +392,47 @@ Deno.test("migrate --check: Expo — native-only packages and prebuild output ar
   assert(r.review.some((f) => f.item === "react-native-web"));
 });
 
+Deno.test("migrate --check: Expo — one native SDK recipe note per Firebase / IAP / Stripe package", async () => {
+  const r = await checkAndCompare({
+    "package.json": {
+      name: "expo-app",
+      dependencies: {
+        expo: "~53.0.0",
+        react: "19.0.0",
+        "react-native": "0.79.0",
+        "@react-native-firebase/app": "22.0.0",
+        "@react-native-firebase/messaging": "22.0.0",
+        "@stripe/stripe-react-native": "0.45.0",
+        "react-native-iap": "14.0.0",
+      },
+    },
+    // Installed and native-only (Nitro): listed once, with its recipe, not twice.
+    "node_modules/react-native-iap/package.json": { name: "react-native-iap", version: "14.0.0" },
+    "node_modules/react-native-iap/nitro.json": "{}",
+    "app.json": { expo: { name: "Expo App", slug: "expo-app" } },
+    "App.tsx": `export default function App() { return null; }\n`,
+  });
+  const url = "https://denext.dev/docs/native-sdk-recipes";
+  const firebase = "native-only, with no alias in React Native mode; Firebase: push through " +
+    "`denext mobile add push` and `sendPush`, the Firebase JS SDK for auth, Firestore and the " +
+    `rest; see ${url}`;
+  assertEquals(r.wontMigrate.filter((f) => !f.item.startsWith("app config")), [
+    { item: "@react-native-firebase/app", reason: firebase },
+    { item: "@react-native-firebase/messaging", reason: firebase },
+    {
+      item: "@stripe/stripe-react-native",
+      reason: "native-only, with no alias in React Native mode; Stripe: Stripe.js and the " +
+        `Payment Element in the WebView, or a Capacitor Stripe plugin; see ${url}`,
+    },
+    {
+      item: "react-native-iap",
+      reason: "native-only, with no alias in React Native mode; in-app purchases: " +
+        "`denext mobile add purchases` (RevenueCat), or a Capacitor billing plugin; " +
+        `see ${url}`,
+    },
+  ]);
+});
+
 Deno.test("migrate --check: a migration that would fail is reported as blocked", async () => {
   const dir = await tempDir();
   try {

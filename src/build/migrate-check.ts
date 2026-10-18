@@ -218,6 +218,10 @@ function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: Migra
       reason: `native-only (${p.kind}); no web build, so give the importing module a .web.ts ` +
         'or map the package to a web stub in deno.json "imports"',
     })),
+    ...e.deps.nativeSdks.map((p) => ({
+      item: p.name,
+      reason: `native-only, with no alias in React Native mode; ${p.advice}`,
+    })),
     ...e.deps.expo.filter((p) => p.status === "none" && p.advice).map((p) => ({
       item: p.name,
       reason: `no denext/expo shim: ${p.advice}`,
