@@ -259,14 +259,19 @@ async function slotFilesOk(
   return !rehash || await sha256File(rubyPath(dir)) === stamp.binary.sha256;
 }
 
+/** Whether `path` is a file a shell would run: Windows has no execute bit, so any file there. */
+async function isCommandFile(path: string): Promise<boolean> {
+  const info = await Deno.stat(path).catch(() => null);
+  if (!info?.isFile) return false;
+  return Deno.build.os === "windows" || ((info.mode ?? 0o111) & 0o111) !== 0;
+}
+
 /** Whether `name` resolves to an executable on `PATH`. */
 async function onPath(name: string, env: EnvGet): Promise<boolean> {
-  const path = env("PATH") ?? "";
   // The host's list separator: `;` on Windows, where `:` is part of every drive path.
-  for (const dir of path.split(DELIMITER)) {
-    if (!dir) continue;
-    const info = await Deno.stat(join(dir, name)).catch(() => null);
-    if (info?.isFile && ((info.mode ?? 0o111) & 0o111) !== 0) return true;
+  const dirs = (env("PATH") ?? "").split(DELIMITER).filter(Boolean);
+  for (const dir of dirs) {
+    if (await isCommandFile(join(dir, name))) return true;
   }
   return false;
 }
