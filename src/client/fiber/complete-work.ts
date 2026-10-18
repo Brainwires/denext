@@ -2,7 +2,13 @@
 // fiber and bubbles its flags and lanes.
 
 import { bubbleLanes, hostNamespace, rawHtmlOf } from "./fiber-utils.ts";
-import { adoptServerHtml, claimText, isHydrating, popHydrationCursor } from "./hydration.ts";
+import {
+  adoptServerHtml,
+  claimText,
+  completeSuspenseHydration,
+  isHydrating,
+  popHydrationCursor,
+} from "./hydration.ts";
 import { onErrorFor } from "./boundaries.ts";
 
 import { applyProps, initSelect, NO_PROPS } from "../dom-props.ts";
@@ -143,7 +149,10 @@ export function completeWork(wip: Fiber): void {
     case "component":
       completeComponent(wip);
       break;
-      // root / fragment / portal / suspense / errorboundary: no own DOM.
+    case "suspense":
+      completeSuspenseHydration(wip);
+      break;
+      // root / fragment / portal / errorboundary: no own DOM.
   }
   bubbleFlags(wip);
   bubbleLanes(wip);

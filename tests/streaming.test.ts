@@ -581,3 +581,140 @@ Deno.test("Flight path: notFound() inside a streamed hole carries the not-found 
   const flightJson = JSON.stringify(hydratedFlight(html));
   assertStringIncludes(flightJson, "This page could not be found.", "hydration sees the same UI");
 });
+
+// ---- a boundary decided inline is part of the shell (signals and head tags) ----------------
+
+Deno.test("notFound() inside a boundary that does not suspend is the whole page's 404", async () => {
+  const Inner = (): VNode => notFound();
+  const Page = (_p: PageProps): VNode =>
+    h(
+      "div",
+      null,
+      h("h2", null, "page heading"),
+      h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Inner, null) }),
+    );
+  const NotFoundUi = (): VNode => h("section", { class: "nf" }, "Custom not found");
+  const app = appWith(
+    { default: Page },
+    { streaming: true, csp: "off" },
+    { "nf.tsx": { default: NotFoundUi } },
+    [rootLevel("nf.tsx")],
+  );
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 404, "decided before anything was sent, as in Next");
+  const html = await res.text();
+  assertStringIncludes(html, '<section class="nf">Custom not found</section>');
+  assert(!html.includes("page heading"), "the not-found UI replaces the page, not the boundary");
+  assert(!html.includes("Loading…"), "no fallback");
+  assert(!html.includes("data-dnx-b"), "no streamed hole");
+});
+
+Deno.test("redirect() inside a boundary that does not suspend is the response's redirect", async () => {
+  const Inner = (): VNode => redirect("/login");
+  const Page = (_p: PageProps): VNode =>
+    h("div", null, h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Inner, null) }));
+  const app = appWith({ default: Page }, { streaming: true, csp: "off" });
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 307);
+  assertEquals(res.headers.get("location"), "/login");
+  await res.body?.cancel();
+});
+
+Deno.test("Flight path: notFound() in a boundary that does not suspend is a 404 too", async () => {
+  const Inner = (): VNode => notFound();
+  const Clock = (): VNode => h("time", null, "now");
+  tagClientExports({ Clock } as Record<string, unknown>, "c_clock_inline");
+  const Page = (_p: PageProps): VNode =>
+    h(
+      "main",
+      null,
+      h(Clock, null),
+      h("h2", null, "page heading"),
+      h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Inner, null) }),
+    );
+  const app = appWith(
+    { default: Page },
+    {
+      streaming: true,
+      csp: "off",
+      flight: true,
+      appDir: "/app",
+      flightRoutes: new Set(["/"]),
+      clientEntryFor: () => "/_denext/entry.js",
+    },
+    {},
+    [rootLevel()],
+  );
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 404);
+  const html = await res.text();
+  assertStringIncludes(html, "This page could not be found.");
+  assert(!html.includes("page heading"), "the not-found UI replaces the page, not the boundary");
+  assert(!html.includes("Loading…"), "no fallback");
+});
+
+Deno.test("head tags in a boundary that does not suspend hoist into <head>", async () => {
+  const Inner = (): VNode =>
+    h(
+      "article",
+      null,
+      h("title", null, "Inline title"),
+      h("meta", { name: "description", content: "from the boundary" }),
+      "body text",
+    );
+  const Page = (_p: PageProps): VNode =>
+    h("div", null, h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Inner, null) }));
+  const app = appWith({ default: Page }, { streaming: true, csp: "off" });
+  const html = await (await app(new Request("http://localhost/"))).text();
+  const headEnd = html.indexOf("</head>");
+  assert(headEnd > 0, html);
+  const headPart = html.slice(0, headEnd);
+  assertStringIncludes(headPart, "<title>Inline title</title>");
+  assertStringIncludes(headPart, '<meta name="description" content="from the boundary">');
+  assertStringIncludes(html, "<!--$--><article>body text</article><!--/$-->");
+});
+
+Deno.test("head tags in a boundary that streams go out before its template, not in it", async () => {
+  const Slow = async (): Promise<VNode> => {
+    await new Promise((r) => setTimeout(r, 10));
+    return h("article", null, h("title", null, "Late title"), "late body");
+  };
+  const Page = (_p: PageProps): VNode =>
+    h("div", null, h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Slow, null) }));
+  const app = appWith({ default: Page }, { streaming: true, csp: "off" });
+  const html = await (await app(new Request("http://localhost/"))).text();
+  assertStringIncludes(
+    html,
+    '<title>Late title</title><template data-dnx-r="dnx0"><article>late body</article></template>',
+  );
+  assert(!html.slice(0, html.indexOf("</head>")).includes("Late title"), "not in the head");
+});
+
+Deno.test("a streamed boundary keeps today's signal behaviour: notFound() after the shell is a 200", async () => {
+  const Slow = async (): Promise<VNode> => {
+    await new Promise((r) => setTimeout(r, 10));
+    return notFound();
+  };
+  const Page = (_p: PageProps): VNode =>
+    h("div", null, h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Slow, null) }));
+  const app = appWith({ default: Page }, { streaming: true, csp: "off" }, {}, [rootLevel()]);
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 200);
+  assertStringIncludes(holeContent(await res.text()) ?? "", "This page could not be found.");
+});
+
+Deno.test("a streamed page whose shell throws a real error is still the error response", async () => {
+  const Page = (_p: PageProps): VNode => {
+    throw new Error("shell exploded");
+  };
+  const origError = console.error;
+  console.error = () => {};
+  try {
+    const app = appWith({ default: Page }, { streaming: true, csp: "off" });
+    const res = await app(new Request("http://localhost/"));
+    assertEquals(res.status, 500);
+    await res.body?.cancel();
+  } finally {
+    console.error = origError;
+  }
+});

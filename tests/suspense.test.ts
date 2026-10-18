@@ -24,7 +24,7 @@ Deno.test("renderToString fully resolves Suspense children (no fallback)", async
   const html = await renderToString(
     h(Suspense, { fallback: h("p", null, "loading"), children: h(AsyncChild, null) }),
   );
-  assertEquals(html, "<span>resolved data</span>");
+  assertEquals(html, "<!--$--><span>resolved data</span><!--/$-->", "React's boundary markers");
 });
 
 Deno.test("streaming emits fallback first, then swaps in real content", async () => {

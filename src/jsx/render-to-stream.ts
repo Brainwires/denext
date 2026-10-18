@@ -21,9 +21,13 @@ import {
 import { hostAttrs, renderHostHtml, reportHoleError } from "./render-shared.ts";
 import { VNodeRenderer } from "./renderer-base.ts";
 export type { HeadCollector };
-import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
+import { enterScope } from "./tree-id.ts";
 import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
-import { StreamBoundaries } from "./stream-boundaries.ts";
+import {
+  InlineBoundarySignal,
+  type SettledBoundary,
+  StreamBoundaries,
+} from "./stream-boundaries.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
@@ -32,14 +36,13 @@ type ProviderScope = Map<symbol, unknown>;
  * `{ id, html, ok: true }`; on a render error `{ id, html: "", ok: false }` (the
  * error is logged and the hole's shell fallback is left in place). Consumed by the
  * document stream assemblers, so one failing hole never tears down the response.
- * A control signal thrown in the hole resolves `ok: true` with the hole's replacement:
+ * A control signal thrown in a streamed hole resolves `ok: true` with the hole's replacement:
  * a client-side redirect for `redirect()`, the nearest signal boundary's UI for
  * `notFound()`/`forbidden()`/`unauthorized()` (the shell that would have unwound has
- * already flushed, so the response's status and headers stay as sent — as in Next).
+ * already flushed, so the response's status and headers stay as sent — as in Next). A
+ * boundary decided inline throws its signal out of {@link renderShell} instead.
  */
-export type PendingHole = Promise<
-  { id: string; html: string; ok: boolean; ms?: number }
->;
+export type PendingHole = Promise<SettledBoundary & { ms?: number }>;
 
 class StreamRenderer extends VNodeRenderer<string> {
   private id = 0;
@@ -100,6 +103,7 @@ class StreamRenderer extends VNodeRenderer<string> {
   protected async renderSuspense(
     props: Record<string, unknown>,
     scopes: ProviderScope[],
+    head: HeadCollector | null,
   ): Promise<string> {
     const id = `dnx${this.id++}`;
     const parentScope = this.ids.scope;
@@ -107,22 +111,13 @@ class StreamRenderer extends VNodeRenderer<string> {
     // Dev-only: time how long this boundary takes to resolve on the server.
     const t0 = this.collectTiming ? performance.now() : 0;
     const elapsed = () => (this.collectTiming ? performance.now() - t0 : 0);
-    // The hole's own render (and the fallback) do NOT hoist into `head`: they resolve after
-    // the head has already flushed, so their head tags stay inline. The id is captured here,
-    // so even a rejected render still reports it (ok:false) — the hole's fallback stays and
-    // the rest of the document streams unaffected. A control signal (`redirect()`,
-    // `notFound()`, …) thrown in the hole is not a failure: it resolves to the hole's
-    // replacement (see `resolveHoleSignal`), since the shell it would have unwound has flushed.
-    const holeScope = rootScope(scopePrefix(boundaryScope));
-    const holeScopes = this.boundaries.open(id, scopes);
-    const render: PendingHole = this.resolve(
-      props.children as VNodeChildren,
-      holeScopes,
-      holeScope,
-      null,
-    )
-      .catch((err) => this.resolveHoleSignal(err, holeScopes, holeScope, (html) => html))
-      .then((html) => ({ id, html, ok: true, ms: elapsed() }))
+    // The content renders on its own (`boundaryContent`; the fallback never hoists head tags).
+    // The id is captured here, so even a rejected render still reports it (ok:false) — the
+    // hole's fallback stays and the rest of the document streams unaffected.
+    const children = props.children as VNodeChildren;
+    const render: PendingHole = this
+      .boundaryContent(id, children, scopes, boundaryScope, this.boundaries, head, (h) => h)
+      .then(({ out, signal, head }) => ({ id, html: out, ok: true, ms: elapsed(), signal, head }))
       .catch((err) => {
         console.error("denext: streamed Suspense boundary failed to resolve:", id, err);
         reportHoleError(this.onHoleError, err);
@@ -334,7 +329,7 @@ export function renderToReadableStream(
     controller.enqueue(encoder.encode(text));
 
   /** One settled hole as its `<template>` (empty for a failed hole: its fallback stays). */
-  const template = ({ id, html, ok, ms }: Awaited<PendingHole>): string => {
+  const template = ({ id, html, ok, ms, headHtml }: Awaited<PendingHole>): string => {
     const roundedMs = Math.round((ms ?? 0) * 100) / 100;
     if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
     if (!ok) return "";
@@ -342,7 +337,7 @@ export function renderToReadableStream(
     // surface a real-time reveal timeline (client reveal + server resolve) as holes
     // land — attributes don't affect the swap-runtime script's fixed CSP hash.
     const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
-    return `<template data-dnx-r="${id}"${msAttr}>${html}</template>`;
+    return `${headHtml ?? ""}<template data-dnx-r="${id}"${msAttr}>${html}</template>`;
   };
 
   /** Drain up to {@link FLUSH_BUDGET} characters of settled holes into one string. */
@@ -495,8 +490,12 @@ export async function renderShell(
     // inline (and their `useServerInsertedHTML` markup is collected with the shell's).
     await renderer.boundaries.quiet();
     flushServerInsertedHTML(sink.inserted, head);
+    // A boundary decided inline is part of the shell: a control signal it threw sets the
+    // whole response (a 404 page, a redirect) — the caller renders the page buffered.
+    const signal = renderer.boundaries.inlineSignal(rendered);
+    if (signal !== undefined) throw new InlineBoundarySignal(signal);
     const holes = new Set<PendingHole>();
-    const shell = renderer.boundaries.expand(rendered, holes);
+    const shell = renderer.boundaries.expand(rendered, holes, head);
     return { shell, holes };
   } finally {
     sink.end();

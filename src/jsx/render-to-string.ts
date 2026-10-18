@@ -477,6 +477,14 @@ export interface RenderOptions {
    * `identifierPrefix` so ids align on hydration.
    */
   idPrefix?: string;
+  /**
+   * Bracket each Suspense boundary with React's comment markers: `<!--$-->…<!--/$-->` around
+   * rendered content, `<!--$!--><template></template>…<!--/$-->` around a fallback a
+   * synchronous render showed in its place (the client renders that boundary itself). On by
+   * default for {@link renderToString} and react-dom/server's `renderToString`, as in React;
+   * off for {@link renderToStringSync} (static markup, React's `renderToStaticMarkup`).
+   */
+  boundaryMarkers?: boolean;
 }
 
 /**
@@ -498,6 +506,26 @@ interface RenderCtx {
    * Server Component *outside* any boundary makes the top-level entry throw.
    */
   sync?: boolean;
+  /** Bracket Suspense boundaries with React's comment markers (see RenderOptions). */
+  markers?: boolean;
+}
+
+/**
+ * A fresh render pass's context. Suspense markers default on for the async render (React's
+ * `renderToString`) and off for the sync one (static markup), unless `boundaryMarkers` says.
+ */
+function renderCtx(options: RenderOptions, sync: boolean): RenderCtx {
+  const scopes: ProviderScope[] = [];
+  const ids: IdHolder = { scope: rootScope(options.idPrefix) };
+  return {
+    out: [],
+    scopes,
+    dispatcher: createSSRDispatcher(scopes, ids),
+    head: options.head ?? null,
+    ids,
+    sync,
+    markers: options.boundaryMarkers ?? !sync,
+  };
 }
 
 /**
@@ -515,11 +543,8 @@ export async function renderToString(
   node: VNodeChildren,
   options: RenderOptions = {},
 ): Promise<string> {
-  const scopes: ProviderScope[] = [];
-  const ids: IdHolder = { scope: rootScope(options.idPrefix) };
-  const dispatcher = createSSRDispatcher(scopes, ids);
-  const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null, ids };
-  const prev = setDispatcher(dispatcher);
+  const ctx = renderCtx(options, false);
+  const prev = setDispatcher(ctx.dispatcher);
   // Collect `useServerInsertedHTML` callbacks during this render pass; they run AFTER the
   // tree renders (returning e.g. a CSS-in-JS registry's `<style>` tags) → placed in <head>.
   const sink = beginServerInsertCollection();
@@ -543,18 +568,8 @@ export async function renderToString(
  * Suspense boundary (that needs `renderToReadableStream` or `await renderToString`).
  */
 export function renderToStringSync(node: VNodeChildren, options: RenderOptions = {}): string {
-  const scopes: ProviderScope[] = [];
-  const ids: IdHolder = { scope: rootScope(options.idPrefix) };
-  const dispatcher = createSSRDispatcher(scopes, ids);
-  const ctx: RenderCtx = {
-    out: [],
-    scopes,
-    dispatcher,
-    head: options.head ?? null,
-    ids,
-    sync: true,
-  };
-  const prev = setDispatcher(dispatcher);
+  const ctx = renderCtx(options, true);
+  const prev = setDispatcher(ctx.dispatcher);
   try {
     const pending = renderChildrenInto(node, ctx);
     if (isThenable(pending)) {
@@ -715,6 +730,8 @@ interface BoundaryRender {
   ctx: RenderCtx;
   parentScope: IdScope;
   boundaryScope: IdScope;
+  /** Sync mode showed the fallback in place of the suspended children. */
+  showedFallback?: boolean;
 }
 
 /**
@@ -731,7 +748,12 @@ interface BoundaryRender {
 function renderSuspenseToStr(props: Props, ctx: RenderCtx): string | Promise<string> {
   const parentScope = ctx.ids.scope;
   const boundaryScope = enterScope(parentScope);
-  return attemptBoundary({ props, ctx, parentScope, boundaryScope });
+  const b: BoundaryRender = { props, ctx, parentScope, boundaryScope };
+  const r = attemptBoundary(b);
+  if (!ctx.markers) return r;
+  const mark = (html: string) =>
+    (b.showedFallback ? "<!--$!--><template></template>" : "<!--$-->") + html + "<!--/$-->";
+  return isThenable(r) ? (r as Promise<string>).then(mark) : mark(r);
 }
 
 /** Enter the boundary scope with its own counters reset (its parent slot is already fixed). */
@@ -767,6 +789,7 @@ function renderFallbackSync(b: BoundaryRender): string {
 function suspendedSync(b: BoundaryRender, pending: unknown): string | null {
   if (!b.ctx.sync) return null;
   (pending as Promise<unknown>).catch(() => {});
+  b.showedFallback = true;
   return renderFallbackSync(b);
 }
 

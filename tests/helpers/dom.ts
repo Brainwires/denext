@@ -160,7 +160,6 @@ export class FakeElement extends FakeNode {
     if (name === "style") return this.style.size ? this.style.cssText : null;
     return this.attributes.has(name) ? this.attributes.get(name)! : null;
   }
-  // fallow-ignore-next-line unused-class-member -- the islands runtime calls it through the DOM
   hasAttribute(name: string): boolean {
     return this.getAttribute(name) !== null;
   }

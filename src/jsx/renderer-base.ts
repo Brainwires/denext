@@ -36,6 +36,7 @@ import {
   scopesWithProvider,
 } from "./render-shared.ts";
 import { safeRedirectLocation } from "../server/config.ts";
+import type { SettledBoundary, StreamBoundaries } from "./stream-boundaries.ts";
 
 /** A VNode's props with the null-props normalization applied. */
 type Props = Record<string, unknown>;
@@ -151,6 +152,11 @@ export abstract class VNodeRenderer<T> {
         idRoot.count = 0;
         idRoot.local = 0;
         this.ids.scope = idRoot;
+        // A retried boundary render starts its hoisted head tags over too.
+        if (head) {
+          head.tags.length = 0;
+          head.title = undefined;
+        }
       }
       try {
         return await this.renderChildren(children, scopes, head);
@@ -270,6 +276,36 @@ export abstract class VNodeRenderer<T> {
       () => this.activate(scopes),
     );
     return await this.resolve(fallback, scopes, holeScope);
+  }
+
+  /**
+   * A streamed Suspense boundary's content, rendered on its own (see stream-boundaries.ts):
+   * opened on `boundaries` so a suspension inside it is attributed, rooted at the boundary's
+   * position so it reproduces the client's ids, and — under a page's head collector — with a
+   * head collector of its own for the `<title>`/`<meta>`/`<link>` it hoists (decided inline
+   * they join the document head; streamed they go out before its template). A control signal
+   * thrown in it resolves to its replacement ({@link resolveHoleSignal}) and is kept with it:
+   * decided inline, the signal sets the whole response instead. Anything else rejects.
+   */
+  protected boundaryContent(
+    id: string,
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    boundaryScope: IdScope,
+    boundaries: StreamBoundaries<SettledBoundary>,
+    head: HeadCollector | null,
+    replacement: (html: string) => T,
+  ): Promise<{ out: T; signal?: unknown; head: HeadCollector | null }> {
+    const holeScope = rootScope(scopePrefix(boundaryScope));
+    const holeScopes = boundaries.open(id, scopes);
+    const holeHead: HeadCollector | null = head ? { tags: [] } : null;
+    return this.resolve(children, holeScopes, holeScope, holeHead)
+      .then((out) => ({ out, head: holeHead }))
+      .catch(async (err) => ({
+        out: await this.resolveHoleSignal(err, holeScopes, holeScope, replacement),
+        signal: err,
+        head: holeHead,
+      }));
   }
 
   /**

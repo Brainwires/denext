@@ -287,9 +287,13 @@ async function renderAndServe(pr: PageRequest): Promise<Response> {
   let outcome: RenderedPage | Response;
   try {
     const prepared = await buildPageContext(pr.page, request, pr.pageLoad, renderOptions(pr));
-    const streamed = await serveStreamed(pr, prepared);
+    const attempt = serveStreamed(pr, prepared);
+    const streamed = attempt && await attempt;
     if (streamed) return streamed;
-    outcome = await renderPage(pr.page, request, pr.pageLoad, renderOptions(pr), prepared);
+    // A streamed shell that fell back (an inline boundary's control signal) already ran the
+    // tree: render buffered from a fresh page context.
+    const context = attempt ? undefined : prepared;
+    outcome = await renderPage(pr.page, request, pr.pageLoad, renderOptions(pr), context);
   } catch (pageError) {
     outcome = await recoverPageError(pr, pageError);
   }

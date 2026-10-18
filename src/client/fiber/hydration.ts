@@ -114,6 +114,46 @@ export function cursorNode(): Node | null {
   }
 }
 
+/**
+ * Suspense fibers hydrating over a boundary the server rendered as its fallback
+ * (`<!--$!-->…<!--/$-->`, a synchronous `renderToString` that suspended), each with the cursor
+ * to resume after it. As in React, the client renders that boundary itself: its content mounts
+ * fresh (no mismatch is reported) and the server's fallback is pruned when its parent syncs.
+ */
+const clientRendered = new WeakMap<Fiber, Cursor>();
+
+/** Entering a Suspense fiber while hydrating: a `<!--$!-->` boundary renders client-side. */
+export function beginSuspenseHydration(wip: Fiber): void {
+  const cursor = hydrationCursor;
+  if (!cursor) return;
+  const node = cursor.parent.childNodes[cursor.index];
+  if (node?.nodeType !== 8 || node.nodeValue !== "$!") return;
+  cursor.index = closingMarker(cursor.parent, cursor.index) + 1;
+  clientRendered.set(wip, cursor);
+  hydrationCursor = null;
+}
+
+/** Leaving a Suspense fiber: resume hydrating after a client-rendered boundary. */
+export function completeSuspenseHydration(wip: Fiber): void {
+  const cursor = clientRendered.get(wip);
+  if (cursor === undefined) return;
+  clientRendered.delete(wip);
+  hydrationCursor = cursor;
+}
+
+/** The index of the `<!--/$-->` closing the boundary that opens at `start` (nesting counted). */
+function closingMarker(parent: Node, start: number): number {
+  let depth = 0;
+  const nodes = parent.childNodes;
+  for (let i = start; i < nodes.length; i++) {
+    if (nodes[i].nodeType !== 8) continue;
+    const data = nodes[i].nodeValue ?? "";
+    if (data === "/$" && --depth === 0) return i;
+    if (data[0] === "$") depth++;
+  }
+  return nodes.length - 1;
+}
+
 /** A streamed Suspense boundary's placeholder (`<div data-dnx-b="id">`). */
 function isBoundaryPlaceholder(node: Node): boolean {
   return node.nodeType === 1 && (node as Element).getAttribute?.("data-dnx-b") != null;

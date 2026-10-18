@@ -356,3 +356,84 @@ Deno.test("hydration: the server's own nodes are adopted, not re-created, in bot
     assert(button && button === after, "the server <button> is the hydrated one: " + html);
   }
 });
+
+// ---- buffered renderToString: React's Suspense markers --------------------------------------
+
+Deno.test("renderToString brackets a boundary with React's markers; static markup does not", async () => {
+  const { renderToString: compatRenderToString, renderToStaticMarkup } = await import(
+    "../src/compat/react-dom-server.ts"
+  );
+  const { renderToString } = await import("../src/jsx/render-to-string.ts");
+  // Recorded from react-dom@19.3.1 (production build).
+  assertEquals(
+    compatRenderToString(h("div", null, boundary(h("p", null, "x")))),
+    "<div><!--$--><p>x</p><!--/$--></div>",
+  );
+  assertEquals(
+    compatRenderToString(h("div", null, "a", boundary("b", "L"), "c")),
+    "<div>a<!--$-->b<!--/$-->c</div>",
+  );
+  // A sync render shows the fallback of a boundary that suspends, marked client-rendered.
+  assertEquals(
+    compatRenderToString(h("div", null, boundary(h(Use, { p: new Promise<string>(() => {}) })))),
+    "<div><!--$!--><template></template><i>L</i><!--/$--></div>",
+  );
+  assertEquals(
+    renderToStaticMarkup(h("div", null, boundary(h("p", null, "x")))),
+    "<div><p>x</p></div>",
+  );
+  // The async buffered render resolves the boundary and marks it, as React's renderToString.
+  assertEquals(
+    await renderToString(h("div", null, boundary(h(Use, { p: later("T") })))),
+    "<div><!--$--><b>T</b><!--/$--></div>",
+  );
+});
+
+Deno.test("hydration: a client-rendered boundary (<!--$!-->) renders its content fresh, no mismatch", () => {
+  const html = "<div>a<!--$!--><template></template>L<!--/$--><p>after</p></div>";
+  const { container, logged } = hydrateOver(
+    html,
+    h("div", null, "a", boundary(h("section", null, h(Counter, null)), "L"), h("p", null, "after")),
+  );
+  assertEquals(logged, [], logged.join("\n"));
+  assertEquals(
+    container.innerHTML,
+    "<div>a<section><button>n=0</button></section><p>after</p></div>",
+    "the server fallback replaced by the client's content",
+  );
+});
+
+Deno.test("hydration: an unterminated <!--$!--> boundary and server markup that ends early", () => {
+  // No closing marker: the client renders the boundary itself, to the end of the parent.
+  const open = hydrateOver(
+    "<div><!--$!--><template></template>L</div>",
+    h("div", null, boundary(h("section", null, h(Counter, null)), "L")),
+  );
+  assertEquals(open.logged, [], open.logged.join("\n"));
+  assertEquals(open.container.innerHTML, "<div><section><button>n=0</button></section></div>");
+  // The client renders more than the server sent: past the markers the cursor runs out.
+  const short = hydrateOver(
+    "<div><!--$--><p>x</p><!--/$--></div>",
+    h("div", null, boundary(h("p", null, "x")), h("span", null, "more")),
+  );
+  assertEquals(short.logged.length, 1, short.logged.join("\n"));
+  assertStringIncludes(short.logged[0], "the server markup ended early");
+});
+
+Deno.test("renderShell: a control signal in a nested inline boundary is the shell's", async () => {
+  const { InlineBoundarySignal } = await import("../src/jsx/stream-boundaries.ts");
+  const { isRedirect, redirect } = await import("../src/runtime/error-boundary.ts");
+  const Inner = (): VNode => redirect("/elsewhere");
+  const origError = console.error;
+  console.error = () => {};
+  try {
+    const err = await renderShell(
+      h("main", null, boundary(h("div", null, "outer", boundary(h(Inner, null))))),
+      { tags: [] },
+    ).then(() => null, (e) => e);
+    assert(err instanceof InlineBoundarySignal, String(err));
+    assert(isRedirect(err.signal), "the redirect itself, for the page to answer with");
+  } finally {
+    console.error = origError;
+  }
+});

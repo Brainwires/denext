@@ -95,7 +95,8 @@ internal design choice with no observable difference lives in
   (`location.assign`), not a soft navigation — the render is abandoned, the browser
   loads the target. On the server it is the usual 307.
 - **Inside a streamed `<Suspense>` hole (the shell has flushed), a control signal can't
-  touch the headers — the hole's streamed replacement carries it instead**, matching
+  touch the headers (a boundary whose content finished with the shell is written inline and is
+  part of the shell: its signal sets the status or redirects, as in Next) — the hole's streamed replacement carries it instead**, matching
   Next's semantics with one deliberate difference in mechanism. `redirect()` /
   `permanentRedirect()` stream a client-side redirect into the hole: a
   `<meta http-equiv="refresh" content="0;url=…">` (destination through the same

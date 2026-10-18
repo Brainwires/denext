@@ -94,8 +94,13 @@ export default { streaming: false };`}
         <strong>Inside a streamed boundary, the headers are already gone.</strong>{" "}
         Once the shell has flushed, a component that resolves later inside a{" "}
         <code>&lt;Suspense&gt;</code>{" "}
-        hole can no longer change the status line or the response headers. denext follows Next here
-        — the same rules apply to a PPR hole and a Flight-route hole:
+        hole can no longer change the status line or the response headers. (A boundary whose content
+        finished with the shell is written inline and is part of it: a <code>notFound()</code> or
+        {" "}
+        <code>redirect()</code> there sets the response's status or redirects, and its{" "}
+        <code>&lt;title&gt;</code>{" "}
+        hoists into the head.) denext follows Next here — the same rules apply to a PPR hole and a
+        Flight-route hole:
       </p>
       <ul>
         <li>

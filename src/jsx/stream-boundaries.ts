@@ -21,6 +21,21 @@
 //   `allReady` (or simply reads late) gets every boundary inline, as with React.
 
 import { nextMacrotask, withinMacrotask } from "../runtime/next-macrotask.ts";
+import type { HeadCollector } from "./render-to-string.ts";
+
+/**
+ * Thrown out of a page's shell render when a boundary decided inline threw a control signal
+ * (`notFound()`, `redirect()`, …): nothing has been sent, so the page renders buffered instead,
+ * where the signal reaches the boundary that catches it and sets the response's status (or
+ * redirects), as a signal thrown in the shell does.
+ */
+export class InlineBoundarySignal extends Error {
+  /** @param signal The control signal the boundary's content threw. */
+  constructor(readonly signal: unknown) {
+    super("denext: a Suspense boundary decided inline threw a control signal");
+    this.name = "InlineBoundarySignal";
+  }
+}
 
 /** A boundary's settled content: `ok: false` when its render failed (its fallback stays). */
 export interface SettledBoundary {
@@ -30,6 +45,31 @@ export interface SettledBoundary {
   html: string;
   /** False when the content failed to render: the placeholder keeps its fallback. */
   ok: boolean;
+  /**
+   * The control signal (`notFound()`, `redirect()`, …) the content threw, when `html` is its
+   * replacement. Decided inline in the shell, the signal is the whole response's instead.
+   */
+  signal?: unknown;
+  /**
+   * The `<title>` / `<meta>` / `<link>` the content hoisted (null: none collected). Inline in
+   * the shell they join the document head; streamed, they go out just before the template.
+   */
+  head?: HeadCollector | null;
+  /** Streamed only: the content's hoisted head tags, written before its template. */
+  headHtml?: string;
+}
+
+/** Fold `from`'s hoisted tags into `into` (a later `<title>` wins, as in tree order). */
+function mergeHead(into: HeadCollector, from: HeadCollector): void {
+  if (from.title !== undefined) into.title = from.title;
+  into.tags.push(...from.tags);
+}
+
+/** A collector's tags as markup (written in the body for a streamed boundary). */
+function headMarkup(head: HeadCollector | null | undefined): string {
+  if (!head) return "";
+  const title = head.title === undefined ? "" : `<title>${head.title}</title>`;
+  return title + head.tags.map((t) => t.html).join("");
 }
 
 /** One tracked boundary. */
@@ -134,14 +174,17 @@ export class StreamBoundaries<S extends SettledBoundary> {
    * A failed boundary keeps its fallback (its placeholder marked `data-dnx-failed`) and streams
    * nothing.
    */
-  expand(html: string, streamed: Set<Promise<S>>): string {
+  expand(html: string, streamed: Set<Promise<S>>, head: HeadCollector | null = null): string {
     if (!html.includes("\u0000")) return html;
     return html.replace(this.tokenRe, (_token, id: string) => {
       const slot = this.slots.get(id)!;
       const settled = slot.settled;
       if (settled?.ok) {
         this.inlined.add(id);
-        return `<!--$-->${this.expand(settled.html, streamed)}<!--/$-->`;
+        // Its hoisted tags join the enclosing head (the document's, or a streamed parent's).
+        const own = settled.head && !head ? headMarkup(settled.head) : "";
+        if (settled.head && head) mergeHead(head, settled.head);
+        return `<!--$-->${own}${this.expand(settled.html, streamed, head)}<!--/$-->`;
       }
       if (!settled) streamed.add(this.flushed(slot, streamed));
       // A boundary that already failed keeps its fallback for good: marked, so `denext
@@ -151,9 +194,34 @@ export class StreamBoundaries<S extends SettledBoundary> {
     });
   }
 
-  /** A streamed boundary's content, its nested tokens decided once it settles. */
+  /**
+   * The control signal an inline boundary of `html` threw (searched through the boundaries
+   * that would be written inline with it), or undefined. Call it right before {@link expand}
+   * decides the same HTML: such a boundary is decided before anything is sent, so its signal
+   * sets the whole response, as a signal thrown in the shell does.
+   */
+  inlineSignal(html: string): unknown {
+    if (!html.includes("\u0000")) return undefined;
+    for (const m of html.matchAll(this.tokenRe)) {
+      const settled = this.slots.get(m[1])!.settled;
+      if (!settled?.ok) continue;
+      if (settled.signal !== undefined) return settled.signal;
+      const nested = this.inlineSignal(settled.html);
+      if (nested !== undefined) return nested;
+    }
+    return undefined;
+  }
+
+  /**
+   * A streamed boundary's content, its nested tokens decided once it settles, and its hoisted
+   * head tags (its own and its inline descendants') as `headHtml`.
+   */
   private flushed(slot: Slot<S>, streamed: Set<Promise<S>>): Promise<S> {
-    return slot.done.then((s) => (s.ok ? { ...s, html: this.expand(s.html, streamed) } : s));
+    return slot.done.then((s) => {
+      if (!s.ok) return s;
+      const html = this.expand(s.html, streamed, s.head ?? null);
+      return { ...s, html, headHtml: headMarkup(s.head) };
+    });
   }
 
   /** `slot` no longer holds the shell back (it finished or suspended). */

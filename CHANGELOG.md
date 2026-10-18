@@ -179,7 +179,17 @@ and this project adheres to
   warning or a re-render: it passes over the boundary comments and unwraps a revealed
   placeholder in place. Before, hydrating a streamed boundary through `hydrateRoot` warned and
   re-created its content. A boundary that fails before the shell is written keeps its fallback in
-  a placeholder marked `data-dnx-failed`, which `denext doctor` reports as a stuck hole.
+  a placeholder marked `data-dnx-failed`, which `denext doctor` reports as a stuck hole. Being
+  part of the shell, an inline boundary also behaves like it: `notFound()` / `forbidden()` /
+  `unauthorized()` thrown in it render the page's not-found (…) UI with its 404 (403, 401), and
+  `redirect()` is the response's 307 / 308, as in Next (the page renders buffered once the shell
+  sees the signal); a boundary that streams keeps the in-place replacement under a 200. Its
+  `<title>` / `<meta>` / `<link>` hoist into `<head>` as the shell's own do; a streamed
+  boundary's go out just before its template. `renderToString` (and react-dom/server's) now
+  brackets each boundary with React's `<!--$-->` / `<!--/$-->` markers, and a boundary a
+  synchronous render showed as its fallback with `<!--$!--><template></template>`, which the
+  client renders itself during hydration instead of reporting a mismatch;
+  `renderToStaticMarkup` writes none, as in React.
 - **`@denext/tanstack-start`: a page `denext export` prerenders works with JavaScript off.** The
   export wrote each page as the server streamed it, so a route's content arrived as a
   `<template>` that a script moves into its Suspense placeholder; with JavaScript off only the

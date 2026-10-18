@@ -502,7 +502,10 @@ async function streamHoles<H extends Awaited<PendingHole>>(
     // reveal timeline (attributes don't affect the swap-runtime script's CSP hash).
     const msAttr = ms === undefined ? "" : ` data-dnx-ms="${ms}"`;
     controller.enqueue(
-      encoder.encode(`<template data-dnx-r="${hole.id}"${msAttr}>${hole.html}</template>`),
+      // The hole's hoisted `<title>`/`<meta>`/`<link>` go just before it: the head has flushed.
+      encoder.encode(
+        `${hole.headHtml ?? ""}<template data-dnx-r="${hole.id}"${msAttr}>${hole.html}</template>`,
+      ),
     );
   }
   // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).

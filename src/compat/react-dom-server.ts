@@ -223,12 +223,15 @@ export interface ServerRenderOptions {
  * @param options React-compatible options (`identifierPrefix` seeds the `useId` scope).
  */
 export function renderToString(element: VNodeChildren, options?: ServerRenderOptions): string {
-  return renderToStringSync(element, { idPrefix: options?.identifierPrefix });
+  return renderToStringSync(element, {
+    idPrefix: options?.identifierPrefix,
+    boundaryMarkers: true, // React's `<!--$-->` / `<!--$!-->` Suspense markers
+  });
 }
 
 /**
- * Like {@link renderToString} but for fully static markup. denext's base render emits no
- * hydration markers, so the output is identical — this is a straight alias.
+ * Like {@link renderToString} but for fully static markup: no Suspense boundary markers, as
+ * React's `renderToStaticMarkup` writes it.
  *
  * @param element The element tree to render.
  * @param options React-compatible options (`identifierPrefix` seeds the `useId` scope).
