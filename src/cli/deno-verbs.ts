@@ -73,6 +73,10 @@ export const DENO_VERBS: readonly DenoVerb[] = [
   ["unlink", "Remove a linked local package from the current project"],
   ["approve-scripts", "Approve npm lifecycle scripts"],
   ["lsp", "Start the language server"],
+  [
+    "sync-types",
+    "Generate a tsconfig.json and type mappings so stock TypeScript tooling can type-check the project",
+  ],
   ["vendor", "`deno vendor` was removed in Deno 2."],
   ["bundle", "Output a single JavaScript file with all dependencies"],
   ["audit", "Audit currently installed dependencies"],

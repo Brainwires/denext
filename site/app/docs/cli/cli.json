@@ -2656,6 +2656,10 @@
       "summary": "Start the language server"
     },
     {
+      "name": "sync-types",
+      "summary": "Generate a tsconfig.json and type mappings so stock TypeScript tooling can type-check the project"
+    },
+    {
       "name": "vendor",
       "summary": "`deno vendor` was removed in Deno 2."
     },
