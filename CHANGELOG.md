@@ -41,8 +41,10 @@ and this project adheres to
 - **`denext fastlane`: a managed fastlane, no Ruby setup.** `denext fastlane ios beta` runs one
   pinned fastlane (2.240.1) on a pinned portable Ruby (Homebrew's 4.0.7, the relocatable build
   `brew` runs), installed on first use into the toolchain cache beside the Deno toolchain and
-  Gleam (`<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`). The Ruby tarball is checked
-  against its pinned SHA-256 and size before it is extracted, and the gems against the checksums
+  Gleam (`<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`). The Ruby tarball comes from
+  denext's own mirror (the `toolchain-assets` GitHub release), falling back to Homebrew's
+  `ghcr.io` registry, and either copy is checked against the one pinned SHA-256 and size before
+  it is extracted, and the gems against the checksums
   in denext's pinned `Gemfile.lock` (Bundler refuses a mismatch). The install runs under the
   cache lock in a temporary directory that is renamed into place. Several gems build C
   extensions, so the first install needs a C compiler (the Command Line Tools on macOS, `cc` +

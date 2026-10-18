@@ -177,8 +177,9 @@ a command that needs it stops with an error naming that command. `DENEXT_GLEAM=<
 
 `denext fastlane <args…>` runs a managed [fastlane](/docs/mobile-build#managed-fastlane): one
 pinned fastlane release on a pinned portable Ruby (Homebrew's, the build `brew` runs), installed on
-first use into `<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`. The Ruby tarball is
-verified against its pinned SHA-256 before it is extracted, and the gems against the checksums in
+first use into `<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`. The Ruby tarball, from
+denext's mirror or else Homebrew's registry, is verified against its pinned SHA-256 before it is
+extracted, and the gems against the checksums in
 denext's pinned `Gemfile.lock`. The install runs under the same cache lock, in a temporary
 directory renamed into place. The gems build C extensions, so the first install needs a C
 compiler (the Command Line Tools on macOS, `cc` and `make` on Linux). macOS and Linux (arm64, x64)

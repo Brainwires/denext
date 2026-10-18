@@ -9,43 +9,63 @@
     "targets": {
       "darwin-aarch64": {
         "file": "portable-ruby-4.0.7_1.arm64_big_sur.bottle.tar.gz",
-        "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:25d6becc4464b6e65ac38a76ccd27eee8be5d0d805f6b3292d74e37deb8dd13b",
+        "url": "https://github.com/Brainwires/denext/releases/download/toolchain-assets/portable-ruby-4.0.7_1.arm64_big_sur.bottle.tar.gz",
         "sha256": "25d6becc4464b6e65ac38a76ccd27eee8be5d0d805f6b3292d74e37deb8dd13b",
         "size": 12693021,
         "format": "tar.gz",
-        "headers": {
-          "Authorization": "Bearer QQ=="
-        }
+        "fallbacks": [
+          {
+            "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:25d6becc4464b6e65ac38a76ccd27eee8be5d0d805f6b3292d74e37deb8dd13b",
+            "headers": {
+              "Authorization": "Bearer QQ=="
+            }
+          }
+        ]
       },
       "darwin-x86_64": {
         "file": "portable-ruby-4.0.7_1.big_sur.bottle.tar.gz",
-        "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:da1d2637272470d15f1c9f9fb56a3c7889978b857912675e7e6fa57b165678de",
+        "url": "https://github.com/Brainwires/denext/releases/download/toolchain-assets/portable-ruby-4.0.7_1.big_sur.bottle.tar.gz",
         "sha256": "da1d2637272470d15f1c9f9fb56a3c7889978b857912675e7e6fa57b165678de",
         "size": 12245103,
         "format": "tar.gz",
-        "headers": {
-          "Authorization": "Bearer QQ=="
-        }
+        "fallbacks": [
+          {
+            "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:da1d2637272470d15f1c9f9fb56a3c7889978b857912675e7e6fa57b165678de",
+            "headers": {
+              "Authorization": "Bearer QQ=="
+            }
+          }
+        ]
       },
       "linux-aarch64": {
         "file": "portable-ruby-4.0.7_1.arm64_linux.bottle.tar.gz",
-        "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:7a43dce308d310788045ea32b5476ad618d0e92e72b540741b83a73717479dc4",
+        "url": "https://github.com/Brainwires/denext/releases/download/toolchain-assets/portable-ruby-4.0.7_1.arm64_linux.bottle.tar.gz",
         "sha256": "7a43dce308d310788045ea32b5476ad618d0e92e72b540741b83a73717479dc4",
         "size": 14673533,
         "format": "tar.gz",
-        "headers": {
-          "Authorization": "Bearer QQ=="
-        }
+        "fallbacks": [
+          {
+            "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:7a43dce308d310788045ea32b5476ad618d0e92e72b540741b83a73717479dc4",
+            "headers": {
+              "Authorization": "Bearer QQ=="
+            }
+          }
+        ]
       },
       "linux-x86_64": {
         "file": "portable-ruby-4.0.7_1.x86_64_linux.bottle.tar.gz",
-        "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:1f78c64df16fc4715452d059c3a8482ba12b683cc582a2e07e19bddaea88d4f7",
+        "url": "https://github.com/Brainwires/denext/releases/download/toolchain-assets/portable-ruby-4.0.7_1.x86_64_linux.bottle.tar.gz",
         "sha256": "1f78c64df16fc4715452d059c3a8482ba12b683cc582a2e07e19bddaea88d4f7",
         "size": 14364456,
         "format": "tar.gz",
-        "headers": {
-          "Authorization": "Bearer QQ=="
-        }
+        "fallbacks": [
+          {
+            "url": "https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:1f78c64df16fc4715452d059c3a8482ba12b683cc582a2e07e19bddaea88d4f7",
+            "headers": {
+              "Authorization": "Bearer QQ=="
+            }
+          }
+        ]
       }
     }
   },

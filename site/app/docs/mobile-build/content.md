@@ -320,7 +320,9 @@ denext fastlane android release rollout:0.1 metadata:true
 installs both into the [toolchain cache](/docs/toolchain#fastlane),
 `<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`:
 
-- the Ruby tarball is checked against its pinned SHA-256 and size before anything is extracted;
+- the Ruby tarball comes from denext's own mirror (the `toolchain-assets` release on GitHub),
+  falling back to Homebrew's `ghcr.io` registry, and either copy is checked against the one pinned
+  SHA-256 and size before anything is extracted;
 - the gems come from denext's pinned `Gemfile.lock`, whose `CHECKSUMS` section pins every gem's
   SHA-256 (Bundler refuses a gem that doesn't match), installed frozen;
 - the install happens in a temporary directory, under the cache lock, and is renamed into place

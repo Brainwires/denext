@@ -369,6 +369,7 @@ async function fetchRuby(slot: Slot, tmp: string, options: FastlaneToolchainOpti
     },
     archive,
     options.fetch ?? fetch,
+    options.log,
   );
   const extracted = join(tmp, "x");
   await extractArchive(archive, artifact.format === "zip" ? "zip" : "tar.gz", extracted);

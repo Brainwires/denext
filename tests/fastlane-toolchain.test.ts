@@ -17,6 +17,7 @@ import {
   DenoToolchainDownloadError,
   DenoToolchainHashError,
   DenoToolchainUnavailableError,
+  downloadPinned,
 } from "../src/build/deno-toolchain.ts";
 import {
   type BundleRunner,
@@ -155,9 +156,17 @@ Deno.test("the fastlane pin: Homebrew's portable Ruby per host, a locked fastlan
   assertEquals(pin.ruby.root, `portable-ruby/${pin.ruby.version}`);
   for (const [target, a] of Object.entries(pin.ruby.targets)) {
     assertMatch(a.sha256, /^[0-9a-f]{64}$/);
-    // ghcr serves a blob by its content address: the URL names the pinned hash.
-    assertEquals(a.url, `https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:${a.sha256}`);
-    assertEquals(a.headers, { Authorization: "Bearer QQ==" });
+    // denext's own mirror first, then ghcr (a blob by its content address: the URL names the
+    // pinned hash); both are checked against the same SHA-256.
+    assertEquals(
+      a.url,
+      `https://github.com/Brainwires/denext/releases/download/toolchain-assets/${a.file}`,
+    );
+    assertEquals(a.headers, undefined);
+    assertEquals(a.fallbacks, [{
+      url: `https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:${a.sha256}`,
+      headers: { Authorization: "Bearer QQ==" },
+    }]);
     assertEquals(a.format, "tar.gz");
     assertStringIncludes(a.file, `portable-ruby-${pin.ruby.version}.`);
     assert((a.size ?? 0) > 10_000_000, target);
@@ -605,4 +614,123 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+/** Two local sources: `/primary` and `/fallback`, each answering with its own handler. */
+async function twoSources(
+  primary: (req: Request) => Response,
+  fallback: (req: Request) => Response,
+) {
+  const seen: string[] = [];
+  const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, (req) => {
+    const path = new URL(req.url).pathname;
+    seen.push(`${path} ${req.headers.get("authorization") ?? "-"}`);
+    return path === "/primary" ? primary(req) : fallback(req);
+  });
+  const base = `http://127.0.0.1:${server.addr.port}`;
+  const dir = await Deno.makeTempDir({ prefix: "denext-fallback-" });
+  return {
+    seen,
+    dest: join(dir, "file"),
+    artifact: (sha256: string, size: number) => ({
+      file: "ruby.tar.gz",
+      url: `${base}/primary`,
+      sha256,
+      size,
+      format: "tar.gz" as const,
+      fallbacks: [{ url: `${base}/fallback`, headers: { Authorization: "Bearer QQ==" } }],
+    }),
+    close: async () => {
+      await server.shutdown();
+      await Deno.remove(dir, { recursive: true });
+    },
+  };
+}
+
+Deno.test("downloadPinned: the mirror first; on failure the fallback, checked against the same hash", async () => {
+  const good = new TextEncoder().encode("the pinned bytes");
+  const sha = await sha256Hex(good);
+  const ok = () => new Response(good);
+  const cases: [string, (req: Request) => Response][] = [
+    ["an HTTP error", () => new Response("gone", { status: 404 })],
+    ["a tampered copy", () => new Response(new TextEncoder().encode("the pinned byteZ"))],
+    ["a truncated copy", () => new Response(good.subarray(0, 4))],
+  ];
+  for (const [label, primary] of cases) {
+    const t = await twoSources(primary, ok);
+    try {
+      const lines: string[] = [];
+      await downloadPinned(
+        { artifact: t.artifact(sha, good.byteLength), what: "fastlane Ruby" },
+        t.dest,
+        fetch,
+        (l) => lines.push(l),
+      );
+      assertEquals(await Deno.readTextFile(t.dest), "the pinned bytes", label);
+      // The mirror is asked without the registry's token; the fallback with it.
+      assertEquals(t.seen, ["/primary -", "/fallback Bearer QQ=="], label);
+      assertEquals(lines.length, 1, label);
+      assertStringIncludes(lines[0], "trying 127.0.0.1", label);
+    } finally {
+      await t.close();
+    }
+  }
+  // The mirror works: the fallback is never asked.
+  const t = await twoSources(ok, () => {
+    throw new Error("must not be asked");
+  });
+  try {
+    await downloadPinned(
+      { artifact: t.artifact(sha, good.byteLength), what: "x" },
+      t.dest,
+      fetch,
+      quiet,
+    );
+    assertEquals(t.seen, ["/primary -"]);
+  } finally {
+    await t.close();
+  }
+});
+
+Deno.test("downloadPinned: every source failing — a hash refusal wins, else all the errors; nothing left", async () => {
+  const good = new TextEncoder().encode("the pinned bytes");
+  const sha = await sha256Hex(good);
+  const tampered = () => new Response(new TextEncoder().encode("the pinned byteZ"));
+  const down = () => new Response("no", { status: 503 });
+  const a = await twoSources(down, tampered);
+  try {
+    const err = await assertRejects(
+      () =>
+        downloadPinned(
+          { artifact: a.artifact(sha, good.byteLength), what: "fastlane Ruby" },
+          a.dest,
+          fetch,
+          quiet,
+        ),
+      DenoToolchainHashError,
+    );
+    assertStringIncludes(err.message, "REFUSING denext's fastlane Ruby");
+    assertEquals(await Deno.stat(a.dest).catch(() => null), null);
+  } finally {
+    await a.close();
+  }
+  const b = await twoSources(down, down);
+  try {
+    const err = await assertRejects(
+      () =>
+        downloadPinned(
+          { artifact: b.artifact(sha, good.byteLength), what: "fastlane Ruby" },
+          b.dest,
+          fetch,
+          quiet,
+        ),
+      DenoToolchainDownloadError,
+    );
+    assertStringIncludes(err.message, "/primary → 503");
+    assertStringIncludes(err.message, "also tried http://127.0.0.1");
+    assertStringIncludes(err.message, "/fallback → 503");
+    assertEquals(await Deno.stat(b.dest).catch(() => null), null);
+  } finally {
+    await b.close();
+  }
 });
