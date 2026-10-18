@@ -11,6 +11,7 @@ import { walk } from "@std/fs";
 import { relative, SEPARATOR } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
 import type { DeployRoute } from "../deploy/manifest.ts";
+import { privateEntriesUnder } from "../server/module-walk.ts";
 
 /** A file's text, or `""` when it can't be read. */
 export async function readText(path: string): Promise<string> {
@@ -171,7 +172,7 @@ export async function conventionModules(dir: string): Promise<ConventionModule[]
       const entry of walk(dir, {
         exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
         includeDirs: false,
-        skip: [/[/\\]\.[^/\\]+/, /[/\\]_/],
+        skip: [privateEntriesUnder(dir)],
       })
     ) {
       const name = rel(dir, entry.path).replace(/\.(tsx?|jsx?|mjs)$/, "");

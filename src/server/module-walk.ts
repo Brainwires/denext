@@ -7,6 +7,22 @@ import { walk } from "@std/fs";
 import { toFileUrl } from "@std/path";
 import { inRootContext } from "./root-context.ts";
 
+/**
+ * The `walk` skip pattern for a discovery directory: an entry under `dir` whose path BELOW it
+ * has a dot (`.cache/`, `.x.ts`) or underscore (`_private.ts`, `_shared/`) segment. Anchored to
+ * `dir`, so the directories above it never count: a project in `~/.apps/` or `D:\a\_temp\` keeps
+ * its modules (an unanchored pattern on the whole path skipped every one of them).
+ *
+ * @param dir The directory the walk starts at, as passed to `walk`.
+ * @returns The pattern for `walk`'s `skip`.
+ */
+export function privateEntriesUnder(dir: string): RegExp {
+  // Either separator matches wherever `dir` has one (`walk` joins with the host's).
+  const root = dir.replace(/[/\\]+$/, "").split(/[/\\]/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[/\\\\]");
+  return new RegExp(`^${root}(?:[/\\\\][^/\\\\]+)*?[/\\\\][._]`);
+}
+
 /** One imported module of a discovery directory. */
 export interface DiscoveredModule {
   /** Its path under the directory, with the extension (`reports/daily.ts`). */
@@ -36,7 +52,7 @@ export async function* importModules(dir: string, kind: string): AsyncGenerator<
     const entry of walk(dir, {
       exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
       includeDirs: false,
-      skip: [/[/\\]\.[^/\\]+/, /[/\\]_/], // dotfiles/dirs and `_private` files
+      skip: [privateEntriesUnder(dir)], // dotfiles/dirs and `_private` files
     })
   ) {
     const rel = entry.path.slice(dir.length).replace(/^[/\\]/, "");

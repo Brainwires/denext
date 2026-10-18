@@ -310,6 +310,12 @@ and this project adheres to
   Nothing inside an `<svg>` hoists now, as in React, in the string, Flight, streaming and PPR
   renderers alike.
 
+- **Jobs and services are found in a project whose path has a `_` or `.` directory above it.**
+  Discovery skips `_private` and dot entries in `jobs/` and `services/`, but matched them against
+  the whole path, so an app under `~/.apps/`, `/srv/_sites/` or a CI runner's `_temp` directory
+  registered no job or service at all (and `denext job --list`, the deploy manifest and `denext
+  ui` showed none). Only the path below `jobs/` / `services/` counts now.
+
 - **On Windows, a CLI run from JSR caches its verbs for offline use in the background again.**
   The first run of a remote CLI starts a background `deno cache` of every verb's modules, meant
   to outlive the run. On Windows a child process that is not detached ends with its parent, so
