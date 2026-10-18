@@ -84,6 +84,8 @@ export interface StartBundles {
   forgetServerBuild(): Promise<void>;
   /** Forget both bundles: the next request builds them again (an edit in dev). */
   reset(): void;
+  /** The app's server functions, by id (a scan of the sources, as the server build starts). */
+  serverFunctions(): Promise<Record<string, ServerFnInfo>>;
 }
 
 /**
@@ -223,6 +225,7 @@ export function createBundles(
       server = undefined;
       built = undefined;
     },
+    serverFunctions: async () => scanServerFns(await toolchain(), app.root, app.src),
   };
 }
 

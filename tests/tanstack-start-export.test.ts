@@ -144,6 +144,7 @@ function bundlesFor(dir: string, fetch: (req: Request) => Promise<Response>): St
     prebuildServer: () => Promise.resolve(),
     forgetServerBuild: () => Promise.resolve(),
     reset: () => {},
+    serverFunctions: () => Promise.resolve({}),
   };
 }
 

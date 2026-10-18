@@ -878,7 +878,9 @@ fly({ app }) }` in `denext.config.ts` runs that adapter's `prepare` after every 
 top level via `registerCronSchedules`, cache on Deno KV), `genericHost()` (systemd + nginx/Caddy)
 and `staticHost()` (refuses, listing every route that needs a server). `denext deploy prepare
 [--preset <name>] [--dry-run]` writes the files; `denext deploy` also pushes (`FLY_API_TOKEN` /
-`DENO_DEPLOY_TOKEN` from the environment only). A plugin adds one with `addDeployAdapter`. Deno's
+`DENO_DEPLOY_TOKEN` from the environment only). A plugin adds one with `addDeployAdapter`, and
+lists the routes it serves in the manifest with `addDeployRoutes` (`@denext/tanstack-start` lists
+a Start app's pages, server routes and server functions). Deno's
 `deno deploy` is `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters
 
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in

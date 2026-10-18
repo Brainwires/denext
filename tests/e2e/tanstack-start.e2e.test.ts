@@ -1,6 +1,7 @@
 // Networked e2e for examples/tanstack-start: a TanStack Start app run by the
 // `@denext/tanstack-start` plugin, end to end through the real CLI — `deno install` →
-// `denext build` (the client and the server bundle) → `denext start` (which loads the server
+// `denext build` (the client and the server bundle, and the deploy manifest listing Start's
+// routes and server functions) → `denext start` (which loads the server
 // bundle the build made) — then a real (headless) Chromium. Start's own handler answers
 // every request: pages stream through the matched routes (a nested layout, a deferred loader
 // promise streaming in after the shell, a route's error component), server routes answer with
@@ -74,6 +75,19 @@ Deno.test({
   const record = JSON.parse(await Deno.readTextFile(join(out, "server.json")));
   const serverBundle = join(out, record.bundle);
   const builtAt = (await Deno.stat(serverBundle)).mtime?.getTime();
+  // The deploy manifest lists Start's server routes, pages and server functions.
+  const manifest = JSON.parse(
+    await Deno.readTextFile(join(EXAMPLE, ".denext", "deploy-manifest.json")),
+  ) as { routes: Array<{ path: string; kind: string; source: string; methods?: string[] }> };
+  const kinds = new Map(manifest.routes.map((r) => [r.path, r.kind]));
+  assertEquals(kinds.get("/about"), "static");
+  assertEquals(kinds.get("/notes"), "dynamic", "it calls a server function");
+  assertEquals(kinds.get("/posts/[postId]"), "dynamic");
+  const hello = manifest.routes.find((r) => r.path === "/api/hello");
+  assertEquals([hello?.kind, hello?.methods], ["route-handler", ["GET", "POST"]]);
+  const fns = manifest.routes.filter((r) => r.path.startsWith("/_serverFn/"));
+  assertEquals(fns.length, 2, "the GET and the POST server function");
+  assert(fns.every((r) => r.kind === "route-handler" && r.source === "src/functions/notes.ts"));
 
   const server = await startCliServer(EXAMPLE, 60_000);
   try {

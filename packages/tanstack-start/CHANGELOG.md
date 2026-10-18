@@ -5,6 +5,14 @@ of `@denext/denext`.
 
 ## [0.2.0] - Unreleased
 
+- **The deploy manifest lists a Start app's routes** (`.denext/deploy-manifest.json`, through
+  the plugin-kit's `addDeployRoutes`), so a deploy adapter sees them: server routes and server
+  functions (at `/_serverFn/<id>`, the URL Start's RPC calls) are `"route-handler"`s, a server
+  route with the methods its `handlers` name; pages are classified as `denext export` classifies
+  them, `"dynamic"` when the route chain reaches a server function in the browser, is a server
+  route or has a dynamic segment, else `"static"`. Paths use the manifest's pattern syntax
+  (`/posts/$postId` → `/posts/[postId]`). The `static` deploy preset now refuses a Start app's
+  server routes and server-function pages, as `denext export` lists them.
 - **Start's `spa` and `sitemap` options in `denext export`.** `spa` adds Start's SPA shell, as
   its post-build does: the mask path (default `/`) rendered with Start's `X-TSS_SHELL` header
   (the root route alone) to `_shell.html`, the file a static host falls back to; it is never

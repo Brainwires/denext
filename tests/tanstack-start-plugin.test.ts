@@ -1228,6 +1228,7 @@ function fakeBundles(over: Partial<StartBundles> = {}) {
     prebuildServer: () => (calls.push("server"), Promise.resolve()),
     forgetServerBuild: () => (calls.push("forget"), Promise.resolve()),
     reset: () => {},
+    serverFunctions: () => Promise.resolve({}),
     ...over,
   };
   return { bundles, calls };

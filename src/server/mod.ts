@@ -208,6 +208,7 @@ export type {
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,
+  PluginDeployRoutes,
   PluginMode,
   PluginPrepareContext,
   PluginPrepareStep,

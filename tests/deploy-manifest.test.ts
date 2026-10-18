@@ -20,6 +20,7 @@ import {
 import type { DenextConfig } from "../src/server/config.ts";
 import { handlerMethods, jobSchedules, middlewareMatcher } from "../src/build/deploy-scan.ts";
 import { fixtureProject } from "./helpers/deploy-fixture.ts";
+import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 
 const GOLDEN = fromFileUrl(new URL("./fixtures/deploy/manifest.json.golden", import.meta.url));
 
@@ -87,8 +88,8 @@ Deno.test("deploy manifest: the version-1 schema — fields, kinds, sorted lists
     assertEquals(Object.keys(manifest), V1_FIELDS);
     const kinds: DeployRouteKind[] = ["static", "isr", "dynamic", "route-handler", "middleware"];
     for (const route of manifest.routes) assert(kinds.includes(route.kind), route.path);
-    const paths_ = manifest.routes.map((r) => r.path);
-    assertEquals(paths_, [...paths_].sort());
+    const keys = manifest.routes.map((r) => r.path);
+    assertEquals(keys, [...keys].sort());
     assertEquals(manifest.env.map((v) => v.name), manifest.env.map((v) => v.name).sort());
     for (const group of manifest.assets) {
       assert(!group.files.some((f) => f.endsWith(".gz")), "precompressed siblings are left out");
@@ -144,6 +145,43 @@ Deno.test("deploy manifest: an SPA has no routes and no image optimizer", async 
     assertEquals(manifest.routes, []);
     assertEquals(manifest.images.optimizer, false);
   } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy manifest: a plugin's routes (addDeployRoutes) are sorted in", async () => {
+  const paths = await fixtureProject();
+  resetPlugins();
+  try {
+    await applyPlugins({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      config: {
+        plugins: [{
+          name: "router-plugin",
+          setup(ctx) {
+            ctx.addDeployRoutes?.(() =>
+              Promise.resolve([
+                { path: "/_rpc/abc", kind: "route-handler", source: "src/fns.ts", reason: "rpc" },
+                { path: "/about", kind: "static", source: "src/routes/about.tsx" },
+              ])
+            );
+          },
+        }],
+      },
+      mode: "build",
+      load: () => Promise.resolve({}),
+    });
+    const { routes } = await collectDeployManifest(paths);
+    const plugin = routes.filter((r) => r.source.startsWith("src/"));
+    assertEquals(plugin.map((r) => [r.path, r.kind]), [
+      ["/_rpc/abc", "route-handler"],
+      ["/about", "static"],
+    ]);
+    const keys = routes.map((r) => `${r.path}\0${r.kind}`);
+    assertEquals(keys, [...keys].sort(), "sorted with the App Router's");
+  } finally {
+    resetPlugins();
     await Deno.remove(paths.projectDir, { recursive: true });
   }
 });

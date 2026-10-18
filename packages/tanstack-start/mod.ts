@@ -54,7 +54,7 @@
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import type { OriginCheckOptions } from "@denext/denext/plugin-kit";
 import { join, relative } from "@std/path";
-import { buildStep, createBundles, type StartApp } from "./src/bundles.ts";
+import { buildStep, createBundles, type StartApp, type StartBundles } from "./src/bundles.ts";
 import type {
   PrerenderOptions,
   RouteInfo,
@@ -65,6 +65,7 @@ import type {
 import { compileImportProtection, type ImportProtectionOptions } from "./src/protect.ts";
 import { clientBootSource, entryPaths, serverEntrySource, writeIfChanged } from "./src/entries.ts";
 import { createHandler } from "./src/handler.ts";
+import { deployRoutes } from "./src/deploy.ts";
 import { generateRouteTree, generatorPaths } from "./src/route-tree.ts";
 import {
   checkBasepath,
@@ -163,7 +164,8 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
       if (!routerFile) return; // not a Start app — nothing to do
       checkBasepath(router.basepath, ctx.config.basePath);
       let routes: RouteInfo[] | null = null;
-      if (options.generateRouteTree !== false) {
+      const generate = options.generateRouteTree !== false;
+      if (generate) {
         const { routesDirectory } = generatorPaths(ctx.projectRoot, src, router.generator);
         ctx.addPrepareStep(async () => {
           routes = await generateRouteTree(ctx.projectRoot, src, router.generator);
@@ -187,6 +189,13 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         maxBodyBytes: options.maxBodyBytes ?? ctx.config.actionMaxBodyBytes ?? 1024 * 1024,
         isStaticFile: (path) => isFile(join(publicDir, ...path.split("/"))),
       }));
+      // The deploy manifest lists the app's server routes, pages and server functions. Collected
+      // after a build in the same process, the build's route tree and browser graph are reused.
+      registerDeployRoutes(ctx, app, bundles, {
+        built: () => routes,
+        owned: generate,
+        generate: () => generateRouteTree(ctx.projectRoot, src, router.generator),
+      });
       ctx.addBuildStep((build) =>
         buildStep(ctx.mode, bundles, build, {
           options: options.prerender ?? {},
@@ -200,6 +209,36 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
       );
     },
   };
+}
+
+/** The route tree the deploy manifest reads: the build's, else (when the plugin owns it) a fresh one. */
+interface DeployRouteTree {
+  built(): RouteInfo[] | null;
+  /** The plugin generates the tree (`generateRouteTree` is not `false`). */
+  owned: boolean;
+  generate(): Promise<RouteInfo[]>;
+}
+
+/**
+ * List the app's routes in the deploy manifest (`addDeployRoutes`, on a host that has it): the
+ * route tree, the server functions, and the browser build's graph (the build's, else built now).
+ */
+function registerDeployRoutes(
+  ctx: PluginContext,
+  app: StartApp,
+  bundles: StartBundles,
+  tree: DeployRouteTree,
+): void {
+  ctx.addDeployRoutes?.(async () =>
+    deployRoutes({
+      routes: tree.built() ?? (tree.owned ? await tree.generate() : null),
+      serverFns: await bundles.serverFunctions(),
+      client: bundles.clientGraph() ?? await bundles.bundle().then(() => bundles.clientGraph()),
+      projectRoot: ctx.projectRoot,
+      realRoot: app.root,
+      readSource: (file) => Deno.readTextFile(file),
+    })
+  );
 }
 
 /** Write the generated entries and collect where the app's modules are. */

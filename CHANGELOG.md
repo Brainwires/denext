@@ -32,6 +32,12 @@ and this project adheres to
 
 ### Added
 
+- **A plugin lists the routes it serves in the deploy manifest** with `ctx.addDeployRoutes?.(source)`
+  (plugin-kit; `PluginDeployRoutes`): `source` returns `DeployRoute`s, called when
+  `.denext/deploy-manifest.json` is collected and sorted in with the App Router's, so a deploy
+  adapter (and the `static` preset's refusal) sees a router plugin's pages and endpoints.
+  `@denext/tanstack-start` lists a Start app's pages, server routes and server functions.
+
 - **`denext fastlane`: a managed fastlane, no Ruby setup.** `denext fastlane ios beta` runs one
   pinned fastlane (2.240.1) on a pinned portable Ruby (Homebrew's 4.0.7, the relocatable build
   `brew` runs), installed on first use into the toolchain cache beside the Deno toolchain and

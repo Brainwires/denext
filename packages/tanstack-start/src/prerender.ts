@@ -260,13 +260,37 @@ function reachesServerFn(client: ClientGraph, file: string, projectRoot: string)
   return false;
 }
 
+/** What deciding whether a route needs a server reads: the browser build's graph. */
+type NeedInput = Pick<PrerenderInput, "client" | "projectRoot">;
+
 /** Why a route needs a server, or `null`. */
-function serverNeed(route: RouteInfo, input: PrerenderInput): string | null {
+function serverNeed(route: RouteInfo, input: NeedInput): string | null {
   if (route.options.includes("server")) {
     return "a server route (server.handlers): it answers requests";
   }
   if (input.client && reachesServerFn(input.client, route.file, input.projectRoot)) {
     return "calls a server function (createServerFn): its RPC answers only from a server";
+  }
+  return null;
+}
+
+/**
+ * Why `route` needs a server (it, or a route above it, is a server route or reaches a server
+ * function in the browser), or `null`.
+ *
+ * @param route The route.
+ * @param input The browser build's graph and the project root.
+ * @param cache Answers per route, shared across calls.
+ */
+export function routeNeed(
+  route: RouteInfo | undefined,
+  input: NeedInput,
+  cache = new Map<RouteInfo, string | null>(),
+): { route: RouteInfo; reason: string } | null {
+  for (let r = route; r; r = r.parent) {
+    if (!cache.has(r)) cache.set(r, serverNeed(r, input));
+    const reason = cache.get(r);
+    if (reason) return { route: r, reason };
   }
   return null;
 }
@@ -278,12 +302,10 @@ function pageNeed(
   cache: Map<RouteInfo, string | null>,
 ): Refusal | null {
   if (!input.routes) return null;
-  for (let r = routeFor(input.routes, path); r; r = r.parent) {
-    if (!cache.has(r)) cache.set(r, serverNeed(r, input));
-    const reason = cache.get(r);
-    if (reason) return { path: r.layout ? path : r.path, file: r.file, reason };
-  }
-  return null;
+  const need = routeNeed(routeFor(input.routes, path), input, cache);
+  if (!need) return null;
+  const r = need.route;
+  return { path: r.layout ? path : r.path, file: r.file, reason: need.reason };
 }
 
 /** The `<a href>` links of a page Start crawls (root-relative and `./` ones). */

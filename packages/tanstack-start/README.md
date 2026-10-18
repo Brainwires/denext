@@ -78,6 +78,10 @@ TanStack from `node_modules`. `denext migrate --check` lists the options it leav
   preset lists them: server routes, pages that call a server function from the browser, and
   dynamic routes no prerendered page links to. Start's `spa` option adds the SPA shell
   (`_shell.html`) and its `sitemap` option writes `sitemap.xml` and `pages.json`.
+- **Lists its routes in the deploy manifest** (`.denext/deploy-manifest.json`), so a deploy
+  adapter sees them: server routes and server functions (at `/_serverFn/<id>`) as
+  `"route-handler"`s, pages as `"static"` or, when they need a server (a server function reached
+  in the browser, a dynamic segment), `"dynamic"`, with the reason.
 - **Keeps denext's directives:** `"use cache"` caches in the server bundle (with
   `cacheComponents` on), Start-compiled modules included. A `"use server"` module's source never
   reaches the browser: its server functions are RPC stubs there, and its other exports throw when

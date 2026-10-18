@@ -208,6 +208,29 @@ ctx.addRequestHandler(renderMyRoutes);
 ctx.servesRoutes?.(); // optional chaining: still runs on a denext from before it existed
 ```
 
+### Listing a plugin's routes in the deploy manifest
+
+`ctx.addDeployRoutes?.(source)` contributes the routes a plugin serves to the deploy manifest
+(`.denext/deploy-manifest.json`), so a [deploy adapter](/docs/deploy#deploy-adapters) sees them:
+`source` returns `DeployRoute`s (`{ path, kind, source, reason?, methods? }`, the type from
+`denext/plugin-kit`), called when the manifest is collected (after `denext build`, and by
+`denext deploy`) and sorted in with the App Router's. A page `denext export` writes is `"static"`,
+one rendered per request `"dynamic"`, an endpoint `"route-handler"`; the `static` preset refuses
+everything but `"static"`. `@denext/tanstack-start` lists its pages, server routes and server
+functions this way.
+
+```ts
+ctx.addDeployRoutes?.(async () => [
+  {
+    path: "/api/hello",
+    kind: "route-handler",
+    source: "src/routes/api/hello.ts",
+    methods: ["GET"],
+  },
+  { path: "/about", kind: "static", source: "src/routes/about.tsx" },
+]);
+```
+
 ### Seam 5 — contribute a CLI verb
 
 `ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can
