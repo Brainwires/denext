@@ -25,7 +25,7 @@
 #      install.ps1 / install.sh against this commit's own binary build (the toolchain step included)
 #      and the real latest release (which may predate the `toolchain` verb: denext < 4.0).
 #      Windows on Arm (windows-11-arm) runs the desktop suites, install.ps1 and the Arm64 package +
-#      .msi natively; not required for a release until it is reliably green.
+#      .msi natively, required for a release like every other job.
 #   4. `denext desktop run` builds outside the project, launches the app (Linux under Xvfb, and macOS)
 #      and quits cleanly (`scripts/ci/desktop-run-smoke.ts`); and a packaged app whose import map
 #      names local modules by absolute path still runs once those sources are moved away
@@ -677,13 +677,11 @@ jobs:
   # Windows on Arm (windows-11-arm), natively: Deno 2.9.7's aarch64-pc-windows-msvc build, the
   # desktop suites, install.ps1 (its tests, this commit's Arm64 binary with the toolchain step, the
   # real latest release) and the Arm64 package on the pinned runtime — the bundle's PE files are
-  # Arm64 and its .msi installs, upgrades and uninstalls per user and per machine. Not required for
-  # a release yet (scripts/release-ci.ts DESKTOP_CI_OPTIONAL_JOBS, continue-on-error) until its
-  # runs are reliably green; then it moves to DESKTOP_CI_JOBS.
+  # Arm64 and its .msi installs, upgrades and uninstalls per user and per machine. Required for a
+  # release (scripts/release-ci.ts DESKTOP_CI_JOBS).
   windows-arm:
     name: windows on arm (windows-11-arm — desktop tests, install.ps1, Arm64 .msi)
     runs-on: windows-11-arm
-    continue-on-error: true
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
