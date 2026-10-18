@@ -45,7 +45,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
 
   constructor(
     mode: PprMode,
-    private readonly head: HeadCollector | null,
+    private head: HeadCollector | null,
     /** Resume only: which boundary ids are dynamic holes. */
     holeIds: Set<string> = new Set(),
     /** Root path prefix (a buffered hole/fallback render is rooted at its position). */
@@ -94,9 +94,21 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     const props = node.props ?? {};
     const tag = node.type as string;
     return renderHostHtml(tag, props, hostAttrs(props, tag), this.head, {
-      renderChildren: (c) => this.renderChildren(c, scopes),
+      renderChildren: (c, hoist) =>
+        hoist ? this.renderChildren(c, scopes) : this.renderUnhoisted(c, scopes),
       renderTitle: (c) => this.renderBuffered(c, scopes),
     }, node.key);
+  }
+
+  /** Render children with nothing hoisting into the head (an `<svg>`'s; children run in order). */
+  private async renderUnhoisted(children: VNodeChildren, scopes: ProviderScope[]): Promise<string> {
+    const head = this.head;
+    this.head = null;
+    try {
+      return await this.renderChildren(children, scopes);
+    } finally {
+      this.head = head;
+    }
   }
 
   /**

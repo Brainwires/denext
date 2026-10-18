@@ -396,6 +396,18 @@ export function flushServerInsertedHTML(
 /** Element tags hoisted into the document head when a collector is present. */
 export const HOISTED_TAGS = new Set(["title", "meta", "link"]);
 
+/**
+ * Whether a host element's children may hoist into the document head. An `<svg>`'s `<title>` is
+ * the drawing's accessible name, not the document's: React hoists nothing from inside an
+ * `<svg>`, so an inline icon's `<title>` must not replace the page title.
+ *
+ * @param tag The host element's tag.
+ * @returns False for `svg`.
+ */
+export function childrenHoist(tag: string): boolean {
+  return tag !== "svg";
+}
+
 /** One hoisted `<meta>`/`<link>` in a {@link HeadCollector}. */
 export interface HeadTag {
   /** The serialized (already escaped) tag, e.g. `<meta name="description" content="…">`. */
@@ -979,7 +991,8 @@ function renderHostInto(
   // Open tag, children appended in place, then close tag — the whole tree shares
   // one buffer, so no per-element intermediate string is built.
   ctx.out.push(`<${tag}${attrs}>`);
-  const pending = renderChildrenInto(hostChildren(tag, props), ctx);
+  const childCtx = ctx.head && !childrenHoist(tag) ? { ...ctx, head: null } : ctx;
+  const pending = renderChildrenInto(hostChildren(tag, props), childCtx);
   if (isThenable(pending)) {
     return (pending as Promise<void>).then(() => {
       ctx.out.push(`</${tag}>`);

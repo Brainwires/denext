@@ -145,7 +145,7 @@ class StreamRenderer extends VNodeRenderer<string> {
     const props = node.props ?? {};
     const tag = node.type as string;
     return renderHostHtml(tag, props, hostAttrs(props, tag), head, {
-      renderChildren: (c) => this.renderChildren(c, scopes, head),
+      renderChildren: (c, hoist) => this.renderChildren(c, scopes, hoist ? head : null),
       renderTitle: (c) => this.renderChildren(c, scopes, null),
     }, node.key);
   }

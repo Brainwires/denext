@@ -30,6 +30,7 @@ import { classComponentsDisabledError, isClassComponent } from "../compat/class-
 import { renderClassToVNode } from "../compat/class-instance.ts";
 import { markClassRendered } from "../runtime/render-scope.ts";
 import {
+  childrenHoist,
   type HeadCollector,
   headDedupKey,
   HOISTED_TAGS,
@@ -341,7 +342,8 @@ function asFlightArray(flight: FlightNode): FlightNode[] {
 
 /** The operations {@link renderHostHtml} composes, bound to the renderer's current scopes. */
 export interface HostHtmlOps {
-  renderChildren(children: VNodeChildren): Promise<string>;
+  /** Render children; with `hoist` false, nothing in them hoists into the head (an `<svg>`). */
+  renderChildren(children: VNodeChildren, hoist: boolean): Promise<string>;
   /** Render a hoisted `<title>`'s children to its text. */
   renderTitle(children: VNodeChildren): Promise<string>;
 }
@@ -367,11 +369,11 @@ export async function renderHostHtml(
   recordDocumentAttrs(tag, props);
   // The page render (a head collector is active): a root layout's `<html>`/`<head>`/`<body>`
   // are the document's own tags, which the assembler writes; only their content goes here.
-  if (head !== null && isDocumentTag(tag)) return await ops.renderChildren(children);
+  if (head !== null && isDocumentTag(tag)) return await ops.renderChildren(children, true);
   if (VOID_ELEMENTS.has(tag)) return hostHtml(tag, attrs, "");
   const dangerous = dangerousInnerHtml(props, tag);
   if (dangerous !== null) return hostHtml(tag, attrs, dangerous);
-  return hostHtml(tag, attrs, await ops.renderChildren(children));
+  return hostHtml(tag, attrs, await ops.renderChildren(children, childrenHoist(tag)));
 }
 
 /** What {@link renderHostDual} needs from a dual renderer, bound to explicit scopes. */
@@ -431,7 +433,7 @@ export async function renderHostDual(
   if (dangerous !== null) {
     return { html: hostHtml(tag, attrs, dangerous), flight: flightHost(tag, p, [], node.key) };
   }
-  const inner = await r.renderChildren(children, scopes, head);
+  const inner = await r.renderChildren(children, scopes, childrenHoist(tag) ? head : null);
   return {
     // A root layout's document tags in the page render: their content only (see
     // `renderHostHtml`); the Flight node is already peeled to the children.
