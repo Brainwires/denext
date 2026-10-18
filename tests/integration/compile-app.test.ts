@@ -374,13 +374,17 @@ Deno.test({
               assert(/-denext\.\d+$/.test(runtime.deno), runtime.deno);
             }
             // A handle nothing closes holds the process after the drain: the in-flight request
-            // still finishes, and the process exits at the drain deadline anyway.
-            const shut = await app.stopDuring("/api/slow");
-            stopped = true;
-            output = shut.output;
-            assertEquals(shut.text, "slow done");
-            assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
-            assertStringIncludes(output, "open handle");
+            // still finishes, and the process exits at the drain deadline anyway. POSIX only:
+            // Windows has no SIGTERM (Deno's `kill("SIGTERM")` there is `TerminateProcess`, which
+            // no handler sees), so there is no drain to observe and `stop()` below ends it.
+            if (Deno.build.os !== "windows") {
+              const shut = await app.stopDuring("/api/slow");
+              stopped = true;
+              output = shut.output;
+              assertEquals(shut.text, "slow done");
+              assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
+              assertStringIncludes(output, "open handle");
+            }
           } finally {
             if (!stopped) output = await app.stop();
           }
