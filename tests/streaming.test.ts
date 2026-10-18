@@ -12,7 +12,7 @@ import { SWAP_RUNTIME, SWAP_RUNTIME_BODY, swapRuntimeHash } from "../src/server/
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { createResource, Suspense } from "../src/runtime/suspense.ts";
-import { notFound, redirect } from "../src/runtime/error-boundary.ts";
+import { forbidden, notFound, redirect, unauthorized } from "../src/runtime/error-boundary.ts";
 import { after, cookies } from "../src/server/request-context.ts";
 import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
 import type { RouteManifest, SegmentLevel } from "../src/router/manifest.ts";
@@ -608,6 +608,58 @@ Deno.test("notFound() inside a boundary that does not suspend is the whole page'
   assert(!html.includes("Loading…"), "no fallback");
   assert(!html.includes("data-dnx-b"), "no streamed hole");
 });
+
+for (
+  const [name, signal, status, file] of [
+    ["forbidden", forbidden, 403, "forbidden.tsx"],
+    ["unauthorized", unauthorized, 401, "unauthorized.tsx"],
+  ] as const
+) {
+  for (const flight of [false, true]) {
+    Deno.test(
+      `${flight ? "Flight path: " : ""}${name}() inside a boundary that does not suspend is ` +
+        `the whole page's ${status}, with the route's ${file}`,
+      async () => {
+        const Inner = (): VNode => signal();
+        const Clock = (): VNode => h("time", null, "now");
+        if (flight) tagClientExports({ Clock } as Record<string, unknown>, `c_clock_${name}`);
+        const Page = (_p: PageProps): VNode =>
+          h(
+            "main",
+            null,
+            flight ? h(Clock, null) : null,
+            h("h2", null, "page heading"),
+            h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Inner, null) }),
+          );
+        const SignalUi = (): VNode => h("section", { class: name }, `Custom ${name}`);
+        const app = appWith(
+          { default: Page },
+          {
+            streaming: true,
+            csp: "off",
+            ...(flight
+              ? {
+                flight: true,
+                appDir: "/app",
+                flightRoutes: new Set(["/"]),
+                clientEntryFor: () => "/_denext/entry.js",
+              }
+              : {}),
+          },
+          { [file]: { default: SignalUi } },
+          [{ ...rootLevel(), [name]: file }],
+        );
+        const res = await app(new Request("http://localhost/"));
+        assertEquals(res.status, status, "decided before anything was sent, as notFound() is");
+        const html = await res.text();
+        assertStringIncludes(html, `<section class="${name}">Custom ${name}</section>`);
+        assert(!html.includes("page heading"), "the signal UI replaces the page, not the boundary");
+        assert(!html.includes("Loading…"), "no fallback");
+        assert(!html.includes("data-dnx-b"), "no streamed hole");
+      },
+    );
+  }
+}
 
 Deno.test("redirect() inside a boundary that does not suspend is the response's redirect", async () => {
   const Inner = (): VNode => redirect("/login");

@@ -207,6 +207,11 @@ class PPRFlightRenderer extends PprVNodeRenderer<Dual> implements IslandRenderer
     };
   }
 
+  /** The HTML side gets React's boundary markers; the Flight tree is unchanged. */
+  protected inlineBoundary(dual: Dual): Dual {
+    return { html: `<!--$-->${dual.html}<!--/$-->`, flight: dual.flight };
+  }
+
   protected async postponedFallback(
     id: string,
     props: Record<string, unknown>,

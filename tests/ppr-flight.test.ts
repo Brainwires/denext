@@ -82,6 +82,17 @@ Deno.test("4b: a fully static Flight page prerenders to a shell with no holes", 
   assert(!JSON.stringify(r.flight).includes(`"$":"$"`), "no unfilled holes in a static shell");
 });
 
+Deno.test("4b: a boundary resolved inline gets React's markers in the HTML, not the Flight", async () => {
+  const tree = h("div", null, [
+    boundary(h(Static, null), "L0"),
+    boundary(h(Dyn, { k: "u" }), "L1"),
+  ]);
+  const pre = await prerender(tree);
+  assertEquals(pre.postponedIds, ["dnx1"]);
+  assertStringIncludes(pre.shell, '<div><!--$--><p>static</p><!--/$--><div data-dnx-b="dnx1">');
+  assert(!JSON.stringify(pre.flight).includes("<!--"), "the Flight tree carries no markers");
+});
+
 Deno.test("4b: a dynamic read under Suspense becomes a hole in BOTH HTML and Flight", async () => {
   const tree = h("div", null, boundary(h(Dyn, { k: "user" }), "loading"));
   const pre = await prerender(tree, "alice");

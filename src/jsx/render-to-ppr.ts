@@ -125,6 +125,10 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     return `<div data-dnx-b="${id}"></div>`;
   }
 
+  protected inlineBoundary(html: string): string {
+    return `<!--$-->${html}<!--/$-->`;
+  }
+
   protected async postponedFallback(
     id: string,
     props: Record<string, unknown>,

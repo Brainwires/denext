@@ -449,6 +449,13 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
     boundaryScope: IdScope,
   ): T;
 
+  /**
+   * A boundary resolved inline (its content, not a hole): bracketed with React's
+   * `<!--$-->` / `<!--/$-->` markers by the HTML-writing subclasses, as the streaming renderers
+   * write one decided before the flush, so hydration sees one document shape either way.
+   */
+  protected abstract inlineBoundary(content: T): T;
+
   /** A postponed boundary's shell output: its fallback, marked for the resume splice. */
   protected abstract postponedFallback(
     id: string,
@@ -484,7 +491,7 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
     // else the retry's ids (`useId`, a `useApi` seed's key) shift by the suspended attempt.
     const inScope = async (): Promise<T> => {
       try {
-        return await this.resolve(children, scopes, boundaryScope);
+        return this.inlineBoundary(await this.resolve(children, scopes, boundaryScope));
       } finally {
         this.ids.scope = parentScope;
       }

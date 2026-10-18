@@ -281,7 +281,9 @@ and this project adheres to
   brackets each boundary with React's `<!--$-->` / `<!--/$-->` markers, and a boundary a
   synchronous render showed as its fallback with `<!--$!--><template></template>`, which the
   client renders itself during hydration instead of reporting a mismatch;
-  `renderToStaticMarkup` writes none, as in React.
+  `renderToStaticMarkup` writes none, as in React. A Cache Components (PPR) shell brackets the
+  boundaries its prerender resolves inline the same way (HTML and Flight routes, and a static
+  boundary inside a resumed hole), so hydration sees one shape whichever renderer wrote the page.
 - **`@denext/tanstack-start`: a page `denext export` prerenders works with JavaScript off.** The
   export wrote each page as the server streamed it, so a route's content arrived as a
   `<template>` that a script moves into its Suspense placeholder; with JavaScript off only the
