@@ -25,6 +25,11 @@ emit correct denext instead of Next.js.
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
    A **TanStack Start** app (`@tanstack/react-start` + `tanstackStart()` in vite.config) is wired
    to the `@denext/tanstack-start` plugin, Start's options carried into `tanstackStart({ … })`.
+   A **Fresh** app (Fresh 2's `jsr:@fresh/core`, or 1.x's `$fresh/`) keeps its `routes/` and
+   `islands/`: migrate generates `app/` + `middleware.ts` around them (`denext/fresh/server` runs
+   the handlers, middleware and layouts as Fresh does), marks islands `"use client"`, moves
+   `static/` to `public/` and maps `fresh`, `preact` and `@preact/signals` to denext
+   (`denext/fresh`, `denext/signals`) in its `deno.json`.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform

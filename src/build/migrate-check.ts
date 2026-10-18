@@ -24,7 +24,8 @@ export type MigrateSource =
   | "cra"
   | "generic-react"
   | "expo"
-  | "tanstack-start";
+  | "tanstack-start"
+  | "fresh";
 
 /** Something the migration leaves to the user, with the reason. */
 export interface MigrateFinding {
@@ -284,6 +285,11 @@ function tanstackStartFindings(r: MigrateResult): MigrateFinding[] {
   ];
 }
 
+/** What a Fresh app leaves to the user (the transform's findings). */
+function freshFindings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
+  return { wont: r.fresh?.wontMigrate ?? [], review: r.fresh?.review ?? [] };
+}
+
 /** A desktop proxy whose prefixes migrate could not read (built in code in vite.config). */
 function spaProxyFindings(r: MigrateResult): MigrateFinding[] {
   const file = r.spa?.proxyUnresolved;
@@ -346,16 +352,19 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
   const next = nextConfigFindings(r);
   const expo = expoFindings(r);
   const cap = capacitorFindings(r);
+  const fresh = freshFindings(r);
   return {
     wont: [
       ...dependencyFindings(r),
       ...existingConfigFindings(r),
       ...next.wont,
       ...expo.wont,
+      ...fresh.wont,
       ...cap.wont,
     ],
     review: [
       ...next.review,
+      ...fresh.review,
       ...spaProxyFindings(r),
       ...viteEmitterFindings(r),
       ...transformFindings(r),

@@ -113,6 +113,31 @@ and this project adheres to
   install. It no longer asks for a Gemfile unless plugins need one. `deno task fastlane:pin` regenerates the pin (the Ruby
   from Homebrew's ghcr index, checked byte for byte, and a fresh `Gemfile.lock` with CHECKSUMS).
 
+- **`denext migrate` moves a Fresh app** (Fresh 2 — `jsr:@fresh/core`, on Vite or Fresh's own
+  builder — and Fresh 1.x — `$fresh/`, `fresh.gen.ts`; `--from fresh` forces it). The route
+  modules stay as they are; migrate generates `app/` around them (a `page.tsx` per page, a
+  `route.ts` per handler-only route, a `layout.tsx` per `_layout` with the root one running
+  `_app`, `not-found.tsx` from `_404` / `_error`) and a `middleware.ts` that runs `main.ts`'s
+  `app.use()` middleware and code routes, the `_middleware` files and each route's handler as
+  Fresh does: `page(data)` / 1.x `ctx.render(data)` hands the data to the page, `ctx.state`
+  reaches layouts and pages, an `HttpError` renders the not-found or `_error` page, a form POST
+  re-renders the page, and a `routeOverride` or an `[[optional]]` / partial-segment pattern is
+  served through the middleware. Islands get `"use client"`, `static/` moves to `public/`, the
+  Vite client entry's stylesheets go to the root layout (Tailwind becomes `tailwind: { input,
+  output }`), and the app's `deno.json` is merged: `fresh`, `$fresh/*`, `preact`, `preact/*`
+  and `@preact/signals*` map to the new `denext/fresh`, `denext/fresh/runtime`,
+  `denext/preact` and `denext/signals`. `migrate --check` (source `fresh`) lists what does not
+  migrate: Partials, Vite's `import.meta.env`, inline scripts under the default CSP,
+  `FRESH_PUBLIC_*`, Vite and Fresh plugins, `useErrorBoundary`.
+- **`denext/signals`: Preact Signals' API** — `signal`, `computed`, `effect`, `batch`,
+  `untracked`, `action`, `Signal`, `useSignal`, `useComputed`, `useSignalEffect`,
+  `useLiveSignal`, `Show`, `For`. A component re-renders when a signal its render read changes,
+  a signal placed in JSX renders its value, a signal passed as a DOM prop is bound, and a signal a
+  Server Component passes to a `"use client"` component arrives as a live signal (one shared
+  signal when two components get the same one).
+- **A compat middleware can hand a non-GET request to the page.** `RequestContext.renderPageForMethod`
+  lets a runtime that ran a page route's handler in `middleware.ts` (the Fresh compat) have the
+  page render for a POST; without it such a request to a page is still a 405.
 - **`ctx.servesRoutes()` in the plugin kit.** A plugin whose pages come from a route tree of its
   own declares it in `setup` (`ctx.servesRoutes?.()`, optional so the plugin still runs on an
   older denext); `denext doctor` then accepts a project with no `app/`. `@denext/pages-router`,
@@ -279,6 +304,12 @@ and this project adheres to
   Server drivers over TLS). `Deno.serve` keeps reading a request body while it streams a response,
   applies backpressure to a client that keeps sending, lets a graceful `shutdown()` finish a
   request body, and answers a malformed `Host` with a 400.
+- **An inline SVG's `<title>` no longer becomes the page title.** The server hoisted every
+  `<title>` in the tree into the document head, so a page with an icon carrying an accessible
+  `<title>` (`<svg><title>Arrow</title>…</svg>`) showed the icon's name in the browser tab.
+  Nothing inside an `<svg>` hoists now, as in React, in the string, Flight, streaming and PPR
+  renderers alike.
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,

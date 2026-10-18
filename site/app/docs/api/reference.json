@@ -7934,6 +7934,18 @@
           "denextOnly": true
         },
         {
+          "name": "FlightSignal",
+          "slug": "FlightSignal",
+          "kind": "interface",
+          "signature": "interface FlightSignal",
+          "doc": "A serialized signal (denext/signals): its wire id and current value.",
+          "docFull": "A serialized signal (`denext/signals`): its wire id and current value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightStreamOptions",
           "slug": "FlightStreamOptions",
           "kind": "interface",
@@ -7961,7 +7973,7 @@
           "name": "FlightValue",
           "slug": "FlightValue",
           "kind": "typeAlias",
-          "signature": "type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightBigInt | FlightNonFinite | FlightUrl | FlightMap | FlightSet | FlightChannelRef | FlightEventHandler",
+          "signature": "type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightBigInt | FlightNonFinite | FlightUrl | FlightMap | FlightSet | FlightSignal | FlightChannelRef | FlightEventHandler",
           "doc": "A serialized prop value.",
           "docFull": "A serialized prop value.",
           "params": [],
@@ -33248,6 +33260,275 @@
             }
           ],
           "returns": "The value or the fallback.",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/signals",
+      "symbols": [
+        {
+          "name": "action",
+          "slug": "action",
+          "kind": "function",
+          "signature": "action<A, R>(fn: (...args: A) => R): (...args: A) => R",
+          "doc": "Wrap fn so each call is batched and reads nothing reactively (@preact/signals-core's action).",
+          "docFull": "Wrap `fn` so each call is batched and reads nothing reactively (`@preact/signals-core`'s\n`action`).",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The action."
+            }
+          ],
+          "returns": "The wrapped action.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "batch",
+          "slug": "batch",
+          "kind": "function",
+          "signature": "batch<T>(fn: () => T): T",
+          "doc": "Apply several writes as one change: effects and re-renders run once, when the outermost batch ends.",
+          "docFull": "Apply several writes as one change: effects and re-renders run once, when the outermost batch\nends.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The writes."
+            }
+          ],
+          "returns": "What fn returned.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "computed",
+          "slug": "computed",
+          "kind": "function",
+          "signature": "computed<T>(fn: () => T): ReadonlySignal<T>",
+          "doc": "A signal derived from other signals: fn re-runs (lazily, when read) after one it read changed.",
+          "docFull": "A signal derived from other signals: `fn` re-runs (lazily, when read) after one it read\nchanged.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "Computes the value."
+            }
+          ],
+          "returns": "A read-only signal.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "effect",
+          "slug": "effect",
+          "kind": "function",
+          "signature": "effect(fn: () => unknown): EffectDispose",
+          "doc": "Run fn now and again after any signal it read changes. fn may return a cleanup, run before the next run and on dispose.",
+          "docFull": "Run `fn` now and again after any signal it read changes. `fn` may return a cleanup, run\nbefore the next run and on dispose.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The effect."
+            }
+          ],
+          "returns": "Its dispose function.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EffectDispose",
+          "slug": "EffectDispose",
+          "kind": "typeAlias",
+          "signature": "type EffectDispose = parenthesized & object",
+          "doc": "The function effect returns: disposes the effect (also using-disposable).",
+          "docFull": "The function {@link effect} returns: disposes the effect (also `using`-disposable).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "For",
+          "slug": "For",
+          "kind": "function",
+          "signature": "For<T>(props: ForProps<T>): VNode",
+          "doc": "Render children for each item of each, or fallback when it is empty (@preact/signals/utils).",
+          "docFull": "Render `children` for each item of `each`, or `fallback` when it is empty\n(`@preact/signals/utils`).",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The items and the item renderer."
+            }
+          ],
+          "returns": "The rendered items.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ForProps",
+          "slug": "ForProps",
+          "kind": "interface",
+          "signature": "interface ForProps<T>",
+          "doc": "Props of For.",
+          "docFull": "Props of {@link For}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ReadonlySignal",
+          "slug": "ReadonlySignal",
+          "kind": "interface",
+          "signature": "interface ReadonlySignal<T>",
+          "doc": "A signal that can be read but not written.",
+          "docFull": "A signal that can be read but not written.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Show",
+          "slug": "Show",
+          "kind": "function",
+          "signature": "Show<T>(props: ShowProps<T>): VNode",
+          "doc": "Render children while when is truthy, else fallback (@preact/signals/utils).",
+          "docFull": "Render `children` while `when` is truthy, else `fallback` (`@preact/signals/utils`).",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The condition and the two branches."
+            }
+          ],
+          "returns": "The branch.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ShowProps",
+          "slug": "ShowProps",
+          "kind": "interface",
+          "signature": "interface ShowProps<T>",
+          "doc": "Props of Show.",
+          "docFull": "Props of {@link Show}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "signal",
+          "slug": "signal-fn",
+          "kind": "function",
+          "signature": "signal<T>(value: T): Signal<T>",
+          "doc": "Create a signal.",
+          "docFull": "Create a signal.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The initial value."
+            }
+          ],
+          "returns": "The signal.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Signal",
+          "slug": "Signal-class",
+          "kind": "class",
+          "signature": "class Signal<T>",
+          "doc": "A reactive value. Read .value to use it (subscribing the computed, effect or component that reads it), assign .value to change it. peek() reads without subscribing.",
+          "docFull": "A reactive value. Read `.value` to use it (subscribing the computed, effect or component that\nreads it), assign `.value` to change it. `peek()` reads without subscribing.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "untracked",
+          "slug": "untracked",
+          "kind": "function",
+          "signature": "untracked<T>(fn: () => T): T",
+          "doc": "Run fn without subscribing to the signals it reads.",
+          "docFull": "Run `fn` without subscribing to the signals it reads.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The reads."
+            }
+          ],
+          "returns": "What fn returned.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useComputed",
+          "slug": "useComputed",
+          "kind": "function",
+          "signature": "useComputed<T>(fn: () => T): ReadonlySignal<T>",
+          "doc": "A computed signal owned by the component; fn is always the latest render's.",
+          "docFull": "A computed signal owned by the component; `fn` is always the latest render's.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "Computes the value."
+            }
+          ],
+          "returns": "The component's computed signal.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useLiveSignal",
+          "slug": "useLiveSignal",
+          "kind": "function",
+          "signature": "useLiveSignal<T>(value: T): ReadonlySignal<T>",
+          "doc": "A signal that follows value (a prop): updated whenever the component renders with a new one.",
+          "docFull": "A signal that follows `value` (a prop): updated whenever the component renders with a new one.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The value to follow."
+            }
+          ],
+          "returns": "The signal.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useSignal",
+          "slug": "useSignal",
+          "kind": "function",
+          "signature": "useSignal<T>(value: T): Signal<T>",
+          "doc": "A signal owned by the component (created once, kept across renders).",
+          "docFull": "A signal owned by the component (created once, kept across renders).",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The initial value."
+            }
+          ],
+          "returns": "The component's signal.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useSignalEffect",
+          "slug": "useSignalEffect",
+          "kind": "function",
+          "signature": "useSignalEffect(fn: () => unknown): void",
+          "doc": "An effect owned by the component: started after mount, disposed on unmount; fn is always the latest render's.",
+          "docFull": "An {@link effect} owned by the component: started after mount, disposed on unmount; `fn` is\nalways the latest render's.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The effect."
+            }
+          ],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         }

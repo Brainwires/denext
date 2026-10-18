@@ -261,6 +261,65 @@ in the summary and in `denext migrate --check`. A Vinxi-era app (`app.config.ts`
 too, with a note to move to Start's current layout first. Pass `--from tanstack-start` to force
 the path. An `app.css?url` link, a Tailwind input included, is compiled and served as in Vite.
 
+### Fresh
+
+A **Fresh** app — Fresh 2 (`jsr:@fresh/core` in `deno.json`, on Vite or Fresh's own builder) or
+Fresh 1.x (`$fresh/`, `fresh.gen.ts`) — is detected from its `deno.json` and `routes/`; pass
+`--from fresh` to force it. Fresh apps are Deno projects already, so the migration keeps the
+route modules where they are and as they are (`routes/`, `islands/`, `components/`; code that
+reads files relative to `import.meta.url` keeps working) and generates denext's side around
+them:
+
+- **`app/`** — a `page.tsx` for every route with a page component, a `route.ts` for every
+  handler-only (API) route, a `layout.tsx` for every `_layout` (the root one runs `_app`), and
+  `not-found.tsx` from `_404` (or `_error` / `_500`, which Fresh also renders for a 404).
+  `[param]`, `[...rest]`, `index` and `(group)` map to folders of the same name; a pattern the
+  folder tree cannot hold (`routeOverride`, `[[optional]]`, a partial segment like
+  `post-[id]`) is served through `middleware.ts`.
+- **`middleware.ts`** runs a request the way Fresh does: `main.ts`'s `app.use()` middleware and
+  `app.get()` / `app.post()` routes, the `_middleware` files, then the route's handler. A
+  handler's `Response` is the answer; `page(data)` (Fresh 1.x: `ctx.render(data)`) hands the data
+  to the page, which denext renders inside the layouts with the status and headers `page()` and
+  the middleware set — for any method, so a form POST that re-renders the page works.
+  `ctx.state` reaches handlers, layouts and pages; `ctx.next()` resolves with a stand-in for the
+  page's response (its status and headers, which middleware may add to). An `HttpError` renders
+  the not-found page (404) or the route's `_error` page. Fresh 1.x's `(req, ctx)` handlers,
+  `defineRoute` / `defineApp` / `defineLayout` and `ctx.renderNotFound()` work too.
+- **Islands** (`islands/` and `(_islands)` folders) get `"use client"`, so each stays its own
+  hydration boundary.
+- **`static/` moves to `public/`.** A Fresh 2 Vite app's `client.ts` stylesheets are imported
+  by the root layout, and the rest of its code moves to `instrumentation-client.ts`. Tailwind
+  (Vite's `@tailwindcss/vite`, or Fresh's Tailwind plugin) becomes denext's
+  `tailwind: { input, output }`; a Tailwind v3 stylesheet needs `npx @tailwindcss/upgrade`
+  first.
+- **`deno.json`** is merged, not replaced: `fresh`, `@fresh/core`, `fresh/runtime`,
+  `$fresh/server.ts` and `$fresh/runtime.ts` map to `denext/fresh` and `denext/fresh/runtime`;
+  `preact`, `preact/hooks`, `preact/compat` and the JSX runtime to denext; `@preact/signals`
+  and `@preact/signals-core` to `denext/signals`. Fresh's and Vite's own packages are dropped,
+  `dev` / `build` / `start` run denext, and your other imports, tasks and settings stay.
+  `fresh.gen.ts`, `dev.ts`, `vite.config.ts`, a 1.x `main.ts` and `fresh.config.ts` are
+  removed; Fresh 2's `main.ts` stays (`middleware.ts` runs it).
+
+`denext/signals` is Preact Signals' API: `signal`, `computed`, `effect`, `batch`, `untracked`,
+`useSignal`, `useComputed`, `useSignalEffect`, `Show` and `For`. A component re-renders when a
+signal its render read changes, a signal in JSX (`{count}`) renders its value, a signal passed
+as a DOM prop (`value={text}`) is bound, and a signal a page passes to an island arrives live —
+one shared signal when two islands get the same one.
+
+What does not migrate is listed by `denext migrate --check`:
+
+| Fresh                                                                                    | On denext                                                                                                                        |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Partials (`<Partial>`, `f-client-nav`)                                                   | `<Partial>` renders its children; links load the next page in full, and `ctx.isPartial` is `false`.                              |
+| An inline `<script dangerouslySetInnerHTML>`                                             | denext's default CSP runs no inline script: move it to a file in `public/` or `instrumentation-client.ts`, or allow it in `csp`. |
+| `import.meta.env` (Vite)                                                                 | Not defined on denext's server; read `Deno.env`, or `publicEnv()` in the browser.                                                |
+| `FRESH_PUBLIC_*` variables, `Deno.env` in an island                                      | Rename to `DENEXT_PUBLIC_*` and read them with `publicEnv()`.                                                                    |
+| `csp()` middleware                                                                       | denext sends its own Content-Security-Policy (the `csp` config key).                                                             |
+| `app.appWrapper` / `layout` / `onError` / `notFound` / `route` / `mountApp` in `main.ts` | Not run; use the `routes/` files (`_app`, `_layout`, `_error`, `_404`).                                                          |
+| Vite plugins other than Fresh's and Tailwind's, Fresh 1.x plugins                        | Not run; port what they do to `denext.config.ts`.                                                                                |
+| Preact's `useErrorBoundary`, `options` hooks, `preact-render-to-string`                  | Catch with `<ErrorBoundary>` from denext; render with `denext/react-dom/server`.                                                 |
+| `ctx.upgrade()` (WebSockets)                                                             | Works under `denext start` / `dev`; denext's Live channels are the portable alternative.                                         |
+
 ---
 
 ## 3c. Adding an iOS / Android target (`--enable-capacitor`)

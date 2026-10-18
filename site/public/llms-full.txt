@@ -29,6 +29,11 @@ emit correct denext instead of Next.js.
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
    A **TanStack Start** app (`@tanstack/react-start` + `tanstackStart()` in vite.config) is wired
    to the `@denext/tanstack-start` plugin, Start's options carried into `tanstackStart({ … })`.
+   A **Fresh** app (Fresh 2's `jsr:@fresh/core`, or 1.x's `$fresh/`) keeps its `routes/` and
+   `islands/`: migrate generates `app/` + `middleware.ts` around them (`denext/fresh/server` runs
+   the handlers, middleware and layouts as Fresh does), marks islands `"use client"`, moves
+   `static/` to `public/` and maps `fresh`, `preact` and `@preact/signals` to denext
+   (`denext/fresh`, `denext/signals`) in its `deno.json`.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
@@ -1783,9 +1788,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FlightPrimitive = string | number | boolean | null` — A JSON primitive leaf in a Flight tree.
 - `type FlightProps = Record<string, FlightValue>` — A serialized props object (VNode-valued props are themselves Flight nodes).
 - `interface FlightSet` — A serialized Set: its values in insertion order.
+- `interface FlightSignal` — A serialized signal (denext/signals): its wire id and current value.
 - `interface FlightStreamOptions` — Options for renderToFlightStream.
 - `interface FlightUrl` — A serialized URL (its href).
-- `type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightBigInt | FlightNonFinite | FlightUrl | FlightMap | FlightSet | FlightChannelRef | FlightEventHandler` — A serialized prop value.
+- `type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightBigInt | FlightNonFinite | FlightUrl | FlightMap | FlightSet | FlightSignal | FlightChannelRef | FlightEventHandler` — A serialized prop value.
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormatDetectionMetadata` — format-detection (telephone=no etc.).
 - `type FormFields = Record<string, FormDataEntryValue>` — The form fields of a submission as a plain object (the default input shape).
@@ -3634,6 +3640,26 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `tryAsync<T, E>(fn: () => T | PromiseLike<T>, mapError?: (thrown: unknown) => E): Promise<Result<Awaited<T>, E>>` — Run a throwing (or rejecting) async call and capture the outcome as a Result.
 - `trySync<T, E>(fn: () => T, mapError?: (thrown: unknown) => E): Result<T, E>` — Run a throwing synchronous call and capture the outcome as a Result.
 - `unwrapOr<T, E, U>(result: Result<T, E>, fallback: U): T | U` — The success value, or fallback for a failure.
+
+### `denext/signals`
+
+- `action<A, R>(fn: (...args: A) => R): (...args: A) => R` — Wrap fn so each call is batched and reads nothing reactively (@preact/signals-core's action).
+- `batch<T>(fn: () => T): T` — Apply several writes as one change: effects and re-renders run once, when the outermost batch ends.
+- `computed<T>(fn: () => T): ReadonlySignal<T>` — A signal derived from other signals: fn re-runs (lazily, when read) after one it read changed.
+- `effect(fn: () => unknown): EffectDispose` — Run fn now and again after any signal it read changes. fn may return a cleanup, run before the next run and on dispose.
+- `type EffectDispose = parenthesized & object` — The function effect returns: disposes the effect (also using-disposable).
+- `For<T>(props: ForProps<T>): VNode` — Render children for each item of each, or fallback when it is empty (@preact/signals/utils).
+- `interface ForProps<T>` — Props of For.
+- `interface ReadonlySignal<T>` — A signal that can be read but not written.
+- `Show<T>(props: ShowProps<T>): VNode` — Render children while when is truthy, else fallback (@preact/signals/utils).
+- `interface ShowProps<T>` — Props of Show.
+- `signal<T>(value: T): Signal<T>` — Create a signal.
+- `class Signal<T>` — A reactive value. Read .value to use it (subscribing the computed, effect or component that reads it), assign .value to change it. peek() reads without subscribing.
+- `untracked<T>(fn: () => T): T` — Run fn without subscribing to the signals it reads.
+- `useComputed<T>(fn: () => T): ReadonlySignal<T>` — A computed signal owned by the component; fn is always the latest render's.
+- `useLiveSignal<T>(value: T): ReadonlySignal<T>` — A signal that follows value (a prop): updated whenever the component renders with a new one.
+- `useSignal<T>(value: T): Signal<T>` — A signal owned by the component (created once, kept across renders).
+- `useSignalEffect(fn: () => unknown): void` — An effect owned by the component: started after mount, disposed on unmount; fn is always the latest render's.
 
 ### `denext/jsx-directives`
 

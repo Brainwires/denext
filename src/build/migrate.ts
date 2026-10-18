@@ -49,6 +49,14 @@ import {
   type TanstackStartMigrateInfo,
 } from "./migrate-tanstack-start.ts";
 import {
+  detectFresh,
+  droppedFreshImports,
+  freshAliasImports,
+  freshDenoJson,
+  type FreshMigrateInfo,
+  transformFreshApp,
+} from "./migrate-fresh.ts";
+import {
   capacitorConfigSource,
   capacitorIdentity,
   expoApiUsage,
@@ -352,9 +360,9 @@ export interface MigrateOptions {
   /** Proxy path prefixes; when omitted, parsed from a literal `vite.config` proxy, else `["/api"]`. */
   proxyPrefixes?: string[];
   /**
-   * Force the source framework instead of auto-detecting (`next` | `remix` | `vite` |
-   * `cra` | `generic` | `expo`). Reserved for ambiguous cases; auto-detection is used when
-   * omitted.
+   * Force the source framework instead of auto-detecting (`next` | `remix` | `react-router` |
+   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh`). Reserved for ambiguous
+   * cases; auto-detection is used when omitted.
    */
   from?: string;
   /**
@@ -436,7 +444,7 @@ export interface AppIconReport {
 
 /** Result of a migration run (for the CLI to print). */
 export interface MigrateResult {
-  kind: "next" | "spa" | "cra" | "generic" | "remix" | "expo" | "tanstack-start";
+  kind: "next" | "spa" | "cra" | "generic" | "remix" | "expo" | "tanstack-start" | "fresh";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -471,6 +479,8 @@ export interface MigrateResult {
   expo?: ExpoMigrateInfo;
   /** Present when {@link kind} is `"tanstack-start"` — the Start options carried and dropped. */
   tanstackStart?: TanstackStartMigrateInfo;
+  /** Present when {@link kind} is `"fresh"` — the route tree generated and what did not migrate. */
+  fresh?: FreshMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
   nextConfig?: NextConfigReport;
   /** Present with `--enable-capacitor`: the Capacitor target written and the steps to run. */
@@ -1411,6 +1421,8 @@ function capacitorSkipReason(r: MigrateResult): string {
     ? "a Remix / React Router app (its loaders and actions need a server)"
     : r.kind === "tanstack-start"
     ? "a TanStack Start app (its server functions need a server)"
+    : r.kind === "fresh"
+    ? "a Fresh app (its handlers and middleware need a server)"
     : "a Pages Router app";
   return `--enable-capacitor covers SPA, Next App Router and Expo apps; this is ${what}, ` +
     "which it does not cover yet";
@@ -1418,6 +1430,10 @@ function capacitorSkipReason(r: MigrateResult): string {
 
 /** The migration for whichever framework `dir` holds. */
 async function migrateAnyProject(dir: string, options: MigrateOptions): Promise<MigrateResult> {
+  // Fresh apps are Deno projects (no package.json), so they are recognized first.
+  if (options.from === "fresh" || (!options.from && await detectFresh(dir))) {
+    return await migrateFreshProject(dir, options);
+  }
   const deps = await readAppDeps(dir);
   return await migrateNonNextProject(dir, deps, options) ??
     await migrateNextProject(dir, deps, options);
@@ -1845,6 +1861,80 @@ async function migrateTanstackStartProject(
     denoJsonExists,
     tanstackStart,
   };
+}
+
+// ── Fresh migration ─────────────────────────────────────────────────────────
+
+/**
+ * A Fresh app (1.x or 2) → denext's App Router: the `app/` tree and `middleware.ts` generated
+ * around the untouched Fresh route modules (`transformFreshApp`), islands marked `"use client"`,
+ * `static/` moved to `public/`, and the app's own `deno.json` merged — Fresh, Preact and Vite
+ * imports replaced by denext's aliases, denext's tasks, the JSX runtime pointed at denext.
+ */
+async function migrateFreshProject(dir: string, options: MigrateOptions): Promise<MigrateResult> {
+  const detection = await detectFresh(dir);
+  if (!detection) {
+    throw new Error(
+      `no Fresh app in ${dir}: expected a deno.json mapping "fresh" (Fresh 2) or "$fresh/" ` +
+        "(Fresh 1.x), or a fresh.gen.ts, beside a routes/ directory",
+    );
+  }
+  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const imports = await buildAppRouterImports(dir, R, {});
+  const aliases = freshAliasImports(R.sub);
+  Object.assign(imports, aliases);
+  const written: string[] = [];
+  const fresh = await transformFreshApp(dir, detection, written);
+  const before = (detection.config.imports ?? {}) as Record<string, string>;
+  const removed = droppedFreshImports(before);
+  const configPath = detection.configPath ?? join(dir, "deno.json");
+  const merged = freshDenoJson(detection.config, {
+    marker: GEN_MARKER_TEXT,
+    imports,
+    tasks: appRouterTasks(R, null),
+    unstable: withDenextUnstable(detection.config.unstable),
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
+  });
+  await mfs.writeTextFile(configPath, JSON.stringify(merged, null, 2) + "\n");
+  written.unshift(configPath);
+  await ensureGitignore(dir, [".denext/", "out/", "_fresh/"], written);
+  await ensureVscodeDeno(dir, written);
+  const configExists = !(await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => freshConfigSource(fresh),
+    written,
+  ));
+  return {
+    kind: "fresh",
+    wrote: written,
+    aliased: removed.filter((k) => k in aliases),
+    passthrough: [],
+    dropped: removed.filter((k) => !(k in aliases)),
+    flagged: [],
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: !configExists,
+    pagesConfigExists: configExists,
+    denoJsonExists: false,
+    fresh,
+  };
+}
+
+/** A migrated Fresh app's `denext.config.ts`: the Tailwind build it had, if any. */
+function freshConfigSource(fresh: FreshMigrateInfo): string {
+  const tailwind = fresh.tailwind
+    ? `  // Compiled by denext (Tailwind v4); the root layout imports the output.\n` +
+      `  tailwind: { input: ${JSON.stringify(fresh.tailwind.input)}, output: ${
+        JSON.stringify(fresh.tailwind.output)
+      } },\n`
+    : "";
+  return `${GEN_MARKER}
+import type { DenextConfig } from "denext/server";
+
+// A Fresh ${fresh.version}.x app on denext: its routes run through middleware.ts and app/.
+export default {
+${tailwind}} satisfies DenextConfig;
+`;
 }
 
 // ── Vite SPA migration ──────────────────────────────────────────────────────

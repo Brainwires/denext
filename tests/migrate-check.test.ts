@@ -1,7 +1,7 @@
 // `denext migrate --check`: the dry run of `denext migrate`.
 //
 // For every source `migrate` supports (Next App Router, Pages Router, Vite, CRA, a generic
-// React SPA, Remix, React Router v7 framework mode, Expo) these tests prove three things:
+// React SPA, Remix, React Router v7 framework mode, Expo, Fresh) these tests prove three things:
 //   1. nothing is written: the project tree (paths, sizes, mtimes, contents) is identical
 //      before and after the check;
 //   2. the planned changes are exactly what the real migration does: the same fixture is
@@ -277,6 +277,40 @@ Deno.test("migrate --check: a generic React SPA", async () => {
     "src/main.tsx": `document.getElementById("app");\n`,
   });
   assertEquals(r.source, "generic-react");
+});
+
+Deno.test("migrate --check: Fresh — the generated app/, the moves and deletes are planned", async () => {
+  const r = await checkAndCompare({
+    "deno.json": {
+      imports: { fresh: "jsr:@fresh/core@^2.3.3", preact: "npm:preact@^10.29.1" },
+      compilerOptions: { jsx: "precompile", jsxImportSource: "preact" },
+    },
+    "vite.config.ts":
+      `import { fresh } from "@fresh/plugin-vite";\nexport default { plugins: [fresh()] };\n`,
+    "client.ts": `import "./assets/styles.css";\n`,
+    "assets/styles.css": `body { margin: 0; }\n`,
+    "routes/_app.tsx": `export default function App({ Component }) { return <Component />; }\n`,
+    "routes/index.tsx": `export default function Home() { return <p>home</p>; }\n`,
+    "routes/api/[name].ts": `export const handler = { GET: () => new Response("x") };\n`,
+    "islands/Counter.tsx":
+      `export default function Counter() { return <button type="button" />; }\n`,
+    "static/logo.svg": "<svg/>\n",
+  });
+  assertEquals(r.source, "fresh");
+  const actions = new Set(r.changes.map((c) => `${c.action} ${c.path}`));
+  for (
+    const change of [
+      "create app/page.tsx",
+      "create app/layout.tsx",
+      "create app/api/[name]/route.ts",
+      "create middleware.ts",
+      "modify islands/Counter.tsx",
+      "move public/logo.svg",
+      "delete vite.config.ts",
+      "delete client.ts",
+      "modify deno.json",
+    ]
+  ) assert(actions.has(change), `${change}\n${JSON.stringify(r.changes, null, 2)}`);
 });
 
 Deno.test("migrate --check: Remix — the route-tree transform (creates, deletes) is planned", async () => {

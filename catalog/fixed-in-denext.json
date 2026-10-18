@@ -717,6 +717,36 @@
         }
       ],
       "docs": "/docs/spa"
+    },
+    {
+      "id": "fresh-app-migration",
+      "title": "A Fresh app moved without rewriting its routes and islands",
+      "group": "migration",
+      "kind": "capability",
+      "problem": "Moving a Fresh app (Preact islands, file routes with handlers and middleware, Preact Signals) to another framework means rewriting every route, handler and island for that framework's conventions and component runtime.",
+      "errorText": [],
+      "affects": {
+        "stack": "Fresh 2 (Vite or Fresh's builder) and Fresh 1.x",
+        "versions": "1.x, 2.x"
+      },
+      "cause": "Fresh's routing, handler and island conventions and its Preact runtime are its own; a React-shaped framework expects different files and components.",
+      "denext": "`denext migrate` recognizes a Fresh app and generates denext's `app/` tree and `middleware.ts` around the unchanged route modules: handlers, `_middleware` state, `page()` data, layouts, `_error` / `_404` pages and form POSTs run as in Fresh (`denext/fresh/server`). Islands become `\"use client\"` components, `static/` moves to `public/`, and Preact and Preact Signals map to denext — a signal a page passes to an island stays live in the browser. `denext migrate --check` lists what has no equivalent (Partials, Vite's `import.meta.env`, inline scripts under the default CSP).",
+      "upstreamFirst": null,
+      "evidence": [
+        {
+          "test": "tests/migrate-fresh.test.ts",
+          "name": "migrate: a Fresh 2 app — app/ and middleware.ts around routes/, islands, static, styles"
+        },
+        {
+          "test": "tests/fresh-runtime.test.ts",
+          "name": "Fresh 2: middleware state, page data, layouts, code routes, route handlers"
+        },
+        {
+          "test": "tests/preact-signals.test.ts",
+          "name": "a signal prop crosses the Flight boundary as one live signal per server signal"
+        }
+      ],
+      "docs": "/docs/migrating"
     }
   ]
 }

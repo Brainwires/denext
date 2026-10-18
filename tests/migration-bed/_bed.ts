@@ -27,6 +27,8 @@ interface BedRoute {
   contains: string;
   /** For a redirect: a substring the `Location` header must contain (redirects are not followed). */
   location?: string;
+  /** Request headers (a browser's `Accept`, for an app that answers by it). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -40,6 +42,11 @@ interface BedBrowserCheck {
   hydrated: string;
   /** A link to click (a CSS selector) and an expression that is truthy once it navigated. */
   navigate?: { click: string; until: string };
+  /**
+   * An interaction on the hydrated page: a control to click (a CSS selector) and an expression
+   * that is truthy once the page reacted (an island's state changed), on the same document.
+   */
+  interact?: { click: string; until: string };
 }
 
 /**
@@ -67,6 +74,11 @@ export interface Bed {
   install: string[][];
   /** App-specific setup after the install and before migrate (an env file, a DB seed). */
   prepare?: (appDir: string) => Promise<void>;
+  /**
+   * An edit after migrate and before build — the hand fix `migrate --check` asked for (a source
+   * line denext cannot run as written), applied the way the report says to.
+   */
+  afterMigrateEdit?: (appDir: string) => Promise<void>;
   /** Extra `denext migrate` flags (`["--from", "remix"]`). */
   migrate?: string[];
   /**
@@ -252,6 +264,7 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
     });
 
     if (bed.afterMigrate && !(await runCommands(bed, bed.afterMigrate, app))) return;
+    await bed.afterMigrateEdit?.(app);
 
     await t.step("denext build", async () => {
       const r = await denext(["build", "."], app, BUILD_TIMEOUT_MS);
@@ -263,7 +276,10 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       await t.step("routes render", async () => {
         const failures: string[] = [];
         for (const route of bed.routes) {
-          const res = await fetch(server.origin + route.path, { redirect: "manual" });
+          const res = await fetch(server.origin + route.path, {
+            redirect: "manual",
+            headers: route.headers,
+          });
           const body = await res.text();
           const want = route.status ?? 200;
           const location = res.headers.get("location") ?? "";
@@ -312,6 +328,15 @@ async function browserCheck(server: { origin: string }, check: BedBrowserCheck):
   try {
     const page = await browser.newPage(server.origin + check.path);
     await pollFor(page, check.hydrated, READY_TIMEOUT_MS);
+    if (check.interact) {
+      await page.evaluate("globalThis.__bedSameDocument = true");
+      await (await page.$(check.interact.click))!.click();
+      await pollFor(page, check.interact.until, READY_TIMEOUT_MS);
+      assert(
+        await page.evaluate("globalThis.__bedSameDocument === true"),
+        `${check.interact.click} reloaded the page instead of updating it`,
+      );
+    }
     if (!check.navigate) return;
     await page.evaluate("globalThis.__bedSameDocument = true");
     await (await page.$(check.navigate.click))!.click();
