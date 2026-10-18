@@ -25,6 +25,7 @@ import {
 } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
 import { inRootContext } from "../server/root-context.ts";
+import { holdRequestDeadline } from "../server/request-context.ts";
 import { configAnchorsResolution } from "./module-config.ts";
 import { recordSelfWrite, writeManagedFile } from "./self-writes.ts";
 import { appConfigBackupPath, guardRestore, isInjectedCssShimEntry } from "./css-config-guard.ts";
@@ -605,7 +606,7 @@ async function compileAppTailwind(
  *
  * @param opts Project directory, its config path, and the build output dir.
  */
-export async function buildAppCss(opts: {
+export function buildAppCss(opts: {
   projectDir: string;
   configPath: string;
   outDir: string;
@@ -635,6 +636,13 @@ export async function buildAppCss(opts: {
   /** The build target's import map the crawls resolve through ({@linkcode AppCss.graph}). */
   graph?: AppCss["graph"];
 }): Promise<AppCss | null> {
+  // Framework work done on a request's behalf (a router plugin's first dev render): its time does
+  // not count against the request's deadline.
+  return holdRequestDeadline(() => compileAppCss(opts));
+}
+
+/** {@linkcode buildAppCss}'s work. */
+async function compileAppCss(opts: Parameters<typeof buildAppCss>[0]): Promise<AppCss | null> {
   // Compile Tailwind first so its output exists for the walk below.
   if (opts.tailwind) await compileAppTailwind(opts.tailwind, opts.minify, opts.projectDir);
   const excluded = opts.tailwind ? new Set([resolve(opts.tailwind.input)]) : null;
