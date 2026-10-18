@@ -12,6 +12,7 @@ import {
   type MacosSigningEntitlementsOptions,
   V8_ENTITLEMENTS,
 } from "../../src/build/desktop-macos-signing.ts";
+import { macosCodesignArgs } from "../../src/build/code-signing.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
@@ -385,6 +386,7 @@ async function runScaffoldedSign(
     "cefHelperEntitlements",
     "macosSigningEntitlements",
     "V8_ENTITLEMENTS",
+    "macosCodesignArgs",
     `${code}\nreturn sign;`,
   );
   await sign(
@@ -405,6 +407,7 @@ async function runScaffoldedSign(
         readSigned: (path) => Promise.resolve(signed[path] ?? ""),
       }),
     V8_ENTITLEMENTS,
+    macosCodesignArgs,
   )(app, identity, entitlements, undefined, undefined);
   return { calls, plists };
 }
