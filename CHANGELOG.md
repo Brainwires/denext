@@ -93,6 +93,23 @@ and this project adheres to
   `unstable_cache` call does; `revalidate: 0` is `fetch`'s no-store (fetched every time, nothing
   stored). Entries are keyed per cache options too, so two call sites tagging one URL
   differently never share an entry.
+- **A Suspense boundary that does not suspend renders inline in the streamed shell, as React's
+  renderer writes it.** Every streaming path (the App Router's HTML and `"use client"` routes,
+  `react-dom/server`'s `renderToReadableStream`, `renderToPipeableStream` and `prerender`) sent
+  every boundary as a fallback placeholder plus a `<template>` a script moved into place, even
+  when its content had finished with the shell, so that content was invisible with JavaScript
+  off, and a crawler or an `allReady` consumer got the fallback. A boundary is now decided when
+  the shell is written, as in React: content that finished by then (plain components, `use()` of
+  a promise already known to be settled) is written in place between `<!--$-->` /
+  `<!--/$-->`, with no fallback, placeholder, template or reveal script; content that suspended
+  (a thrown promise, an async component) streams as before. `renderToReadableStream` now writes
+  the shell on the first read, so `await stream.allReady` before reading (and `prerender`, and
+  piping from `onAllReady`) yields every boundary inline. A route whose boundaries all finished in
+  the shell is served as one buffered document. Hydration accepts both shapes without a mismatch
+  warning or a re-render: it passes over the boundary comments and unwraps a revealed
+  placeholder in place. Before, hydrating a streamed boundary through `hydrateRoot` warned and
+  re-created its content. A boundary that fails before the shell is written keeps its fallback in
+  a placeholder marked `data-dnx-failed`, which `denext doctor` reports as a stuck hole.
 - **`@denext/tanstack-start`: a page `denext export` prerenders works with JavaScript off.** The
   export wrote each page as the server streamed it, so a route's content arrived as a
   `<template>` that a script moves into its Suspense placeholder; with JavaScript off only the

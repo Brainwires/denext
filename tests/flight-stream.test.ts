@@ -379,8 +379,12 @@ Deno.test("renderToFlightStream: each deferred value's data streams as it resolv
   const reader = renderToFlightStream(tree).getReader();
   const dec = new TextDecoder();
   let early = "";
-  // Read until the fast field's data chunk arrives — the slow promise is STILL pending.
-  while (!/data-dnx-v="dnxv0">\{"reviews":\["great"\]\}/.test(early)) {
+  // Read until the fast field's data chunk and its boundary arrive — the slow promise is STILL
+  // pending. (The boundary suspended, so it streams a turn after its data, as React's would.)
+  while (
+    !/data-dnx-v="dnxv0">\{"reviews":\["great"\]\}/.test(early) ||
+    !early.includes(`<template data-dnx-r="dnx0">`)
+  ) {
     const { value, done } = await reader.read();
     assert(!done, "the stream must not end while the slow field is pending");
     early += dec.decode(value);

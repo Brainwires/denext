@@ -77,10 +77,13 @@ export function generateStaticParams() {
       <h3>Streaming SSR — on by default</h3>
       <p>
         A route with pending <code>&lt;Suspense&gt;</code>{" "}
-        boundaries streams: the shell and fallbacks flush first, then each boundary's real content
-        streams in as a <code>&lt;template&gt;</code>{" "}
-        revealed by a single hashed swap-runtime script. A route with no holes buffers (so it stays
-        cache-friendly). Streaming carries the same strict <strong>hash-based CSP</strong>{" "}
+        boundaries streams. As in React, each boundary is decided when the shell is written: one
+        whose content finished with the shell is written in place (readable with JavaScript off),
+        one that suspended flushes as its fallback, and its real content streams in later as a{" "}
+        <code>&lt;template&gt;</code>{" "}
+        revealed by a single hashed swap-runtime script. A route with no holes left buffers (so it
+        stays cache-friendly). Streaming carries the same strict <strong>hash-based CSP</strong>
+        {" "}
         as a buffered response, and works on <code>"use client"</code> (Flight) routes.
       </p>
       <Code lang="ts">

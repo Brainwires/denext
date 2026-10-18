@@ -1,12 +1,14 @@
 // A prerendered page as a static file: its streamed Suspense boundaries resolved in place.
 //
-// denext's streaming render sends each Suspense boundary as a placeholder
-// (`<div data-dnx-b="id">fallback</div>`) and, once it resolves, its content as a
+// denext's streaming render writes a Suspense boundary that finished in the shell pass inline,
+// as React does. One that suspended past it (a deferred loader's `<Await>`) is sent as a
+// placeholder (`<div data-dnx-b="id">fallback</div>`) and, once it resolves, its content as a
 // `<template data-dnx-r="id">…</template>` that a small script moves into the placeholder. A live
 // response needs that; a static file does not, and with JavaScript off the content would never
 // show. The export writes each page as the browser's DOM ends up after the script ran: the
 // template's content in its placeholder (in place of the fallback), the template gone. The
-// placeholder element stays, so the page hydrates against the same DOM as a streamed one.
+// placeholder element stays, so the page hydrates against the same DOM as a streamed one (the
+// client unwraps it as it hydrates).
 
 /** One tag the scanner tracks: an opening or closing `div` / `template`, or a `script`. */
 const TAG = /<(\/?)(div|template|script)\b[^>]*>/gi;

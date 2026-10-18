@@ -455,13 +455,17 @@ function boundaryCheck(errors: readonly unknown[]): ProbeCheck {
 }
 
 /**
- * The streamed Suspense holes a document left on their fallback: every `data-dnx-b`
- * placeholder of a streamed document (one carrying the swap runtime) that no
- * `<template data-dnx-r>` fills. A hole whose render threw with nothing inside it to catch
+ * The Suspense holes a document left on their fallback: every `data-dnx-b` placeholder of a
+ * streamed document (one carrying the swap runtime) that no `<template data-dnx-r>` fills,
+ * and every placeholder marked `data-dnx-failed` (a boundary that failed before the shell
+ * flushed, in any document). A hole whose render threw with nothing inside it to catch
  * streams no template, so its fallback is what the user keeps seeing — in a 200 page.
  */
 export function stuckHoles(html: string): string[] {
-  if (!html.includes(SWAP_RUNTIME_BODY)) return [];
+  if (!html.includes(SWAP_RUNTIME_BODY)) {
+    const failed = html.matchAll(/<div data-dnx-b="([^"]+)" data-dnx-failed/g);
+    return [...new Set([...failed].map((m) => m[1]))];
+  }
   const filled = new Set([...html.matchAll(/<template data-dnx-r="([^"]+)"/g)].map((m) => m[1]));
   const placeholders = [...html.matchAll(/<div data-dnx-b="([^"]+)"/g)].map((m) => m[1]);
   return [...new Set(placeholders)].filter((id) => !filled.has(id));

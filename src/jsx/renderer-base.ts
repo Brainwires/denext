@@ -156,10 +156,18 @@ export abstract class VNodeRenderer<T> {
         return await this.renderChildren(children, scopes, head);
       } catch (err) {
         if (!isThenable(err)) throw err;
+        this.suspended(scopes);
         await err;
       }
     }
   }
+
+  /**
+   * The render on the `scopes` path is about to wait: a thrown thenable, or an async
+   * component's promise. A streaming renderer marks the enclosing Suspense boundary as
+   * suspended (React retries suspended work after the shell, so it streams); others ignore it.
+   */
+  protected suspended(_scopes: ProviderScope[]): void {}
 
   /** Dispatch one VNode by kind. */
   renderVNode(node: VNode, scopes: ProviderScope[], head: HeadCollector | null = null): Promise<T> {
@@ -336,8 +344,9 @@ export abstract class VNodeRenderer<T> {
     head: HeadCollector | null,
   ): Promise<T> {
     const out = invokeServerComponent(type, props, scopes);
-    const rendered = out instanceof Promise ? await out : out;
-    return await this.renderChild(rendered, scopes, head);
+    if (!(out instanceof Promise)) return await this.renderChild(out, scopes, head);
+    this.suspended(scopes);
+    return await this.renderChild(await out, scopes, head);
   }
 }
 

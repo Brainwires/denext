@@ -2339,7 +2339,7 @@
           "kind": "function",
           "signature": "renderToReadableStream(node: VNodeChildren, options?: StreamOptions): RenderStream",
           "doc": "Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.",
-          "docFull": "Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`,\nresolving Suspense boundaries progressively.\n\nThe stream is **pull-gated**: the shell is enqueued as the first chunk, and each later\nchunk (a batch of settled boundaries, then the tail) is produced only when the consumer\nasks for more (`desiredSize > 0`), so a slow consumer applies backpressure instead of the\nwhole document queueing in memory as encoded chunks. Boundary rendering is not gated —\nsee {@link RenderStream.allReady}.",
+          "docFull": "Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`,\nresolving Suspense boundaries progressively.\n\nThe stream is **pull-gated**: nothing is produced ahead of a read. The first read gets the\nshell — every Suspense boundary that has finished by then inline, as React writes it, the\nrest as fallback placeholders — and each later chunk (a batch of settled boundaries, then\nthe tail) is produced only when the consumer asks for more, so a slow consumer applies\nbackpressure instead of the whole document queueing in memory as encoded chunks. Boundary\nrendering is not gated — see {@link RenderStream.allReady}: a consumer that awaits it before\nreading gets every boundary inline.",
           "params": [],
           "returns": "",
           "examples": [],

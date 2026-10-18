@@ -244,8 +244,8 @@ The glass-box view of how this page reached the browser — see
   `streamed`, plus `· cache HIT` / `STALE` / `MISS` when the request was served
   through the page cache. Read from a dev-only JSON island the document renderer
   emits.
-- **Suspense boundaries (live waterfall)** — one row per streamed boundary: its
-  id, a bar proportional to its server resolve time, `Nms server`, and
+- **Suspense boundaries (live waterfall)** — one row per streamed boundary (one that
+  finished with the shell is written in place and has none): its id, a bar proportional to its server resolve time, `Nms server`, and
   `revealed @Nms` once the hole lands on the client. The swap runtime records
   reveals in real time, so the timeline fills as the stream arrives rather than
   only at end-of-stream, and settles onto the authoritative server times when the
