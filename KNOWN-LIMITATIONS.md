@@ -238,10 +238,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
   on first use). `jobs/` and `services/` are not started.
 - **The first-party Markdown renderer escapes raw HTML by default**; `markdown: { html:
-  "sanitize" }` keeps what an allowlist sanitizer allows, never passing HTML through. Sanitized
-  HTML is closed inside the Markdown block it was written in, so Markdown can't sit inside a raw
-  element across blank lines (`<details>` + a blank line + `**md**` renders the Markdown after
-  the `</details>`); write that body as HTML, or use an `.mdx` entry for components.
+  "sanitize" }` keeps what an allowlist sanitizer allows, never passing HTML through. Only the
+  block containers (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when
+  allowlisted) stay open across Markdown blocks, and only when an HTML block of their own opens
+  them; an inline element (`<b>`, `<span>`, …) is closed at the end of the paragraph, heading,
+  cell or item it was written in. Use an `.mdx` entry for components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
   ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
   file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party

@@ -113,11 +113,15 @@ document (`{ h1: Heading, Callout }`).
   `iframe`, `object`, `form` controls, `svg`, `math`, `template`, any namespaced or custom
   element, `on*` handlers, `style`, `srcdoc`, `formaction` and `xlink:*` never survive. URLs are
   entity-decoded and control-stripped before the scheme check (`http`, `https`, `mailto`,
-  relative and `#fragment` only); `id` / `name` get GitHub's `user-content-` prefix (and
-  same-document `#fragment` links follow it); `class` is stripped; `target="_blank"` comes with
-  `rel="noopener noreferrer nofollow"`; comments and doctypes are removed; and every element is
-  closed inside the Markdown block it was written in (so a `<details>` opened in one block closes
-  there — keep it and its body in one HTML block). `sanitize: { allowElements, allowAttributes,
+  relative and `#fragment` only); `id` / `name` get GitHub's `user-content-` prefix, and a
+  `#fragment` link follows it when the document's raw HTML defines that id or name (a link to a
+  Markdown heading's id is left as written); `class` is stripped; `target="_blank"` comes with
+  `rel="noopener noreferrer nofollow"`; comments and doctypes are removed. A block container
+  (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when allowlisted) that an
+  HTML block leaves open wraps the Markdown blocks after it until a later HTML block closes it
+  (or the document ends), so GitHub's `<details>` + blank line + Markdown + `</details>` pattern
+  works; anything else is closed inside the block it was written in, and raw HTML never closes
+  the renderer's own markup. `sanitize: { allowElements, allowAttributes,
   allowDataImages }` only adds to the allowlist (`{ "*": ["class"] }` keeps `class`;
   `allowDataImages` admits base64 PNG/GIF/JPEG/WebP on `<img src>`), never the denied set. The
   option is stored with each `.md` entry at build; `renderContent(entry, { markdown })` overrides

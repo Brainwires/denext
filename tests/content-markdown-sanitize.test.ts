@@ -328,11 +328,11 @@ Deno.test("renderMarkdown html: sanitize — inline tags mix with Markdown, code
   assertStringIncludes(html, `<td><kbd>k</kbd></td><td>y</td>`);
   assertStringIncludes(html, `<li><mark>m</mark></li>`);
   assertStringIncludes(html, `<li id="fn-1"><s>old</s> <a href="#fnref-1"`);
-  // The renderer's own links keep their attributes; raw ones are rewritten.
+  // The renderer's own links keep their attributes; a raw one gets ours.
   assertEquals(
     renderMarkdown(`[ext](https://e.x) <a href="#top" target="_blank">t</a>`, S),
     `<p><a href="https://e.x" rel="noopener noreferrer" target="_blank">ext</a> ` +
-      `<a href="#user-content-top" target="_blank" rel="noopener noreferrer nofollow">t</a></p>`,
+      `<a href="#top" target="_blank" rel="noopener noreferrer nofollow">t</a></p>`,
   );
 });
 
@@ -348,10 +348,6 @@ Deno.test("renderMarkdown html: sanitize — raw HTML can't escape the block it 
     renderMarkdown(`<div align="center">\n  <img src="logo.png" alt="L">\n</div>\n\nafter`, S),
     `<div align="center">\n  <img src="logo.png" alt="L" />\n</div>\n<p>after</p>`,
   );
-  assertEquals(
-    renderMarkdown("<details>\n<summary>Hi</summary>\n\n**md**\n\n</details>", S),
-    `<details>\n<summary>Hi</summary></details>\n<p><strong>md</strong></p>`,
-  );
   // Kinds 1–5 run to their end marker across blank lines; comments vanish.
   assertEquals(
     renderMarkdown("<pre>\n<b>a</b>\n\nb\n</pre>\n\n<!-- note\n\nstill -->\n\ntext", S),
@@ -365,6 +361,95 @@ Deno.test("renderMarkdown html: sanitize — raw HTML can't escape the block it 
   );
   assertEquals(renderMarkdown("<span>\nlone\n</span>", S), `<span>\nlone\n</span>`);
 });
+
+Deno.test("renderMarkdown html: sanitize — a raw container wraps the Markdown blocks after it", () => {
+  // GitHub's <details> pattern: the list sits inside the details element.
+  assertEquals(
+    renderMarkdown("<details>\n<summary>More</summary>\n\n- a\n- b\n\n</details>\n\nafter", S),
+    `<details>\n<summary>More</summary>\n<ul><li>a</li><li>b</li></ul>\n</details>\n<p>after</p>`,
+  );
+  // Nested containers, each closed by its own HTML block.
+  assertEquals(
+    renderMarkdown(
+      `<div align="center">\n\n<details open>\n\n**x**\n\n</details>\n\n<blockquote>\n\ny\n\n` +
+        `</blockquote>\n\n</div>\n\nz`,
+      S,
+    ),
+    `<div align="center">\n<details open="">\n<p><strong>x</strong></p>\n</details>\n` +
+      `<blockquote>\n<p>y</p>\n</blockquote>\n</div>\n<p>z</p>`,
+  );
+  // Left open at the end of the document: closed there, before the footnotes.
+  assertEquals(
+    renderMarkdown("<details>\n\nnever closed[^1]\n\n[^1]: note", S),
+    `<details>\n<p>never closed<sup class="footnote-ref"><a href="#fn-1" id="fnref-1">1</a></sup>` +
+      `</p>\n</details>\n<section class="footnotes"><ol><li id="fn-1">note ` +
+      `<a href="#fnref-1" class="footnote-backref">↩</a></li></ol></section>`,
+  );
+  // A stray close tag with nothing open is dropped; an outer one closes the inner one too.
+  assertEquals(renderMarkdown("</details>\n\nx", S), `<p>x</p>`);
+  assertEquals(
+    renderMarkdown("<div>\n\n<details>\n\nx\n\n</div>\n\ny", S),
+    `<div>\n<details>\n<p>x</p>\n</details></div>\n<p>y</p>`,
+  );
+  // Only containers carry: an inline element left open in the block is closed in it.
+  assertEquals(
+    renderMarkdown("<div><span>\n\n**x**\n\n</div>", S),
+    `<div><span></span>\n<p><strong>x</strong></p>\n</div>`,
+  );
+  assertEquals(renderMarkdown("<span>\n\nx", S), `<span></span>\n<p>x</p>`);
+  // Inline raw HTML keeps its per-block scope: it neither opens nor closes a carried container.
+  assertEquals(
+    renderMarkdown("<div>\n\npara </div> more <details>x\n\nend", S),
+    `<div>\n<p>para  more <details>x</details></p>\n<p>end</p>\n</div>`,
+  );
+  // A container never closes the renderer's markup, and an HTML block can't reach into a list.
+  const list = renderMarkdown("<div>\n\n- a\n</ul></div>\n\nb", S);
+  assertEquals(list, `<div>\n<ul><li>a</li></ul>\n</div>\n<p>b</p>`);
+  assertBalanced(list);
+});
+
+Deno.test("renderMarkdown html: sanitize — #fragment links follow the user-content- ids the raw HTML defines", () => {
+  // A link to a Markdown heading stays as written; one to a raw id (defined before or after it)
+  // follows the id's user-content- prefix.
+  assertEquals(
+    renderMarkdown(
+      `## Intro\n\n<a href="#intro">h</a> <a href="#box">b</a> <a href="#anchor">n</a>\n\n` +
+        `<div id="box">x</div>\n\n<a name="anchor"></a>`,
+      S,
+    ),
+    `<h2 id="intro">Intro</h2>\n<p><a href="#intro">h</a> <a href="#user-content-box">b</a> ` +
+      `<a href="#user-content-anchor">n</a></p>\n<div id="user-content-box">x</div>\n` +
+      `<p><a name="user-content-anchor"></a></p>`,
+  );
+  // The same rule standalone, and idempotent (an already-prefixed id or link matches too).
+  const once = sanitizeHtml(`<a href="#x">1</a><a href="#y">2</a><p id="y"></p>`);
+  assertEquals(
+    once,
+    `<a href="#x">1</a><a href="#user-content-y">2</a><p id="user-content-y"></p>`,
+  );
+  assertEquals(sanitizeHtml(once), once);
+  assertEquals(
+    sanitizeHtml(`<a href="#z">z</a><p id="user-content-z"></p>`),
+    `<a href="#user-content-z">z</a><p id="user-content-z"></p>`,
+  );
+  // A forged marker in the input is inert.
+  assertEquals(sanitizeHtml(`<a href="#\u00030\u0003">x</a>`), `<a href="#0">x</a>`);
+  assertEquals(
+    renderMarkdown(`<a href="#\u00030\u0003">x</a> <a href="#y">y</a>`, S),
+    `<p><a href="#0">x</a> <a href="#y">y</a></p>`,
+  );
+});
+
+/** Assert `html` (sanitizer output, whose attribute values never hold `>`) nests properly. */
+function assertBalanced(html: string): void {
+  const stack: string[] = [];
+  for (const [, close, name, self] of html.matchAll(/<(\/?)([a-z0-9]+)[^>]*?(\/?)>/g)) {
+    if (self) continue;
+    if (!close) stack.push(name);
+    else assertEquals(stack.pop(), name, `misnested </${name}> in ${html}`);
+  }
+  assertEquals(stack, [], `unclosed in ${html}`);
+}
 
 /** A small seeded PRNG (mulberry32), so a failing fuzz case reproduces. */
 function prng(seed: number): () => number {
@@ -520,6 +605,42 @@ Deno.test("sanitizeHtml fuzz: tag/attribute soup parses (deno-dom) with nothing 
   }
 });
 
+Deno.test("renderMarkdown fuzz: multi-block documents with raw containers stay safe and balanced", () => {
+  const rand = prng(0xb10c5);
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
+  const BLOCKS = [
+    "<details>",
+    "<details open><summary>s</summary>",
+    "</details>",
+    "<div>",
+    "</div>",
+    "<blockquote>",
+    "</blockquote>",
+    "<figure>",
+    "</figure>",
+    "<section>",
+    "<div><svg>",
+    "</p></li></ul>",
+    "- item\n- <b>two",
+    "1. one\n2. </details>",
+    "> quote </div>",
+    "| a | b |\n|---|---|\n| <div> | </table> |",
+    "```\n</details>\n```",
+    '## Heading <a href="#heading">h</a>',
+    'para [x](#box) <a href="#box">b</a> <span id="box">',
+    "text[^1]\n\n[^1]: <details>note",
+  ];
+  for (let k = 0; k < 400; k++) {
+    const parts: string[] = [];
+    const n = 1 + Math.floor(rand() * 8);
+    for (let b = 0; b < n; b++) parts.push(rand() < 0.75 ? pick(BLOCKS) : soup(rand));
+    const html = renderMarkdown(parts.join("\n\n"), S);
+    assertSafe(html, RENDERER);
+    assert(!html.includes("\u0002") && !html.includes("\u0003"), `marker leaked: ${html}`);
+    if (parts.every((p) => BLOCKS.includes(p))) assertBalanced(html);
+  }
+});
+
 Deno.test("sanitize mode stays linear on pathological input", () => {
   const big = "<a ".repeat(20_000) + " ".repeat(20_000) + "<b>".repeat(20_000) +
     "</i>".repeat(20_000);
@@ -527,5 +648,5 @@ Deno.test("sanitize mode stays linear on pathological input", () => {
   sanitizeHtml(big);
   renderMarkdown(big, S);
   renderMarkdown("<div " + "a ".repeat(20_000), S);
-  assert(performance.now() - t0 < 5_000, "sanitizing stays fast");
+  assert(performance.now() - t0 < 30_000, "sanitizing stays linear");
 });

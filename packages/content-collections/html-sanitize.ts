@@ -696,16 +696,69 @@ function attributeAllowed(element: string, name: string, policy: SanitizePolicy)
   return listed === true && attributeNameAllowed(name);
 }
 
-/** A URL attribute's value, or null to drop it; `#fragment` links follow the id rewrite. */
+/** Raw containers that may stay open across the Markdown blocks after their HTML block. */
+const CONTAINERS = new Set(["details", "div", "section", "aside", "blockquote", "figure"]);
+
+/** The marker a same-document `#fragment` link carries until the document's ids are known. */
+// deno-lint-ignore no-control-regex -- U+0003 delimits the marker
+const LINK_MARK = /\u0003(\d+)\u0003/g;
+
+/**
+ * One document's sanitizing state, shared by every fragment of it (each HTML block and inline run
+ * of a Markdown document): its policy, the ids and names its raw HTML defines, the `#fragment`
+ * links waiting on them, and the raw containers still open between Markdown blocks.
+ */
+export class SanitizeDocument {
+  /** Ids / names the raw HTML defines, as written (and without a `user-content-` prefix). */
+  readonly #ids = new Set<string>();
+  /** The fragment of each held `#fragment` link, by marker index. */
+  readonly #links: string[] = [];
+  /** Raw containers left open by an HTML block, outermost first. */
+  carried: Open[] = [];
+
+  constructor(readonly policy: SanitizePolicy) {}
+
+  /** Record an id / name the raw HTML defines; returns its prefixed, emitted form. */
+  define(value: string): string {
+    this.#ids.add(value);
+    if (value.startsWith(USER_CONTENT)) this.#ids.add(value.slice(USER_CONTENT.length));
+    return prefixed(value);
+  }
+
+  /** Hold a same-document `#fragment` link until {@linkcode resolve}. */
+  link(fragment: string): string {
+    return `#\u0003${this.#links.push(fragment) - 1}\u0003`;
+  }
+
+  /**
+   * Resolve the held links in the finished document: a fragment the raw HTML defines follows the
+   * `user-content-` rewrite; any other (a Markdown heading's id, say) is left as written.
+   */
+  resolve(html: string): string {
+    return html.replace(LINK_MARK, (_m, i) => {
+      const fragment = this.#links[Number(i)];
+      return escapeAttribute(this.#ids.has(fragment) ? prefixed(fragment) : fragment);
+    });
+  }
+}
+
+/** The end tags of a document's raw containers still open at its end (and none are left open). */
+export function closeCarried(doc: SanitizeDocument): string {
+  const tags = doc.carried.map((o) => `</${o.name}>`).reverse().join("");
+  doc.carried = [];
+  return tags;
+}
+
+/** A URL attribute's value, or null to drop it; `#fragment` links are held for the id rewrite. */
 function urlAttribute(
   element: string,
   name: string,
   value: string,
-  policy: SanitizePolicy,
+  doc: SanitizeDocument,
 ): string | null {
-  const url = sanitizeUrl(value, policy.dataImages && element === "img" && name === "src");
+  const url = sanitizeUrl(value, doc.policy.dataImages && element === "img" && name === "src");
   const fragment = url !== null && name === "href" && url.length > 1 && url.startsWith("#");
-  return fragment ? `#${prefixed(url.slice(1))}` : url;
+  return fragment ? doc.link(url.slice(1)) : url;
 }
 
 /** One attribute after the allowlist and value rules, or null to drop it. */
@@ -713,27 +766,27 @@ function sanitizeAttribute(
   element: string,
   name: string,
   value: string,
-  policy: SanitizePolicy,
+  doc: SanitizeDocument,
 ): string | null {
-  if (!attributeAllowed(element, name, policy)) return null;
-  if (name === "id" || name === "name") return value === "" ? null : prefixed(value);
+  if (!attributeAllowed(element, name, doc.policy)) return null;
+  if (name === "id" || name === "name") return value === "" ? null : doc.define(value);
   if (name === "target") return value.toLowerCase() === "_blank" ? "_blank" : null;
   if (SRCSET_ATTRIBUTES.has(name)) return sanitizeSrcset(value);
-  return URL_ATTRIBUTES.has(name) ? urlAttribute(element, name, value, policy) : value;
+  return URL_ATTRIBUTES.has(name) ? urlAttribute(element, name, value, doc) : value;
 }
 
 /** An allowed start tag, serialized from its parsed (and sanitized) attributes. */
 function serializeStart(
   name: string,
   attrs: ReadonlyArray<readonly [string, string]>,
-  policy: SanitizePolicy,
+  doc: SanitizeDocument,
 ): string {
   const seen = new Set<string>();
   const kept: Array<[string, string]> = [];
   for (const [n, v] of attrs) {
     if (seen.has(n)) continue; // the first of a duplicated attribute wins, as in browsers
     seen.add(n);
-    const safe = sanitizeAttribute(name, n, v, policy);
+    const safe = sanitizeAttribute(name, n, v, doc);
     if (safe !== null) kept.push([n, safe]);
   }
   // A kept `target` is `_blank`: it only ever goes out with our rel, never the author's.
@@ -768,7 +821,13 @@ class HtmlWriter {
   /** How many elements of each `trusted:name` are open, so a stray end tag costs no scan. */
   #open = new Map<string, number>();
   #dropping = 0;
-  constructor(readonly policy: SanitizePolicy) {}
+  /**
+   * @param doc The document this fragment belongs to.
+   * @param carried Raw containers already open around it (an HTML block between Markdown blocks).
+   */
+  constructor(readonly doc: SanitizeDocument, carried: readonly Open[] = []) {
+    for (const open of carried) this.#push(open);
+  }
 
   text(text: string): void {
     if (this.#dropping === 0 && text !== "") this.#out.push(escapeText(text));
@@ -792,8 +851,8 @@ class HtmlWriter {
   ): boolean {
     if (this.#dropping > 0 || drop) return false;
     if (trusted) this.#out.push(trustedStart(name, attrs));
-    else if (this.policy.elements.has(name)) {
-      this.#out.push(serializeStart(name, attrs, this.policy));
+    else if (this.doc.policy.elements.has(name)) {
+      this.#out.push(serializeStart(name, attrs, this.doc));
     } else return false;
     return true;
   }
@@ -828,6 +887,23 @@ class HtmlWriter {
     while (this.#stack.length > 0) this.#pop();
     return this.#out.join("");
   }
+
+  /**
+   * Finish an HTML block: the raw containers at the bottom of the stack stay open (left to wrap
+   * the Markdown blocks that follow, in `doc.carried`); everything above them is closed here.
+   */
+  finishBlock(): string {
+    let keep = 0;
+    while (keep < this.#stack.length && carryable(this.#stack[keep])) keep++;
+    while (this.#stack.length > keep) this.#pop();
+    this.doc.carried = [...this.#stack];
+    return this.#out.join("");
+  }
+}
+
+/** May this open element stay open across Markdown blocks? (an emitted raw container) */
+function carryable(open: Open): boolean {
+  return !open.trusted && open.emitted && CONTAINERS.has(open.name);
 }
 
 /** A trusted (renderer-emitted) start tag, re-serialized with its attributes as they were. */
@@ -862,10 +938,23 @@ export function sanitizeHtml(html: string, options: SanitizeOptions = {}): strin
 }
 
 /** {@linkcode sanitizeHtml} with an already-resolved policy. */
-export function sanitizeWithPolicy(html: string, policy: SanitizePolicy): string {
-  const writer = new HtmlWriter(policy);
+function sanitizeWithPolicy(html: string, policy: SanitizePolicy): string {
+  const doc = new SanitizeDocument(policy);
+  const writer = new HtmlWriter(doc);
+  // deno-lint-ignore no-control-regex -- U+0003 delimits the held link markers
+  for (const token of tokenizeHtml(html.replace(/\u0003/g, ""))) feed(writer, token, false);
+  return doc.resolve(writer.finish());
+}
+
+/**
+ * Sanitize one HTML block of a Markdown document (its links are resolved with the document): the
+ * raw containers carried in from earlier blocks may be closed here, and containers this block
+ * leaves open are carried on to wrap the Markdown blocks after it.
+ */
+export function sanitizeBlock(html: string, doc: SanitizeDocument): string {
+  const writer = new HtmlWriter(doc, doc.carried);
   for (const token of tokenizeHtml(html)) feed(writer, token, false);
-  return writer.finish();
+  return writer.finishBlock();
 }
 
 /**
@@ -888,9 +977,9 @@ export function rawMarker(index: number): string {
 export function mergeRawInline(
   html: string,
   raws: readonly string[],
-  policy: SanitizePolicy,
+  doc: SanitizeDocument,
 ): string {
-  const writer = new HtmlWriter(policy);
+  const writer = new HtmlWriter(doc);
   for (const token of tokenizeHtml(html)) {
     if (token.type !== "text") {
       feed(writer, token, true);

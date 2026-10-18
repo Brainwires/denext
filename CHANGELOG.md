@@ -18,9 +18,13 @@ and this project adheres to
   with per-element attributes; no `script`, `style`, `iframe`, `object`, form controls, `svg`,
   `math`, `template`, namespaced or custom elements, `on*`, `style`, `srcdoc`, `formaction` or
   `xlink:*`; URLs scheme-checked after entity decoding and control-character stripping (`http`,
-  `https`, `mailto`, relative); `id` / `name` prefixed `user-content-` with `#fragment` links
-  rewritten to match; `target="_blank"` only with `rel="noopener noreferrer nofollow"`; every
-  element closed inside its Markdown block. `sanitize: { allowElements, allowAttributes,
+  `https`, `mailto`, relative); `id` / `name` prefixed `user-content-`, with a `#fragment` link
+  rewritten to match only when the document's raw HTML defines that id or name (links to heading
+  ids keep working); `target="_blank"` only with `rel="noopener noreferrer nofollow"`. A block
+  container (`details`, `div`, `blockquote`, `figure`) an HTML block leaves open wraps the
+  Markdown blocks after it until a later HTML block closes it, so GitHub's `<details>` +
+  Markdown + `</details>` pattern works; everything else closes inside its block, and raw HTML
+  never closes the renderer's markup. `sanitize: { allowElements, allowAttributes,
   allowDataImages }` only extends the allowlist. `sanitizeHtml()` is exported too.
 
 - **`@denext/tanstack-start` 0.2.0: checked options, Start's object `router`, and the rest of

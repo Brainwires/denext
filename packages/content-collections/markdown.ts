@@ -15,20 +15,22 @@
  * Opt-in raw HTML: `renderMarkdown(body, { html: "sanitize" })` keeps raw HTML that passes a
  * first-party allowlist sanitizer ({@linkcode sanitizeHtml}): the HTML is parsed into a tree and
  * re-serialized from it (never passed through), so only allowlisted elements and attributes,
- * scheme-checked URLs and escaped text come out, and every element is closed inside the Markdown
- * block it was written in.
+ * scheme-checked URLs and escaped text come out. A block container (`<details>`, `<div>`, …) an
+ * HTML block leaves open wraps the Markdown blocks after it until a later HTML block closes it;
+ * every other element is closed inside the block it was written in.
  *
  * @module
  */
 
 import {
+  closeCarried,
   type MarkdownHtmlMode,
   mergeRawInline,
   rawMarker,
   resolveSanitizePolicy,
+  sanitizeBlock,
+  SanitizeDocument,
   type SanitizeOptions,
-  type SanitizePolicy,
-  sanitizeWithPolicy,
   scanInlineHtml,
   ScanMemo,
 } from "./html-sanitize.ts";
@@ -104,8 +106,8 @@ interface LinkRefs {
   links: Map<string, string>;
   /** The document's footnotes. */
   notes: Footnotes;
-  /** The raw-HTML policy with `html: "sanitize"`; null when raw HTML is escaped. */
-  raw: SanitizePolicy | null;
+  /** The document's raw-HTML sanitizing state with `html: "sanitize"`; null when escaped. */
+  raw: SanitizeDocument | null;
 }
 
 /** An `<a>` for an (already-escaped) label and raw href, or the bare label for a script URL. */
@@ -450,8 +452,12 @@ const HTML_BLOCK_ENDS: ReadonlyArray<readonly [RegExp, RegExp]> = [
   [/^ {0,3}<![A-Za-z]/, />/],
 ];
 
-/** An HTML block at `i` (with `html: "sanitize"`), sanitized on its own; null when none opens. */
-function parseHtmlBlock(lines: string[], i: number, policy: SanitizePolicy): Block | null {
+/**
+ * An HTML block at `i` (with `html: "sanitize"`), sanitized as one fragment of the document, or
+ * null when none opens. A container it leaves open (`<details>`, `<div>`, …) stays open around
+ * the Markdown blocks after it until a later HTML block closes it, or the document ends.
+ */
+function parseHtmlBlock(lines: string[], i: number, doc: SanitizeDocument): Block | null {
   const kind = htmlBlockKind(lines[i], false);
   if (kind === null) return null;
   let j = i;
@@ -461,7 +467,7 @@ function parseHtmlBlock(lines: string[], i: number, policy: SanitizePolicy): Blo
     while (j < lines.length && !kind.test(lines[j])) j++;
     j = Math.min(j + 1, lines.length); // the closing line belongs to the block
   }
-  return { html: sanitizeWithPolicy(lines.slice(i, j).join("\n"), policy), next: j };
+  return { html: sanitizeBlock(lines.slice(i, j).join("\n"), doc), next: j };
 }
 
 /** A fenced code block starting at `i`, or null when `i` isn't a fence. */
@@ -701,7 +707,7 @@ function takeFootnote(lines: string[], i: number, notes: Footnotes): number | nu
  */
 function collectLinkRefs(
   source: string[],
-  raw: SanitizePolicy | null,
+  raw: SanitizeDocument | null,
 ): { lines: string[]; refs: LinkRefs } {
   const refs: LinkRefs = {
     links: new Map(),
@@ -795,8 +801,12 @@ function parseBlock(lines: string[], i: number, refs: LinkRefs): Block {
  * Raw HTML is escaped unless `options.html` is `"sanitize"`, which keeps the HTML the allowlist
  * sanitizer allows ({@linkcode sanitizeHtml}): an HTML block (a line opening with a block-level
  * tag, a comment, or a lone tag) is sanitized as one fragment, inline tags together with the
- * paragraph, heading, cell or item they sit in; either way every element is closed inside that
- * block, and code spans and code blocks stay literal.
+ * paragraph, heading, cell or item they sit in. Every element is closed inside that block, except
+ * a block container (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when
+ * allowlisted) an HTML block leaves open: it wraps the Markdown blocks that follow until a later
+ * HTML block closes it, or the document ends. Raw HTML never closes the renderer's own markup, a
+ * `#fragment` link follows the `user-content-` prefix only to an id the raw HTML defines, and code
+ * spans and code blocks stay literal.
  *
  * ```ts
  * renderMarkdown("Press <kbd>Ctrl</kbd>+<kbd>C</kbd> <img src=x onerror=alert(1)>", {
@@ -810,11 +820,13 @@ function parseBlock(lines: string[], i: number, refs: LinkRefs): Block {
  *   section, when a footnote is referenced, last).
  */
 export function renderMarkdown(body: string, options: MarkdownOptions = {}): string {
-  const raw = options.html === "sanitize" ? resolveSanitizePolicy(options.sanitize) : null;
+  const raw = options.html === "sanitize"
+    ? new SanitizeDocument(resolveSanitizePolicy(options.sanitize))
+    : null;
   // deno-lint-ignore no-control-regex -- NUL delimits the inline placeholders
   let source = body.replace(/\r\n/g, "\n").replace(/\u0000/g, "");
-  // deno-lint-ignore no-control-regex -- U+0002 delimits the held raw-HTML markers
-  if (raw !== null) source = source.replace(/\u0002/g, "");
+  // deno-lint-ignore no-control-regex -- U+0002 / U+0003 delimit the raw-HTML and link markers
+  if (raw !== null) source = source.replace(/[\u0002\u0003]/g, "");
   const { lines, refs } = collectLinkRefs(source.split("\n"), raw);
   const out: string[] = [];
   let i = 0;
@@ -827,6 +839,14 @@ export function renderMarkdown(body: string, options: MarkdownOptions = {}): str
     if (block.html !== "") out.push(block.html); // a sanitized HTML block may come out empty
     i = block.next;
   }
+  if (raw === null) return finishDocument(out, refs);
+  const closing = closeCarried(raw); // raw containers still open at the end of the document
+  if (closing !== "") out.push(closing);
+  return raw.resolve(finishDocument(out, refs));
+}
+
+/** The rendered blocks joined, with the footnotes section (when one is referenced) last. */
+function finishDocument(out: string[], refs: LinkRefs): string {
   if (refs.notes.order.length > 0) out.push(renderFootnotes(refs));
   return out.join("\n");
 }

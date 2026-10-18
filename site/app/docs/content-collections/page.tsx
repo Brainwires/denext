@@ -159,12 +159,31 @@ export default async function Blog() {
         never do. URLs are entity-decoded and stripped of control characters before the scheme check
         (<code>http</code>, <code>https</code>,{" "}
         <code>mailto</code>, relative and fragment links only); <code>id</code> and{" "}
-        <code>name</code> get GitHub's <code>user-content-</code> prefix, and same-document{" "}
-        <code>#fragment</code> links follow it; <code>class</code> is stripped;{" "}
-        <code>target="_blank"</code> always gets{" "}
-        <code>rel="noopener noreferrer nofollow"</code>; comments are removed. Every element is
-        closed inside the Markdown block it was written in, so a <code>&lt;details&gt;</code>{" "}
-        and its body belong in one HTML block (no blank line inside it).
+        <code>name</code> get GitHub's <code>user-content-</code> prefix, and a{" "}
+        <code>#fragment</code>{" "}
+        link follows it when the document's raw HTML defines that id or name (links to Markdown
+        heading ids are left alone); <code>class</code> is stripped; <code>target="_blank"</code>
+        {" "}
+        always gets <code>rel="noopener noreferrer nofollow"</code>; comments are removed.
+      </p>
+      <p>
+        A block container (<code>details</code>, <code>div</code>, <code>blockquote</code>,{" "}
+        <code>figure</code>) that an HTML block leaves open wraps the Markdown blocks after it until
+        a later HTML block closes it, or the document ends. So GitHub's collapsible section works as
+        written:
+      </p>
+      <Code lang="md">
+        {`<details>
+<summary>Show the steps</summary>
+
+1. Install
+2. Run
+
+</details>`}
+      </Code>
+      <p>
+        Anything else is closed inside the paragraph, heading, cell or HTML block it was written in,
+        and raw HTML can never close the renderer's own markup.
       </p>
       <Code lang="ts">
         {`// denext.config.ts

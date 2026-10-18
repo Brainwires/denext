@@ -378,3 +378,85 @@ Deno.test("markdown option: raw HTML in .md entries is escaped by default, sanit
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("buildContent: a bad config, a throwing loader, a root-level issue and a failed MDX compile are reported", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-content-edges-" });
+  const outDir = join(dir, ".denext");
+  try {
+    // A config that doesn't export `{ collections }` is an error naming the file.
+    await Deno.writeTextFile(join(dir, "content.config.ts"), `export default { nope: 1 };\n`);
+    await assertRejects(
+      () => buildContent({ projectRoot: dir, outDir }),
+      Error,
+      "content.config.ts must",
+    );
+
+    const docs = join(dir, "content", "docs");
+    await Deno.mkdir(docs, { recursive: true });
+    await Deno.writeTextFile(join(docs, "broken.mdx"), `# Broken\n\n<div>{unclosed\n`);
+    await Deno.writeTextFile(join(docs, "notes.txt"), `plain text`);
+    await Deno.writeTextFile(join(docs, "ok.md"), `# OK`);
+    await Deno.writeTextFile(
+      join(dir, "content.config.mts"),
+      `import { defineCollection, defineContentConfig, glob } from ${JSON.stringify(CONFIG_URL)};
+const rootIssue = { "~standard": { version: 1, vendor: "t", validate: (v) =>
+  v && v.reject ? { issues: [{ message: "rejected" }] } : { value: v } } };
+export default defineContentConfig({ collections: {
+  docs: defineCollection({ loader: glob({ pattern: "**/*", base: "content/docs" }), schema: rootIssue }),
+  boom: defineCollection({ loader: { name: "boom", load() { throw new Error("offline"); } } }),
+  data: defineCollection({ loader: { name: "inline", load: () => [{ id: "r", data: { reject: true } }] }, schema: rootIssue }),
+} });
+`,
+    );
+    await Deno.remove(join(dir, "content.config.ts"));
+    const report = await buildContent({ projectRoot: dir, outDir });
+    const messages = report.diagnostics.map((d) =>
+      `${d.collection}/${d.id}: ${d.messages.join("; ")}`
+    );
+    assert(
+      messages.some((m) => m.startsWith("boom/: loader failed: offline")),
+      messages.join("\n"),
+    );
+    assert(messages.some((m) => m === "data/r: (root): rejected"), messages.join("\n"));
+    assert(
+      messages.some((m) => m.startsWith("docs/broken: mdx compile failed")),
+      messages.join("\n"),
+    );
+    const store = JSON.parse(await Deno.readTextFile(join(outDir, "content-data.json")));
+    const notes = store.docs.find((e: { id: string }) => e.id === "notes");
+    assertEquals(notes.format, undefined, "a non-Markdown text entry has no render format");
+    assertEquals(store.docs.find((e: { id: string }) => e.id === "ok").format, "md");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("contentCollections prepare step: a clean build logs its counts; no config is a no-op", async () => {
+  const dir = await makeProject();
+  const empty = await Deno.makeTempDir({ prefix: "denext-content-none-" });
+  const logs: string[] = [];
+  const log = console.log;
+  console.log = (line: string) => logs.push(line);
+  try {
+    await Deno.remove(join(dir, "content", "blog", "bad.md"));
+    let prepare: ((c: PluginPrepareContext) => void | Promise<void>) | undefined;
+    const ctx = {
+      addPrepareStep: (fn: (c: PluginPrepareContext) => void | Promise<void>) => (prepare = fn),
+      addCommand: () => {},
+    } as unknown as PluginContext;
+    contentCollections({ watch: ["content/**"] }).setup(ctx);
+    await prepare!({ projectRoot: dir, appDir: dir, outDir: join(dir, ".denext"), config: {} });
+    assert(logs.some((l) => l === "denext content: 3 entries in 1 collection"), logs.join("\n"));
+    await prepare!({
+      projectRoot: empty,
+      appDir: empty,
+      outDir: join(empty, ".denext"),
+      config: {},
+    });
+    assertEquals(logs.length, 1, "no content.config.ts logs nothing");
+  } finally {
+    console.log = log;
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(empty, { recursive: true });
+  }
+});

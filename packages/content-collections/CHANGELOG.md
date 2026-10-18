@@ -11,7 +11,9 @@
   sanitizer, re-serialized from a parsed tree (never passed through), instead of escaping it.
   The default stays `"escape"`. `sanitizeHtml(html, options)` is exported from
   `@denext/content-collections/markdown`; `createContentCommand(io, { markdown })` takes the
-  option.
+  option. A `<details>` / `<div>` / `<blockquote>` / `<figure>` HTML block left open wraps the
+  Markdown blocks after it until a later HTML block closes it, and a `#fragment` link follows the
+  `user-content-` prefix only when the document's raw HTML defines that id.
 
 ## [0.6.0]
 
