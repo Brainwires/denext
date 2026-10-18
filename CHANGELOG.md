@@ -366,6 +366,10 @@ and this project adheres to
   directory.** The import was resolved against `file://` + the importing file's path, which is
   no URL for a Windows path or a directory with `#` in its name.
 
+- **`denext migrate --check` prints a Windows `--denext-local-path` as the shell takes it.** The
+  suggested command JSON-escaped the path, doubling every backslash; it is now verbatim (quoted
+  when it has a space) on Windows and single-quoted when needed elsewhere.
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,

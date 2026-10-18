@@ -93,6 +93,21 @@ function migrateSource(r: MigrateResult): MigrateSource {
   }
 }
 
+/**
+ * `path` as one argument of a command line the user pastes into this OS's shell. A Windows path
+ * keeps its backslashes (cmd and PowerShell read them literally; JSON-escaping doubled them), in
+ * double quotes when it has a space; elsewhere it is single-quoted when anything in it is special.
+ *
+ * @internal
+ * @param path The path.
+ * @param os The OS whose shell reads the line (`Deno.build.os`).
+ * @returns The argument.
+ */
+export function shellPathArg(path: string, os: string): string {
+  if (os === "windows") return /[\s&()^%!;,]/.test(path) ? `"${path}"` : path;
+  return /[^\w@%+=:,./-]/.test(path) ? `'${path.replaceAll("'", `'\\''`)}'` : path;
+}
+
 /** The `denext migrate` command line that runs the checked migration. */
 function migrateCommandLine(options: MigrateOptions): string {
   const parts = ["denext migrate"];
@@ -103,7 +118,7 @@ function migrateCommandLine(options: MigrateOptions): string {
   parts.push(...capacitorFlags(options));
   if (options.denextLocalPath) {
     const path = options.denextLocalPath;
-    parts.push(`--denext-local-path ${/[\s"'$`\\]/.test(path) ? JSON.stringify(path) : path}`);
+    parts.push(`--denext-local-path ${shellPathArg(path, Deno.build.os)}`);
   }
   return parts.join(" ");
 }

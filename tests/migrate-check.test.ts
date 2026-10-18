@@ -14,7 +14,11 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { dirname, fromFileUrl, join, relative } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration, type MigrateCheckReport } from "../src/build/migrate-check.ts";
+import {
+  checkMigration,
+  type MigrateCheckReport,
+  shellPathArg,
+} from "../src/build/migrate-check.ts";
 import { dryRunMigration, mfs, type PlannedChange } from "../src/build/migrate-io.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
@@ -675,4 +679,15 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+Deno.test("shellPathArg: a path as the user's shell reads it back", () => {
+  // Windows: backslashes stay single (cmd and PowerShell read them literally).
+  assertEquals(shellPathArg("C:\\Users\\me\\denext\\", "windows"), "C:\\Users\\me\\denext\\");
+  assertEquals(shellPathArg("C:\\My Code\\denext", "windows"), '"C:\\My Code\\denext"');
+  // POSIX: single quotes when anything is special, a quote closed and reopened.
+  assertEquals(shellPathArg("/home/me/denext/", "linux"), "/home/me/denext/");
+  assertEquals(shellPathArg("/home/me/my code", "darwin"), "'/home/me/my code'");
+  assertEquals(shellPathArg("/tmp/it's", "linux"), "'/tmp/it'\\''s'");
+  assertEquals(shellPathArg("/tmp/a\\b$c", "linux"), "'/tmp/a\\b$c'");
 });
