@@ -237,6 +237,12 @@ through `node_modules`, **not** your `deno.json` import map — so an import-map
 alias can't reach it. You install the compat _as_ `better-sqlite3` instead. The
 two ORMs need slightly different mechanisms because of how they depend on it.
 
+On denext's Deno toolchain (2.9.7-denext.22 and later) there is a shorter path:
+the runtime serves the real `better-sqlite3` package's API over the same
+built-in SQLite engine, so a `better-sqlite3` dependency (no `--allow-scripts`,
+no addon build) is enough for Drizzle, Knex and Kysely. The shim below is for
+stock Deno, or with `DENO_NO_BETTER_SQLITE3_COMPAT=1`.
+
 ### Drizzle (verified — full app + e2e)
 
 Drizzle declares `better-sqlite3` as an optional peer dependency, so a top-level

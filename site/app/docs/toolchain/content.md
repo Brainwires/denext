@@ -302,8 +302,10 @@ skipping V8's code cache, the HTTP connection-pool fix and the `rand` security u
 each release also ships its own `denort` per platform (the standalone runtime `deno compile`
 builds onto), pinned and verified beside the CLI, so a binary from `denext build --compile` (or
 the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` included.
-`2.9.7-denext.21` (the build denext pins today) adds Windows on Arm (`aarch64-pc-windows-msvc`)
-builds of the CLI and `denort`, and a compiled program keeps `--unstable-no-legacy-abort`. Each new Deno
+`2.9.7-denext.21` adds Windows on Arm (`aarch64-pc-windows-msvc`) builds of the CLI and `denort`,
+and a compiled program keeps `--unstable-no-legacy-abort`. `2.9.7-denext.22` (the build denext
+pins today) type-checks with the native TypeScript 7 compiler, shipped in the CLI zip and pinned
+like the binary, and runs npm packages more as Node.js does. Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 

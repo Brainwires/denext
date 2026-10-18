@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Security
 
+- **The pinned Deno runtime's security fixes (2.9.7-denext.22).** Every RustSec advisory with a
+  fixed release is taken (rustls, the Postgres driver behind `Deno.SQL`, zip, quinn, quick-xml and
+  others; hickory 0.26 for DNS), a `--deny-read` / `--deny-write` scope holds through symlinks
+  (copying onto, removing under, or stat-ing through a link no longer reaches a denied path), an op
+  never lends JavaScript's shared or resizable buffer memory to native code as a slice (the op works
+  on a copy and writes back only what it changed), a worker's `permissions.import` covers its static
+  remote imports, and CR/LF is refused in a `node:http` proxy request target.
+
 - **A cached page no longer stores one visitor's answer from an in-process API call for every
   visitor.** The typed client (`createApiClient` / `useApi`) called during a render runs the
   route in-process under the visitor's cookie and authorization. A handler that read them
@@ -32,6 +40,43 @@ and this project adheres to
 
 ### Added
 
+- **Deno toolchain and Deno Desktop runtime 2.9.7-denext.22, pinned.** Every verb that runs
+  project code moves to it, and `denext desktop` / the package scripts download and verify its
+  archives. What it brings to denext apps is below;
+  [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases) list the rest.
+- **Native TypeScript 7 type checking is on.** The pinned toolchain's CLI archive ships the
+  TypeScript 7.0.2 compiler in `typescript-check/`, so `denext check`, the dev type-check overlay,
+  `denext test` and every other command that type-checks now run it (installed only when it
+  hashes to the pin; `DENEXT_NATIVE_CHECK=0` keeps the in-process TypeScript 6.0.3).
+  [The differences page](https://denext.dev/docs/differences) lists how its output differs.
+- **npm packages run more as they do on Node.js** (on the toolchain: `denext dev`, `build`,
+  `start`, `test`, jobs). In a project with a `package.json` and no `deno.json`:
+  - `deno install` writes npm's hoisted `node_modules` (a dependency's dependency, such as `ms`
+    under `debug`, resolves from app code and from tools that walk `node_modules`);
+    `node-linker=isolated` in `.npmrc`, `--node-modules-linker=isolated` or a `deno.json` keeps
+    the isolated layout;
+  - packages resolve with Node.js's export conditions, not Deno's `"deno"` condition (a
+    package's Deno build can lack its Node.js API, e.g. a synchronous webhook verifier);
+    `"denoCondition"` in `deno.json` / `package.json` chooses per package;
+  - TypeScript resolves as tsx and ts-node resolve it: extensionless, directory and `.js`-for-`.ts`
+    relative imports, and `tsconfig.json` `compilerOptions.paths` at run time
+    (`DENO_NO_SLOPPY_IMPORTS=1` / `DENO_NO_TSCONFIG_PATHS=1` opt out).
+  - Everywhere: an untyped `.js` file that uses CommonJS (`require`, `module.exports`) and no ES
+    module syntax runs as CommonJS, as Node.js detects it (`DENO_NO_DETECT_CJS=1` opts out).
+- **More npm dependencies install.** git (`github:user/repo`, `git+https://…#tag`,
+  `#semver:<range>`) and tarball URL dependencies install and are recorded in `deno.lock` (a
+  tarball by its integrity, a git dependency by its commit); the project's own lifecycle scripts
+  (`postinstall`, `prepare`) run on install with their output, as npm runs them, while a
+  dependency's still need approval; `.npmrc` `ignore-scripts=true` is honoured; `node` /
+  `node-gyp` work inside lifecycle scripts; `deno x --install-node-shims` writes `node`, `npx` and
+  `npm` executables that map onto the toolchain.
+- **`better-sqlite3` works**: its API is served over the built-in SQLite engine (the package's
+  native addon can't load), so Drizzle, Knex and Kysely on better-sqlite3 run unchanged
+  (`DENO_NO_BETTER_SQLITE3_COMPAT=1` loads the package's own code).
+- **Downloads from a desktop window.** A page's `<a download>`, `Content-Disposition: attachment`
+  response or blob export opens the platform's save dialog on every backend (it was inert or
+  cancelled), only for the app's own origins, with a sanitized file name and at most three save
+  dialogs per window in 10 s.
 - **A plugin lists the routes it serves in the deploy manifest** with `ctx.addDeployRoutes?.(source)`
   (plugin-kit; `PluginDeployRoutes`): `source` returns `DeployRoute`s, called when
   `.denext/deploy-manifest.json` is collected and sorted in with the App Router's, so a deploy
@@ -212,6 +257,21 @@ and this project adheres to
 
 ### Fixed
 
+- **A CEF desktop window keeps what the page just stored.** A quit that cut a `localStorage` or
+  IndexedDB write short no longer costs every later launch its writes (the runtime repairs the torn
+  log end before the window opens, and on macOS and Windows waits for the page's renderer to end
+  before shutting down); a macOS CEF quit no longer hangs while every core is busy; a CEF app
+  started elevated on Windows stays elevated instead of exiting; and a deep-link launch no longer
+  crashes at startup (runtime 2.9.7-denext.22).
+- **Node.js compatibility fixes in the pinned toolchain (2.9.7-denext.22).** A pipe from a stream
+  that old code flags as destroyed drains (zip extraction in installers no longer stalls), HTTPS
+  keep-alive continues after `res.end()`, an unread request body no longer stalls the next
+  keep-alive request, `async_hooks` reports promises with Node's ids, `node:test` has
+  `t.waitFor()` and per-test mocks, `spawnSync()` keeps an explicit `env` and numeric stdio, a
+  CommonJS main module behind a symlink loads, and `TLSSocket.setMaxSendFragment()` works (SQL
+  Server drivers over TLS). `Deno.serve` keeps reading a request body while it streams a response,
+  applies backpressure to a client that keeps sending, lets a graceful `shutdown()` finish a
+  request body, and answers a malformed `Host` with a 400.
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,
