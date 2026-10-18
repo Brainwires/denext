@@ -334,6 +334,10 @@ function platformRuntimeEntries(u: EntryUrl): Record<string, string> {
     "virtual-masonry": u("src/virtual-masonry.ts"),
     // `denext/mvu` — useMvu / MvuView; shares the one hooks instance.
     "mvu": u("src/mvu.ts"),
+    // `denext/gleam` — the Lustre helpers (`lustreIsland`, `lustreElement`, the view island):
+    // client components whose hooks and Live socket must be the one instance. Its `gleam()`
+    // build plugin loads its own code only when set up (by denext.config.ts, never a bundle).
+    "gleam": u("src/gleam.ts"),
     // `denext/desktop/{client,window,app}` — the Deno Desktop page APIs (no hooks; prebuilt so
     // the unbundled dev loop can serve them like the other `denext/*` client modules).
     "desktop-client": u("src/desktop/client.ts"),
@@ -877,6 +881,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/navigation": "navigation.js",
   "denext/virtual-masonry": "virtual-masonry.js",
   "denext/mvu": "mvu.js",
+  "denext/gleam": "gleam.js",
   // The Deno Desktop page APIs (deep-link scheme ownership, the window, the app menu / tray).
   "denext/desktop/client": "desktop-client.js",
   "denext/desktop/window": "desktop-window.js",
@@ -970,8 +975,6 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/cli/command",
   "denext/plugin-kit",
   "denext/plugin-kit/vite-emitter",
-  // The `gleam()` build plugin: imported by denext.config.ts, it runs the Gleam compiler.
-  "denext/gleam",
   "denext/lint-plugin",
   "denext/bundle",
   "denext/build/css",

@@ -14,7 +14,7 @@
 // denext's pinned Gleam (gleam-toolchain.ts), fetched and verified on first need, or the one
 // `DENEXT_GLEAM` / the `gleam` option names. Nothing here runs at request time. A project that
 // depends on Lustre also gets the Lustre kit modules (lustre-kit.ts) after each build, and the
-// post-build fix for Lustre 5.7.1's server-component runtime (lustre-patch.ts).
+// post-build fixes for Lustre's server-component and client runtimes (lustre-patch.ts).
 
 import { dirname, join, relative } from "@std/path";
 import { appendGitignore } from "./gitignore.ts";
@@ -22,7 +22,7 @@ import type { DenextPlugin, PluginContext } from "../plugin/mod.ts";
 import { DenoToolchainHashError } from "./deno-toolchain.ts";
 import { resolveGleamToolchain } from "./gleam-toolchain.ts";
 import { writeLustreKits } from "./lustre-kit.ts";
-import { patchLustreServerRuntime } from "./lustre-patch.ts";
+import { patchLustreRuntimes } from "./lustre-patch.ts";
 
 /** The import-map prefix Gleam packages are imported under (`@gleam/<package>/<module>.mjs`). */
 const GLEAM_IMPORT_PREFIX = "@gleam/";
@@ -130,8 +130,9 @@ export async function buildGleam(
   const built = await host.run(bin, ["build", "--target", "javascript"], dir);
   if (!built.success) return { status: "failed", dir, output: built.output.trim() };
   const patched = await patchGleamTypeRefs(join(dir, "build", "dev", "javascript"));
-  // Lustre 5.7.1's server-component runtime throws on every message (lustre-patch.ts).
-  await patchLustreServerRuntime(dir);
+  // Lustre's server-component runtime throws on every message, and its client runtime ignores
+  // `shutdown` (lustre-patch.ts).
+  await patchLustreRuntimes(dir);
   await writeLustreKits(root, dir); // `.denext/lustre*.ts` when the project depends on Lustre
   return { status: "built", dir, version, patched };
 }

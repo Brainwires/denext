@@ -104,7 +104,11 @@ export function createHandlerTable<Msg>(): { send: Send<Msg>; table: MsgSource<M
 /** The MAC domain of a live view's props token. */
 const TOKEN_DOMAIN = "denext.liveview.v1";
 
-let fallbackSecret: string | null = null;
+/**
+ * Where the per-process key lives: on `globalThis`, so every copy of this module in the process
+ * (a compat build's prebuilt runtime graph beside the server's own) signs and checks with one key.
+ */
+const SECRET_SLOT = Symbol.for("denext.liveViewSecret");
 
 /**
  * The key live-view tokens are signed with, and the shared view store's snapshots are sealed
@@ -120,11 +124,12 @@ export function liveViewSecret(): string {
     configured = (globalThis as { Deno?: typeof Deno }).Deno?.env.get("DENEXT_LIVE_VIEW_SECRET");
   } catch { /* no env permission: the per-process key */ }
   if (configured) return configured;
-  if (fallbackSecret === null) {
+  const slot = globalThis as unknown as Record<symbol, string | undefined>;
+  if (slot[SECRET_SLOT] === undefined) {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
-    fallbackSecret = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    slot[SECRET_SLOT] = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
-  return fallbackSecret;
+  return slot[SECRET_SLOT];
 }
 
 const keys = /* @__PURE__ */ new Map<string, Promise<CryptoKey>>();

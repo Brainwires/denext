@@ -42,6 +42,10 @@ Deno.test("every public denext subpath is a prebuilt runtime file or a server-on
   }
   for (const spec of DENEXT_SERVER_SUBPATHS) assert(PUBLIC.includes(spec), `${spec} not exported`);
   assertEquals(DENEXT_RUNTIME_FILES["denext"], "denext.js");
+  // The Lustre helpers are client components (hooks, the Live socket): prebuilt into the one
+  // runtime graph, never an external a compat page's browser can't load.
+  assertEquals(DENEXT_RUNTIME_FILES["denext/gleam"], "gleam.js");
+  assert(!DENEXT_SERVER_SUBPATHS.has("denext/gleam"));
 });
 
 /** A compat SPA whose deno.json maps denext the way `denext migrate` does: to JSR. */

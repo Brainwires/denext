@@ -8,6 +8,12 @@
 //   • server component  — defineLustreView: the model lives on the server; clicks and typing go
 //                          over the Live socket as Lustre events and come back as patches, and a
 //                          reload of the socket resumes the same runtime.
+//   • a stopped island  — the ticker's timer effect keeps firing after its island unmounts, but
+//                          none of its dispatches reaches the stopped app (denext's post-build
+//                          fix for Lustre's SPA `shutdown`).
+// It runs three ways: the example as it is (Lustre 5.7.1 from Hex), the same app under
+// `compatibilityMode: true` (the Next drop-in path), and the app on Lustre's `main` at a pinned
+// commit (the runtime fixes match code patterns, not one version's bytes).
 // The build compiles gleam/ with denext's pinned Gleam (downloaded on first use) and fetches
 // Lustre from Hex, so this needs the network the first time. It drives the CLI as a subprocess
 // ON PURPOSE: the app's `@gleam/` import-map entry resolves only under the CLI's merged
@@ -15,8 +21,9 @@
 //
 // Opt-in: `deno task test:e2e` (astral downloads Chromium on first run).
 
-import { assert, assertEquals } from "@std/assert";
-import { fromFileUrl } from "@std/path";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { copy } from "@std/fs/copy";
+import { fromFileUrl, join } from "@std/path";
 import {
   collectConsoleErrors,
   launchBrowser,
@@ -25,19 +32,37 @@ import {
   startCliServer,
 } from "./harness.ts";
 
-const EXAMPLE = fromFileUrl(new URL("../../examples/lustre", import.meta.url));
-const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
+const REPO = fromFileUrl(new URL("../../", import.meta.url)).replace(/\/$/, "");
+const EXAMPLE = join(REPO, "examples", "lustre");
+const CLI = join(REPO, "cli.ts");
 const BUILD_TIMEOUT_MS = 300_000;
-const READY_TIMEOUT_MS = 60_000;
+const READY_TIMEOUT_MS = 180_000; // generous: a loaded machine loads the app slowly
 
-Deno.test({
-  name: "e2e: examples/lustre runs a Lustre island, custom element and server component",
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, async (t) => {
-  const built = await runDeno(["run", "-A", CLI, "build", "."], EXAMPLE, BUILD_TIMEOUT_MS);
+/** Lustre's `main`, pinned: the commit the "Lustre main" variant builds against. */
+const LUSTRE_MAIN_COMMIT = "f5ac432bb2d625951be4f8731fe446aa03320061";
+
+/**
+ * A copy of the example in a temp dir (its sources, not its build output), with `deno.json`'s
+ * repo-relative paths made absolute, then `edit`ed.
+ */
+async function exampleCopy(edit: (dir: string) => Promise<void>): Promise<string> {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-lustre-e2e-" }));
+  for (const entry of ["app", "public", "denext.config.ts", "gleam/src", "gleam/gleam.toml"]) {
+    await copy(join(EXAMPLE, entry), join(dir, entry));
+  }
+  const denoJson = await Deno.readTextFile(join(EXAMPLE, "deno.json"));
+  await Deno.writeTextFile(join(dir, "deno.json"), denoJson.replaceAll('"../../', `"${REPO}/`));
+  await edit(dir);
+  return dir;
+}
+
+/** Build `dir` with the CLI, serve it, and run every check in a headless browser. */
+async function checkLustreApp(t: Deno.TestContext, dir: string): Promise<void> {
+  const built = await runDeno(["run", "-A", CLI, "build", "."], dir, BUILD_TIMEOUT_MS);
   assert(built.ok, "denext build failed:\n" + built.out);
-  const server = await startCliServer(EXAMPLE, READY_TIMEOUT_MS);
+  // Every Lustre runtime file had a shape the post-build fixes know.
+  assert(!built.out.includes("is not a shape denext knows"), built.out);
+  const server = await startCliServer(dir, READY_TIMEOUT_MS);
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
@@ -115,6 +140,23 @@ Deno.test({
       await pollFor(page, `${view}.querySelector('.echo').textContent === 'over the socket'`);
     });
 
+    await t.step("a stopped island: its timer's dispatches reach nothing", async () => {
+      const ticks = "document.querySelector('.ticker-island .ticks')";
+      await pollFor(page, `!!${ticks} && Number(${ticks}.textContent) >= 2`);
+      // Keep the span Lustre renders into: once the island unmounts it is detached, and an
+      // update the timer still drove would render into it.
+      await page.evaluate(`window.__tickSpan = ${ticks}`);
+      await page.evaluate("document.querySelector('.toggle-ticker').click()");
+      await pollFor(page, "!document.querySelector('.ticker-island')");
+      const stoppedAt = await page.evaluate("window.__tickSpan.textContent");
+      // The timer fires every 200 ms: five more intervals, none reaching update or view.
+      await new Promise((r) => setTimeout(r, 1000));
+      assertEquals(await page.evaluate("window.__tickSpan.textContent"), stoppedAt);
+      // Shown again, the island starts a fresh app.
+      await page.evaluate("document.querySelector('.toggle-ticker').click()");
+      await pollFor(page, `!!${ticks} && Number(${ticks}.textContent) >= 1`);
+    });
+
     await t.step("no CSP violation and no console error", async () => {
       assertEquals(await page.evaluate("window.__csp"), []);
       assertEquals(errors, []);
@@ -122,5 +164,55 @@ Deno.test({
   } finally {
     await browser.close();
     await server.close();
+  }
+}
+
+Deno.test({
+  name: "e2e: examples/lustre runs a Lustre island, custom element and server component",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, (t) => checkLustreApp(t, EXAMPLE));
+
+Deno.test({
+  name: "e2e: examples/lustre under compatibilityMode: true (the Next drop-in path)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const dir = await exampleCopy(async (dir) => {
+    const config = join(dir, "denext.config.ts");
+    const text = await Deno.readTextFile(config);
+    const compat = text.replace(
+      "plugins: [gleam()],",
+      "plugins: [gleam()],\n  compatibilityMode: true,",
+    );
+    assertStringIncludes(compat, "compatibilityMode: true");
+    await Deno.writeTextFile(config, compat);
+  });
+  try {
+    await checkLustreApp(t, dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: `e2e: examples/lustre on Lustre's main (${LUSTRE_MAIN_COMMIT.slice(0, 8)})`,
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const dir = await exampleCopy(async (dir) => {
+    const toml = join(dir, "gleam", "gleam.toml");
+    const text = await Deno.readTextFile(toml);
+    const pinned = text.replace(
+      /^lustre = .*$/m,
+      `lustre = { git = "https://github.com/lustre-labs/lustre.git", ref = "${LUSTRE_MAIN_COMMIT}" }`,
+    );
+    assertStringIncludes(pinned, LUSTRE_MAIN_COMMIT);
+    await Deno.writeTextFile(toml, pinned);
+  });
+  try {
+    await checkLustreApp(t, dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

@@ -137,6 +137,20 @@ Deno.test("defineLustreView: the page renders the first view in the island with 
   assertThrows(() => defineLustreView({ id: "", kit, app: counterApp }), TypeError);
 });
 
+Deno.test("defineLustreView: a second copy of the modules sees the view and its token (a compat build)", async () => {
+  // A compat build prebuilds denext/gleam into its own graph: the app defines its view in one
+  // copy of these modules while the server's Live hub reads another. Both share one registry and
+  // one per-process signing key.
+  const copy = `?copy=${crypto.randomUUID()}`;
+  const view2 = await import(new URL(`../src/lustre/view.ts${copy}`, import.meta.url).href);
+  const live2 = await import(new URL(`../src/runtime/live-view.ts${copy}`, import.meta.url).href);
+  const id = `shared-${crypto.randomUUID()}`;
+  defineLustreView({ id, kit, app: counterApp });
+  assert(view2.getLustreView(id), "the other copy finds the view");
+  const token = await signLiveViewToken(lustreTokenName(id), "{}");
+  assert(await live2.verifyLiveViewToken(lustreTokenName(id), "{}", token), "and its token");
+});
+
 Deno.test("lustreViewIsland: the server renders the first paint inside the view's root", async () => {
   const Island = lustreViewIsland(
     class {
@@ -178,6 +192,29 @@ Deno.test("lustreServerKit: Runtime built directly (no argument shift), guarded 
   (rt as unknown as { send(m: unknown): void }).send({ t: "dispatch", msg: { name: "click" } });
   assertEquals(errors.length, 1);
   assertEquals(kit.render(counterApp, 9), "<p>9</p>");
+});
+
+Deno.test("lustreServerKit: a Runtime whose constructor dropped the unused first parameter gets no placeholder", () => {
+  const got: unknown[][] = [];
+  // A later Lustre's shape: `constructor(init, update, view, config, flags)` (five declared).
+  class FiveArgRuntime {
+    constructor(init: unknown, update: unknown, view: unknown, config: unknown, flags: unknown) {
+      got.push([init, update, view, config, flags]);
+    }
+    send(_message: unknown): void {}
+  }
+  const five = lustreServerKit({
+    ...fakeLustreServerModules(),
+    Runtime: FiveArgRuntime as never,
+  });
+  five.start(counterApp, 4, () => {});
+  assertEquals(got, [[
+    counterApp.init,
+    counterApp.update,
+    counterApp.view,
+    { configured: counterApp.config },
+    4,
+  ]]);
 });
 
 Deno.test("checkLustreEvent: only EventFired, a bounded path and name, small plain JSON", () => {
