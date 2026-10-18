@@ -81,9 +81,10 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   counts as covered; stock Deno's `deno coverage` would under-report such a module.
   **`deno task test:stress`** finds these: it runs the timer-heavy unit tests (client runtime,
   mobile, desktop, React Native, Expo, VirtualList, navigation; serial and child-process files
-  left out, see `scripts/test-stress.ts`) with the `tests/stress/timer-jitter.ts` preload, which
-  stalls the thread for up to 40 ms before timer and microtask callbacks, from a seeded PRNG.
-  Each run prints its seed and the summary lists the failed ones; replay one with
+  left out, see `scripts/test-stress.ts`; the `.vitest.ts` files in those areas too, their pass
+  granted only the preload's `DENEXT_STRESS_*` variables) with the `tests/stress/timer-jitter.ts`
+  preload, which stalls the thread for up to 40 ms before timer and microtask callbacks, from a
+  seeded PRNG. Each run prints its seed and the summary lists the failed ones; replay one with
   `deno task test:stress --seed <seed> [files]`. `--runs N` runs N seeds, `--max-ms` and `--p`
   change the longest stall and the stall chance. Run it ten times before a release.
 - **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two

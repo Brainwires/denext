@@ -3,11 +3,14 @@
 // environment variable or working directory another test file set for itself; then the Vitest
 // files (`tests/**/*.vitest.ts`) on denext's Deno toolchain.
 //
-//   deno run -A scripts/test-run.ts [--ignore=a/,b.ts] [deno test flags...] [paths...] [-- args]
+//   deno run -A scripts/test-run.ts [--ignore=a/,b.ts] [--vitest-allow-env=A,B] [deno test flags...]
+//     [paths...] [-- args]
 //
 // Paths and `--ignore` entries are relative to the repo root (where `deno task` runs); with no
 // path, every test under the root. A flag's value may be its own argument (`--filter foo`), and
 // what follows `--` goes to the tests. Every pass runs; the exit code is non-zero when any fails.
+// `--vitest-allow-env=A,B` grants the Vitest pass (which runs least-privilege) reads of those
+// environment variables, for a `--preload` that reads them (`deno task test:stress`'s jitter).
 //
 // The Vitest files use Vitest's API (`vi.useFakeTimers()`, `vi.mock()`), which only denext's
 // Deno toolchain (the `2.9.7-denext.N` fork) provides. Deno's default test discovery never picks
@@ -44,9 +47,13 @@ function covers(entry: string, file: string): boolean {
 /** The `deno test` flags whose value may be the next argument (`--filter foo`). */
 const VALUE_FLAGS = TEST_VALUE_FLAGS;
 
-/** `args` split into `--ignore` entries, flags (with their values), paths and the `--` tail. */
+/**
+ * `args` split into `--ignore` entries, `--vitest-allow-env` names, flags (with their values),
+ * paths and the `--` tail.
+ */
 function splitArgs(args: readonly string[]) {
   const ignores: string[] = [];
+  const vitestEnv: string[] = [];
   const flags: string[] = [];
   const paths: string[] = [];
   const end = args.indexOf("--");
@@ -55,11 +62,13 @@ function splitArgs(args: readonly string[]) {
     const a = own[i];
     if (a.startsWith("--ignore=")) {
       ignores.push(...a.slice("--ignore=".length).split(",").filter(Boolean));
+    } else if (a.startsWith("--vitest-allow-env=")) {
+      vitestEnv.push(...a.slice("--vitest-allow-env=".length).split(",").filter(Boolean));
     } else if (!a.startsWith("-")) paths.push(a);
     else if (VALUE_FLAGS.has(a) && i + 1 < own.length) flags.push(a, own[++i]);
     else flags.push(a);
   }
-  return { ignores, flags, paths, rest: end === -1 ? [] : args.slice(end) };
+  return { ignores, vitestEnv, flags, paths, rest: end === -1 ? [] : args.slice(end) };
 }
 
 /** `files` within `paths` (all of them when there is none) and outside every `ignores` entry. */
@@ -77,7 +86,8 @@ function inScope(
  * The Vitest pass's grants: least privilege. From 2.9.7-denext.16 the Vitest layer's own reads
  * (its config, `__mocks__`, automock) and environment reads need no permission, so these are only
  * what the Vitest files themselves use (temp directories they write and read back). A new Vitest
- * file that needs more adds it here.
+ * file that needs more adds it here; a preload that reads environment variables names them with
+ * `--vitest-allow-env`.
  */
 const VITEST_GRANTS: readonly string[] = ["--allow-read", "--allow-write"];
 
@@ -130,7 +140,7 @@ export function testPasses(
   typeCheckVitest = true,
 ): TestPasses {
   const split = splitArgs(args);
-  const { ignores, paths, rest } = split;
+  const { ignores, paths, rest, vitestEnv } = split;
   const coverage = wantsCoverage(split.flags);
   // Coverage accumulates across the passes: no pass may empty the directory another wrote.
   const flags = coverage && !split.flags.includes("--coverage-raw-data-only")
@@ -156,6 +166,7 @@ export function testPasses(
       ? [
         "test",
         ...VITEST_GRANTS,
+        ...(vitestEnv.length > 0 ? [`--allow-env=${vitestEnv.join(",")}`] : []),
         "--unstable-kv",
         ...vitestFlags(flags, typeCheckVitest),
         "--parallel",
