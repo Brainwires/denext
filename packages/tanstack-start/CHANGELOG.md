@@ -28,6 +28,13 @@ of `@denext/denext`.
   `buildSitemap` (loaded from the app's `@tanstack/start-plugin-core`) over every page the
   prerender met, writing `sitemap.xml` and `pages.json` at the export's root; a page's `sitemap`
   entry is checked against Start's shape. `denext migrate` now carries both options.
+
+- **Windows: import protection and the export's server-route report see the app's own modules**
+  however their paths are spelled: the importer check, the trace's app-module test and the
+  refusal list's relative paths go through `relative()` rather than a string prefix with the
+  host separator, which called a module outside the app when its root and path differed in
+  separator or drive spelling (`\app` vs `C:\app`).
+
 - **The options are checked** when `tanstackStart()` is called, so a bad config fails as
   `denext.config.ts` loads: each option against the shape Start's own plugin accepts (`router`,
   `importProtection`, `prerender`, `pages`) or the plugin's own, with `denext.config`'s

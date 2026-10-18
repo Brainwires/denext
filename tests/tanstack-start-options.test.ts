@@ -6,7 +6,7 @@
 // tests/tanstack-start-mock.test.ts).
 
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
 import {
   checkBasepath,
   resolveRouter,
@@ -418,7 +418,7 @@ function metafile(graph: Record<string, string[]>): Metafile {
 }
 
 Deno.test("tanstack-start import protection: maxTraceDepth caps the trace (Start's buildTrace)", async () => {
-  const P = join("/", "p");
+  const P = resolve("/p"); // absolute on every OS (`C:\p` on Windows), as the guard resolves
   const meta = metafile({
     "src/router.tsx": ["src/a.ts"],
     "src/a.ts": ["src/b.ts"],

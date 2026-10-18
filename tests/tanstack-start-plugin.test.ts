@@ -15,7 +15,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, resolve } from "@std/path";
 import {
   CLIENT_ENTRY,
   createHandler,
@@ -657,9 +657,15 @@ function metafile(graph: Record<string, Array<string | [string, string]>>): Meta
   return { inputs, outputs: { "client.js": { entryPoint: ".denext/entry.tsx", inputs: shipped } } };
 }
 
-const P = "/p";
+// An absolute root on every OS (`C:\p` on Windows): the guard resolves the metafile's paths
+// against it, as it does the build's own.
+const P = resolve("/p");
+/** `rel` under {@link P}, as the guard names it. */
+const p = (rel: string) => join(P, rel);
+/** A guard path back to its `/`-separated path under {@link P}. */
+const rel = (path: string) => path.slice(P.length + 1).replaceAll("\\", "/");
 const startRules = (options?: ImportProtectionOptions) =>
-  compileImportProtection(options, P, `${P}/src`);
+  compileImportProtection(options, P, p("src"));
 
 /** A resolve record, as a build fills it. */
 function recorded(
@@ -692,27 +698,27 @@ Deno.test("tanstack-start import protection: Start's browser rules, in its words
   });
   const rules = startRules();
   const { record, actions } = recorded(rules, "client", [
-    ["@tanstack/react-start/server-only", "/p/src/marked.ts"],
-    ["@tanstack/react-start/server", "/p/src/routes/a.tsx"],
-    ["@tanstack/react-start/server", "/p/node_modules/x/y.js"],
-    ["@tanstack/react-start", "/p/src/a.ts"],
+    ["@tanstack/react-start/server-only", p("src/marked.ts")],
+    ["@tanstack/react-start/server", p("src/routes/a.tsx")],
+    ["@tanstack/react-start/server", p("node_modules/x/y.js")],
+    ["@tanstack/react-start", p("src/a.ts")],
   ]);
   // Start's server entry and its marker are an empty module in the browser; the rest resolves.
   assertEquals(actions, ["mock", "mock", "pass", "pass"]);
   const found = await importProtectionViolations(meta, P, rules, "client", record);
   assertEquals(found.map((v) => [v.type, v.importer, v.specifier, v.trace.map((s) => s.file)]), [
-    ["specifier", "/p/src/routes/a.tsx", "@tanstack/react-start/server", [
-      "/p/src/router.tsx",
-      "/p/src/routes/a.tsx",
+    ["specifier", p("src/routes/a.tsx"), "@tanstack/react-start/server", [
+      p("src/router.tsx"),
+      p("src/routes/a.tsx"),
     ]],
-    ["file", "/p/src/routes/a.tsx", "../db.server.ts", [
-      "/p/src/router.tsx",
-      "/p/src/routes/a.tsx",
+    ["file", p("src/routes/a.tsx"), "../db.server.ts", [
+      p("src/router.tsx"),
+      p("src/routes/a.tsx"),
     ]],
-    ["marker", "/p/src/marked.ts", "@tanstack/react-start/server-only", [
-      "/p/src/router.tsx",
-      "/p/src/routes/a.tsx",
-      "/p/src/marked.ts",
+    ["marker", p("src/marked.ts"), "@tanstack/react-start/server-only", [
+      p("src/router.tsx"),
+      p("src/routes/a.tsx"),
+      p("src/marked.ts"),
     ]],
   ]);
   const message = formatViolation(found[1], P);
@@ -747,7 +753,7 @@ Deno.test("tanstack-start import protection: tree-shaken imports do not count", 
   meta.outputs["client.js"].inputs["src/db.server.ts"].bytesInOutput = 0;
   meta.outputs["client.js"].inputs[deniedModulePath("x-secret")].bytesInOutput = 0;
   const rules = startRules({ client: { specifiers: ["x-secret"] } });
-  const { record } = recorded(rules, "client", [["x-secret", "/p/src/routes/a.tsx"]]);
+  const { record } = recorded(rules, "client", [["x-secret", p("src/routes/a.tsx")]]);
   assertEquals(await importProtectionViolations(meta, P, rules, "client", record), []);
 });
 
@@ -765,14 +771,14 @@ Deno.test("tanstack-start import protection: the server build refuses *.client.*
   });
   const rules = startRules();
   const { record, actions } = recorded(rules, "server", [
-    ["@tanstack/react-start/client-only", "/p/src/browser.ts"],
-    ["@tanstack/react-start/server-only", "/p/src/db.server.ts"],
+    ["@tanstack/react-start/client-only", p("src/browser.ts")],
+    ["@tanstack/react-start/server-only", p("src/db.server.ts")],
   ]);
   assertEquals(actions, ["pass", "pass"], "both markers resolve on the server");
   const found = await importProtectionViolations(meta, P, rules, "server", record);
   assertEquals(found.map((v) => [v.type, v.importer, v.resolved]), [
-    ["file", "/p/src/routes/a.tsx", "/p/src/widget.client.tsx"],
-    ["marker", "/p/src/browser.ts", undefined],
+    ["file", p("src/routes/a.tsx"), p("src/widget.client.tsx")],
+    ["marker", p("src/browser.ts"), undefined],
   ]);
   const message = formatViolation(found[0], P);
   assertStringIncludes(message, "[import-protection] Import denied in server environment");
@@ -781,13 +787,13 @@ Deno.test("tanstack-start import protection: the server build refuses *.client.*
   // The browser's rules leave *.client.* alone; the server's leave *.server.* alone.
   assertEquals(
     (await importProtectionViolations(meta, P, rules, "client")).map((v) => v.resolved),
-    ["/p/src/db.server.ts"],
+    [p("src/db.server.ts")],
   );
   // One module may not carry both markers.
   const both = newResolveRecord();
-  recordImport(rules, "server", both, "@tanstack/react-start/client-only", "/p/src/x.ts");
+  recordImport(rules, "server", both, "@tanstack/react-start/client-only", p("src/x.ts"));
   assertThrows(
-    () => recordImport(rules, "server", both, "@tanstack/react-start/server-only", "/p/src/x.ts"),
+    () => recordImport(rules, "server", both, "@tanstack/react-start/server-only", p("src/x.ts")),
     Error,
     'File "src/x.ts" has both server-only and client-only markers',
   );
@@ -809,15 +815,15 @@ Deno.test("tanstack-start import protection: the app's importProtection rules", 
     [deniedModulePath("@prisma/client")]: [],
   });
   const files = (found: ImportProtectionViolation[]) =>
-    found.map((v) => `${v.type}:${v.importer.slice(3)}>${v.resolved?.slice(3) ?? v.specifier}`);
+    found.map((v) => `${v.type}:${rel(v.importer)}>${v.resolved ? rel(v.resolved) : v.specifier}`);
   // client.specifiers add to Start's; client.files replace its *.server.* rule.
   const client = startRules({
     client: { specifiers: [/^@prisma\//], files: ["src/secret/**"] },
   });
   assertEquals(resolveFilter(client, "client").source, ".*", "a RegExp rule sees every import");
   const { record } = recorded(client, "client", [
-    ["@prisma/client", "/p/src/routes/a.tsx"],
-    ["@tanstack/react-start/server", "/p/src/routes/a.tsx"],
+    ["@prisma/client", p("src/routes/a.tsx")],
+    ["@tanstack/react-start/server", p("src/routes/a.tsx")],
   ]);
   assertEquals(record.denied.map((d) => d.specifier), [
     "@prisma/client",
@@ -852,7 +858,7 @@ Deno.test("tanstack-start import protection: the app's importProtection rules", 
   const server = startRules({ server: { files: ["**/legacy.*"], specifiers: ["@prisma/client"] } });
   assertEquals(resolveFilter(server, "server").test("@prisma/client"), true);
   assertEquals(resolveFilter(startRules(), "server").test("@prisma/client"), false);
-  const serverRecord = recorded(server, "server", [["@prisma/client", "/p/src/routes/a.tsx"]]);
+  const serverRecord = recorded(server, "server", [["@prisma/client", p("src/routes/a.tsx")]]);
   assertEquals(serverRecord.actions, ["mock"]);
   assertEquals(
     files(await importProtectionViolations(meta, P, server, "server", serverRecord.record)),

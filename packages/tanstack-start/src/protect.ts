@@ -23,7 +23,7 @@
 //
 // Either fails the build.
 
-import { globToRegExp, isAbsolute, relative, resolve, SEPARATOR } from "@std/path";
+import { globToRegExp, isAbsolute, relative, resolve } from "@std/path";
 import { findServerOnlyLeaks, type ServerOnlySignal } from "@denext/denext/build/next-compat";
 
 /** The slice of an esbuild metafile the guard reads. */
@@ -283,7 +283,7 @@ export function compileImportProtection(
       const rel = relativePath(importer, root);
       if (matchesAny(rel, exclude)) return false;
       if (include.length > 0) return !!matchesAny(rel, include);
-      return importer.startsWith(srcDirectory + SEPARATOR);
+      return isUnder(importer, srcDirectory);
     },
     onViolation: options?.onViolation,
     maxTraceDepth: options?.maxTraceDepth ?? DEFAULT_MAX_TRACE_DEPTH,
@@ -397,9 +397,19 @@ function moduleId(path: string, cwd: string): string {
 
 const inNodeModules = (path: string) => /[\\/]node_modules[\\/]/.test(path);
 
+/**
+ * Whether the absolute `path` lies under `dir`, by `relative` rather than a string prefix: on
+ * Windows the two may differ in separator or in a drive letter `resolve` added (`\app` and
+ * `C:\app`), which a prefix test with the host separator calls outside.
+ */
+function isUnder(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return rel !== "" && !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== "..";
+}
+
 /** Whether `path` is one of the app's own modules (a file under `cwd`, not a package). */
 export function isAppModule(path: string, cwd: string): boolean {
-  return isAbsolute(path) && path.startsWith(cwd + SEPARATOR) && !inNodeModules(path);
+  return isAbsolute(path) && isUnder(path, cwd) && !inNodeModules(path);
 }
 
 /** A module the plugin generates (`.denext/`), left out of traces. */

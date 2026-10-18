@@ -21,7 +21,7 @@
 // - **The pages Start's sitemap lists** come back as {@link PrerenderResult.pages}: every page the
 //   prerender met (listed, discovered, crawled), each with what its `onSuccess` returned.
 
-import { join } from "@std/path";
+import { isAbsolute, join, relative } from "@std/path";
 import type { ClientGraph } from "./compile.ts";
 import { isAppModule } from "./protect.ts";
 import { inlineStreamedBoundaries } from "./static-html.ts";
@@ -534,8 +534,12 @@ function refuseUnserved(
  */
 export function formatRefusals(refused: Refusal[], projectRoot: string): string | null {
   if (refused.length === 0) return null;
-  const rel = (file: string) =>
-    file.startsWith(projectRoot) ? file.slice(projectRoot.length + 1).replace(/\\/g, "/") : file;
+  // By `relative`, not a string prefix: on Windows the root and the file may differ in separator
+  // or drive spelling.
+  const rel = (file: string) => {
+    const inside = relative(projectRoot, file);
+    return inside.startsWith("..") || isAbsolute(inside) ? file : inside.replace(/\\/g, "/");
+  };
   const lines = refused.map((r) =>
     `    ${r.path}${r.file ? `  (${rel(r.file)})` : ""} — ${r.reason}`
   );
