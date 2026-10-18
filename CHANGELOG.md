@@ -362,6 +362,10 @@ and this project adheres to
   refuses); it now follows Deno's own naming (`localhost_4873`, the port alone for an IP address,
   the registry's path segments below it).
 
+- **The diagnostics explainer's "did you mean" for a missing relative module reads the right
+  directory.** The import was resolved against `file://` + the importing file's path, which is
+  no URL for a Windows path or a directory with `#` in its name.
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,

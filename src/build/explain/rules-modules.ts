@@ -1,7 +1,7 @@
 // Imports: a `react` / `next/*` import in new code (point at the denext import map), a module
 // that doesn't exist (did-you-mean over its directory), and a name used without importing it.
 
-import { basename, dirname, extname } from "@std/path";
+import { basename, dirname, extname, isAbsolute, toFileUrl } from "@std/path";
 import { suggest } from "../../cli/command.ts";
 import { lookupImport } from "../../mcp/next-denext-map.ts";
 import { lineText } from "./source.ts";
@@ -86,7 +86,9 @@ function respell(spec: string, name: string): string {
 function resolvedTarget(input: RuleInput, spec: string): string | null {
   if (spec.startsWith("file://")) return toPath(spec);
   if (!input.d.file || !/^\.{1,2}\//.test(spec)) return null;
-  return toPath(new URL(spec, `file://${input.d.file}`).href);
+  // A path, not a URL: `file://` + `C:\\app\\x.ts` is no file URL (Windows).
+  const base = isAbsolute(input.d.file) ? toFileUrl(input.d.file).href : `file://${input.d.file}`;
+  return toPath(new URL(spec, base).href);
 }
 
 /** The specifier as the source wrote it, on the reported line (for a resolved `file://` one). */
