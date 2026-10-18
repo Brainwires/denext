@@ -236,8 +236,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   build steps don't run, so a route served from build output renders on demand (a Pages Router
   `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
   on first use). `jobs/` and `services/` are not started.
-- **The first-party Markdown renderer escapes raw HTML** (it is not passed through). Use an `.mdx`
-  entry for raw HTML or components.
+- **The first-party Markdown renderer escapes raw HTML by default**; `markdown: { html:
+  "sanitize" }` keeps what an allowlist sanitizer allows, never passing HTML through. Sanitized
+  HTML is closed inside the Markdown block it was written in, so Markdown can't sit inside a raw
+  element across blank lines (`<details>` + a blank line + `**md**` renders the Markdown after
+  the `</details>`); write that body as HTML, or use an `.mdx` entry for components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
   ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
   file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party

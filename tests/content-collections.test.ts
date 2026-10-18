@@ -327,3 +327,54 @@ Deno.test("renderContent / <Content>: .md through the first-party renderer, .mdx
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("markdown option: raw HTML in .md entries is escaped by default, sanitized when the plugin opts in", async () => {
+  const dir = await makeProject();
+  const outDir = join(dir, ".denext");
+  const store = join(outDir, "content-data.json");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "content", "blog", "raw.md"),
+      `---\ntitle: Raw\ndraft: false\n---\nPress <kbd>K</kbd> <img src=x onerror=alert(1)>\n`,
+    );
+    const render = async (options?: Parameters<typeof renderContent>[1]) => {
+      setContentStorePath(store);
+      clearContentCache();
+      return await renderToString(await renderContent((await getEntry("blog", "raw"))!, options));
+    };
+
+    // Default: no `markdown` stored with the entry, raw HTML escaped.
+    await buildContent({ projectRoot: dir, outDir });
+    const plain = JSON.parse(await Deno.readTextFile(store));
+    assertEquals(plain.blog.find((e: { id: string }) => e.id === "raw").markdown, undefined);
+    assertStringIncludes(await render(), "&lt;kbd&gt;K&lt;/kbd&gt;");
+
+    // The plugin's option reaches the prepare step's store …
+    let prepare: ((c: PluginPrepareContext) => void | Promise<void>) | undefined;
+    let command: { run: (c: CommandContext) => unknown } | undefined;
+    const ctx = {
+      addPrepareStep: (fn: (c: PluginPrepareContext) => void | Promise<void>) => (prepare = fn),
+      addCommand: (c: { run: (c: CommandContext) => unknown }) => (command = c),
+    } as unknown as PluginContext;
+    const markdown = { html: "sanitize", sanitize: { allowElements: ["center"] } } as const;
+    contentCollections({ markdown }).setup(ctx);
+    await prepare!({ projectRoot: dir, appDir: dir, outDir, config: {} });
+    const sanitized = await render();
+    assertStringIncludes(sanitized, `<p>Press <kbd>K</kbd> <img src="x" /></p>`);
+    assert(!sanitized.includes("onerror"), "event handlers are dropped");
+    // … and a renderContent call's own option overrides it.
+    assertStringIncludes(await render({ markdown: { html: "escape" } }), "&lt;kbd&gt;");
+
+    // `denext content build` through the plugin's command keeps the option too.
+    await buildContent({ projectRoot: dir, outDir }); // back to escaped
+    await command!.run(cmdCtx(dir, "build"));
+    const rebuilt = JSON.parse(await Deno.readTextFile(store));
+    assertEquals(rebuilt.blog.find((e: { id: string }) => e.id === "raw").markdown, markdown);
+    // MDX entries never carry it.
+    assertEquals(rebuilt.blog.find((e: { id: string }) => e.id === "mdx-post").markdown, undefined);
+  } finally {
+    setContentStorePath(null);
+    clearContentCache();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

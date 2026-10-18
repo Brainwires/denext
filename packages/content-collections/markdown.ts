@@ -12,8 +12,40 @@
  * the source is escaped, not passed through; link and image targets are attribute-escaped and
  * `javascript:`/`vbscript:`/`data:` URLs are dropped (an image keeps its alt text).
  *
+ * Opt-in raw HTML: `renderMarkdown(body, { html: "sanitize" })` keeps raw HTML that passes a
+ * first-party allowlist sanitizer ({@linkcode sanitizeHtml}): the HTML is parsed into a tree and
+ * re-serialized from it (never passed through), so only allowlisted elements and attributes,
+ * scheme-checked URLs and escaped text come out, and every element is closed inside the Markdown
+ * block it was written in.
+ *
  * @module
  */
+
+import {
+  type MarkdownHtmlMode,
+  mergeRawInline,
+  rawMarker,
+  resolveSanitizePolicy,
+  type SanitizeOptions,
+  type SanitizePolicy,
+  sanitizeWithPolicy,
+  scanInlineHtml,
+  ScanMemo,
+} from "./html-sanitize.ts";
+
+export { sanitizeHtml } from "./html-sanitize.ts";
+export type { MarkdownHtmlMode, SanitizeOptions } from "./html-sanitize.ts";
+
+/** Options for {@linkcode renderMarkdown}. */
+export interface MarkdownOptions {
+  /**
+   * Raw HTML in the source: `"escape"` (the default) shows it as text; `"sanitize"` keeps what
+   * the allowlist sanitizer allows (see {@linkcode sanitizeHtml}) and drops the rest.
+   */
+  readonly html?: MarkdownHtmlMode;
+  /** With `html: "sanitize"`: additions to the sanitizer's built-in allowlist. */
+  readonly sanitize?: SanitizeOptions;
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -36,7 +68,7 @@ function safeHref(raw: string): string | null {
   // placeholder (see `renderInline`) could be smuggled into the attribute and restored there
   // as raw markup after escaping. Refuse both.
   // deno-lint-ignore no-control-regex -- the NUL placeholder delimiter
-  if (/[\s\u0000]/.test(raw)) return null;
+  if (/[\s\u0000\u0002]/.test(raw)) return null;
   // The inline pass already HTML-escaped `raw`; undo that before the scheme test so an
   // `&#106;avascript:` style entity can't hide the scheme, then re-escape for the attribute.
   const decoded = raw.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
@@ -72,6 +104,8 @@ interface LinkRefs {
   links: Map<string, string>;
   /** The document's footnotes. */
   notes: Footnotes;
+  /** The raw-HTML policy with `html: "sanitize"`; null when raw HTML is escaped. */
+  raw: SanitizePolicy | null;
 }
 
 /** An `<a>` for an (already-escaped) label and raw href, or the bare label for a script URL. */
@@ -197,7 +231,9 @@ function renderInline(text: string, refs: LinkRefs): string {
   };
   // deno-lint-ignore no-control-regex -- the NUL placeholder
   const PLACEHOLDER = /\u0000(\d+)\u0000/g;
-  let out = extractCodeSpans(escapeHtml(text), hold);
+  const raws: string[] = [];
+  const source = refs.raw === null ? text : holdRawHtml(text, raws);
+  let out = extractCodeSpans(escapeHtml(source), hold);
   out = out.replace(/\[\^([^\]\s]+)\]/g, (m, label) => {
     const ref = footnoteRef(label, refs.notes);
     return ref === null ? m : hold(ref);
@@ -222,7 +258,40 @@ function renderInline(text: string, refs: LinkRefs): string {
   out = out.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
   out = out.replace(/(^|[^\w])_([^_]+)_(?=[^\w]|$)/g, "$1<em>$2</em>");
 
-  return out.replace(PLACEHOLDER, (_m, i) => held[Number(i)]);
+  out = out.replace(PLACEHOLDER, (_m, i) => held[Number(i)]);
+  return refs.raw === null ? out : mergeRawInline(out, raws, refs.raw);
+}
+
+/**
+ * With `html: "sanitize"`: replace each raw-HTML token of an inline run (outside its code spans,
+ * which stay literal) with a marker, holding the token's source in `raws` for
+ * {@linkcode mergeRawInline} to sanitize once the Markdown markup is in place.
+ */
+function holdRawHtml(text: string, raws: string[]): string {
+  const memo = new ScanMemo();
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "`") {
+      let n = i;
+      while (text[n] === "`") n++;
+      const close = findBacktickRun(text, n, n - i);
+      const end = close < 0 ? n : close + (n - i);
+      out += text.slice(i, end);
+      i = end;
+      continue;
+    }
+    const end = c === "<" ? scanInlineHtml(text, i, memo) : -1;
+    if (end < 0) {
+      out += c;
+      i++;
+      continue;
+    }
+    out += rawMarker(raws.push(text.slice(i, end)) - 1);
+    i = end;
+  }
+  return out;
 }
 
 const CALLOUT_KINDS: Record<string, "note" | "warn"> = {
@@ -334,12 +403,65 @@ function parseTable(lines: string[], i: number, refs: LinkRefs): Block {
   };
 }
 
-/** Does the line at `i` begin a new block (a list item, fence, heading, quote, rule, or table)? */
-function startsBlock(lines: string[], i: number): boolean {
+/**
+ * Does the line at `i` begin a new block (a list item, fence, heading, quote, rule, or table — or,
+ * with `html: "sanitize"`, an HTML block that may interrupt a paragraph)?
+ */
+function startsBlock(lines: string[], i: number, refs: LinkRefs): boolean {
   const l = lines[i];
   return /^\s*(\d+\.|[-*])\s+/.test(l) || /^```/.test(l) ||
     /^#{1,6}\s/.test(l) ||
-    l.startsWith(">") || /^(-{3,}|\*{3,})\s*$/.test(l) || isTableStart(lines, i);
+    l.startsWith(">") || /^(-{3,}|\*{3,})\s*$/.test(l) || isTableStart(lines, i) ||
+    (refs.raw !== null && htmlBlockKind(l, true) !== null);
+}
+
+/** CommonMark HTML block kinds 6's tag names: a block-level tag opens a block on its own. */
+const HTML_BLOCK_TAGS = new Set(
+  ("address article aside base basefont blockquote body caption center col colgroup dd details " +
+    "dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 " +
+    "head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option " +
+    "p param search section summary table tbody td tfoot th thead title tr track ul").split(" "),
+);
+
+/** A whole open or closing tag alone on its line (CommonMark HTML block kind 7). */
+const HTML_LONE_TAG =
+  /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)\s*$/;
+
+/**
+ * The CommonMark HTML block a line opens: the pattern of the line that ends it (inclusive), or
+ * `"blank"` when the block runs to the next blank line; null when it opens none. Kind 7 (a lone
+ * tag) can't interrupt a paragraph, so `interrupting` leaves it out.
+ */
+function htmlBlockKind(line: string, interrupting: boolean): RegExp | "blank" | null {
+  const m = line.match(/^ {0,3}<\/?([A-Za-z][A-Za-z0-9-]*)?/);
+  if (m === null) return null;
+  for (const [open, close] of HTML_BLOCK_ENDS) if (open.test(line)) return close;
+  const blockTag = m[1] !== undefined && HTML_BLOCK_TAGS.has(m[1].toLowerCase()) &&
+    /^(?:$|\s|\/?>)/.test(line.slice(m[0].length));
+  return blockTag || (!interrupting && HTML_LONE_TAG.test(line)) ? "blank" : null;
+}
+
+/** CommonMark HTML block kinds 1–5: the opening line's pattern and the closing line's. */
+const HTML_BLOCK_ENDS: ReadonlyArray<readonly [RegExp, RegExp]> = [
+  [/^ {0,3}<(?:script|pre|style|textarea)(?:[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
+  [/^ {0,3}<!--/, /-->/],
+  [/^ {0,3}<\?/, /\?>/],
+  [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
+  [/^ {0,3}<![A-Za-z]/, />/],
+];
+
+/** An HTML block at `i` (with `html: "sanitize"`), sanitized on its own; null when none opens. */
+function parseHtmlBlock(lines: string[], i: number, policy: SanitizePolicy): Block | null {
+  const kind = htmlBlockKind(lines[i], false);
+  if (kind === null) return null;
+  let j = i;
+  if (kind === "blank") {
+    while (j < lines.length && lines[j].trim() !== "") j++;
+  } else {
+    while (j < lines.length && !kind.test(lines[j])) j++;
+    j = Math.min(j + 1, lines.length); // the closing line belongs to the block
+  }
+  return { html: sanitizeWithPolicy(lines.slice(i, j).join("\n"), policy), next: j };
 }
 
 /** A fenced code block starting at `i`, or null when `i` isn't a fence. */
@@ -427,10 +549,14 @@ function listMarker(line: string | undefined): ListMarker | null {
  * a wrapped, non-marker line belongs to the current item (CommonMark lazy continuation),
  * without which a wrapped bullet would close the list and render its tail as a stray paragraph.
  */
-function collectItem(lines: string[], i: number): { text: string; next: number } {
+function collectItem(
+  lines: string[],
+  i: number,
+  refs: LinkRefs,
+): { text: string; next: number } {
   const parts = [lines[i].replace(LIST_MARKER, "").trim()];
   let j = i + 1;
-  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines, j)) {
+  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines, j, refs)) {
     parts.push(lines[j].trim());
     j++;
   }
@@ -451,11 +577,11 @@ function nestedListAt(lines: string[], j: number, indent: number): number {
  * Where a further paragraph of an item whose marker sits at `indent` starts — past one blank
  * line, a line indented two or more columns past the marker (CommonMark) — or -1.
  */
-function itemParagraphAt(lines: string[], j: number, indent: number): number {
+function itemParagraphAt(lines: string[], j: number, indent: number, refs: LinkRefs): number {
   if (lines[j]?.trim() !== "" || lines[j + 1] === undefined) return -1;
   const line = lines[j + 1];
   const ws = line.match(/^\s*/)![0];
-  return line.trim() !== "" && indentWidth(ws) >= indent + 2 && !startsBlock(lines, j + 1)
+  return line.trim() !== "" && indentWidth(ws) >= indent + 2 && !startsBlock(lines, j + 1, refs)
     ? j + 1
     : -1;
 }
@@ -469,13 +595,13 @@ function itemContinuation(
 ): Block | null {
   const nested = nestedListAt(lines, j, indent);
   if (nested >= 0) return parseList(lines, nested, refs);
-  const para = itemParagraphAt(lines, j, indent);
+  const para = itemParagraphAt(lines, j, indent, refs);
   return para >= 0 ? parseParagraph(lines, para, refs) : null;
 }
 
 /** One list item at `i` (marker at `indent`): its text, then its nested lists and paragraphs. */
 function parseItem(lines: string[], i: number, indent: number, refs: LinkRefs): Block {
-  const item = collectItem(lines, i);
+  const item = collectItem(lines, i, refs);
   let html = renderInline(item.text, refs);
   let j = item.next;
   for (let more = itemContinuation(lines, j, indent, refs); more !== null;) {
@@ -539,7 +665,7 @@ function parseParagraph(lines: string[], i: number, refs: LinkRefs): Block {
   // consumed nothing would leave the renderer at the same line forever.
   const para: string[] = [lines[i].trim()];
   let j = i + 1;
-  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines, j)) {
+  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines, j, refs)) {
     para.push(lines[j].trim());
     j++;
   }
@@ -573,10 +699,14 @@ function takeFootnote(lines: string[], i: number, notes: Footnotes): number | nu
  * render nothing in place and resolve `[text][label]` / `[label]` / `![alt][label]` / `[^label]`
  * in the inline pass. The first definition of a label wins (CommonMark).
  */
-function collectLinkRefs(source: string[]): { lines: string[]; refs: LinkRefs } {
+function collectLinkRefs(
+  source: string[],
+  raw: SanitizePolicy | null,
+): { lines: string[]; refs: LinkRefs } {
   const refs: LinkRefs = {
     links: new Map(),
     notes: { defs: new Map(), order: [], uses: new Map() },
+    raw,
   };
   const kept: string[] = [];
   let inFence = false;
@@ -632,6 +762,11 @@ function opensIndentedCode(lines: string[], i: number): boolean {
     /^(-{3,}|\*{3,})\s*$/.test(prev);
 }
 
+/** An HTML block (with `html: "sanitize"`) or a fenced code block at `i`, or null. */
+function parseRawOrFence(lines: string[], i: number, refs: LinkRefs): Block | null {
+  return (refs.raw === null ? null : parseHtmlBlock(lines, i, refs.raw)) ?? parseFence(lines, i);
+}
+
 /** The block at `i` (a non-blank line), rendered. */
 function parseBlock(lines: string[], i: number, refs: LinkRefs): Block {
   const line = lines[i];
@@ -646,8 +781,8 @@ function parseBlock(lines: string[], i: number, refs: LinkRefs): Block {
     };
   }
   if (CODE_INDENT.test(line) && opensIndentedCode(lines, i)) return parseIndentedCode(lines, i);
-  const fence = parseFence(lines, i);
-  if (fence) return fence;
+  const leaf = parseRawOrFence(lines, i, refs);
+  if (leaf) return leaf;
   if (isTableStart(lines, i)) return parseTable(lines, i, refs);
   if (line.startsWith(">")) return parseBlockquote(lines, i, refs);
   if (LIST_MARKER.test(line)) return parseList(lines, i, refs);
@@ -657,14 +792,30 @@ function parseBlock(lines: string[], i: number, refs: LinkRefs): Block {
 /**
  * Render a Markdown body (frontmatter already stripped) to an HTML string.
  *
+ * Raw HTML is escaped unless `options.html` is `"sanitize"`, which keeps the HTML the allowlist
+ * sanitizer allows ({@linkcode sanitizeHtml}): an HTML block (a line opening with a block-level
+ * tag, a comment, or a lone tag) is sanitized as one fragment, inline tags together with the
+ * paragraph, heading, cell or item they sit in; either way every element is closed inside that
+ * block, and code spans and code blocks stay literal.
+ *
+ * ```ts
+ * renderMarkdown("Press <kbd>Ctrl</kbd>+<kbd>C</kbd> <img src=x onerror=alert(1)>", {
+ *   html: "sanitize",
+ * }); // → '<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd> <img src="x" /></p>'
+ * ```
+ *
  * @param body The Markdown source, without frontmatter.
+ * @param options How raw HTML is treated (escaped by default).
  * @returns HTML: one block element per Markdown block, joined by newlines (the footnotes
  *   section, when a footnote is referenced, last).
  */
-export function renderMarkdown(body: string): string {
+export function renderMarkdown(body: string, options: MarkdownOptions = {}): string {
+  const raw = options.html === "sanitize" ? resolveSanitizePolicy(options.sanitize) : null;
   // deno-lint-ignore no-control-regex -- NUL delimits the inline placeholders
-  const source = body.replace(/\r\n/g, "\n").replace(/\u0000/g, "");
-  const { lines, refs } = collectLinkRefs(source.split("\n"));
+  let source = body.replace(/\r\n/g, "\n").replace(/\u0000/g, "");
+  // deno-lint-ignore no-control-regex -- U+0002 delimits the held raw-HTML markers
+  if (raw !== null) source = source.replace(/\u0002/g, "");
+  const { lines, refs } = collectLinkRefs(source.split("\n"), raw);
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -673,7 +824,7 @@ export function renderMarkdown(body: string): string {
       continue;
     }
     const block = parseBlock(lines, i, refs);
-    out.push(block.html);
+    if (block.html !== "") out.push(block.html); // a sanitized HTML block may come out empty
     i = block.next;
   }
   if (refs.notes.order.length > 0) out.push(renderFootnotes(refs));

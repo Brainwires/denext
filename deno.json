@@ -325,6 +325,7 @@
     "@std/jsonc": "jsr:@std/jsonc@^1.0.0",
     "@std/yaml": "jsr:@std/yaml@^1.0.0",
     "@std/assert": "jsr:@std/assert@^1.0.0",
+    "@b-fuze/deno-dom": "jsr:@b-fuze/deno-dom@0.1.56",
     "effect": "npm:effect@^3.22.0",
     "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
     "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.3.1",

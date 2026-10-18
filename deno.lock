@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@astral/astral@~0.5.3": "0.5.6",
+    "jsr:@b-fuze/deno-dom@0.1.56": "0.1.56",
     "jsr:@david/jsonc-morph@~0.3.4": "0.3.5",
     "jsr:@david/path@0.2": "0.2.0",
     "jsr:@david/temp@~0.1.1": "0.1.1",
@@ -89,6 +90,9 @@
         "jsr:@std/path@1",
         "jsr:@zip-js/zip-js"
       ]
+    },
+    "@b-fuze/deno-dom@0.1.56": {
+      "integrity": "8030e2dc1d8750f1682b53462ab893d9c3470f2287feecbe22f44a88c54ab148"
     },
     "@david/jsonc-morph@0.3.5": {
       "integrity": "c60b33ba2e3add2c2bda45d83b0a029119cbaa09175f9a494c643a2180a15598"
@@ -2409,6 +2413,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@astral/astral@~0.5.3",
+      "jsr:@b-fuze/deno-dom@0.1.56",
       "jsr:@denext/docs-corpus@4.3.1",
       "jsr:@denext/lightningcss@^1.0.0-rc.72",
       "jsr:@denext/swc@76",

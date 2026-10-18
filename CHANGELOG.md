@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in sanitized raw HTML in the first-party Markdown renderer** (`@denext/content-collections`
+  0.7). Raw HTML in a `.md` entry stays escaped by default; `contentCollections({ markdown: {
+  html: "sanitize" } })` (or `renderContent(entry, { markdown })`, or `renderMarkdown(body, {
+  html: "sanitize" })`) keeps what a first-party, zero-dependency allowlist sanitizer allows. The
+  HTML is parsed into a tree and re-serialized from it, never passed through: GitHub's element set
+  with per-element attributes; no `script`, `style`, `iframe`, `object`, form controls, `svg`,
+  `math`, `template`, namespaced or custom elements, `on*`, `style`, `srcdoc`, `formaction` or
+  `xlink:*`; URLs scheme-checked after entity decoding and control-character stripping (`http`,
+  `https`, `mailto`, relative); `id` / `name` prefixed `user-content-` with `#fragment` links
+  rewritten to match; `target="_blank"` only with `rel="noopener noreferrer nofollow"`; every
+  element closed inside its Markdown block. `sanitize: { allowElements, allowAttributes,
+  allowDataImages }` only extends the allowlist. `sanitizeHtml()` is exported too.
+
 ## [4.3.1] - 2026-10-17
 
 ### Added

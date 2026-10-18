@@ -140,6 +140,50 @@ export default async function Blog() {
         entry is compiled to a component module at build, so nothing MDX-related runs per request.
         Pass <code>components</code> to map elements or MDX components to your own.
       </p>
+      <h3>Raw HTML in Markdown (opt-in)</h3>
+      <p>
+        Raw HTML in a <code>.md</code> entry is escaped by default. Set{" "}
+        <code>markdown: {'{ html: "sanitize" }'}</code>{" "}
+        on the plugin to keep the HTML that passes denext's first-party allowlist sanitizer instead.
+        The HTML is parsed into a tree and re-serialized from it, never passed through: GitHub's
+        element set survives (<code>kbd</code>, <code>details</code>/<code>summary</code>,{" "}
+        <code>sub</code>/<code>sup</code>, tables, <code>img</code>, <code>picture</code>/<code>
+          source
+        </code>, …) with a per-element attribute list, while <code>script</code>,{" "}
+        <code>style</code>, <code>iframe</code>, <code>object</code>, form controls,{" "}
+        <code>svg</code>, <code>math</code>, <code>template</code>, namespaced and custom elements,
+        {" "}
+        <code>on*</code> handlers, <code>style</code>, <code>srcdoc</code>, <code>formaction</code>
+        {" "}
+        and <code>xlink:*</code>{" "}
+        never do. URLs are entity-decoded and stripped of control characters before the scheme check
+        (<code>http</code>, <code>https</code>,{" "}
+        <code>mailto</code>, relative and fragment links only); <code>id</code> and{" "}
+        <code>name</code> get GitHub's <code>user-content-</code> prefix, and same-document{" "}
+        <code>#fragment</code> links follow it; <code>class</code> is stripped;{" "}
+        <code>target="_blank"</code> always gets{" "}
+        <code>rel="noopener noreferrer nofollow"</code>; comments are removed. Every element is
+        closed inside the Markdown block it was written in, so a <code>&lt;details&gt;</code>{" "}
+        and its body belong in one HTML block (no blank line inside it).
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+import { contentCollections } from "@denext/content-collections";
+
+export default {
+  plugins: [contentCollections({
+    markdown: {
+      html: "sanitize", // default "escape"
+      // Additions only; the denied set stays denied whatever is listed here.
+      sanitize: { allowAttributes: { "*": ["class"] }, allowDataImages: true },
+    },
+  })],
+};
+
+// Per call, or outside a collection:
+// await renderContent(post, { markdown: { html: "sanitize" } });
+// import { renderMarkdown, sanitizeHtml } from "@denext/content-collections/markdown";`}
+      </Code>
       <Code lang="tsx">
         {`// app/blog/[id]/page.tsx
 import { notFound } from "denext";
