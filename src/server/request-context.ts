@@ -232,6 +232,13 @@ export interface RequestContext {
   /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
   /**
+   * Set by a compat runtime's middleware (`denext/fresh`) that ran a page route's handler for a
+   * method other than GET / HEAD and wants the page to render its result, as Fresh renders a
+   * page for any method whose handler returns page data. Without it such a request to a page is
+   * a 405.
+   */
+  renderPageForMethod?: boolean;
+  /**
    * Set when the request's locale was negotiated (`detectLocale`: the `NEXT_LOCALE` cookie or
    * `Accept-Language`; `localeMiddleware`, next-intl's middleware): the response may differ per
    * visitor on the same URL, so `cdnCacheHeaders` never marks it public.
