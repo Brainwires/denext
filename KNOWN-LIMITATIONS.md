@@ -91,8 +91,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   a reconnect that lands on another instance, or any reconnect after
   `live.limits.viewResumeSeconds`, re-runs `init`; a model the wire codec cannot encode (a
   function, a class instance) stays in its process. A view resumed elsewhere carries on from the
-  model as last stored, while the parked copy runs on where it was until its window ends. With
-  JavaScript disabled only the first render works.
+  model as last stored; the resuming instance announces it over the channel transport, and the
+  instance that parked the view stops its copy at once. With JavaScript disabled only the first
+  render works.
 - **Channels carry state unless they keep a log:** without `history`, no replay on reconnect,
   at-most-once, latest-wins, 16 ms coalescing, `seq` ordered per instance. A log replays what
   it retains (`size` per key, `ttlSeconds`); the in-memory one is per instance. Re-authorization is lazy (`authTtlSeconds`;
