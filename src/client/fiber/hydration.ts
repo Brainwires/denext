@@ -115,43 +115,25 @@ export function cursorNode(): Node | null {
 }
 
 /**
- * Suspense fibers hydrating over a boundary the server rendered as its fallback
- * (`<!--$!-->…<!--/$-->`, a synchronous `renderToString` that suspended), each with the cursor
- * to resume after it. As in React, the client renders that boundary itself: its content mounts
- * fresh (no mismatch is reported) and the server's fallback is pruned when its parent syncs.
+ * The client-rendered boundary step (suspense-hydration.ts): given a Suspense fiber entering
+ * (`true`) or completing, and the cursor, the cursor to continue with. Only react-dom/server's
+ * synchronous `renderToString` writes such a boundary (`<!--$!-->`), so the compat
+ * `react-dom/client` / `react-dom` install it; denext's own renderers never do.
  */
-const clientRendered = new WeakMap<Fiber, Cursor>();
+let suspenseHydration:
+  | ((wip: Fiber, cursor: Cursor | null, entering: boolean) => Cursor | null)
+  | null = null;
 
-/** Entering a Suspense fiber while hydrating: a `<!--$!-->` boundary renders client-side. */
-export function beginSuspenseHydration(wip: Fiber): void {
-  const cursor = hydrationCursor;
-  if (!cursor) return;
-  const node = cursor.parent.childNodes[cursor.index];
-  if (node?.nodeType !== 8 || node.nodeValue !== "$!") return;
-  cursor.index = closingMarker(cursor.parent, cursor.index) + 1;
-  clientRendered.set(wip, cursor);
-  hydrationCursor = null;
+/** Install {@link suspenseHydration}. */
+export function setSuspenseHydration(
+  fn: (wip: Fiber, cursor: Cursor | null, entering: boolean) => Cursor | null,
+): void {
+  suspenseHydration = fn;
 }
 
-/** Leaving a Suspense fiber: resume hydrating after a client-rendered boundary. */
-export function completeSuspenseHydration(wip: Fiber): void {
-  const cursor = clientRendered.get(wip);
-  if (cursor === undefined) return;
-  clientRendered.delete(wip);
-  hydrationCursor = cursor;
-}
-
-/** The index of the `<!--/$-->` closing the boundary that opens at `start` (nesting counted). */
-function closingMarker(parent: Node, start: number): number {
-  let depth = 0;
-  const nodes = parent.childNodes;
-  for (let i = start; i < nodes.length; i++) {
-    if (nodes[i].nodeType !== 8) continue;
-    const data = nodes[i].nodeValue ?? "";
-    if (data === "/$" && --depth === 0) return i;
-    if (data[0] === "$") depth++;
-  }
-  return nodes.length - 1;
+/** Entering (`true`) or completing a Suspense fiber: a `<!--$!-->` boundary renders client-side. */
+export function suspenseHydrationStep(wip: Fiber, entering: boolean): void {
+  if (suspenseHydration) hydrationCursor = suspenseHydration(wip, hydrationCursor, entering);
 }
 
 /** A streamed Suspense boundary's placeholder (`<div data-dnx-b="id">`). */

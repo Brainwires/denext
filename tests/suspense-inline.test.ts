@@ -25,6 +25,8 @@ import type { VNode, VNodeChildren } from "../src/jsx/types.ts";
 import { stuckHoles } from "../src/testing/conformance.ts";
 import { flushSync, hydrateRoot, setDocument } from "../src/client/reconciler.ts";
 import { installHydrationWarning } from "../src/client/fiber/hydration.ts";
+// react-dom/client installs the `<!--$!-->` (client-rendered boundary) hydration it brings.
+import "../src/compat/react-dom-client.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import {
   FakeComment,

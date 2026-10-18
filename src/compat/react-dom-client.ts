@@ -15,6 +15,10 @@
  */
 
 import { createRoot, hydrateRoot } from "../client/mod.ts";
+import { installSuspenseHydration } from "../client/fiber/suspense-hydration.ts";
+
+// react-dom/server's `renderToString` writes `<!--$!-->` boundaries; hydrate them as React does.
+installSuspenseHydration();
 
 export { createRoot, hydrateRoot, type Root } from "../client/mod.ts";
 

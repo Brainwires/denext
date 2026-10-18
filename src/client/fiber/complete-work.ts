@@ -5,9 +5,9 @@ import { bubbleLanes, hostNamespace, rawHtmlOf } from "./fiber-utils.ts";
 import {
   adoptServerHtml,
   claimText,
-  completeSuspenseHydration,
   isHydrating,
   popHydrationCursor,
+  suspenseHydrationStep,
 } from "./hydration.ts";
 import { onErrorFor } from "./boundaries.ts";
 
@@ -150,7 +150,7 @@ export function completeWork(wip: Fiber): void {
       completeComponent(wip);
       break;
     case "suspense":
-      completeSuspenseHydration(wip);
+      suspenseHydrationStep(wip, false);
       break;
       // root / fragment / portal / errorboundary: no own DOM.
   }

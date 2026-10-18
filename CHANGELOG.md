@@ -251,6 +251,12 @@ and this project adheres to
 
 ### Changed
 
+- **Hydrating a react-dom/server `<!--$!-->` boundary ships only with the compat `react-dom`
+  modules.** Only react-dom/server's synchronous `renderToString` writes such a client-rendered
+  boundary; denext's own renderers never do, so its hydration (suspense-hydration.ts) is installed
+  by `react-dom/client` / `react-dom` instead of riding every app's shared runtime (−375 B raw:
+  65,780 → 65,405 B for `examples/hello`, back under the 65,500 B budget).
+
 - **`@denext/openapi`'s `ui: "scalar"` docs page loads nothing from a CDN.** Scalar's API
   reference (`@scalar/api-reference` 1.72.4, MIT, licence and notice beside it) is vendored in
   the package like Swagger UI, checked against its recorded SHA-256 and served from

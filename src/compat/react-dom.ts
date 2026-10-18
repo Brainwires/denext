@@ -26,6 +26,10 @@ import {
   requestFormReset,
 } from "./react-dom-preload.ts";
 import { useFormState, useFormStatus } from "../runtime/actions.ts";
+import { installSuspenseHydration } from "../client/fiber/suspense-hydration.ts";
+
+// react-dom/server's `renderToString` writes `<!--$!-->` boundaries; hydrate them as React does.
+installSuspenseHydration();
 
 export { createPortal, createRoot, flushSync, hydrateRoot };
 export {
