@@ -18,6 +18,7 @@ import type {
 import { clientActionStub } from "../runtime/server-action.ts";
 import { qrlStub } from "../runtime/qrl.ts";
 import { decodeTagged, NOT_TAGGED } from "../runtime/wire-codec.ts";
+import { reviveSignal } from "../runtime/signal-brand.ts";
 import { ErrorBoundary } from "../runtime/error-boundary.ts";
 
 /** Maps client-reference ids (`clientId#export`) to client component functions. */
@@ -159,6 +160,8 @@ function parseTagged(value: Record<string, unknown>, registry: ClientRegistry): 
   if (tag === "a") return clientActionStub(value.i as string);
   if (tag === "e") return qrlStub(value.i as string);
   if (tag === "ch") return { denextChannelId: value.i as string };
+  // A signal prop (Flight only — never on the HTTP / Live wires, whose payloads a client sends).
+  if (tag === "sg") return reviveSignal(parseValue(value.v as FlightValue, registry), value.i);
   // A VNode-valued prop.
   if (tag === "h" || tag === "c") return parseFlight(value as unknown as FlightNode, registry);
   // Date / bigint / URL / non-finite / Map / Set: the wire codec's tags, decoded by the same

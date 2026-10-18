@@ -36,6 +36,7 @@ export type {
   FlightPrimitive,
   FlightProps,
   FlightSet,
+  FlightSignal,
   FlightUrl,
   FlightValue,
 } from "../jsx/render-to-flight.ts";

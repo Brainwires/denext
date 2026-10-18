@@ -32,6 +32,7 @@ import {
   type QueuedEffect,
   StrictBit,
   TransitionLane,
+  UnmountedBit,
 } from "./fiber.ts";
 import { isHydrating } from "./hydration.ts";
 
@@ -339,6 +340,19 @@ function storeChangeCheck(cell: HookCell, getSnapshot: () => unknown): () => boo
 }
 
 export const clientDispatcher: Dispatcher = {
+  renderingComponent(): object | null {
+    return currentFiber;
+  },
+
+  rerenderComponent(token: object): boolean {
+    const fiber = token as Fiber;
+    if (hasBit(fiber, UnmountedBit)) return false;
+    // A forced render (not a state update): no hook cell changed, so the eager same-state
+    // bailout must not skip it.
+    scheduleUpdate(fiber, false);
+    return true;
+  },
+
   useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
     const hook = getHook(HK_STATE);
     if (!hook.inited) {

@@ -54,6 +54,7 @@ import type {
   FlightValue,
 } from "./render-to-flight.ts";
 import { serializeScalar, serializeThenable, warnDroppedFunctionProps } from "./flight-scalar.ts";
+import { type BrandedSignal, isSignal, signalWireId } from "../runtime/signal-brand.ts";
 
 /** A renderer output that carries both the SSR HTML and the Flight tree for the same subtree. */
 export interface Dual {
@@ -866,11 +867,19 @@ export async function serializeFlightValue(
 /** The compound half of {@link serializeFlightValue}: arrays, Maps, Sets, VNodes, plain objects. */
 export async function serializeCompound(value: unknown, s: ValueSerializer): Promise<Serialized> {
   if (Array.isArray(value)) return await serializeArray(value, s);
+  // Before the VNode check: a signal also renders as a child, so it is element-shaped.
+  if (isSignal(value)) return await serializeSignal(value, s);
   if (value instanceof Map) return await serializeMap(value, s);
   if (value instanceof Set) return { $: "S", v: await serializeArray([...value], s) };
   if (isVNode(value)) return await s.vnode(value);
   if (typeof value === "object" && value !== null) return await serializeObject(value, s);
   return SKIP;
+}
+
+/** A signal prop: its wire id and current value (the client revives a live signal). */
+async function serializeSignal(value: BrandedSignal, s: ValueSerializer): Promise<FlightValue> {
+  const v = await s.value(value.peek());
+  return { $: "sg", i: signalWireId(value), v: v === SKIP ? null : v };
 }
 
 /** A Map prop: entries whose key or value is dropped are removed (a JSON-less `Map` was `{}`). */
