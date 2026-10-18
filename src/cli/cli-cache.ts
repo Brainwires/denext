@@ -96,7 +96,8 @@ export async function warmCliModules(url: string = CLI_MODULES_URL): Promise<voi
     Deno.mkdirSync(join(marker, ".."), { recursive: true });
     Deno.writeTextFileSync(`${marker}.attempt`, new Date().toISOString());
     // `deno eval` runs the cache and writes the marker only when it succeeded; it outlives this
-    // process (unref'd, stdio detached).
+    // process (detached, unref'd, no stdio). `detached` matters on Windows, where a child that
+    // is not detached ends with the process that started it.
     const script = `const r = await new Deno.Command(Deno.execPath(), { args: JSON.parse(` +
       `Deno.env.get("DENEXT_CLI_CACHE_ARGS")), stdin: "null", stdout: "null", stderr: "null" })` +
       `.output(); if (r.success) Deno.writeTextFileSync(Deno.env.get("DENEXT_CLI_CACHE_MARKER"),` +
@@ -110,6 +111,7 @@ export async function warmCliModules(url: string = CLI_MODULES_URL): Promise<voi
       stdin: "null",
       stdout: "null",
       stderr: "null",
+      detached: true,
     }).spawn();
     child.unref();
   } catch {

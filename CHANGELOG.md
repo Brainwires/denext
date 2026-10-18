@@ -310,6 +310,12 @@ and this project adheres to
   Nothing inside an `<svg>` hoists now, as in React, in the string, Flight, streaming and PPR
   renderers alike.
 
+- **On Windows, a CLI run from JSR caches its verbs for offline use in the background again.**
+  The first run of a remote CLI starts a background `deno cache` of every verb's modules, meant
+  to outlive the run. On Windows a child process that is not detached ends with its parent, so
+  the warm-up died as soon as the command returned and the verbs stayed uncached; it is now
+  started detached.
+
 - **On Windows, the CLI's toolchain re-run keeps the `--config` it was started with.** A verb
   that runs project code re-runs itself on denext's Deno toolchain and passes on the parent's
   `--config` and resolution flags, read from the process's own command line. Windows had no

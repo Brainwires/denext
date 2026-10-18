@@ -88,7 +88,14 @@ Deno.test({
       assertEquals(completions.code, 0, completions.err);
       assertStringIncludes(completions.out, "_denext_complete()");
 
-      const listing = await run(bin, ["commands", "--json", "--cwd", project], project);
+      // The project's plugin comes from JSR with a cold cache here: on a slow disk (Windows
+      // scans every file written) its download alone can outlast the 1.5 s listing budget,
+      // which bounds a hung `setup`, not a first download.
+      const listing = await run(
+        bin,
+        ["commands", "--json", "--timeout", "120000", "--cwd", project],
+        project,
+      );
       assertEquals(listing.code, 0, listing.err);
       const json = JSON.parse(listing.out.slice(listing.out.indexOf("{"))) as {
         project: { name: string }[];
