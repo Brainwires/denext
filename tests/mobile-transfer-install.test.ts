@@ -13,6 +13,7 @@ import {
 import { withAppDelegateBackgroundTransfers } from "../src/build/mobile-native-config.ts";
 import {
   isPristineTransferTemplate,
+  TRANSFER_TEMPLATE_VERSION,
   WORK_RUNTIME_DEPENDENCY,
 } from "../src/build/transfer-native-templates.ts";
 
@@ -88,7 +89,12 @@ Deno.test("mobile add file-transfer: DenextTransfer on iOS + Android, registered
       assert(report.written.includes(path), path);
     }
     for (const path of [...ios, ...android]) {
-      assert((await read(dir, path)).startsWith("// denext-transfer-template: 1 sha256="), path);
+      assert(
+        (await read(dir, path)).startsWith(
+          `// denext-transfer-template: ${TRANSFER_TEMPLATE_VERSION} sha256=`,
+        ),
+        path,
+      );
     }
     assertStringIncludes(await read(dir, ios[1]), 'jsName = "DenextTransfer"');
     assertStringIncludes(await read(dir, ios[0]), "URLSessionConfiguration.background");

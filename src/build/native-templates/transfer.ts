@@ -407,10 +407,18 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
 
     // MARK: delegate
 
+    /// Whether \`task\` is no longer the transfer's own: a paused download's cancelled task can
+    /// report after a resume started its successor, and must not settle the new one. (Under the
+    /// state lock. A task adopted after a relaunch, before \`attach\` lists it, is not superseded.)
+    private func superseded(_ id: String, _ task: URLSessionTask) -> Bool {
+        guard let current = tasks[id] else { return false }
+        return current !== task
+    }
+
     private func progress(_ task: URLSessionTask, _ bytes: Int64, _ expected: Int64) {
         guard let id = task.taskDescription else { return }
         state.sync {
-            guard var record = records[id], record.state == "running" else { return }
+            guard var record = records[id], record.state == "running", !superseded(id, task) else { return }
             record.bytes = bytes
             if expected > 0 { record.total = expected }
             records[id] = record
@@ -456,7 +464,7 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
         guard let id = downloadTask.taskDescription else { return }
         let (status, headers) = DenextTransferManager.response(downloadTask)
         state.sync {
-            guard var record = records[id], record.state == "running" else { return }
+            guard var record = records[id], record.state == "running", !superseded(id, downloadTask) else { return }
             record.status = status
             if (200..<300).contains(status) {
                 do {
@@ -493,7 +501,7 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
         guard let id = task.taskDescription else { return }
         let (status, headers) = DenextTransferManager.response(task)
         state.sync {
-            guard var record = records[id], record.state == "running" else { return }
+            guard var record = records[id], record.state == "running", !superseded(id, task) else { return }
             // A paused or cancelled task, or a download already settled in didFinishDownloadingTo.
             if let error = error as NSError? {
                 let resume = error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data

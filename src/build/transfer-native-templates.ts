@@ -35,7 +35,7 @@ import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-ma
 import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 
 /** The generation of the templates, stamped into every file the installer writes. */
-export const TRANSFER_TEMPLATE_VERSION = 1;
+export const TRANSFER_TEMPLATE_VERSION = 2;
 
 /**
  * A template as the installer writes it: a first line

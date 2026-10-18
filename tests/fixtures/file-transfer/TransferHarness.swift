@@ -68,8 +68,17 @@ do {
     let paused = last("d2", "paused")
     check("a paused download is resumable", paused?["resumable"] as? Bool == true, "\(String(describing: paused))")
     check("resume answers true", (try? manager.resume("d2")) == true)
+    // The paused task's own completion (cancelled) can arrive after the resume started its
+    // successor; it must not settle the resumed download. Delivered here on purpose, so the race is
+    // not left to timing.
+    let stale = URLSession.shared.downloadTask(with: URL(string: "\(base)/slow")!)
+    stale.taskDescription = "d2"
+    manager.urlSession(URLSession.shared, task: stale,
+                       didCompleteWithError: NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled))
     _ = wait(60) { settled("d2") }
     check("the resumed download finishes", last("d2", "done") != nil, "\(eventsFor("d2").suffix(3))")
+    check("a superseded task's late completion does not fail the resumed download",
+          last("d2", "failed") == nil, "\(eventsFor("d2").suffix(3))")
     let file = DenextTransferManager.rootOverride!.appendingPathComponent("DATA/slow.bin")
     let data = (try? Data(contentsOf: file)) ?? Data()
     check("the resumed file is complete and in order", data.count == 524_288 &&
