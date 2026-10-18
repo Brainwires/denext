@@ -323,3 +323,17 @@ Deno.test("client forwardHeaders: an unlisted header, a refused name or an overs
     ]);
     assertEquals(seen.length, 2);
   }));
+
+Deno.test("client: a read with a body, or an empty forwardHeaders config, goes alone", () =>
+  asBrowser(async () => {
+    const { app } = echoApp({});
+    validateDenextConfig({ apiBatch: {} } as DenextConfig);
+    const seen: Request[] = [];
+    const api = createApiClient({ fetch: appFetch(app, seen), batch: { forwardHeaders: [] } });
+    await Promise.all([
+      api("/api/echo" as never, "GET" as never, { body: {} } as never),
+      api("/api/echo" as never, "GET" as never, { headers: { "x-tenant": "a" } } as never),
+    ]).catch(() => {});
+    // (A GET with a body is refused by `fetch` itself; what matters is that it never batched.)
+    assertEquals(seen.filter((r) => new URL(r.url).pathname === API_BATCH_PATH), []);
+  }));

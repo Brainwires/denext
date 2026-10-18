@@ -219,3 +219,45 @@ Deno.test("useId: the server's signal boundaries take no component slot (ids mat
   assert(flat, "the page rendered its id");
   assertEquals(await pageIdWith(true), flat);
 });
+
+Deno.test("useApi PPR seeding: a prerender that throws falls back and closes its collection", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const Boom = () => {
+    throw new Error("boom");
+  };
+  const manifest: RouteManifest = {
+    pages: [{
+      kind: "page",
+      pattern: parsePattern("boom"),
+      routePath: "/boom",
+      filePath: "/app/boom.tsx",
+      layoutChain: [],
+      templateChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+    }],
+    api: [],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+    directives: new Map(),
+  };
+  const app = createApp({
+    getManifest: () => manifest,
+    load: () => Promise.resolve({ default: Boom, revalidate: 60 }),
+    clientEntryFor: () => "/_denext/entry.js",
+    flight: true,
+    appDir: "/app",
+    pageCache: new PageCache(),
+    cacheComponents: true,
+  });
+  const res = await app(new Request(`${ORIGIN}/boom`));
+  assertEquals(res.status, 500);
+  await res.body?.cancel();
+  // A later render still records and seeds normally.
+  const { app: ok } = pprApp(false);
+  assertEquals(seedsOf(await (await ok(new Request(`${ORIGIN}/iso`))).text()).length, 1);
+});

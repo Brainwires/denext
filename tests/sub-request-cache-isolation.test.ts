@@ -141,3 +141,55 @@ for (const mode of ["isr", "ppr", "flight-ppr"] as const) {
     assertEquals(second.cache, "HIT", "the page (or its shell) was stored");
   });
 }
+
+Deno.test("sub-request cache isolation: the app's rateLimitHeader counts as an inherited header", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const manifest: RouteManifest = {
+    pages: [{
+      kind: "page",
+      pattern: parsePattern(""),
+      routePath: "/",
+      filePath: "/app/page.tsx",
+      layoutChain: [],
+      templateChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+    }],
+    api: [{
+      kind: "api",
+      pattern: parsePattern("/api/me"),
+      routePath: "/api/me",
+      filePath: "/app/api/me/route.ts",
+    }],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+    directives: new Map(),
+  };
+  const Page = () =>
+    h("main", null, h(Suspense, { fallback: h("i", null, "loading"), children: h(Me, null) }));
+  const modules: Record<string, unknown> = {
+    "/app/page.tsx": { default: Page, revalidate: 60 },
+    "/app/api/me/route.ts": {
+      GET: (req: Request) => json({ u: req.headers.get("x-client-addr") ?? "none" }),
+    },
+  };
+  const handler = createApp({
+    getManifest: () => manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    clientEntryFor: () => "/_denext/entry.js",
+    flight: true,
+    appDir: "/app",
+    pageCache: new PageCache(),
+    rateLimitHeader: "X-Client-Addr",
+  });
+  const served: (string | undefined)[] = [];
+  for (const addr of ["10.0.0.1", "10.0.0.2"]) {
+    const res = await handler(new Request(`${ORIGIN}/`, { headers: { "x-client-addr": addr } }));
+    served.push(/>me=([^<]*)/.exec(await res.text())?.[1]);
+  }
+  assert(!served[1]?.includes("10.0.0.1"), `the second visitor got ${served[1]}`);
+});
