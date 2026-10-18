@@ -168,7 +168,7 @@ Deno.test("probePlatformSource: each target picks its own file, then the plain o
         platformResolution(config, platform),
         probeSourceFile,
         SOURCE_EXTS,
-      )?.slice(dir.length + 1);
+      )?.slice(dir.length + 1).replaceAll("\\", "/");
     assertEquals(probe("B", "web"), "B.tsx");
     assertEquals(probe("B", "ios"), "B.ios.tsx");
     assertEquals(probe("B", "android"), "B.mobile.ts");
@@ -219,7 +219,10 @@ Deno.test("scanPlatformGroups → platformRedirects / platformGaps per target", 
   });
   try {
     const groups = await scanPlatformGroups(dir);
-    assertEquals(groups.map((g) => g.stem.slice(dir.length + 1)), ["src/Card", "src/Pad"]);
+    assertEquals(
+      groups.map((g) => g.stem.slice(dir.length + 1).replaceAll("\\", "/")),
+      ["src/Card", "src/Pad"],
+    );
     assertEquals(groups[0].plain, join(dir, "src/Card.tsx"));
     assertEquals(groups[1].plain, null);
     assertEquals(chooseVariant(groups[1], platformResolution({}, "web")!), null);
@@ -261,7 +264,7 @@ Deno.test("platform scan: skips dot-folders and build output at any depth", asyn
   });
   try {
     const files = (await Array.fromAsync(projectSourceFiles(dir))).map((f) =>
-      f.slice(dir.length + 1)
+      f.slice(dir.length + 1).replaceAll("\\", "/")
     );
     assertEquals(files.sort(), ["apps/web/src/j.ios.ts", "src/a.ios.ts", "src/a.ts"]);
   } finally {

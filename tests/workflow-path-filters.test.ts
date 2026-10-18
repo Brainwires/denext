@@ -169,7 +169,8 @@ async function denoInfo(files: readonly string[], cwd: string): Promise<Map<stri
       files.map((f) => `import ${JSON.stringify(toFileUrl(join(ROOT, f)).href)};`).join("\n"),
     );
     const out = await new Deno.Command(Deno.execPath(), {
-      args: ["info", "--json", "--no-lock", entry], // never rewrite a lockfile
+      // never rewrite a lockfile; a file URL, as `deno info` reads a Windows path as a URL
+      args: ["info", "--json", "--no-lock", toFileUrl(entry).href],
       cwd,
       stdout: "piped",
       stderr: "piped",
