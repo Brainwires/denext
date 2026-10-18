@@ -15,7 +15,7 @@ import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
 import { runDenoPassthrough } from "./deno-toolchain.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
-import { type DenextPlugin, setupAppPlugins } from "../../plugin/mod.ts";
+import { setupAppPlugins } from "../../plugin/mod.ts";
 import { defaultLoader } from "../../server/default-loader.ts";
 import { type ConformanceReport, probeApp } from "../../testing/conformance.ts";
 import {
@@ -159,42 +159,28 @@ async function appDirCheck(appDir: string): Promise<Check> {
 }
 
 /**
- * The names of the configured plugins that serve requests or synthesize routes — what routes an
- * app with no `app/` (a Pages Router or TanStack Start app). Each plugin is set up in a registry of
- * its own (as the route probe does), then torn down. Empty when none does, or when setup fails.
+ * The names of the configured plugins that serve the app's pages from a route tree of their own
+ * (they call `ctx.servesRoutes()` — the Pages Router, TanStack Start and React Router plugins), so
+ * the app needs no `app/`. A plugin that only adds endpoints (an API, OpenAPI docs, auth, storage)
+ * does not count, whatever handlers it registers. The plugins are set up in a registry of their own
+ * (as the route probe does), then torn down. Empty when none declares it, or when setup fails.
  */
-async function routingPlugins(paths: ProjectPaths): Promise<string[]> {
+async function routingPlugins(paths: ProjectPaths): Promise<readonly string[]> {
   const config = paths.config;
   if (!config?.plugins?.length) return [];
-  const routing = new Set<string>();
-  const plugins = config.plugins.map((plugin): DenextPlugin => ({
-    name: plugin.name,
-    setup: (ctx) =>
-      plugin.setup({
-        ...ctx,
-        addRequestHandler: (handler) => {
-          routing.add(plugin.name);
-          ctx.addRequestHandler(handler);
-        },
-        addRouteSynthesizer: (fn) => {
-          routing.add(plugin.name);
-          ctx.addRouteSynthesizer(fn);
-        },
-      }),
-  }));
   try {
     const set = await setupAppPlugins({
       projectRoot: paths.projectDir,
       appDir: paths.appDir,
-      config: { ...config, plugins },
+      config,
       mode: "dev",
       load: defaultLoader,
     });
     await set.teardown();
+    return set.routeServers;
   } catch {
     return [];
   }
-  return [...routing];
 }
 
 /**

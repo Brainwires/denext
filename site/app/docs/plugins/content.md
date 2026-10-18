@@ -192,6 +192,22 @@ const watcher = Deno.watchFs(ctx.appDir);
 ctx.addTeardown(() => watcher.close());
 ```
 
+### Declaring that a plugin serves the pages
+
+A router plugin whose pages come from a route tree of its own (a `pages/` directory, a
+TanStack Start route tree, React Router's `routes.ts`) calls `ctx.servesRoutes?.()` in
+`setup`. The app then needs no `app/`: `denext doctor` passes its "app directory" check
+naming the plugin, where it fails a project with neither. Registering a request handler or a
+route synthesizer does not say this on its own: a plugin that only adds endpoints beside the
+app's pages (an API, OpenAPI docs, auth, storage) leaves it out, and a project with only such
+plugins and no `app/` still fails the check. `@denext/pages-router`, `@denext/tanstack-start`
+and `@denext/react-router` declare it.
+
+```ts
+ctx.addRequestHandler(renderMyRoutes);
+ctx.servesRoutes?.(); // optional chaining: still runs on a denext from before it existed
+```
+
 ### Seam 5 — contribute a CLI verb
 
 `ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can

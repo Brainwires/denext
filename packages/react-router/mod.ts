@@ -81,6 +81,8 @@ export function reactRouter(options: ReactRouterOptions = {}): DenextPlugin {
         await typegen(nodes);
         synthesizeRoutes(manifest, nodes, generated);
       });
+      // The pages come from `routes.ts`: the app needs no App Router tree (`denext doctor`).
+      ctx.servesRoutes?.();
       ctx.addCommand(typegenCommand(async () => (await typegen(await routeTree())).length));
     },
   };

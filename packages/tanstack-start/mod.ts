@@ -151,6 +151,8 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         ctx.addPrepareStep(() => bundles.reset(), { watch: [`${projectRelative(ctx, src)}/**`] });
       }
       const publicDir = join(ctx.projectRoot, "public");
+      // The pages come from the router's route tree: the app needs no `app/` (`denext doctor`).
+      ctx.servesRoutes?.();
       ctx.addRequestHandler(createHandler({
         loadServerEntry: () => bundles.loadServerEntry(),
         client: () => bundles.client(),

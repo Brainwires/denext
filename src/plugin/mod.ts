@@ -176,6 +176,17 @@ export interface PluginContext {
    * `setup` closes over `setup`'s scope, so they already share state.
    */
   addTeardown(teardown: PluginTeardown): void;
+  /**
+   * Declare that this plugin serves the app's pages from a route tree of its own (a Pages Router
+   * `pages/` tree, a TanStack Start or React Router route config), so the app needs no `app/`
+   * directory: `denext doctor` passes its "app directory" check naming the plugin, where it
+   * otherwise fails a project without one. A plugin that only adds endpoints beside the app's
+   * pages (an API, docs, auth, storage) does not call it, however many request handlers it adds.
+   *
+   * Optional, so a plugin that calls it as `ctx.servesRoutes?.()` still runs on a host from
+   * before it existed.
+   */
+  servesRoutes?(): void;
 }
 
 /**
@@ -248,6 +259,8 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
     },
     deployAdapter: (adapter) => deployAdapters.push(adapter),
     teardown: (teardown) => teardowns.push(teardown),
+    // Read per app ({@linkcode setupAppPlugins}); the process registries have no reader for it.
+    servesRoutes: () => {},
   };
   for (const plugin of plugins) {
     if (startedUnder !== generation) return; // superseded by a resetPlugins() — stale run
@@ -269,6 +282,7 @@ interface PluginSinks {
   command(command: CommandSpec): void;
   deployAdapter(adapter: DeployAdapter): void;
   teardown(teardown: PluginTeardown): void;
+  servesRoutes(pluginName: string): void;
 }
 
 /** The {@linkcode PluginContext} one plugin's `setup` receives, writing into `sinks`. */
@@ -300,6 +314,7 @@ function pluginContext(
     },
     addDeployAdapter: (adapter) => sinks.deployAdapter(adapter),
     addTeardown: (teardown) => sinks.teardown(teardown),
+    servesRoutes: () => sinks.servesRoutes(plugin.name),
   };
 }
 
@@ -317,6 +332,11 @@ export interface AppPlugins {
   runPrepareSteps(context: PluginPrepareContext): Promise<void>;
   /** Run this app's teardowns, most recent first (each failure logged, never thrown). */
   teardown(): Promise<void>;
+  /**
+   * The names of this app's plugins that serve its pages from a route tree of their own
+   * ({@linkcode PluginContext.servesRoutes}), in setup order.
+   */
+  readonly routeServers: readonly string[];
 }
 
 /**
@@ -334,6 +354,7 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
   const handlers: PluginRequestHandler[] = [];
   const prepares: Array<{ step: PluginPrepareStep }> = [];
   const own: PluginTeardown[] = [];
+  const servers = new Set<string>();
   const ignore = () => {};
   const sinks: PluginSinks = {
     synthesizer: (fn) => synthesizers.push(fn),
@@ -343,6 +364,7 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
     command: ignore,
     deployAdapter: ignore,
     teardown: (teardown) => own.push(teardown),
+    servesRoutes: (name) => servers.add(name),
   };
   try {
     for (const plugin of base.config.plugins ?? []) {
@@ -357,6 +379,7 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
     requestHandler: combineHandlers(handlers),
     runPrepareSteps: (context) => runPrepares(prepares, context),
     teardown: () => runTeardowns(own),
+    routeServers: [...servers],
   };
 }
 

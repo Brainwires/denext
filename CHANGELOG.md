@@ -32,6 +32,12 @@ and this project adheres to
 
 ### Added
 
+- **`ctx.servesRoutes()` in the plugin kit.** A plugin whose pages come from a route tree of its
+  own declares it in `setup` (`ctx.servesRoutes?.()`, optional so the plugin still runs on an
+  older denext); `denext doctor` then accepts a project with no `app/`. `@denext/pages-router`,
+  `@denext/tanstack-start` and `@denext/react-router` declare it. `setupAppPlugins()` reports the
+  declaring plugins as `routeServers`.
+
 - **File transfers with progress that outlive the app** (`denext/mobile`). `downloadToFile(url,
   path, options)` gains `onProgress`, `signal`, `headers` and an `id`, and `uploadFile(url, path,
   options)` sends a file as a `multipart/form-data` part (with text `fields`) or as the body
@@ -163,9 +169,11 @@ and this project adheres to
   Start app has no `app/`; its routes come from the `@denext/pages-router` /
   `@denext/tanstack-start` plugin. Doctor reported "app directory: FAIL" for it and exited 1. When
   `app/` is missing, doctor now sets up the configured plugins in a registry of their own and
-  treats the check as satisfied when one of them serves requests or synthesizes routes, naming
-  it ("not needed: routes come from @denext/tanstack-start"). Route conformance, which walks
-  `app/`, is not probed for such an app.
+  treats the check as satisfied when one of them declares that it serves the app's pages
+  (`ctx.servesRoutes()`, below), naming it ("not needed: routes come from
+  @denext/tanstack-start"). A plugin that only adds endpoints (`@denext/openapi`,
+  `@denext/backend`) does not count, so a project with only such plugins and no `app/` still
+  fails. Route conformance, which walks `app/`, is not probed for a plugin-routed app.
 
 - **A page whose only interactive part is a `defineLiveView` mounts in the browser.** The build
   counted a route as needing a client entry only when it reached a `"use client"` module, so a

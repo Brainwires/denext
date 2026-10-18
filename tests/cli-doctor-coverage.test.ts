@@ -144,51 +144,18 @@ Deno.test("doctor --report on a project with no app dir explains the un-probed s
   assert(exit.calls.includes(1), "a failing critical check still exits non-zero under --report");
 });
 
-Deno.test("doctor counts the app directory as not needed when a plugin serves the routes", async () => {
-  // A Pages Router / TanStack Start shape: no `app/`, the routes come from a plugin's request
-  // handler (or route synthesizer). The plugin here is a stand-in with the same seams.
+/** `doctor --json` over a project with no `app/` and `config` as its `denext.config.ts`. */
+async function doctorWithoutAppDir(
+  config: string,
+  files: Record<string, string> = {},
+): Promise<{ app: { ok: boolean; detail: string } | undefined; exitCalls: number[] }> {
   const dir = await Deno.makeTempDir({ prefix: "denext_doctor_plugin_" });
   await Deno.writeTextFile(join(dir, "deno.json"), "{}");
-  await Deno.writeTextFile(
-    join(dir, "denext.config.ts"),
-    `export default {\n` +
-      `  plugins: [{\n` +
-      `    name: "fixture-router",\n` +
-      `    setup(ctx) { ctx.addRequestHandler(() => new Response("routed")); },\n` +
-      `  }, { name: "fixture-inert", setup() {} }],\n` +
-      `};\n`,
-  );
-  const cap = capture();
-  const exit = stubExit();
-  try {
-    await doctorCommand.run(makeCtx({ positionals: [dir], global: { json: true } }));
-  } finally {
-    exit.restore();
-    cap.restore();
-    await Deno.remove(dir, { recursive: true });
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
+  for (const [rel, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, rel), text);
   }
-  const checks = JSON.parse(cap.logs.join("\n")) as Array<
-    { name: string; ok: boolean; detail: string }
-  >;
-  const app = checks.find((c) => c.name === "app directory");
-  assert(app?.ok, `app directory passes: ${JSON.stringify(app)}`);
-  assertStringIncludes(app.detail, "fixture-router");
-  assert(!app.detail.includes("fixture-inert"), "a plugin that serves nothing is not named");
-  assert(!exit.calls.includes(1), "no critical failure for a plugin-routed app");
-});
-
-Deno.test("doctor still fails a missing app directory when no plugin serves routes", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_doctor_noroute_" });
-  await Deno.writeTextFile(join(dir, "deno.json"), "{}");
-  await Deno.writeTextFile(
-    join(dir, "denext.config.ts"),
-    `export default {\n` +
-      `  plugins: [{ name: "fixture-inert", setup() {} }, {\n` +
-      `    name: "fixture-broken",\n` +
-      `    setup(ctx) { ctx.addRequestHandler(() => null); throw new Error("setup failed"); },\n` +
-      `  }],\n` +
-      `};\n`,
-  );
   const cap = capture();
   const exit = stubExit();
   try {
@@ -200,9 +167,74 @@ Deno.test("doctor still fails a missing app directory when no plugin serves rout
     cap.restore();
     await Deno.remove(dir, { recursive: true });
   }
-  const checks = JSON.parse(cap.logs.join("\n")) as Array<{ name: string; ok: boolean }>;
-  assert(checks.find((c) => c.name === "app directory")?.ok === false);
-  assert(exit.calls.includes(1), "a plugin whose setup fails does not stand in for app/");
+  const checks = JSON.parse(cap.logs.join("\n")) as Array<
+    { name: string; ok: boolean; detail: string }
+  >;
+  return { app: checks.find((c) => c.name === "app directory"), exitCalls: exit.calls };
+}
+
+Deno.test("doctor counts the app directory as not needed when a plugin serves the pages", async () => {
+  // A Pages Router / TanStack Start shape: no `app/`, the pages come from a plugin that declares
+  // `ctx.servesRoutes()`. A plugin that only adds a request handler is not named.
+  const { app, exitCalls } = await doctorWithoutAppDir(
+    `export default {\n` +
+      `  plugins: [{\n` +
+      `    name: "fixture-router",\n` +
+      `    setup(ctx) { ctx.addRequestHandler(() => new Response("routed")); ctx.servesRoutes(); },\n` +
+      `  }, {\n` +
+      `    name: "fixture-api",\n` +
+      `    setup(ctx) { ctx.addRequestHandler(() => null); ctx.addRouteSynthesizer(() => {}); },\n` +
+      `  }, { name: "fixture-inert", setup() {} }],\n` +
+      `};\n`,
+  );
+  assert(app?.ok, `app directory passes: ${JSON.stringify(app)}`);
+  assertStringIncludes(app.detail, "not needed: routes come from fixture-router");
+  assert(!app.detail.includes("fixture-api"), "an endpoint-only plugin is not named");
+  assert(!app.detail.includes("fixture-inert"), "a plugin that serves nothing is not named");
+  assert(!exitCalls.includes(1), "no critical failure for a plugin-routed app");
+});
+
+Deno.test("doctor passes a Pages Router app (no app/) through @denext/pages-router", async () => {
+  const pagesRouter = new URL("../packages/pages-router/mod.ts", import.meta.url).href;
+  const { app, exitCalls } = await doctorWithoutAppDir(
+    `import { pagesRouter } from ${JSON.stringify(pagesRouter)};\n` +
+      `export default { plugins: [pagesRouter()] };\n`,
+    { "pages/index.ts": `export default function Home() { return null; }\n` },
+  );
+  assert(app?.ok, `app directory passes: ${JSON.stringify(app)}`);
+  assertStringIncludes(app.detail, "@denext/pages-router");
+  assert(!exitCalls.includes(1));
+});
+
+Deno.test("doctor fails a missing app directory when the only plugin is OpenAPI's", async () => {
+  // @denext/openapi registers a request handler (its docs) and a route synthesizer, but serves no
+  // pages: it must not stand in for `app/`.
+  const openapi = new URL("../packages/openapi/mod.ts", import.meta.url).href;
+  const { app, exitCalls } = await doctorWithoutAppDir(
+    `import { openapi } from ${JSON.stringify(openapi)};\n` +
+      `export default { plugins: [openapi()] };\n`,
+  );
+  assert(app?.ok === false, `app directory fails: ${JSON.stringify(app)}`);
+  assert(exitCalls.includes(1), "an OpenAPI-only project with no app/ is a critical failure");
+});
+
+Deno.test("doctor fails a missing app directory with no plugins", async () => {
+  const { app, exitCalls } = await doctorWithoutAppDir(`export default {};\n`);
+  assert(app?.ok === false, `app directory fails: ${JSON.stringify(app)}`);
+  assert(exitCalls.includes(1));
+});
+
+Deno.test("doctor still fails a missing app directory when a router plugin's setup fails", async () => {
+  const { app, exitCalls } = await doctorWithoutAppDir(
+    `export default {\n` +
+      `  plugins: [{ name: "fixture-inert", setup() {} }, {\n` +
+      `    name: "fixture-broken",\n` +
+      `    setup(ctx) { ctx.servesRoutes(); throw new Error("setup failed"); },\n` +
+      `  }],\n` +
+      `};\n`,
+  );
+  assert(app?.ok === false, `app directory fails: ${JSON.stringify(app)}`);
+  assert(exitCalls.includes(1), "a plugin whose setup fails does not stand in for app/");
 });
 
 Deno.test("doctor reports a config-load failure as a failed critical check", async () => {
