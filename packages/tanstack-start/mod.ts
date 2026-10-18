@@ -27,7 +27,8 @@
  * - **`denext export` prerenders** the app's pages with Start's prerender (its `prerender` and
  *   `pages` options, the route tree's static paths, the links each page has), and leaves out and
  *   lists the routes that need a server: server routes, pages that call a server function, and
- *   dynamic routes no page covered.
+ *   dynamic routes no page covered. Start's `spa` adds its SPA shell (`_shell.html`), and its
+ *   `sitemap` writes `sitemap.xml` and `pages.json` with Start's own builder.
  * - **denext's rules:** a server function called with a mutating method must come from the
  *   app's origin (the check Server Actions use; a cross-site call is a 403), and request bodies
  *   are capped (`maxBodyBytes`, default `actionMaxBodyBytes` or 1 MiB).
@@ -54,7 +55,13 @@ import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import type { OriginCheckOptions } from "@denext/denext/plugin-kit";
 import { join, relative } from "@std/path";
 import { buildStep, createBundles, type StartApp } from "./src/bundles.ts";
-import type { PrerenderOptions, RouteInfo, StartPage } from "./src/prerender.ts";
+import type {
+  PrerenderOptions,
+  RouteInfo,
+  SitemapOptions,
+  SpaOptions,
+  StartPage,
+} from "./src/prerender.ts";
 import { compileImportProtection, type ImportProtectionOptions } from "./src/protect.ts";
 import { clientBootSource, entryPaths, serverEntrySource, writeIfChanged } from "./src/entries.ts";
 import { createHandler } from "./src/handler.ts";
@@ -75,7 +82,14 @@ export type {
   ProtectionEnv,
   TraceStep,
 } from "./src/protect.ts";
-export type { PagePrerenderOptions, PrerenderOptions, StartPage } from "./src/prerender.ts";
+export type {
+  PagePrerenderOptions,
+  PageSitemapOptions,
+  PrerenderOptions,
+  SitemapOptions,
+  SpaOptions,
+  StartPage,
+} from "./src/prerender.ts";
 export type { StartRouterOptions } from "./src/options.ts";
 
 /** Options for {@link tanstackStart}. */
@@ -117,6 +131,18 @@ export interface TanStackStartOptions {
   prerender?: PrerenderOptions;
   /** Start's `pages`: the paths `denext export` prerenders (default `/`, plus discovery). */
   pages?: StartPage[];
+  /**
+   * Start's `sitemap`: `denext export` writes `sitemap.xml` (at `outputPath`, default
+   * `sitemap.xml`) and `pages.json` with Start's own sitemap builder, over every page the
+   * prerender met; `host` is required.
+   */
+  sitemap?: SitemapOptions;
+  /**
+   * Start's `spa`: `denext export` also renders Start's SPA shell (the root route alone) at
+   * `maskPath` (default `/`) to `_shell.html` (`prerender.outputPath`), the file a static host
+   * serves for any path the export has no file for.
+   */
+  spa?: SpaOptions;
 }
 
 /**
@@ -165,6 +191,8 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         buildStep(ctx.mode, bundles, build, {
           options: options.prerender ?? {},
           pages: options.pages ?? [],
+          spa: options.spa,
+          sitemap: options.sitemap,
           routes: () => routes,
           projectRoot: app.projectRoot,
           basePath: app.basePath,

@@ -1,6 +1,6 @@
 // The plugin's options, checked when `tanstackStart(options)` is called: each option against the
 // shape TanStack Start's own plugin accepts for it (`@tanstack/start-plugin-core`'s schema —
-// `router`, `importProtection`, `prerender`, `pages`) or the plugin's own (`srcDirectory`,
+// `router`, `importProtection`, `prerender`, `pages`, `sitemap`, `spa`) or the plugin's own (`srcDirectory`,
 // `maxBodyBytes`, …). A bad value throws the field-scoped error `denext.config` validation throws
 // (`invalid tanstackStart() options: \`importProtection.client.files[0]\` must be …`), so a typo
 // in a security rule fails at config load instead of quietly turning the rule off. An unknown key
@@ -219,10 +219,74 @@ function page(field: string, v: unknown): void {
   if (object(`${field}.prerender`, p.prerender, PAGE_PRERENDER_KEYS)) {
     pagePrerenderFields(`${field}.prerender`, p.prerender);
   }
-  if (p.sitemap !== undefined && !isPlainObject(p.sitemap)) {
-    fail(`${field}.sitemap`, "must be an object");
-  }
+  pageSitemap(`${field}.sitemap`, p.sitemap);
   boolean(`${field}.fromCrawl`, p.fromCrawl);
+}
+
+const CHANGEFREQ = ["always", "hourly", "daily", "weekly", "monthly", "yearly", "never"];
+
+/** A string or a `Date` (Start's `z.union([z.string(), z.date()])`). */
+function dateLike(field: string, v: unknown): void {
+  if (v !== undefined && typeof v !== "string" && !(v instanceof Date)) {
+    fail(field, "must be a string or a Date");
+  }
+}
+
+/** One object of an array, its fields each a string (`required` ones present). */
+function stringsObject(field: string, v: unknown, required: string[], optional: string[]): void {
+  if (!isPlainObject(v)) fail(field, "must be an object");
+  object(field, v, [...required, ...optional]);
+  const o = v as Record<string, unknown>;
+  for (const key of required) {
+    if (typeof o[key] !== "string") fail(`${field}.${key}`, "must be a string");
+  }
+  for (const key of optional) string(`${field}.${key}`, o[key]);
+}
+
+/** A page's `sitemap` (Start's `pageSitemapOptionsSchema`). */
+function pageSitemap(field: string, v: unknown): void {
+  const keys = ["exclude", "priority", "changefreq", "lastmod", "alternateRefs", "images", "news"];
+  if (!object(field, v, keys)) return;
+  boolean(`${field}.exclude`, v.exclude);
+  number(`${field}.priority`, v.priority);
+  if (typeof v.priority === "number" && v.priority > 1) fail(`${field}.priority`, "must be <= 1");
+  oneOf(`${field}.changefreq`, v.changefreq, CHANGEFREQ);
+  dateLike(`${field}.lastmod`, v.lastmod);
+  arrayOf(
+    `${field}.alternateRefs`,
+    v.alternateRefs,
+    (f, ref) => stringsObject(f, ref, ["href", "hreflang"], []),
+  );
+  arrayOf(
+    `${field}.images`,
+    v.images,
+    (f, img) => stringsObject(f, img, ["loc"], ["caption", "title"]),
+  );
+  if (!object(`${field}.news`, v.news, ["publication", "publicationDate", "title"])) return;
+  stringsObject(`${field}.news.publication`, v.news.publication, ["name", "language"], []);
+  if (v.news.publicationDate === undefined) {
+    fail(`${field}.news.publicationDate`, "must be a string or a Date");
+  }
+  dateLike(`${field}.news.publicationDate`, v.news.publicationDate);
+  if (typeof v.news.title !== "string") fail(`${field}.news.title`, "must be a string");
+}
+
+/** Start's `sitemap`: `{ enabled?, host?, outputPath? }`. */
+function sitemap(field: string, v: unknown): void {
+  if (!object(field, v, ["enabled", "host", "outputPath"])) return;
+  boolean(`${field}.enabled`, v.enabled);
+  string(`${field}.host`, v.host);
+  string(`${field}.outputPath`, v.outputPath);
+}
+
+/** Start's `spa`: `{ enabled?, maskPath?, prerender? }` (a page's prerender options). */
+function spa(field: string, v: unknown): void {
+  if (!object(field, v, ["enabled", "maskPath", "prerender"])) return;
+  boolean(`${field}.enabled`, v.enabled);
+  string(`${field}.maskPath`, v.maskPath);
+  if (object(`${field}.prerender`, v.prerender, PAGE_PRERENDER_KEYS)) {
+    pagePrerenderFields(`${field}.prerender`, v.prerender);
+  }
 }
 
 /**
@@ -301,6 +365,8 @@ const OPTION_KEYS = [
   "importProtection",
   "prerender",
   "pages",
+  "sitemap",
+  "spa",
 ];
 
 /**
@@ -320,6 +386,8 @@ export function validateOptions(options: unknown): void {
   importProtection("importProtection", options.importProtection);
   prerender("prerender", options.prerender);
   arrayOf("pages", options.pages, page);
+  sitemap("sitemap", options.sitemap);
+  spa("spa", options.spa);
 }
 
 /** Start's `router` option in its object form. */

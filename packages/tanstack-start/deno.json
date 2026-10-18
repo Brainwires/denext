@@ -23,7 +23,9 @@
         "allowedOrigins",
         "importProtection",
         "prerender",
-        "pages"
+        "pages",
+        "sitemap",
+        "spa"
       ]
     }
   },

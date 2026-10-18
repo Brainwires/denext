@@ -37,6 +37,7 @@ export default defineConfig({
       pages: routes,
       tsr: { quoteStyle: 'double' },
       spa: { enabled: false },
+      sitemap: { host: 'https://start.example' },
     }),
     viteReact(),
   ],
@@ -97,10 +98,10 @@ Deno.test("readTanstackStartOptions: literal plugin options carry, the rest are 
     const info = await readTanstackStartOptions(dir);
     assertEquals(info.file, "vite.config.ts");
     assertEquals(info.legacy, false);
-    assertEquals(info.carried.map((o) => o.key), ["srcDirectory", "prerender"]);
+    assertEquals(info.carried.map((o) => o.key), ["srcDirectory", "prerender", "spa", "sitemap"]);
     assertEquals(info.carried[0].source, "srcDirectory: 'src'");
     assertStringIncludes(info.carried[1].source, "filter: ({ path }) => path !== '/boom'");
-    assertEquals(info.dropped.map((d) => d.key), ["pages", "tsr", "spa"]);
+    assertEquals(info.dropped.map((d) => d.key), ["pages", "tsr"]);
     assertStringIncludes(info.dropped[0].note, "reads routes from vite.config.ts");
     assertStringIncludes(info.dropped[1].note, "tsr.config.json");
     assertEquals(info.notes, []);
@@ -172,7 +173,12 @@ Deno.test("migrate: a TanStack Start app is wired to the @denext/tanstack-start 
     const router = await Deno.readTextFile(join(dir, "src/router.tsx"));
     const r = await migrateProject(dir, { denextLocalPath: REPO });
     assertEquals(r.kind, "tanstack-start");
-    assertEquals(r.tanstackStart?.carried.map((o) => o.key), ["srcDirectory", "prerender"]);
+    assertEquals(r.tanstackStart?.carried.map((o) => o.key), [
+      "srcDirectory",
+      "prerender",
+      "spa",
+      "sitemap",
+    ]);
     assertEquals(r.pagesConfigWritten, true);
     assertEquals(r.denoJsonExists, false);
     assert(r.dropped.includes("vite") && r.dropped.includes("@vitejs/plugin-react"));
@@ -185,6 +191,7 @@ Deno.test("migrate: a TanStack Start app is wired to the @denext/tanstack-start 
       config,
       "    tanstackStart({\n      srcDirectory: 'src',\n      prerender: {\n" +
         "        enabled: true,\n        filter: ({ path }) => path !== '/boom',\n      },\n" +
+        "      spa: { enabled: false },\n      sitemap: { host: 'https://start.example' },\n" +
         "    }),\n",
     );
     assertStringIncludes(config, "Options carried from vite.config.ts.");
@@ -236,7 +243,6 @@ Deno.test("migrate --check: a TanStack Start app is named, with the options left
     assertEquals(report.review.map((f) => f.item), [
       "vite.config.ts: pages",
       "vite.config.ts: tsr",
-      "vite.config.ts: spa",
     ]);
     // Nothing was written.
     assert(!(await exists(join(dir, "deno.json"))));
@@ -284,7 +290,7 @@ Deno.test("migrate CLI: the TanStack Start section of the report", async () => {
       );
       assertStringIncludes(out, "vite.config.ts: tsr not carried — the route generator reads");
       if (target === dir) {
-        assertStringIncludes(out, "(from vite.config.ts: srcDirectory, prerender).");
+        assertStringIncludes(out, "(from vite.config.ts: srcDirectory, prerender, spa, sitemap).");
       } else {
         assertStringIncludes(out, "denext.config.ts already exists — add `tanstackStart()`");
       }

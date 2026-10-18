@@ -267,9 +267,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **`@denext/tanstack-start`:** an import-protection violation always fails the build, in
   `denext dev` too, where Start's dev server mocks the import and warns (Start's `behavior` and
-  `mockAccess` options are accepted, but a `"mock"` is only warned about, not applied). `denext export` writes no
-  sitemap (Start's `sitemap` and `spa` options are not applied), and with
-  `generateRouteTree: false` it prerenders only the `pages` listed and their links, refusing no
+  `mockAccess` options are accepted, but a `"mock"` is only warned about, not applied). With
+  `generateRouteTree: false` `denext export` prerenders only the `pages` listed and their links, refusing no
   route by kind. The deploy manifest lists App Router routes only, so the `static` deploy preset
   does not refuse a Start app's server routes; `denext export` lists them. The server render and the client bundle are compiled onto denext's React, so an
   app's own `react` import must resolve to denext (`compatibilityMode`).

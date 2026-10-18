@@ -14,11 +14,19 @@
 //   prerendered. The export leaves them out and lists each with the reason.
 // - **A page is written as its final HTML**: each streamed Suspense boundary's content in place of
 //   its fallback (./static-html.ts), so the static file reads the same with JavaScript off.
+// - **Start's SPA shell** (`spa`, its `post-build`): one more page, `spa.maskPath` (default `/`),
+//   rendered with Start's `X-TSS_SHELL` header (the root route alone, no loaders) to
+//   `<spa.prerender.outputPath>.html` (default `_shell.html`), the file a host serves for any path
+//   the export has no file for. It is left out of the sitemap and never refused.
+// - **The pages Start's sitemap lists** come back as {@link PrerenderResult.pages}: every page the
+//   prerender met (listed, discovered, crawled), each with what its `onSuccess` returned.
 
 import { join } from "@std/path";
 import type { ClientGraph } from "./compile.ts";
 import { isAppModule } from "./protect.ts";
 import { inlineStreamedBoundaries } from "./static-html.ts";
+
+const ORIGIN = "http://localhost";
 
 /** A route the generator found. */
 export interface RouteInfo {
@@ -62,11 +70,88 @@ export interface StartPage {
   path: string;
   /** This page's prerender options (over the `prerender` ones). */
   prerender?: PagePrerenderOptions;
-  /** Start's sitemap options (accepted; denext writes no sitemap). */
-  sitemap?: Record<string, unknown>;
+  /** The page's sitemap entry (Start's `pageSitemapOptionsSchema`). */
+  sitemap?: PageSitemapOptions;
   /** Found by crawling a prerendered page's links. */
   fromCrawl?: boolean;
 }
+
+/** A page's entry in the sitemap (Start's `pageSitemapOptionsSchema`). */
+export interface PageSitemapOptions {
+  /** Leave the page out of `sitemap.xml`. */
+  exclude?: boolean;
+  /** `<priority>`, from 0 to 1. */
+  priority?: number;
+  /** `<changefreq>`. */
+  changefreq?: "always" | "hourly" | "daily" | "weekly" | "monthly" | "yearly" | "never";
+  /** `<lastmod>` (default: the day of the export). */
+  lastmod?: string | Date;
+  /** `<xhtml:link rel="alternate">` entries. */
+  alternateRefs?: Array<{ href: string; hreflang: string }>;
+  /** `<image:image>` entries. */
+  images?: Array<{ loc: string; title?: string; caption?: string }>;
+  /** A `<news:news>` entry. */
+  news?: {
+    publication: { name: string; language: string };
+    publicationDate: string | Date;
+    title: string;
+  };
+}
+
+/** Start's `sitemap` option: `denext export` writes `sitemap.xml` and `pages.json`. */
+export interface SitemapOptions {
+  /** `false` writes no sitemap (default `true` once the option is given). */
+  enabled?: boolean;
+  /** The site's origin each `<loc>` starts with (required). */
+  host?: string;
+  /** Where the sitemap is written in the export (default `sitemap.xml`). */
+  outputPath?: string;
+}
+
+/** Start's `spa` option: `denext export` writes the SPA shell a host falls back to. */
+export interface SpaOptions {
+  /** `false` writes no shell (default `true` once the option is given). */
+  enabled?: boolean;
+  /** The URL the shell is rendered at (default `/`). */
+  maskPath?: string;
+  /** The shell page's prerender options (default `outputPath: "/_shell"`, no crawling). */
+  prerender?: PagePrerenderOptions;
+}
+
+/** The request header that renders a page as Start's SPA shell (`HEADERS.TSS_SHELL`). */
+export const SHELL_HEADER = "X-TSS_SHELL";
+
+/** The shell's default output path (Start's `spaSchema`). */
+const SHELL_OUTPUT = "/_shell";
+
+/**
+ * The page Start's `post-build` adds for its SPA shell, or `null` when `spa` is not enabled: the
+ * mask path with `spa.prerender` over Start's defaults and the shell header, out of the sitemap.
+ *
+ * @param spa The app's `spa` option.
+ * @throws When `maskPath` is not a path (Start's error).
+ */
+export function spaShellPage(spa: SpaOptions | undefined): StartPage | null {
+  if (!spa || spa.enabled === false) return null;
+  const mask = new URL(spa.maskPath ?? "/", ORIGIN);
+  if (mask.origin !== ORIGIN) throw new Error("spa.maskPath must be a path (no protocol/host)");
+  const opts = spa.prerender ?? {};
+  return {
+    path: mask.toString().replace(ORIGIN, ""),
+    prerender: {
+      outputPath: SHELL_OUTPUT,
+      crawlLinks: false,
+      retryCount: 0,
+      ...opts,
+      enabled: true,
+      headers: { ...opts.headers, [SHELL_HEADER]: "true" },
+    },
+    sitemap: { exclude: true },
+  };
+}
+
+/** Whether a page is the SPA shell (it carries Start's shell header). */
+const isShellPage = (page: StartPage) => page.prerender?.headers?.[SHELL_HEADER] === "true";
 
 /** Start's `prerender` options. */
 export interface PrerenderOptions extends PagePrerenderOptions {
@@ -107,6 +192,8 @@ export interface PrerenderInput {
   fetch(request: Request): Promise<Response>;
   /** Write one page's HTML, at a path relative to the export's root. */
   write(file: string, html: string): Promise<void>;
+  /** The SPA shell's output path (`spa.prerender.outputPath`), when `spa` is enabled. */
+  shellOutputPath?: string;
 }
 
 /** What the export wrote and what it refused. */
@@ -115,9 +202,12 @@ export interface PrerenderResult {
   written: string[];
   /** The routes left to a server. */
   refused: Refusal[];
+  /**
+   * Every page the prerender met, in order (Start's `startConfig.pages` after its prerender, what
+   * its sitemap lists): listed, discovered and crawled, each updated by its `onSuccess`.
+   */
+  pages: StartPage[];
 }
-
-const ORIGIN = "http://localhost";
 
 /** The paths Start discovers (its generator plugin's `getPrerenderablePaths`). */
 export function staticPaths(routes: RouteInfo[]): string[] {
@@ -216,19 +306,32 @@ function pagePath(path: string, basePath: string): string {
   return pathname + url.search;
 }
 
-/** Where a page's HTML is written (Start's file naming), relative to the export's root. */
-function outputFile(page: StartPage, opts: PagePrerenderOptions, contentType: string): string {
+/**
+ * Where a page's HTML is written (Start's file naming), relative to the export's root: the SPA
+ * shell's output path takes `.html` (`/_shell` → `_shell.html`).
+ */
+function outputFile(
+  page: StartPage,
+  opts: PagePrerenderOptions,
+  contentType: string,
+  shellOutputPath?: string,
+): string {
   const clean = (opts.outputPath || page.path).split(/[?#]/)[0];
   const implicitHtml = !clean.endsWith(".html") && contentType.includes("html");
   const withIndex = clean.endsWith("/") ? clean + "index" : clean;
-  const html = clean.endsWith("/") || (opts.autoSubfolderIndex ?? true)
-    ? `${clean.replace(/\/$/, "")}/index.html`
-    : `${clean}.html`;
-  const file = (implicitHtml ? html : withIndex).replace(/^\/+/, "");
+  const file = (implicitHtml ? htmlFile(clean, opts, shellOutputPath) : withIndex)
+    .replace(/^\/+/, "");
   if (file.split("/").some((s) => s === ".." || s === ".")) {
     throw new Error(`Prerender output path must stay within the client output directory: ${file}`);
   }
   return file;
+}
+
+/** An HTML page's file: `<path>/index.html`, or `<path>.html` (the shell, `autoSubfolderIndex`). */
+function htmlFile(clean: string, opts: PagePrerenderOptions, shellOutputPath?: string): string {
+  if (clean === shellOutputPath) return `${clean}.html`;
+  const subfolder = clean.endsWith("/") || (opts.autoSubfolderIndex ?? true);
+  return subfolder ? `${clean.replace(/\/$/, "")}/index.html` : `${clean}.html`;
 }
 
 /** Fetch a page, following redirects inside the app. */
@@ -282,7 +385,7 @@ async function renderPage(
   // A static file has no streaming: each Suspense boundary's content goes in its place, so the
   // page reads the same with JavaScript off.
   const html = type === "" || type.includes("html") ? inlineStreamedBoundaries(body) : body;
-  await input.write(outputFile(page, opts, type), html);
+  await input.write(outputFile(page, opts, type, input.shellOutputPath), html);
   return html;
 }
 
@@ -300,6 +403,7 @@ export async function prerenderPages(input: PrerenderInput): Promise<PrerenderRe
     for (const path of staticPaths(routes)) if (!known.has(path)) pages.push({ path });
   }
   const seen = new Set<string>();
+  const met: StartPage[] = [];
   const written: string[] = [];
   const refused = new Map<string, Refusal>();
   const needs = new Map<RouteInfo, string | null>();
@@ -310,9 +414,11 @@ export async function prerenderPages(input: PrerenderInput): Promise<PrerenderRe
     if (seen.has(key)) return;
     seen.add(key);
     page = { ...page, path };
+    met.push(page);
     if (!(page.prerender?.enabled ?? true)) return;
     if (options.filter && !options.filter(page)) return;
-    const need = pageNeed(input, path, needs);
+    // The shell renders the root route alone: what the page's own route needs does not apply.
+    const need = isShellPage(page) ? null : pageNeed(input, path, needs);
     if (need) {
       refused.set(need.path, need);
       return;
@@ -367,7 +473,11 @@ export async function prerenderPages(input: PrerenderInput): Promise<PrerenderRe
   await Promise.all(Array.from({ length: workers }, worker));
   if (failure !== undefined) throw failure;
   for (const r of routes ?? []) refuseUnserved(r, input, written, needs, refused);
-  return { written, refused: [...refused.values()].sort((a, b) => a.path.localeCompare(b.path)) };
+  return {
+    written,
+    refused: [...refused.values()].sort((a, b) => a.path.localeCompare(b.path)),
+    pages: met,
+  };
 }
 
 /** A route no page covered that needs a server: a server route, or a dynamic page route. */

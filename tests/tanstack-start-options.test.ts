@@ -1,5 +1,5 @@
 // @denext/tanstack-start's options: the field-scoped check `tanstackStart()` runs on them (Start's
-// own shapes for `router`, `importProtection`, `prerender` and `pages`; unknown keys refused with a
+// own shapes for `router`, `importProtection`, `prerender`, `pages`, `sitemap` and `spa`; unknown keys refused with a
 // suggestion), Start's object form of `router` mapped onto the plugin (an extensionless `entry`,
 // `basepath` against the app's `basePath`, the generator's options), and Start's remaining
 // `importProtection` keys: `maxTraceDepth` caps a violation's trace, `behavior: "mock"` is warned
@@ -80,6 +80,30 @@ Deno.test("tanstack-start options: Start's full shapes pass", () => {
     },
   });
   validateOptions({ importProtection: { behavior: "mock" } });
+  validateOptions({
+    sitemap: { enabled: true, host: "https://start.example", outputPath: "seo/sitemap.xml" },
+    spa: {
+      enabled: true,
+      maskPath: "/app",
+      prerender: { outputPath: "/200", crawlLinks: false, headers: { "x-a": "1" } },
+    },
+    pages: [{
+      path: "/",
+      sitemap: {
+        exclude: false,
+        priority: 0.5,
+        changefreq: "weekly",
+        lastmod: new Date(0),
+        alternateRefs: [{ href: "https://start.example/fr", hreflang: "fr" }],
+        images: [{ loc: "https://start.example/a.png", title: "A" }],
+        news: {
+          publication: { name: "Start", language: "en" },
+          publicationDate: "2026-01-02",
+          title: "News",
+        },
+      },
+    }],
+  });
 });
 
 Deno.test("tanstack-start options: unknown keys are refused, with the closest one suggested", () => {
@@ -108,6 +132,15 @@ Deno.test("tanstack-start options: unknown keys are refused, with the closest on
   invalid({ prerender: { crawlLink: true } }, "(did you mean `crawlLinks`?)");
   invalid({ pages: [{ path: "/", prerender: { outPath: "/x" } }] }, "`pages[0].prerender.outPath`");
   invalid({ router: { routesDir: "x" } }, "(did you mean `routesDirectory`?)");
+  invalid(
+    { sitemap: { hostname: "x" } },
+    "`sitemap.hostname` is not an option (did you mean `host`?)",
+  );
+  invalid({ spa: { mask: "/" } }, "`spa.mask` is not an option (did you mean `maskPath`?)");
+  invalid(
+    { pages: [{ path: "/", sitemap: { priority: 1, freq: "x" } }] },
+    "`pages[0].sitemap.freq`",
+  );
 });
 
 Deno.test("tanstack-start options: a bad type names the field and what it must be", () => {
@@ -158,6 +191,60 @@ Deno.test("tanstack-start options: a bad type names the field and what it must b
     [{ pages: ["/"] }, "`pages[0]` must be an object"],
     [{ pages: [{ path: "about" }] }, '`pages[0].path` must be a path starting with "/"'],
     [{ pages: [{ path: "/", sitemap: 1 }] }, "`pages[0].sitemap` must be an object"],
+    [{ sitemap: true }, "`sitemap` must be an object"],
+    [{ sitemap: { host: 1 } }, "`sitemap.host` must be a string"],
+    [{ sitemap: { enabled: "yes" } }, "`sitemap.enabled` must be a boolean"],
+    [{ spa: { maskPath: 1 } }, "`spa.maskPath` must be a string"],
+    [{ spa: { prerender: { crawlLinks: 1 } } }, "`spa.prerender.crawlLinks` must be a boolean"],
+    [{ spa: { prerender: { path: "/" } } }, "`spa.prerender.path` is not an option"],
+    [
+      { pages: [{ path: "/", sitemap: { exclude: 1 } }] },
+      "`pages[0].sitemap.exclude` must be a boolean",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { priority: 2 } }] },
+      "`pages[0].sitemap.priority` must be <= 1",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { priority: -1 } }] },
+      "`pages[0].sitemap.priority` must be a finite number >= 0",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { changefreq: "often" } }] },
+      "`pages[0].sitemap.changefreq` must be one of",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { lastmod: 1 } }] },
+      "`pages[0].sitemap.lastmod` must be a string or a Date",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { alternateRefs: [{ href: "x" }] } }] },
+      "`pages[0].sitemap.alternateRefs[0].hreflang` must be a string",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { images: [1] } }] },
+      "`pages[0].sitemap.images[0]` must be an object",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { images: [{ loc: "x", title: 1 }] } }] },
+      "`pages[0].sitemap.images[0].title` must be a string",
+    ],
+    [
+      { pages: [{ path: "/", sitemap: { news: { title: "t", publicationDate: "d" } } }] },
+      "`pages[0].sitemap.news.publication` must be an object",
+    ],
+    [{
+      pages: [{
+        path: "/",
+        sitemap: { news: { publication: { name: "n", language: "en" }, title: "t" } },
+      }],
+    }, "`pages[0].sitemap.news.publicationDate` must be a string or a Date"],
+    [{
+      pages: [{
+        path: "/",
+        sitemap: { news: { publication: { name: "n", language: "en" }, publicationDate: "d" } },
+      }],
+    }, "`pages[0].sitemap.news.title` must be a string"],
     [{ router: { entry: "" } }, "`router.entry` must be a non-empty string"],
     [{ router: { semicolons: "no" } }, "`router.semicolons` must be a boolean"],
     [{ router: { quoteStyle: "back" } }, '`router.quoteStyle` must be one of "single", "double"'],

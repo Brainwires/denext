@@ -29,11 +29,20 @@ import {
   type PrerenderOptions,
   prerenderPages,
   type RouteInfo,
+  type SitemapOptions,
+  type SpaOptions,
+  spaShellPage,
   type StartPage,
 } from "./prerender.ts";
 import type { ImportProtection } from "./protect.ts";
 import { coversServerFns, scanServerFns } from "./server-fns.ts";
-import { loadStartToolchain, type ServerFnInfo, type StartEnv } from "./toolchain.ts";
+import {
+  loadSitemapBuilder,
+  loadStartToolchain,
+  type ServerFnInfo,
+  type SitemapBuilder,
+  type StartEnv,
+} from "./toolchain.ts";
 
 /** Where a Start app's modules are, and where the plugin writes. */
 export interface StartApp {
@@ -252,10 +261,19 @@ async function readServerRecord(path: string, app: StartApp): Promise<Map<string
   return new Map([[app.serverEntry, `${join(app.outDir, record.bundle)}#${record.key}`]]);
 }
 
-/** What `denext export` prerenders: Start's `prerender` and `pages` options, and the routes. */
+/**
+ * What `denext export` prerenders and writes: Start's `prerender`, `pages`, `spa` and `sitemap`
+ * options, and the routes.
+ */
 export interface ExportPlan {
   options: PrerenderOptions;
   pages: StartPage[];
+  /** Start's `spa`: the SPA shell to write. */
+  spa?: SpaOptions;
+  /** Start's `sitemap`: the sitemap to write. */
+  sitemap?: SitemapOptions;
+  /** Start's `buildSitemap` (default: loaded from the app's `@tanstack/start-plugin-core`). */
+  sitemapBuilder?: () => Promise<SitemapBuilder>;
   /** The route tree the prepare step generated (`null` when the plugin does not generate it). */
   routes(): RouteInfo[] | null;
   /** The project root and the app's `basePath`. */
@@ -281,13 +299,16 @@ export async function buildStep(
   plan?: ExportPlan,
 ): Promise<void> {
   if (mode === "export") {
-    if (build && plan && plan.options.enabled !== false) {
+    // Start's SPA shell turns the prerender on.
+    if (build && plan && (plan.options.enabled !== false || spaShellPage(plan.spa))) {
       return await exportStep(build, bundles, plan);
     }
     console.warn(
       "[@denext/tanstack-start] prerender is off (`prerender.enabled: false`): the export has " +
         "no TanStack routes; `denext start` serves them.",
     );
+    // Start still writes the sitemap, of the pages listed.
+    if (build && plan) await writeSitemap(build, plan, plan.pages);
     return;
   }
   await bundles.forgetServerBuild();
@@ -316,9 +337,12 @@ async function exportStep(
     await build.emitFile({ fileName: `${CLIENT_PREFIX.slice(1)}${name}`, source });
   }
   const server = await bundles.loadServerEntry();
-  const { written, refused } = await prerenderPages({
+  // Start's post-build: the SPA shell is one more page, after the app's own.
+  const shell = spaShellPage(plan.spa);
+  const { written, refused, pages } = await prerenderPages({
     options: plan.options,
-    pages: plan.pages,
+    pages: shell ? [...plan.pages, shell] : plan.pages,
+    shellOutputPath: shell?.prerender?.outputPath,
     routes: plan.routes(),
     client: bundles.clientGraph(),
     projectRoot: plan.projectRoot,
@@ -329,6 +353,30 @@ async function exportStep(
   console.log(`[@denext/tanstack-start] prerendered ${written.length} page(s)`);
   const report = formatRefusals(refused, plan.projectRoot);
   if (report) console.warn(report);
+  await writeSitemap(build, plan, pages);
+}
+
+/**
+ * Start's sitemap, when `sitemap` is enabled: its own `buildSitemap` over the pages the prerender
+ * met (`sitemap.xml` at `sitemap.outputPath` and `pages.json`), written beside the pages so the
+ * export publishes them at its root.
+ */
+async function writeSitemap(
+  build: PluginBuildContext,
+  plan: ExportPlan,
+  pages: StartPage[],
+): Promise<void> {
+  if (!plan.sitemap || plan.sitemap.enabled === false) return;
+  const publicDir = join(build.outDir, PAGES_DIR);
+  await Deno.mkdir(publicDir, { recursive: true });
+  const builder = await (plan.sitemapBuilder ?? (() => loadSitemapBuilder(plan.projectRoot)))();
+  // Start's schema defaults (`enabled: true`, `outputPath: "sitemap.xml"`).
+  const sitemap = {
+    ...plan.sitemap,
+    enabled: true,
+    outputPath: plan.sitemap.outputPath ?? "sitemap.xml",
+  };
+  await builder({ startConfig: { sitemap, pages }, publicDir });
 }
 
 /** The client bundle's files, and the assets it emitted under `assets/` (`/`-separated). */

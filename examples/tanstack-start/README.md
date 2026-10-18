@@ -47,7 +47,10 @@ denext export .       # a static site in out/ (Start's prerender)
   `/posts/1`…`/posts/3` too) into `out/`, and lists what needs a server:
   `/api/hello` (a server route) and `/notes` (it calls a server function).
   `/boom` is filtered out in `denext.config.ts` (its loader fails on purpose,
-  which would fail the export). Serve `out/` from any static host: the pages
-  hydrate and navigate on the client.
+  which would fail the export). Start's `spa` option writes its SPA shell to
+  `out/_shell.html` (the root route alone, rendered at `/`), and `sitemap`
+  writes `out/sitemap.xml` and `out/pages.json`. Serve `out/` from any static
+  host with `_shell.html` as its fallback: the pages hydrate and navigate on the
+  client, and a path with no file of its own renders from the shell.
 - **npm from `node_modules`** — `nodeModulesDir: "manual"` + `package.json`,
   with `react` aliased to denext in `deno.json` (what `denext migrate` writes).

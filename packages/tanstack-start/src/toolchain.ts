@@ -7,6 +7,7 @@
 
 import { createRequire } from "node:module";
 import { dirname, join, toFileUrl } from "@std/path";
+import type { SitemapOptions, StartPage } from "./prerender.ts";
 
 /** The environment a module is compiled for. */
 export type StartEnv = "client" | "server";
@@ -70,11 +71,10 @@ function resolveFrom(fromFile: string, specifier: string): string {
 const importFile = (path: string) => import(toFileUrl(path).href);
 
 /**
- * Load TanStack Start's compiler from the app at `projectRoot`.
- *
- * @param projectRoot The app root (its `package.json` lists `@tanstack/react-start`).
+ * The app's `@tanstack/start-plugin-core` (a dependency of its `@tanstack/react-start`): its
+ * `package.json`, and an importer of its built modules (`dist/esm/<rel>`).
  */
-export async function loadStartToolchain(projectRoot: string): Promise<StartToolchain> {
+function startCore(projectRoot: string) {
   let startPkg: string;
   try {
     startPkg = resolveFrom(join(projectRoot, "package.json"), "@tanstack/react-start/package.json");
@@ -85,7 +85,40 @@ export async function loadStartToolchain(projectRoot: string): Promise<StartTool
     );
   }
   const corePkg = resolveFrom(startPkg, "@tanstack/start-plugin-core/package.json");
-  const core = (rel: string) => importFile(join(dirname(corePkg), "dist", "esm", rel));
+  return {
+    corePkg,
+    core: (rel: string) => importFile(join(dirname(corePkg), "dist", "esm", rel)),
+  };
+}
+
+/** What Start's `buildSitemap` reads: the `sitemap` option and the pages its prerender met. */
+export interface SitemapInput {
+  startConfig: { sitemap?: SitemapOptions; pages: StartPage[] };
+  /** The directory the files are written to (the export's root). */
+  publicDir: string;
+}
+
+/** Start's `buildSitemap`: writes `sitemap.xml` (at `sitemap.outputPath`) and `pages.json`. */
+export type SitemapBuilder = (input: SitemapInput) => void | Promise<void>;
+
+/**
+ * Start's own `buildSitemap` (`@tanstack/start-plugin-core`'s `build-sitemap`), from the app at
+ * `projectRoot`.
+ *
+ * @param projectRoot The app root (its `package.json` lists `@tanstack/react-start`).
+ */
+export async function loadSitemapBuilder(projectRoot: string): Promise<SitemapBuilder> {
+  const mod = await startCore(projectRoot).core("build-sitemap.js");
+  return mod.buildSitemap as SitemapBuilder;
+}
+
+/**
+ * Load TanStack Start's compiler from the app at `projectRoot`.
+ *
+ * @param projectRoot The app root (its `package.json` lists `@tanstack/react-start`).
+ */
+export async function loadStartToolchain(projectRoot: string): Promise<StartToolchain> {
+  const { corePkg, core } = startCore(projectRoot);
   const [host, compiler, config, resolver] = await Promise.all([
     core("start-compiler/host.js"),
     core("start-compiler/compiler.js"),

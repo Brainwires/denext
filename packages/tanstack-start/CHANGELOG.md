@@ -5,6 +5,13 @@ of `@denext/denext`.
 
 ## [0.2.0] - Unreleased
 
+- **Start's `spa` and `sitemap` options in `denext export`.** `spa` adds Start's SPA shell, as
+  its post-build does: the mask path (default `/`) rendered with Start's `X-TSS_SHELL` header
+  (the root route alone) to `_shell.html`, the file a static host falls back to; it is never
+  refused, turns the prerender on and stays out of the sitemap. `sitemap` runs Start's own
+  `buildSitemap` (loaded from the app's `@tanstack/start-plugin-core`) over every page the
+  prerender met, writing `sitemap.xml` and `pages.json` at the export's root; a page's `sitemap`
+  entry is checked against Start's shape. `denext migrate` now carries both options.
 - **The options are checked** when `tanstackStart()` is called, so a bad config fails as
   `denext.config.ts` loads: each option against the shape Start's own plugin accepts (`router`,
   `importProtection`, `prerender`, `pages`) or the plugin's own, with `denext.config`'s

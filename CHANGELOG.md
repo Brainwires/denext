@@ -383,6 +383,10 @@ and this project adheres to
 
 ### Changed
 
+- **`denext migrate` carries a TanStack Start app's `spa` and `sitemap` options** into
+  `tanstackStart({ … })`: `@denext/tanstack-start` now writes Start's SPA shell and sitemap in
+  `denext export`, so they are no longer listed as left behind.
+
 - **Hydrating a react-dom/server `<!--$!-->` boundary ships only with the compat `react-dom`
   modules.** Only react-dom/server's synchronous `renderToString` writes such a client-rendered
   boundary; denext's own renderers never do, so its hydration (suspense-hydration.ts) is installed

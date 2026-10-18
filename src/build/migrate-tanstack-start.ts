@@ -61,7 +61,6 @@ const DROP_NOTES: Record<string, string> = {
   tsr: "the route generator reads tsr.config.json; move these options there",
   server: "denext builds and serves the server itself (src/server.ts still applies)",
   client: "denext builds the client bundle itself (src/client.tsx still applies)",
-  spa: "Start's SPA mode is not supported; every page renders through Start's handler",
   vite: "there is no Vite build under denext",
 };
 
