@@ -58,9 +58,16 @@ import type { PrerenderOptions, RouteInfo, StartPage } from "./src/prerender.ts"
 import { compileImportProtection, type ImportProtectionOptions } from "./src/protect.ts";
 import { clientBootSource, entryPaths, serverEntrySource, writeIfChanged } from "./src/entries.ts";
 import { createHandler } from "./src/handler.ts";
-import { generateRouteTree } from "./src/route-tree.ts";
+import { generateRouteTree, generatorPaths } from "./src/route-tree.ts";
+import {
+  checkBasepath,
+  resolveRouter,
+  type StartRouterOptions,
+  validateOptions,
+} from "./src/options.ts";
 
 export type {
+  ImportProtectionBehavior,
   ImportProtectionEnvRules,
   ImportProtectionOptions,
   ImportProtectionViolation,
@@ -69,13 +76,20 @@ export type {
   TraceStep,
 } from "./src/protect.ts";
 export type { PagePrerenderOptions, PrerenderOptions, StartPage } from "./src/prerender.ts";
+export type { StartRouterOptions } from "./src/options.ts";
 
 /** Options for {@link tanstackStart}. */
 export interface TanStackStartOptions {
   /** The source directory, relative to the project (default `src`). */
   srcDirectory?: string;
-  /** The router module, relative to `srcDirectory` (default `router.tsx`). */
-  router?: string;
+  /**
+   * The router module, relative to `srcDirectory` (default `router.tsx`), or Start's own
+   * `router` option: `{ entry, basepath, ...the route generator's options }`. `entry` may leave
+   * out the extension; `basepath` must match the app's `basePath`; the generator's options
+   * (`routesDirectory` and `generatedRouteTree` relative to `srcDirectory`, as in Start) apply
+   * over `tsr.config.json`.
+   */
+  router?: string | StartRouterOptions;
   /** Generate `routeTree.gen.ts` from `routes/` (default `true`). */
   generateRouteTree?: boolean;
   /**
@@ -91,7 +105,9 @@ export interface TanStackStartOptions {
   /**
    * Start's `importProtection` options (as `tanstackStart({ importProtection })` takes them in
    * Start's Vite plugin): extra denied specifiers and files per side, the importers checked,
-   * `onViolation`, `enabled`. A violation always fails the build (Start's `error` behavior).
+   * `onViolation`, `enabled`, `maxTraceDepth`. A violation always fails the build and the dev
+   * request (Start's `error` behavior); `behavior: "mock"` is warned about, once per process
+   * (`log: "once"`, the default) or on every build (`log: "always"`).
    */
   importProtection?: ImportProtectionOptions;
   /**
@@ -110,17 +126,22 @@ export interface TanStackStartOptions {
  * @returns The denext plugin.
  */
 export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin {
+  // A bad shape fails when denext.config.ts loads, not at the first build.
+  validateOptions(options);
+  const router = resolveRouter(options.router);
   return {
     name: "@denext/tanstack-start",
     async setup(ctx: PluginContext) {
       const src = join(ctx.projectRoot, options.srcDirectory ?? "src");
-      const routerFile = join(src, options.router ?? "router.tsx");
-      if (!(await exists(routerFile))) return; // not a Start app — nothing to do
+      const routerFile = await routerModule(src, router.entry);
+      if (!routerFile) return; // not a Start app — nothing to do
+      checkBasepath(router.basepath, ctx.config.basePath);
       let routes: RouteInfo[] | null = null;
       if (options.generateRouteTree !== false) {
+        const { routesDirectory } = generatorPaths(ctx.projectRoot, src, router.generator);
         ctx.addPrepareStep(async () => {
-          routes = await generateRouteTree(ctx.projectRoot, src);
-        }, { watch: [`${projectRelative(ctx, join(src, "routes"))}/**`] });
+          routes = await generateRouteTree(ctx.projectRoot, src, router.generator);
+        }, { watch: [`${projectRelative(ctx, join(ctx.projectRoot, routesDirectory))}/**`] });
       }
       const app = await prepareApp(ctx, src, routerFile);
       const protection = compileImportProtection(options.importProtection, app.projectRoot, src);
@@ -208,6 +229,14 @@ function env(name: string): string | undefined {
   } catch {
     return undefined; // no --allow-env
   }
+}
+
+/** The router module: `entry` under `src`, as given or with a module extension (Start's rule). */
+async function routerModule(src: string, entry: string): Promise<string | null> {
+  for (const name of [entry, ...[".tsx", ".ts", ".jsx", ".js"].map((ext) => entry + ext)]) {
+    if (await isFile(join(src, name))) return join(src, name);
+  }
+  return null;
 }
 
 async function firstExisting(dir: string, names: string[]): Promise<string | null> {

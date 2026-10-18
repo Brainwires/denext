@@ -8,7 +8,8 @@
 // loader on the server, and from the browser after hydration, with middleware and validation.
 // denext refuses a cross-origin server function POST before Start sees it. Then `denext export`:
 // Start's prerender writes the static pages (and the crawled dynamic ones), lists the routes that
-// need a server, and the static site hydrates and navigates on the client in Chromium.
+// need a server, and the static site hydrates and navigates on the client in Chromium — and, with
+// JavaScript off, renders from its HTML and follows a link with a full page load.
 //
 // Opt-in + NETWORK-REQUIRED (`deno install` fetches the TanStack packages from npm):
 // `deno task test:e2e`. Skipped automatically if the install can't reach npm.
@@ -109,7 +110,18 @@ Deno.test({
         }
       }
       assertStringIncludes(js, "/_serverFn/", "server functions are RPC stubs");
-      for (const leak of ["notes.push", "A note needs some text", 'searchParams.get("name")']) {
+      // src/functions/notes.server.ts (only the server functions' handlers use it), the
+      // handlers' bodies and a server route's handler: none of it ships.
+      for (
+        const leak of [
+          "notes.push",
+          "notes.server.ts stored note",
+          "Server functions run on the server",
+          "saveNote(",
+          "readNotes(",
+          'searchParams.get("name")',
+        ]
+      ) {
         assert(!js.includes(leak), `the client bundle leaks ${leak}`);
       }
       assert(!js.includes("AsyncLocalStorage"), "Start's server-only context stayed on the server");
@@ -265,13 +277,20 @@ Deno.test({
   }
 });
 
-/** Serve a static export as a static host would: `<path>/index.html`, then the file itself. */
-function serveStatic(root: string): { origin: string; close(): Promise<void> } {
+/**
+ * Serve a static export as a static host would: `<path>/index.html`, then the file itself.
+ * `served` lists each file answered, relative to the export (`posts/2/index.html`).
+ */
+function serveStatic(
+  root: string,
+): { origin: string; served: string[]; close(): Promise<void> } {
+  const served: string[] = [];
   const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, async (req) => {
     const path = decodeURIComponent(new URL(req.url).pathname);
     for (const candidate of [join(root, path, "index.html"), join(root, path)]) {
       const body = await Deno.readFile(candidate).catch(() => null);
       if (!body) continue;
+      served.push(candidate.slice(root.length + 1).replace(/\\/g, "/"));
       const type = candidate.endsWith(".js")
         ? "text/javascript; charset=utf-8"
         : "text/html; charset=utf-8";
@@ -279,7 +298,11 @@ function serveStatic(root: string): { origin: string; close(): Promise<void> } {
     }
     return new Response("Not Found", { status: 404 });
   });
-  return { origin: `http://127.0.0.1:${server.addr.port}`, close: () => server.shutdown() };
+  return {
+    origin: `http://127.0.0.1:${server.addr.port}`,
+    served,
+    close: () => server.shutdown(),
+  };
 }
 
 Deno.test({
@@ -359,6 +382,42 @@ Deno.test({
       assertNoConsoleErrors(errors);
       await page.close();
     });
+
+    await t.step(
+      "with JavaScript off, the pages render and a link loads the next file",
+      async () => {
+        const page = await browser.newPage();
+        // deno-lint-ignore no-explicit-any
+        const cdp = page.unsafelyGetCelestialBindings() as any;
+        await cdp.Emulation.setScriptExecutionDisabled({ value: true });
+        host.served.length = 0;
+        await page.goto(host.origin + "/posts", { waitUntil: "load" });
+        const list = await page.evaluate(() => document.querySelector("#posts")?.textContent ?? "");
+        assertStringIncludes(list, "Every page arrives rendered", "the list is in the HTML");
+        const pages = () => host.served.filter((f) => f.endsWith(".html"));
+        assertEquals(pages(), ["posts/index.html"]);
+        // Marks this document: a full page load drops the mark, a client navigation keeps it.
+        await page.evaluate(() => {
+          (globalThis as unknown as { __sameDocument: boolean }).__sameDocument = true;
+        });
+        const navigated = page.waitForNavigation({ waitUntil: "load" });
+        await (await page.$('#posts a[href="/posts/2"]'))!.click();
+        await navigated;
+        const state = await page.evaluate(() => ({
+          path: location.pathname,
+          sameDocument:
+            (globalThis as unknown as { __sameDocument?: boolean }).__sameDocument === true,
+          layout: !!document.querySelector("#posts-layout #post"),
+          text: document.querySelector("#post")?.textContent ?? "",
+        }));
+        assertEquals(state.path, "/posts/2");
+        assert(!state.sameDocument, "a full page load, not a client navigation");
+        assert(state.layout, "the post renders inside its layout, from the exported HTML");
+        assertStringIncludes(state.text, "Then the router takes over");
+        assertEquals(pages(), ["posts/index.html", "posts/2/index.html"], "the exported file");
+        await page.close();
+      },
+    );
   } finally {
     await browser.close();
     await host.close();

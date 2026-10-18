@@ -23,6 +23,23 @@ and this project adheres to
   element closed inside its Markdown block. `sanitize: { allowElements, allowAttributes,
   allowDataImages }` only extends the allowlist. `sanitizeHtml()` is exported too.
 
+- **`@denext/tanstack-start` 0.2.0: checked options, Start's object `router`, and the rest of
+  `importProtection`.** `tanstackStart()` checks its options when `denext.config.ts` loads,
+  against the shapes Start's own plugin accepts, with `denext.config`'s field-scoped errors; a
+  key that is not an option is refused with the closest one suggested, so a typo in an
+  import-protection rule no longer turns it off. `router` also takes Start's object (`entry`,
+  `basepath`, the route generator's options); `importProtection.maxTraceDepth` caps a
+  violation's trace; `behavior` / `mockAccess` / `log` are accepted, and a `"mock"` behavior is
+  warned about, since a violation always fails the build.
+
+### Fixed
+
+- **`@denext/tanstack-start`: a page `denext export` prerenders works with JavaScript off.** The
+  export wrote each page as the server streamed it, so a route's content arrived as a
+  `<template>` that a script moves into its Suspense placeholder; with JavaScript off only the
+  fallback showed. Each page is now written with every boundary's content in place, the same DOM
+  the script produces, so it still hydrates.
+
 ## [4.3.1] - 2026-10-17
 
 ### Added

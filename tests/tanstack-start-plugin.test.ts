@@ -888,6 +888,18 @@ Deno.test({
       `export const read = createServerFn().handler(() => Deno.env.get("K"));\n`,
     );
     await file("ok.ts", `import { read } from "./fns.ts";\nexport const run = () => read();\n`);
+    // A server function whose handler alone uses a *.server.* module: the compiler drops the
+    // handler from the browser build, and with it the only use of the module.
+    await file("store.server.ts", `export const load = () => "STORE_SERVER_BODY";\n`);
+    await file(
+      "store.ts",
+      `import { load } from "./store.server.ts";\n` +
+        `export const read = createServerFn().handler(() => "HANDLER_BODY:" + load());\n`,
+    );
+    await file(
+      "uses-store.ts",
+      `import { read } from "./store.ts";\nexport const run = () => read();\n`,
+    );
     await file("bad.ts", `import { db } from "./db.server.ts";\nexport const run = () => db();\n`);
     // The fake compiler turns a server function into an RPC stub in the browser.
     const { tc } = fakeToolchain();
@@ -925,6 +937,13 @@ Deno.test({
     await build("ok.ts");
     const js = await Deno.readTextFile(join(dir, ".denext", "client", "client.js"));
     assert(!js.includes("Deno.env"), "the compiled module shipped, not the source");
+    // The emitted browser bundle has neither the *.server.* module nor the handler's body.
+    await build("uses-store.ts");
+    const shipped = await clientBundleText(join(dir, ".denext", "client"));
+    assertStringIncludes(shipped, "rpc()", "the server function is an RPC stub");
+    for (const body of ["STORE_SERVER_BODY", "HANDLER_BODY"]) {
+      assert(!shipped.includes(body), `the client bundle ships ${body}`);
+    }
     const err = await assertRejects(() => build("bad.ts"));
     assertStringIncludes(String(err), "[import-protection] Import denied in client environment");
     assertStringIncludes(String(err), "Denied by file pattern: **/*.server.*");
@@ -1087,7 +1106,13 @@ Deno.test({
             compileImportProtection(protection, dir, join(dir, "src")),
         })],
       });
-    await build("safe.ts");
+    // The emitted server bundle has no *.client.* module body: only createClientOnlyFn used it.
+    const safe = await build("safe.ts");
+    const serverJs = await Deno.readTextFile(
+      safe.get(join(dir, "src", "safe.ts"))!.split("#")[0],
+    );
+    assertStringIncludes(serverJs, "client only", "createClientOnlyFn's server stub");
+    assert(!serverJs.includes("WIDGET"), "the server bundle ships the .client module's body");
     const err = await assertRejects(() => build("bad.ts"));
     assertStringIncludes(String(err), "[import-protection] Import denied in server environment");
     assertStringIncludes(String(err), "Denied by file pattern: **/*.client.*");
@@ -1103,6 +1128,17 @@ Deno.test({
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+/** Every `.js` file a client build wrote, concatenated. */
+async function clientBundleText(dir: string): Promise<string> {
+  let js = "";
+  for await (const entry of Deno.readDir(dir)) {
+    if (entry.isFile && entry.name.endsWith(".js")) {
+      js += await Deno.readTextFile(join(dir, entry.name));
+    }
+  }
+  return js;
+}
 
 /** A Start app's layout under `dir`, as the plugin records it. */
 function startApp(dir: string): StartApp {

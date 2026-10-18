@@ -102,7 +102,28 @@ export interface ImportProtectionOptions {
   onViolation?: (
     violation: ImportProtectionViolation,
   ) => boolean | void | Promise<boolean | void>;
+  /**
+   * Start's violation behavior: `"error"`, `"mock"`, or one per command (`{ dev, build }`).
+   * Accepted so a Start config ports unchanged, but denext always fails on a violation (the
+   * build, and in dev the request that builds); a `"mock"` is warned about.
+   */
+  behavior?: ImportProtectionBehavior | {
+    dev?: ImportProtectionBehavior;
+    build?: ImportProtectionBehavior;
+  };
+  /** Start's runtime diagnostics for a mocked import. Accepted; denext mocks none. */
+  mockAccess?: "error" | "warn" | "off";
+  /** How many importers a violation's trace walks up at most (default 20, as in Start). */
+  maxTraceDepth?: number;
+  /**
+   * Start's repetition of its warnings: `"once"` (default) warns about a `"mock"` behavior once
+   * per process, `"always"` on every build. Violations are reported on every build either way.
+   */
+  log?: "once" | "always";
 }
+
+/** Start's import-protection behavior. */
+export type ImportProtectionBehavior = "error" | "mock";
 
 const FRAMEWORKS = ["react", "solid", "vue"];
 
@@ -173,6 +194,31 @@ export interface ImportProtection {
   checksImporter(importer: string): boolean;
   /** The app's `onViolation` hook. */
   readonly onViolation?: ImportProtectionOptions["onViolation"];
+  /** How many importers a trace walks up at most. */
+  readonly maxTraceDepth: number;
+  /** Warn that a `"mock"` behavior is not applied (per `log`); called as each build ends. */
+  noticeBehavior(): void;
+}
+
+/** Start's default `maxTraceDepth`. */
+const DEFAULT_MAX_TRACE_DEPTH = 20;
+
+/**
+ * The warning for an app that asked for Start's `"mock"` behavior, or `null` when it did not
+ * (or turned protection off).
+ *
+ * @param options The app's `importProtection` options.
+ */
+export function mockNotice(options: ImportProtectionOptions | undefined): string | null {
+  const behavior = options?.behavior;
+  if (behavior === undefined || options?.enabled === false) return null;
+  const mocks = typeof behavior === "string"
+    ? behavior === "mock"
+    : behavior.dev === "mock" || behavior.build === "mock";
+  if (!mocks) return null;
+  return '[@denext/tanstack-start] importProtection.behavior "mock" is not applied: denext ' +
+    "fails the build (and in dev the request that builds) on every import-protection violation, " +
+    "so a denied import never reaches the other side mocked.";
 }
 
 /**
@@ -205,6 +251,8 @@ export function compileImportProtection(
     };
   };
   const rules = { client: env("client"), server: env("server") };
+  const notice = mockNotice(options);
+  let warned = false;
   const include = compileAll(options?.include ?? []);
   const exclude = compileAll([...(options?.exclude ?? []), ...(options?.ignoreImporters ?? [])]);
   return {
@@ -219,6 +267,12 @@ export function compileImportProtection(
       return importer.startsWith(srcDirectory + SEPARATOR);
     },
     onViolation: options?.onViolation,
+    maxTraceDepth: options?.maxTraceDepth ?? DEFAULT_MAX_TRACE_DEPTH,
+    noticeBehavior() {
+      if (!notice || (warned && options?.log !== "always")) return;
+      warned = true;
+      console.warn(notice);
+    },
   };
 }
 
@@ -369,28 +423,41 @@ export function bundleGraph(meta: Metafile, cwd: string): BundleGraph {
 /** Where each module was reached from, walking up from a violation's importer. */
 type Down = Map<string, { next: string; specifier: string }>;
 
+/** The breadth-first walk up from a violation's importer. */
+interface Walk {
+  target: string;
+  down: Down;
+  depth: Map<string, number>;
+  queue: string[];
+  maxDepth: number;
+}
+
 /** Queue the importers of `node` not reached yet; `node` itself when it is an entry. */
-function stepUp(graph: BundleGraph, node: string, target: string, down: Down, queue: string[]) {
+function stepUp(graph: BundleGraph, node: string, walk: Walk) {
   const from = graph.importers.get(node) ?? [];
-  if (node !== target && from.length === 0) return node;
+  if (node !== walk.target && from.length === 0) return node;
+  const depth = walk.depth.get(node) ?? 0;
+  if (depth >= walk.maxDepth) return null; // Start's maxTraceDepth: no further up from here
   for (const edge of from) {
-    if (edge.from === target || down.has(edge.from)) continue;
-    down.set(edge.from, { next: node, specifier: edge.specifier });
-    queue.push(edge.from);
+    if (edge.from === walk.target || walk.down.has(edge.from)) continue;
+    walk.down.set(edge.from, { next: node, specifier: edge.specifier });
+    walk.depth.set(edge.from, depth + 1);
+    walk.queue.push(edge.from);
   }
   return null;
 }
 
 /**
  * The shortest import path from an entry (a module nothing imports) to `target`, each step with
- * the specifier it imports the next one by (Start's `buildTrace`).
+ * the specifier it imports the next one by, walking at most `maxDepth` importers up (Start's
+ * `buildTrace`: with no entry within reach, the trace is `target` alone).
  */
-function shortestImportPath(graph: BundleGraph, target: string): TraceStep[] {
+function shortestImportPath(graph: BundleGraph, target: string, maxDepth: number): TraceStep[] {
   const down: Down = new Map();
-  const queue = [target];
+  const walk: Walk = { target, down, depth: new Map([[target, 0]]), queue: [target], maxDepth };
   let root: string | null = null;
-  for (let i = 0; i < queue.length && !root; i++) {
-    root = stepUp(graph, queue[i], target, down, queue);
+  for (let i = 0; i < walk.queue.length && !root; i++) {
+    root = stepUp(graph, walk.queue[i], walk);
   }
   const path: TraceStep[] = [];
   for (let at = root ?? target;;) {
@@ -402,8 +469,13 @@ function shortestImportPath(graph: BundleGraph, target: string): TraceStep[] {
 }
 
 /** The app modules (not packages, nor the plugin's generated entries) on the way to `target`. */
-function traceTo(graph: BundleGraph, target: string, cwd: string): TraceStep[] {
-  return shortestImportPath(graph, target).filter((s) =>
+function traceTo(
+  graph: BundleGraph,
+  target: string,
+  cwd: string,
+  maxDepth = DEFAULT_MAX_TRACE_DEPTH,
+): TraceStep[] {
+  return shortestImportPath(graph, target, maxDepth).filter((s) =>
     s.file === target || (isAppModule(s.file, cwd) && !isGenerated(s.file, cwd))
   );
 }
@@ -490,7 +562,7 @@ export async function importProtectionViolations(
       envType: env,
       behavior: "error",
       ...v,
-      trace: traceTo(graph, v.importer, cwd),
+      trace: traceTo(graph, v.importer, cwd, protection.maxTraceDepth),
     });
   }
   const violations: ImportProtectionViolation[] = [];

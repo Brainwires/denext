@@ -114,7 +114,7 @@ export const addNote = createServerFn({ method: "POST" })
 | Option              | Default                                    | What it does                                                        |
 | ------------------- | ------------------------------------------ | ------------------------------------------------------------------- |
 | `srcDirectory`      | `src`                                      | Where the app's sources live, relative to the project.              |
-| `router`            | `router.tsx`                               | The router module, relative to `srcDirectory`.                      |
+| `router`            | `router.tsx`                               | The router module, or Start's `router` object (below).              |
 | `generateRouteTree` | `true`                                     | `false` keeps generating `routeTree.gen.ts` yourself.               |
 | `maxBodyBytes`      | the app's `actionMaxBodyBytes`, else 1 MiB | The request-body cap for server functions and server routes.        |
 | `allowedOrigins`    | none                                       | Other origins (or bare hosts) allowed to POST to a server function. |
@@ -144,9 +144,42 @@ tanstackStart({
 (`files`, `excludeFiles`, `server.specifiers`). Patterns are globs over paths relative to the
 project (or specifiers as written), or regular expressions. `include`, `exclude` and
 `ignoreImporters` choose the importers checked; `onViolation` returning `false` waives a
-violation; `enabled: false` turns Start's rules off (denext's server-only scan still runs). A
-violation always fails the build, Start's `behavior: "error"` (`behavior`, `mockAccess`, `log`
-and `maxTraceDepth` are not applied).
+violation; `enabled: false` turns Start's rules off (denext's server-only scan still runs);
+`maxTraceDepth` (default 20) caps how far up a violation's trace walks. A violation always fails
+the build, and in `denext dev` the request that builds: Start's `behavior: "error"`. `behavior`
+and `mockAccess` are accepted so a Start config ports unchanged, but a `"mock"` is not applied and
+is warned about, once per process (`log: "once"`, the default) or on every build
+(`log: "always"`).
+
+### `router`
+
+A filename under `srcDirectory`, or Start's own `router` option:
+
+```ts
+tanstackStart({
+  router: {
+    entry: "app-router", // under srcDirectory; the extension may be left out
+    basepath: "/docs", // must match basePath in denext.config.ts
+    routesDirectory: "pages", // the route generator's options, as in Start
+    quoteStyle: "double",
+  },
+});
+```
+
+`routesDirectory` and `generatedRouteTree` are relative to `srcDirectory`, as in Start; the
+generator's other options apply over `tsr.config.json`. denext serves the app under its own
+`basePath`, so a `basepath` that differs is refused. Refused too: `target` (the plugin builds a
+React app) and `addExtensions: false` (Deno resolves the route tree's imports by extension).
+
+### Checked options
+
+`tanstackStart()` checks its options when `denext.config.ts` loads, with the errors
+`denext.config` validation gives: a wrong type, or a key that is not an option (the closest one is
+suggested), fails with the field's path:
+
+```
+invalid tanstackStart() options: `importProtection.cleint` is not an option (did you mean `client`?)
+```
 
 ### `prerender` and `pages`
 
@@ -161,6 +194,10 @@ tanstackStart({
   pages: [{ path: "/posts/42" }],
 });
 ```
+
+Each page is written as its final HTML: the content of every Suspense boundary (TanStack Router
+renders a route's matches inside one) in its place, so an exported page reads the same with
+JavaScript off and hydrates when it is on.
 
 Prerendering is on whenever you run `denext export`; `denext build` / `denext start` serve every
 route as before. The prerender reads the route tree the plugin generates, so with

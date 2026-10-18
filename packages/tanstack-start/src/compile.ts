@@ -360,6 +360,7 @@ function guardBundle(
   build.onEnd(async (result) => {
     const seen = record;
     record = newResolveRecord();
+    protection.noticeBehavior();
     if (result.errors.length > 0 || !result.metafile) return;
     const violations = await importProtectionViolations(
       result.metafile,

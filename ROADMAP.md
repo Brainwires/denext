@@ -69,8 +69,8 @@
 ## Router plugins
 
 - **TanStack Start, the rest:** `@denext/tanstack-start` runs a Start app (server functions,
-  server routes, streamed pages); `denext export` prerendering of Start routes, Start's import
-  protection, and `denext migrate` recognizing a Start app are next.
+  server routes, streamed pages, Start's import protection and options, `denext export`
+  prerendering); `denext migrate` recognizing a Start app is next.
 
 ## Build toolchain: waiting on `deno bundle`
 

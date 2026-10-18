@@ -12,10 +12,13 @@
 //   server route (`server` handlers), a page whose route chain reaches a server function in the
 //   browser (its RPC answers only from a server), and a dynamic route no page of which was
 //   prerendered. The export leaves them out and lists each with the reason.
+// - **A page is written as its final HTML**: each streamed Suspense boundary's content in place of
+//   its fallback (./static-html.ts), so the static file reads the same with JavaScript off.
 
 import { join } from "@std/path";
 import type { ClientGraph } from "./compile.ts";
 import { isAppModule } from "./protect.ts";
+import { inlineStreamedBoundaries } from "./static-html.ts";
 
 /** A route the generator found. */
 export interface RouteInfo {
@@ -274,8 +277,12 @@ async function renderPage(
     await res.body?.cancel();
     throw new Error(`Failed to fetch ${page.path}: ${res.status} ${res.statusText}`);
   }
-  const html = await res.text();
-  await input.write(outputFile(page, opts, res.headers.get("content-type") ?? ""), html);
+  const type = res.headers.get("content-type") ?? "";
+  const body = await res.text();
+  // A static file has no streaming: each Suspense boundary's content goes in its place, so the
+  // page reads the same with JavaScript off.
+  const html = type === "" || type.includes("html") ? inlineStreamedBoundaries(body) : body;
+  await input.write(outputFile(page, opts, type), html);
   return html;
 }
 

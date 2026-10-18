@@ -1,8 +1,9 @@
 // The route tree: TanStack's own generator (what Start's Vite plugin runs) over `<src>/routes/`
 // into `<src>/routeTree.gen.ts`, with explicit extensions on its imports so Deno resolves them
 // without sloppy imports. The routes it found come back as {@link RouteInfo}s (what Start's own
-// generator plugin reads to discover the paths it prerenders). `tsr.config.json` in the project still applies (inline settings win
-// only for the two paths and the extensions). The generator is a build-time npm tool, resolved
+// generator plugin reads to discover the paths it prerenders). `tsr.config.json` in the project
+// still applies; Start's `router` options win over it, and the plugin's own (the two paths, the
+// extensions, `target`) over both. The generator is a build-time npm tool, resolved
 // from the APP's own dependencies (its package.json lists `@tanstack/router-generator`), so the
 // plugin itself depends on no npm package.
 
@@ -42,25 +43,53 @@ async function loadGenerator(projectRoot: string): Promise<RouterGenerator> {
 }
 
 /**
+ * Where the generator reads the routes from and writes the tree to, as Start resolves them:
+ * `routesDirectory` (default `routes`) and `generatedRouteTree` (default `routeTree.gen.ts`)
+ * relative to the source directory, `./`-prefixed relative to the project root.
+ *
+ * @param projectRoot The project root.
+ * @param srcDir The source directory (absolute).
+ * @param inline Start's `router` generator options.
+ */
+export function generatorPaths(
+  projectRoot: string,
+  srcDir: string,
+  inline: Record<string, unknown> = {},
+): { routesDirectory: string; generatedRouteTree: string } {
+  const rel = (name: unknown, fallback: string) =>
+    "./" + relative(projectRoot, resolve(srcDir, String(name ?? fallback))).replace(/\\/g, "/");
+  return {
+    routesDirectory: rel(inline.routesDirectory, "routes"),
+    generatedRouteTree: rel(inline.generatedRouteTree, "routeTree.gen.ts"),
+  };
+}
+
+/**
  * Generate the route tree of the app at `projectRoot` whose sources are in `srcDir`.
  *
  * @param projectRoot The project root (the generator's root, where `tsr.config.json` lives).
  * @param srcDir The source directory (absolute).
+ * @param inline Start's `router` generator options (over `tsr.config.json`).
  * @returns The routes, the root route first.
  */
-export async function generateRouteTree(projectRoot: string, srcDir: string): Promise<RouteInfo[]> {
+export async function generateRouteTree(
+  projectRoot: string,
+  srcDir: string,
+  inline: Record<string, unknown> = {},
+): Promise<RouteInfo[]> {
   const generator = await loadGenerator(projectRoot);
   const { Generator, getConfig } = generator;
-  const src = "./" + relative(projectRoot, srcDir).replace(/\\/g, "/");
   let routes: RouteInfo[] = [];
+  const own = Array.isArray(inline.plugins) ? inline.plugins : [];
   const config = getConfig({
-    target: "react",
-    routesDirectory: `${src}/routes`,
-    generatedRouteTree: `${src}/routeTree.gen.ts`,
-    addExtensions: true,
     disableLogging: true,
+    ...inline,
+    target: "react",
+    ...generatorPaths(projectRoot, srcDir, inline),
+    // An extension string (`".tsx"`) stays the app's; `false` is refused by the options check.
+    addExtensions: inline.addExtensions ?? true,
     // A fresh generator always reports the tree (its first run writes it).
-    plugins: [{
+    plugins: [...own, {
       name: "denext-route-info",
       onRouteTreeChanged: (
         { routeNodes, rootRouteNode }: { routeNodes: RouteNode[]; rootRouteNode?: RouteNode },

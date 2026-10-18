@@ -428,7 +428,10 @@ an npm-React app, with TanStack's own compiler run over them as extra esbuild pl
 protection (its rules, the app's `importProtection` options, Start's messages), read from each
 bundle's esbuild metafile so only what tree-shaking kept counts; the client build also fails on
 denext's server-only scan (`findServerOnlyLeaks`), and `serverModuleSource` lets it serve a
-`"use server"` module's server functions as RPC stubs. Under `denext export` the same build step
+`"use server"` module's server functions as RPC stubs. The plugin's options are checked when
+`tanstackStart()` is called, against the shapes Start's own plugin accepts (`router` as a filename
+or Start's object, `importProtection`, `prerender`, `pages`), with `denext.config`'s field-scoped
+errors and a did-you-mean for a key that is not an option. Under `denext export` the same build step
 runs Start's prerender against the server bundle: the pages go to `<outDir>/pages-static/`
 (which an export with no `app/` copies to its root, as for `pages-router`), the client bundle is
 published with `emitFile`, and the routes that need a server are listed.
