@@ -247,7 +247,11 @@ tanstackStart({
   host's fallback (the file it serves for a path with no file of its own) at it, and the app
   renders on the client. The shell is never refused (only the root route renders), it turns the
   prerender on even with `prerender.enabled: false`, and it stays out of the sitemap. As in Start,
-  the shell takes its mask path: with the default `/` no `index.html` is written.
+  the shell takes its mask path: with the default `/` no `index.html` is written. In
+  `denext dev`, as in Start's dev server (its `TSS_SHELL`), every page is the shell: the server
+  renders the root route alone and the browser renders the route, so dev behaves as the static
+  host will. `spa: { enabled: false }` turns both off; `denext build` / `denext start` render
+  every page on the server either way.
 - **`sitemap`** (`enabled` defaults to `true` once the option is given) runs Start's own
   `buildSitemap`, loaded from the app's `@tanstack/start-plugin-core`, over every page the
   prerender met (listed, discovered and crawled, a filtered one included, each with what its

@@ -93,14 +93,19 @@ export interface StartBundles {
  *
  * @param basePath The app's `basePath` (`""` when none).
  * @param prerendering The bundle is the export's server bundle (Start's `TSS_PRERENDERING`).
+ * @param shell Every page renders as the SPA shell (Start's `TSS_SHELL`; see {@link startShell}).
  */
-export function startDefines(basePath: string, prerendering = false): Record<string, string> {
+export function startDefines(
+  basePath: string,
+  prerendering = false,
+  shell = false,
+): Record<string, string> {
   const values: Record<string, string> = {
     TSS_SERVER_FN_BASE: `${basePath}${SERVER_FN_SEGMENT}`,
     TSS_ROUTER_BASEPATH: basePath || "/",
     TSS_DEV_SERVER: "false",
     TSS_PRERENDERING: String(prerendering),
-    TSS_SHELL: "false",
+    TSS_SHELL: String(shell),
     TSS_INLINE_CSS_ENABLED: "false",
     TSS_DEV_SSR_STYLES_ENABLED: "false",
     // denext's own same-origin check guards server functions (see the handler).
@@ -112,16 +117,30 @@ export function startDefines(basePath: string, prerendering = false): Record<str
 }
 
 /**
+ * Whether every page renders as Start's SPA shell (the root route alone, no route's loader): in
+ * `denext dev` with `spa` enabled, as Start's dev server defines `TSS_SHELL` from `spa.enabled`
+ * (default `true`) in serve mode. A build leaves it off: the export prerenders the shell page.
+ *
+ * @param mode The plugin's pipeline.
+ * @param spa Start's `spa` option.
+ */
+export function startShell(mode: PluginContext["mode"], spa: SpaOptions | undefined): boolean {
+  return mode === "dev" && spa !== undefined && spa.enabled !== false;
+}
+
+/**
  * The bundles of the Start app `app`.
  *
  * @param ctx The plugin context (mode, config, module loader).
  * @param app The app's modules and output paths.
  * @param protection Start's import protection, as the app configures it.
+ * @param spa Start's `spa` option (in dev it renders every page as the shell).
  */
 export function createBundles(
   ctx: PluginContext,
   app: StartApp,
   protection?: ImportProtection,
+  spa?: SpaOptions,
 ): StartBundles {
   let tc: ReturnType<typeof loadStartToolchain> | undefined;
   const toolchain = () => (tc ??= loadStartToolchain(app.projectRoot));
@@ -133,7 +152,7 @@ export function createBundles(
     // TanStack Router's error boundaries are class components.
     classComponents: ctx.config.classComponents !== false,
     resolveAllNodeModules: ctx.config.nodeResolve !== false,
-    define: startDefines(app.basePath, ctx.mode === "export"),
+    define: startDefines(app.basePath, ctx.mode === "export", startShell(ctx.mode, spa)),
     // Vite's asset imports (`logo.svg`, `app.css?url`, a Tailwind input compiled): both bundles
     // emit them into the client dir's `assets/` under the same content-hashed URL.
     assets: {

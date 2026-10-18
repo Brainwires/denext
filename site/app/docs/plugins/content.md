@@ -480,7 +480,8 @@ to `<outDir>/pages-static/` (which an export with no `app/` copies to its root, 
 `pages-router`), the client bundle is published with `emitFile`, and the routes that need a server
 are listed. Start's `spa` option adds its SPA shell (the mask path rendered with Start's
 `X-TSS_SHELL` header, the root route alone, to `_shell.html`, the file a static host falls back
-to), and its `sitemap` option writes `sitemap.xml` and `pages.json` with Start's own
+to; in `denext dev` both bundles are built with Start's `TSS_SHELL`, so every page is the shell,
+as in Start's dev server), and its `sitemap` option writes `sitemap.xml` and `pages.json` with Start's own
 `buildSitemap` over every page the prerender met.
 
 ## The first-party catalog

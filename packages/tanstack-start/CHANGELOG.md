@@ -5,6 +5,10 @@ of `@denext/denext`.
 
 ## [0.2.0] - Unreleased
 
+- **`spa` renders every page as the shell in `denext dev`**, as Start's dev server does (it
+  defines `TSS_SHELL` from `spa.enabled` in serve mode): the server renders the root route alone
+  and the browser renders the route, so dev behaves as the static host the export is for.
+  `spa: { enabled: false }` turns it off; `denext build` and `start` are unchanged.
 - **The deploy manifest lists a Start app's routes** (`.denext/deploy-manifest.json`, through
   the plugin-kit's `addDeployRoutes`), so a deploy adapter sees them: server routes and server
   functions (at `/_serverFn/<id>`, the URL Start's RPC calls) are `"route-handler"`s, a server

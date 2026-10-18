@@ -28,8 +28,9 @@
  * - **`denext export` prerenders** the app's pages with Start's prerender (its `prerender` and
  *   `pages` options, the route tree's static paths, the links each page has), and leaves out and
  *   lists the routes that need a server: server routes, pages that call a server function, and
- *   dynamic routes no page covered. Start's `spa` adds its SPA shell (`_shell.html`), and its
- *   `sitemap` writes `sitemap.xml` and `pages.json` with Start's own builder.
+ *   dynamic routes no page covered. Start's `spa` adds its SPA shell (`_shell.html`; in
+ *   `denext dev` every page renders as the shell, as in Start's dev server), and its `sitemap`
+ *   writes `sitemap.xml` and `pages.json` with Start's own builder.
  * - **denext's rules:** a server function called with a mutating method must come from the
  *   app's origin (the check Server Actions use; a cross-site call is a 403), and request bodies
  *   are capped (`maxBodyBytes`, default `actionMaxBodyBytes` or 1 MiB).
@@ -148,7 +149,9 @@ export interface TanStackStartOptions {
   /**
    * Start's `spa`: `denext export` also renders Start's SPA shell (the root route alone) at
    * `maskPath` (default `/`) to `_shell.html` (`prerender.outputPath`), the file a static host
-   * serves for any path the export has no file for.
+   * serves for any path the export has no file for. In `denext dev`, as in Start's dev server,
+   * every page renders as the shell and the browser renders the route (`enabled: false` turns
+   * both off).
    */
   spa?: SpaOptions;
 }
@@ -186,7 +189,7 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         src,
         protectionCommand(ctx.mode),
       );
-      const bundles = createBundles(ctx, app, protection);
+      const bundles = createBundles(ctx, app, protection, options.spa);
       if (ctx.mode === "dev") {
         // An edit under the source directory: the next request builds both bundles again.
         ctx.addPrepareStep(() => bundles.reset(), { watch: [`${projectRelative(ctx, src)}/**`] });

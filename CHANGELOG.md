@@ -176,7 +176,8 @@ and this project adheres to
   `basepath`, the route generator's options); `importProtection.maxTraceDepth` caps a
   violation's trace; `behavior` / `mockAccess` / `log` apply as in Start: unset, a `denext dev`
   violation is mocked with Start's own mock modules and warned about, a build's fails, and a
-  `"mock"` asked of a build (`denext build`, `start`, `export`) ships Start's build mocks.
+  `"mock"` asked of a build (`denext build`, `start`, `export`) ships Start's build mocks. With
+  `spa` on, `denext dev` renders every page as Start's SPA shell, as Start's dev server does.
 
 - **`denext create --template lustre`.** Scaffolds an app with a Gleam project
   (`gleam/src/counter.gleam`), the `gleam()` plugin, the `@gleam/` import and a home page that

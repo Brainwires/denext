@@ -64,6 +64,7 @@ import {
   type StartApp,
   type StartBundles,
   startDefines,
+  startShell,
 } from "../packages/tanstack-start/src/bundles.ts";
 import {
   formatRefusals,
@@ -1511,6 +1512,23 @@ Deno.test("tanstack-start prerender: page options, redirects and the base path",
 Deno.test("tanstack-start: the export's server bundle is Start's prerendering build", () => {
   assertEquals(startDefines("")["process.env.TSS_PRERENDERING"], '"false"');
   assertEquals(startDefines("", true)["process.env.TSS_PRERENDERING"], '"true"');
+});
+
+Deno.test("tanstack-start: spa renders every dev page as the shell (Start's serve-mode TSS_SHELL)", () => {
+  assertEquals(startDefines("")["process.env.TSS_SHELL"], '"false"');
+  assertEquals(startDefines("", false, true)["process.env.TSS_SHELL"], '"true"');
+  // Start defines TSS_SHELL from `spa.enabled` (default true) in serve mode only.
+  assertEquals(startShell("dev", {}), true);
+  assertEquals(startShell("dev", { enabled: true, maskPath: "/app" }), true);
+  assertEquals(startShell("dev", { enabled: false }), false);
+  assertEquals(startShell("dev", undefined), false);
+  for (const mode of ["build", "prod", "export"] as const) {
+    assertEquals(
+      startShell(mode, {}),
+      false,
+      `${mode} renders each page (the shell is prerendered)`,
+    );
+  }
 });
 
 // TanStack's real compiler, from the example app's install (`deno install` in

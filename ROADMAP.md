@@ -67,13 +67,6 @@
 
 ## `denext ui` and DevTools
 
-## Router plugins
-
-- **TanStack Start, dev defaults:** `@denext/tanstack-start` runs a Start app (server functions,
-  server routes, streamed pages, import protection with Start's `behavior` defaults, `denext
-  export` with the SPA shell and sitemap, the deploy manifest, `denext migrate`). Left: Start's
-  `spa` rendering every dev page as the shell.
-
 ## Build toolchain: waiting on `deno bundle`
 
 esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)

@@ -12,6 +12,8 @@
 // need a server, writes Start's SPA shell and sitemap, and the static site hydrates and navigates
 // on the client in Chromium (a path with no file served Start's SPA shell, which the app renders)
 // — and, with JavaScript off, renders from its HTML and follows a link with a full page load.
+// Then `denext dev`: with Start's `spa` on, every page is the SPA shell (Start's dev server
+// defines `TSS_SHELL` so), which the browser hydrates and renders.
 //
 // Opt-in + NETWORK-REQUIRED (`deno install` fetches the TanStack packages from npm):
 // `deno task test:e2e`. Skipped automatically if the install can't reach npm.
@@ -21,6 +23,7 @@ import { fromFileUrl, join } from "@std/path";
 import {
   assertNoConsoleErrors,
   collectConsoleErrors,
+  killTree,
   launchBrowser,
   runDeno,
   startCliServer,
@@ -481,5 +484,78 @@ Deno.test({
   } finally {
     await browser.close();
     await host.close();
+  }
+});
+
+/** `denext dev` for the example on a free port, once it answers. */
+async function startDev(): Promise<{ origin: string; close(): Promise<void> }> {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (listener.addr as Deno.NetAddr).port;
+  listener.close();
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", CLI, "dev", ".", "--host", "127.0.0.1", "--port", String(port)],
+    cwd: EXAMPLE,
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  const origin = `http://127.0.0.1:${port}`;
+  const close = async () => {
+    await killTree(child.pid);
+    await child.status.catch(() => {});
+  };
+  for (let i = 0; i < 240; i++) {
+    try {
+      const res = await fetch(origin + "/_tss/client.js");
+      await res.body?.cancel();
+      if (res.ok) return { origin, close };
+    } catch { /* not listening yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await close();
+  throw new Error("denext dev did not answer within 120 s");
+}
+
+Deno.test({
+  name: "e2e: examples/tanstack-start in denext dev renders every page as Start's SPA shell",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const install = await runDeno(["install"], EXAMPLE, 180_000);
+  if (!install.ok) {
+    console.warn("e2e: `deno install` failed (npm unreachable?) — skipping.\n" + install.out);
+    return;
+  }
+  const dev = await startDev();
+  const browser = await launchBrowser();
+  try {
+    await t.step("the server renders the root route alone, for any page", async () => {
+      for (const path of ["/", "/about", "/posts/2"]) {
+        const html = await (await fetch(dev.origin + path, {
+          headers: { "user-agent": BROWSER_UA },
+        })).text();
+        assert(html.startsWith("<!DOCTYPE html><html"), `${path}: the shellComponent's document`);
+        assertStringIncludes(html, '<script type="module" src="/_tss/client.js"');
+        for (const id of ['id="home"', 'id="about"', 'id="post"']) {
+          assert(!html.includes(id), `${path}: the shell renders no route (${id})`);
+        }
+      }
+    });
+
+    await t.step("the browser renders the route from the shell", async () => {
+      const page = await browser.newPage(dev.origin + "/");
+      const errors = collectConsoleErrors(page);
+      await hydrated(page);
+      assertEquals(
+        await textWhen(page, "#rendered-on", (t) => t.includes("browser")),
+        "loader ran on the browser",
+      );
+      await page.goto(dev.origin + "/about", { waitUntil: "load" });
+      await page.waitForSelector("#about", { timeout: 20_000 });
+      assertNoConsoleErrors(errors);
+      await page.close();
+    });
+  } finally {
+    await browser.close();
+    await dev.close();
   }
 });
