@@ -9,13 +9,25 @@
 //   server function in the browser, or with a dynamic segment, is `"dynamic"` (with the reason);
 //   the rest are `"static"` (the export writes them).
 //
+// - **The client files** under `/_tss/` are the manifest's asset groups: the entry (`client.js`,
+//   revalidated) and the content-hashed chunks and assets (immutable), with the `Cache-Control`
+//   the handler sends — the files it serves, nothing else in the client directory.
+//
 // Paths are written in the manifest's pattern syntax: `$id` → `[id]`, `{-$id}` → `[[id]]`, a
 // splat `$` → `[..._splat]` (TanStack names its splat param `_splat`).
 
-import type { DeployRoute } from "@denext/denext/plugin-kit";
-import { isAbsolute, relative } from "@std/path";
+import type { DeployAssetGroup, DeployRoute } from "@denext/denext/plugin-kit";
+import { isAbsolute, join, relative } from "@std/path";
 import type { ClientGraph } from "./compile.ts";
-import { SERVER_FN_SEGMENT } from "./handler.ts";
+import {
+  ASSETS_DIR,
+  CLIENT_ENTRY,
+  CLIENT_PREFIX,
+  clientFileType,
+  ENTRY_CACHE_CONTROL,
+  HASHED_CACHE_CONTROL,
+  SERVER_FN_SEGMENT,
+} from "./handler.ts";
 import { routeFor, type RouteInfo, routeNeed } from "./prerender.ts";
 import type { ServerFnInfo } from "./toolchain.ts";
 
@@ -131,4 +143,39 @@ export async function deployRoutes(input: DeployInput): Promise<DeployRoute[]> {
     });
   }
   return out;
+}
+
+/**
+ * The client bundle's files under `/_tss/` as the deploy manifest's asset groups: the entry
+ * (revalidated) and the content-hashed files (immutable), with the `Cache-Control` the handler
+ * sends. Only the files the handler serves are listed; none before a build.
+ *
+ * @param clientDir The client bundle's directory (absolute).
+ * @param projectRoot The project root: the directory is listed relative to it.
+ */
+export async function deployAssets(
+  clientDir: string,
+  projectRoot: string,
+): Promise<DeployAssetGroup[]> {
+  const names: string[] = [];
+  const list = async (sub: string) => {
+    try {
+      for await (const entry of Deno.readDir(join(clientDir, sub))) {
+        const name = sub ? `${sub}/${entry.name}` : entry.name;
+        if (entry.isFile && clientFileType(name) !== null) names.push(name);
+      }
+    } catch {
+      // Not built: nothing to list.
+    }
+  };
+  await list("");
+  await list(ASSETS_DIR);
+  const dir = relative(projectRoot, clientDir).replace(/\\/g, "/");
+  const group = (files: string[], cacheControl: string, immutable: boolean) =>
+    files.length ? [{ urlPrefix: CLIENT_PREFIX, dir, cacheControl, immutable, files }] : [];
+  const hashed = names.filter((n) => n !== CLIENT_ENTRY).sort();
+  return [
+    ...group(names.filter((n) => n === CLIENT_ENTRY), ENTRY_CACHE_CONTROL, false),
+    ...group(hashed, HASHED_CACHE_CONTROL, true),
+  ];
 }

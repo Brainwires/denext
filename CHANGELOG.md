@@ -83,6 +83,13 @@ and this project adheres to
   adapter (and the `static` preset's refusal) sees a router plugin's pages and endpoints.
   `@denext/tanstack-start` lists a Start app's pages, server routes and server functions.
 
+- **A plugin lists the files it serves in the deploy manifest** with
+  `ctx.addDeployAssets?.(source)` (plugin-kit; `PluginDeployAssets`): `source` returns
+  `DeployAssetGroup`s (`{ urlPrefix, dir, cacheControl, immutable, files }`), appended to the
+  manifest's `assets` after denext's own (a group with no files left out).
+  `@denext/tanstack-start` lists its `/_tss/` client files: the entry revalidated, the
+  content-hashed chunks and assets immutable.
+
 - **`denext fastlane`: a managed fastlane, no Ruby setup.** `denext fastlane ios beta` runs one
   pinned fastlane (2.240.1) on a pinned portable Ruby (Homebrew's 4.0.7, the relocatable build
   `brew` runs), installed on first use into the toolchain cache beside the Deno toolchain and

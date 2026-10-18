@@ -1,8 +1,8 @@
 // Networked e2e for examples/tanstack-start: a TanStack Start app run by the
 // `@denext/tanstack-start` plugin, end to end through the real CLI — `deno install` →
 // `denext build` (the client and the server bundle, and the deploy manifest listing Start's
-// routes and server functions) → `denext start` (which loads the server
-// bundle the build made) — then a real (headless) Chromium. Start's own handler answers
+// routes and server functions, and its `/_tss/` client files as asset groups) → `denext start`
+// (which loads the server bundle the build made) — then a real (headless) Chromium. Start's own handler answers
 // every request: pages stream through the matched routes (a nested layout, a deferred loader
 // promise streaming in after the shell, a route's error component), server routes answer with
 // their handlers, and server functions (`createServerFn`) are called over Start's RPC — from a
@@ -81,7 +81,10 @@ Deno.test({
   // The deploy manifest lists Start's server routes, pages and server functions.
   const manifest = JSON.parse(
     await Deno.readTextFile(join(EXAMPLE, ".denext", "deploy-manifest.json")),
-  ) as { routes: Array<{ path: string; kind: string; source: string; methods?: string[] }> };
+  ) as {
+    routes: Array<{ path: string; kind: string; source: string; methods?: string[] }>;
+    assets: Array<{ urlPrefix: string; cacheControl: string; immutable: boolean; files: string[] }>;
+  };
   const kinds = new Map(manifest.routes.map((r) => [r.path, r.kind]));
   assertEquals(kinds.get("/about"), "static");
   assertEquals(kinds.get("/notes"), "dynamic", "it calls a server function");
@@ -91,6 +94,14 @@ Deno.test({
   const fns = manifest.routes.filter((r) => r.path.startsWith("/_serverFn/"));
   assertEquals(fns.length, 2, "the GET and the POST server function");
   assert(fns.every((r) => r.kind === "route-handler" && r.source === "src/functions/notes.ts"));
+  // …and the client files it serves under /_tss/, with the Cache-Control the server sends.
+  const tss = manifest.assets.filter((g) => g.urlPrefix === "/_tss/");
+  assertEquals(tss.map((g) => [g.cacheControl, g.immutable]), [
+    ["no-cache", false],
+    ["public, max-age=31536000, immutable", true],
+  ]);
+  assertEquals(tss[0].files, ["client.js"]);
+  assert(tss[1].files.length > 0 && !tss[1].files.includes("client.js"), "the hashed files");
 
   const server = await startCliServer(EXAMPLE, 60_000);
   try {

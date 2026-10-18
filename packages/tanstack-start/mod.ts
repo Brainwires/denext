@@ -71,7 +71,7 @@ import {
 } from "./src/protect.ts";
 import { clientBootSource, entryPaths, serverEntrySource, writeIfChanged } from "./src/entries.ts";
 import { createHandler } from "./src/handler.ts";
-import { deployRoutes } from "./src/deploy.ts";
+import { deployAssets, deployRoutes } from "./src/deploy.ts";
 import { generateRouteTree, generatorPaths } from "./src/route-tree.ts";
 import {
   checkBasepath,
@@ -205,8 +205,9 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         maxBodyBytes: options.maxBodyBytes ?? ctx.config.actionMaxBodyBytes ?? 1024 * 1024,
         isStaticFile: (path) => isFile(join(publicDir, ...path.split("/"))),
       }));
-      // The deploy manifest lists the app's server routes, pages and server functions. Collected
-      // after a build in the same process, the build's route tree and browser graph are reused.
+      // The deploy manifest lists the app's server routes, pages, server functions and client
+      // files. Collected after a build in the same process, the build's route tree and browser
+      // graph are reused.
       registerDeployRoutes(ctx, app, bundles, {
         built: () => routes,
         owned: generate,
@@ -237,7 +238,8 @@ interface DeployRouteTree {
 
 /**
  * List the app's routes in the deploy manifest (`addDeployRoutes`, on a host that has it): the
- * route tree, the server functions, and the browser build's graph (the build's, else built now).
+ * route tree, the server functions, and the browser build's graph (the build's, else built now);
+ * and the client files it serves under `/_tss/`, with their Cache-Control (`addDeployAssets`).
  */
 function registerDeployRoutes(
   ctx: PluginContext,
@@ -255,6 +257,7 @@ function registerDeployRoutes(
       readSource: (file) => Deno.readTextFile(file),
     })
   );
+  ctx.addDeployAssets?.(() => deployAssets(app.clientDir, ctx.projectRoot));
 }
 
 /** Write the generated entries and collect where the app's modules are. */

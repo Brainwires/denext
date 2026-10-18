@@ -79,9 +79,9 @@ Your own adapter is an object with a `name`, a `prepare(ctx)` and, optionally, a
 (the adapter's own `.denext/deploy/<name>/`, or a marked project file), `env(name)`,
 `which(...names)`, `run(command)`, `exportStatic()` and `dryRun`. A plugin contributes one with
 `addDeployAdapter(adapter)` (the config's `deploy.adapter` wins), and lists the routes it serves
-in the manifest with `addDeployRoutes(source)` ([plugins](/docs/plugins)), as
-`@denext/tanstack-start` does for a TanStack Start app's pages, server routes and server
-functions. This is the seam for targets denext does not ship, such as a Workers or Vercel
+in the manifest with `addDeployRoutes(source)` and the files it serves as they are with
+`addDeployAssets(source)` ([plugins](/docs/plugins)), as `@denext/tanstack-start` does for a
+TanStack Start app's pages, server routes, server functions and `/_tss/` client files. This is the seam for targets denext does not ship, such as a Workers or Vercel
 adapter:
 
 ```ts

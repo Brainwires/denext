@@ -186,6 +186,61 @@ Deno.test("deploy manifest: a plugin's routes (addDeployRoutes) are sorted in", 
   }
 });
 
+Deno.test("deploy manifest: a plugin's asset groups (addDeployAssets) are listed", async () => {
+  const paths = await fixtureProject();
+  resetPlugins();
+  try {
+    await applyPlugins({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      config: {
+        plugins: [{
+          name: "asset-plugin",
+          setup(ctx) {
+            ctx.addDeployAssets?.(() =>
+              Promise.resolve([
+                {
+                  urlPrefix: "/_rpc/",
+                  dir: ".denext/rpc",
+                  cacheControl: "no-cache",
+                  immutable: false,
+                  files: ["entry.js"],
+                },
+                // A group with no files is left out, as the core's are.
+                {
+                  urlPrefix: "/_none/",
+                  dir: ".denext/none",
+                  cacheControl: "no-cache",
+                  immutable: false,
+                  files: [],
+                },
+              ])
+            );
+          },
+        }],
+      },
+      mode: "build",
+      load: () => Promise.resolve({}),
+    });
+    const { assets } = await collectDeployManifest(paths);
+    assertEquals(
+      assets.filter((g) => g.urlPrefix.startsWith("/_rpc/") || g.urlPrefix === "/_none/"),
+      [
+        {
+          urlPrefix: "/_rpc/",
+          dir: ".denext/rpc",
+          cacheControl: "no-cache",
+          immutable: false,
+          files: ["entry.js"],
+        },
+      ],
+    );
+  } finally {
+    resetPlugins();
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
 Deno.test("deploy scans: handler methods, the middleware matcher, a job's schedules", () => {
   assertEquals(
     handlerMethods(

@@ -5,6 +5,10 @@ of `@denext/denext`.
 
 ## [0.2.0] - Unreleased
 
+- **The deploy manifest lists the `/_tss/` client files** as asset groups (through the
+  plugin-kit's `addDeployAssets`), with the `Cache-Control` the plugin serves them with: the entry
+  (`client.js`, `no-cache`) and the content-hashed chunks and `assets/` (immutable), the files
+  the handler serves and nothing else, so a deploy adapter can put them on a CDN.
 - **`spa` renders every page as the shell in `denext dev`**, as Start's dev server does (it
   defines `TSS_SHELL` from `spa.enabled` in serve mode): the server renders the root route alone
   and the browser renders the route, so dev behaves as the static host the export is for.

@@ -7,7 +7,11 @@
 
 import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { deployPattern, deployRoutes } from "../packages/tanstack-start/src/deploy.ts";
+import {
+  deployAssets,
+  deployPattern,
+  deployRoutes,
+} from "../packages/tanstack-start/src/deploy.ts";
 import type { RouteInfo } from "../packages/tanstack-start/src/prerender.ts";
 import type { ClientGraph } from "../packages/tanstack-start/src/compile.ts";
 import { tanstackStart } from "../packages/tanstack-start/mod.ts";
@@ -173,16 +177,64 @@ Deno.test("tanstack-start deploy: the plugin lists its routes through addDeployR
     addBuildStep: () => {},
     addPrepareStep: () => {},
     addDeployRoutes: (source: () => unknown) => sourcesAdded.push(source),
+    addDeployAssets: (source: () => unknown) => sourcesAdded.push(source),
   } as unknown as PluginContext;
   try {
     await Deno.mkdir(join(dir, "src"));
     await Deno.writeTextFile(join(dir, "src", "router.tsx"), "export function getRouter() {}\n");
     await Deno.writeTextFile(join(dir, "deno.json"), "{}");
     await tanstackStart({ generateRouteTree: false }).setup(ctx);
-    assertEquals(sourcesAdded.length, 1);
-    // A host from before the seam: the plugin still sets up.
-    const { addDeployRoutes: _, ...older } = ctx as unknown as Record<string, unknown>;
+    assertEquals(sourcesAdded.length, 2, "its routes and its client files");
+    // A host from before the seams: the plugin still sets up.
+    const { addDeployRoutes: _, addDeployAssets: __, ...older } = ctx as unknown as Record<
+      string,
+      unknown
+    >;
     await tanstackStart({ generateRouteTree: false }).setup(older as unknown as PluginContext);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("tanstack-start deploy: the /_tss/ client files are asset groups, with their Cache-Control", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_assets_" }));
+  try {
+    const client = join(dir, ".denext", "tanstack-start", "client");
+    // Not built yet: no group.
+    assertEquals(await deployAssets(client, dir), []);
+    await Deno.mkdir(join(client, "assets"), { recursive: true });
+    for (
+      const f of [
+        "client.js",
+        "chunk-AB12CD34.js",
+        "assets/app-1a2b3c4d.css",
+        "assets/logo-5e6f7a8b.svg",
+        // Not served under /_tss/ (the handler answers 404): left out.
+        "client.js.map",
+        "metafile.json",
+        "assets/nested/x.css",
+      ]
+    ) {
+      await Deno.mkdir(join(client, f, ".."), { recursive: true });
+      await Deno.writeTextFile(join(client, f), "x");
+    }
+    assertEquals(await deployAssets(client, dir), [
+      {
+        // The entry keeps its name across builds: revalidated, as the handler serves it.
+        urlPrefix: "/_tss/",
+        dir: ".denext/tanstack-start/client",
+        cacheControl: "no-cache",
+        immutable: false,
+        files: ["client.js"],
+      },
+      {
+        urlPrefix: "/_tss/",
+        dir: ".denext/tanstack-start/client",
+        cacheControl: "public, max-age=31536000, immutable",
+        immutable: true,
+        files: ["assets/app-1a2b3c4d.css", "assets/logo-5e6f7a8b.svg", "chunk-AB12CD34.js"],
+      },
+    ]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

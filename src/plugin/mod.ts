@@ -23,7 +23,7 @@ import { OTA_MANIFEST_PATH, OTA_PLATFORM_PATH } from "../mobile/ota-manifest.ts"
 import { DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
 import type { CommandSpec } from "../cli/command.ts";
 import type { DeployAdapter } from "../deploy/adapter.ts";
-import type { DeployRoute } from "../deploy/manifest.ts";
+import type { DeployAssetGroup, DeployRoute } from "../deploy/manifest.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../cli/deno-verbs.ts";
 import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
@@ -124,6 +124,14 @@ export interface PluginBuildContext extends PluginPrepareContext {
 /** A plugin's routes for the deploy manifest ({@linkcode PluginContext.addDeployRoutes}). */
 export type PluginDeployRoutes = () => readonly DeployRoute[] | Promise<readonly DeployRoute[]>;
 
+/**
+ * A plugin's asset groups for the deploy manifest ({@linkcode PluginContext.addDeployAssets}):
+ * files it serves as they are, each group with the `Cache-Control` the plugin sends for them.
+ */
+export type PluginDeployAssets = () =>
+  | readonly DeployAssetGroup[]
+  | Promise<readonly DeployAssetGroup[]>;
+
 /** Where `denext build` writes emitted files, under the build output dir; `start` serves it. */
 export const EMITTED_DIR = "emitted";
 
@@ -184,6 +192,17 @@ export interface PluginContext {
    */
   addDeployRoutes?(source: PluginDeployRoutes): void;
   /**
+   * Contribute the files this plugin serves as they are to the deploy manifest
+   * (`.denext/deploy-manifest.json`'s `assets`): a router plugin's client bundle under its own URL
+   * prefix, each group with the `Cache-Control` the plugin sends (`immutable` when the names are
+   * content-hashed). `source` is called when the manifest is collected; a group with no files is
+   * left out.
+   *
+   * Optional, so a plugin that calls it as `ctx.addDeployAssets?.(…)` still runs on a host from
+   * before it existed.
+   */
+  addDeployAssets?(source: PluginDeployAssets): void;
+  /**
    * Register a disposer to run when the server drains — the symmetric shutdown
    * for anything {@linkcode DenextPlugin.setup} opened (a file watcher, a
    * connection, a timer). Disposers run most-recently-registered first. Per-plugin
@@ -226,6 +245,7 @@ const prepareSteps: Array<{ step: PluginPrepareStep; watch: readonly string[] }>
 const pluginCommands: CommandSpec[] = [];
 const deployAdapters: DeployAdapter[] = [];
 const deployRouteSources: PluginDeployRoutes[] = [];
+const deployAssetSources: PluginDeployAssets[] = [];
 const teardowns: PluginTeardown[] = [];
 // Disposers that unregister the route synthesizers this layer added, so
 // `resetPlugins()` clears plugin-registered synthesizers (their registry is
@@ -275,6 +295,7 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
     },
     deployAdapter: (adapter) => deployAdapters.push(adapter),
     deployRoutes: (source) => deployRouteSources.push(source),
+    deployAssets: (source) => deployAssetSources.push(source),
     teardown: (teardown) => teardowns.push(teardown),
     // Read per app ({@linkcode setupAppPlugins}); the process registries have no reader for it.
     servesRoutes: () => {},
@@ -299,6 +320,7 @@ interface PluginSinks {
   command(command: CommandSpec): void;
   deployAdapter(adapter: DeployAdapter): void;
   deployRoutes(source: PluginDeployRoutes): void;
+  deployAssets(source: PluginDeployAssets): void;
   teardown(teardown: PluginTeardown): void;
   servesRoutes(pluginName: string): void;
 }
@@ -332,6 +354,7 @@ function pluginContext(
     },
     addDeployAdapter: (adapter) => sinks.deployAdapter(adapter),
     addDeployRoutes: (source) => sinks.deployRoutes(source),
+    addDeployAssets: (source) => sinks.deployAssets(source),
     addTeardown: (teardown) => sinks.teardown(teardown),
     servesRoutes: () => sinks.servesRoutes(plugin.name),
   };
@@ -362,7 +385,7 @@ export interface AppPlugins {
  * Set up `base.config.plugins` for ONE app, into a registry of its own: every plugin's `setup`
  * runs (not de-duplicated against the process registries {@linkcode applyPlugins} fills), and
  * the route synthesizers, request handlers, prepare steps and teardowns it registers come back
- * on the result. Build steps, commands, deploy adapters and deploy routes are accepted and ignored — they
+ * on the result. Build steps, commands, deploy adapters, deploy routes and assets are accepted and ignored — they
  * belong to a build or the CLI, not to a running app.
  *
  * @param base The pipeline facts to expose to each plugin.
@@ -383,6 +406,7 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
     command: ignore,
     deployAdapter: ignore,
     deployRoutes: ignore,
+    deployAssets: ignore,
     teardown: (teardown) => own.push(teardown),
     servesRoutes: (name) => servers.add(name),
   };
@@ -673,6 +697,22 @@ export async function getPluginDeployRoutes(): Promise<DeployRoute[]> {
   return routes;
 }
 
+/**
+ * The asset groups every plugin contributed to the deploy manifest
+ * ({@linkcode PluginContext.addDeployAssets}), in setup order, those with no files left out.
+ *
+ * @returns The groups.
+ */
+export async function getPluginDeployAssets(): Promise<DeployAssetGroup[]> {
+  const groups: DeployAssetGroup[] = [];
+  for (const source of deployAssetSources) {
+    for (const group of await source()) {
+      if (group.files.length) groups.push({ ...group, files: [...group.files] });
+    }
+  }
+  return groups;
+}
+
 /** Every plugin-contributed CLI command (for the CLI to merge into its registry). */
 export function getPluginCommands(): readonly CommandSpec[] {
   return pluginCommands;
@@ -719,6 +759,7 @@ export function resetPlugins(): void {
   pluginCommands.length = 0;
   deployAdapters.length = 0;
   deployRouteSources.length = 0;
+  deployAssetSources.length = 0;
   teardowns.length = 0;
   for (const dispose of synthDisposers) dispose();
   synthDisposers.length = 0;

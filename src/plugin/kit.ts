@@ -41,6 +41,7 @@ export type {
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,
+  PluginDeployAssets,
   PluginDeployRoutes,
   PluginMode,
   PluginPrepareContext,

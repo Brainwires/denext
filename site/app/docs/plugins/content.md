@@ -231,6 +231,23 @@ ctx.addDeployRoutes?.(async () => [
 ]);
 ```
 
+`ctx.addDeployAssets?.(source)` does the same for the files a plugin serves as they are: `source`
+returns `DeployAssetGroup`s (`{ urlPrefix, dir, cacheControl, immutable, files }`, `dir` and
+`files` project-relative), appended to the manifest's `assets` after denext's own; a group with
+no files is left out. `immutable` says the names are content-hashed, so a CDN may cache them
+forever. `@denext/tanstack-start` lists its `/_tss/` client files: `client.js` with `no-cache`, the
+hashed chunks and `assets/` immutable.
+
+```ts
+ctx.addDeployAssets?.(async () => [{
+  urlPrefix: "/_rpc/",
+  dir: ".denext/rpc/client",
+  cacheControl: "public, max-age=31536000, immutable",
+  immutable: true,
+  files: await listClientFiles(),
+}]);
+```
+
 ### Seam 5 — contribute a CLI verb
 
 `ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can
