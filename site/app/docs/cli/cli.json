@@ -304,7 +304,7 @@
           "name": "template",
           "type": "string",
           "valueName": "<name>",
-          "description": "Starter template (default | minimal; default: default)"
+          "description": "Starter template (default | minimal | lustre; default: default)"
         },
         {
           "name": "no-vscode",
@@ -1181,7 +1181,7 @@
           "name": "template",
           "type": "string",
           "valueName": "<name>",
-          "description": "Starter template (default | minimal; default: default)"
+          "description": "Starter template (default | minimal | lustre; default: default)"
         },
         {
           "name": "no-vscode",

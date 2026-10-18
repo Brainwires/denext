@@ -120,6 +120,12 @@ async function runCreate(
   for (const p of written) console.log(`   + ${p}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
   const notes = featureNotes(on);
+  if (template === "lustre") {
+    notes.push(
+      "  The Lustre template compiles gleam/ with denext's pinned Gleam: the first dev/build\n" +
+        "  downloads the compiler, then Lustre from Hex.",
+    );
+  }
   console.log(
     `\n  Done. Next steps:\n${cd}    denext task dev\n` +
       `\n  (\`deno task dev\` does the same with Deno installed. The first run downloads the framework\n` +

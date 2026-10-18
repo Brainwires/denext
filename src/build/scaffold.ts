@@ -19,10 +19,17 @@ import {
   mcpTaskCommand,
   writeMcpClientConfigs,
 } from "./mcp-template.ts";
+import {
+  LUSTRE_CONFIG_IMPORT,
+  LUSTRE_CONFIG_LINES,
+  LUSTRE_GITIGNORE,
+  LUSTRE_IMPORTS,
+  lustreTemplateFiles,
+} from "./scaffold-lustre.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
 /** Named starter templates `denext create --template <name>` can choose. */
-export const SCAFFOLD_TEMPLATES = ["default", "minimal"] as const;
+export const SCAFFOLD_TEMPLATES = ["default", "minimal", "lustre"] as const;
 export type ScaffoldTemplate = (typeof SCAFFOLD_TEMPLATES)[number];
 
 export interface ScaffoldOptions {
@@ -30,8 +37,9 @@ export interface ScaffoldOptions {
   dir: string;
   /**
    * Starter template: `"default"` (a Server Component page rendering a `"use client"`
-   * counter island — the SSR + hydration round-trip) or `"minimal"` (a bare page).
-   * Defaults to `"default"`.
+   * counter island — the SSR + hydration round-trip), `"minimal"` (a bare page) or `"lustre"`
+   * (a Gleam project with one Lustre counter used as an island, a custom element and a server
+   * component, compiled by the `gleam()` plugin). Defaults to `"default"`.
    */
   template?: ScaffoldTemplate;
   /**
@@ -107,11 +115,7 @@ function readme(opts: ScaffoldOptions, appBase: string): string {
         "`error.tsx`, `middleware.ts`). They are Server Components: they can be `async`, read " +
         "the database directly, and ship no JavaScript.",
     ),
-    opts.template === "minimal" ? "" : item(
-      `\`${appBase}/counter.tsx\` — a \`"use client"\` island: the one file that ships to the ` +
-        "browser. Hooks and event handlers live in files like this one; the page passes it " +
-        "serialisable props (and Server Actions).",
-    ),
+    templateReadmeItem(opts, appBase),
     item(
       "`denext.config.ts` — redirects, rewrites, headers, images, i18n, CSP, `cacheComponents`.",
     ),
@@ -155,6 +159,33 @@ ${item("Guide + API: https://denext.dev/docs")}${
       "`denext doctor` checks the toolchain; `denext generate page|component|route|test` scaffolds.",
     )
   }`;
+}
+
+/** The README's entry for the template's own files: the island, the Lustre project, or none. */
+function templateReadmeItem(opts: ScaffoldOptions, appBase: string): string {
+  if (opts.template === "lustre") return lustreReadmeItem(appBase);
+  if (opts.template === "minimal") return "";
+  return wrapProse(
+    `\`${appBase}/counter.tsx\` — a \`"use client"\` island: the one file that ships to the ` +
+      "browser. Hooks and event handlers live in files like this one; the page passes it " +
+      "serialisable props (and Server Actions).",
+    "- ",
+    "  ",
+  );
+}
+
+/** The README's entry for the `lustre` template's Gleam project and counters. */
+function lustreReadmeItem(appBase: string): string {
+  return wrapProse(
+    "`gleam/src/counter.gleam` — a Lustre counter in Gleam, rendered three ways by " +
+      `\`${appBase}/page.tsx\`: an island (\`counter-island.tsx\`), a custom element ` +
+      "(`counter-element.tsx`) and a server component over Live (`counter-view.ts`). The " +
+      "`gleam()` plugin compiles it with denext's pinned Gleam (downloaded on first use) and " +
+      "Lustre comes from Hex, so the first `dev` / `build` needs the network. See " +
+      "https://denext.dev/docs/gleam.",
+    "- ",
+    "  ",
+  );
 }
 
 /** The README task rows `--fallow` adds. */
@@ -254,6 +285,8 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     "denext/deploy": `${dep}/deploy`,
     // `denext generate test` writes tests against @std/assert.
     "@std/assert": "jsr:@std/assert@^1",
+    // The `lustre` template: the Lustre helpers and the Gleam build's import prefix.
+    ...(opts.template === "lustre" ? { "denext/gleam": `${dep}/gleam`, ...LUSTRE_IMPORTS } : {}),
     // Native-target deps as bare, versioned specifiers (the lint plugin forbids
     // inline `jsr:`/`npm:` in source).
     ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
@@ -621,8 +654,10 @@ function denextConfig(opts: ScaffoldOptions): string {
       `  },`,
     );
   }
+  if (opts.template === "lustre") lines.push(...LUSTRE_CONFIG_LINES);
+  const lustreImport = opts.template === "lustre" ? `${LUSTRE_CONFIG_IMPORT}\n` : "";
   return `import type { DenextConfig } from "denext/server";
-
+${lustreImport}
 export default {
 ${lines.join("\n")}
 } satisfies DenextConfig;
@@ -643,12 +678,16 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     { path: ".gitignore", content: scaffoldGitignore(opts, appBase) },
     { path: "README.md", content: readme(opts, appBase) },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
-    {
+  ];
+  if (opts.template === "lustre") {
+    files.push(...lustreTemplateFiles(appBase, opts.tailwind === true));
+  } else {
+    files.push({
       path: `${appBase}/page.tsx`,
       content: opts.template === "minimal" ? minimalPage(opts) : page(opts),
-    },
-  ];
-  if (opts.template !== "minimal") {
+    });
+  }
+  if (opts.template === undefined || opts.template === "default") {
     files.push({ path: `${appBase}/counter.tsx`, content: counter(opts) });
   }
   if (opts.tailwind) {
@@ -658,7 +697,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   }
   // `desktop.capabilities` and the rest of the desktop settings live in `./denext.config.ts`, so
   // a desktop scaffold always needs the config file even without tailwind/compiler.
-  if (opts.tailwind || opts.compiler || opts.desktop) {
+  if (opts.tailwind || opts.compiler || opts.desktop || opts.template === "lustre") {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
   if (opts.desktop) files.push(...desktopScaffoldFiles());
@@ -684,6 +723,7 @@ function scaffoldGitignore(opts: ScaffoldOptions, appBase: string): string {
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
   if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
+  if (opts.template === "lustre") ignore.push(...LUSTRE_GITIGNORE);
   return ignore.join("\n") + "\n";
 }
 
