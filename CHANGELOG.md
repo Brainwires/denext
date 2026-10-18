@@ -40,6 +40,13 @@ and this project adheres to
   fallback showed. Each page is now written with every boundary's content in place, the same DOM
   the script produces, so it still hydrates.
 
+### Fixed
+
+- **The deployment guide's Dockerfile is the one `denext generate docker` writes.** The guide had
+  drifted from the generator (no `DENO_DIR`, no `STOPSIGNAL`, older comments); its block is now
+  the generator's output for a `denext create` project, and `tests/docs-deploy-dockerfile.test.ts`
+  diffs the two so they cannot drift again.
+
 ## [4.3.1] - 2026-10-17
 
 ### Added

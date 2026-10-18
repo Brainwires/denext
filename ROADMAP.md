@@ -96,9 +96,3 @@ rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 tr
   but runs several times slower on every compat build and dev session.
 - **Maintenance:** track each vendored codec's upstream CVEs, rebuild SHA-256-pinned and
   regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.
-
-## Docs
-
-- **Make the deployment guide's Dockerfile byte-comparable** with what `denext generate docker`
-  emits (the dependency-cache layer, least-privilege run flags, `PORT` vs `--port`), with a test
-  that diffs the guide's fenced block against the template.
