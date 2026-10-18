@@ -518,7 +518,8 @@ Deno.test("migrate: a Fresh 1.x app — (req, ctx) handlers, fresh.gen.ts / main
 /** The check report without what varies per run (the temp directory, the version). */
 function stable(report: Record<string, unknown>): Record<string, unknown> {
   const { target: _t, denext: _d, ...rest } = report;
-  return JSON.parse(JSON.stringify(rest).replaceAll(REPO, "<repo>/"));
+  // The checkout as it appears inside the JSON text (Windows' backslashes are escaped there).
+  return JSON.parse(JSON.stringify(rest).replaceAll(JSON.stringify(REPO).slice(1, -1), "<repo>/"));
 }
 
 async function golden(name: string, report: Record<string, unknown>): Promise<void> {
