@@ -48,6 +48,7 @@ import {
 } from "./swc-ast.ts";
 import { BLOCK_SCOPES, boundNames, FN_SCOPES } from "./use-cache-transform.ts";
 import { projectSourceFiles } from "./platform-extensions.ts";
+import { toPosixPath } from "./mobile-paths.ts";
 
 /** Next.js's build error for an inline `"use server"` function in client code (verbatim). */
 export const INLINE_ACTION_IN_CLIENT_ERROR =
@@ -136,7 +137,8 @@ export async function findInlineServerActions(source: string): Promise<string[]>
  * @param found Each module's display path → the positions of its inline actions.
  */
 export function inlineServerActionError(found: ReadonlyMap<string, readonly string[]>): string {
-  const lines = [...found].map(([module, at]) => `  ${module}:${at.join(", ")}`);
+  // `/`-separated on every OS, as Next prints it (a Windows caller's `relative()` gives backslashes).
+  const lines = [...found].map(([module, at]) => `  ${toPosixPath(module)}:${at.join(", ")}`);
   return `${INLINE_ACTION_IN_CLIENT_ERROR}\n\n${lines.join("\n")}`;
 }
 

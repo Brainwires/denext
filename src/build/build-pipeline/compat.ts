@@ -2,7 +2,6 @@
 // every route module, plus the compat Flight and client-route bundles. One prebuilt
 // runtime is shared across server + client.
 
-import { relative } from "@std/path";
 import { generateRouteEntry } from "../bundle.ts";
 import {
   buildNextCompatClientEntries,
@@ -18,6 +17,7 @@ import {
   finishCompatGlobalErrorEntry,
 } from "../pipeline-shared.ts";
 import { writeFlightBoot } from "../flight-boot.ts";
+import { posixRelative } from "../mobile-paths.ts";
 import { assertNoReservedRouteIds, type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 
 /** The options every compat bundling call shares. */
@@ -49,8 +49,13 @@ async function compatServerBundles(ctx: BuildContext): Promise<void> {
   );
   log(`next-compat: bundling ${modules.length} server module(s) -> server/`);
   const moduleMap = await buildNextCompatModules({ ...compatOptions(ctx), modules });
+  // `/`-separated on every OS: the manifest is read back by `join` (which takes either), and a
+  // build made on Windows then served on Linux (a CI build shipped to a container) keeps it.
   for (const [absSrc, absBundle] of moduleMap) {
-    ctx.compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
+    ctx.compatServerModules[posixRelative(projectDir, absSrc)] = posixRelative(
+      paths.outDir,
+      absBundle,
+    );
   }
 }
 

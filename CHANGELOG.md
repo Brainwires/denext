@@ -324,6 +324,22 @@ and this project adheres to
   import only the app's import map resolves (`Import "postgres" not a dependency`). The command
   line now comes from `GetCommandLineW` there (with `--allow-ffi`, which `-A` grants).
 
+- **Windows: build paths and messages are `/`-separated and portable.** The build manifest's
+  `compatServerModules` (a next-compat app's source → server bundle map) was written with
+  Windows' `\` separators, so a build made on Windows and served on Linux (a CI build shipped to
+  a container) missed every entry; it is `/`-separated on every OS now. The inline
+  `"use server"` build error and the `"use server"` leak guard name modules as `app/x.tsx` on
+  Windows too, as on macOS and Linux.
+- **Windows: `next/font/local` measures a font given by an absolute `C:\…` path.** A
+  drive-letter `src` was taken for a project-relative one, so the metric-matched fallback face
+  (`adjustFontFallback`) was silently dropped.
+- **Windows: an edit to a drive-letter input rebuilds the prebuilt runtime.** The runtime cache
+  took an input such as `C:\app\x.ts` for a URL with scheme `C:` and never stamped it, so the
+  edit served the stale runtime.
+- **Windows: the next-compat bundles' `platform` fold and the inline-action refusal recognise
+  the project's own modules however their paths are spelled** (a `/` or `\` separator), by
+  `relative()` rather than a string prefix with the host separator.
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,

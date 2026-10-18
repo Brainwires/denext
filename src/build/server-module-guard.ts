@@ -11,8 +11,9 @@
 // `"use server"` inside a function body, and a string that merely mentions the directive are
 // not flagged.
 
-import { fromFileUrl, relative, toFileUrl } from "@std/path";
+import { fromFileUrl, toFileUrl } from "@std/path";
 import { readDirective } from "./directives.ts";
+import { posixRelative } from "./mobile-paths.ts";
 
 /** A `"use server"` module a client bundle shipped. */
 export interface ServerModuleLeak {
@@ -164,7 +165,8 @@ export function formatServerModuleLeaks(
   projectDir: string,
 ): string {
   const show = (p: string) => {
-    const rel = relative(projectDir, p);
+    // `/`-separated on every OS, like the other paths denext's build errors print.
+    const rel = posixRelative(projectDir, p);
     return rel.startsWith("..") ? p : rel;
   };
   const lines = leaks.map((leak) => {
