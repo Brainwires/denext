@@ -4,7 +4,8 @@
 //
 //   ruby/          Homebrew's portable Ruby (the Ruby `brew` itself runs: relocatable, OpenSSL and
 //                  libyaml built in), its tarball SHA-256 + size pinned per host in
-//                  `fastlane-toolchain-pin.json` and verified by the toolchain's own download
+//                  `fastlane-toolchain-pin.json` (regenerated, lock included, by
+//                  `deno task fastlane:pin`) and verified by the toolchain's own download
 //                  (`downloadPinned` in deno-toolchain.ts) before anything is extracted;
 //   Gemfile, Gemfile.lock
 //                  denext's pinned ones (the pin file carries both). The lock's CHECKSUMS section

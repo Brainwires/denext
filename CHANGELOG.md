@@ -58,7 +58,8 @@ and this project adheres to
   entry, which adds Capacitor) scaffolds the lanes into a new app. `denext mobile doctor
   --release` checks that the managed fastlane can run on the host: Windows, a `DENEXT_FASTLANE`
   that names no file, an install that no longer matches its pin, or no compiler for the first
-  install. It no longer asks for a Gemfile unless plugins need one.
+  install. It no longer asks for a Gemfile unless plugins need one. `deno task fastlane:pin` regenerates the pin (the Ruby
+  from Homebrew's ghcr index, checked byte for byte, and a fresh `Gemfile.lock` with CHECKSUMS).
 
 - **`ctx.servesRoutes()` in the plugin kit.** A plugin whose pages come from a route tree of its
   own declares it in `setup` (`ctx.servesRoutes?.()`, optional so the plugin still runs on an
