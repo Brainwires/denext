@@ -289,27 +289,6 @@ and this project adheres to
 - **A `?url` stylesheet named through a path alias** (`~/styles/app.css?url`, `~/` mapped to
   `./src/` in `deno.json`) is compiled and emitted like a relative one; before, the compat build
   emitted an empty module in its place.
-
-### Changed
-
-- **Hydrating a react-dom/server `<!--$!-->` boundary ships only with the compat `react-dom`
-  modules.** Only react-dom/server's synchronous `renderToString` writes such a client-rendered
-  boundary; denext's own renderers never do, so its hydration (suspense-hydration.ts) is installed
-  by `react-dom/client` / `react-dom` instead of riding every app's shared runtime (−375 B raw:
-  65,780 → 65,405 B for `examples/hello`, back under the 65,500 B budget).
-
-- **`@denext/openapi`'s `ui: "scalar"` docs page loads nothing from a CDN.** Scalar's API
-  reference (`@scalar/api-reference` 1.72.4, MIT, licence and notice beside it) is vendored in
-  the package like Swagger UI, checked against its recorded SHA-256 and served from
-  `<docs>/scalar/standalone.<hash>.js` with a year-long `immutable` cache. The page's CSP names no
-  other origin (`script-src 'self'` plus the hash of its inline start-up script, which turns off
-  Scalar's web fonts, telemetry, agent chat and hosted proxy), and a headless e2e
-  (`tests/e2e/openapi-scalar.e2e.test.ts`) holds it to zero third-party requests while Scalar
-  renders. `cdn: DOCS_CDN.scalar` opts back into jsDelivr. The package grows by about 4.4 MB
-  (1.3 MB gzipped).
-
-### Fixed
-
 - **`useApi({ suspense: true })` is seeded from a Cache Components (PPR) shell on a route that
   doesn't use Flight.** An isomorphic route's static shell now records the results its prerender
   resolved and caches them with the shell, so every response — the first and every cached hit —
@@ -341,6 +320,24 @@ and this project adheres to
   lifetime. A `"use cache"` function called inside a loader keeps its tags and lifetime to
   itself, as before (Next.js's rule). `cacheStoreContract` gains a case proving a store keeps
   every tag of an entry and purges it by any one of them.
+
+### Changed
+
+- **Hydrating a react-dom/server `<!--$!-->` boundary ships only with the compat `react-dom`
+  modules.** Only react-dom/server's synchronous `renderToString` writes such a client-rendered
+  boundary; denext's own renderers never do, so its hydration (suspense-hydration.ts) is installed
+  by `react-dom/client` / `react-dom` instead of riding every app's shared runtime (−375 B raw:
+  65,780 → 65,405 B for `examples/hello`, back under the 65,500 B budget).
+
+- **`@denext/openapi`'s `ui: "scalar"` docs page loads nothing from a CDN.** Scalar's API
+  reference (`@scalar/api-reference` 1.72.4, MIT, licence and notice beside it) is vendored in
+  the package like Swagger UI, checked against its recorded SHA-256 and served from
+  `<docs>/scalar/standalone.<hash>.js` with a year-long `immutable` cache. The page's CSP names no
+  other origin (`script-src 'self'` plus the hash of its inline start-up script, which turns off
+  Scalar's web fonts, telemetry, agent chat and hosted proxy), and a headless e2e
+  (`tests/e2e/openapi-scalar.e2e.test.ts`) holds it to zero third-party requests while Scalar
+  renders. `cdn: DOCS_CDN.scalar` opts back into jsDelivr. The package grows by about 4.4 MB
+  (1.3 MB gzipped).
 
 ## [4.3.1] - 2026-10-17
 
