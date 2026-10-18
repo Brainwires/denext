@@ -14,6 +14,7 @@ const PPR_FIELDS = [
   "flightShell",
   "flightIslands",
   "flightSignalState",
+  "shellSignalState",
 ] as const;
 
 /**

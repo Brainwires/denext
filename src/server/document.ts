@@ -590,6 +590,13 @@ function pprHoles(
 export function streamPprDocument(
   opts: DocumentOptions & {
     holes: ResumedHole[];
+    /** The cached shell's own signal state (an HTML shell's `useApi` seeds). */
+    shellSignalState?: Record<string, unknown>;
+    /**
+     * Ends the request's signal collection once every hole has streamed: the holes' state,
+     * merged over the shell's into the `#__denext_state` island, emitted before the entry.
+     */
+    finishSignals?: () => Record<string, unknown>;
     signal?: AbortSignal;
     onHoleError?: (error: unknown) => void;
   },
@@ -603,14 +610,22 @@ ${htmlOpenTag(lang, opts.htmlAttrs)}
 ${bodyOpenTag(opts.bodyAttrs)}<div id="${ROOT_ID}"${
     rootRouteAttr(opts)
   }>${opts.bodyHtml}</div>${SWAP_RUNTIME}`;
-  const tail = `${renderBodyScripts(opts)}</body>
-</html>`;
   const active = pprHoles(opts.holes, opts.onHoleError);
+  // Close signal collection exactly once (success, failure or cancel).
+  let holeSignals: Record<string, unknown> | null = null;
+  const finish = () => (holeSignals ??= opts.finishSignals?.() ?? {});
   return streamedBody(async (controller) => {
     controller.enqueue(encoder.encode(prefix));
     await streamHoles(controller, encoder, active, opts.signal);
-    controller.enqueue(encoder.encode(tail));
-  });
+    // The cached shell's values win over the resume's re-walk of the same components: they are
+    // what the shell's HTML was rendered from, so hydration must adopt them.
+    const merged = { ...opts.signalState, ...finish(), ...opts.shellSignalState };
+    const signalState = Object.keys(merged).length > 0 ? merged : undefined;
+    controller.enqueue(
+      encoder.encode(`${renderBodyScripts({ ...opts, signalState })}</body>
+</html>`),
+    );
+  }, finish);
 }
 
 /**

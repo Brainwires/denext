@@ -75,7 +75,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     idPrefix = "",
   ): Promise<string> {
     const sub = new PPRRenderer("buffered", null, new Set(), idPrefix);
-    return sub.resolveChildren(children, scopes);
+    return sub.resolveFromRoot(children, scopes);
   }
 
   protected empty(): string {
@@ -115,7 +115,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     // replacement instead (see `resolveHoleSignal`).
     const prefix = scopePrefix(boundaryScope);
     const sub = new PPRRenderer("buffered", null, new Set(), prefix);
-    const html = sub.resolveChildren(children, scopes)
+    const html = sub.resolveFromRoot(children, scopes)
       .catch((err) => sub.resolveHoleSignal(err, scopes, rootScope(prefix), (h) => h));
     // The hole's promise is consumed later by the streamer; a rejection between creation and
     // that consumer must not surface as an unhandled rejection (which crashes the process

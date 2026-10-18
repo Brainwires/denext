@@ -1793,6 +1793,11 @@ export interface CachedPage {
   flightIslands?: IslandPayload[];
   /** Flight PPR only: signal state (`useId → value`) captured in the static shell. */
   flightSignalState?: Record<string, unknown>;
+  /**
+   * HTML (non-Flight) PPR only: signal state (`useId → value`) the static shell recorded — the
+   * `useApi({ suspense: true })` results the route entry adopts before it hydrates.
+   */
+  shellSignalState?: Record<string, unknown>;
 }
 
 /**

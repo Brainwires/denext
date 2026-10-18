@@ -115,7 +115,7 @@ class PPRFlightRenderer extends PprVNodeRenderer<Dual> implements IslandRenderer
     idPrefix = "",
   ): Promise<{ dual: Dual; islands: IslandPayload[] }> {
     const sub = new PPRFlightRenderer("buffered", null, new Set(), this.resumable, idPrefix);
-    const dual = await sub.resolveChildren(children, scopes);
+    const dual = await sub.resolveFromRoot(children, scopes);
     return { dual, islands: sub.islands };
   }
 
@@ -174,7 +174,7 @@ class PPRFlightRenderer extends PprVNodeRenderer<Dual> implements IslandRenderer
     // Flight, a signal boundary's UI carries its own.
     const prefix = scopePrefix(boundaryScope);
     const sub = new PPRFlightRenderer("buffered", null, new Set(), this.resumable, prefix);
-    const built = sub.resolveChildren(children, scopes)
+    const built = sub.resolveFromRoot(children, scopes)
       .catch((err) =>
         sub.resolveHoleSignal(err, scopes, rootScope(prefix), (html) => ({ html, flight: null }))
       )

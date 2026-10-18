@@ -383,6 +383,16 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
     return this.resolve(children, scopes);
   }
 
+  /**
+   * Render a hole's or fallback's subtree from this (sub-)renderer's root scope — the Suspense
+   * boundary's position. A retry after a suspension starts again from slot 0, as the boundary's
+   * retry does in every other renderer and on the client, so the subtree's ids don't shift by
+   * the suspended attempt.
+   */
+  resolveFromRoot(children: VNodeChildren, scopes: ProviderScope[]): Promise<T> {
+    return this.resolve(children, scopes, this.ids.scope);
+  }
+
   protected override resolveBoundaryChildren(
     children: VNodeChildren,
     scopes: ProviderScope[],
@@ -433,11 +443,12 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
     const parentScope = this.ids.scope;
     const boundaryScope = enterScope(parentScope);
     // Render this boundary's real content inline in its own scope, restoring the parent
-    // scope afterward (the boundary already took its parent slot).
+    // scope afterward (the boundary already took its parent slot). The scope is the retry
+    // root: a child that suspends re-renders from slot 0 again, as the client numbers it —
+    // else the retry's ids (`useId`, a `useApi` seed's key) shift by the suspended attempt.
     const inScope = async (): Promise<T> => {
-      this.ids.scope = boundaryScope;
       try {
-        return await this.resolveChildren(children, scopes);
+        return await this.resolve(children, scopes, boundaryScope);
       } finally {
         this.ids.scope = parentScope;
       }

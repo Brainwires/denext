@@ -242,7 +242,8 @@ export function Post({ id }: { id: string }) {
 
 // Suspense mode: the server runs the call in-process inside <Suspense>, records the value under
 // the hook's useId(), and the client adopts it — hydration never refetches (Flight routes and
-// isomorphic ones, buffered or streamed, and an isomorphic soft navigation).
+// isomorphic ones, buffered or streamed, an isomorphic soft navigation, and a Cache Components
+// (PPR) shell, whose seed is cached with it).
 const { data } = useApi("/api/posts/[id]", "GET", { params: { id } }, { suspense: true });
 
 // Refetch when the server revalidates a tag (needs the Live transport):

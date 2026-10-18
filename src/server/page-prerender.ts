@@ -38,16 +38,22 @@ function prerenderShell(pr: PageRequest): Promise<Prerendered | null> {
   });
 }
 
-/** The cache-entry fields a Flight shell carries beyond the body (its tree, islands, signals). */
+/**
+ * The cache-entry fields a shell carries beyond the body: a Flight shell's tree, islands and
+ * signals, or an HTML shell's signal state.
+ */
 function flightShellFields(pre: Prerendered, useFlight: boolean) {
-  if (!useFlight) return {};
+  if (!useFlight) return pre.shellSignalState ? { shellSignalState: pre.shellSignalState } : {};
   const { flightShell, flightIslands, flightSignalState } = pre as PrerenderedFlightPage;
   return { flightShell, flightIslands, flightSignalState };
 }
 
-/** The inline Flight payload a fully-static Flight shell document embeds. */
+/**
+ * What a fully-static shell document embeds: a Flight shell's inline Flight payload, or an HTML
+ * shell's signal state (its `#__denext_state` island).
+ */
 function flightDocumentFields(pre: Prerendered, useFlight: boolean) {
-  if (!useFlight) return {};
+  if (!useFlight) return pre.shellSignalState ? { signalState: pre.shellSignalState } : {};
   const { flightShell, flightIslands, flightSignalState } = pre as PrerenderedFlightPage;
   return {
     flight: flightShell,

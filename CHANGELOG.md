@@ -130,6 +130,18 @@ and this project adheres to
 
 ### Fixed
 
+- **`useApi({ suspense: true })` is seeded from a Cache Components (PPR) shell on a route that
+  doesn't use Flight.** An isomorphic route's static shell now records the results its prerender
+  resolved and caches them with the shell, so every response — the first and every cached hit —
+  carries them in `#__denext_state`, and a call inside a dynamic hole is recorded per request as
+  the hole resumes. The client adopts them and never fetches on mount (a headless e2e,
+  `tests/e2e/use-api-ppr.e2e.test.ts`, holds it to zero `/api` requests). It fetched on mount
+  before. Two `useId()` misalignments the seeds exposed are fixed with it, so a seed is filed
+  under the id the browser computes: the segments' not-found / forbidden / unauthorized
+  boundaries, which only the server renders, no longer take a component slot (every id below them
+  on an isomorphic route was offset from the browser entry's, so seeds on routes from a scanned
+  `app/` were never adopted and the call ran again on mount), and a PPR boundary or hole whose
+  content suspended and retried no longer shifts the ids inside it (Flight PPR included).
 - **The deployment guide's Dockerfile is the one `denext generate docker` writes.** The guide had
   drifted from the generator (no `DENO_DIR`, no `STOPSIGNAL`, older comments); its block is now
   the generator's output for a `denext create` project, and `tests/docs-deploy-dockerfile.test.ts`

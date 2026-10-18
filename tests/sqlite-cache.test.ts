@@ -188,6 +188,7 @@ Deno.test("pages: a PPR shell round-trips its hole/flight extras", () => {
     headExtras: "<meta>",
     inTreeTitle: "Title",
     flightSignalState: { "0.1": 42 },
+    shellSignalState: { "_d0_0_": { v: 1, k: "k" } },
     flightShell: { $: "$", r: "h0" } as unknown as CachedPage["flightShell"],
   };
   store.setPage("ppr", shell);
@@ -196,6 +197,11 @@ Deno.test("pages: a PPR shell round-trips its hole/flight extras", () => {
   assertEquals(got.headExtras, "<meta>");
   assertEquals(got.inTreeTitle, "Title");
   assertEquals(got.flightSignalState, { "0.1": 42 });
+  assertEquals(
+    got.shellSignalState,
+    { "_d0_0_": { v: 1, k: "k" } },
+    "an HTML shell's useApi seeds",
+  );
   assertEquals(got.flightShell, { $: "$", r: "h0" } as unknown);
 
   // A plain (non-PPR) page carries no extras.

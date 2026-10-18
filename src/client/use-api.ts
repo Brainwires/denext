@@ -11,8 +11,9 @@
 //   (the typed client's dispatcher) inside the nearest `<Suspense>`, and the fulfilled value is
 //   recorded under the hook's `useId()` into the `#__denext_state` island — on a Flight route
 //   and on an isomorphic one (the whole route hydrated as one client bundle) alike, buffered or
-//   streamed, and in an isomorphic soft navigation's payload; the client adopts it before its
-//   first render, so it hydrates with the data and never refetches.
+//   streamed, from a Cache Components (PPR) shell (cached with the shell; a dynamic hole's call
+//   recorded per request), and in an isomorphic soft navigation's payload; the client adopts it
+//   before its first render, so it hydrates with the data and never refetches.
 //
 // Where entries live is the security-relevant part: in the browser one module-level table,
 // ref-counted by mounted hooks (an entry is dropped when its last hook unmounts and it is not

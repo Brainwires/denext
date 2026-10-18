@@ -733,6 +733,12 @@ export interface PrerenderedPage {
   status: number;
   /** Effective route segment config. */
   config: SegmentConfig;
+  /**
+   * HTML (non-Flight) shells only: the signal state the static shell recorded
+   * (`useApi({ suspense: true })` results, `useSignal` values), cached with the shell so every
+   * response seeds the route entry's hydration with it.
+   */
+  shellSignalState?: Record<string, unknown>;
 }
 
 /**
@@ -757,9 +763,13 @@ export async function prerenderPage(
   if (ctx.staticParamsNotFound) return bail();
 
   options.signal?.throwIfAborted();
+  // The route hydrates as one client bundle: the signal state the static shell records seeds
+  // that hydration, on this response and on every cache hit of the shell.
+  const finishSignals = beginSignalCollection();
   try {
     const head: HeadCollector = { tags: [] };
     const result = await withPrerender(() => prerenderToShell(tree, { head }));
+    const shellSignalState = finishSignals();
     // A caught control signal must not be cached as a 200 shell either.
     if (result.dynamic || ctx.signal.status) return bail();
     return {
@@ -771,8 +781,10 @@ export async function prerenderPage(
       ...hoistStaticHead(head, metadata, true),
       status: 200,
       config,
+      ...(Object.keys(shellSignalState).length > 0 ? { shellSignalState } : {}),
     };
   } catch {
+    finishSignals();
     // A control signal (notFound/redirect/…) or any error during prerender: fall
     // back to the proven normal render for this request rather than mis-cache a
     // shell. renderPage will re-encounter and handle it correctly.
@@ -973,6 +985,12 @@ export async function resumePageHoles(
 export interface StreamedPage {
   /** Each dynamic hole (its `html` may still be resolving) — streamed as it settles. */
   holes: ResumedHole[];
+  /**
+   * Ends the request's signal collection once every hole has settled: the state the holes
+   * recorded (`useApi({ suspense: true })` results, `useSignal` values). Bound to this
+   * request's render scope, so it may be called after the async context has ended.
+   */
+  finishSignals(): Record<string, unknown>;
   /** Metadata resolved for THIS request (see {@link ResumedPage.metadata}). */
   metadata: Metadata;
   /** Viewport resolved for THIS request. */
@@ -992,8 +1010,15 @@ export async function resumePageHolesStream(
   options: RenderPageOptions = {},
 ): Promise<StreamedPage> {
   const { tree, metadata, viewport } = await buildPageContext(match, request, load, options);
-  const { holes } = await resumeShellHoles(tree, new Set(holeIds));
-  return { holes, metadata, viewport };
+  // The holes render unawaited and record their signals into the still-open collector.
+  const finishSignals = beginSignalCollection();
+  try {
+    const { holes } = await resumeShellHoles(tree, new Set(holeIds));
+    return { holes, metadata, viewport, finishSignals };
+  } catch (err) {
+    finishSignals();
+    throw err;
+  }
 }
 
 /** One control signal's built-in UI + the route file convention that customizes it. */
@@ -1215,7 +1240,10 @@ async function wrapSignalBoundaries(
     const fallback = file
       ? ((await load(file)) as { default: never }).default
       : (() => builtinSignalUI(ui)) as never;
-    tree = h(ErrorBoundary, {
+    // The boundary node itself, not `h(ErrorBoundary, …)`: a server-only wrapper the route's
+    // browser entry doesn't have must not take a component slot, or every `useId()` below it
+    // (a `useApi({ suspense: true })` seed's key included) would differ from the client's.
+    tree = ErrorBoundary({
       fallback,
       catches: ui.is,
       onCaught: () => {
