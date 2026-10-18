@@ -48,6 +48,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`cachedFetch(url, { revalidate, tags })` applies its options to the cached body.** The
+  helper passed them to its loader as an argument, so every entry was stored without expiry or
+  tags: `revalidateTag` never purged a cached body, and a `"use cache"` function reading one
+  carried no tag from it. The entry now expires after `revalidate` seconds, carries the tags,
+  reaches the page being rendered, and propagates to an outer `"use cache"` entry as an
+  `unstable_cache` call does; `revalidate: 0` is `fetch`'s no-store (fetched every time, nothing
+  stored). Entries are keyed per cache options too, so two call sites tagging one URL
+  differently never share an entry.
 - **`@denext/tanstack-start`: a page `denext export` prerenders works with JavaScript off.** The
   export wrote each page as the server streamed it, so a route's content arrived as a
   `<template>` that a script moves into its Suspense placeholder; with JavaScript off only the

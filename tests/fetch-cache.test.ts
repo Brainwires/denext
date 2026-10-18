@@ -5,7 +5,10 @@
 import { assert, assertEquals } from "@std/assert";
 import {
   __setFetchBaseForTests,
+  __useCache,
   cachedFetch,
+  type CacheStore,
+  type DataEntry,
   inMemoryCacheStore,
   installFetchCache,
   revalidateTag,
@@ -181,5 +184,102 @@ Deno.test("M3: cachedFetch keys on Headers-instance auth (no collision)", async 
     assertEquals(calls, 2, "identical headers hit the cache");
   } finally {
     globalThis.fetch = prevGlobal;
+  }
+});
+
+/** A store that records every data entry written, over the in-memory one. */
+function recordingStore(): { store: CacheStore; written: DataEntry[] } {
+  const base = inMemoryCacheStore();
+  const written: DataEntry[] = [];
+  const store: CacheStore = {
+    getData: (k) => base.getData(k),
+    setData: (k, e) => {
+      written.push(e);
+      return base.setData(k, e);
+    },
+    getPage: (k) => base.getPage(k),
+    setPage: (k, p) => base.setPage(k, p),
+    deleteByTag: (t) => base.deleteByTag(t),
+    deleteByPath: (p) => base.deleteByPath(p),
+    expireByTag: (t, timing) => base.expireByTag!(t, timing),
+  };
+  return { store, written };
+}
+
+/** Stub the global fetch (cachedFetch's loader) with a counter; returns the counter + restore. */
+function stubGlobalFetch(body: (calls: number) => string) {
+  const counter = { calls: 0 };
+  const prev = globalThis.fetch;
+  globalThis.fetch = (() => {
+    counter.calls++;
+    return Promise.resolve(new Response(body(counter.calls), { status: 200 }));
+  }) as typeof fetch;
+  return { counter, restore: () => void (globalThis.fetch = prev) };
+}
+
+Deno.test("cachedFetch: revalidate and tags are the stored entry's, and revalidateTag purges it", async () => {
+  const { store, written } = recordingStore();
+  setCacheStore(store);
+  const { counter, restore } = stubGlobalFetch((n) => `body ${n}`);
+  const posts = { revalidate: 60, tags: ["posts"] };
+  try {
+    const t0 = Date.now();
+    assertEquals(await cachedFetch("http://api/posts", posts), "body 1");
+    assertEquals(written.length, 1, "one entry stored");
+    assertEquals(written[0].tags, ["posts"], "the tags option reaches the entry");
+    assert(
+      written[0].expiresAt >= t0 + 60_000 && written[0].expiresAt <= Date.now() + 60_000,
+      `revalidate 60 is the entry's TTL (expiresAt ${written[0].expiresAt})`,
+    );
+    assertEquals(await cachedFetch("http://api/posts", posts), "body 1");
+    assertEquals(counter.calls, 1, "a hit");
+    await revalidateTag("posts");
+    assertEquals(await cachedFetch("http://api/posts", posts), "body 2");
+    assertEquals(counter.calls, 2, "purged by its tag, fetched again");
+    // Another call site tagging the same URL differently gets its own entry (its own tags).
+    assertEquals(await cachedFetch("http://api/posts", { tags: ["feed"] }), "body 3");
+    assertEquals(written.at(-1)?.tags, ["feed"]);
+    assertEquals(written.at(-1)?.expiresAt, Infinity, "no revalidate: no expiry");
+    // `revalidate: 0` is fetch's no-store: fetched every time, nothing stored.
+    const before = written.length;
+    assertEquals(await cachedFetch("http://api/live", { revalidate: 0 }), "body 4");
+    assertEquals(await cachedFetch("http://api/live", { revalidate: 0 }), "body 5");
+    assertEquals(written.length, before, "nothing stored");
+  } finally {
+    restore();
+    setCacheStore(inMemoryCacheStore());
+  }
+});
+
+Deno.test('cachedFetch inside a "use cache" function: its tags and revalidate reach the outer entry and the page', async () => {
+  const store = inMemoryCacheStore();
+  setCacheStore(store);
+  const { restore } = stubGlobalFetch((n) => `body ${n}`);
+  try {
+    const outer = __useCache(
+      "fc#outer",
+      () => cachedFetch("http://api/posts", { revalidate: 30, tags: ["posts"] }),
+    );
+    const ctx = createRequestContext(new Request("http://x/"));
+    const t0 = Date.now();
+    assertEquals(await runWithContext(ctx, () => outer()), "body 1");
+    assert(ctx.collectedTags?.has("posts"), "the page carries the tag");
+    const entry = await store.getData(JSON.stringify(["fc#outer", []]));
+    assert(entry, "the outer entry is stored");
+    assertEquals(entry.tags, ["posts"], "the fetch's tags reach the outer entry");
+    assert(
+      entry.staleAt! >= t0 + 30_000 && entry.staleAt! <= Date.now() + 30_000,
+      "the fetch's revalidate caps the outer entry's",
+    );
+    await revalidateTag("posts");
+    const again = createRequestContext(new Request("http://x/"));
+    assertEquals(
+      await runWithContext(again, () => outer()),
+      "body 2",
+      "revalidating the fetch's tag drops the outer entry too",
+    );
+  } finally {
+    restore();
+    setCacheStore(inMemoryCacheStore());
   }
 });

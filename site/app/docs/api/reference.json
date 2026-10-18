@@ -5964,7 +5964,7 @@
           "kind": "function",
           "signature": "cachedFetch(input: string | URL, options?: CacheOptions & RequestInit): Promise<string>",
           "doc": "Fetch input and cache the response body across requests (a small fetch-with-caching helper). Returns the cached text on a hit.",
-          "docFull": "Fetch `input` and cache the response body across requests (a small\n`fetch`-with-caching helper). Returns the cached text on a hit.",
+          "docFull": "Fetch `input` and cache the response body across requests (a small\n`fetch`-with-caching helper). Returns the cached text on a hit.\n\nThe `revalidate` and `tags` options are the entry's: it expires after `revalidate` seconds\n(`false` / omitted: never), `revalidateTag` on one of its tags purges it, the tags reach the\npage being rendered, and — called inside a `\"use cache\"` function — they propagate to the\nouter entry as an {@link unstable_cache} call's do. `revalidate: 0` is `fetch`'s no-store: the\nbody is fetched every time and nothing is stored (the tags still reach the page).",
           "params": [
             {
               "name": "input",

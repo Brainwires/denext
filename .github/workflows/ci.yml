@@ -79,7 +79,12 @@ jobs:
       - name: Test-count badge is current
         # Deterministic, source-derived count (like `deno fmt --check`): fails if
         # .github/badges/tests.json drifts from the number of Deno.test cases.
-        # Regenerate with `deno task badge:tests` and commit.
+        # Regenerate with `deno task badge:tests` and commit. The README shows `main`'s
+        # badge and the release script refreshes it before the tag, so the check runs
+        # where it is displayed — `main` and the development → main PR — not on every
+        # push to `development`, where the pre-commit hook no longer regenerates it
+        # (a per-commit badge put parallel commits in conflict at nearly every rebase).
+        if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
         run: deno task badge:tests --check
 
       - name: Doc lint (JSR documentation coverage)

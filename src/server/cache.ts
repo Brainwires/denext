@@ -1380,21 +1380,21 @@ export function isJsonSafe(value: unknown, depth = 0): boolean {
   return false;
 }
 
-// Inner memoized fetch: caches the response text keyed on its arguments.
-const cachedFetchInner: (
-  input: string | URL,
-  options?: RequestInit,
-) => Promise<string> = unstable_cache(
-  async (input: string | URL, options?: RequestInit) => {
-    const res = await fetch(input, options);
-    return await res.text();
-  },
-  ["denext:cachedFetch"],
-);
+/** The loader behind {@link cachedFetch}: the response body as text (the global fetch, at call time). */
+async function fetchText(input: string | URL, init?: RequestInit): Promise<string> {
+  const res = await fetch(input, init);
+  return await res.text();
+}
 
 /**
  * Fetch `input` and cache the response body across requests (a small
  * `fetch`-with-caching helper). Returns the cached text on a hit.
+ *
+ * The `revalidate` and `tags` options are the entry's: it expires after `revalidate` seconds
+ * (`false` / omitted: never), `revalidateTag` on one of its tags purges it, the tags reach the
+ * page being rendered, and — called inside a `"use cache"` function — they propagate to the
+ * outer entry as an {@link unstable_cache} call's do. `revalidate: 0` is `fetch`'s no-store: the
+ * body is fetched every time and nothing is stored (the tags still reach the page).
  *
  * @param input The URL to fetch.
  * @param options Request options plus TTL and tags for the cached body.
@@ -1404,15 +1404,18 @@ export const cachedFetch = async (
   input: string | URL,
   options?: CacheOptions & RequestInit,
 ): Promise<string> => {
+  // The cache options are the entry's, not the request's: keep them out of what reaches fetch.
+  const { revalidate, tags = [], ...init } = options ?? {};
+  let request: RequestInit = init;
   // The cache key is derived from the arguments via JSON.stringify. A non-string
   // body (Blob / FormData / ArrayBuffer / URLSearchParams / stream) serializes to
   // "{}", so DIFFERENT such bodies to the same URL would collide onto one cache
   // entry — response-body cache confusion (cf. Next.js CVE-2026-64648/64647).
   // Buffer it to bytes first: a Uint8Array serializes distinctly, so the key
   // reflects the exact body, and the buffered bytes are what we actually send.
-  if (options && options.body != null && typeof options.body !== "string") {
-    const bytes = new Uint8Array(await new Response(options.body as BodyInit).arrayBuffer());
-    options = { ...options, body: bytes };
+  if (request.body != null && typeof request.body !== "string") {
+    const bytes = new Uint8Array(await new Response(request.body as BodyInit).arrayBuffer());
+    request = { ...request, body: bytes };
   }
   // Fold the request headers into the key too: a `Headers` instance serializes to
   // "{}" (and a plain-object header list keys by casing/order), so two requests to
@@ -1420,10 +1423,17 @@ export const cachedFetch = async (
   // onto one entry — cross-user response-body confusion (cf. CVE-2026-64648).
   // Replacing headers with the normalized fingerprint makes the key reflect them
   // and still passes a valid HeadersInit to fetch.
-  if (options?.headers) {
-    options = { ...options, headers: headerFingerprint(options.headers) };
+  if (request.headers) {
+    request = { ...request, headers: headerFingerprint(request.headers) };
   }
-  return cachedFetchInner(input, options);
+  if (revalidate === 0) {
+    collectTags(tags);
+    return fetchText(input, request);
+  }
+  // One entry per URL + request AND per cache options, so two call sites tagging the same URL
+  // differently never share an entry carrying only the first one's tags.
+  const keyParts = ["denext:cachedFetch", String(revalidate ?? ""), ...tags];
+  return unstable_cache(fetchText, keyParts, { revalidate, tags })(input, request);
 };
 
 // ---- Automatic fetch() caching (uncached by default) -----------------------
