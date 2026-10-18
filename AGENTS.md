@@ -943,6 +943,8 @@ JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it ty
 `gleam/src/**/*.gleam` at dev and build. The compiler is denext's pinned Gleam (no Erlang needed),
 downloaded and SHA-256-verified on first need beside the Deno toolchain; `denext toolchain install
 --with gleam` fetches it ahead for offline work, `DENEXT_GLEAM=<path>` runs another one.
+`denext create my-app --template lustre` starts an app with one Lustre counter used as an island
+(`lustreIsland`), a custom element (`lustreElement`) and a server view (`defineLustreView`).
 
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
 folds to a boolean literal at build time for any KEY in `features` — denext's

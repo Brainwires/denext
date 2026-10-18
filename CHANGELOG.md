@@ -67,6 +67,12 @@ and this project adheres to
   violation's trace; `behavior` / `mockAccess` / `log` are accepted, and a `"mock"` behavior is
   warned about, since a violation always fails the build.
 
+- **`denext create --template lustre`.** Scaffolds an app with a Gleam project
+  (`gleam/src/counter.gleam`), the `gleam()` plugin, the `@gleam/` import and a home page that
+  renders one Lustre counter as an island (`lustreIsland`), a custom element (`lustreElement`) and
+  a server component over Live (`defineLustreView`). The first `dev` / `build` downloads denext's
+  pinned Gleam, then Lustre from Hex.
+
 ### Fixed
 
 - **`denext build --compile` compiles next-compat (drop-in) and Pages Router apps.** A drop-in's
@@ -121,6 +127,23 @@ and this project adheres to
   `<template>` that a script moves into its Suspense placeholder; with JavaScript off only the
   fallback showed. Each page is now written with every boundary's content in place, the same DOM
   the script produces, so it still hydrates.
+- **A Lustre island that unmounts stops taking its effects' messages.** `lustre.shutdown()` is a
+  TODO for a client app in Lustre (5.7.1 and `main`), so a timer or subscription an island's app
+  started kept updating it after `lustreIsland` unmounted. After every Gleam build denext now
+  fixes Lustre's client runtime (`spa.ffi.mjs`) so a stopped app ignores every later dispatch,
+  emit and context message.
+- **The fixes to Lustre's runtimes match the code, not one version's bytes.** The server-runtime
+  fix applied only to Lustre 5.7.1's exact file; both fixes now find the buggy code by pattern, so
+  a Lustre release that moves or reformats it is fixed too, one that fixed it upstream is left
+  alone silently, a file an earlier denext fixed counts as fixed, and a file of another shape gets
+  one warning naming what breaks. `defineLustreView` also builds a runtime whose constructor
+  dropped its unused first parameter.
+- **The Lustre helpers work under `compatibilityMode: true`.** A compat build treated
+  `denext/gleam` as a server-only module, so no Lustre island, custom element or server view ran
+  in the browser. It is now prebuilt into the compat runtime like `denext/live`, and the Lustre
+  view registry and the per-process Live view signing key are shared by every copy of their
+  modules in the process, so a view the app defines in the prebuilt graph mounts through the
+  server's Live hub. The Lustre example's e2e runs both ways.
 
 ### Changed
 

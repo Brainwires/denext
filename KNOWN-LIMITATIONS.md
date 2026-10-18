@@ -117,14 +117,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   paint is replaced by Lustre's own render when the view mounts (not adopted), and Lustre's
   contexts (`provide` / `subscribe`) and client-sent attribute or property changes are not
   carried over Live.
-- **A stopped Lustre app's own effects keep running:** Lustre gives no way to cancel an app's
-  timers or subscriptions from outside. A stopped server component drops what they dispatch;
-  `lustreIsland` clears its root on unmount, but `lustre.shutdown()` does nothing for a client app
-  in Lustre 5.7.1, so they still dispatch into the detached runtime.
-- **denext fixes Lustre 5.7.1's server runtime only:** the post-build fix applies to that version's
-  exact file; another Lustre version or a changed file is left as it is, with a warning.
-- **The Lustre helpers need the App Router without `compatibilityMode`:** in a compat build
-  `denext/gleam` is a server-only subpath.
+- **A stopped Lustre app's timers keep firing:** Lustre gives no way to cancel an app's timers or
+  subscriptions from outside. A stopped server component, and (with denext's post-build fix to
+  Lustre's client runtime) a stopped `lustreIsland`, ignore what they dispatch, but the timer
+  itself runs until the page goes. A render frame Lustre scheduled just before the stop still runs
+  once.
+- **A Lustre runtime file of an unrecognised shape is not fixed:** the post-build fixes match the
+  buggy code's pattern; a rewritten runtime is left as it is, with one warning.
 
 ### First-party auth (`denextAuth`)
 
