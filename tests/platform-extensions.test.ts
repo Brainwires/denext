@@ -299,7 +299,8 @@ Deno.test("platform scanner: one walk, kept until a platform file comes or goes"
     await scanner.redirects({}, "web");
     await Deno.writeTextFile(join(dir, "src/a.web.ts"), "");
     assertEquals(
-      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.includes("/a")),
+      // The module's own key, not any path with an `/a` in it (a runner's `D:/a/…` checkout).
+      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.endsWith("/a")),
       false,
       "the kept scan is used until invalidated",
     );

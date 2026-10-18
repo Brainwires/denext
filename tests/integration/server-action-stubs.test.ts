@@ -382,8 +382,8 @@ Deno.test(
       const built = await cli(dir, ["build"]);
       assert(built.code !== 0, "a SPA has no server to call: the build must fail");
       assertStringIncludes(built.output, `a "use server" module would ship to the browser`);
-      assertStringIncludes(built.output, join("app", "actions.ts"));
-      assertStringIncludes(built.output, join("components", "Island.tsx"));
+      assertStringIncludes(built.output, "app/actions.ts"); // `/` on every OS
+      assertStringIncludes(built.output, "components/Island.tsx");
       for await (const e of walk(join(dir, ".denext"), { includeDirs: false })) {
         const text = await Deno.readTextFile(e.path).catch(() => "");
         assert(!text.includes(SECRET), `the action's secret was written to ${e.path}`);

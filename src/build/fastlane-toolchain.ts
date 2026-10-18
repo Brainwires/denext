@@ -28,7 +28,7 @@
 // Plugins (`fastlane/Pluginfile`) need the project's own Gemfile: the managed fastlane runs
 // denext's pinned bundle, so `denext fastlane` warns when the project lists plugins.
 
-import { join, resolve } from "@std/path";
+import { DELIMITER, join, resolve } from "@std/path";
 import { createHash } from "node:crypto";
 import {
   type DenoToolchainArtifact,
@@ -262,7 +262,8 @@ async function slotFilesOk(
 /** Whether `name` resolves to an executable on `PATH`. */
 async function onPath(name: string, env: EnvGet): Promise<boolean> {
   const path = env("PATH") ?? "";
-  for (const dir of path.split(":")) {
+  // The host's list separator: `;` on Windows, where `:` is part of every drive path.
+  for (const dir of path.split(DELIMITER)) {
     if (!dir) continue;
     const info = await Deno.stat(join(dir, name)).catch(() => null);
     if (info?.isFile && ((info.mode ?? 0o111) & 0o111) !== 0) return true;
