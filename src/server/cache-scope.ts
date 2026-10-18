@@ -96,11 +96,15 @@ export interface CacheScope {
    */
   life?: CacheLifeProfile;
   /**
-   * The shortest lifetime of the cached functions the body called (a nested `"use cache"`
-   * propagates its entry's remaining life here). Applies to a field `cacheLife()` didn't set.
+   * The shortest lifetime of the cached functions the body called: a nested `"use cache"`
+   * propagates its entry's remaining life here, an `unstable_cache()` call its `revalidate`
+   * option. Applies to a field `cacheLife()` didn't set.
    */
   nested?: CacheLifeProfile;
-  /** Tags attached to this entry via `cacheTag` (and those of the cached calls it made). */
+  /**
+   * Tags attached to this entry via `cacheTag` (and those of the cached calls it made: a nested
+   * `"use cache"` entry's tags and an `unstable_cache()` call's `tags` option).
+   */
   tags: string[];
 }
 

@@ -2592,7 +2592,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/testing`
 
 - `act<T>(callback: () => T | Promise<T>): Promise<T>` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
-- `cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>` — The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (and that a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.
+- `cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>` — The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (every tag of an entry purges it, and a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface ConformanceReport` — The full report from probeApp.
 - `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.

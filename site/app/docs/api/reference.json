@@ -15604,7 +15604,7 @@
           "kind": "function",
           "signature": "unstable_cache<A, R>(fn: (...args: A) => Promise<R> | R, keyParts?: string[], options?: CacheOptions): (...args: A) => Promise<R>",
           "doc": "Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js unstable_cache). Results are keyed by keyParts plus the call arguments. Tags propagate to the enclosing page render, so revalidateTag purges both the data and any page that read it.",
-          "docFull": "Wrap an async data-loading function in a cross-request cache with an optional\nTTL and tags (Next.js `unstable_cache`). Results are keyed by `keyParts` plus\nthe call arguments. Tags propagate to the enclosing page render, so\n{@link revalidateTag} purges both the data and any page that read it.",
+          "docFull": "Wrap an async data-loading function in a cross-request cache with an optional\nTTL and tags (Next.js `unstable_cache`). Results are keyed by `keyParts` plus\nthe call arguments. Tags propagate to the enclosing page render, so\n{@link revalidateTag} purges both the data and any page that read it.\n\nNesting follows Next.js 16. Called inside a `\"use cache\"` (or `\"use cache: private\"`)\nfunction, the call's `tags` reach the outer entry — `revalidateTag` on one of them drops the\nouter entry too — and its `revalidate` caps the outer entry's revalidate (the minimum wins,\nunless the outer body sets `cacheLife()` itself); a stale hit is refreshed in the foreground\nthere, so the outer entry never stores a stale value. Called inside another `unstable_cache`\nloader the cache is bypassed (the outer entry holds the result). A `\"use cache\"` function\ncalled inside a loader keeps its tags and lifetime to itself.",
           "params": [
             {
               "name": "fn",
@@ -19187,8 +19187,8 @@
           "slug": "cacheStoreContract",
           "kind": "function",
           "signature": "cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>",
-          "doc": "The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (and that a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.",
-          "docFull": "The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,\n`deleteByPath`, `deleteByTag` (and that a rewrite drops a tag), and `expireByTag` /\n`sweepPages` when the store implements them.",
+          "doc": "The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (every tag of an entry purges it, and a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.",
+          "docFull": "The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,\n`deleteByPath`, `deleteByTag` (every tag of an entry purges it, and a rewrite drops a tag), and\n`expireByTag` / `sweepPages` when the store implements them.",
           "params": [
             {
               "name": "t",

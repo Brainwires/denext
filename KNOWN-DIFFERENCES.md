@@ -223,8 +223,9 @@ internal design choice with no observable difference lives in
 - **A nested cache passes on what is left of its life.** An outer `"use cache"` without its own
   `cacheLife()` lives no longer than the inner entries it read: Next.js takes the inner entry's
   `revalidate` / `expire` durations, denext the time each has left (the same for a fresh entry,
-  shorter for a cached one). Next.js's errors for a short-lived entry nested in an outer one
-  without `cacheLife()` are not raised.
+  shorter for a cached one). An `unstable_cache()` call inside it passes on its `revalidate`
+  option and `tags` as written, in both. Next.js's errors for a short-lived entry nested in an
+  outer one without `cacheLife()` are not raised.
 - **`revalidateTag(tag)` with one argument is not deprecated.** Next.js 16 warns and asks for a
   profile; in denext it stays the immediate purge that Live, `useApi({ tags })` and the
   backend's realtime build on, and it does not warn. `revalidateTag(tag, profile)` is the
@@ -234,7 +235,9 @@ internal design choice with no observable difference lives in
   (`updateTag` and `refresh` are Server Action only there, and none of them may run during a
   render). Inside a cached function all of them throw, as in Next.js.
 - **`cacheTag()` works outside a cached function**, where Next.js throws: it tags the page being
-  rendered, so `revalidateTag()` purges it. `cacheLife()` outside one throws, as in Next.js.
+  rendered, so `revalidateTag()` purges it; inside an `unstable_cache()` loader it tags that
+  entry (Next.js throws there too). `cacheLife()` outside a `"use cache"` function — an
+  `unstable_cache()` loader included — throws, as in Next.js.
 
 ## Remix and React Router
 

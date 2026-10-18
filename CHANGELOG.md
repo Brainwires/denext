@@ -58,6 +58,21 @@ and this project adheres to
   drifted from the generator (no `DENO_DIR`, no `STOPSIGNAL`, older comments); its block is now
   the generator's output for a `denext create` project, and `tests/docs-deploy-dockerfile.test.ts`
   diffs the two so they cannot drift again.
+- **`unstable_cache()` inside a `"use cache"` function propagates to the outer entry, as in
+  Next.js 16.** The call's `tags` reach the outer entry — `revalidateTag` on one of them drops
+  the outer entry with the loader's — and its `revalidate` caps the outer entry's revalidate
+  (the minimum wins; `false` never shortens it; the outer body's own `cacheLife()` still wins),
+  whether the loader's entry was a hit or a miss. A stale hit inside a cached function (a
+  `"use cache"` body or an `unstable_cache()` loader, in either direction) is now refreshed in
+  the foreground, so the outer entry never stores a stale value; outside one the stale value
+  is still served while it refreshes. A loader nested in another loader bypasses its own cache
+  (the outer entry holds the result), and `unstable_cache(fn, key, { revalidate: 0 })` — or a
+  negative or non-numeric `revalidate` — is refused when the wrapper is made, with Next.js's
+  messages. Before, a loader's tags and revalidate stopped at its own entry, so revalidating
+  its tag left an outer `"use cache"` entry serving the old data for the outer profile's
+  lifetime. A `"use cache"` function called inside a loader keeps its tags and lifetime to
+  itself, as before (Next.js's rule). `cacheStoreContract` gains a case proving a store keeps
+  every tag of an entry and purges it by any one of them.
 
 ## [4.3.1] - 2026-10-17
 

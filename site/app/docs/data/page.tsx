@@ -243,8 +243,16 @@ export default {
         <code>cacheLife</code>; called more than once, each field keeps the lowest value. A cached
         function that calls another one carries its tags, and lives no longer than it unless it sets
         {" "}
-        <code>cacheLife</code> itself. <code>revalidateTag(tag, "max")</code>{" "}
-        serves the tagged entries stale while they refresh; <code>updateTag(tag)</code>{" "}
+        <code>cacheLife</code> itself. An <code>unstable_cache</code>{" "}
+        call inside it does the same: its <code>tags</code> reach the outer entry and its{" "}
+        <code>revalidate</code>{" "}
+        caps the outer entry's (the minimum wins), hit or miss, and a stale hit is refreshed before
+        the outer entry stores it; inside an <code>unstable_cache</code>{" "}
+        loader a nested cached function keeps its tags and lifetime to itself, and a nested{" "}
+        <code>unstable_cache</code> bypasses its own cache, as in Next.js.{" "}
+        <code>revalidateTag(tag, "max")</code> serves the tagged entries stale while they refresh;
+        {" "}
+        <code>updateTag(tag)</code>{" "}
         expires them for the rest of the request (read-your-writes in a Server Action), and{" "}
         <code>refresh()</code> re-fetches the route's uncached data.
       </p>

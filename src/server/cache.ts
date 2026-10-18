@@ -676,9 +676,11 @@ export function cacheTag(...tags: string[]): void {
 }
 
 /**
- * A nested cached call finished inside an outer `"use cache"` body: the outer entry carries
- * the inner entry's tags (so `revalidateTag(innerTag)` reaches the outer entry too) and lives
- * no longer than what remains of the inner entry, unless the outer body set `cacheLife()`.
+ * A nested `"use cache"` call finished inside an outer `"use cache"` body: the outer entry
+ * carries the inner entry's tags (so `revalidateTag(innerTag)` reaches the outer entry too) and
+ * lives no longer than what remains of the inner entry, unless the outer body set `cacheLife()`.
+ * Inside an `unstable_cache()` loader nothing propagates (Next.js's rule: that entry keeps its
+ * own options).
  */
 function propagateToOuter(entry: DataEntry): void {
   const outer = cacheScopeStorage.getStore();
@@ -691,6 +693,41 @@ function propagateToOuter(entry: DataEntry): void {
     revalidate: left(entry.staleAt),
     expire: left(entry.expiresAt),
   });
+}
+
+/**
+ * An `unstable_cache()` call inside a `"use cache"` body (Next.js 16's rule, applied before the
+ * lookup, so a hit propagates as a miss does): its `tags` option reaches the outer entry, and
+ * its `revalidate` lowers the outer entry's implicit revalidate (the minimum wins; `false`,
+ * no expiry, never shortens it). The outer body's own `cacheLife()` still wins over both.
+ */
+function propagateUnstableToOuter(
+  outer: CacheScope | undefined,
+  tags: string[],
+  revalidate: number | false,
+): void {
+  if (!outer) return;
+  for (const t of tags) if (!outer.tags.includes(t)) outer.tags.push(t);
+  if (revalidate !== false) outer.nested = minLife(outer.nested, { revalidate });
+}
+
+/**
+ * Normalize `unstable_cache()`'s `revalidate` option as Next.js does: `false`, `Infinity` or
+ * omitted means no expiry, a positive number is the TTL in seconds, `0` is refused (it would
+ * cache nothing; Next.js's invariant) and anything else is invalid.
+ */
+function unstableRevalidate(value: unknown, fn: (...args: never[]) => unknown): number | false {
+  const name = fn.name || fn.toString();
+  if (value === 0) {
+    throw new Error(
+      `Invariant revalidate: 0 can not be passed to unstable_cache(), must be "false" or "> 0" ${name}`,
+    );
+  }
+  if (value === undefined || value === false || value === Infinity) return false;
+  if (typeof value === "number" && !Number.isNaN(value) && value > -1) return value;
+  throw new Error(
+    `Invalid revalidate value "${value}" on "unstable_cache ${name}", must be a non-negative number or false`,
+  );
 }
 
 // The cache is best-effort: a backing-store error (e.g. a disk/IO failure, or a
@@ -801,7 +838,10 @@ function invalidate(kind: "tag" | "path", value: string): Promise<void> {
 
 /** Options accepted by {@link unstable_cache}. */
 export interface CacheOptions {
-  /** Seconds until the entry revalidates, or `false`/omitted for no expiry. */
+  /**
+   * Seconds until the entry revalidates, or `false`/omitted for no expiry. `0` is refused, as
+   * in Next.js (it would cache nothing), and so is a negative or non-numeric value.
+   */
   revalidate?: number | false;
   /** Tags for targeted invalidation via {@link revalidateTag}. */
   tags?: string[];
@@ -813,21 +853,37 @@ export interface CacheOptions {
  * the call arguments. Tags propagate to the enclosing page render, so
  * {@link revalidateTag} purges both the data and any page that read it.
  *
+ * Nesting follows Next.js 16. Called inside a `"use cache"` (or `"use cache: private"`)
+ * function, the call's `tags` reach the outer entry — `revalidateTag` on one of them drops the
+ * outer entry too — and its `revalidate` caps the outer entry's revalidate (the minimum wins,
+ * unless the outer body sets `cacheLife()` itself); a stale hit is refreshed in the foreground
+ * there, so the outer entry never stores a stale value. Called inside another `unstable_cache`
+ * loader the cache is bypassed (the outer entry holds the result). A `"use cache"` function
+ * called inside a loader keeps its tags and lifetime to itself.
+ *
  * @param fn The loader to cache.
  * @param keyParts Extra key segments distinguishing this cache from others.
  * @param options TTL and tags.
  * @returns A wrapper returning cached (or freshly computed) results.
+ * @throws At once for `revalidate: 0`, a negative or a non-numeric `revalidate` (Next.js's
+ *   messages).
  */
 export function unstable_cache<A extends unknown[], R>(
   fn: (...args: A) => Promise<R> | R,
   keyParts: string[] = [],
   options: CacheOptions = {},
 ): (...args: A) => Promise<R> {
+  const revalidate = unstableRevalidate(options.revalidate, fn);
+  const tags = options.tags ?? [];
   return async (...args: A): Promise<R> => {
     const key = safeKey([keyParts, args]);
-    const tags = options.tags ?? [];
     // Tag the enclosing render whether or not the data itself is a cache hit.
     collectTags(tags);
+    const outer = cacheScopeStorage.getStore();
+    // Nested in another unstable_cache() loader: Next.js bypasses the cache (the outer entry
+    // holds the result) and stores the fresh value for callers outside it.
+    if (outer?.kind === "unstable") return computeData(key, () => fn(...args), revalidate, tags);
+    propagateUnstableToOuter(outer, tags, revalidate);
     const hit = await lookupData(key);
     if (hit) {
       // Stale-while-revalidate: a soft `revalidateTag(tag, profile)` marked this
@@ -835,12 +891,15 @@ export function unstable_cache<A extends unknown[], R>(
       // so the next reader gets fresh data. Revive inside a cache scope too, so the
       // request-API guard below also holds on the background refresh path.
       if (isStaleHit(hit)) {
-        reviveStaleData(
+        const fresh = reviveStaleData(
           key,
           () => withCacheScope(() => fn(...args), "unstable").then((r) => r.value),
-          options.revalidate,
+          revalidate,
           tags,
         );
+        // Inside a cached function the refresh runs in the foreground (Next.js): the outer
+        // entry stores the fresh value, never the stale one — which stands in if it fails.
+        if (outer) return ((await fresh) ?? hit).value as R;
       }
       return hit.value as R;
     }
@@ -848,7 +907,7 @@ export function unstable_cache<A extends unknown[], R>(
     // runs once under a cold-cache stampede instead of once per request.
     const inFlight = dataInFlight.get(key);
     if (inFlight) return await awaitLeader(inFlight) as R;
-    return leadFlight(key, computeData(key, () => fn(...args), options.revalidate, tags));
+    return leadFlight(key, computeData(key, () => fn(...args), revalidate, tags));
   };
 }
 
@@ -944,47 +1003,48 @@ async function computeData<R>(
 /** In-flight loader promises for {@link unstable_cache}, keyed by cache key. */
 const dataInFlight = new Map<string, Promise<unknown>>();
 
-/** Keys currently being refreshed in the background (SWR), so we refresh once. */
-const dataRevalidateInFlight = new Set<string>();
+/** The stale entries being refreshed (SWR), keyed by cache key, so each refreshes once. */
+const dataRevalidateInFlight = new Map<string, Promise<DataEntry | undefined>>();
 
 /**
- * Refresh a stale data-cache entry in the background: run `compute` once (deduped
- * per key), store the fresh value, and — inside a request — register the promise on
- * the deferred queue so a serverless isolate drains it before freezing. Errors are
- * logged; the stale value has already been served.
+ * Refresh a stale data-cache entry: run `compute` once (deduped per key), store the fresh
+ * value, and resolve to the fresh entry — or undefined when the refresh failed (logged). A
+ * caller serving the stale value lets the promise run in the background; one inside a cached
+ * function awaits it (see {@link revive}).
  */
 function reviveStaleData(
   key: string,
   compute: () => Promise<unknown> | unknown,
-  revalidate: number | false | undefined,
+  revalidate: number | false,
   tags: string[],
-): void {
-  reviveInBackground(key, async () => {
-    const value = await compute();
-    await setDataEntry(currentCacheStore, key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+): Promise<DataEntry | undefined> {
+  return revive(key, async () => {
+    const entry: DataEntry = { value: await compute(), expiresAt: ttlToExpiry(revalidate), tags };
+    await setDataEntry(currentCacheStore, key, entry);
+    return entry;
   });
 }
 
 /**
- * Run `refresh` once per key in the background (deduped while one is in flight),
- * logging rather than throwing — the stale value has already been served. Inside a
- * request the promise is registered on the deferred queue so a serverless isolate
- * drains it before freezing.
+ * Run `refresh` once per key (deduped while one is in flight) and resolve to the fresh entry,
+ * or undefined when it failed — logged rather than thrown, since the stale value stands in.
+ * Inside a request the promise is registered on the deferred queue so a serverless isolate
+ * drains it before freezing, whether or not the caller awaits it.
  */
-function reviveInBackground(key: string, refresh: () => Promise<void>): void {
-  if (dataRevalidateInFlight.has(key)) return;
-  dataRevalidateInFlight.add(key);
-  const p = (async () => {
-    try {
-      await refresh();
-    } catch (err) {
-      logCacheError("revalidate", err);
-    } finally {
-      dataRevalidateInFlight.delete(key);
-    }
-  })();
+function revive(
+  key: string,
+  refresh: () => Promise<DataEntry>,
+): Promise<DataEntry | undefined> {
+  let p = dataRevalidateInFlight.get(key);
+  if (!p) {
+    p = refresh()
+      .catch((err): undefined => void logCacheError("revalidate", err))
+      .finally(() => dataRevalidateInFlight.delete(key));
+    dataRevalidateInFlight.set(key, p);
+  }
   const ctx = currentContext();
   if (ctx) ctx.deferred.push(() => p);
+  return p;
 }
 
 // ---- `"use cache"` directive runtime executor -----------------------------
@@ -1026,20 +1086,20 @@ async function runCachedBody<R>(
 }
 
 /**
- * Refresh a stale `use cache` entry in the background (deduped per key), re-running
- * the body inside its cache scope so the recomputed value picks up fresh
- * `cacheLife`/`cacheTag` timing. Inside a request the promise is registered on the
- * deferred queue so a serverless isolate drains it before freezing.
+ * Refresh a stale `use cache` entry (deduped per key), re-running the body inside its cache
+ * scope so the recomputed value picks up fresh `cacheLife`/`cacheTag` timing; resolves to the
+ * fresh entry, or undefined when the run failed (see {@link revive}).
  */
 function reviveStaleUseCache(
   key: string,
   run: () => unknown | Promise<unknown>,
   staticTags: string[],
   profile: string | CacheLifeProfile | undefined,
-): void {
-  reviveInBackground(key, async () => {
+): Promise<DataEntry | undefined> {
+  return revive(key, async () => {
     const { entry } = await runCachedBody(run, staticTags, profile);
     await storeUseCacheEntry(key, entry);
+    return entry;
   });
 }
 
@@ -1138,13 +1198,7 @@ async function sharedCacheEntry<A extends unknown[], R>(
   if (debugCache()) {
     console.error(`[cache] ${id} ${hit ? "HIT" : "MISS"} key=${key.length}b`);
   }
-  if (hit) {
-    // The body didn't run on a hit, so replay its tag propagation to the page
-    // from the stored tags.
-    collectTags(hit.tags);
-    if (isStaleHit(hit)) reviveStaleUseCache(key, () => fn(...args), staticTags, profile);
-    return hit;
-  }
+  if (hit) return serveUseCacheHit(hit, key, () => fn(...args), staticTags, profile);
   // Single-flight: coalesce concurrent misses so the body runs once.
   const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
   if (inFlight) {
@@ -1159,6 +1213,27 @@ async function sharedCacheEntry<A extends unknown[], R>(
   // The leader collected the body's tags during `runCachedBody` (in its own
   // request scope), so it returns the entry directly.
   return await leadFlight(key, computeUseCache(key, () => fn(...args), staticTags, profile));
+}
+
+/**
+ * A `"use cache"` hit for this request. The body didn't run, so its tag propagation to the page
+ * is replayed from the stored tags. A stale hit is refreshed (deduped per key): in the
+ * background when the value is served to a request, in the foreground when the call is nested
+ * in a cached function (a `"use cache"` body or an `unstable_cache()` loader), as in Next.js,
+ * so the outer entry stores the fresh value, never the stale one — which stands in if the
+ * refresh fails.
+ */
+async function serveUseCacheHit(
+  hit: DataEntry,
+  key: string,
+  run: () => unknown | Promise<unknown>,
+  staticTags: string[],
+  profile: string | CacheLifeProfile | undefined,
+): Promise<DataEntry> {
+  collectTags(hit.tags);
+  if (!isStaleHit(hit)) return hit;
+  const fresh = reviveStaleUseCache(key, run, staticTags, profile);
+  return cacheScopeStorage.getStore() ? (await fresh) ?? hit : hit;
 }
 
 const PRIVATE_IN_PUBLIC =
