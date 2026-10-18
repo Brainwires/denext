@@ -69,6 +69,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext build --compile` compiles next-compat (drop-in) and Pages Router apps.** A drop-in's
+  compile failed on the npm tree Deno writes beside the build's CSS config (`.denext/node_modules`
+  is no longer embedded); a Pages Router app without `app/` was refused as unbuilt, its `pages/`
+  were not embedded (every page a 404), and its stylesheet imports missed the binary's paths (the
+  compile's stylesheet redirects are now relative to its config). Both shapes now serve their
+  pages, API routes and static assets from the binary, with the project deleted.
 - **`denext desktop dev --lan` hands the window its per-launch desktop token**, so the capability
   bridge (`secureStore`, `fs`, the OAuth sheet, the boot beacon) works against a dev server bound
   to the LAN address. The token rides the proxied page only when the dev URL carries that server's

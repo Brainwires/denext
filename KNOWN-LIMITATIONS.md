@@ -222,8 +222,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
-  `build` and `export` stay on the CLI. next-compat builds and the Pages Router are untested in a
-  binary.
+  `build` and `export` stay on the CLI.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,

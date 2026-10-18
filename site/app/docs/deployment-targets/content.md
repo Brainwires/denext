@@ -244,7 +244,7 @@ Deno toolchain over a generated entry (`.denext/compile/main.ts`) that does
 what `denext start` does. The result is one executable with nothing to install
 beside it. It embeds:
 
-- the server modules (`app/`, `denext.config.ts`, `middleware.ts`,
+- the server modules (`app/`, the Pages Router's `pages/`, `denext.config.ts`, `middleware.ts`,
   `instrumentation.ts`, `jobs/`, `services/`, `functions/`), plus everything they import:
   the framework and your `jsr:` and `npm:` packages;
 - the build (`.denext/`: client bundles, manifest, server copies), `public/`,
@@ -317,8 +317,10 @@ its first request.
   the desktop packager;
 - the build verbs: `dev`, `build` and `export` stay on the `denext` CLI.
 
-`next-compat` (drop-in) builds and the Pages Router plugin are untested in a
-binary. The binary is about 200 MB: the runtime plus the framework's and
+A `next-compat` (drop-in) app and a Pages Router (`@denext/pages-router`) app compile like any
+other: their pages, API routes and static assets are served from the binary. A module served
+without a server copy (a Pages Router page) imports its stylesheet through the compile's import
+map, whose stylesheet entries are relative to the embedded config. The binary is about 200 MB: the runtime plus the framework's and
 your packages' module graph.
 
 The **`denext` executable** is a separate thing: the CLI itself, a
