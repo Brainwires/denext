@@ -538,13 +538,6 @@ jobs:
     runs-on: windows-latest
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
-    env:
-      # The tests' temp projects on the checkout's drive (D:), not C:\Users\RUNNER~1\…: Deno
-      # 2.9 resolves a config's `file:` targets on another drive as `file:///C:/D:/…` (and loses
-      # the framework's own import map for its modules there), so a temp app on C: that imports
-      # this checkout on D: fails in Deno, not in denext. runner.temp has no 8.3 short names.
-      TEMP: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -567,12 +560,21 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: Deno
+      # 2.9 resolves a config's `file:` targets on another drive as `file:///C:/D:/…` (and loses
+      # the framework's own import map for its modules there), so a temp app on C: that imports
+      # this checkout on D: fails in Deno, not in denext. runner.temp has no 8.3 short names.
       - name: Unit tests
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: deno task test:unit
 
       - name: Integration tests
         if: ${{ !cancelled() }}
         env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
           DENEXT_TEST_COMPILED_CLI: "1"
           DENEXT_TEST_REMOTE_CLI: "1"
         run: deno task test:integration
