@@ -353,6 +353,10 @@ and this project adheres to
   by the server's stop signal. Its filter also skips `.denext/` output on Windows, where the
   watcher reports backslash paths.
 
+- **`denext stack` and the project UI's log viewer say Docker is missing instead of failing to
+  spawn.** `Deno.Command#output()` throws a missing program at once rather than rejecting, so
+  the "docker is not on PATH" hint never replaced the raw `Failed to spawn 'docker'` error.
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,

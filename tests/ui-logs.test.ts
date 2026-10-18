@@ -332,3 +332,26 @@ Deno.test("Logs page: no compose file and no relay says so", async () => {
     await api.body?.cancel();
   }, false);
 });
+
+Deno.test("the real docker runner: a machine without docker gets the hint, not a spawn error", async () => {
+  // `Command.output()` throws a missing binary synchronously; a child with an empty PATH has no
+  // docker on any OS.
+  const empty = await Deno.makeTempDir({ prefix: "dnx-no-docker-" });
+  try {
+    const source = new URL("../src/ui/logs/source.ts", import.meta.url).href;
+    const code = `const { setDockerRunner } = await import(${JSON.stringify(source)});
+const real = setDockerRunner(() => Promise.reject(new Error("unused")));
+try { await real(["--version"], ".", undefined); console.log("ran"); }
+catch (error) { console.log(error.message); }`;
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--no-check", code],
+      env: { PATH: empty, Path: empty },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+    assertStringIncludes(text, "docker is not on PATH");
+  } finally {
+    await Deno.remove(empty, { recursive: true });
+  }
+});

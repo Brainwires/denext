@@ -69,18 +69,22 @@ export type DockerRunner = (
 
 /** The real runner: `docker`, argv only. */
 const realDocker: DockerRunner = async (args, cwd, signal) => {
-  const out = await new Deno.Command("docker", {
-    args,
-    cwd,
-    stdout: "piped",
-    stderr: "piped",
-    stdin: "null",
-    signal,
-  }).output().catch((error) => {
+  let out: Deno.CommandOutput;
+  try {
+    // `output()` throws a missing binary synchronously, so a `.catch()` on it never sees one.
+    out = await new Deno.Command("docker", {
+      args,
+      cwd,
+      stdout: "piped",
+      stderr: "piped",
+      stdin: "null",
+      signal,
+    }).output();
+  } catch (error) {
     throw error instanceof Deno.errors.NotFound
       ? new Error("docker is not on PATH: logs need Docker (or the stack's dashboard-logs relay)")
       : error;
-  });
+  }
   const text = (b: Uint8Array) => new TextDecoder().decode(b);
   return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
 };
