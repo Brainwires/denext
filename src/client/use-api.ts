@@ -25,6 +25,7 @@
 // no-op with a one-time dev warning — this module never imports the socket, so an app that
 // doesn't use Live bundles none of it.
 
+import { isPostpone } from "../runtime/postpone.ts";
 import { useEffect, useId, useSyncExternalStore } from "../runtime/hooks.ts";
 import { use } from "../runtime/suspense.ts";
 import { adoptedSignal, recordSignal } from "../runtime/signal-state.ts";
@@ -181,6 +182,17 @@ function startFetch(e: Entry, run: () => Promise<unknown>): Promise<unknown> {
       return value;
     },
     (err: unknown) => {
+      // A prerender postponed this call (its route read the visitor's request): not a result.
+      // Leave the entry unsettled so the per-request pass (the PPR hole's resume, in the same
+      // request) runs the call for real instead of replaying the postpone as an error.
+      if (isPostpone(err)) {
+        if (e.promise === p) {
+          e.status = "idle";
+          e.promise = null;
+          e.snapshot = null;
+        }
+        throw err;
+      }
       settle(() => {
         e.status = "rejected";
         e.error = isApiClientError(err) ? err : wrapUnknown(err);

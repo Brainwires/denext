@@ -122,6 +122,13 @@ and this project adheres to
   were not embedded (every page a 404), and its stylesheet imports missed the binary's paths (the
   compile's stylesheet redirects are now relative to its config). Both shapes now serve their
   pages, API routes and static assets from the binary, with the project deleted.
+
+- **`cookies()` / `headers()` in an API route reached through `useApi` during a Cache Components
+  prerender postpone that call's `<Suspense>` instead of failing the page.** The prerender
+  turned the route's postpone into a `500` and the calling page into an `ApiClientError`; the
+  boundary now becomes a per-request hole that renders (and seeds) each visitor's own answer,
+  on the first request and on every cached one. A raw read of the inherited request does the
+  same.
 - **`denext desktop dev --lan` hands the window its per-launch desktop token**, so the capability
   bridge (`secureStore`, `fs`, the OAuth sheet, the boot beacon) works against a dev server bound
   to the LAN address. The token rides the proxied page only when the dev URL carries that server's
