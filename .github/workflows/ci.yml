@@ -14,7 +14,8 @@ name: CI
 # run is a dispatch: `gh workflow run ci.yml --ref development`, then `gh run watch`.
 #
 # A newer push to `development` cancels the push run before it; dispatch, `main` and PR runs are
-# never cancelled (the event is part of the concurrency group, so a push never cancels a dispatch).
+# never cancelled (the event is part of the concurrency group, so a push never cancels a dispatch,
+# such as the one a release is gated on).
 on:
   push:
     branches: [main, development]

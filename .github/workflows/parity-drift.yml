@@ -24,6 +24,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch supersedes its run. Never cancelled: a run on `main`, a pull
+# request's, and a dispatch (the event is part of the group, so a push never cancels a dispatched
+# run, such as the one a release is gated on).
+concurrency:
+  group: parity-drift-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
+
 jobs:
   drift:
     runs-on: ubuntu-latest

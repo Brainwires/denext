@@ -12,8 +12,8 @@ name: Native plugins
 #   android  a debug .apk (Gradle)
 #   ios      an unsigned Release build (xcodebuild; no certificates on the runner)
 #
-# Runs when a template or an installer changes on `development` (or on a `ci/*` branch), nightly,
-# and on manual dispatch.
+# Runs when a template or an installer changes on `development` (or on a `ci/*` branch), and on
+# manual dispatch. There is no scheduled run.
 on:
   push:
     branches: [development, "ci/**"]
@@ -33,9 +33,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch supersedes its run. Never cancelled: a run on `main`, a pull
+# request's, and a dispatch (the event is part of the group, so a push never cancels a dispatched
+# run, such as the one a release is gated on).
 concurrency:
-  group: native-plugins-${{ github.ref }}
-  cancel-in-progress: true
+  group: native-plugins-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 env:
   # The CLI from this checkout. --node-modules-dir=none: next to the example's package.json,

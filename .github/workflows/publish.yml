@@ -59,6 +59,11 @@ permissions:
   id-token: write # required for JSR provenance / OIDC publishing
   actions: read # scripts/publish-verify.ts asks for ci.yml's runs on the tagged commit
 
+# A publish is never cancelled: two runs for the same tag queue instead.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest

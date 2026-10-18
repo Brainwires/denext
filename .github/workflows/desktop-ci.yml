@@ -71,6 +71,7 @@ on:
       - "src/build/scaffold.ts"
       - "src/build/fallow-template.ts"
       - "src/build/pe-resources.ts"
+      - "src/build/code-signing.ts"
       - "src/build/plist-value.ts"
       - "src/build/export-paths.ts"
       - "src/build/export.ts"
@@ -143,6 +144,13 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same branch supersedes its run. Never cancelled: a run on `main`, a pull
+# request's, and a dispatch (the event is part of the group, so a push never cancels a dispatched
+# run, such as the one a release is gated on).
+concurrency:
+  group: desktop-ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 jobs:
   desktop-tests:
