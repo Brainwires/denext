@@ -123,6 +123,11 @@ and this project adheres to
   compile's stylesheet redirects are now relative to its config). Both shapes now serve their
   pages, API routes and static assets from the binary, with the project deleted.
 
+- **An ISR page's cached document keeps its islands map and its signal state.** The document
+  stored for a `revalidate` route was built without `#__denext_islands` and `#__denext_state`,
+  so every response from the page cache — the first one included — shipped a Flight route's
+  deferred `client:*` islands with no map to hydrate them from, and made `useApi({ suspense:
+  true })` fetch again on mount. Both are now stored with the document.
 - **`cookies()` / `headers()` in an API route reached through `useApi` during a Cache Components
   prerender postpone that call's `<Suspense>` instead of failing the page.** The prerender
   turned the route's postpone into a `500` and the calling page into an `ApiClientError`; the
