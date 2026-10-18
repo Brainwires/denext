@@ -113,6 +113,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext ui`'s Cron page says when an app's history store took too long, not that it printed
+  nothing.** A custom `jobs.history.store` is read through a `denext job --history` child with a
+  15 s deadline; a child killed at that deadline exits without an error, so its empty output was
+  reported as "printed nothing". The page now says `denext job --history did not finish within
+  15 s` (likewise `--clear-history`).
+
 - **Live views, server actions, channels and taint work under `compatibilityMode: true`.** A
   compat build prebuilds `denext`, `denext/live` and the React compat modules into a graph of
   their own, so the app and the server could load two copies of the same runtime module, each
