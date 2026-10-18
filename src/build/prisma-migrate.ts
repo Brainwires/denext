@@ -118,12 +118,15 @@ export function readDatasource(schema: string): PrismaDatasource {
 
 /**
  * The provider denext wires for a datasource `provider` (`postgres` is Prisma's alias of
- * `postgresql`), or null for one it has no adapter path for (`sqlserver`, `mongodb`,
- * `cockroachdb`). A schema without a readable provider is treated as SQLite, as before.
+ * `postgresql`; `cockroachdb` speaks the Postgres wire protocol, and Prisma takes the Postgres
+ * adapter for it), or null for one it has no adapter path for (`sqlserver`, `mongodb`). A
+ * schema without a readable provider is treated as SQLite, as before.
  */
 export function wiredProvider(provider: string | null): PrismaProvider | null {
   if (provider === null || provider === "sqlite") return "sqlite";
-  if (provider === "postgresql" || provider === "postgres") return "postgresql";
+  if (provider === "postgresql" || provider === "postgres" || provider === "cockroachdb") {
+    return "postgresql";
+  }
   if (provider === "mysql") return "mysql";
   return null;
 }
@@ -251,7 +254,7 @@ async function transformPrismaApp(plan: TransformPlan): Promise<PrismaMigrateInf
   if (!adapter) {
     warnings.push(
       `the datasource provider "${plan.provider}" has no driver adapter denext wires (SQLite, ` +
-        "Postgres and MySQL do) — `new PrismaClient()` was left as is; pass the provider's " +
+        "Postgres, CockroachDB and MySQL do) — `new PrismaClient()` was left as is; pass the provider's " +
         "driver adapter by hand (sqlserver: `@prisma/adapter-mssql`; MongoDB has none in Prisma 6).",
     );
   }

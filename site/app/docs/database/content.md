@@ -387,14 +387,16 @@ denext's own `Deno.SQL` client can't back a Prisma adapter: a driver adapter
 reports each result's column names in order and the Postgres type of each
 column, and `Deno.SQL` returns neither.
 
-A `sqlserver`, `mongodb` or `cockroachdb` datasource is not wired: migrate
-rewrites the schema and imports, leaves `new PrismaClient()` as it is and says
-so. For SQL Server pass `@prisma/adapter-mssql` by hand; Prisma 6 has no
-driver adapter for MongoDB. `tests/e2e/prisma-server-db.e2e.test.ts` migrates a
-Prisma app and runs it against a live Postgres and MySQL (CRUD, relations,
+A `cockroachdb` datasource takes the Postgres path: CockroachDB speaks the
+Postgres wire protocol, so migrate injects `@prisma/adapter-pg` the same way.
+A `sqlserver` or `mongodb` datasource is not wired: migrate rewrites the schema
+and imports, leaves `new PrismaClient()` as it is and says so. For SQL Server
+pass `@prisma/adapter-mssql` by hand; Prisma 6 has no driver adapter for
+MongoDB. `tests/e2e/prisma-server-db.e2e.test.ts` migrates a Prisma app and
+runs it against a live Postgres, CockroachDB and MySQL (CRUD, relations,
 transactions, raw queries, `migrate deploy`, a built and served app) when
-`DENEXT_E2E_POSTGRES_URL` / `DENEXT_E2E_MYSQL_URL` point at a throwaway
-database.
+`DENEXT_E2E_POSTGRES_URL` / `DENEXT_E2E_COCKROACH_URL` / `DENEXT_E2E_MYSQL_URL`
+point at a throwaway database.
 
 ## Migrations & seeding
 
