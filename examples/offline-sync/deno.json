@@ -1,0 +1,34 @@
+{
+  "//": "`nodeModulesDir: none`: Deno resolves nothing from package.json, which lists only the browser SQLite engine (`npm install` puts it in node_modules, where the build finds it).",
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "build": "deno run -A ../../cli.ts build .",
+    "start": "deno run -A ../../cli.ts start .",
+    "export": "deno run -A ../../cli.ts export .",
+    "backend": "cd backend && deno task dev"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/mobile": "../../src/mobile/mod.ts"
+  },
+  "lint": {
+    "plugins": [
+      "../../src/lint/denext-plugin.ts"
+    ]
+  },
+  "nodeModulesDir": "none"
+}

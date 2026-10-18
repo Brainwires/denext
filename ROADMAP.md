@@ -56,7 +56,7 @@
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
   the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
 - **Capabilities:** file transfer with progress, a notification service extension and badges,
-  SQLite encryption, a PowerSync recipe.
+  SQLite encryption.
 - **On a device:** background audio with the lock-screen / notification controls
   (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
   the controls reaching the page, the Android foreground service), and `pickMedia`'s

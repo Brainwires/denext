@@ -20,6 +20,17 @@ and this project adheres to
   iOS. Changed occurrences from that one on are replaced by the new values; cancelled ones stay
   cancelled. From the first occurrence the event itself changes.
 
+- **Offline sync and PowerSync: a recipe and `examples/offline-sync`.** A new guide,
+  [Offline sync and PowerSync](https://denext.dev/docs/powersync), covers keeping an app's data in
+  SQLite on the device and syncing it: a sync loop over `openSqlite` with denext route handlers as
+  the backend, and PowerSync's own SDK in a denext app (its connector's token, JWKS and upload
+  routes on denext). It says plainly what `openSqlite` cannot do: it is not a PowerSync database
+  driver, since PowerSync's SDKs bring their own SQLite with its core extension, so the two keep
+  separate database files. `examples/offline-sync` is a local-first notes app (an SPA for the
+  Capacitor shell plus a `backend/` of two route handlers) whose writes queue offline in the same
+  transaction as the local change, upload in order, and take server changes only once the queue
+  is empty; its upload route accepts PowerSync's upload shape. Built and synced over HTTP in CI.
+
 - **Typed-API batching forwards the request headers an app lists, per item.**
   `apiBatch: { forwardHeaders: ["x-tenant"] }` on the server and `createApiClient({ batch: {
   forwardHeaders: ["x-tenant"] } })` on the client let calls carrying `x-tenant` ride the one

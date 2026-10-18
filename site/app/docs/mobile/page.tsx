@@ -592,7 +592,8 @@ denext mobile add haptics share network secure-store`}
           <code>@sqlite.org/sqlite-wasm</code>{" "}
           on the Origin Private File System (install it yourself; without it <code>openSqlite</code>
           {" "}
-          reports the engine is missing).
+          reports the engine is missing). Syncing it with a backend, and running PowerSync beside
+          it: <a href="/docs/powersync">Offline sync and PowerSync</a>.
         </li>
         <li>
           <code>readFile</code> / <code>writeFile</code> / <code>deleteFile</code> /{" "}

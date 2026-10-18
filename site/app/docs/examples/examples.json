@@ -177,7 +177,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task test:window        # package, launch and assert every check (exits 1 on a failure)\ndenext task drive start        # launch the last build in drive mode (the manual checks, scripted)",
+      "run": "denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task test:window        # package, launch and assert every check (exits 1 on a failure)\ndenext task drive start        # launch the last build in drive mode (the manual checks, scripted)\ndenext task test:lan-dev       # `desktop dev --lan`: the proxied page keeps its bridge (secureStore)",
       "runFrom": "example"
     },
     {
@@ -464,6 +464,19 @@
       "hasReadme": true,
       "category": "start",
       "run": "denext task dev      # http://localhost:3000\n# or, production:\ndenext task build && denext task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "offline-sync",
+      "title": "Offline sync example (openSqlite + a sync backend)",
+      "blurb": "A local-first notes app: every read and write goes to a SQLite database on the device (openSqlite from denext/mobile), so the app works offline, and a small sync loop reconciles it with a denext…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/offline-sync",
+      "tags": [
+        "spa"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "deno task backend   # the API on http://127.0.0.1:8788 (backend/)\ndenext task dev     # the app on http://localhost:3000; /api is proxied to the backend",
       "runFrom": "example"
     },
     {
