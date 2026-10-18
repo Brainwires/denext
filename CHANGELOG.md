@@ -174,8 +174,9 @@ and this project adheres to
   key that is not an option is refused with the closest one suggested, so a typo in an
   import-protection rule no longer turns it off. `router` also takes Start's object (`entry`,
   `basepath`, the route generator's options); `importProtection.maxTraceDepth` caps a
-  violation's trace; `behavior` / `mockAccess` / `log` are accepted, and a `"mock"` behavior is
-  warned about, since a violation always fails the build.
+  violation's trace; `behavior` / `mockAccess` / `log` apply as in Start: unset, a `denext dev`
+  violation is mocked with Start's own mock modules and warned about, a build's fails, and a
+  `"mock"` asked of a build (`denext build`, `start`, `export`) ships Start's build mocks.
 
 - **`denext create --template lustre`.** Scaffolds an app with a Gleam project
   (`gleam/src/counter.gleam`), the `gleam()` plugin, the `@gleam/` import and a home page that

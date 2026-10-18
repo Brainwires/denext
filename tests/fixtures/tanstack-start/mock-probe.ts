@@ -56,7 +56,29 @@ try {
   console.error = error;
 }
 
+// A build's "mock": Start's build mocks (an edge over a per-violation build id, which loads the
+// silent mock; a denied file as a self-contained mock).
+const build = compileImportProtection({ behavior: "mock" }, root, "/p/src", "build");
+const buildEdge = mockEdgeId(mocks, build, {
+  env: "client",
+  importer: "/p/src/a.ts",
+  importerCode,
+  specifier: "@tanstack/react-start/server",
+});
+const buildEdgeSource = mockModuleSource(mocks, buildEdge);
+const buildEdgeRuntime = /import mock from "([^"]+)"/.exec(buildEdgeSource)?.[1] ?? "";
+const buildSelfDenial = selfDenialSource(mocks, build, {
+  env: "client",
+  file: "/p/src/db.server.ts",
+  source: `export const db = () => "DB";\nexport const other = 1;\n`,
+});
+
 console.log(JSON.stringify({
+  buildEdgeRuntime,
+  buildEdgeExports: [...buildEdgeSource.matchAll(/export const (\w+)/g)].map((m) => m[1]).sort(),
+  buildRuntimeIsSilent: mockModuleSource(mocks, buildEdgeRuntime) ===
+    mocks.loadSilentMockModule().code,
+  buildSelfDenial,
   edgeExports,
   selfDenial,
   called,

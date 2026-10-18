@@ -1,10 +1,12 @@
-// @denext/tanstack-start's `importProtection.behavior: "mock"` in `denext dev`, as Start's dev
-// server applies it: a denied file is loaded as Start's self-denial module (its named exports over
-// a mock), a denied specifier resolves to a mock-edge module (the names its importer uses), the
-// violation is a warning in Start's words (once per process, or every build with `log:
-// "always"`), and a marker stays a warning. A build still fails, and `behavior` resolves per
-// command as Start resolves it. Start's own mock modules (loaded from the installed example) are
-// checked in a subprocess: the browser mock reports its use per `mockAccess`.
+// @denext/tanstack-start's `importProtection.behavior: "mock"`, as Start applies it. In `denext
+// dev` (the default there, as Start's `behavior?.dev ?? 'mock'`) a denied file is loaded as Start's
+// self-denial module (its named exports over a mock), a denied specifier resolves to a mock-edge
+// module (the names its importer uses), the violation is a warning in Start's words (once per
+// process, or every build with `log: "always"`), and a marker stays a warning. A build mocks only
+// when asked (`"mock"` or `{ build: "mock" }`), with Start's build mocks: a denied file is a
+// self-contained mock module and a denied specifier an edge over the silent mock. `behavior`
+// resolves per command as Start resolves it. Start's own mock modules (loaded from the installed
+// example) are checked in a subprocess: the browser mock reports its use per `mockAccess`.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -29,6 +31,7 @@ const fakeMocks: StartMocks = {
   MOCK_MODULE_ID: `${PREFIX}mock`,
   MOCK_EDGE_PREFIX: `${PREFIX}mock-edge:`,
   MOCK_RUNTIME_PREFIX: `${PREFIX}mock-runtime:`,
+  MOCK_BUILD_PREFIX: `${PREFIX}mock:build:`,
   mockRuntimeModuleIdFromViolation: (info, mode) =>
     info.env === "client" && mode !== "off"
       ? `${PREFIX}mock-runtime:${encodeURIComponent(JSON.stringify({ ...info, mode }))}`
@@ -47,6 +50,10 @@ const fakeMocks: StartMocks = {
   loadMockRuntimeModule: (payload) => ({
     code: `const meta = ${decodeURIComponent(payload)};\n` +
       `export default new Proxy({}, { get: (_t, p) => () => "RUNTIME_MOCK:" + meta.specifier + ":" + String(p) });\n`,
+  }),
+  generateSelfContainedMockModule: (exports) => ({
+    code: `const mock = { selfContained: "SELF_CONTAINED_MOCK" };\n` +
+      exports.map((n) => `export const ${n} = mock.${n};\n`).join(""),
   }),
   generateDevSelfDenialModule: (exports, runtimeId) => ({
     code: `import mock from ${JSON.stringify(runtimeId)};\n` +
@@ -142,11 +149,19 @@ async function warned(fn: () => Promise<unknown>): Promise<string[]> {
 }
 
 Deno.test("tanstack-start import protection: behavior resolves per command, as Start's", () => {
-  assertEquals(effectiveBehavior(undefined, "dev"), "error", "unset: every violation fails");
+  // Unset: Start's `behavior?.dev ?? 'mock'` in dev, `behavior?.build ?? 'error'` in a build.
+  assertEquals(effectiveBehavior(undefined, "dev"), "mock", "unset: dev mocks");
+  assertEquals(effectiveBehavior(undefined, "build"), "error", "unset: a build fails");
+  assertEquals(effectiveBehavior({}, "dev"), "mock");
   assertEquals(effectiveBehavior({ behavior: "mock" }, "dev"), "mock");
-  assertEquals(effectiveBehavior({ behavior: "mock" }, "build"), "error", "a build never mocks");
+  assertEquals(effectiveBehavior({ behavior: "mock" }, "build"), "mock", "a string is both");
+  assertEquals(effectiveBehavior({ behavior: "error" }, "dev"), "error");
   assertEquals(effectiveBehavior({ behavior: { build: "error" } }, "dev"), "mock", "dev: mock");
+  assertEquals(effectiveBehavior({ behavior: { build: "mock" } }, "build"), "mock");
+  assertEquals(effectiveBehavior({ behavior: { dev: "mock" } }, "build"), "error");
   assertEquals(effectiveBehavior({ behavior: { dev: "error" } }, "dev"), "error");
+  assertEquals(compileImportProtection(undefined, "/p", "/p/src", "dev").behavior, "mock");
+  assertEquals(compileImportProtection(undefined, "/p", "/p/src").behavior, "error");
   const off = compileImportProtection({ enabled: false, behavior: "mock" }, "/p", "/p/src", "dev");
   assertEquals(off.behavior, "error");
   assertEquals(compileImportProtection({}, "/p", "/p/src").mockAccess, "error");
@@ -159,9 +174,11 @@ Deno.test({
 }, async () => {
   const dir = await app();
   try {
-    // A build fails, whatever the behavior.
-    const err = await assertRejects(() => build(dir, protect(dir, { behavior: "mock" }, "build")));
-    assertStringIncludes(String(err), "[import-protection] Import denied in client environment");
+    // A build fails unless it asks for a mock.
+    for (const options of [{}, { behavior: { dev: "mock" } }] as ImportProtectionOptions[]) {
+      const err = await assertRejects(() => build(dir, protect(dir, options, "build")));
+      assertStringIncludes(String(err), "[import-protection] Import denied in client environment");
+    }
 
     // Dev: the build passes, the denied file is its self-denial module, the specifier an edge.
     const dev = protect(dir, { behavior: "mock" }, "dev");
@@ -215,6 +232,58 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name:
+    "tanstack-start import protection: a dev violation mocks with behavior unset (Start's default)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await app();
+  try {
+    const warnings = await warned(() => build(dir, protect(dir, {}, "dev")));
+    const js = await bundleText(dir);
+    assert(!js.includes("DB_SECRET"), "the denied file's body never ships");
+    assertStringIncludes(js, "RUNTIME_MOCK:", "the dev runtime mock stands in");
+    assertEquals(warnings.length, 2, warnings.join("\n---\n"));
+  } finally {
+    await stopNextCompat().catch(() => {});
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+for (
+  const behavior of ["mock", { build: "mock" }] as ImportProtectionOptions["behavior"][]
+) {
+  Deno.test({
+    name: `tanstack-start import protection: a build's ${
+      JSON.stringify(behavior)
+    } ships Start's build mocks and warns`,
+    sanitizeOps: false,
+    sanitizeResources: false,
+  }, async () => {
+    const dir = await app();
+    try {
+      const protection = protect(dir, { behavior }, "build");
+      const warnings = await warned(() => build(dir, protection));
+      const js = await bundleText(dir);
+      assert(!js.includes("DB_SECRET"), "the denied file's body never ships");
+      // The denied file: Start's self-contained mock; the specifier: an edge over the silent mock.
+      assertStringIncludes(js, "SELF_CONTAINED_MOCK");
+      assertStringIncludes(js, "SILENT_MOCK");
+      assert(!js.includes("RUNTIME_MOCK:"), "a build has no runtime diagnostics, as in Start");
+      assertEquals(warnings.length, 2, warnings.join("\n---\n"));
+      assertStringIncludes(warnings.join("\n"), "Denied by file pattern: **/*.server.*");
+      assertStringIncludes(
+        warnings.join("\n"),
+        "Denied by specifier pattern: @tanstack/react-start/server",
+      );
+    } finally {
+      await stopNextCompat().catch(() => {});
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  });
+}
+
 // Start's own mock modules, from the example app's install (`deno install` in
 // examples/tanstack-start; the e2e does it). Skipped when the example is not installed.
 const EXAMPLE = fromFileUrl(new URL("../examples/tanstack-start", import.meta.url));
@@ -247,4 +316,14 @@ Deno.test({
   // On the server, and with mockAccess "off", it is Start's silent mock.
   assertEquals(r.serverRuntime, "tanstack-start-import-protection:mock");
   assertEquals(r.offRuntime, "tanstack-start-import-protection:mock");
+  // A build's mocks: an edge over a per-violation build id, which loads the silent mock, and a
+  // denied file as a self-contained mock (no runtime import).
+  assertStringIncludes(
+    r.buildEdgeRuntime as string,
+    "tanstack-start-import-protection:mock:build:",
+  );
+  assertEquals(r.buildEdgeExports, ["getRequest", "setCookie"]);
+  assertEquals(r.buildRuntimeIsSilent, true);
+  assertStringIncludes(r.buildSelfDenial as string, "export const db = mock.db;");
+  assert(!(r.buildSelfDenial as string).includes("import mock from"), "self-contained");
 });

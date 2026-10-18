@@ -2,11 +2,10 @@
 // own shapes for `router`, `importProtection`, `prerender`, `pages`, `sitemap` and `spa`; unknown keys refused with a
 // suggestion), Start's object form of `router` mapped onto the plugin (an extensionless `entry`,
 // `basepath` against the app's `basePath`, the generator's options), and Start's remaining
-// `importProtection` keys: `maxTraceDepth` caps a violation's trace, a build's `behavior: "mock"`
-// is warned about (per `log`) while every build violation still fails (a dev "mock" is
+// `importProtection` keys: `maxTraceDepth` caps a violation's trace (`behavior: "mock"` is
 // tests/tanstack-start-mock.test.ts).
 
-import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
   checkBasepath,
@@ -17,7 +16,6 @@ import {
   compileImportProtection,
   importProtectionViolations,
   type Metafile,
-  mockNotice,
 } from "../packages/tanstack-start/src/protect.ts";
 import { generateRouteTree, generatorPaths } from "../packages/tanstack-start/src/route-tree.ts";
 import { tanstackStart, type TanStackStartOptions } from "../packages/tanstack-start/mod.ts";
@@ -439,40 +437,4 @@ Deno.test("tanstack-start import protection: maxTraceDepth caps the trace (Start
   // No entry within reach: the importer alone, as in Start.
   assertEquals(await trace(2), ["src/c.ts"]);
   assertEquals(await trace(0), ["src/c.ts"]);
-});
-
-Deno.test('tanstack-start import protection: a build\'s "mock" is warned about; log sets how often', () => {
-  assertEquals(mockNotice(undefined), null);
-  assertEquals(mockNotice({ behavior: "error" }), null);
-  assertEquals(mockNotice({ behavior: { build: "error" } }), null);
-  assertEquals(mockNotice({ behavior: "mock", enabled: false }), null);
-  // A dev "mock" applies in dev, and a build's behavior is then Start's default "error".
-  assertEquals(mockNotice({ behavior: { dev: "mock" } }), null);
-  assertEquals(mockNotice({ behavior: "mock" }, "dev"), null);
-  assertStringIncludes(
-    mockNotice({ behavior: { build: "mock" } })!,
-    'importProtection.behavior "mock" applies in `denext dev` only: a build fails',
-  );
-  const warnings: string[] = [];
-  const warn = console.warn;
-  console.warn = (msg: string) => warnings.push(msg);
-  try {
-    const root = join("/", "p");
-    const once = compileImportProtection({ behavior: "mock" }, root, join(root, "src"));
-    once.noticeBehavior();
-    once.noticeBehavior();
-    assertEquals(warnings.length, 1, 'log "once" (the default) warns once');
-    const always = compileImportProtection(
-      { behavior: "mock", log: "always" },
-      root,
-      join(root, "src"),
-    );
-    always.noticeBehavior();
-    always.noticeBehavior();
-    assertEquals(warnings.length, 3, 'log "always" warns on every build');
-    compileImportProtection({ log: "always" }, root, join(root, "src")).noticeBehavior();
-    assertEquals(warnings.length, 3, "no mock, no warning");
-  } finally {
-    console.warn = warn;
-  }
 });

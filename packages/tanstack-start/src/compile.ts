@@ -16,8 +16,9 @@
 //   the rest of its source never ships (./use-server.ts), through denext's server-module stub.
 // - **The bundles' guard** once each is built: Start's import protection on both sides (server
 //   code the browser would get, browser code the server would run) and denext's server-only scan
-//   in the browser (./protect.ts) fail the build. In `denext dev` with Start's `"mock"` behavior a
-//   violation is a warning instead, and the denied module Start's mock (./mock.ts). The browser
+//   in the browser (./protect.ts) fail the build. With Start's `"mock"` behavior (`denext dev`'s
+//   default, as in Start) a violation is a warning instead, and the denied module Start's mock
+//   (./mock.ts): its dev mocks in `denext dev`, its build mocks in a build. The browser
 //   build's import graph is kept for the export's prerender (which routes reach a server
 //   function).
 
@@ -80,7 +81,7 @@ export interface StartBuildOptions {
    * under the router module's directory checked.
    */
   protection?: ImportProtection;
-  /** Start's mock modules (default: loaded from the app when a dev `"mock"` needs them). */
+  /** Start's mock modules (default: loaded from the app when a `"mock"` needs them). */
   mocks?: () => Promise<StartMocks>;
 }
 
@@ -261,8 +262,8 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
   };
   const protection = opts.protection ??
     compileImportProtection(undefined, opts.projectRoot, dirname(opts.routerFile));
-  // A dev `"mock"`: what each module compiled to (a mock-edge module reads its importer's names),
-  // and Start's mock modules, loaded once.
+  // A `"mock"`: what each module compiled to (a mock-edge module reads its importer's names), and
+  // Start's mock modules, loaded once.
   const compiled = new Map<string, string>();
   let mocksLoaded: Promise<StartMocks> | undefined;
   const mocking: Mocking | null = protection.behavior === "mock"
@@ -357,15 +358,15 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
   };
 }
 
-/** A dev `"mock"` build's mock modules and its modules' code (read by a mock-edge module). */
+/** A `"mock"` build's mock modules and its modules' code (read by a mock-edge module). */
 interface Mocking {
   mocks(): Promise<StartMocks>;
   code(path: string): Promise<string>;
 }
 
 /**
- * In dev with a `"mock"` behavior, a file the environment's `files` rules deny is loaded as
- * Start's self-denial module (its named exports over a mock) instead of itself; `null` otherwise.
+ * With a `"mock"` behavior, a file the environment's `files` rules deny is loaded as Start's
+ * self-denial module (its named exports over a mock) instead of itself; `null` otherwise.
  */
 async function selfDenial(
   path: string,
@@ -389,14 +390,14 @@ interface GuardOptions {
   protection: ImportProtection;
   /** What the browser build compiled (the server-only scan reads it). */
   emitted: Map<string, string>;
-  /** A dev `"mock"`: denied imports resolve to Start's mocks and violations warn. */
+  /** A `"mock"`: denied imports resolve to Start's mocks and violations warn. */
   mocking: Mocking | null;
 }
 
 /**
  * Fail a build on what crossed sides: Start's import protection over the bundle's metafile (both
  * sides) and, in the browser, denext's server-only scan, each compiled module read as compiled.
- * In dev with a `"mock"` behavior a violation is a warning instead, and the import a mock.
+ * With a `"mock"` behavior a violation is a warning instead, and the import a mock.
  * `onGraph` receives the metafile of a build that passed.
  */
 function guardBundle(
@@ -416,7 +417,7 @@ function guardBundle(
     const denied = record.denied.length;
     const action = recordImport(protection, env, record, args.path, args.importer);
     if (action !== "mock") return undefined;
-    // A denied specifier in a dev "mock": Start's mock-edge module (a marker stays empty).
+    // A denied specifier in a "mock": Start's mock-edge module (a marker stays empty).
     if (mocking && record.denied.length > denied) {
       const id = mockEdgeId(await mocking.mocks(), protection, {
         env,
@@ -445,7 +446,6 @@ function guardBundle(
   build.onEnd(async (result) => {
     const seen = record;
     record = newResolveRecord();
-    protection.noticeBehavior();
     if (result.errors.length > 0 || !result.metafile) return;
     const violations = await importProtectionViolations(
       result.metafile,
@@ -472,7 +472,7 @@ function guardBundle(
 
 /**
  * Warn about each mocked violation in Start's words, once per process (`log: "once"`) or on every
- * build (`log: "always"`), as Start's dev server does.
+ * build (`log: "always"`), as Start does.
  */
 function warnMocked(
   violations: ImportProtectionViolation[],

@@ -4,8 +4,8 @@
 // and the Babel helpers it parses and prints with (`@tanstack/router-utils`, `@babel/core`).
 // `@tanstack/start-plugin-core` is a dependency of `@tanstack/react-start`, so it is resolved
 // from there; the plugin itself depends on no npm package. These run at build time only. The
-// same package's sitemap builder (`denext export`) and import-protection mocks (`denext dev` with
-// a `"mock"` behavior) are loaded from it on demand.
+// same package's sitemap builder (`denext export`) and import-protection mocks (a `"mock"`
+// behavior) are loaded from it on demand.
 
 import { createRequire } from "node:module";
 import { dirname, join, toFileUrl } from "@std/path";
@@ -120,6 +120,8 @@ export interface StartMocks {
   MOCK_MODULE_ID: string;
   MOCK_EDGE_PREFIX: string;
   MOCK_RUNTIME_PREFIX: string;
+  /** A build mock's id prefix (a build's mock-edge runtime: Start's silent mock). */
+  MOCK_BUILD_PREFIX: string;
   /** The runtime mock's id for a violation (diagnostics in the browser, per `mockAccess`). */
   mockRuntimeModuleIdFromViolation(
     info: { env: string; importer: string; specifier: string; trace: unknown[] },
@@ -131,6 +133,8 @@ export interface StartMocks {
   loadSilentMockModule(): { code: string };
   loadMockEdgeModule(payload: string): { code: string };
   loadMockRuntimeModule(payload: string): { code: string };
+  /** The module a denied file becomes in a build: its named exports over a mock of its own. */
+  generateSelfContainedMockModule(exports: string[]): { code: string };
   /** The module a denied file becomes in dev: its named exports, over a runtime mock. */
   generateDevSelfDenialModule(exports: string[], runtimeId: string): { code: string };
   /** The names each import source is used by in `code` (named imports, member accesses). */

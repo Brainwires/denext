@@ -21,9 +21,9 @@
  * - **Both builds are guarded** by Start's import protection, its rules, options
  *   (`importProtection`) and messages: in the browser a `*.server.*` file,
  *   `@tanstack/react-start/server` or a module marked server-only, on the server a `*.client.*`
- *   file or a module marked client-only, fails the build when tree-shaking kept the import (in
- *   `denext dev` with `behavior: "mock"`, the import is Start's mock module and the violation a
- *   warning, as in Start's dev server); the browser build also runs denext's server-only scan. `denext build` builds the server bundle
+ *   file or a module marked client-only, fails the build when tree-shaking kept the import (with
+ *   `behavior: "mock"`, `denext dev`'s default as in Start, the import is Start's mock module and
+ *   the violation a warning); the browser build also runs denext's server-only scan. `denext build` builds the server bundle
  *   too, so `denext start` serves its first request without building.
  * - **`denext export` prerenders** the app's pages with Start's prerender (its `prerender` and
  *   `pages` options, the route tree's static paths, the links each page has), and leaves out and
@@ -125,11 +125,11 @@ export interface TanStackStartOptions {
   /**
    * Start's `importProtection` options (as `tanstackStart({ importProtection })` takes them in
    * Start's Vite plugin): extra denied specifiers and files per side, the importers checked,
-   * `onViolation`, `enabled`, `maxTraceDepth`. A violation fails the build and the dev request
-   * (Start's `error` behavior), unless `behavior` asks for `"mock"` in dev: then, as Start's dev
-   * server does, the denied import is Start's mock module (`mockAccess` sets its browser
-   * diagnostics) and the violation a warning, once per process (`log: "once"`, the default) or
-   * on every build (`log: "always"`). A build always fails.
+   * `onViolation`, `enabled`, `maxTraceDepth`, `behavior`. As in Start, `behavior` defaults to
+   * `"mock"` in `denext dev` and `"error"` in a build. An `"error"` violation fails the build (in
+   * dev, the request that builds); a `"mock"` one makes the denied import Start's mock module
+   * (`mockAccess` sets its browser diagnostics in dev) and the violation a warning, once per
+   * process (`log: "once"`, the default) or on every build (`log: "always"`).
    */
   importProtection?: ImportProtectionOptions;
   /**
@@ -179,7 +179,7 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         }, { watch: [`${projectRelative(ctx, join(ctx.projectRoot, routesDirectory))}/**`] });
       }
       const app = await prepareApp(ctx, src, routerFile);
-      // `denext dev` applies Start's dev behavior (a `"mock"`); every other command is a build.
+      // `denext dev` resolves `behavior` as Start's dev server; every other command as its build.
       const protection = compileImportProtection(
         options.importProtection,
         app.projectRoot,

@@ -70,9 +70,9 @@
 ## Router plugins
 
 - **TanStack Start, dev defaults:** `@denext/tanstack-start` runs a Start app (server functions,
-  server routes, streamed pages, import protection with a dev `"mock"`, `denext export` with the
-  SPA shell and sitemap, the deploy manifest, `denext migrate`). Left: Start's dev defaults — a
-  dev violation mocked with `behavior` unset, and `spa` rendering every dev page as the shell.
+  server routes, streamed pages, import protection with Start's `behavior` defaults, `denext
+  export` with the SPA shell and sitemap, the deploy manifest, `denext migrate`). Left: Start's
+  `spa` rendering every dev page as the shell.
 
 ## Build toolchain: waiting on `deno bundle`
 
