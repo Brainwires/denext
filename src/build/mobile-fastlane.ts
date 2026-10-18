@@ -8,8 +8,12 @@
 // upgraded by a later run, an edited one is kept (`--force` replaces it). A Gemfile the project
 // already had (no marker) is kept, with the one line to add as a manual step.
 //
+// The lanes run with `denext fastlane …`: denext's managed fastlane (./fastlane-toolchain.ts), a
+// pinned fastlane on a pinned Ruby installed on first use. The Gemfile is the other way in, for
+// teams that run fastlane through their own Ruby (fastlane plugins need it).
+//
 // Also here: what `denext mobile doctor --release` reports when a `fastlane/` folder exists
-// (`fastlaneFindings`), read as text, never run.
+// (`fastlaneFindings`), read as text, never run, plus the managed fastlane's state on this host.
 
 import { dirname, join } from "@std/path";
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
@@ -30,6 +34,16 @@ import {
   workflowTemplate,
 } from "./fastlane-templates.ts";
 import { VERSION } from "../../mod.ts";
+import {
+  type CompilerProblem,
+  compilerProblem,
+  FASTLANE_ENV,
+  FASTLANE_PREFETCH,
+  FASTLANE_TOOLCHAIN,
+  type FastlaneToolchainStatus,
+  fastlaneToolchainStatus,
+  pluginfileGems,
+} from "./fastlane-toolchain.ts";
 import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 const FAMILY = "fastlane";
@@ -198,13 +212,15 @@ export async function addFastlaneToProject(opts: AddFastlaneOptions): Promise<Na
   if (opts.ci) await writeWorkflow(opts.dir, force, report);
   if (!(await exists(join(opts.dir, "Gemfile.lock")))) {
     report.manual.push(
-      "run `bundle install` here (Ruby 3.x; `bundle config set --local path vendor/bundle` " +
-        "keeps the gems in the project) and commit Gemfile.lock",
+      "run the lanes with `denext fastlane ios|android build|beta|release` (denext's pinned " +
+        `fastlane ${FASTLANE_TOOLCHAIN.fastlane}, installed on first use; \`${FASTLANE_PREFETCH}\` ` +
+        "installs it now). To run fastlane through the Gemfile instead (plugins need it): " +
+        "`bundle install` (Ruby 3.2+) and commit Gemfile.lock",
     );
   }
   if (await exists(nativeJoin(opts.dir, "ios"))) {
     report.manual.push(
-      "iOS signing with match: create the certificate once with `MATCH_GIT_URL=… bundle exec " +
+      "iOS signing with match: create the certificate once with `MATCH_GIT_URL=… denext " +
         "fastlane match appstore`; the lanes then run match read-only (MATCH_PASSWORD)",
     );
   }
@@ -225,7 +241,7 @@ function planLabel(ci: boolean): string {
 export const FASTLANE_CAPABILITY: MobileCapability = {
   capacitorMajor: 8,
   listing: "(fastlane: Ruby tooling, no plugin)",
-  notes: "bundle exec fastlane ios|android build|beta|release [flavor:<name>] (lanes over " +
+  notes: "denext fastlane ios|android build|beta|release [flavor:<name>] (lanes over " +
     "`denext mobile build`: match, TestFlight, Play tracks, metadata; --ci adds a GitHub " +
     "Actions workflow)",
   options: ["ci"],
@@ -313,30 +329,85 @@ function appfileFindings(appfile: string | undefined, appId: string | undefined)
   return out;
 }
 
-/** Gemfile findings: fastlane run outside bundler, or without a lockfile. */
-function gemfileFindings(gemfile: string | undefined, locked: boolean): FastlaneFinding[] {
-  if (gemfile === undefined) {
+/**
+ * Gemfile findings. The lanes run with `denext fastlane` (pinned by denext), so a Gemfile is only
+ * needed for plugins (fastlane/Pluginfile): then it must list fastlane, and a Gemfile that does
+ * should be locked.
+ */
+function gemfileFindings(
+  gemfile: string | undefined,
+  locked: boolean,
+  plugins: readonly string[],
+): FastlaneFinding[] {
+  const listsFastlane = gemfile !== undefined && /^\s*gem\s+["']fastlane["']/m.test(gemfile);
+  if (!listsFastlane) {
+    if (plugins.length === 0) return [];
     return [{
       level: "warning",
-      message: "no Gemfile next to fastlane/, so each machine and CI runs whatever fastlane " +
-        "it has installed",
-      fix: `add a Gemfile with gem "fastlane", "~> ${FASTLANE_VERSION}" (\`denext mobile add ` +
-        "fastlane` writes one), `bundle install`, and run `bundle exec fastlane`",
-    }];
-  }
-  if (!/^\s*gem\s+["']fastlane["']/m.test(gemfile)) {
-    return [{
-      level: "warning",
-      message: "the Gemfile does not list fastlane",
-      fix: `add gem "fastlane", "~> ${FASTLANE_VERSION}" and run \`bundle install\``,
+      message: `fastlane/Pluginfile lists ${plugins.join(", ")}, but ` +
+        (gemfile === undefined ? "there is no Gemfile" : "the Gemfile does not list fastlane") +
+        ": `denext fastlane` runs denext's pinned fastlane, which does not load plugins",
+      fix: `add gem "fastlane", "~> ${FASTLANE_VERSION}" and the Pluginfile to a Gemfile ` +
+        "(`denext mobile add fastlane` writes one), `bundle install`, and run `bundle exec fastlane`",
     }];
   }
   if (locked) return [];
   return [{
     level: "warning",
-    message: "Gemfile has no Gemfile.lock, so fastlane's version (and its dependencies') " +
-      "differs between machines and CI",
-    fix: "run `bundle install` and commit Gemfile.lock",
+    message: "Gemfile has no Gemfile.lock, so `bundle exec fastlane`'s version (and its " +
+      "dependencies') differs between machines and CI",
+    fix: "run `bundle install` and commit Gemfile.lock (or run the lanes with `denext fastlane`, " +
+      "which pins its own)",
+  }];
+}
+
+/** What {@linkcode fastlaneFindings} asks about this host (seams for tests). */
+export interface FastlaneHostProbe {
+  /** The managed fastlane's state (default {@linkcode fastlaneToolchainStatus}). */
+  readonly status: () => Promise<FastlaneToolchainStatus>;
+  /** What a gem build lacks here, or `null` (default {@linkcode compilerProblem}). */
+  readonly compiler: () => Promise<CompilerProblem | null>;
+}
+
+const HOST_PROBE: FastlaneHostProbe = {
+  status: () => fastlaneToolchainStatus(),
+  compiler: () => compilerProblem(Deno.build.os),
+};
+
+/** Whether `denext fastlane` can run here: the override, the host, the install, a compiler. */
+async function managedFastlaneFindings(probe: FastlaneHostProbe): Promise<FastlaneFinding[]> {
+  const status = await probe.status();
+  if (status.mode === "path") {
+    return status.ok ? [] : [{
+      level: "error",
+      message: `${FASTLANE_ENV} names no file (${status.detail})`,
+      fix: `point ${FASTLANE_ENV} at a fastlane executable, or unset it to use denext's`,
+    }];
+  }
+  if (status.state === "unsupported") {
+    return [{
+      level: "warning",
+      message: `\`denext fastlane\` does not run on ${status.target}: fastlane needs macOS ` +
+        "(iOS) or Linux / macOS (Android)",
+      fix: `run the lanes on macOS or Linux (in CI, for example), or set ${FASTLANE_ENV}=<path> ` +
+        "to a fastlane you installed",
+    }];
+  }
+  if (status.state === "invalid") {
+    return [{
+      level: "warning",
+      message: `denext's installed fastlane does not match its pin (${status.path})`,
+      fix: `it re-installs on the next \`denext fastlane\`, or now with \`${FASTLANE_PREFETCH}\``,
+    }];
+  }
+  if (status.state !== "missing") return [];
+  const problem = await probe.compiler();
+  return problem === null ? [] : [{
+    level: "warning",
+    message:
+      `the first \`denext fastlane\` installs fastlane ${status.version}, whose gems build ` +
+      `C extensions, and this machine has no ${problem.missing}`,
+    fix: problem.fix,
   }];
 }
 
@@ -393,15 +464,18 @@ function inlineSecretFindings(texts: Record<string, string | undefined>): Fastla
 
 /**
  * What `denext mobile doctor --release` reports about a project's fastlane setup: the Appfile's
- * identifiers against capacitor.config, the Gemfile and its lock, a Fastfile that skips denext's
- * export and sync, and secrets kept in `fastlane/`. Undefined when there is no `fastlane/`.
+ * identifiers against capacitor.config, the Gemfile and its lock (when plugins need one), a
+ * Fastfile that skips denext's export and sync, secrets kept in `fastlane/`, and whether
+ * `denext fastlane` can run on this host. Undefined when there is no `fastlane/`.
  *
  * @param root The Capacitor project.
  * @param appId capacitor.config's `appId`, when known.
+ * @param probe This host's managed fastlane and compiler (a seam for tests).
  */
 export async function fastlaneFindings(
   root: string,
   appId: string | undefined,
+  probe: FastlaneHostProbe = HOST_PROBE,
 ): Promise<FastlaneFinding[] | undefined> {
   const dir = join(root, "fastlane");
   try {
@@ -418,7 +492,9 @@ export async function fastlaneFindings(
     ...gemfileFindings(
       await readText(join(root, "Gemfile")),
       await exists(join(root, "Gemfile.lock")),
+      await pluginfileGems(root),
     ),
+    ...await managedFastlaneFindings(probe),
     ...fastfileFindings(fastfile),
     ...inlineSecretFindings({ Appfile: appfile, Fastfile: fastfile, Matchfile: matchfile }),
     ...secrets.map((name): FastlaneFinding => ({

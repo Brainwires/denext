@@ -326,6 +326,11 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   binary, so rotating it takes a store release; the fingerprint gate can't see native code pulled
   in from outside `ios/`, `android/` and the declared plugins; an iOS web-content crash during a
   trial is reloaded by Capacitor, not the plugin.
+- **`denext fastlane` (the managed fastlane)** runs on macOS and Linux only (arm64, x64); Windows
+  is not supported. Its first install needs a C compiler, because several of fastlane's gems
+  build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the
+  project's Gemfile and `bundle exec`. The Ruby is downloaded from Homebrew's `ghcr.io` registry
+  and pinned by SHA-256.
 - **Won't:** native UIs for watches, cars and App Clips; hosted services (an Expo Go-style
   client, push relay, build/submit, OTA CDN); install attribution; MDM configuration wrappers;
   code obfuscation (keep secrets on the server).

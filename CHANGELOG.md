@@ -32,6 +32,26 @@ and this project adheres to
 
 ### Added
 
+- **`denext fastlane`: a managed fastlane, no Ruby setup.** `denext fastlane ios beta` runs one
+  pinned fastlane (2.240.1) on a pinned portable Ruby (Homebrew's 4.0.7, the relocatable build
+  `brew` runs), installed on first use into the toolchain cache beside the Deno toolchain and
+  Gleam (`<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`). The Ruby tarball is checked
+  against its pinned SHA-256 and size before it is extracted, and the gems against the checksums
+  in denext's pinned `Gemfile.lock` (Bundler refuses a mismatch). The install runs under the
+  cache lock in a temporary directory that is renamed into place. Several gems build C
+  extensions, so the first install needs a C compiler (the Command Line Tools on macOS, `cc` +
+  `make` on Linux), and denext says which one is missing. macOS and Linux on arm64 and x64;
+  Windows gets a clear "not supported". Runs drop the user's `GEM_*` / `BUNDLE_*` / `RUBY*`
+  variables. `denext toolchain install --with fastlane` installs it ahead of time, `toolchain
+  status` lists it, and `DENEXT_FASTLANE=<path>` runs another fastlane instead. The lanes and the
+  `--ci` workflow `denext mobile add fastlane` writes now run `denext fastlane` (the workflow has
+  no Ruby setup step). The Gemfile stays for plugins (`fastlane/Pluginfile`), which need `bundle
+  exec`; `denext fastlane` warns when it finds them. `denext create --fastlane` (an opt-in picker
+  entry, which adds Capacitor) scaffolds the lanes into a new app. `denext mobile doctor
+  --release` checks that the managed fastlane can run on the host: Windows, a `DENEXT_FASTLANE`
+  that names no file, an install that no longer matches its pin, or no compiler for the first
+  install. It no longer asks for a Gemfile unless plugins need one.
+
 - **`ctx.servesRoutes()` in the plugin kit.** A plugin whose pages come from a route tree of its
   own declares it in `setup` (`ctx.servesRoutes?.()`, optional so the plugin still runs on an
   older denext); `denext doctor` then accepts a project with no `app/`. `@denext/pages-router`,

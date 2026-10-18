@@ -291,6 +291,11 @@
           "description": "iOS / Android (Capacitor)"
         },
         {
+          "name": "fastlane",
+          "type": "boolean",
+          "description": "fastlane lanes for the iOS / Android app (denext fastlane; adds Capacitor)"
+        },
+        {
           "name": "compatibility",
           "type": "boolean",
           "description": "React + Next import aliases"
@@ -901,6 +906,21 @@
       ]
     },
     {
+      "name": "fastlane",
+      "summary": "Run denext's managed fastlane (pinned; installed on first use)",
+      "usage": "denext fastlane [args...] [-- <deno args>]",
+      "description": "Runs fastlane with the arguments verbatim, in the current directory (or --cwd):\n  denext fastlane ios beta flavor:staging\n  denext fastlane android release track:production\nThe first run installs fastlane 2.240.1 on a pinned portable Ruby\ninto denext's toolchain cache (SHA-256-verified; the gems build C extensions, so it needs\nthe Command Line Tools on macOS or cc + make on Linux). Windows is not supported.\n  denext toolchain install --with fastlane   install it ahead of time\n  DENEXT_FASTLANE=<path>                     run that fastlane instead (unverified)",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "args",
+          "required": false,
+          "variadic": true,
+          "description": "fastlane's arguments"
+        }
+      ]
+    },
+    {
       "name": "fmt",
       "summary": "Format the app (deno fmt)",
       "usage": "denext fmt [paths] [-- <deno args>]",
@@ -1166,6 +1186,11 @@
           "name": "capacitor",
           "type": "boolean",
           "description": "iOS / Android (Capacitor)"
+        },
+        {
+          "name": "fastlane",
+          "type": "boolean",
+          "description": "fastlane lanes for the iOS / Android app (denext fastlane; adds Capacitor)"
         },
         {
           "name": "compatibility",
@@ -2404,7 +2429,7 @@
       "name": "toolchain",
       "summary": "Manage denext's Deno toolchain (install | status | path | link | unlink)",
       "usage": "denext toolchain <action> [options]",
-      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain install --with gleam   …and the pinned Gleam compiler\n  denext toolchain status       Pinned versions (Deno, Gleam), cache state, active (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n  denext toolchain unlink       Remove that link (only what link created)",
+      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain install --with gleam   …and the pinned Gleam compiler\n  denext toolchain install --with fastlane   …and the managed fastlane (Ruby + gems)\n  denext toolchain status       Pinned versions (Deno, Gleam, fastlane), cache state (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n  denext toolchain unlink       Remove that link (only what link created)",
       "flags": [
         {
           "name": "verify",
@@ -2415,7 +2440,7 @@
           "name": "with",
           "type": "string",
           "valueName": "<tool>",
-          "description": "install: also fetch these pinned tools (gleam)"
+          "description": "install: also fetch these pinned tools (gleam, fastlane)"
         }
       ],
       "positionals": [

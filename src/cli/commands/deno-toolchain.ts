@@ -21,9 +21,13 @@ import {
 } from "../../build/deno-toolchain.ts";
 import { esbuildBinaryStatus } from "../../build/esbuild/binary.ts";
 import { ensureGleamToolchain, gleamToolchainStatus } from "../../build/gleam-toolchain.ts";
+import {
+  ensureFastlaneToolchain,
+  fastlaneToolchainStatus,
+} from "../../build/fastlane-toolchain.ts";
 
 /** The extra tools `toolchain install --with <tool>` fetches beside the Deno toolchain. */
-const EXTRA_TOOLS = ["gleam"] as const;
+const EXTRA_TOOLS = ["gleam", "fastlane"] as const;
 
 /**
  * `ensureDenoToolchain()`, or a clear refusal (exit 1) when the toolchain can't be had: `install`,
@@ -110,32 +114,40 @@ async function status(ctx: CommandContext): Promise<void> {
   const s = await denoToolchainStatus({ verify });
   const esbuild = await esbuildBinaryStatus();
   const gleam = await gleamToolchainStatus({ verify });
+  const fastlane = await fastlaneToolchainStatus({ verify });
   if (ctx.global.json) {
-    console.log(JSON.stringify({ ...s, esbuildBinary: esbuild, gleam }, null, 2));
+    console.log(JSON.stringify({ ...s, esbuildBinary: esbuild, gleam, fastlane }, null, 2));
   } else {
     console.log("");
     statusLine(s.ok, "deno toolchain", s.detail, s.path);
     statusLine(esbuild.ok, "esbuild", esbuild.detail, esbuild.path);
     statusLine(s.tsgo.state !== "refused", "typescript", s.tsgo.detail, s.tsgo.path);
     statusLine(gleam.ok, "gleam", gleam.detail, gleam.state === "missing" ? null : gleam.path);
+    statusLine(
+      fastlane.ok,
+      "fastlane",
+      fastlane.detail,
+      fastlane.state === "missing" ? null : fastlane.path,
+    );
     console.log("");
   }
   const stale = await staleToolchainLink().catch(() => null);
   if (stale) console.error(stale);
-  if (!s.ok || !gleam.ok) Deno.exit(1);
+  if (!s.ok || !gleam.ok || !fastlane.ok) Deno.exit(1);
 }
 
 /**
  * `denext toolchain install`: download and verify the toolchain, and — for a CLI run from JSR,
  * which loads each verb on first use — cache every verb now, so all of them work offline after
  * this post-install step (nothing to do for a checkout or a binary). `--with gleam` also fetches
- * the pinned Gleam compiler.
+ * the pinned Gleam compiler, and `--with fastlane` installs the managed fastlane.
  */
 async function install(ctx: CommandContext): Promise<void> {
   const extras = withTools(ctx);
   const rt = await requireToolchain();
   console.log(`  denext's Deno toolchain ${rt.version}: ${rt.deno}${rt.cached ? " (cached)" : ""}`);
   if (extras.includes("gleam")) await installGleam();
+  if (extras.includes("fastlane")) await installFastlane();
   if (!isRemoteCli()) return;
   if (!await cacheCliModules()) {
     console.error("denext: could not cache the CLI's verbs; they load on first use instead");
@@ -169,6 +181,17 @@ async function installGleam(): Promise<void> {
   }
 }
 
+/** Install the managed fastlane (exit 1 when it can't be had: Windows, no compiler, offline). */
+async function installFastlane(): Promise<void> {
+  try {
+    const f = await ensureFastlaneToolchain();
+    console.log(`  denext's fastlane ${f.version}: ${f.dir}${f.cached ? " (cached)" : ""}`);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
+  }
+}
+
 /** `toolchain link` / `unlink`. */
 async function link(unlink: boolean): Promise<void> {
   if (unlink) {
@@ -191,7 +214,8 @@ export const toolchainCommand: CommandSpec = {
     "verified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n" +
     "  denext toolchain install      Download + verify it now (fails when it can't)\n" +
     "  denext toolchain install --with gleam   …and the pinned Gleam compiler\n" +
-    "  denext toolchain status       Pinned versions (Deno, Gleam), cache state, active (--json)\n" +
+    "  denext toolchain install --with fastlane   …and the managed fastlane (Ruby + gems)\n" +
+    "  denext toolchain status       Pinned versions (Deno, Gleam, fastlane), cache state (--json)\n" +
     "  denext toolchain path         Print the binary's path (installs it first)\n" +
     "  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n" +
     "  denext toolchain unlink       Remove that link (only what link created)",
@@ -209,7 +233,7 @@ export const toolchainCommand: CommandSpec = {
     type: "string",
     valueName: "<tool>",
     repeatable: true,
-    help: "install: also fetch these pinned tools (gleam)",
+    help: "install: also fetch these pinned tools (gleam, fastlane)",
   }],
   run: async (ctx) => {
     const action = ctx.positionals[0];

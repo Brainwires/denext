@@ -9,6 +9,7 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { mfs } from "./migrate-io.ts";
 import { DESKTOP_RUNTIME_CONFIG_FILE, desktopRuntimeConfigText } from "./desktop-app-config.ts";
 import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
+import { addFastlaneToProject } from "./mobile-fastlane.ts";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
@@ -66,6 +67,12 @@ export interface ScaffoldOptions {
    * a `package.json` for Capacitor's CLI, and `export`/`mobile:*` tasks.
    */
   capacitor?: boolean;
+  /**
+   * Add fastlane lanes over `denext mobile build` (what `denext mobile add fastlane` writes:
+   * `fastlane/Appfile`, `Fastfile`, `Matchfile`, `.gitignore` and a `Gemfile`), run with
+   * `denext fastlane`. Implies {@linkcode capacitor}.
+   */
+  fastlane?: boolean;
   /**
    * Add React + Next import-map aliases (`react`, `react-dom`, `next/*`) so code
    * and libraries that import from `"react"`/`"next"` resolve to denext.
@@ -756,8 +763,9 @@ function desktopScaffoldFiles(): ScaffoldFile[] {
  * @returns The relative paths written.
  */
 export async function scaffoldProject(
-  opts: ScaffoldOptions,
+  options: ScaffoldOptions,
 ): Promise<string[]> {
+  const opts = options.fastlane ? { ...options, capacitor: true } : options;
   const files = scaffoldFiles(opts);
   await refuseToClobber(files, opts);
   for (const f of files) {
@@ -771,6 +779,10 @@ export async function scaffoldProject(
     await ensureVscodeDeno(opts.dir, vscode);
     // `/`-separated like every other scaffolded path, on Windows too.
     written.push(...vscode.map((p) => relative(opts.dir, p).split(SEPARATOR).join("/")));
+  }
+  if (opts.fastlane) {
+    // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
+    written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
   }
   if (opts.mcp) {
     // Merged like the .vscode files: `init` may meet a client config that already lists servers.

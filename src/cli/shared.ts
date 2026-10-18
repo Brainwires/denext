@@ -160,7 +160,7 @@ const TERMINAL: readonly Deno.Signal[] = Deno.build.os === "windows"
  * child's status comes back as Deno reports it — on Unix a child killed by a signal has
  * `code` 128 + its number, which is what the caller exits with, as a shell would.
  */
-async function relayingSignals(child: Deno.ChildProcess): Promise<Deno.CommandStatus> {
+export async function relayingSignals(child: Deno.ChildProcess): Promise<Deno.CommandStatus> {
   const relays = RELAYED.map((sig) =>
     [sig, () => {
       try {

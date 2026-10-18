@@ -510,6 +510,11 @@ ios|android [--dry-run]` (App Store Connect / Google Play). Teams already on fas
 `ios|android build|beta|release` lanes that run `denext mobile build --release` and hand the
 artifact to match / TestFlight / Play tracks; `flavor:` / `build_number:` pass through), a pinned
 Gemfile and, with `--ci`, a GitHub Actions workflow; `denext mobile doctor --release` checks it.
+Run the lanes with `denext fastlane ios beta` (`denext create --fastlane` scaffolds them): denext's
+managed fastlane, a pinned fastlane on a pinned portable Ruby installed on first use into the
+toolchain cache (SHA-256-verified Ruby, checksum-locked gems; needs a C compiler once; macOS and
+Linux, not Windows; `toolchain install --with fastlane`, `DENEXT_FASTLANE=<path>` overrides it;
+plugins need the Gemfile and `bundle exec`).
 Credentials are env-only. App backend:
 `cors` in config, `denextAuth({ native })` sessions, `createApiClient({ base, auth:
 nativeSession(…) })`, `sendPush` from `denext/server`. Docs: https://denext.dev/docs/mobile,
