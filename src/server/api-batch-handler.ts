@@ -13,7 +13,9 @@
 //   6. `{ v: 1, items: [1..maxItems] }`
 //   7. each item: an integer id unique in the batch; method GET/HEAD, or POST/PUT/PATCH/DELETE
 //      (unless `apiBatch.mutations: false`); a body only on a mutation, a string; headers only
-//      from `BATCH_ITEM_HEADERS`; a path string ≤ 2048 chars that starts with `/` (not `//` or
+//      `BATCH_ITEM_HEADERS` on a mutation and the app's `apiBatch.forwardHeaders` on any item
+//      (never a credential, framing, trust or proxy header, nor the app's `rateLimitHeader`),
+//      each value a single-line header value of at most 1024 characters; a path string ≤ 2048 chars that starts with `/` (not `//` or
 //      `/\`), resolves against the TRUSTED app origin (never a client-supplied one) to the same
 //      origin, and does not target `/_denext/*` (no actions, no live upgrade, no batch, no dev
 //      endpoints through a batch)
@@ -22,7 +24,9 @@
 // concurrently; a mutation runs ALONE, after every item before it settled and before any item
 // after it starts — the order the calls were made in. A mutation item gets the batch's
 // `Origin` and `Host` (already verified, as for a Server Action) so the route's own `csrf()` sees the same
-// proof a direct call would carry, plus its own double-submit token when it sent one.
+// proof a direct call would carry, plus its own double-submit token when it sent one. A forwarded
+// header reaches its own item's sub-request only: never another item's, and never from the batch
+// request itself.
 // Non-2xx items are ordinary results; item bodies travel as raw text (never re-parsed here);
 // item Set-Cookies are merged onto the batch response; the batch response is
 // `cache-control: no-store` (the per-item cache headers are gone).
@@ -47,6 +51,8 @@ import {
   type BatchRequest,
   type BatchResponse,
   type BatchResult,
+  forwardableBatchHeaders,
+  isBatchHeaderValue,
   isBatchMutation,
   MAX_BATCH_ITEMS_DEFAULT,
 } from "../runtime/api-batch-protocol.ts";
@@ -122,12 +128,10 @@ export async function handleApiBatch(
   }
   const body = await readBatchBody(request, cfg.maxBodyBytes);
   if (body instanceof Response) return finalize(state, body);
-  const items = parseBatch(
-    body,
-    cfg.maxItems,
-    requestOrigin(request, originOptions(config)),
-    config.apiBatch?.mutations !== false,
-  );
+  const items = parseBatch(body, cfg.maxItems, requestOrigin(request, originOptions(config)), {
+    mutations: config.apiBatch?.mutations !== false,
+    forward: forwardedHeaders(config.apiBatch?.forwardHeaders, state.ctx.limitPolicy?.header),
+  });
   if (items instanceof Response) return finalize(state, items);
   const results = await runItems(state, items, cfg, runSub, crossOrigin);
   return finalize(state, batchResponse(results));
@@ -143,6 +147,26 @@ async function readBatchBody(request: Request, maxBodyBytes: number): Promise<st
   return await bufferedRequest(request, buffered).text();
 }
 
+/**
+ * The headers an item may carry beyond `x-csrf-token`: the app's `forwardHeaders`, lower-cased,
+ * minus anything {@link forwardableBatchHeaders} refuses and the app's `rateLimitHeader` (the
+ * client address a limiter keys on comes from the batch request alone).
+ */
+function forwardedHeaders(
+  list: readonly string[] | undefined,
+  limitHeader: string | undefined,
+): Set<string> {
+  const names = forwardableBatchHeaders(list);
+  if (limitHeader) names.delete(limitHeader.toLowerCase());
+  return names;
+}
+
+/** What the app lets a batch carry: mutation items, and the headers forwarded per item. */
+interface ItemPolicy {
+  mutations: boolean;
+  forward: Set<string>;
+}
+
 /** A validated item: its URL on the trusted origin. */
 interface ResolvedItem extends BatchItem {
   url: URL;
@@ -153,7 +177,7 @@ function parseBatch(
   text: string,
   maxItems: number,
   origin: string,
-  mutations: boolean,
+  policy: ItemPolicy,
 ): ResolvedItem[] | Response {
   let parsed: Partial<Record<keyof BatchRequest, unknown>> | null;
   try {
@@ -168,7 +192,7 @@ function parseBatch(
   const seen = new Set<number>();
   const out: ResolvedItem[] = [];
   for (const raw of parsed.items) {
-    const item = resolveItem(raw, origin, seen, mutations);
+    const item = resolveItem(raw, origin, seen, policy);
     if (!item) return batchError(400, "malformed batch item");
     out.push(item);
   }
@@ -180,12 +204,12 @@ function resolveItem(
   raw: unknown,
   origin: string,
   seen: Set<number>,
-  mutations: boolean,
+  policy: ItemPolicy,
 ): ResolvedItem | null {
   const it = raw as Partial<BatchItem> | null;
   if (!it || typeof it !== "object") return null;
   if (!Number.isInteger(it.id) || (it.id as number) < 0 || seen.has(it.id as number)) return null;
-  if (!methodAllowed(it, mutations) || !headersAllowed(it.h)) return null;
+  if (!methodAllowed(it, policy.mutations) || !headersAllowed(it.h, policy.forward)) return null;
   const url = itemUrl(it.p, origin);
   if (!url) return null;
   seen.add(it.id as number);
@@ -213,13 +237,16 @@ function bodyAllowed(b: unknown, benc: unknown): boolean {
   return typeof b === "string" && (benc === undefined || benc === 1);
 }
 
-/** Item headers: absent, or only the allowlisted names with short string values. */
-function headersAllowed(h: unknown): boolean {
+/**
+ * Item headers: absent, or only the allowlisted names (`x-csrf-token`, the forwarded ones) —
+ * exact lower-case keys — each with a single-line value of at most 1024 characters.
+ */
+function headersAllowed(h: unknown, forward: Set<string>): boolean {
   if (h === undefined) return true;
   if (!h || typeof h !== "object" || Array.isArray(h)) return false;
   return Object.entries(h).every(([k, v]) =>
-    (BATCH_ITEM_HEADERS as readonly string[]).includes(k) && typeof v === "string" &&
-    v.length <= 1024
+    (forward.has(k) || (BATCH_ITEM_HEADERS as readonly string[]).includes(k)) &&
+    isBatchHeaderValue(v)
   );
 }
 
@@ -307,25 +334,42 @@ function phasesOf(items: ResolvedItem[]): ResolvedItem[][] {
 }
 
 /**
- * The headers a mutation item adds to its sub-request: its JSON content type (and codec flag),
- * its allowlisted headers, and the batch's verified `Origin` (else `Referer`) — the proof the
- * route's own CSRF check reads.
+ * The headers an item adds to its sub-request: its own forwarded headers; on a mutation also its
+ * JSON content type (and codec flag), its `x-csrf-token`, and the batch's verified `Origin`
+ * (else `Referer`) — the proof the route's own CSRF check reads. Set after the item's own
+ * headers, so none of them can be replaced (the parse refused those names anyway).
  */
 function itemHeaders(state: RequestState, item: ResolvedItem, crossOrigin: boolean): Headers {
-  const headers = new Headers();
+  const mutation = isBatchMutation(item.m);
+  const headers = ownItemHeaders(item, mutation);
   if (crossOrigin) {
     headers.set(BATCH_CORS_HEADER, "1");
     headers.set("origin", state.request.headers.get("origin")!);
   }
-  if (!isBatchMutation(item.m)) return headers;
+  if (mutation) addMutationHeaders(state, item, headers);
+  return headers;
+}
+
+/**
+ * The item's own headers: its forwarded ones, and on a mutation its `x-csrf-token` (the
+ * double-submit proof; a read has no use for it).
+ */
+function ownItemHeaders(item: ResolvedItem, mutation: boolean): Headers {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(item.h ?? {})) {
+    if (mutation || !(BATCH_ITEM_HEADERS as readonly string[]).includes(k)) headers.set(k, v);
+  }
+  return headers;
+}
+
+/** A mutation's JSON content type (and codec flag), and the batch's verified `Origin` / `Referer`. */
+function addMutationHeaders(state: RequestState, item: ResolvedItem, headers: Headers): void {
   if (item.b !== undefined) headers.set("content-type", "application/json");
   if (item.benc === 1) headers.set("x-denext-wire", "1");
-  for (const [k, v] of Object.entries(item.h ?? {})) headers.set(k, v);
   const origin = state.request.headers.get("origin");
   const referer = state.request.headers.get("referer");
   if (origin) headers.set("origin", origin);
   else if (referer) headers.set("referer", referer);
-  return headers;
 }
 
 /** How one item runs: its response caps, and whether the batch came from another origin. */

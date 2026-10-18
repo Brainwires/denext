@@ -98,8 +98,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   at-most-once, latest-wins, 16 ms coalescing, `seq` ordered per instance. A log replays what
   it retains (`size` per key, `ttlSeconds`); the in-memory one is per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
-- **A batched call carries no custom headers but `x-csrf-token`** (one that needs another goes as
-  its own request), and **`useApi({ suspense: true })` is not seeded from a Cache Components
+- **A batched call carries no custom headers but `x-csrf-token` and the ones the app forwards**
+  (`apiBatch.forwardHeaders`, listed on the client too; one that needs another goes as its own
+  request), and **`useApi({ suspense: true })` is not seeded from a Cache Components
   (PPR) shell of a non-Flight route** (it fetches on mount there).
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
   custom middleware's responses appear only as `default` until it is tagged with

@@ -712,6 +712,18 @@ export interface ApiBatchConfig {
    */
   mutations?: boolean;
   /**
+   * Request headers a batched call may carry, each item with its own value — a tenant or
+   * locale header such as `["x-tenant"]` (default none). The client batches a call carrying
+   * one only when it lists the same name (`createApiClient({ batch: { forwardHeaders } })`);
+   * a call with any other custom header goes as its own request. A header reaches only its own
+   * item's handler, never another item's, and never comes from the batch request itself. Names
+   * are lower-cased; a credential (`cookie`, `authorization`), framing or hop-by-hop header,
+   * `origin` / `referer` / `host`, a proxy-set header (`forwarded`, `x-forwarded-*`,
+   * `x-real-ip`, `cf-*`, …), `x-denext-*`, `sec-*` and the app's `rateLimitHeader` are refused.
+   * Each value is one line of at most 1024 characters; anything else fails the whole batch.
+   */
+  forwardHeaders?: string[];
+  /**
    * Max items per batch (default 20, at most 100).
    *
    * @minimum 1

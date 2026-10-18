@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **Typed-API batching forwards the request headers an app lists, per item.**
+  `apiBatch: { forwardHeaders: ["x-tenant"] }` on the server and `createApiClient({ batch: {
+  forwardHeaders: ["x-tenant"] } })` on the client let calls carrying `x-tenant` ride the one
+  `POST /_denext/api-batch` (reads and mutations); each item's handler gets its own value, never
+  another item's, and the batch request's own copy reaches no item. A call with any other custom
+  header still goes alone. Credential, framing, trust and proxy headers (`cookie`,
+  `authorization`, `host`, `origin`, `x-forwarded-*`, `cf-*`, `x-denext-*`, the app's
+  `rateLimitHeader`, …) are refused by config validation and by the handler, and an item value
+  with a line break, a control character or over 1024 characters fails the whole batch.
+
 - **Opt-in sanitized raw HTML in the first-party Markdown renderer** (`@denext/content-collections`
   0.7). Raw HTML in a `.md` entry stays escaped by default; `contentCollections({ markdown: {
   html: "sanitize" } })` (or `renderContent(entry, { markdown })`, or `renderMarkdown(body, {

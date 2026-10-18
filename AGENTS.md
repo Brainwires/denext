@@ -164,6 +164,10 @@ export function User({ id }: { id: string }) {
 }
 ```
 
+A call with a custom header goes alone unless both sides forward it (`apiBatch: { forwardHeaders:
+["x-tenant"] }` + `createApiClient({ batch: { forwardHeaders: ["x-tenant"] } })`, each item its own
+value; never `cookie` / `authorization` / proxy headers).
+
 Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
 definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
 `openapi.json` at build, and back `denext openapi emit | diff | lint | types | client` — zero extra
