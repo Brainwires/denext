@@ -38,7 +38,7 @@ export type ExpoSdkFamily = "calendar" | "contacts" | "print" | "brightness";
 
 /** Each family's template generation, stamped into every file of it the installer writes. */
 export const EXPO_SDK_TEMPLATE_VERSIONS: Readonly<Record<ExpoSdkFamily, number>> = {
-  calendar: 1,
+  calendar: 2,
   contacts: 1,
   print: 1,
   brightness: 1,

@@ -2440,8 +2440,9 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         {" "}
         <code>MainActivity</code>, upgraded in place while unedited): <code>DenextCalendar</code>
         {" "}
-        (attendees, an event by id, one occurrence's changes and its time zone, the system event
-        viewer), <code>DenextContacts</code>{" "}
+        (attendees, an event by id, one occurrence's changes and its time zone, an Android series
+        split from one occurrence on for <code>futureEvents</code>, the system event viewer),{" "}
+        <code>DenextContacts</code>{" "}
         (containers on iOS, change events, and the postal addresses, URLs, birthday and photo an
         Android update would drop), <code>DenextPrint</code>{" "}
         (<code>printToFileAsync</code>: HTML to a PDF file; on iOS the printer picker and printing

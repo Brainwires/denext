@@ -49,8 +49,8 @@
   `DenextContacts` (containers, change events, Android's full updates), `DenextPrint` (HTML to
   PDF, the printer picker, printing to a picked printer) and `DenextBrightness` (Android's system
   brightness and the `WRITE_SETTINGS` screen, iOS's change events) are compiled and type-checked
-  only. Then: splitting a repeating Android event from one occurrence on (`futureEvents` with
-  `instanceStartDate`, refused today).
+  only, Android's split of a repeating event from one occurrence on (`futureEvents` with
+  `instanceStartDate`) included.
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at

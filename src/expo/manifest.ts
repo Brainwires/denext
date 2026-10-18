@@ -215,7 +215,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "strings. DenextCalendar reads attendees (and adds, changes and removes them on Android; " +
       "iOS's are read-only, as in Expo), looks an event up by id, changes one occurrence " +
       "(EKSpan.thisEvent on iOS; an exception event on Android, whose id updateEventAsync " +
-      "returns) or an event's time zone, and shows an event in the system viewer " +
+      "returns), or it and the ones after it (futureEvents: EKSpan.futureEvents on iOS; on " +
+      "Android the series is split there, ending before it, and the new series' id is " +
+      "returned), or an event's time zone, and shows an event in the system viewer " +
       "(openEventInCalendarAsync: iOS reports done / responded / deleted / canceled, Android " +
       "done) or one occurrence in the editor. An event's recurrence rule is not reported " +
       "(recurrenceRule reads null), and only relative alarms are passed on. " +

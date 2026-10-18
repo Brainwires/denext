@@ -362,8 +362,7 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Not verified on a device yet:** the `DenextCalendar`, `DenextContacts`, `DenextPrint` and
   `DenextBrightness` plugins `denext mobile add calendar | contacts | print | brightness` write
   are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
-  yet run on a phone. On Android, splitting a repeating event from one occurrence on
-  (`updateEventAsync` with `instanceStartDate` and `futureEvents`) is refused, and
+  yet run on a phone (Android's split of a repeating event from one occurrence on included), and
   `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim

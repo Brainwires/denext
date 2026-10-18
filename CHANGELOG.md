@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **expo-calendar: `futureEvents` on Android splits the series.** `updateEventAsync(id, details,
+  { instanceStartDate, futureEvents: true })` no longer rejects on Android: `DenextCalendar`
+  (calendar template generation 2; re-run `denext mobile add calendar`) ends the repeating event
+  just before the occurrence (`UNTIL` in place of `COUNT` or a later `UNTIL`; earlier `EXDATE` /
+  `RDATE` values kept) and inserts a new event from it on with the changes, the rest of the rule
+  (a `COUNT` rule ends at the series' last occurrence), the later `EXDATE` / `RDATE` values, the
+  attendees and the reminders, and returns its id, as EventKit's `EKSpan.futureEvents` does on
+  iOS. Changed occurrences from that one on are replaced by the new values; cancelled ones stay
+  cancelled. From the first occurrence the event itself changes.
+
 - **Typed-API batching forwards the request headers an app lists, per item.**
   `apiBatch: { forwardHeaders: ["x-tenant"] }` on the server and `createApiClient({ batch: {
   forwardHeaders: ["x-tenant"] } })` on the client let calls carrying `x-tenant` ride the one

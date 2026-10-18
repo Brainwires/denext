@@ -38642,8 +38642,8 @@
           "slug": "updateEventAsync",
           "kind": "function",
           "signature": "updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>",
-          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.",
-          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones; iOS only). An occurrence and a time zone are changed through\n`DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is\nreturned.",
+          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned, and with futureEvents the series is split there (it ends before the occurrence, and a new event with the changes carries the rest: its id is returned, as EventKit's new identifier is on iOS).",
+          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones). An occurrence and a time zone are changed through `DenextCalendar`; on\nAndroid the changed occurrence becomes an exception event, whose id is returned, and with\n`futureEvents` the series is split there (it ends before the occurrence, and a new event with\nthe changes carries the rest: its id is returned, as EventKit's new identifier is on iOS).",
           "params": [
             {
               "name": "id",
@@ -38658,7 +38658,7 @@
               "doc": "instanceStartDate and futureEvents."
             }
           ],
-          "returns": "The id (of the exception, for an Android occurrence).",
+          "returns": "The id (of the exception, or of the new series with futureEvents, for an Android occurrence).",
           "examples": [],
           "denextOnly": false
         },
@@ -39671,8 +39671,8 @@
           "slug": "updateEventAsync",
           "kind": "function",
           "signature": "updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>",
-          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.",
-          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones; iOS only). An occurrence and a time zone are changed through\n`DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is\nreturned.",
+          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned, and with futureEvents the series is split there (it ends before the occurrence, and a new event with the changes carries the rest: its id is returned, as EventKit's new identifier is on iOS).",
+          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones). An occurrence and a time zone are changed through `DenextCalendar`; on\nAndroid the changed occurrence becomes an exception event, whose id is returned, and with\n`futureEvents` the series is split there (it ends before the occurrence, and a new event with\nthe changes carries the rest: its id is returned, as EventKit's new identifier is on iOS).",
           "params": [
             {
               "name": "id",
@@ -39687,7 +39687,7 @@
               "doc": "instanceStartDate and futureEvents."
             }
           ],
-          "returns": "The id (of the exception, for an Android occurrence).",
+          "returns": "The id (of the exception, or of the new series with futureEvents, for an Android occurrence).",
           "examples": [],
           "denextOnly": false
         },
