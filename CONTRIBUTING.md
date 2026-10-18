@@ -85,10 +85,11 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   stalls the thread for up to 40 ms before timer and microtask callbacks, from a seeded PRNG.
   Each run prints its seed and the summary lists the failed ones; replay one with
   `deno task test:stress --seed <seed> [files]`. `--runs N` runs N seeds, `--max-ms` and `--p`
-  change the longest stall and the stall chance. The nightly workflow runs it ten times.
+  change the longest stall and the stall chance. Run it ten times before a release.
 - **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two
-  network-bound suites `check` never runs; the nightly workflow
-  (`.github/workflows/e2e.yml`) does. The e2e suite drives the examples in a real
+  network-bound suites `check` never runs; the e2e workflow
+  (`.github/workflows/e2e.yml`) does, dispatched by hand before a release
+  (`gh workflow run e2e.yml --ref development`). The e2e suite drives the examples in a real
   Chromium. The **migration beds** (`tests/migration-bed/`) clone SHA-pinned
   real-world apps, run `denext migrate` against your checkout, build, serve and
   render-assert routes — one `<app>.test.ts` per bed describing the app as data

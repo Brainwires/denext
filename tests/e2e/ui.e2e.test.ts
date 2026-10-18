@@ -8,7 +8,7 @@
 // full navigation. The dev-server bug this file's second test pins was invisible for exactly
 // that reason.
 //
-// Opt-in and nightly, like the rest of `tests/e2e/`: astral downloads Chromium on first run.
+// Opt-in and dispatched before a release, like the rest of `tests/e2e/`: astral downloads Chromium on first run.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";

@@ -5,13 +5,13 @@
 //
 // Skip vs. fail: a clone, dependency install or post-migrate setup command (`afterMigrate`:
 // Prisma engines, a seed) that fails for NETWORK reasons skips the bed (warn + return, the
-// `tests/e2e/drizzle.e2e.test.ts` idiom — the nightly runner may be offline or npm may be
+// `tests/e2e/drizzle.e2e.test.ts` idiom — the CI runner may be offline or npm may be
 // down); `denext migrate`, the build, serving and the route assertions are real failures,
 // because that is where a denext regression shows up. `denext doctor` runs last as an informational
 // report (printed, not asserted) until its route expectations are tunable per bed.
 //
 // Run: `deno task test:migration-bed` (NETWORK-REQUIRED; the `migration-beds` job in
-// .github/workflows/e2e.yml runs it nightly). Never part of `deno task check`/`test`.
+// .github/workflows/e2e.yml runs it when dispatched before a release). Never part of `deno task check`/`test`.
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";

@@ -576,7 +576,7 @@ More: [/docs/mobile](/docs/mobile).
 
 **Why it happens.** Framework migrations usually start with rewriting imports, config and routes.
 
-**What denext does.** `denext migrate` writes config only (a `deno.json` alias map and a `denext.config.ts`), so the app's own source is unchanged for Next.js. Two public apps are migrated, built and rendered by a nightly test: Vercel's App Router playground and the Epic Stack (Remix). `denext migrate --check` reports what would change for your app first.
+**What denext does.** `denext migrate` writes config only (a `deno.json` alias map and a `denext.config.ts`), so the app's own source is unchanged for Next.js. Two public apps are migrated, built and rendered by a test: Vercel's App Router playground and the Epic Stack (Remix). `denext migrate --check` reports what would change for your app first.
 
 **Evidence.**
 

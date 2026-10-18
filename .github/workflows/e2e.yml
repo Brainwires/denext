@@ -1,20 +1,12 @@
-name: E2E (nightly)
+name: E2E
 
 # The headless-browser e2e suite (real Chromium via astral, plus next-compat tests
 # that install real npm packages) is heavy and comparatively slow/flaky, so it is
-# intentionally kept OFF the pull_request / push critical path. It runs on a nightly
-# schedule and on manual dispatch instead — a failure here is visible on the nightly
-# run without ever blocking a PR merge. The fast `check` + `integration` jobs in
-# ci.yml gate PRs.
-#
-# Active development happens on `development` (the 2.0 line); `main` lags several rc
-# releases behind. A `schedule` event always runs from the DEFAULT branch's workflow
-# file and defaults to checking out that branch, so the nightly is pinned to check out
-# `development` below — otherwise it would test stale `main`. `workflow_dispatch` still
-# honors whatever ref you dispatch it against.
+# intentionally kept OFF the pull_request / push critical path. There is no scheduled run:
+# dispatch it by hand before a release (`gh workflow run e2e.yml --ref development`), so a
+# failure here never blocks a PR merge. The fast `check` + `integration` jobs in ci.yml gate
+# PRs. `workflow_dispatch` tests whatever ref you dispatch it against.
 on:
-  schedule:
-    - cron: "0 7 * * *" # 07:00 UTC daily
   workflow_dispatch: {}
 
 permissions:
@@ -27,9 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # Scheduled runs test `development` (active branch); a manual dispatch tests
-          # whatever ref it was launched against.
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
@@ -68,7 +58,7 @@ jobs:
 
   # Migration beds: clone SHA-pinned real-world apps (tests/migration-bed/*.test.ts), run
   # `denext migrate` against this checkout, build, serve, and render-assert routes. Every
-  # real-app migration so far found bugs by hand; this is that walk, nightly. A separate job
+  # real-app migration so far found bugs by hand; this is that walk, dispatched before a release. A separate job
   # so a bed flake never masks a core e2e failure and each gets its own timeout. A clone or
   # dependency install or post-migrate setup command that fails for network reasons SKIPS the
   # bed; `denext migrate`, the build, serving and the route assertions FAIL the job.
@@ -82,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
@@ -123,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
@@ -153,7 +143,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
 
       - name: Set up Deno (to compile the binary only; the container has none)
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5

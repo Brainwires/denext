@@ -612,7 +612,7 @@
       "errorText": [],
       "affects": { "stack": "Next.js App Router, Remix", "versions": "current" },
       "cause": "Framework migrations usually start with rewriting imports, config and routes.",
-      "denext": "`denext migrate` writes config only (a `deno.json` alias map and a `denext.config.ts`), so the app's own source is unchanged for Next.js. Two public apps are migrated, built and rendered by a nightly test: Vercel's App Router playground and the Epic Stack (Remix). `denext migrate --check` reports what would change for your app first.",
+      "denext": "`denext migrate` writes config only (a `deno.json` alias map and a `denext.config.ts`), so the app's own source is unchanged for Next.js. Two public apps are migrated, built and rendered by a test: Vercel's App Router playground and the Epic Stack (Remix). `denext migrate --check` reports what would change for your app first.",
       "upstreamFirst": null,
       "evidence": [
         {

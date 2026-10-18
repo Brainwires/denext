@@ -1,7 +1,7 @@
 // A FAST, BLOCKING guard for the next-compat build pipeline — the subsystem that
 // rewrites `react`/`react-dom`/`react-dom/server` imports to denext's single
 // runtime so real npm React libraries run. The full real-npm proof lives in the
-// nightly `tests/e2e/next-compat-*` suite (needs npm install); this one builds a
+// `tests/e2e/next-compat-*` suite (e2e.yml) (needs npm install); this one builds a
 // page that imports only React specifiers (no npm packages, no browser), so it
 // runs on every PR and catches an aliasing/dual-React regression in seconds.
 

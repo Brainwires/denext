@@ -272,7 +272,7 @@ The key files are read into WebCrypto only: nothing prints, logs or copies their
 
 ## In CI
 
-`.github/workflows/mobile-build.yml` in the denext repository runs this pipeline nightly on
+`.github/workflows/mobile-build.yml` in the denext repository runs this pipeline, dispatched by hand before a release, on
 [`examples/mobile`](https://github.com/Brainwires/denext/tree/main/examples/mobile): a debug
 `.apk`, a signed release `.aab` of its `staging` flavor (a throwaway keystore made in the job),
 `submit android --dry-run --offline`, and an unsigned iOS `.ipa` on a macOS runner. For your

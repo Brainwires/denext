@@ -14,17 +14,14 @@
 # the job summary, and a skip without a reason fails the run. The last job puts every check of every
 # OS in one table.
 #
-# The nightly `schedule` runs from the DEFAULT branch's copy of this file (so it starts firing once
-# the workflow reaches `main` with a release merge) and would check out `main`; like e2e.yml, the
-# window test checks out `development` on a scheduled run so the nightly tests the active line. A
-# push or a manual dispatch tests its own ref.
+# There is no scheduled run: the push filter below covers the desktop code, and the job is dispatched
+# by hand before a release (`gh workflow run desktop-window.yml --ref development`). A push or a
+# manual dispatch tests its own ref.
 
 name: Desktop window test
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: "17 5 * * *" # nightly, 05:17 UTC
   push:
     branches: [development]
     # What the test runs: `denext desktop package` (src/cli/commands/desktop*.ts), which writes the
@@ -33,7 +30,7 @@ on:
     # module-graph.ts, spa/, platform-*.ts, use-cache-loader.ts, scaffold.ts, pe-resources.ts and
     # more: about 140 of src/build's files, so all of src/build is listed — then the packaged app
     # (src/desktop, src/mobile). The render / server / runtime layers the export also runs are left
-    # to ci.yml (every push) and this workflow's nightly run.
+    # to ci.yml (every push) and this workflow's dispatch before a release.
     paths:
       - "src/desktop/**"
       - "src/build/**"
@@ -92,8 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # A scheduled run tests `development` (the active line); push / dispatch test their ref.
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.7" # exactly: denext's pinned Deno Desktop runtime is built for it
@@ -155,7 +151,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.7"

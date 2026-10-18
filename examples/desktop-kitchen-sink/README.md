@@ -13,7 +13,8 @@ rendered and hydrated instead of the plain web file) and the full-app updater (a
 installed, left unconfirmed and rolled back).
 
 CI runs it on Linux, macOS (Apple silicon and Intel) and Windows
-(`.github/workflows/desktop-window.yml`): nightly, and on pushes that touch the desktop code.
+(`.github/workflows/desktop-window.yml`): dispatched before a release, and on pushes that touch the
+desktop code.
 
 ## Run it
 

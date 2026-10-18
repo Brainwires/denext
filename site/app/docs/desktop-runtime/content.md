@@ -840,7 +840,7 @@ Each layer has its own gate, and a release runs all of them:
   turns on every capability, calls each one from the page and asserts the results, including a
   real update installed, left unconfirmed and rolled back. Its window test
   (`.github/workflows/desktop-window.yml`) runs on Linux, macOS arm64, macOS Intel and Windows,
-  nightly and on every push that touches the desktop code; a check that can't run on a hosted
+  when dispatched before a release and on every push that touches the desktop code; a check that can't run on a hosted
   runner must say why.
 
 ## How it works

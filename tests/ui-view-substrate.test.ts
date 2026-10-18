@@ -445,7 +445,7 @@ Deno.test("the flip adds exactly the three view modules to the UI server's graph
 Deno.test("the client module is unchanged by the flip: no JSX, no hydration", () => {
   assert(!/jsx|hydrat/i.test(UI_JS), "ui.js stays progressive enhancement only");
   assertStringIncludes(UI_JS, "DOMParser");
-  // The unsaved-changes guard: its BEHAVIOUR is the e2e suite's subject (nightly, a real
+  // The unsaved-changes guard: its BEHAVIOUR is the e2e suite's subject (dispatched before a release, a real
   // browser), so this is the cheap always-run check that it is still there at all — and that it
   // is still built as nodes rather than assembled as markup, which is what keeps the strict CSP
   // and the no-innerHTML rule intact.

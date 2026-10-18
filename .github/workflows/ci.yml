@@ -157,7 +157,7 @@ jobs:
   # Real-npm next-compat compatibility tests: SSR of Radix / recharts / react-hook-
   # form / dnd-kit / framer-motion / lucide through the next-compat build. They
   # install real npm packages (needs Node) but drive NO browser, so — unlike the
-  # headless-Chromium e2e suite (nightly, e2e.yml) — they run on every PR to catch
+  # headless-Chromium e2e suite (dispatched before a release, e2e.yml) — they run on every PR to catch
   # npm-React compat regressions early. Runs in parallel with `check`/`integration`.
   next-compat:
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 name: Parity drift
 
-# Weekly (and on-demand) check for upstream React/ReactDOM/Next surface changes vs the
+# On-demand check for upstream React/ReactDOM/Next surface changes vs the
 # committed baseline in `tests/fixtures/react-surface.baseline.json`. This is a
 # non-blocking heads-up, NOT the parity gate — the blocking structural-parity check runs
 # offline in the `check` job (via `deno task test`, `tests/react-parity.test.ts`) against
@@ -8,13 +8,11 @@ name: Parity drift
 # `deno task parity:refresh` locally, review, and re-run `deno task parity:gaps`.
 #
 # A push to `development` that changes the drift tooling or the committed baseline runs it too, so
-# a broken extractor or a baseline refreshed by hand shows up on the push instead of the next Monday.
+# a broken extractor or a baseline refreshed by hand shows up on the push instead of the next dispatch.
 # The filter lists what `parity:drift` runs and imports (tests/workflow-path-filters.test.ts fails
 # when the scripts import a file it misses); it imports nothing from src/.
 
 on:
-  schedule:
-    - cron: "0 6 * * 1" # Mondays 06:00 UTC
   workflow_dispatch:
   push:
     branches: [development]
