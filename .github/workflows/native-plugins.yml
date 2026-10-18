@@ -23,8 +23,6 @@ on:
       - "src/build/native-templates.packed.ts"
       - "src/build/mobile-*.ts"
       - ".github/workflows/native-plugins.yml"
-  schedule:
-    - cron: "15 8 * * *" # 08:15 UTC daily, after mobile-build.yml
   workflow_dispatch:
     inputs:
       ios:
@@ -58,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.6" # match ci.yml
@@ -98,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+          ref: ${{ github.ref }}
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.6"
