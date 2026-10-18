@@ -122,6 +122,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A page whose only interactive part is a `defineLiveView` mounts in the browser.** The build
+  counted a route as needing a client entry only when it reached a `"use client"` module, so a
+  live-view-only page shipped no client JS and the `denext#LiveView` island and the Live socket
+  client never loaded: the view kept its server-rendered first paint and ignored clicks, natively
+  and under `compatibilityMode`. A route whose own modules define a live view is now a Flight route
+  in `denext build`, `dev`, `start` and `export`; a route without one still ships no Live client.
+
 - **`denext ui`'s Cron page says when an app's history store took too long, not that it printed
   nothing.** A custom `jobs.history.store` is read through a `denext job --history` child with a
   15 s deadline; a child killed at that deadline exits without an error, so its empty output was

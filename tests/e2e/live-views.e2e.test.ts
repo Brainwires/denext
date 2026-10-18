@@ -3,7 +3,9 @@
 // coming back. It runs twice: on the native App Router, and under `compatibilityMode: true` (the
 // Next drop-in path), where `denext/live` is prebuilt into the compat runtime graph, so the app's
 // `defineLiveView` and the server's Live hub load different copies of the live-view module and
-// must still share one registry and one signing key (src/runtime/process-shared.ts).
+// must still share one registry and one signing key (src/runtime/process-shared.ts). The page has
+// no `"use client"` module of its own: the live view alone makes it a Flight route that ships the
+// Live view client.
 //
 // The app is built and served by the CLI as a subprocess, like the other example e2es.
 // Opt-in: `deno task test:e2e` (astral downloads Chromium on first run).
@@ -51,16 +53,8 @@ export default function RootLayout({ children }: LayoutProps) {
 }
 `,
     "app/page.tsx": `import { Counter } from "./counter.ts";
-import { Hello } from "./hello.tsx";
 export default function Page() {
-  return <section><h1>Live view</h1><Counter start={2} /><Hello /></section>;
-}
-`,
-    // A client island beside the view: a page whose only interactive part is a live view ships
-    // no client entry today, so the view never mounts (a known gap, tracked separately).
-    "app/hello.tsx": `"use client";
-export function Hello() {
-  return <p class="hello">hello</p>;
+  return <section><h1>Live view</h1><Counter start={2} /></section>;
 }
 `,
     "app/counter.ts": `import { defineLiveView } from "denext/live";
