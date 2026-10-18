@@ -1204,7 +1204,10 @@ async function sign(
         !file.slice(macosDir.length).includes("/");
       await run(macosCodesignArgs(file, {
         identity,
-        entitlementArgs: await entitlementArgs(cefHelperEntitlements(file), file),
+        entitlementArgs: await entitlementArgs(
+          cefHelperEntitlements(file),
+          file,
+        ),
         identifier: besideMain ? bundleId : undefined,
       }));
     }
@@ -1212,7 +1215,11 @@ async function sign(
     // executable (V8) gets the JIT keys they do not set.
     await run(macosCodesignArgs(app, {
       identity,
-      entitlementArgs: await entitlementArgs(V8_ENTITLEMENTS, app, entitlements),
+      entitlementArgs: await entitlementArgs(
+        V8_ENTITLEMENTS,
+        app,
+        entitlements,
+      ),
     }));
   } finally {
     for (const file of written) await Deno.remove(file).catch(() => {});
