@@ -21,8 +21,7 @@ import type { ApiMatch } from "../router/match.ts";
 import type { ApiContext, ApiModule, HttpMethod, ModuleLoader } from "./types.ts";
 import { readApiBodyLimit, readSegmentConfig } from "./segment-config.ts";
 import { currentContext, type RequestContext } from "./request-context.ts";
-import { SUB_REQUEST_HEADER_ALLOWLIST } from "./sub-request.ts";
-import { trackInheritedReads } from "./inherited-read-tracking.ts";
+import { selfCallInheritedHeaders, trackInheritedReads } from "./inherited-read-tracking.ts";
 import { asyncProps } from "../runtime/async-props.ts";
 import { isPostpone } from "../runtime/postpone.ts";
 import { cappedBody, isBodyTooLarge } from "./body.ts";
@@ -144,11 +143,8 @@ async function dispatchToHandler(
  * caller make the caller's render per-visitor (see `inherited-read-tracking.ts`).
  */
 function trackSelfCall(req: Request, ctx: RequestContext | undefined): Request {
-  if (!ctx?.subRequestDepth) return req;
-  const inherited = new Set<string>(SUB_REQUEST_HEADER_ALLOWLIST);
-  const limitHeader = ctx.limitPolicy?.header;
-  if (limitHeader) inherited.add(limitHeader.toLowerCase());
-  return trackInheritedReads(req, inherited);
+  const inherited = selfCallInheritedHeaders(ctx);
+  return inherited ? trackInheritedReads(req, inherited) : req;
 }
 
 /** The request with its body bounded by `cap` (`false` = unbounded; no body = unchanged). */

@@ -21,6 +21,15 @@ and this project adheres to
   hole (HTML and Flight routes alike). Reads the framework makes while routing don't count, and
   a handler that reads no inherited header stays cacheable.
 
+- **The app's `middleware.ts` no longer launders a visitor's cookie into a cached in-process API
+  answer.** The middleware runs inside that in-process call under the same cookie and
+  authorization, and what it read it could hand on untracked: a rewrite (`/api/me?u=<user>`) or
+  a request header it sets for the handler. Its reads now count as the visitor's request read,
+  exactly like the handler's: `request.headers` (`get`, `has`, iteration, `forEach`), a
+  `NextRequest`'s `cookies`, and a matcher's `has` / `missing` condition on an inherited header
+  or a cookie (`cookies()` / `headers()` already did). A middleware that reads none of them
+  leaves the page cacheable.
+
 ### Added
 
 - **expo-calendar: `futureEvents` on Android splits the series.** `updateEventAsync(id, details,

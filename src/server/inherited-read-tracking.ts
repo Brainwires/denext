@@ -5,9 +5,18 @@
 // for other visitors. `cookies()` / `headers()` already mark a render dynamic; this catches the
 // raw reads (`request.headers.get("cookie")`, `has`, iteration, `forEach`, a `NextRequest`'s
 // `cookies`). Reads the framework itself makes while routing go to the untracked original
-// request; only the request handed to the handler is tracked.
+// request; only the request handed to the handler is tracked. The app's own `middleware.ts`
+// runs inside the self-call too, and what it reads it can hand on (a rewrite, a request header
+// it sets): its handler's request is tracked the same way, and so is a matcher's `has` /
+// `missing` condition on an inherited header or the cookie.
 
-import { markInheritedRequestRead } from "./request-context.ts";
+import { copyRemoteAddr } from "./remote-addr.ts";
+import {
+  currentContext,
+  markInheritedRequestRead,
+  type RequestContext,
+} from "./request-context.ts";
+import { SUB_REQUEST_HEADER_ALLOWLIST } from "./sub-request.ts";
 
 /** The `Headers` read methods that reveal a value or presence. */
 const NAMED_READS = new Set(["get", "has", "getSetCookie"]);
@@ -82,4 +91,54 @@ export function trackInheritedReads(request: Request, inherited: ReadonlySet<str
     });
   }
   return request;
+}
+
+/**
+ * The lower-case names a self-call inherited from its caller (the sub-request allowlist plus
+ * the app's `rateLimitHeader`), or `null` outside a self-call.
+ *
+ * @param ctx The request context (the current one by default).
+ * @returns The inherited names, or `null`.
+ */
+export function selfCallInheritedHeaders(
+  ctx: RequestContext | undefined = currentContext(),
+): ReadonlySet<string> | null {
+  if (!ctx?.subRequestDepth) return null;
+  const inherited = new Set<string>(SUB_REQUEST_HEADER_ALLOWLIST);
+  const limitHeader = ctx.limitPolicy?.header;
+  if (limitHeader) inherited.add(limitHeader.toLowerCase());
+  return inherited;
+}
+
+/**
+ * The request a middleware handler receives inside a self-call: its own copy (so the
+ * framework's later reads of the routed request stay untracked) whose reads of an inherited
+ * header count as the visitor's request read. Outside a self-call, `handed` as is.
+ *
+ * @param original The request the pipeline routes.
+ * @param handed What the handler would receive (`original`, or its `NextRequest` adaptation).
+ * @returns The request to hand the handler.
+ */
+export function trackMiddlewareReads(original: Request, handed: Request): Request {
+  const inherited = selfCallInheritedHeaders();
+  if (!inherited) return handed;
+  let own = handed;
+  if (own === original) {
+    own = original.body ? original.clone() : new Request(original);
+    copyRemoteAddr(original, own);
+  }
+  return trackInheritedReads(own, inherited);
+}
+
+/**
+ * A middleware matcher condition read header `name` (`cookie` for a cookie condition): inside
+ * a self-call, when that header was inherited, the caller's render is per-visitor.
+ *
+ * @param name The header the condition reads.
+ */
+export function noteMatcherHeaderRead(name: string): void {
+  const lower = name.toLowerCase();
+  if (selfCallInheritedHeaders()?.has(lower)) {
+    markInheritedRequestRead(lower === "cookie" ? "cookies" : "headers");
+  }
 }

@@ -146,8 +146,11 @@ internal design choice with no observable difference lives in
   API carries none unless you pass them, which reads `cookies()`), a handler that reads any
   header it inherited — `cookies()`, `headers()`, or `request.headers` / a `NextRequest`'s
   `cookies` directly — makes the calling render per-visitor: an ISR page is not stored, and in
-  a Cache Components prerender the enclosing `<Suspense>` becomes a per-request hole. A handler
-  that reads none of them stays cacheable.
+  a Cache Components prerender the enclosing `<Suspense>` becomes a per-request hole. The app's
+  `middleware.ts` runs inside the call too, and its reads count the same way (its request's
+  headers, a `NextRequest`'s `cookies`, `cookies()` / `headers()`, and a matcher's `has` /
+  `missing` condition on an inherited header or a cookie), since it can hand what it read on
+  through a rewrite or a request header. A handler that reads none of them stays cacheable.
 - **`json()` from `denext/server` may add an `x-denext-wire: 1` header** when the body
   carried a Date / Map / Set / BigInt / URL / `undefined` / NaN / ±Infinity / -0 (the wire
   codec); a plain-JSON body
