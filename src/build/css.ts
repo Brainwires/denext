@@ -286,6 +286,21 @@ function readTextSync(path: string): string | null {
   }
 }
 
+/**
+ * Tailwind v4's options on its own import (`@import "tailwindcss" source("../") prefix(tw)`,
+ * `theme(static)`, `important`) are Tailwind syntax, not CSS, and lightningcss refuses the whole
+ * sheet over them. The walk passes a Tailwind import through as written (Tailwind itself compiles
+ * the input: the `tailwind` config, or a `?url` import), so it drops those options and keeps the
+ * import and the sheet's own rules. Any other stylesheet is returned unchanged.
+ */
+function withoutTailwindImportOptions(css: string): string {
+  return css.replace(TAILWIND_IMPORT_OPTIONS, "$1");
+}
+
+/** A `@import "tailwindcss[/…]"` followed by Tailwind's own import options, up to the `;`. */
+const TAILWIND_IMPORT_OPTIONS =
+  /(@import\s+(["'])tailwindcss(?:\/[^"']*)?\2)(?:\s+(?:(?:source|prefix|theme)\([^()]*\)|important))+(?=\s*;)/g;
+
 /** The generated CSS assets for a set of source files. */
 export interface CssAssets {
   /**
@@ -324,7 +339,10 @@ export async function generateCssAssets(
       // Sass files are compiled to CSS first (resolving their own @use/@import), then run
       // through lightningcss exactly like a `.css` file — so scoping/minify are unchanged.
       const source = isSass(file) ? await compileSass(file) : await Deno.readTextFile(file);
-      const t = await transformCss(source, file, { cssModules: isModule, minify: opts.minify });
+      const t = await transformCss(withoutTailwindImportOptions(source), file, {
+        cssModules: isModule,
+        minify: opts.minify,
+      });
       cssText = t.css;
       exports = t.exports;
     } catch (err) {

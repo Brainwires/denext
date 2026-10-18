@@ -70,6 +70,47 @@ Deno.test("generateCssAssets scopes a .module.scss and exports the class map", a
   }
 });
 
+/** `generateCssAssets` over one sheet, with the warnings it printed. */
+async function walkOne(text: string): Promise<{ css: string; warnings: string[] }> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_tw4_" });
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    const file = join(dir, "app.css");
+    await Deno.writeTextFile(file, text);
+    const assets = await generateCssAssets([file], dir);
+    return { css: assets.css.get(file)!, warnings };
+  } finally {
+    console.warn = warn;
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("generateCssAssets takes Tailwind v4's import options without a warning", async () => {
+  for (
+    const head of [
+      `@import "tailwindcss" source('../');`,
+      `@import 'tailwindcss' source(none) prefix(tw);`,
+      `@import "tailwindcss" important;`,
+      `@import "tailwindcss/theme.css" theme(static);`,
+    ]
+  ) {
+    const { css, warnings } = await walkOne(`${head}\n.card { color: red }\n`);
+    assertEquals(warnings, [], head);
+    assertStringIncludes(css, ".card"); // the sheet's own rules still compile
+  }
+});
+
+Deno.test("generateCssAssets still warns about a stylesheet that does not parse", async () => {
+  for (const text of [`@import "tailwindcss" source('../');\n.a { color: }}}`, `@media (`]) {
+    const { css, warnings } = await walkOne(text);
+    assertEquals(warnings.length, 1, text);
+    assertStringIncludes(warnings[0], "could not compile stylesheet");
+    assertEquals(css, "");
+  }
+});
+
 Deno.test("transformCss scopes module classes + resolves composes", async () => {
   const { css, exports } = await transformCss(
     ".base { color: red } .card { composes: base; padding: 8px } :global(.util) { margin: 0 }",

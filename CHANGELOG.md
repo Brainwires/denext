@@ -140,6 +140,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
+  The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
+  over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,
+  `theme(…)`, `important`), so a valid input such as a TanStack Start app's `src/styles/app.css`
+  (compiled through its `?url` import) printed the warning on every build. The walk now drops
+  those options and keeps the import and the sheet's own rules, as it already did for a plain
+  `@import "tailwindcss"`; a sheet that does not parse still warns.
+
 - **`denext doctor` passes an app whose routes come from a plugin.** A Pages Router or TanStack
   Start app has no `app/`; its routes come from the `@denext/pages-router` /
   `@denext/tanstack-start` plugin. Doctor reported "app directory: FAIL" for it and exited 1. When
