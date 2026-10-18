@@ -67,7 +67,9 @@ Deno.test("jsr pins: RUNTIME_MEMBERS are exactly the workspace members published
     }
   }
   // Generated code text, not imports: migrate / codemod write these specifiers into an app.
-  for (const textOnly of ["effect", "pages-router", "react-router"]) imported.delete(textOnly);
+  for (const textOnly of ["effect", "pages-router", "react-router", "tanstack-start"]) {
+    imported.delete(textOnly);
+  }
   assertEquals([...imported].sort(), [...RUNTIME_MEMBERS]);
 });
 

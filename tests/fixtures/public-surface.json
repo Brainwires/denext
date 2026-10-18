@@ -5818,6 +5818,7 @@
     "buildNextCompatClientEntries:function",
     "buildNextCompatFlightEntry:function",
     "buildNextCompatModules:function",
+    "compileCssAsset:function",
     "createNextCompatServerLoader:function",
     "detectNextCompat:function",
     "findServerOnlyLeaks:function"
