@@ -141,7 +141,10 @@ describe("live view client", () => {
 
 describe("live view island", () => {
   it("binds handler references to listeners that send the index and the event payload", async () => {
-    const { render } = await import("../src/testing/mod.ts");
+    // `render` from its own module, not `denext/testing`'s barrel: the barrel's graph (the
+    // conformance prober, the test client, the server) is ~3x larger, and after
+    // `vi.resetModules()` this test re-evaluates whatever it imports inside its own timeout.
+    const { render } = await import("../src/testing/render.ts");
     const { h } = await import("../src/jsx/jsx-runtime.ts");
     const { LiveViewIsland } = await import("../src/client/live-view-island.ts");
     const screen = await render(
@@ -149,14 +152,17 @@ describe("live view island", () => {
     );
     const ws = latest();
     ws.open();
-    ws.server({
-      type: "view-render",
-      vid: "v1",
-      rev: 1,
-      flight: [h("button", { onClick: { __dnxlv: 2 } }, "pushed")],
-      iid: "i",
-    });
-    await vi.waitFor(() => expect(screen.container.textContent).toBe("pushed"));
+    // `act` settles once the push's parse chain has committed: no polling deadline to race.
+    await screen.act(() =>
+      ws.server({
+        type: "view-render",
+        vid: "v1",
+        rev: 1,
+        flight: [h("button", { onClick: { __dnxlv: 2 } }, "pushed")],
+        iid: "i",
+      })
+    );
+    expect(screen.container.textContent).toBe("pushed");
     await screen.fireEvent.click(screen.getByRole("button"));
     expect(ws.frames().at(-1)).toEqual({
       type: "view-event",
