@@ -4,6 +4,7 @@
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
+import { windowsCommandLine } from "./windows-command-line.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -552,8 +553,14 @@ export function configArgsFor(config: string | null, childScript: string, cwd: s
   return own === config ? [] : ["--config", config];
 }
 
-/** This process's command line (Linux `/proc`, macOS `ps`); `null` where it can't be read. */
-async function ownCommandLine(): Promise<string[] | null> {
+/**
+ * This process's command line (Linux `/proc`, macOS `ps`, Windows `GetCommandLineW`); `null`
+ * where it can't be read.
+ *
+ * @returns The arguments, the Deno executable first.
+ */
+export async function ownCommandLine(): Promise<string[] | null> {
+  if (Deno.build.os === "windows") return windowsCommandLine();
   try {
     if (Deno.build.os === "linux") {
       return (await Deno.readTextFile("/proc/self/cmdline")).split("\0").filter(Boolean);

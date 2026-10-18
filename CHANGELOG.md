@@ -310,6 +310,14 @@ and this project adheres to
   Nothing inside an `<svg>` hoists now, as in React, in the string, Flight, streaming and PPR
   renderers alike.
 
+- **On Windows, the CLI's toolchain re-run keeps the `--config` it was started with.** A verb
+  that runs project code re-runs itself on denext's Deno toolchain and passes on the parent's
+  `--config` and resolution flags, read from the process's own command line. Windows had no
+  reader for it, so a local checkout started as `deno run -A --config <app>/deno.json cli.ts
+  build` re-ran under the checkout's own config, and loading `denext.config.ts` failed on any
+  import only the app's import map resolves (`Import "postgres" not a dependency`). The command
+  line now comes from `GetCommandLineW` there (with `--allow-ffi`, which `-A` grants).
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,
