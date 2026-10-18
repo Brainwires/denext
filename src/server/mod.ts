@@ -293,6 +293,7 @@ export {
   type CompileConfig,
   type CompiledPattern,
   type CompilePermissions,
+  type CompileSignConfig,
   type CompressConfig,
   type CorsConfig,
   type DenextCommand,

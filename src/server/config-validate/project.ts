@@ -5,7 +5,7 @@ import type { DenextConfig } from "../config.ts";
 import { VERB_NAME } from "../../cli/command.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../../cli/deno-verbs.ts";
 import { validateRemovedExperimental } from "./keys.ts";
-import type { Fail } from "./shared.ts";
+import { type Fail, isPlainObject } from "./shared.ts";
 
 /** `tailwind.input`/`output` are required non-empty path strings. */
 function validateTailwind(tailwind: unknown, fail: Fail): void {
@@ -173,18 +173,49 @@ function validateCompilePermissions(permissions: unknown, fail: Fail): void {
   }
 }
 
+/** `compile.sign`'s keys, each with its check and the message for a bad value. */
+const COMPILE_SIGN_KEYS: Record<string, [(v: unknown) => boolean, string]> = {
+  entitlements: [
+    (v) => typeof v === "string" && v !== "",
+    "must be the path of an entitlements plist",
+  ],
+  notarize: [(v) => typeof v === "boolean", "must be a boolean"],
+  timestampUrl: [(v) => /^https?:\/\/\S+$/.test(String(v)), "must be an http(s) URL"],
+};
+
+/** One `compile.sign` option: a known key with a valid value. */
+function validateCompileSignKey(key: string, value: unknown, fail: Fail): void {
+  const rule = Object.hasOwn(COMPILE_SIGN_KEYS, key) ? COMPILE_SIGN_KEYS[key] : undefined;
+  if (!rule) fail(`compile.sign.${key}`, "is not a key (entitlements, notarize, timestampUrl)");
+  else if (value !== undefined && !rule[0](value)) fail(`compile.sign.${key}`, rule[1]);
+}
+
+/** `compile.sign`: a boolean, or `{ entitlements?, notarize?, timestampUrl? }`. */
+function validateCompileSign(sign: unknown, fail: Fail): void {
+  if (sign === undefined || typeof sign === "boolean") return;
+  if (!isPlainObject(sign)) {
+    return fail("compile.sign", "must be a boolean or { entitlements?, notarize?, timestampUrl? }");
+  }
+  for (const [key, value] of Object.entries(sign)) validateCompileSignKey(key, value, fail);
+}
+
 /**
  * `compile`: `include` a list of project-relative paths (no `..`, none absolute), `permissions`
- * `"all"` or an object of permission kinds to string arrays.
+ * `"all"` or an object of permission kinds to string arrays, `sign` a boolean or its options.
  */
 export function validateCompile(compile: unknown, fail: Fail): void {
   if (compile === undefined) return;
   if (typeof compile !== "object" || compile === null || Array.isArray(compile)) {
     return fail("compile", "must be an object");
   }
-  const { include, permissions } = compile as { include?: unknown; permissions?: unknown };
+  const { include, permissions, sign } = compile as {
+    include?: unknown;
+    permissions?: unknown;
+    sign?: unknown;
+  };
   validateCompileInclude(include, fail);
   validateCompilePermissions(permissions, fail);
+  validateCompileSign(sign, fail);
 }
 
 /**

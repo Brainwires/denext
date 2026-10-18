@@ -34,6 +34,13 @@ import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
 import { backendChecks } from "./doctor-backend.ts";
+import {
+  signingReadiness,
+  type SigningReadinessDeps,
+  signingReadinessLines,
+  signingReady,
+} from "../../build/code-signing.ts";
+import { hasCommand, listSigningIdentities } from "../../ui/signing.ts";
 
 /** Whether `path` is an existing directory. */
 async function isDirectory(path: string): Promise<boolean> {
@@ -384,6 +391,31 @@ export async function desktopRuntimeCheck(
   return { name: "desktop runtime", ok: status.ok, detail: status.detail, critical: false };
 }
 
+/**
+ * The compiled binary's signing readiness, when `compile.sign` is configured (null otherwise):
+ * the macOS identity (and whether the keychain holds it), the notary credentials, the Windows
+ * certificate and the Authenticode tools. Advisory — `compile.sign` without credentials only
+ * warns at build time. Reads no secret.
+ */
+export async function compileSigningCheck(
+  config: DenextConfig | null | undefined,
+  deps: Partial<SigningReadinessDeps> = {},
+): Promise<Check | null> {
+  const sign = config?.compile?.sign;
+  if (sign === undefined || sign === false) return null;
+  const readiness = await signingReadiness({
+    has: (cmd) => hasCommand(cmd),
+    identities: () => listSigningIdentities(),
+    ...deps,
+  });
+  return {
+    name: "compile signing",
+    ok: signingReady(readiness, deps.os),
+    detail: signingReadinessLines(readiness).join("; "),
+    critical: false,
+  };
+}
+
 /** A task command that runs `deno test` itself (stock Deno under `deno task`). */
 const STOCK_DENO_TEST = /(?:^|[;&|(]\s*)deno\s+test\b/;
 
@@ -509,6 +541,8 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   if (desktopOrigin) checks.push(desktopOrigin);
   const desktopRuntime = await desktopRuntimeCheck(dir);
   if (desktopRuntime) checks.push(desktopRuntime);
+  const signing = await compileSigningCheck(paths.config);
+  if (signing) checks.push(signing);
   checks.push(...await backendChecks(paths.projectDir, paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };

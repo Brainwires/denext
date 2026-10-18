@@ -634,6 +634,7 @@
     "ChildStatus:interface",
     "CompileConfig:interface",
     "CompilePermissions:interface",
+    "CompileSignConfig:interface",
     "CompiledPattern:interface",
     "Component:typeAlias",
     "CompressConfig:interface",

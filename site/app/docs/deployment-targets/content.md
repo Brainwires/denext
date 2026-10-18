@@ -295,6 +295,64 @@ export default {
 `permissions: "all"` bakes `--allow-all`, and only when you ask for it. `denext build --compile`
 prints the flags it baked.
 
+### Signing the binary
+
+```sh
+export DENEXT_CODESIGN_IDENTITY="Developer ID Application: Example Inc (ABCDE12345)"
+export DENEXT_NOTARY_PROFILE=denext            # or DENEXT_NOTARY_KEY + _KEY_ID + _ISSUER
+denext build --compile --sign                  # signed, verified, notarized
+
+export DENEXT_WINDOWS_CERT=certs/app.pfx DENEXT_WINDOWS_CERT_PASSWORD=...
+denext build --compile --sign --target x86_64-pc-windows-msvc   # Authenticode, from any OS
+```
+
+`--sign` code-signs the binary after the compile, for the target it was built for. Set
+`compile: { sign: true }` in `denext.config.ts` to sign every `--compile` build. The
+difference is what happens when a credential or tool is missing: `--sign` fails with the
+reason, and a configured `compile.sign` prints a warning and leaves the binary unsigned (a
+developer machine without the certificate still builds).
+
+**macOS** (signed on a Mac). The binary is signed as `DENEXT_CODESIGN_IDENTITY` with
+`codesign --force --options runtime --timestamp --entitlements <plist>`, then checked with
+`codesign --verify --strict`. The Hardened Runtime is what notarization requires, and under it
+V8 needs one entitlement, `com.apple.security.cs.allow-jit`: on Apple Silicon it allocates its
+code space with `MAP_JIT`, and without the entitlement the binary crashes at startup. A binary
+whose `compile.permissions` grants `ffi` also gets `disable-library-validation`, because
+`Deno.dlopen` and Node-API addons load libraries your Developer ID did not sign. Nothing else is
+granted. To add keys, point `compile.sign.entitlements` (or `DENEXT_ENTITLEMENTS`) at a plist; a
+key the plist sets, `false` included, wins. `DENEXT_CODESIGN_IDENTITY=-` signs ad-hoc with the same
+Hardened Runtime and entitlements, which is useful for checking that the binary runs before you
+have a certificate.
+
+With notary credentials, the binary is zipped and submitted with `xcrun notarytool submit
+--wait`. The credentials are a keychain profile (`DENEXT_NOTARY_PROFILE`, from `xcrun notarytool
+store-credentials`) or an App Store Connect API key (`DENEXT_NOTARY_KEY`, the `.p8` path, plus
+`DENEXT_NOTARY_KEY_ID` and, for a team key, `DENEXT_NOTARY_ISSUER`). A rejection fails the build
+and names the submission, so `xcrun notarytool log <id>` shows why. Without credentials the
+binary is signed but not notarized, and Gatekeeper blocks it when it is downloaded.
+`compile.sign.notarize: true` makes notarization required and `false` skips it. **A bare
+executable cannot be stapled** (stapler takes `.app`, `.dmg` and `.pkg` only), so Gatekeeper
+checks the ticket online the first time the binary runs on a machine. If you ship to machines
+that are offline at first launch, wrap the binary in a signed `.pkg` or `.dmg` and staple that.
+
+**Windows** (`--target x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc`). The `.exe` is
+Authenticode-signed with SHA-256 digests and an RFC-3161 timestamp (`DENEXT_SIGN_TIMESTAMP_URL`
+or `compile.sign.timestampUrl`, DigiCert's by default). The certificate settings are the desktop
+packager's: `DENEXT_WINDOWS_CERT` (a `.pfx`) with `DENEXT_WINDOWS_CERT_PASSWORD`, or
+`DENEXT_WINDOWS_CERT_THUMBPRINT` for a certificate in the Windows certificate store. On Windows
+it signs with `signtool` (Windows SDK). On macOS and Linux it signs with `osslsigncode` (`brew
+install osslsigncode`, `apt install osslsigncode`), which reads the password from a private
+temporary file, never from its command line; a store thumbprint needs `signtool`.
+
+A Linux executable carries no OS signature, so `--sign` refuses a Linux target. Publish a
+checksum, or a detached signature of the archive.
+
+Credentials are read from the environment only. None are written to the project or printed, and
+a failing command's message has the certificate password redacted. `denext doctor` reports the
+signing readiness when `compile.sign` is set: the identity and whether the keychain holds it, the
+notary credentials, the Windows certificate, and `signtool` / `osslsigncode`. The "Compiled
+binary" tab of `denext ui`'s [Desktop panel](/docs/ui#desktop) shows the same.
+
 **Cross-compiling** takes any `deno compile` target: `x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`,
 `x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc` (Windows on Arm). The binary's

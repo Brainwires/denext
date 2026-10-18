@@ -37,7 +37,22 @@ and this project adheres to
   older denext); `denext doctor` then accepts a project with no `app/`. `@denext/pages-router`,
   `@denext/tanstack-start` and `@denext/react-router` declare it. `setupAppPlugins()` reports the
   declaring plugins as `routeServers`.
-
+- **Code-signed compiled binaries** (`denext build --compile --sign`, `compile.sign`). A macOS
+  binary is signed with `codesign` under the Hardened Runtime with a secure timestamp and the one
+  entitlement V8 needs (`allow-jit`; `disable-library-validation` too when `compile.permissions`
+  grants `ffi`), verified, then notarized with `xcrun notarytool submit --wait` when a keychain
+  profile (`DENEXT_NOTARY_PROFILE`) or an App Store Connect API key (`DENEXT_NOTARY_KEY`,
+  `DENEXT_NOTARY_KEY_ID`, `DENEXT_NOTARY_ISSUER`) is set; a bare executable cannot be stapled, so
+  Gatekeeper checks the ticket online on its first run. A Windows binary is Authenticode-signed
+  with `signtool` on Windows or `osslsigncode` from macOS and Linux (cross-compiled `--target
+  x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`), with the desktop packager's
+  `DENEXT_WINDOWS_CERT` / `DENEXT_WINDOWS_CERT_PASSWORD` (or `DENEXT_WINDOWS_CERT_THUMBPRINT` for
+  a certificate in the Windows store) and an RFC-3161 timestamp. Credentials come from the
+  environment only and are never printed. `--sign` fails without them; a configured
+  `compile.sign` warns and leaves the binary unsigned. `denext doctor` reports the signing
+  readiness when `compile.sign` is set, and `denext ui`'s Desktop panel has a "Compiled binary"
+  tab. The desktop packager and this path now share one signing module, and denext's own release
+  signs its Windows binaries the same way when the certificate secrets exist.
 - **File transfers with progress that outlive the app** (`denext/mobile`). `downloadToFile(url,
   path, options)` gains `onProgress`, `signal`, `headers` and an `id`, and `uploadFile(url, path,
   options)` sends a file as a `multipart/form-data` part (with text `fields`) or as the body

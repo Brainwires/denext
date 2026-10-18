@@ -147,3 +147,32 @@ Deno.test("the copy-paste export line single-quotes the identity, so a hostile n
   }).outputSync();
   assertEquals(new TextDecoder().decode(stdout), hostile);
 });
+
+Deno.test("the compiled-binary tab: its variables, the shared readiness, and the build command", async () => {
+  const dir = await project(false);
+  try {
+    // No packaging script needed: `denext build --compile --sign` reads the variables itself.
+    const body = await (await call(dir, "/desktop?tab=compile")).text();
+    assert(!body.includes("was not created with desktop packaging"));
+    for (
+      const name of [
+        "DENEXT_NOTARY_KEY_ID",
+        "DENEXT_WINDOWS_CERT_THUMBPRINT",
+        "DENEXT_WINDOWS_CERT_PASSWORD",
+        "Readiness",
+        "macOS: ",
+        "Windows: ",
+        "denext build --compile --sign --target x86_64-pc-windows-msvc",
+      ]
+    ) assertStringIncludes(body, name);
+    const api = await (await call(dir, "/api/desktop?tab=compile")).json();
+    assertEquals(api.tab, "compile");
+    assertEquals(api.scaffolded, true);
+    assertEquals(typeof api.readiness.macos.codesign, "boolean");
+    assertEquals(typeof api.readiness.windows.osslsigncode, "boolean");
+    const secret = api.env.find((e: { name: string }) => e.name === "DENEXT_WINDOWS_CERT_PASSWORD");
+    assertEquals(secret.value, null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

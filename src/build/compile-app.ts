@@ -29,6 +29,11 @@ import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
+import {
+  type CompileSignDeps,
+  type CompileSignResult,
+  signCompiledBinary,
+} from "./compile-sign.ts";
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
 import {
   denortTargetKey,
@@ -55,6 +60,13 @@ export interface CompileAppOptions {
   output?: string;
   /** The `deno` to compile with (default: {@linkcode denoExecutable}, the toolchain). */
   deno?: string;
+  /**
+   * `--sign`: code-sign the binary, failing when a credential or tool is missing (without it,
+   * `compile.sign` signs and only warns). See ./compile-sign.ts.
+   */
+  sign?: boolean;
+  /** Seams for the signing step (tests). */
+  signDeps?: CompileSignDeps;
 }
 
 /** What {@linkcode compileApp} produced. */
@@ -63,6 +75,8 @@ export interface CompileAppResult {
   output: string;
   /** The `--allow-*` baked into it. */
   permissions: string[];
+  /** The signing step's outcome, when signing was asked for. */
+  signing?: CompileSignResult;
 }
 
 /** Where the generated entry and config live, under the out dir. */
@@ -359,6 +373,23 @@ async function excludedPaths(
   return [...out].sort();
 }
 
+/** `--sign` / `compile.sign` over the written binary (./compile-sign.ts). */
+function signOutput(
+  output: string,
+  projectDir: string,
+  compile: CompileConfig | undefined,
+  permissions: readonly string[],
+  options: CompileAppOptions,
+): Promise<CompileSignResult | undefined> {
+  return signCompiledBinary(output, {
+    explicit: options.sign === true,
+    config: compile?.sign,
+    target: options.target ?? Deno.build.target,
+    projectDir,
+    ffi: permissions.some((p) => p === "--allow-all" || p.startsWith("--allow-ffi")),
+  }, options.signDeps);
+}
+
 /**
  * Compile the built project in `projectDir` into one executable (see the module comment).
  * `denext build` must have run first.
@@ -433,5 +464,6 @@ export async function compileApp(
     stderr: "inherit",
   }).output();
   if (code !== 0) throw new Error(`deno compile failed (exit ${code})`);
-  return { output, permissions };
+  const signing = await signOutput(output, paths.projectDir, compile, permissions, options);
+  return { output, permissions, signing };
 }

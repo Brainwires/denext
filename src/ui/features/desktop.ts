@@ -13,6 +13,10 @@
 // probed with `Deno.env.has` and never read, which makes that distinction a property of the
 // code rather than a promise in a comment.
 //
+// The "Compiled binary" tab does the same for `denext build --compile --sign`, which shares the
+// variables (./../../build/code-signing.ts) and adds the App Store Connect API key, a certificate
+// thumbprint and osslsigncode for signing a Windows binary from macOS or Linux.
+//
 // Read-only: this panel runs no build and writes no file. Every probe is a local query.
 
 import { h } from "../../jsx/jsx-runtime.ts";
@@ -22,9 +26,14 @@ import { Badge, type BadgeTone, Mono, Note, Out, Panel, Table, Tabs } from "../c
 import { renderView } from "../view.ts";
 import { uiSafeJoin } from "../security.ts";
 import { hasCommand, listSigningIdentities, type SigningIdentity } from "../signing.ts";
+import {
+  type SigningReadiness,
+  signingReadiness,
+  signingReadinessLines,
+} from "../../build/code-signing.ts";
 
-/** The three platforms `denext desktop package` knows, in tab order. */
-const TABS = ["macos", "windows", "linux"] as const;
+/** The three platforms `denext desktop package` knows, then the compiled binary, in tab order. */
+const TABS = ["macos", "windows", "linux", "compile"] as const;
 
 /** One of {@linkcode TABS}. */
 type DesktopTab = typeof TABS[number];
@@ -34,13 +43,18 @@ const TAB_LABEL: Record<DesktopTab, string> = {
   macos: "macOS",
   windows: "Windows",
   linux: "Linux",
+  compile: "Compiled binary",
 };
 
-/** The scaffolded packaging script per platform — its absence is what "not set up" means. */
-const SCRIPT: Record<DesktopTab, string> = {
+/**
+ * The scaffolded packaging script per platform — its absence is what "not set up" means. The
+ * compiled binary needs no script: `denext build --compile --sign` reads the variables itself.
+ */
+const SCRIPT: Record<DesktopTab, string | null> = {
   macos: "scripts/package-macos.ts",
   windows: "scripts/package-windows.ts",
   linux: "scripts/package-linux.ts",
+  compile: null,
 };
 
 /** One environment variable the packaging scripts read. */
@@ -103,6 +117,50 @@ const VARS: Record<DesktopTab, readonly EnvVar[]> = {
     },
   ],
   linux: [],
+  compile: [
+    {
+      name: "DENEXT_CODESIGN_IDENTITY",
+      purpose: "The Developer ID Application identity a macOS binary is signed with (the " +
+        'Hardened Runtime and the JIT entitlement V8 needs). "-" signs ad-hoc, for local runs.',
+    },
+    {
+      name: "DENEXT_ENTITLEMENTS",
+      purpose: "Path to an entitlements .plist merged under the defaults (compile.sign." +
+        "entitlements overrides it).",
+    },
+    {
+      name: "DENEXT_NOTARY_PROFILE",
+      purpose: "An `xcrun notarytool store-credentials` profile. Set it, or the API key below, " +
+        "to notarize a macOS binary.",
+    },
+    {
+      name: "DENEXT_NOTARY_KEY",
+      purpose: "Path to an App Store Connect API key (.p8), with DENEXT_NOTARY_KEY_ID and, for " +
+        "a team key, DENEXT_NOTARY_ISSUER — the CI alternative to a keychain profile.",
+    },
+    { name: "DENEXT_NOTARY_KEY_ID", purpose: "The API key's id." },
+    { name: "DENEXT_NOTARY_ISSUER", purpose: "The API key's issuer id (a team key)." },
+    {
+      name: "DENEXT_WINDOWS_CERT",
+      purpose: "Path to a .pfx that signs a Windows binary (signtool on Windows, osslsigncode " +
+        "on macOS and Linux).",
+    },
+    {
+      name: "DENEXT_WINDOWS_CERT_THUMBPRINT",
+      purpose: "Instead of a .pfx: the SHA-1 thumbprint of a certificate in the Windows store " +
+        "(signtool only).",
+    },
+    {
+      name: "DENEXT_WINDOWS_CERT_PASSWORD",
+      purpose: "The .pfx password. This panel never asks for it and never shows it — set it in " +
+        "your own shell or CI.",
+      secret: true,
+    },
+    {
+      name: "DENEXT_SIGN_TIMESTAMP_URL",
+      purpose: "RFC-3161 timestamp server. Defaults to DigiCert's when unset.",
+    },
+  ],
 };
 
 /** What the panel resolved for one request. */
@@ -121,6 +179,8 @@ interface DesktopState {
   readonly tool: ToolState | null;
   /** True when packaging this tab's platform cannot run on this host. */
   readonly wrongHost: boolean;
+  /** The compiled binary's signing readiness (that tab only). */
+  readonly readiness: SigningReadiness | null;
 }
 
 /** One variable's current state. */
@@ -192,20 +252,27 @@ async function toolOf(tab: DesktopTab): Promise<ToolState | null> {
       purpose: "signs the .exe; ships with the Windows SDK",
     };
   }
-  return null; // Linux artifacts are not signed at all
+  return null; // Linux artifacts are not signed at all; the compiled tab lists its readiness
 }
 
 /** Everything one request needs. */
 async function readState(ctx: UiContext): Promise<DesktopState> {
   const tab = tabOf(ctx);
+  const script = SCRIPT[tab];
   return {
     dir: ctx.dir,
     tab,
-    scaffolded: await exists(ctx.dir, SCRIPT[tab]),
+    scaffolded: script === null || await exists(ctx.dir, script),
     env: VARS[tab].map(envState),
     identities: tab === "macos" ? await listSigningIdentities() : [],
     tool: await toolOf(tab),
     wrongHost: tab === "macos" && Deno.build.os !== "darwin",
+    readiness: tab === "compile"
+      ? await signingReadiness({
+        has: (cmd) => hasCommand(cmd),
+        identities: () => listSigningIdentities(),
+      })
+      : null,
   };
 }
 
@@ -252,6 +319,7 @@ function DesktopPanel({ state }: { readonly state: DesktopState }): VNode {
       : null,
     state.tab === "linux" ? h(LinuxNote, null) : null,
     state.tab === "macos" ? h(Identities, { state }) : null,
+    state.readiness ? h(Readiness, { readiness: state.readiness }) : null,
     state.env.length > 0 ? h(EnvTable, { state }) : null,
     state.tool ? h(ToolNote, { tool: state.tool }) : null,
     state.scaffolded ? h(Command, { state }) : null,
@@ -330,7 +398,7 @@ function EnvTable({ state }: { readonly state: DesktopState }): VNode {
       "p",
       { class: "lead" },
       "What ",
-      h(Mono, null, SCRIPT[state.tab]),
+      h(Mono, null, SCRIPT[state.tab] ?? "denext build --compile --sign"),
       " reads, as this UI's own environment has it.",
     ),
     h(Table, {
@@ -355,6 +423,25 @@ function EnvRow({ entry }: { readonly entry: EnvState }): VNode {
       entry.value === null ? null : h("div", null, h(Mono, null, entry.value)),
     ),
     h("td", null, entry.spec.purpose),
+  );
+}
+
+/** The compiled binary's readiness: one line per platform, from the shared probe. */
+function Readiness({ readiness }: { readonly readiness: SigningReadiness }): VNode {
+  return h(
+    "div",
+    null,
+    h("h2", null, "Readiness"),
+    h(
+      "p",
+      { class: "lead" },
+      "What this machine has for ",
+      h(Mono, null, "denext build --compile --sign"),
+      " (or ",
+      h(Mono, null, "compile.sign"),
+      " in denext.config.ts).",
+    ),
+    h(Out, null, signingReadinessLines(readiness).join("\n")),
   );
 }
 
@@ -393,16 +480,28 @@ function Command({ state }: { readonly state: DesktopState }): VNode {
   // One line per variable that is not set yet, in the order the tab presents them. The identity
   // is the one denext can answer for you, when the keychain holds an answer; the secret is named
   // so you know to set it, and says where it stays.
-  const lines = state.env.filter((entry) => !entry.set).map((entry) => {
+  // The compiled tab's variables are alternatives (a keychain profile OR an API key, a .pfx OR a
+  // thumbprint), so it suggests the identity alone.
+  const missing = state.env.filter((entry) =>
+    !entry.set && (state.tab !== "compile" || entry.spec.name === "DENEXT_CODESIGN_IDENTITY")
+  );
+  const lines = missing.map((entry) => {
     if (entry.spec.name === "DENEXT_CODESIGN_IDENTITY" && first !== undefined) {
       return `export ${entry.spec.name}=${shellQuote(first.name)}`;
     }
     if (entry.spec.secret) return `export ${entry.spec.name}=...   # yours; never stored here`;
     return `export ${entry.spec.name}=...`;
   });
-  lines.push(
-    `denext desktop package${state.tab === "macos" ? "" : ` --target-os ${state.tab}`}`,
-  );
+  if (state.tab === "compile") {
+    lines.push(
+      "denext build --compile --sign                                   # this machine's target",
+      "denext build --compile --sign --target x86_64-pc-windows-msvc   # a signed Windows .exe",
+    );
+  } else {
+    lines.push(
+      `denext desktop package${state.tab === "macos" ? "" : ` --target-os ${state.tab}`}`,
+    );
+  }
   return h(
     "div",
     null,
@@ -410,7 +509,9 @@ function Command({ state }: { readonly state: DesktopState }): VNode {
     h(
       "p",
       { class: "lead" },
-      "Set what is missing in your own shell, then package. Nothing here is written to disk.",
+      `Set what is missing in your own shell, then ${
+        state.tab === "compile" ? "build" : "package"
+      }. Nothing here is written to disk.`,
     ),
     h(Out, null, lines.join("\n")),
   );
@@ -438,6 +539,7 @@ export const desktopPanel: UiHandler = async (
       wrongHost: state.wrongHost,
       identities: state.identities,
       tool: state.tool,
+      readiness: state.readiness,
       // A secret's value is absent here too: the JSON twin says whether it is set, never what.
       env: state.env.map((entry) => ({
         name: entry.spec.name,

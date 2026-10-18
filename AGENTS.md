@@ -388,7 +388,12 @@ import map. No `.env` file is embedded: the environment, `.env` files and relati
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
 `--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
 `--allow-all`). The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
-`Deno.SQL` works in the binary. Docs: https://denext.dev/docs/deployment-targets
+`Deno.SQL` works in the binary. `--sign` (or `compile.sign`) code-signs it: macOS with `codesign`
+(Hardened Runtime + V8's `allow-jit` entitlement) as `DENEXT_CODESIGN_IDENTITY`, then `notarytool`
+with `DENEXT_NOTARY_PROFILE` or an API key (`DENEXT_NOTARY_KEY` / `_KEY_ID` / `_ISSUER`); Windows
+with `signtool` or, from macOS / Linux, `osslsigncode` and `DENEXT_WINDOWS_CERT`. Env-only
+credentials; `--sign` fails without them, `compile.sign` warns. Docs:
+https://denext.dev/docs/deployment-targets
 
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry

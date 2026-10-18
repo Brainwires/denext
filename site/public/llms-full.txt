@@ -392,7 +392,12 @@ import map. No `.env` file is embedded: the environment, `.env` files and relati
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
 `--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
 `--allow-all`). The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
-`Deno.SQL` works in the binary. Docs: https://denext.dev/docs/deployment-targets
+`Deno.SQL` works in the binary. `--sign` (or `compile.sign`) code-signs it: macOS with `codesign`
+(Hardened Runtime + V8's `allow-jit` entitlement) as `DENEXT_CODESIGN_IDENTITY`, then `notarytool`
+with `DENEXT_NOTARY_PROFILE` or an API key (`DENEXT_NOTARY_KEY` / `_KEY_ID` / `_ISSUER`); Windows
+with `signtool` or, from macOS / Linux, `osslsigncode` and `DENEXT_WINDOWS_CERT`. Env-only
+credentials; `--sign` fails without them, `compile.sign` warns. Docs:
+https://denext.dev/docs/deployment-targets
 
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
@@ -1655,6 +1660,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CompileConfig` — denext build --compile settings (see DenextConfig.compile).
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
 - `interface CompilePermissions` — Extra --allow-* for CompileConfig.permissions: permission kinds to Deno values.
+- `interface CompileSignConfig` — Options for CompileConfig.sign.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
 - `interface CompressConfig` — Response compression settings (DenextConfig.compress as an object: compression on, with these settings).
@@ -2781,8 +2787,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `installWindowCloseHandler(BrowserWindow?: unknown, exit?: (code: number) => void, intercept?: (event: Event) => boolean): unknown` — Closing the window (macOS red light / Cmd-W) quits the app. Deno.serve is a permanently-live task, so deno desktop won't auto-exit on close; adopt the initial window and exit on its close. Guarded so a non-desktop run is a no-op. Returns the adopted window (handed to capabilities as ctx.window), or undefined outside the desktop runtime.
 - `isDenoCliExecPath(execPath: string): boolean` — Whether execPath is the deno CLI (deno / deno.exe, case-insensitive) rather than a compiled/packaged app binary. A packaged app's execPath is its own binary; the window denext desktop dev builds is one too, and carries the dev-build mark instead (see desktopDevProxyDecision). Pure, so the packaged-vs-dev decision is testable without the real Deno.execPath.
 - `LAUFEY_LAUNCH_FILE: laufey-launch.json` — The webview backend's launch-settings file name.
+- `macosCodesignArgs(path: string, options?: MacosCodesignOptions): string[]` — The codesign argv that signs path: --force, a secure timestamp with a real identity (--timestamp=none ad-hoc), the Hardened Runtime, the entitlements, then -s <identity>.
+- `interface MacosCodesignOptions` — Options for macosCodesignArgs.
 - `macosSigningEntitlements(defaults: Readonly<Record<string, boolean>>, options?: MacosSigningEntitlementsOptions): Promise<string>` — Write the entitlements to sign one piece of code with under the Hardened Runtime: the explicit plist (or, without one, what current is signed with now), plus each of defaults it does not set. A key the base sets, to false too, is kept as set: allow-jit = false in DENEXT_ENTITLEMENTS turns the JIT default off.
 - `interface MacosSigningEntitlementsOptions` — Options for macosSigningEntitlements.
+- `type NotaryCredentials = object | object` — How xcrun notarytool authenticates: a keychain profile, or an App Store Connect API key.
+- `notarytoolSubmitArgs(file: string, credentials: NotaryCredentials, json?: boolean): string[]` — The xcrun notarytool submit … --wait argv for file (a .zip, .dmg or .pkg).
 - `parseDesktopPackageArgs(argv: typeOperator, spec: DesktopPackageArgSpec): DesktopPackageArgs` — Parse a package script's arguments: --arch <mode>, --no-export, --no-sign, --format <list> (repeatable), the script's legacy installer flags, and -h / --help. An unknown argument or an --arch outside spec.arches throws.
 - `class PickedPaths` — The runtime's picked-path set. One instance per launch is threaded (by the caps resolver) into the dialogs cap (which adds a pick) and the fs / shell caps (which resolve a handle back to a confined path).
 - `interface PickedTarget` — A resolved access: the confined absolute path plus the root dir to ensure before a write.

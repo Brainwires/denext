@@ -6408,6 +6408,18 @@
           "denextOnly": true
         },
         {
+          "name": "CompileSignConfig",
+          "slug": "CompileSignConfig",
+          "kind": "interface",
+          "signature": "interface CompileSignConfig",
+          "doc": "Options for CompileConfig.sign.",
+          "docFull": "Options for {@link CompileConfig.sign}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Component",
           "slug": "Component",
           "kind": "typeAlias",
@@ -21756,6 +21768,39 @@
           "denextOnly": true
         },
         {
+          "name": "macosCodesignArgs",
+          "slug": "macosCodesignArgs",
+          "kind": "function",
+          "signature": "macosCodesignArgs(path: string, options?: MacosCodesignOptions): string[]",
+          "doc": "The codesign argv that signs path: --force, a secure timestamp with a real identity (--timestamp=none ad-hoc), the Hardened Runtime, the entitlements, then -s <identity>.",
+          "docFull": "The `codesign` argv that signs `path`: `--force`, a secure timestamp with a real identity\n(`--timestamp=none` ad-hoc), the Hardened Runtime, the entitlements, then `-s <identity>`.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The code to sign (a Mach-O, or a bundle)."
+            },
+            {
+              "name": "options",
+              "doc": "The identity, the Hardened Runtime, the entitlements and the identifier."
+            }
+          ],
+          "returns": "The argv, codesign first.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MacosCodesignOptions",
+          "slug": "MacosCodesignOptions",
+          "kind": "interface",
+          "signature": "interface MacosCodesignOptions",
+          "doc": "Options for macosCodesignArgs.",
+          "docFull": "Options for {@linkcode macosCodesignArgs}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "macosSigningEntitlements",
           "slug": "macosSigningEntitlements",
           "kind": "function",
@@ -21785,6 +21830,43 @@
           "docFull": "Options for {@linkcode macosSigningEntitlements}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "NotaryCredentials",
+          "slug": "NotaryCredentials",
+          "kind": "typeAlias",
+          "signature": "type NotaryCredentials = object | object",
+          "doc": "How xcrun notarytool authenticates: a keychain profile, or an App Store Connect API key.",
+          "docFull": "How `xcrun notarytool` authenticates: a keychain profile, or an App Store Connect API key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "notarytoolSubmitArgs",
+          "slug": "notarytoolSubmitArgs",
+          "kind": "function",
+          "signature": "notarytoolSubmitArgs(file: string, credentials: NotaryCredentials, json?: boolean): string[]",
+          "doc": "The xcrun notarytool submit … --wait argv for file (a .zip, .dmg or .pkg).",
+          "docFull": "The `xcrun notarytool submit … --wait` argv for `file` (a .zip, .dmg or .pkg).",
+          "params": [
+            {
+              "name": "file",
+              "doc": "The submission."
+            },
+            {
+              "name": "credentials",
+              "doc": "The keychain profile or API key."
+            },
+            {
+              "name": "json",
+              "doc": "Ask for the result as JSON (--output-format json)."
+            }
+          ],
+          "returns": "The argv, xcrun first.",
           "examples": [],
           "denextOnly": true
         },

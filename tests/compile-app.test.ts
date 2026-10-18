@@ -119,6 +119,16 @@ Deno.test("validateDenextConfig: compile", () => {
   bad({ permissions: "most" }, "`compile.permissions`");
   bad({ permissions: { net: ["x.com"] } }, "`compile.permissions.net`");
   bad({ permissions: { write: ["a,b"] } }, "`compile.permissions.write`");
+  ok({ sign: true });
+  ok({ sign: { entitlements: "ents.plist", notarize: false, timestampUrl: "http://ts.example" } });
+  bad({ sign: "yes" }, "`compile.sign` must be a boolean");
+  bad({ sign: { identity: "x" } }, "`compile.sign.identity` is not a key");
+  bad({ sign: { entitlements: "" } }, "`compile.sign.entitlements`");
+  bad({ sign: { notarize: "auto" } }, "`compile.sign.notarize` must be a boolean");
+  bad(
+    { sign: { timestampUrl: "ts.example" } },
+    "`compile.sign.timestampUrl` must be an http(s) URL",
+  );
 });
 
 Deno.test("standaloneArgv: a verb or help as given, else start with the flags", () => {

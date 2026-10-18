@@ -1508,6 +1508,35 @@ export interface CompileConfig {
    * kind unscoped. `"all"` bakes `--allow-all` instead — an explicit opt-in.
    */
   permissions?: "all" | CompilePermissions;
+  /**
+   * Code-sign the binary after the compile (`denext build --compile --sign` asks for it once).
+   * A macOS target is signed with `codesign` (the Hardened Runtime, a secure timestamp and the
+   * JIT entitlement V8 needs) as `DENEXT_CODESIGN_IDENTITY`, then notarized when notary
+   * credentials are set; a Windows target is Authenticode-signed with `signtool` (Windows) or
+   * `osslsigncode` (macOS / Linux) with `DENEXT_WINDOWS_CERT`. Credentials come from the
+   * environment only. Without them a configured `sign` warns and leaves the binary unsigned,
+   * where `--sign` fails.
+   */
+  sign?: boolean | CompileSignConfig;
+}
+
+/** Options for {@link CompileConfig.sign}. */
+export interface CompileSignConfig {
+  /**
+   * An entitlements plist (project-relative) the macOS signature takes; the JIT entitlement is
+   * added unless the plist sets it. Default: `DENEXT_ENTITLEMENTS`.
+   */
+  entitlements?: string;
+  /**
+   * Notarize a macOS binary. Default: when notary credentials (`DENEXT_NOTARY_PROFILE`, or
+   * `DENEXT_NOTARY_KEY` + `DENEXT_NOTARY_KEY_ID`) are set; `true` requires them; `false` skips.
+   */
+  notarize?: boolean;
+  /**
+   * The RFC-3161 timestamp server for a Windows signature. Default: `DENEXT_SIGN_TIMESTAMP_URL`,
+   * else DigiCert's.
+   */
+  timestampUrl?: string;
 }
 
 /** Extra `--allow-*` for {@link CompileConfig.permissions}: permission kinds to Deno values. */
