@@ -15,6 +15,7 @@ import {
   toolchainEsbuild,
 } from "../src/build/deno-toolchain.ts";
 import {
+  denoNpmRegistryDir,
   ensureNpmEsbuild,
   esbuildBinaryStatus,
   type EsbuildNpmArtifact,
@@ -298,8 +299,9 @@ Deno.test("the npm fallback: integrity-checked download, SHA-256-checked binary,
 Deno.test("the npm fallback takes a verified copy from Deno's npm cache before downloading", async () => {
   const w = await world({ pinned: null });
   try {
-    const host = new URL(w.env.NPM_CONFIG_REGISTRY).host;
-    const cached = join(w.denoDir, "npm", host, "@esbuild", "fake-x64", ESBUILD_VERSION, "bin");
+    // Deno names a registry's folder by domain and port, `:` never in it (an IP: the port alone).
+    const port = new URL(w.env.NPM_CONFIG_REGISTRY).port;
+    const cached = join(w.denoDir, "npm", port, "@esbuild", "fake-x64", ESBUILD_VERSION, "bin");
     await Deno.mkdir(cached, { recursive: true });
     await Deno.writeFile(join(cached, "esbuild"), NPM_ESBUILD);
     const path = await ensureNpmEsbuild({ ...seams(w), fetch: offline });
@@ -334,4 +336,15 @@ Deno.test("the npm fallback REFUSES a tarball whose integrity or binary does not
   } finally {
     await w.close();
   }
+});
+
+Deno.test("denoNpmRegistryDir: Deno's own folder name for a registry in its npm cache", () => {
+  assertEquals(denoNpmRegistryDir("https://registry.npmjs.org"), ["registry.npmjs.org"]);
+  assertEquals(denoNpmRegistryDir("http://localhost:4873/"), ["localhost_4873"]);
+  assertEquals(denoNpmRegistryDir("http://127.0.0.1:4873"), ["4873"]);
+  assertEquals(denoNpmRegistryDir("https://npm.example.com:443/org/x"), [
+    "npm.example.com",
+    "org",
+    "x",
+  ]);
 });

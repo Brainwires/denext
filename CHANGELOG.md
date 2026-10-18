@@ -357,6 +357,11 @@ and this project adheres to
   spawn.** `Deno.Command#output()` throws a missing program at once rather than rejecting, so
   the "docker is not on PATH" hint never replaced the raw `Failed to spawn 'docker'` error.
 
+- **The esbuild fallback finds its binary in Deno's npm cache behind a registry with a port.**
+  It looked for `<DENO_DIR>/npm/<host>:<port>/…`, a folder Deno never writes (and a name Windows
+  refuses); it now follows Deno's own naming (`localhost_4873`, the port alone for an IP address,
+  the registry's path segments below it).
+
 - **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
   The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
   over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,
