@@ -57,6 +57,7 @@ Deno.test("release CI gate: the jobs a release needs, and what is unmet", () => 
     "backend-integration",
     "ios-export-router",
     "windows-resolve",
+    "windows-tests",
   ]);
   assertEquals(unmetCiJobs(jobs("success")), []);
   assertEquals(

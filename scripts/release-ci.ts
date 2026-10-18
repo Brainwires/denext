@@ -1,7 +1,7 @@
 // The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs and every
 // desktop-ci.yml job passed on.
-// A push to `development` runs only the fast jobs (integration, next-compat, coverage and
-// backend-integration stay on pull requests, `main` and a manual dispatch), so `deno task release`
+// A push to `development` runs only the fast jobs (integration, next-compat, coverage,
+// backend-integration and windows-tests stay on pull requests, `main` and a manual dispatch), so `deno task release`
 // asks GitHub for the ci.yml runs on HEAD and refuses unless the newest one that ran those jobs
 // has every required job green. desktop-ci.yml runs on a push only when the desktop surface
 // changed (its `paths` filter), so the release asks for its newest run on HEAD, push or dispatch,
@@ -18,6 +18,7 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "backend-integration",
   "ios-export-router",
   "windows-resolve",
+  "windows-tests",
 ];
 
 /**
