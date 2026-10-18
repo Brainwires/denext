@@ -284,7 +284,7 @@ ${await javaIsMemoryWarning()}
       }).output();
       assert(run.success, new TextDecoder().decode(run.stderr));
       assertEquals(
-        new TextDecoder().decode(run.stdout).trim().split("\n"),
+        new TextDecoder().decode(run.stdout).trim().split(/\r?\n/),
         ["false", "true", "true", "false", "true", "true", "true"],
       );
     } finally {

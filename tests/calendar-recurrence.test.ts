@@ -7,7 +7,7 @@
 // always). The provider calls around it run on a device only.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   CALENDAR_ANDROID_FILES,
   EXPO_SDK_TEMPLATE_VERSIONS,
@@ -18,9 +18,9 @@ import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 
 const PLUGIN = CALENDAR_ANDROID_FILES["DenextCalendarPlugin.java"];
 const RECURRENCE = CALENDAR_ANDROID_FILES["DenextCalendarRecurrence.java"];
-const HARNESS =
-  new URL("./fixtures/calendar-recurrence/CalendarRecurrenceHarness.java", import.meta.url)
-    .pathname;
+const HARNESS = fromFileUrl(
+  new URL("./fixtures/calendar-recurrence/CalendarRecurrenceHarness.java", import.meta.url),
+);
 
 Deno.test("calendar template generation 2: Android splits a series instead of refusing futureEvents", () => {
   assertEquals(EXPO_SDK_TEMPLATE_VERSIONS.calendar, 2);
@@ -89,7 +89,7 @@ Deno.test({
       const classes = join(dir, "classes");
       await run("javac", ["-d", classes, join(pkg, "DenextCalendarRecurrence.java"), HARNESS]);
       const out = await run("java", ["-cp", classes, "CalendarRecurrenceHarness"]);
-      const failed = out.split("\n").filter((line) => line.startsWith("FAIL"));
+      const failed = out.split(/\r?\n/).filter((line) => line.startsWith("FAIL"));
       assertEquals(failed, [], out);
       assertStringIncludes(out, "ok ruleFrom ends a COUNT rule at the last occurrence");
       assertStringIncludes(out, "all passed");

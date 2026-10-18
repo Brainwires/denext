@@ -424,7 +424,7 @@ const IS_ROOT = Deno.build.os !== "windows" && Deno.uid() === 0;
 
 /** Asserts a harness's output: every line ok, the shared checks all present, a clean tally. */
 function assertHarness(output: string, platform: string): void {
-  const lines = output.trim().split("\n");
+  const lines = output.trim().split(/\r?\n/);
   const failed = lines.filter((l) => l.startsWith("FAIL"));
   assertEquals(failed, [], `${platform}:\n${output}`);
   const passed = new Set(lines.filter((l) => l.startsWith("ok ")).map((l) => l.slice(3)));
@@ -437,7 +437,10 @@ function assertHarness(output: string, platform: string): void {
 
 Deno.test({
   name: "OTA re-verification (Android): the Java templates compile and refuse a tampered UI",
-  ignore: IGNORE_WITHOUT_JDK,
+  // The store is Android code: it resolves served paths with `/` and moves directories the way
+  // Android's (Linux) filesystem does. A Windows JVM runs it under other path rules, so the
+  // harness is only meaningful on a POSIX host (macOS and Linux CI run it).
+  ignore: IGNORE_WITHOUT_JDK || Deno.build.os === "windows",
   async fn() {
     requireJdk();
     const dir = await Deno.makeTempDir({ prefix: "denext_ota_reverify_java_" });
