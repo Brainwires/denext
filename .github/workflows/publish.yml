@@ -277,7 +277,16 @@ jobs:
           echo "$APPLE_CERT" | base64 --decode > cert.p12
           printf '%s' "$APPLE_CERT_PASSWORD" > cert.pw
           # --for-notarization: the hardened runtime and a secure timestamp, as notarisation needs.
-          "$rcodesign" sign --p12-file cert.p12 --p12-password-file cert.pw --for-notarization denext
+          # Under the hardened runtime V8 needs the JIT entitlement on Apple Silicon (it maps its
+          # code space MAP_JIT): the same minimal set `denext build --compile --sign` grants
+          # (COMPILE_ENTITLEMENTS in src/build/compile-sign.ts).
+          cat > ents.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>
+          PLIST
+          "$rcodesign" sign --p12-file cert.p12 --p12-password-file cert.pw --for-notarization \
+            --entitlements-xml-file ents.plist denext
           echo "$APPLE_API_KEY" | base64 --decode > key.p8
           "$rcodesign" encode-app-store-connect-api-key -o key.json \
             "$APPLE_API_ISSUER" "$APPLE_API_KEY_ID" key.p8
@@ -285,7 +294,32 @@ jobs:
           # A bare executable cannot be stapled (stapler takes .app/.dmg/.pkg only), so the
           # notarisation ticket is checked online by Gatekeeper on first run.
           "$rcodesign" notary-submit --api-key-file key.json --wait denext.zip
-          rm -rf cert.p12 cert.pw key.p8 key.json denext.zip rcs.tar.gz "$rcs"
+          rm -rf cert.p12 cert.pw key.p8 key.json ents.plist denext.zip rcs.tar.gz "$rcs"
+
+      # Authenticode for the Windows binaries, cross-signed here on Linux with osslsigncode through
+      # the same code path as `denext build --compile --sign` (scripts/ci/sign-binary.ts →
+      # src/build/compile-sign.ts): SHA-256 and an RFC-3161 timestamp, the .pfx password read
+      # from a 0600 file, never a command line. Without the certificate secrets the binary ships
+      # unsigned (SmartScreen warns on first run), and the step says so in a notice.
+      - name: Sign the Windows binary
+        if: contains(matrix.target, 'windows')
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CODESIGN_PFX }}
+          DENEXT_WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+        run: |
+          set -eu
+          # `secrets` is not a context a step-level `if` can read, so the guard lives here.
+          if [ -z "${WINDOWS_CERT_PFX:-}" ]; then
+            echo "::notice::denext: no Windows code-signing secrets — denext.exe for ${{ matrix.target }} ships unsigned"
+            exit 0
+          fi
+          sudo apt-get install -y -qq osslsigncode >/dev/null
+          umask 077
+          cert="$RUNNER_TEMP/denext-codesign.pfx"
+          trap 'rm -f "$cert"' EXIT
+          echo "$WINDOWS_CERT_PFX" | base64 --decode > "$cert"
+          DENEXT_WINDOWS_CERT="$cert" deno run -A scripts/ci/sign-binary.ts \
+            --target ${{ matrix.target }} denext.exe
 
       # Asset names — the installers (scripts/install.sh, scripts/install.ps1) and the docs depend
       # on these exactly:
