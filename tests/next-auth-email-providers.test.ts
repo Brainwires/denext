@@ -97,6 +97,21 @@ Deno.test("next-auth email: Mailgun posts a form to the region's host for the fr
   assertEquals(new URL(us.url).host, "api.mailgun.net");
 });
 
+Deno.test("next-auth email: Mailgun's message fields, and a from address with no domain", async () => {
+  const sent = await send(Mailgun({ from: "auth@mg.app.test" }), {
+    AUTH_MAILGUN_KEY: "mg",
+  });
+  const form = sent.body as FormData;
+  assertEquals(form.get("subject"), "Sign in to app.test");
+  assert(String(form.get("html")).includes("https://app.test/api/auth/callback/x?token=t"));
+  assert(String(form.get("text")).includes("https://app.test/api/auth/callback/x?token=t"));
+  await assertRejects(
+    () => send(Mailgun({ from: "no-domain" }), { AUTH_MAILGUN_KEY: "mg" }),
+    Error,
+    "malformed Mailgun domain",
+  );
+});
+
 Deno.test("next-auth email: no key, or a refusing API, fails the send", async () => {
   await assertRejects(() => send(SendGrid(), {}), Error, "AUTH_SENDGRID_KEY");
   await assertRejects(() => send(Postmark(), { AUTH_POSTMARK_KEY: "k" }, 401), Error, "401");
