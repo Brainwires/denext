@@ -42,9 +42,14 @@ async function buildForProfile(dir: string, minify: boolean): Promise<void> {
 // deno-lint-ignore no-explicit-any
 type Cdp = any;
 
-/** Read the page's used JS-heap size (precise with `--enable-precise-memory-info`). */
+/**
+ * Read the page's used JS-heap size: the page's own `heapBytes()` when it has one (a remote
+ * target reads `Runtime.getHeapUsage`, which is exact), else `performance.memory` (precise in
+ * the local Chromium, launched with `--enable-precise-memory-info`).
+ */
 // deno-lint-ignore no-explicit-any
 async function readHeapBytes(page: any): Promise<number> {
+  if (typeof page.heapBytes === "function") return await page.heapBytes();
   const v = await page.evaluate(
     "(performance && performance.memory) ? performance.memory.usedJSHeapSize : 0",
   );
@@ -148,6 +153,43 @@ async function captureStartup(
 }
 
 /**
+ * Profile a page that is already open over CDP: enable the profiler, run the startup or the
+ * interaction capture against `origin + route`, and aggregate the result. Shared by the local
+ * headless-Chromium run ({@linkcode profileApp}) and the on-device one (`--android`).
+ *
+ * @param page The page: `goto(url)`, `evaluate(source)` and optionally `heapBytes()`.
+ * @param cdp The CDP domains (`Profiler`, `HeapProfiler`).
+ * @param origin The origin the route is resolved against.
+ * @param options The run's options.
+ * @returns The result, with `minified` false (the caller knows the build).
+ */
+export async function profilePage(
+  // deno-lint-ignore no-explicit-any
+  page: any,
+  cdp: Cdp,
+  origin: string,
+  options: ProfileOptions = {},
+): Promise<ProfileResult> {
+  const route = options.route ?? "/";
+  const iterations = Math.max(1, options.iterations ?? 1);
+  await cdp.HeapProfiler.enable();
+  await cdp.Profiler.enable();
+  await cdp.Profiler.setSamplingInterval({ interval: options.samplingMicros ?? 100 });
+
+  const url = origin + route;
+  const { profile, heap } = options.interact
+    ? await captureInteraction(page, cdp, url, options.interact, iterations)
+    : await captureStartup(page, cdp, url, iterations);
+
+  const topN = options.topN ?? 20;
+  const all = aggregateSelfTime(profile, topN);
+  const budget = options.budget ? evaluateBudget(options.budget, all, heap) : undefined;
+  if (!options.filter) return { route, origin, cpu: all, heap, budget, minified: false };
+  const cpu = aggregateSelfTime(profile, topN, frameFilter(options.filter));
+  return { route, origin, cpu, heap, budget, minified: false, filter: options.filter };
+}
+
+/**
  * Build, serve, and profile `dir`. Returns CPU self-time, heap growth + leak verdict,
  * and (when `options.budget` is set) the budget verdict.
  */
@@ -155,11 +197,7 @@ export async function profileApp(
   dir: string,
   options: ProfileOptions = {},
 ): Promise<ProfileResult> {
-  const route = options.route ?? "/";
   const minify = options.minify ?? false;
-  const iterations = Math.max(1, options.iterations ?? 1);
-  const samplingMicros = options.samplingMicros ?? 100;
-
   await buildForProfile(dir, minify);
   const { origin, close: closeServer } = await serveEphemeral(dir);
 
@@ -169,21 +207,8 @@ export async function profileApp(
   try {
     const page = await browser.newPage();
     const cdp: Cdp = page.unsafelyGetCelestialBindings();
-    await cdp.HeapProfiler.enable();
-    await cdp.Profiler.enable();
-    await cdp.Profiler.setSamplingInterval({ interval: samplingMicros });
-
-    const url = origin + route;
-    const { profile, heap } = options.interact
-      ? await captureInteraction(page, cdp, url, options.interact, iterations)
-      : await captureStartup(page, cdp, url, iterations);
-
-    const topN = options.topN ?? 20;
-    const all = aggregateSelfTime(profile, topN);
-    const budget = options.budget ? evaluateBudget(options.budget, all, heap) : undefined;
-    if (!options.filter) return { route, origin, cpu: all, heap, budget, minified: minify };
-    const cpu = aggregateSelfTime(profile, topN, frameFilter(options.filter));
-    return { route, origin, cpu, heap, budget, minified: minify, filter: options.filter };
+    const result = await profilePage(page, cdp, origin, options);
+    return { ...result, minified: minify };
   } finally {
     await browser.close().catch(() => {});
     await closeServer();

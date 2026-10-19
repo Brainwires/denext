@@ -2094,6 +2094,23 @@
           "description": "Profile a minified build (default: unminified)"
         },
         {
+          "name": "android",
+          "type": "boolean",
+          "description": "Profile the installed app's WebView on an Android device over adb (remote CDP)"
+        },
+        {
+          "name": "device",
+          "type": "string",
+          "valueName": "<serial>",
+          "description": "With --android: the adb serial, when several devices are attached"
+        },
+        {
+          "name": "package",
+          "type": "string",
+          "valueName": "<appId>",
+          "description": "With --android: the app whose WebView to profile (default: the Capacitor appId)"
+        },
+        {
           "name": "filter",
           "type": "string",
           "valueName": "<text>",

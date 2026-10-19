@@ -40,6 +40,13 @@ and this project adheres to
 
 ### Added
 
+- **`denext profile --android` profiles the app on an Android device.** The installed app's
+  WebView (a Capacitor shell, or any debuggable WebView) is reached the way chrome://inspect
+  reaches it: adb picks the device, finds the app's `webview_devtools_remote_<pid>` socket and
+  forwards a free port to it, and the run speaks the Chrome DevTools Protocol to the page. The
+  report is the local one: CPU self-time by function, heap growth (read exactly with
+  `Runtime.getHeapUsage`), the leak check, `--budget`, `--filter`, `--out` / `--compare`.
+  `--package` defaults to the Capacitor `appId`; `--device` picks among several devices.
 - **Deno toolchain and Deno Desktop runtime 2.9.7-denext.22, pinned.** Every verb that runs
   project code moves to it, and `denext desktop` / the package scripts download and verify its
   archives. What it brings to denext apps is below;

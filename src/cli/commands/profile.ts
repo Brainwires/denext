@@ -2,6 +2,8 @@
 // report where startup/interaction time goes (CPU self-time by function) plus heap growth
 // and a leak check. With `--budget` it gates: a regression exits non-zero (CI-usable).
 // The heavy lifting is `src/profile/core.ts`, shared with the `denext_profile` MCP tool.
+// `--android` profiles the installed app's WebView on a device over adb + remote CDP instead
+// (`src/profile/android.ts`): nothing is built or served.
 
 import type { CommandSpec } from "../command.ts";
 import { projectDir } from "../shared.ts";
@@ -10,6 +12,7 @@ import { comparisonLines, profileReportLines } from "../../profile/report.ts";
 import { type Budget, budgetFromRun } from "../../profile/budget.ts";
 import { compareProfiles, isProfileResult, type ProfileComparison } from "../../profile/compare.ts";
 import type { ProfileOptions, ProfileResult } from "../../profile/types.ts";
+import { capacitorConfigFile, readCapacitorConfig } from "../../build/capacitor-config.ts";
 
 /** Read the interaction script source, or undefined when no `--interact` was given. */
 async function loadInteract(file: string): Promise<string | undefined> {
@@ -85,6 +88,34 @@ async function profileOptions(flags: Record<string, unknown>): Promise<ProfileOp
   };
 }
 
+/** The Capacitor config's `appId` in `dir`, the default `--package` of an `--android` run. */
+export async function capacitorAppId(dir: string): Promise<string | undefined> {
+  const file = await capacitorConfigFile(dir);
+  if (!file) return undefined;
+  const config = await readCapacitorConfig(file, await Deno.readTextFile(file)).catch(() => null);
+  return typeof config?.appId === "string" ? config.appId : undefined;
+}
+
+/** Run the profile: on the Android device (`--android`), or built and served locally. */
+async function runProfile(
+  dir: string,
+  flags: Record<string, unknown>,
+  options: ProfileOptions,
+): Promise<ProfileResult> {
+  if (flags.android !== true) return await profileApp(dir, options);
+  if (flags.minify === true) {
+    throw new Error(
+      "denext: --minify does not apply to --android (the app is profiled as installed).",
+    );
+  }
+  const { profileAndroid } = await import("../../profile/android.ts");
+  return await profileAndroid({
+    ...options,
+    serial: str(flags.device) || undefined,
+    package: str(flags.package) || await capacitorAppId(dir),
+  });
+}
+
 /** The terminal report: the run, the comparison, and the files written. */
 function printRun(
   result: ProfileResult,
@@ -132,6 +163,23 @@ export const profileCommand: CommandSpec = {
     },
     { name: "minify", type: "boolean", help: "Profile a minified build (default: unminified)" },
     {
+      name: "android",
+      type: "boolean",
+      help: "Profile the installed app's WebView on an Android device over adb (remote CDP)",
+    },
+    {
+      name: "device",
+      type: "string",
+      valueName: "<serial>",
+      help: "With --android: the adb serial, when several devices are attached",
+    },
+    {
+      name: "package",
+      type: "string",
+      valueName: "<appId>",
+      help: "With --android: the app whose WebView to profile (default: the Capacitor appId)",
+    },
+    {
       name: "filter",
       type: "string",
       valueName: "<text>",
@@ -157,7 +205,7 @@ export const profileCommand: CommandSpec = {
 
     if (!ctx.global.json) console.log(`\n  denext profile  ▸  ${dir}  ${options.route}\n`);
 
-    const result = await profileApp(dir, options);
+    const result = await runProfile(dir, ctx.flags, options);
     const files = { out: str(ctx.flags.out), writeBudget: str(ctx.flags["write-budget"]) };
     const comparison = await finishProfileRun(result, { ...files, saved });
 

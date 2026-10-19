@@ -1,0 +1,562 @@
+{
+  "_comment": "A recorded `denext profile --android` session, shape for shape: adb's answers, the WebView's /json/list, and the CDP transcript (each command the run sends, in order, with the WebView's result and the events that follow it). Shapes from adb, https://chromedevtools.github.io/devtools-protocol/ and the local profiler's own runs; values are illustrative.",
+  "adb": {
+    "devices": "List of devices attached\nR58N12ABCDE\tdevice\nemulator-5556\toffline\n\n",
+    "procNetUnix": "Num       RefCount Protocol Flags    Type St Inode Path\n0000000000000000: 00000002 00000000 00010000 0001 01 23871 /dev/socket/zygote\n0000000000000000: 00000002 00000000 00010000 0001 01 41234 @webview_devtools_remote_12345\n0000000000000000: 00000002 00000000 00010000 0001 01 41290 @chrome_devtools_remote\n0000000000000000: 00000003 00000000 00000000 0001 03 41235 @webview_devtools_remote_12345\n0000000000000000: 00000002 00000000 00010000 0001 01 51022 @webview_devtools_remote_20811\n",
+    "pidof": {
+      "dev.example.app": "12345\n"
+    }
+  },
+  "targets": [
+    {
+      "description": "{\"attached\":false,\"empty\":true,\"never_attached\":true,\"screenX\":0,\"screenY\":0,\"visible\":false}",
+      "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@0a2bc3/inspector.html?ws=localhost/devtools/page/1D2E3F",
+      "id": "1D2E3F",
+      "title": "about:blank",
+      "type": "page",
+      "url": "about:blank",
+      "webSocketDebuggerUrl": "ws://localhost/devtools/page/1D2E3F"
+    },
+    {
+      "description": "{\"attached\":true,\"empty\":false,\"height\":2208,\"screenX\":0,\"screenY\":0,\"visible\":true,\"width\":1080}",
+      "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@0a2bc3/inspector.html?ws=localhost/devtools/page/9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3",
+      "faviconUrl": "https://localhost/favicon.ico",
+      "id": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3",
+      "title": "Example",
+      "type": "page",
+      "url": "https://localhost/",
+      "webSocketDebuggerUrl": "ws://localhost/devtools/page/9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+    },
+    {
+      "description": "",
+      "devtoolsFrontendUrl": "",
+      "id": "5E6F7A",
+      "title": "Service Worker https://localhost/sw.js",
+      "type": "service_worker",
+      "url": "https://localhost/sw.js",
+      "webSocketDebuggerUrl": "ws://localhost/devtools/page/5E6F7A"
+    }
+  ],
+  "interact": "globalThis.__toggleSettings()",
+  "sessions": {
+    "startup": [
+      {
+        "method": "Page.enable",
+        "result": {}
+      },
+      {
+        "method": "Runtime.enable",
+        "result": {},
+        "events": [
+          {
+            "method": "Runtime.executionContextCreated",
+            "params": {
+              "context": {
+                "id": 1,
+                "origin": "https://localhost",
+                "name": "",
+                "uniqueId": "-4729836104412716245.-2381270498172231771",
+                "auxData": {
+                  "isDefault": true,
+                  "type": "default",
+                  "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "HeapProfiler.enable",
+        "result": {}
+      },
+      {
+        "method": "Profiler.enable",
+        "result": {}
+      },
+      {
+        "method": "Profiler.setSamplingInterval",
+        "params": {
+          "interval": 100
+        },
+        "result": {}
+      },
+      {
+        "method": "HeapProfiler.collectGarbage",
+        "result": {}
+      },
+      {
+        "method": "Runtime.getHeapUsage",
+        "result": {
+          "usedSize": 3145728,
+          "totalSize": 4194304,
+          "embedderHeapUsedSize": 0,
+          "backingStorageSize": 0
+        }
+      },
+      {
+        "method": "Profiler.start",
+        "result": {}
+      },
+      {
+        "method": "Page.navigate",
+        "params": {
+          "url": "https://localhost/settings"
+        },
+        "result": {
+          "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3",
+          "loaderId": "6F3E1A0B2C4D5E6F708192A3B4C5D6E7"
+        },
+        "events": [
+          {
+            "method": "Page.frameStartedLoading",
+            "params": {
+              "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+            }
+          },
+          {
+            "method": "Runtime.executionContextsCleared",
+            "params": {}
+          },
+          {
+            "method": "Runtime.executionContextCreated",
+            "params": {
+              "context": {
+                "id": 1,
+                "origin": "https://localhost",
+                "name": "",
+                "uniqueId": "-4729836104412716245.-2381270498172231771",
+                "auxData": {
+                  "isDefault": true,
+                  "type": "default",
+                  "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+                }
+              }
+            }
+          },
+          {
+            "method": "Page.domContentEventFired",
+            "params": {
+              "timestamp": 181227.42
+            }
+          },
+          {
+            "method": "Page.loadEventFired",
+            "params": {
+              "timestamp": 181227.43
+            }
+          },
+          {
+            "method": "Page.frameStoppedLoading",
+            "params": {
+              "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+            }
+          }
+        ]
+      },
+      {
+        "method": "Profiler.stop",
+        "result": {
+          "profile": {
+            "nodes": [
+              {
+                "id": 1,
+                "callFrame": {
+                  "functionName": "(root)",
+                  "scriptId": "0",
+                  "url": "",
+                  "lineNumber": -1,
+                  "columnNumber": -1
+                },
+                "hitCount": 0,
+                "children": [
+                  2,
+                  3,
+                  4
+                ]
+              },
+              {
+                "id": 2,
+                "callFrame": {
+                  "functionName": "(program)",
+                  "scriptId": "0",
+                  "url": "",
+                  "lineNumber": -1,
+                  "columnNumber": -1
+                },
+                "hitCount": 3
+              },
+              {
+                "id": 3,
+                "callFrame": {
+                  "functionName": "renderSettings",
+                  "scriptId": "41",
+                  "url": "https://localhost/_denext/client/app-4f2a9c1e.js",
+                  "lineNumber": 1203,
+                  "columnNumber": 17
+                },
+                "hitCount": 6,
+                "children": [
+                  5
+                ]
+              },
+              {
+                "id": 4,
+                "callFrame": {
+                  "functionName": "(garbage collector)",
+                  "scriptId": "0",
+                  "url": "",
+                  "lineNumber": -1,
+                  "columnNumber": -1
+                },
+                "hitCount": 1
+              },
+              {
+                "id": 5,
+                "callFrame": {
+                  "functionName": "commitRoot",
+                  "scriptId": "41",
+                  "url": "https://localhost/_denext/client/app-4f2a9c1e.js",
+                  "lineNumber": 88,
+                  "columnNumber": 4
+                },
+                "hitCount": 2
+              }
+            ],
+            "startTime": 181227419283,
+            "endTime": 181227431283,
+            "samples": [
+              2,
+              3,
+              3,
+              5,
+              3,
+              3,
+              4,
+              5,
+              3,
+              3,
+              2,
+              2
+            ],
+            "timeDeltas": [
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000
+            ]
+          }
+        }
+      },
+      {
+        "method": "Runtime.getHeapUsage",
+        "result": {
+          "usedSize": 6291456,
+          "totalSize": 7340032,
+          "embedderHeapUsedSize": 0,
+          "backingStorageSize": 0
+        }
+      },
+      {
+        "method": "HeapProfiler.collectGarbage",
+        "result": {}
+      },
+      {
+        "method": "Runtime.getHeapUsage",
+        "result": {
+          "usedSize": 5242880,
+          "totalSize": 6291456,
+          "embedderHeapUsedSize": 0,
+          "backingStorageSize": 0
+        }
+      }
+    ],
+    "interaction": [
+      {
+        "method": "Page.enable",
+        "result": {}
+      },
+      {
+        "method": "Runtime.enable",
+        "result": {},
+        "events": [
+          {
+            "method": "Runtime.executionContextCreated",
+            "params": {
+              "context": {
+                "id": 1,
+                "origin": "https://localhost",
+                "name": "",
+                "uniqueId": "-4729836104412716245.-2381270498172231771",
+                "auxData": {
+                  "isDefault": true,
+                  "type": "default",
+                  "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "HeapProfiler.enable",
+        "result": {}
+      },
+      {
+        "method": "Profiler.enable",
+        "result": {}
+      },
+      {
+        "method": "Profiler.setSamplingInterval",
+        "params": {
+          "interval": 100
+        },
+        "result": {}
+      },
+      {
+        "method": "Page.navigate",
+        "params": {
+          "url": "https://localhost/settings"
+        },
+        "result": {
+          "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3",
+          "loaderId": "6F3E1A0B2C4D5E6F708192A3B4C5D6E7"
+        },
+        "events": [
+          {
+            "method": "Page.frameStartedLoading",
+            "params": {
+              "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+            }
+          },
+          {
+            "method": "Runtime.executionContextsCleared",
+            "params": {}
+          },
+          {
+            "method": "Runtime.executionContextCreated",
+            "params": {
+              "context": {
+                "id": 1,
+                "origin": "https://localhost",
+                "name": "",
+                "uniqueId": "-4729836104412716245.-2381270498172231771",
+                "auxData": {
+                  "isDefault": true,
+                  "type": "default",
+                  "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+                }
+              }
+            }
+          },
+          {
+            "method": "Page.domContentEventFired",
+            "params": {
+              "timestamp": 181227.42
+            }
+          },
+          {
+            "method": "Page.loadEventFired",
+            "params": {
+              "timestamp": 181227.43
+            }
+          },
+          {
+            "method": "Page.frameStoppedLoading",
+            "params": {
+              "frameId": "9B7C0E8A1F2D4C3B5A6E7D8F90A1B2C3"
+            }
+          }
+        ]
+      },
+      {
+        "method": "HeapProfiler.collectGarbage",
+        "result": {}
+      },
+      {
+        "method": "Runtime.getHeapUsage",
+        "result": {
+          "usedSize": 5242880,
+          "totalSize": 6291456,
+          "embedderHeapUsedSize": 0,
+          "backingStorageSize": 0
+        }
+      },
+      {
+        "method": "Profiler.start",
+        "result": {}
+      },
+      {
+        "method": "Runtime.evaluate",
+        "params": {
+          "expression": "globalThis.__toggleSettings()",
+          "returnByValue": true,
+          "awaitPromise": true
+        },
+        "result": {
+          "result": {
+            "type": "undefined"
+          }
+        }
+      },
+      {
+        "method": "HeapProfiler.collectGarbage",
+        "result": {}
+      },
+      {
+        "method": "Runtime.getHeapUsage",
+        "result": {
+          "usedSize": 5767168,
+          "totalSize": 6815744,
+          "embedderHeapUsedSize": 0,
+          "backingStorageSize": 0
+        }
+      },
+      {
+        "method": "Runtime.evaluate",
+        "params": {
+          "expression": "globalThis.__toggleSettings()",
+          "returnByValue": true,
+          "awaitPromise": true
+        },
+        "result": {
+          "result": {
+            "type": "undefined"
+          }
+        }
+      },
+      {
+        "method": "Profiler.stop",
+        "result": {
+          "profile": {
+            "nodes": [
+              {
+                "id": 1,
+                "callFrame": {
+                  "functionName": "(root)",
+                  "scriptId": "0",
+                  "url": "",
+                  "lineNumber": -1,
+                  "columnNumber": -1
+                },
+                "hitCount": 0,
+                "children": [
+                  2,
+                  3,
+                  4
+                ]
+              },
+              {
+                "id": 2,
+                "callFrame": {
+                  "functionName": "(program)",
+                  "scriptId": "0",
+                  "url": "",
+                  "lineNumber": -1,
+                  "columnNumber": -1
+                },
+                "hitCount": 3
+              },
+              {
+                "id": 3,
+                "callFrame": {
+                  "functionName": "toggleSettings",
+                  "scriptId": "41",
+                  "url": "https://localhost/_denext/client/app-4f2a9c1e.js",
+                  "lineNumber": 1203,
+                  "columnNumber": 17
+                },
+                "hitCount": 6,
+                "children": [
+                  5
+                ]
+              },
+              {
+                "id": 4,
+                "callFrame": {
+                  "functionName": "(garbage collector)",
+                  "scriptId": "0",
+                  "url": "",
+                  "lineNumber": -1,
+                  "columnNumber": -1
+                },
+                "hitCount": 1
+              },
+              {
+                "id": 5,
+                "callFrame": {
+                  "functionName": "dispatchSetState",
+                  "scriptId": "41",
+                  "url": "https://localhost/_denext/client/app-4f2a9c1e.js",
+                  "lineNumber": 88,
+                  "columnNumber": 4
+                },
+                "hitCount": 2
+              }
+            ],
+            "startTime": 181227419283,
+            "endTime": 181227431283,
+            "samples": [
+              2,
+              3,
+              3,
+              5,
+              3,
+              3,
+              4,
+              5,
+              3,
+              3,
+              2,
+              2
+            ],
+            "timeDeltas": [
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000,
+              1000
+            ]
+          }
+        }
+      },
+      {
+        "method": "Runtime.getHeapUsage",
+        "result": {
+          "usedSize": 7340032,
+          "totalSize": 8388608,
+          "embedderHeapUsedSize": 0,
+          "backingStorageSize": 0
+        }
+      },
+      {
+        "method": "HeapProfiler.collectGarbage",
+        "result": {}
+      },
+      {
+        "method": "Runtime.getHeapUsage",
+        "result": {
+          "usedSize": 5832704,
+          "totalSize": 6881280,
+          "embedderHeapUsedSize": 0,
+          "backingStorageSize": 0
+        }
+      }
+    ]
+  }
+}
