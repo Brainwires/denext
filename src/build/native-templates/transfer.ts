@@ -90,6 +90,10 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
     private var records: [String: DenextTransferRecord] = [:]
     private var tasks: [String: URLSessionTask] = [:]
     private var bodies: [String: Data] = [:]
+    /// Paused downloads whose resume data has not arrived yet, and those of them a resume asked
+    /// for meanwhile (they continue from that data once it arrives, not from the first byte).
+    private var pausing: Set<String> = []
+    private var resumeWhenPaused: Set<String> = []
     private var lastProgress: [String: TimeInterval] = [:]
     private var observers: [UUID: ([String: Any]) -> Void] = [:]
     private var backgroundCompletion: (() -> Void)?
@@ -345,13 +349,21 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
                   let task = tasks[id] as? URLSessionDownloadTask else { return nil }
             record.state = "paused"
             records[id] = record
+            pausing.insert(id)
             save()
             return task
         }
         guard let task else { return false }
         task.cancel(byProducingResumeData: { data in
             self.state.sync {
+                self.pausing.remove(id)
+                let resumeNow = self.resumeWhenPaused.remove(id) != nil
                 guard var record = self.records[id], record.state == "paused" else { return }
+                if resumeNow, let url = URL(string: record.url) {
+                    self.tasks[id] = nil
+                    self.relaunch(id, url: url, resumeData: data)
+                    return
+                }
                 if let data { try? data.write(to: self.file(id, ".resume"), options: .atomic) }
                 record.resumable = data != nil
                 self.records[id] = record
@@ -368,6 +380,11 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
         try state.sync {
             guard let record = records[id], record.state == "paused" || record.state == "failed",
                   let url = URL(string: record.url) else { return false }
+            // Paused a moment ago: its resume data is still on its way. Continue from it then.
+            if record.state == "paused", pausing.contains(id) {
+                resumeWhenPaused.insert(id)
+                return true
+            }
             let resumeFile = file(id, ".resume")
             let data = record.kind == "download" ? try? Data(contentsOf: resumeFile) : nil
             try? FileManager.default.removeItem(at: resumeFile)
@@ -377,6 +394,22 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
         }
     }
 
+    /// Start record \`id\` again from \`resumeData\` (a resume that came before its pause settled);
+    /// a launch that throws fails the transfer. Runs on \`state\`.
+    private func relaunch(_ id: String, url: URL, resumeData: Data?) {
+        do {
+            try launch(id, url: url, resumeData: resumeData)
+        } catch {
+            guard var record = records[id] else { return }
+            record.state = "failed"
+            record.code = "IO"
+            record.error = "\\(error)"
+            records[id] = record
+            emit(id, "failed")
+        }
+        save()
+    }
+
     /// Cancel a transfer; a download's partial data is dropped.
     func cancel(_ id: String) -> Bool {
         state.sync {
@@ -384,6 +417,7 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
             record.state = "cancelled"
             record.resumable = false
             records[id] = record
+            resumeWhenPaused.remove(id)
             tasks.removeValue(forKey: id)?.cancel()
             try? FileManager.default.removeItem(at: file(id, ".resume"))
             try? FileManager.default.removeItem(at: file(id, ".body"))
