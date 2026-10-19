@@ -678,3 +678,32 @@ Deno.test("--restore logs one line per file changed, re-copies, and notes a fail
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("mobile dev on a LAN address says how to answer iOS's Local Network prompt", async () => {
+  const { root, file } = await project();
+  try {
+    const lines: string[] = [];
+    const f = fakes(root, file);
+    await runMobileDev({ cwd: root }, { ...f.deps, log: (l) => lines.push(l) });
+    const text = lines.join("\n");
+    assertStringIncludes(text, "Local Network");
+    assertStringIncludes(text, "Settings → Privacy & Security → Local Network");
+    // Loopback (the simulator) needs no permission: no hint.
+    const loop = fakes(root, file);
+    const loopLines: string[] = [];
+    await runMobileDev({ cwd: root }, {
+      ...loop.deps,
+      startServer: () =>
+        Promise.resolve({
+          url: "http://localhost:3000",
+          attached: false,
+          finished: new Promise(() => {}),
+          stop: () => Promise.resolve(),
+        }),
+      log: (l) => loopLines.push(l),
+    });
+    assert(!loopLines.join("\n").includes("Local Network"), loopLines.join("\n"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

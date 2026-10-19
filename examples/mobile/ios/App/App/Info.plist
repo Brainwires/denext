@@ -89,6 +89,8 @@
 	<true/>
 	<key>DenextOtaPublicKey</key>
 	<string>MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEo4RPHP+nuUQmOf3IKEi67Wgn/CLX5A3quR2vADPho24Lr8FY/H4Jk7uPA9VhHUZB2g4rNZLBaHZo1i8kUPCLHg==</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Downloads app updates from the OTA server on your local network (deno task ota:serve).</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock the app with Face ID.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

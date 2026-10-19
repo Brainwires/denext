@@ -5,7 +5,11 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import { addOtaToProject, parseOtaOrigins } from "../src/build/mobile-ota-install.ts";
+import {
+  addOtaToProject,
+  OTA_LOCAL_NETWORK_USAGE,
+  parseOtaOrigins,
+} from "../src/build/mobile-ota-install.ts";
 import {
   isPristineOtaTemplate,
   OTA_ANDROID_FILES,
@@ -1297,6 +1301,34 @@ Deno.test("add-ota: a template a newer denext wrote is kept, never downgraded; -
     for (const [path, template] of Object.entries(files)) {
       assertEquals(await read(dir, path), await renderOtaTemplate(template));
     }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("add-ota: a LAN origin declares NSLocalNetworkUsageDescription (an app's own is kept)", async () => {
+  const dir = await keyedProject();
+  try {
+    await addOtaToProject({ dir, origins: ["https://ota.example.com"] });
+    assert(!(await read(dir, INFO_PLIST)).includes("NSLocalNetworkUsageDescription"));
+    const lan = await addOtaToProject({ dir, origins: ["https://mac-mini.local:8443"] });
+    assertEquals(lan.manual, []);
+    const plist = await read(dir, INFO_PLIST);
+    assertStringIncludes(plist, "<key>NSLocalNetworkUsageDescription</key>");
+    assertStringIncludes(plist, `<string>${OTA_LOCAL_NETWORK_USAGE}</string>`);
+    // Idempotent, and an app's own description is never replaced.
+    assertEquals(
+      (await addOtaToProject({ dir, origins: ["https://mac-mini.local:8443"] })).written,
+      [],
+    );
+    await Deno.writeTextFile(
+      join(dir, INFO_PLIST),
+      plist.replace(OTA_LOCAL_NETWORK_USAGE, "Mine."),
+    );
+    await addOtaToProject({ dir, origins: ["https://10.0.0.2"] });
+    const kept = await read(dir, INFO_PLIST);
+    assertStringIncludes(kept, "<string>Mine.</string>");
+    assertEquals(kept.split("NSLocalNetworkUsageDescription").length, 2);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

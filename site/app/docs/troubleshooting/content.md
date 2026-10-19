@@ -503,6 +503,19 @@ Security → Local Network).
 
 See [Live reload on a device](/docs/mobile#live-reload-on-a-device).
 
+### A LAN server answers "The Internet connection appears to be offline" on an iPhone
+
+**Cause.** iOS 14 and later fail every request to a host on the local network (an RFC 1918 or
+link-local address, a `.local` name) with `NSURLErrorNotConnectedToInternet` (-1009) until the
+user answers the app's Local Network prompt, and show the prompt only when `Info.plist` declares
+`NSLocalNetworkUsageDescription`. An OTA check against `ota:serve` on your machine, a
+`downloadToFile` / `uploadFile` to a LAN host and the `mobile dev --lan` page all fail this way.
+denext adds a hint to the OTA `reason` and the transfer error's message when it sees it.
+
+**Fix.** Allow the app under Settings → Privacy & Security → Local Network, then retry.
+`denext mobile dev` and `denext mobile add-ota --ota-origin <LAN origin>` add the
+`Info.plist` key; for a server URL the app picks at run time, add it yourself.
+
 ### A release build still loads the dev server
 
 **Cause.** A `denext mobile dev` session that was killed outright (`SIGKILL`, a

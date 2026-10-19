@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **iOS Local Network hint.** Until the user answers iOS's Local Network prompt, a request to a
+  LAN host fails with "The Internet connection appears to be offline" (-1009), which reads like
+  the phone being offline. When the OTA client (`checkForUiUpdate` / `prepareUiUpdate`) or a file
+  transfer (`downloadToFile` / `uploadFile`, natively or in the page) sees that error against an
+  RFC 1918, link-local or `.local` host, its message now says where to allow it (Settings →
+  Privacy & Security → Local Network). `denext mobile add-ota --ota-origin` declares
+  `NSLocalNetworkUsageDescription` in Info.plist when a pinned origin is such a host (an app's
+  own description is kept), and `denext mobile dev --lan` prints how to answer the prompt.
+
 - **Deno Desktop downloads are tracked transfers.** A `downloadToFile` in a Deno Desktop window
   is now listed by `fileTransfers()` and reported to `onFileTransfer` (`started`, `progress`,
   `done`, `failed`, `cancelled`) under its `id`, as on the web and in the native shell, and

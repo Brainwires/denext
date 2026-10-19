@@ -695,6 +695,12 @@ function nextSteps(server: MobileDevServer, ios: IosSession): string {
       ? "  The URL is loopback: only the iOS simulator (or Android with `adb reverse tcp:PORT " +
         "tcp:PORT`) reaches it. Use --lan for a physical device on your network."
       : "  The device must be on the same network as this machine.",
+    ...(loopback ? [] : [
+      "  iOS asks for Local Network access on the app's first launch: allow it. Until then (or",
+      '  if it was denied) every request to this machine fails as "The Internet connection',
+      '  appears to be offline"; turn it on in Settings → Privacy & Security → Local Network →',
+      "  <your app>, then relaunch the app.",
+    ]),
     "  WebView debugging is on for the session: Safari → Develop → <device> (iOS), or",
     "  chrome://inspect (Android); `denext mobile inspect` prints the steps.",
     `  Edits reload on the device. Ctrl-C restores capacitor.config` +

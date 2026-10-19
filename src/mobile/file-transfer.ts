@@ -18,6 +18,7 @@
  * @module
  */
 
+import { withLocalNetworkHint } from "./local-network.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 
 /** A transfer's direction. */
@@ -286,6 +287,9 @@ function fromNative(raw: RawTransfer): FileTransferEvent {
     const value = read(raw[key as keyof RawTransfer]);
     if (value !== undefined) out[key] = value;
   }
+  if (typeof out.error === "string") {
+    out.error = withLocalNetworkHint(out.error, String(out.url), out.error);
+  }
   return out as unknown as FileTransferEvent;
 }
 
@@ -523,16 +527,20 @@ function pageInfo(spec: PageTransferSpec, id: string, kind: FileTransferKind): F
   };
 }
 
-/** The failure of an attempt: a write (IO) or the network, resumable when bytes are kept. */
-function attemptFailure(err: unknown, canResume: boolean): {
+/**
+ * The failure of an attempt at `url`: a write (IO) or the network, resumable when bytes are
+ * kept. A network failure iOS's Local Network permission may cause carries the hint.
+ */
+function attemptFailure(err: unknown, canResume: boolean, url: string): {
   code: FileTransferErrorCode;
   message: string;
   resumable: boolean;
 } {
   const code = err instanceof WriteFailure ? "IO" : "NETWORK";
+  const message = String((err as Error)?.message ?? err);
   return {
     code,
-    message: String((err as Error)?.message ?? err),
+    message: code === "NETWORK" ? withLocalNetworkHint(message, url, err) : message,
     resumable: code === "NETWORK" && canResume,
   };
 }
@@ -682,6 +690,7 @@ class PageDownload implements PageTransfer {
     const { code, message, resumable } = attemptFailure(
       err,
       this.#validator !== null && this.info.bytes > 0,
+      this.spec.url,
     );
     pageEvent(this, "failed", { state: "failed", code, error: message, resumable });
     this.#fail(
@@ -1021,7 +1030,7 @@ class PageUpload implements PageTransfer {
       pageEvent(this, "cancelled", { state: "cancelled" });
       return cancelError("uploadFile", this.info.id, reason, this.spec.options.signal);
     }
-    const { message } = attemptFailure(err, false);
+    const { message } = attemptFailure(err, false, this.spec.url);
     pageEvent(this, "failed", { state: "failed", code: "NETWORK", error: message });
     return new FileTransferError(`uploadFile: ${message}`, { code: "NETWORK", id: this.info.id });
   }
@@ -1039,6 +1048,12 @@ export function pageUpload(spec: PageUploadSpec): Promise<UploadFileResult> {
 
 // --- the transfers the plugin runs ------------------------------------------------------------
 
+/** A plugin failure's text, with the Local Network hint where it applies. */
+function failureText(event: FileTransferEvent, url: string): string {
+  const text = event.error ?? "the transfer failed";
+  return withLocalNetworkHint(text, url, text);
+}
+
 /** How a plugin event settles a transfer's promise: done, an error, or not yet (null). */
 function nativeOutcome(
   event: FileTransferEvent,
@@ -1052,7 +1067,7 @@ function nativeOutcome(
   }
   if (event.type !== "failed") return null;
   return {
-    error: new FileTransferError(`${fn}: ${start.url}: ${event.error ?? "the transfer failed"}`, {
+    error: new FileTransferError(`${fn}: ${start.url}: ${failureText(event, start.url)}`, {
       code: (event.code ?? "NETWORK") as FileTransferErrorCode,
       id: start.id,
       status: event.status,
