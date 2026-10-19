@@ -2313,9 +2313,11 @@ The relying party is `AUTH_URL`'s origin (or `relayingParty: { id, origin }`), n
 host. A passkey is registered for a signed-in user whose address is verified, after a recent
 sign-in; Auth.js's sign-up by passkey (an unverified email creating an account) is not offered.
 With an Auth.js adapter, a credential is its `Authenticator` row and a `webauthn` account, as
-Auth.js stores them; the ceremony's challenge is held in the server's memory (Auth.js keeps it in a
-cookie), so a multi-instance deployment needs sticky sessions for the few seconds a ceremony
-takes, or a denext adapter.
+Auth.js stores them. The ceremony's challenge (Auth.js keeps it in a cookie) goes to the app's
+[cache store](/docs/multi-instance): single-use, taken atomically, and expiring with the ceremony.
+Instances that share a store (`postgresCacheStore`, `redisCacheStore`, `denoKvCacheStore`, or one
+host's SQLite file) finish each other's ceremonies; with the in-memory store a ceremony must
+finish on the instance that began it, as with sticky sessions.
 
 An Auth.js adapter's schema has no column for denext's roles, bans or `sessionsValidAfter`. Give
 it two more methods over a table of your own, keyed by user id, and `requireAuth({ role })`, a

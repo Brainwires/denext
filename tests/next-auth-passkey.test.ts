@@ -16,6 +16,13 @@ import type { NextAuthConfig } from "../src/compat/next-auth/types.ts";
 import { type CallInit, inRequest, Jar, request } from "./helpers/next-auth-harness.ts";
 import { Authenticator } from "./helpers/soft-authenticator.ts";
 import type { AuthPasskeyConfig } from "../src/server/auth/types.ts";
+import {
+  type CacheStore,
+  getCacheStore,
+  inMemoryCacheStore,
+  setCacheStore,
+} from "../src/server/cache.ts";
+import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
 
 const SECRET = "next-auth-passkey-test-secret-32-chars-plus";
 
@@ -252,4 +259,94 @@ Deno.test("next-auth adapter bridge: the passkey group on Auth.js's authenticato
   // Without a WebAuthn provider, the bridge offers no passkey group.
   const none = fromAuthJsAdapter(adapter, { credentialsProviders: new Set(), warn: () => {} });
   assertEquals(none.createPasskey, undefined);
+});
+
+/** Two "instances": separate bridges over one Auth.js adapter, each with its own cache handle. */
+function instances(store: () => CacheStore, other: () => CacheStore = store) {
+  const { adapter } = authJsAdapter();
+  const bridge = (challengeStore: () => CacheStore) =>
+    fromAuthJsAdapter(adapter, {
+      credentialsProviders: new Set(),
+      warn: () => {},
+      webAuthnProvider: "passkey",
+      challengeStore,
+    });
+  return [bridge(store), bridge(other)] as const;
+}
+
+Deno.test("next-auth adapter bridge: a passkey challenge in a shared cache store", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "dnx-passkey-challenge-" });
+  // Two handles on one SQLite file stand in for two instances sharing a store.
+  const a = sqliteCacheStore({ path: `${dir}/cache.db` });
+  const b = sqliteCacheStore({ path: `${dir}/cache.db` });
+  try {
+    const [one, two] = instances(() => a, () => b);
+    const now = Math.floor(Date.now() / 1000);
+    await one.createPasskeyChallenge!({ hash: "h1", expiresAt: now + 60, data: "d1" });
+    // Begun on one instance, finished on the other — no sticky session needed.
+    assertEquals((await two.usePasskeyChallenge!("h1"))?.data, "d1");
+    assertEquals(await one.usePasskeyChallenge!("h1"), undefined, "single use, across instances");
+    // Racing redemptions of one challenge: exactly one wins.
+    await one.createPasskeyChallenge!({ hash: "h2", expiresAt: now + 60, data: "d2" });
+    const raced = await Promise.all([
+      one.usePasskeyChallenge!("h2"),
+      two.usePasskeyChallenge!("h2"),
+      one.usePasskeyChallenge!("h2"),
+    ]);
+    assertEquals(raced.filter(Boolean).length, 1);
+    // Expired, and capped at 15 minutes whatever the ceremony asked for.
+    await one.createPasskeyChallenge!({ hash: "h3", expiresAt: now - 1, data: "d3" });
+    assertEquals(await two.usePasskeyChallenge!("h3"), undefined);
+    await one.createPasskeyChallenge!({ hash: "h4", expiresAt: now + 86_400, data: "d4" });
+    const capped = (await a.getData("denext:passkey-challenge:h4"))!;
+    assert(capped.expiresAt <= (now + 15 * 60) * 1000);
+    assertEquals(capped.tags, [], "no tag a revalidation could reach");
+    // Something else under the key, or a record for another hash, is not a challenge.
+    await a.setData("denext:passkey-challenge:h5", {
+      value: { x: 1 },
+      expiresAt: Infinity,
+      tags: [],
+    });
+    assertEquals(await two.usePasskeyChallenge!("h5"), undefined);
+    await a.setData("denext:passkey-challenge:h6", {
+      value: { hash: "other", data: "d", expiresAt: now + 60 },
+      expiresAt: Infinity,
+      tags: [],
+    });
+    assertEquals(await two.usePasskeyChallenge!("h6"), undefined);
+  } finally {
+    a.close();
+    b.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("next-auth adapter bridge: the app's cache store by default; memory without takeData", async () => {
+  const previous = getCacheStore();
+  const dir = await Deno.makeTempDir({ prefix: "dnx-passkey-default-" });
+  const shared = sqliteCacheStore({ path: `${dir}/cache.db` });
+  try {
+    const { adapter } = authJsAdapter();
+    const bridge = () =>
+      fromAuthJsAdapter(adapter, {
+        credentialsProviders: new Set(),
+        warn: () => {},
+        webAuthnProvider: "passkey",
+      });
+    const now = Math.floor(Date.now() / 1000);
+    setCacheStore(shared);
+    const [one, two] = [bridge(), bridge()];
+    await one.createPasskeyChallenge!({ hash: "s1", expiresAt: now + 60, data: "d" });
+    assertEquals((await two.usePasskeyChallenge!("s1"))?.data, "d", "through the app's store");
+    // The in-memory cache store has no takeData: each instance keeps its own challenges.
+    setCacheStore(inMemoryCacheStore());
+    const [three, four] = [bridge(), bridge()];
+    await three.createPasskeyChallenge!({ hash: "m1", expiresAt: now + 60, data: "d" });
+    assertEquals(await four.usePasskeyChallenge!("m1"), undefined, "another instance's memory");
+    assertEquals((await three.usePasskeyChallenge!("m1"))?.data, "d");
+  } finally {
+    setCacheStore(previous);
+    shared.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

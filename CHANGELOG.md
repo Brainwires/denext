@@ -99,6 +99,12 @@ and this project adheres to
   (`AUTH_<ID>_KEY`) are written by hand. Fourteen providers whose flow isn't standard OAuth
   (`dropbox`, `hubspot`, `line`, `tiktok`, `wechat`, …) are not provided; Limitations lists why.
   The shim now ships 88 provider modules, up from 22.
+- **A passkey ceremony through an Auth.js adapter finishes on any instance.** Its challenge now
+  lives in the app's cache store instead of the instance's memory: single-use (taken atomically by
+  the new optional `CacheStore.takeData`, which the SQLite, Postgres, Redis and Deno KV stores
+  implement and `cacheStoreContract` checks), expiring with the ceremony and untagged. A
+  multi-instance `next-auth` app with a shared cache store no longer needs sticky sessions; the
+  in-memory store keeps the old per-instance behaviour.
 - **A provider's `checks` decide PKCE and the OIDC `nonce`, as in Auth.js.** `OAuthProvider.checks`
   (`"pkce"`, `"state"`, `"nonce"`, `"none"`) leaves PKCE out unless it lists `"pkce"` and the
   `nonce` unless it lists `"nonce"`, so Reddit, ClickUp, EVE Online, Figma, Atlassian and the other

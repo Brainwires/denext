@@ -78,6 +78,19 @@ const decoder = new TextDecoder();
 const toDb = (at: number | undefined): number | null =>
   at === undefined || at === Infinity ? null : at;
 
+/** How often `takeData` re-reads an entry rewritten under it before giving up. */
+const TAKE_ATTEMPTS = 5;
+
+/** A data entry from its head and value. */
+function dataOf(head: Head, value: unknown): DataEntry {
+  return {
+    value,
+    expiresAt: head.e ?? Infinity,
+    ...(head.s === null ? {} : { staleAt: head.s }),
+    tags: head.t,
+  };
+}
+
 /** The {@link CacheStore} behind {@linkcode denoKvCacheStore}. */
 class DenoKvCache implements CacheStore {
   readonly #handle: KvHandle;
@@ -253,14 +266,23 @@ class DenoKvCache implements CacheStore {
   async getData(key: string): Promise<DataEntry | undefined> {
     const live = await this.#live("data", key);
     if (!live) return undefined;
-    const value = await this.#readValue(live.kv, live.head);
-    const { head } = live;
-    return {
-      value,
-      expiresAt: head.e ?? Infinity,
-      ...(head.s === null ? {} : { staleAt: head.s }),
-      tags: head.t,
-    };
+    return dataOf(live.head, await this.#readValue(live.kv, live.head));
+  }
+
+  async takeData(key: string): Promise<DataEntry | undefined> {
+    const kv = await this.#handle.db();
+    // Read the head, then delete it checked against its versionstamp: of two racing takers,
+    // one commit lands. A rewrite in between fails the check too, and the loop re-reads.
+    for (let attempt = 0; attempt < TAKE_ATTEMPTS; attempt++) {
+      const entry = await kv.get(this.#head("data", key));
+      const head = entry.value as Head | null;
+      if (!head) return undefined;
+      const value = await this.#readValue(kv, head);
+      if (!(await this.#remove(kv, "data", key, entry))) continue;
+      const live = value !== undefined && (head.e === null || head.e > Date.now());
+      return live ? dataOf(head, value) : undefined;
+    }
+    return undefined;
   }
 
   async setData(key: string, entry: DataEntry): Promise<void> {

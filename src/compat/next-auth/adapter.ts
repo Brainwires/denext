@@ -27,6 +27,7 @@ import type {
   VerificationTokenRef,
 } from "../../server/auth/adapter.ts";
 import { decodeCbor } from "../../server/auth/cbor.ts";
+import { type CacheStore, getCacheStore } from "../../server/cache.ts";
 import { base64UrlDecode } from "../../server/auth/oauth.ts";
 import type { SessionStore } from "../../server/auth/session-store.ts";
 import type { AuthSession } from "../../server/auth/types.ts";
@@ -351,11 +352,62 @@ const CHALLENGE_CAP_SECONDS = 15 * 60;
 /** The most in-memory passkey challenges kept at once (the oldest go first). */
 const MAX_CHALLENGES = 10_000;
 
+/** The cache-store key a challenge's record lives under (its hash names it). */
+const CHALLENGE_KEY = "denext:passkey-challenge:";
+
+/** The port's challenge pair. */
+type ChallengeGroup = Pick<
+  Required<AuthAdapter>,
+  "createPasskeyChallenge" | "usePasskeyChallenge"
+>;
+
+/** A record read back from a store, when it is one this bridge wrote. */
+function challengeRecord(value: unknown): PasskeyChallengeRecord | undefined {
+  const record = value as Partial<PasskeyChallengeRecord> | null | undefined;
+  if (
+    typeof record?.hash !== "string" || typeof record.data !== "string" ||
+    typeof record.expiresAt !== "number"
+  ) {
+    return undefined;
+  }
+  return record as PasskeyChallengeRecord;
+}
+
 /**
- * Passkey challenges in this instance's memory: an Auth.js schema has no table for them (Auth.js
- * keeps its challenge in a cookie). Single-use and expiring, as the adapter port requires.
+ * Passkey challenges in the app's cache store when it can take an entry atomically
+ * (`takeData`): an Auth.js schema has no table for them (Auth.js keeps its challenge in a
+ * cookie), and a shared store lets any instance finish a ceremony another began. Each is
+ * single-use (an atomic take), expires with the ceremony (15 minutes at most) and carries no
+ * tag a revalidation could reach. A store without `takeData` falls back to `memory`.
  */
-function memoryChallenges(): Pick<AuthAdapter, "createPasskeyChallenge" | "usePasskeyChallenge"> {
+function storeChallenges(store: () => CacheStore, memory: ChallengeGroup): ChallengeGroup {
+  const nowSeconds = () => Math.floor(Date.now() / 1000);
+  return {
+    async createPasskeyChallenge(record) {
+      const cache = store();
+      if (!cache.takeData) return await memory.createPasskeyChallenge(record);
+      const expiresAt = Math.min(record.expiresAt, nowSeconds() + CHALLENGE_CAP_SECONDS);
+      await cache.setData(`${CHALLENGE_KEY}${record.hash}`, {
+        value: { ...record, expiresAt },
+        expiresAt: expiresAt * 1000,
+        tags: [],
+      });
+    },
+    async usePasskeyChallenge(hash) {
+      const cache = store();
+      if (!cache.takeData) return await memory.usePasskeyChallenge(hash);
+      const record = challengeRecord((await cache.takeData(`${CHALLENGE_KEY}${hash}`))?.value);
+      if (!record || record.hash !== hash || record.expiresAt <= nowSeconds()) return undefined;
+      return record;
+    },
+  };
+}
+
+/**
+ * Passkey challenges in this instance's memory, for a cache store that can't take an entry
+ * atomically. Single-use and expiring, as the adapter port requires.
+ */
+function memoryChallenges(): ChallengeGroup {
   const challenges = new Map<string, PasskeyChallengeRecord>();
   return {
     createPasskeyChallenge(record) {
@@ -388,6 +440,7 @@ function passkeyGroup(
   adapter: AuthJsAdapter,
   providerId: string,
   linkAccount: NonNullable<AuthJsAdapter["linkAccount"]>,
+  challengeStore: () => CacheStore,
 ): Partial<AuthAdapter> {
   const get = adapter.getAuthenticator?.bind(adapter);
   const create = adapter.createAuthenticator?.bind(adapter);
@@ -445,7 +498,7 @@ function passkeyGroup(
       }
       await remove(urlToBase64(id));
     },
-    ...memoryChallenges(),
+    ...storeChallenges(challengeStore, memoryChallenges()),
   };
 }
 
@@ -528,6 +581,13 @@ export interface FromAuthJsAdapterOptions {
   onUpdateUser?: (user: AuthJsAdapterUser) => void | Promise<void>;
   /** The WebAuthn provider's id (`"passkey"`), when the app has one: its accounts' provider. */
   webAuthnProvider?: string;
+  /**
+   * Where passkey ceremony challenges live: the app's cache store (`cache.store` /
+   * `setCacheStore`) by default, read on every call. A store with `takeData` (SQLite, Postgres,
+   * Redis, Deno KV) holds them, so every instance sharing it can finish a ceremony; one without
+   * (the in-memory store) leaves them in this instance's memory.
+   */
+  challengeStore?: () => CacheStore;
 }
 
 /**
@@ -621,7 +681,12 @@ export function fromAuthJsAdapter(
     },
     ...verificationTokens(adapter),
     ...(options.webAuthnProvider
-      ? passkeyGroup(adapter, options.webAuthnProvider, linkAccount)
+      ? passkeyGroup(
+        adapter,
+        options.webAuthnProvider,
+        linkAccount,
+        options.challengeStore ?? getCacheStore,
+      )
       : {}),
   };
   if (adapter.unlinkAccount) {

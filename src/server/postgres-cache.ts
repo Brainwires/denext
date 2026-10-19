@@ -77,6 +77,17 @@ type Ns = "data" | "page";
 /** The table of one namespace. */
 const TABLE: Record<Ns, string> = { data: "cache_data", page: "cache_pages" };
 
+/** A `cache_data` row as the entry it stores. */
+function dataEntryOf(row: SqlRow): DataEntry {
+  const staleAt = toNumber(row.stale_at);
+  return {
+    value: JSON.parse(row.value as string),
+    expiresAt: fromDbExpiry(row.expires_at),
+    ...(staleAt === undefined ? {} : { staleAt }),
+    tags: JSON.parse(row.tags as string),
+  };
+}
+
 /** The {@link CacheStore} behind {@linkcode postgresCacheStore}. */
 class PostgresCache implements CacheStore {
   readonly #sql: SqlClient;
@@ -221,14 +232,29 @@ class PostgresCache implements CacheStore {
 
   async getData(key: string): Promise<DataEntry | undefined> {
     const row = await this.#live("data", "value, expires_at, stale_at, tags", key);
+    return row && dataEntryOf(row);
+  }
+
+  async takeData(key: string): Promise<DataEntry | undefined> {
+    const db = await this.#db();
+    // DELETE … RETURNING takes the row lock: of two racing takers, one gets the row.
+    const row = await db.begin(async (tx) => {
+      const [taken] = await tx.unsafe(
+        `DELETE FROM ${this.#t(TABLE.data)} WHERE key = $1 ` +
+          "RETURNING value, expires_at, stale_at, tags",
+        [key],
+      );
+      if (taken) {
+        await tx.unsafe(
+          `DELETE FROM ${this.#t("cache_tags")} WHERE ns = 'data' AND key = $1`,
+          [key],
+        );
+      }
+      return taken;
+    });
     if (!row) return undefined;
-    const staleAt = toNumber(row.stale_at);
-    return {
-      value: JSON.parse(row.value as string),
-      expiresAt: fromDbExpiry(row.expires_at),
-      ...(staleAt === undefined ? {} : { staleAt }),
-      tags: JSON.parse(row.tags as string),
-    };
+    const expires = toNumber(row.expires_at);
+    return expires !== undefined && expires <= Date.now() ? undefined : dataEntryOf(row);
   }
 
   async setData(key: string, entry: DataEntry): Promise<void> {

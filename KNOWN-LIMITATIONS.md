@@ -182,8 +182,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Passkeys (`next-auth/providers/passkey`, `…/webauthn`):** registration is for a signed-in
   user with a verified address after a recent sign-in (Auth.js's sign-up by passkey is not
   offered); the relying party needs `AUTH_URL` or `relayingParty: { id, origin }`. Through an
-  Auth.js adapter the ceremony challenge lives in the instance's memory (a ceremony must finish on
-  the instance that began it), the counter update is a read-then-write (Auth.js's port has no
+  Auth.js adapter the ceremony challenge lives in the app's cache store, so instances sharing one
+  (Postgres, Redis, Deno KV, or one host's SQLite file) need no sticky sessions; with the
+  in-memory cache store (the default on Deno Deploy, or `cache: { store: "memory" }`) a ceremony
+  must finish on the instance that began it. The counter update is a read-then-write (Auth.js's port has no
   compare-and-swap), and removing a passkey needs a denext-only `deleteAuthenticator` method. The
   built-in sign-in page lists no passkey button.
 - **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs

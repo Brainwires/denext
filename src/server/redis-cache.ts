@@ -276,6 +276,21 @@ class RedisCache implements CacheStore {
     return fields && readData(fields);
   }
 
+  async takeData(key: string): Promise<DataEntry | undefined> {
+    const entry = this.#entry("d", key);
+    // One MULTI block: the read and the delete are atomic, so racing takers can't both read it.
+    const [reply] = await this.#redis.transaction([["HGETALL", entry], ["DEL", entry]]);
+    const fields = toFields(reply);
+    if (!Object.keys(fields).length) return undefined;
+    await this.#redis.transaction([
+      ...this.#retag("d", key, tagsOf(fields), []),
+      ["ZREM", this.#written("d"), key],
+      ["ZREM", this.#expiry("d"), key],
+    ]);
+    const data = readData(fields);
+    return data && data.expiresAt > Date.now() ? data : undefined;
+  }
+
   async setData(key: string, entry: DataEntry): Promise<void> {
     await this.#write("d", key, {
       v: JSON.stringify(entry.value) ?? "null",

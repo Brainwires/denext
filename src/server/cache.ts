@@ -132,6 +132,14 @@ export interface CacheStore {
    * unreachable pages age out through its own eviction.
    */
   sweepPages?(keep: string): number | Promise<number>;
+  /**
+   * Optional: **atomically** read and delete one data entry — a single-use record (a passkey
+   * ceremony's challenge) that must be consumed exactly once even when several instances race
+   * for it. Returns the entry when it was fresh, and then no other call (on any instance sharing
+   * the store) ever returns it; an expired entry is removed and missed. A store that omits this
+   * is not used for such records (they stay in the instance's memory).
+   */
+  takeData?(key: string): DataEntry | undefined | Promise<DataEntry | undefined>;
 }
 
 // Bound the in-memory caches so high-cardinality keys (e.g. many distinct query

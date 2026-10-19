@@ -200,6 +200,28 @@ const CACHE_CASES: Record<string, (store: CacheStore) => Promise<void>> = {
     await store.expireByTag("a", { staleAt, expiresAt: Date.now() - 1 });
     expectSame(await store.getData("d"), undefined, "expired by a past hard expiry");
   },
+  "takeData hands a fresh entry out once, even to racing takers (when supported)": async (
+    store,
+  ) => {
+    if (!store.takeData) return;
+    const entry = { value: { hash: "h", n: 1 }, expiresAt: Date.now() + 60_000, tags: ["t"] };
+    await store.setData("once", entry);
+    expectSame(await store.takeData("once"), entry, "the first take");
+    expectSame(await store.takeData("once"), undefined, "a second take");
+    expectSame(await store.getData("once"), undefined, "taken is gone");
+    await store.setData("race", entry);
+    const takes = await Promise.all(Array.from({ length: 5 }, () => store.takeData!("race")));
+    expectSame(takes.filter(Boolean).length, 1, "racing takers: exactly one gets it");
+    await store.setData("old", { value: 1, expiresAt: Date.now() - 1, tags: [] });
+    expectSame(await store.takeData("old"), undefined, "an expired entry is a miss");
+    expectSame(await store.takeData("never"), undefined, "an unknown key");
+    // A taken entry's tags no longer reach it: re-set without the tag, the purge spares it.
+    await store.setData("tagged", entry);
+    await store.takeData("tagged");
+    await store.setData("tagged", { ...entry, tags: [] });
+    await store.deleteByTag("t");
+    expectSame((await store.getData("tagged"))?.value, entry.value, "re-set after a take");
+  },
   "sweepPages keeps one key prefix and counts the rest (when supported)": async (store) => {
     if (!store.sweepPages) return;
     await store.setPage("v2:new:/a", page("/a", ["t"]));
@@ -216,7 +238,7 @@ const CACHE_CASES: Record<string, (store: CacheStore) => Promise<void>> = {
 /**
  * The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,
  * `deleteByPath`, `deleteByTag` (every tag of an entry purges it, and a rewrite drops a tag), and
- * `expireByTag` / `sweepPages` when the store implements them.
+ * `expireByTag` / `sweepPages` / `takeData` (single-use, atomic) when the store implements them.
  *
  * @param t Where the cases run (a `Deno.TestContext`).
  * @param make A fresh, empty store per case.
