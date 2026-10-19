@@ -195,6 +195,21 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
   }
 });
 
+Deno.test("migrate ignores .deno/ (the TypeScript 7 check's cache) once, across re-runs", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_deno_cache_" });
+  try {
+    await writeViteApp(dir);
+    await Deno.writeTextFile(join(dir, ".gitignore"), "node_modules\n");
+    await migrateProject(dir);
+    await migrateProject(dir);
+    const lines = (await Deno.readTextFile(join(dir, ".gitignore"))).split("\n");
+    assertEquals(lines.filter((l) => l === ".deno/").length, 1, lines.join("\n"));
+    assertEquals(lines[0], "node_modules", "the app's own lines stay first");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate SPA (--desktop --backend): a computed Vite proxy is reported, --proxy wins", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_spa_computed_proxy_" });
   try {

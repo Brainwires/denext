@@ -24,6 +24,7 @@ import {
   DenoToolchainUnavailableError,
   ensureCached,
   type EnsureDenoToolchainOptions,
+  pathOverrideStatus,
   toolchainEnvValue,
 } from "./deno-toolchain.ts";
 import pinJson from "./gleam-toolchain-pin.json" with { type: "json" };
@@ -198,18 +199,7 @@ export async function gleamToolchainStatus(
   const target = options.target ?? denoToolchainTarget();
   const raw = toolchainEnvValue(options.env ?? processEnv, GLEAM_ENV);
   const base = { version: pin.version, target };
-  if (raw !== "") {
-    const path = resolve(raw);
-    const exists = (await Deno.stat(path).catch(() => null))?.isFile === true;
-    return {
-      ...base,
-      mode: "path",
-      state: "n/a",
-      path,
-      ok: exists,
-      detail: `${GLEAM_ENV}=${path} (unverified)${exists ? "" : " — NOT FOUND"}`,
-    };
-  }
+  if (raw !== "") return { ...base, ...(await pathOverrideStatus(raw, GLEAM_ENV)) };
   if (!pin.targets[target]) {
     return {
       ...base,

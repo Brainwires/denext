@@ -11,6 +11,8 @@
 // can never silently drift from what the package actually ships.
 
 /** The npm packages installed (with their `@types`) to source the real surface. */
+import { NEXT_AUTH_PROVIDER_MODULES } from "../../src/compat/next-auth/providers/list.ts";
+
 export const REAL_PACKAGES = [
   "react",
   "react-dom",
@@ -84,31 +86,11 @@ export const NEXT_AUTH_V4_SUBPATHS: ReadonlyArray<readonly [subpath: string, fil
   ["/adapters", "adapters.ts"],
 ];
 
-/** The `next-auth/providers/*` modules the shim ships (each one's default export is checked). */
-export const NEXT_AUTH_PROVIDERS = [
-  "apple",
-  "auth0",
-  "cognito",
-  "credentials",
-  "discord",
-  "email",
-  "facebook",
-  "github",
-  "gitlab",
-  "google",
-  "keycloak",
-  "linkedin",
-  "microsoft-entra-id",
-  "nodemailer",
-  "notion",
-  "okta",
-  "resend",
-  "slack",
-  "spotify",
-  "twitch",
-  "twitter",
-  "zoom",
-] as const;
+/**
+ * The `next-auth/providers/*` modules the shim ships (each one's default export is checked):
+ * the hand-written and generated ones, from `deno task gen:auth-providers`'s list.
+ */
+export const NEXT_AUTH_PROVIDERS: readonly string[] = NEXT_AUTH_PROVIDER_MODULES;
 
 /** One React/Next(-adjacent) specifier and the two files that must agree on it. */
 export interface SpecEntry {
@@ -326,6 +308,12 @@ export const CATALOG: SpecEntry[] = [
     specifier: "next-auth/react",
     real: "next-auth/react",
     denext: "src/compat/next-auth/react.ts",
+    group: "next-auth",
+  },
+  {
+    specifier: "next-auth/webauthn",
+    real: "next-auth/webauthn",
+    denext: "src/compat/next-auth/webauthn.ts",
     group: "next-auth",
   },
   {

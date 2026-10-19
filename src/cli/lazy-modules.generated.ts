@@ -18,6 +18,7 @@ import "./commands/deps.ts";
 import "./commands/desktop.ts";
 import "./commands/doctor.ts";
 import "./commands/fallow.ts";
+import "./commands/fastlane.ts";
 import "./commands/gen.ts";
 import "./commands/generate.ts";
 import "./commands/job.ts";

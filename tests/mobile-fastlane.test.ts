@@ -3,7 +3,13 @@
 // Gemfile, .gitignore, the --ci workflow), idempotency / --force / --dry-run through
 // `mobile add`, and what `denext mobile doctor --release` reports about a fastlane/ folder.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { join } from "@std/path";
 import {
   addMobileCapabilities,
@@ -11,7 +17,16 @@ import {
   formatCapabilityPlan,
   formatCapabilityTable,
 } from "../src/build/mobile-capabilities.ts";
-import { addFastlaneToProject, fastlaneFindings } from "../src/build/mobile-fastlane.ts";
+import {
+  addFastlaneToProject,
+  fastlaneFindings,
+  type FastlaneHostProbe,
+} from "../src/build/mobile-fastlane.ts";
+import {
+  FASTLANE_TOOLCHAIN,
+  fastlanePinHash,
+  type FastlaneToolchainStatus,
+} from "../src/build/fastlane-toolchain.ts";
 import {
   appfileTemplate,
   fastfileTemplate,
@@ -20,6 +35,8 @@ import {
   workflowTemplate,
 } from "../src/build/fastlane-templates.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
+import { scaffoldProject } from "../src/build/scaffold.ts";
+import { FEATURES, preselectedFeatures } from "../src/cli/commands/create.ts";
 
 /** A Capacitor 8 project with `files` added (a null value leaves a default file out). */
 async function project(files: Record<string, string | null> = {}): Promise<string> {
@@ -99,7 +116,11 @@ Deno.test("add fastlane: the files, marked, with the Appfile and Matchfile from 
     // No workflow without --ci; Gemfile.lock and match are left to do.
     assert(!(await exists(join(dir, ".github"))));
     assert(report.manual.some((m) => m.includes("bundle install")));
-    assert(report.manual.some((m) => m.includes("fastlane match appstore")));
+    assert(report.manual.some((m) => m.includes("`denext fastlane ios|android")));
+    assert(report.manual.some((m) => m.includes("denext fastlane match appstore")));
+    // The lanes are run with denext's managed fastlane; the Gemfile is the bundler way in.
+    assertStringIncludes(await read(dir, "fastlane/Fastfile"), "#   denext fastlane ios build");
+    assertStringIncludes(await read(dir, "Gemfile"), "`denext fastlane …` runs denext's own");
   });
 });
 
@@ -259,10 +280,22 @@ Deno.test("add fastlane --ci: the workflow at the repository root, secrets by na
     const yml = await Deno.readTextFile(join(repo, ".github/workflows/mobile-release.yml"));
     assertStringIncludes(yml, 'working-directory: "apps/mobile"');
     assertStringIncludes(yml, "pnpm install --frozen-lockfile");
-    assertStringIncludes(yml, "uses: ruby/setup-ruby@v1");
-    assertStringIncludes(yml, "bundler-cache: true");
-    assertStringIncludes(yml, 'bundle exec fastlane android "$LANE"');
-    assertStringIncludes(yml, 'bundle exec fastlane ios "$LANE"');
+    // denext's managed fastlane: no Ruby setup step, no bundler.
+    assert(!yml.includes("setup-ruby"));
+    assert(!yml.includes("bundle exec"));
+    assertStringIncludes(yml, 'run: $DENEXT_CLI fastlane android "$LANE"');
+    assertStringIncludes(yml, 'run: $DENEXT_CLI fastlane ios "$LANE"');
+    // The managed fastlane's install is cached per runner OS / arch, keyed on the pin.
+    const key = `key: denext-fastlane-\${{ runner.os }}-\${{ runner.arch }}-${fastlanePinHash()}`;
+    assertEquals(yml.split("uses: actions/cache@v4").length - 1, 2);
+    assertEquals(yml.split(key).length - 1, 2);
+    assertStringIncludes(yml, "path: ~/.cache/deno/denext-deno/fastlane\n");
+    assertStringIncludes(yml, "path: ~/Library/Caches/deno/denext-deno/fastlane\n");
+    // A pin bump is a new key.
+    assert(
+      fastlanePinHash({ ...FASTLANE_TOOLCHAIN, fastlane: "2.999.0" }) !== fastlanePinHash(),
+    );
+    assertMatch(fastlanePinHash(), /^[0-9a-f]{16}$/);
     assertStringIncludes(yml, "runs-on: macos-15");
     for (
       const secret of [
@@ -308,11 +341,28 @@ Deno.test("add fastlane --ci: the workflow at the repository root, secrets by na
 
 // ---- doctor ------------------------------------------------------------------------------------
 
+/**
+ * Run `fn` with `DENEXT_FASTLANE` naming an existing file, so the doctor's managed-fastlane check
+ * (the host's install and compiler) has nothing to say on any machine.
+ */
+async function withOwnFastlane<T>(fn: () => Promise<T>): Promise<T> {
+  const exe = await Deno.makeTempFile({ prefix: "denext_fastlane_exe_" });
+  const before = Deno.env.get("DENEXT_FASTLANE");
+  Deno.env.set("DENEXT_FASTLANE", exe);
+  try {
+    return await fn();
+  } finally {
+    if (before === undefined) Deno.env.delete("DENEXT_FASTLANE");
+    else Deno.env.set("DENEXT_FASTLANE", before);
+    await Deno.remove(exe);
+  }
+}
+
 /** The `fastlane` findings `mobile doctor --release` reports for a project with `files`. */
 async function doctorFindings(files: Record<string, string | null>) {
   const dir = await project(files);
   try {
-    const report = await runMobileDoctor({ root: dir, profile: "release" });
+    const report = await withOwnFastlane(() => runMobileDoctor({ root: dir, profile: "release" }));
     return {
       listed: report.checks.includes("fastlane"),
       findings: report.findings.filter((f) => f.check === "fastlane"),
@@ -332,7 +382,7 @@ Deno.test("doctor --release: no fastlane/ folder, no fastlane check", async () =
 Deno.test("doctor --release: denext's fastlane files with a Gemfile.lock pass", async () => {
   await inProject({ "Gemfile.lock": "GEM\n" }, async (dir) => {
     await addFastlaneToProject({ dir });
-    const report = await runMobileDoctor({ root: dir, profile: "release" });
+    const report = await withOwnFastlane(() => runMobileDoctor({ root: dir, profile: "release" }));
     assert(report.checks.includes("fastlane"));
     assertEquals(report.findings.filter((f) => f.check === "fastlane"), []);
     // The store profile does not run it.
@@ -370,19 +420,128 @@ Deno.test("doctor --release: Appfile, Gemfile, Fastfile and secret problems, eac
   assert(findings.every((f) => f.fix.length > 0));
 });
 
-Deno.test("doctor --release: fastlane/ without an Appfile, a Fastfile or a Gemfile", async () => {
-  const { findings } = await doctorFindings({ "fastlane/Pluginfile": "" });
+Deno.test("doctor --release: fastlane/ without an Appfile, a Fastfile, or the Gemfile plugins need", async () => {
+  const plugin = "gem 'fastlane-plugin-versioning'\n";
+  const { findings } = await doctorFindings({ "fastlane/Pluginfile": plugin });
   const messages = findings.map((f) => f.message).join("\n");
   assertStringIncludes(messages, "fastlane/ has no Appfile");
   assertStringIncludes(messages, "fastlane/ has no Fastfile");
-  assertStringIncludes(messages, "no Gemfile next to fastlane/");
+  assertStringIncludes(
+    messages,
+    "fastlane/Pluginfile lists fastlane-plugin-versioning, but there is no Gemfile",
+  );
   assert(findings.every((f) => f.level === "warning"));
   const noFastlaneGem = await doctorFindings({
     "fastlane/Fastfile": "",
+    "fastlane/Pluginfile": plugin,
     Gemfile: 'gem "cocoapods"\n',
   });
   assertStringIncludes(
     noFastlaneGem.findings.map((f) => f.message).join("\n"),
     "the Gemfile does not list fastlane",
   );
+  // Without plugins, `denext fastlane` pins fastlane itself: no Gemfile is needed, and one for
+  // something else is fine.
+  const cases: Record<string, string>[] = [
+    { "fastlane/Pluginfile": "" },
+    { Gemfile: 'gem "cocoapods"\n' },
+  ];
+  for (const files of cases) {
+    const quiet = await doctorFindings({ "fastlane/Fastfile": "", ...files });
+    assertEquals(quiet.findings.filter((f) => /Gemfile/.test(f.message)), []);
+  }
+});
+
+Deno.test("doctor --release: whether `denext fastlane` can run on this host", async () => {
+  const status = (s: Partial<FastlaneToolchainStatus>): FastlaneToolchainStatus => ({
+    mode: "pinned",
+    version: "2.999.0",
+    target: "linux-x86_64",
+    state: "cached",
+    path: "/cache/fastlane/2.999.0/linux-x86_64",
+    ok: true,
+    detail: "d",
+    ...s,
+  });
+  const managed = async (probe: FastlaneHostProbe) => {
+    let out: string[] = [];
+    await inProject({ "Gemfile.lock": "GEM\n" }, async (dir) => {
+      await addFastlaneToProject({ dir });
+      out = ((await fastlaneFindings(dir, "com.example.notes", probe)) ?? []).map((f) =>
+        `${f.level}: ${f.message} | ${f.fix}`
+      );
+    });
+    return out;
+  };
+  const noCompiler = () => Promise.resolve({ missing: "C compiler (cc)", fix: "install gcc" });
+  const fine = () => Promise.resolve(null);
+  // Installed: nothing to say (the compiler isn't even asked about).
+  assertEquals(
+    await managed({ status: () => Promise.resolve(status({})), compiler: noCompiler }),
+    [],
+  );
+  // Not installed yet and a compiler present: fine.
+  assertEquals(
+    await managed({ status: () => Promise.resolve(status({ state: "missing" })), compiler: fine }),
+    [],
+  );
+  // Not installed and no compiler: the first run would fail.
+  const [missing] = await managed({
+    status: () => Promise.resolve(status({ state: "missing" })),
+    compiler: noCompiler,
+  });
+  assertStringIncludes(missing, "warning: the first `denext fastlane` installs fastlane 2.999.0");
+  assertStringIncludes(missing, "this machine has no C compiler (cc) | install gcc");
+  const [windows] = await managed({
+    status: () =>
+      Promise.resolve(status({ state: "unsupported", target: "windows-x86_64", path: null })),
+    compiler: fine,
+  });
+  assertStringIncludes(windows, "warning: `denext fastlane` does not run on windows-x86_64");
+  assertStringIncludes(windows, "DENEXT_FASTLANE=<path>");
+  const [invalid] = await managed({
+    status: () => Promise.resolve(status({ state: "invalid", ok: false })),
+    compiler: fine,
+  });
+  assertStringIncludes(invalid, "does not match its pin");
+  assertStringIncludes(invalid, "denext toolchain install --with fastlane");
+  const [path] = await managed({
+    status: () =>
+      Promise.resolve(status({ mode: "path", state: "n/a", ok: false, detail: "X — NOT FOUND" })),
+    compiler: fine,
+  });
+  assertStringIncludes(path, "error: DENEXT_FASTLANE names no file (X — NOT FOUND)");
+  assertEquals(
+    await managed({
+      status: () => Promise.resolve(status({ mode: "path", state: "n/a", ok: true })),
+      compiler: noCompiler,
+    }),
+    [],
+  );
+});
+
+Deno.test("denext create --fastlane: Capacitor plus the fastlane files, from the scaffold's appId", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_fastlane_create_" });
+  try {
+    assert(preselectedFeatures({ fastlane: true }, false).has("fastlane"));
+    assert(FEATURES.some((f) => f.key === "fastlane" && f.defaultOn !== true), "opt-in");
+    const written = await scaffoldProject({ dir, fastlane: true, vscode: false });
+    for (const p of ["capacitor.config.ts", "package.json", ...FILES]) {
+      assert(written.includes(p), `${p} in ${written}`);
+    }
+    assertStringIncludes(
+      await read(dir, "fastlane/Appfile"),
+      'app_identifier("com.example.denext")',
+    );
+    // Without --fastlane, none of it.
+    const plain = await Deno.makeTempDir({ prefix: "denext_fastlane_create_" });
+    try {
+      const none = await scaffoldProject({ dir: plain, capacitor: true, vscode: false });
+      assert(!none.some((p) => p.startsWith("fastlane/")), String(none));
+    } finally {
+      await Deno.remove(plain, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

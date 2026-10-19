@@ -45,6 +45,11 @@ export const FEATURES: readonly ScaffoldFeature[] = [
   },
   { key: "capacitor", flag: "capacitor", label: "iOS / Android (Capacitor)" },
   {
+    key: "fastlane",
+    flag: "fastlane",
+    label: "fastlane lanes for the iOS / Android app (denext fastlane; adds Capacitor)",
+  },
+  {
     key: "compatibility",
     flag: "compatibility",
     label: "React + Next import aliases",
@@ -111,6 +116,7 @@ async function runCreate(
     compiler: on("compiler"),
     desktop: on("desktop"),
     capacitor: on("capacitor"),
+    fastlane: on("fastlane"),
     compatibilityMode: on("compatibility"),
     fallow: on("fallow"),
     mcp: on("mcp"),
@@ -120,6 +126,12 @@ async function runCreate(
   for (const p of written) console.log(`   + ${p}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
   const notes = featureNotes(on);
+  if (template === "lustre") {
+    notes.push(
+      "  The Lustre template compiles gleam/ with denext's pinned Gleam: the first dev/build\n" +
+        "  downloads the compiler, then Lustre from Hex.",
+    );
+  }
   console.log(
     `\n  Done. Next steps:\n${cd}    denext task dev\n` +
       `\n  (\`deno task dev\` does the same with Deno installed. The first run downloads the framework\n` +
@@ -134,7 +146,7 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
   if (target) return target;
   console.error(
     "denext create: missing target directory.\n" +
-      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility] [--fallow] [--mcp] [--no-vscode]\n" +
+      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--fastlane] [--compatibility] [--fallow] [--mcp] [--no-vscode]\n" +
       "  denext init            (scaffold into the current directory)",
   );
   Deno.exit(1);
@@ -179,9 +191,13 @@ function featureNotes(on: (key: string) => boolean): string[] {
   return [
     on("tailwind") ? "  Tailwind is compiled automatically by denext dev/build." : "",
     on("desktop") ? "  Desktop: `denext task desktop`." : "",
-    on("capacitor")
+    on("capacitor") || on("fastlane")
       ? "  Mobile: `denext install`, then `denext task mobile:sync` (needs Xcode/Android Studio).\n" +
         "  Over-the-air UI updates: after `cap add ios|android`, `denext task mobile:add-ota`."
+      : "",
+    on("fastlane")
+      ? "  fastlane: `denext fastlane ios|android build|beta|release` (fastlane/Fastfile). The first\n" +
+        "  run installs denext's pinned fastlane (macOS / Linux, needs a C compiler; not Windows)."
       : "",
     on("compatibility")
       ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'

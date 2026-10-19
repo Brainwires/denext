@@ -8,6 +8,682 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-10-19
+
+### Added
+
+- **Unistyles 3 in React Native mode, with nothing to configure.** With `react-native-unistyles`
+  installed, the app's own `react-native` imports give Unistyles' wrapped components and
+  `styles.useVariants(…)` applies to the rest of its block, as its Babel plugin does; react-native-web's
+  own components ignored a Unistyles style, so such an app rendered unstyled.
+  `reactNative: { unistyles: false }` turns it off.
+- **Metro's `require.context` in React Native mode.** A call with literal arguments in the app's
+  own modules (an Expo app rendering `<ExpoRoot context={require.context("./app")} />`) is a module
+  generated at build time with Metro's defaults; it threw in the browser.
+- **A native-stack screen's `header` option** draws the app's own header in place of the stack's,
+  called as native-stack calls it.
+- **Migration beds for Tamagui's starter and Unistyles' Expo example**, each built in React Native
+  mode from a pinned public commit, rendered, navigated and interacted with in headless Chromium.
+- **React Native Skia runs in React Native mode on the web, and so do other `react-reconciler`
+  renderers.** denext's `react` exports React's shared internals
+  (`__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE`): a renderer built on
+  `react-reconciler` (`@shopify/react-native-skia`'s `<Canvas>`, react-three-fiber, react-konva)
+  loads, and while it renders a component the hooks that component imported from `react` go to
+  the renderer's dispatcher. A context's default is in React's `_currentValue` fields. The React
+  Native page has a Skia recipe: CanvasKit's wasm imported with `?url`, and `'wasm-unsafe-eval'`
+  (not `'unsafe-eval'`) under a CSP.
+- **`denext profile --android` profiles the app on an Android device.** The installed app's
+  WebView (a Capacitor shell, or any debuggable WebView) is reached the way chrome://inspect
+  reaches it: adb picks the device, finds the app's `webview_devtools_remote_<pid>` socket and
+  forwards a free port to it, and the run speaks the Chrome DevTools Protocol to the page. The
+  report is the local one: CPU self-time by function, heap growth (read exactly with
+  `Runtime.getHeapUsage`), the leak check, `--budget`, `--filter`, `--out` / `--compare`.
+  `--package` defaults to the Capacitor `appId`; `--device` picks among several devices.
+- **Deno toolchain and Deno Desktop runtime 2.9.7-denext.22, pinned.** Every verb that runs
+  project code moves to it, and `denext desktop` / the package scripts download and verify its
+  archives. What it brings to denext apps is below;
+  [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases) list the rest.
+- **Native TypeScript 7 type checking is on.** The pinned toolchain's CLI archive ships the
+  TypeScript 7.0.2 compiler in `typescript-check/`, so `denext check`, the dev type-check overlay,
+  `denext test` and every other command that type-checks now run it (installed only when it
+  hashes to the pin; `DENEXT_NATIVE_CHECK=0` keeps the in-process TypeScript 6.0.3).
+  [The differences page](https://denext.dev/docs/differences) lists how its output differs. An
+  absolute `file:` import does not resolve under it yet (TS2307); such a project type-checks with
+  `DENEXT_NATIVE_CHECK=0` until a runtime with the fix is pinned
+  ([known limitations](https://denext.dev/docs/limitations)).
+- **npm packages run more as they do on Node.js** (on the toolchain: `denext dev`, `build`,
+  `start`, `test`, jobs). In a project with a `package.json` and no `deno.json`:
+  - `deno install` writes npm's hoisted `node_modules` (a dependency's dependency, such as `ms`
+    under `debug`, resolves from app code and from tools that walk `node_modules`);
+    `node-linker=isolated` in `.npmrc`, `--node-modules-linker=isolated` or a `deno.json` keeps
+    the isolated layout;
+  - packages resolve with Node.js's export conditions, not Deno's `"deno"` condition (a
+    package's Deno build can lack its Node.js API, e.g. a synchronous webhook verifier);
+    `"denoCondition"` in `deno.json` / `package.json` chooses per package;
+  - TypeScript resolves as tsx and ts-node resolve it: extensionless, directory and `.js`-for-`.ts`
+    relative imports, and `tsconfig.json` `compilerOptions.paths` at run time
+    (`DENO_NO_SLOPPY_IMPORTS=1` / `DENO_NO_TSCONFIG_PATHS=1` opt out).
+  - Everywhere: an untyped `.js` file that uses CommonJS (`require`, `module.exports`) and no ES
+    module syntax runs as CommonJS, as Node.js detects it (`DENO_NO_DETECT_CJS=1` opts out).
+- **More npm dependencies install.** git (`github:user/repo`, `git+https://…#tag`,
+  `#semver:<range>`) and tarball URL dependencies install and are recorded in `deno.lock` (a
+  tarball by its integrity, a git dependency by its commit); the project's own lifecycle scripts
+  (`postinstall`, `prepare`) run on install with their output, as npm runs them, while a
+  dependency's still need approval; `.npmrc` `ignore-scripts=true` is honoured; `node` /
+  `node-gyp` work inside lifecycle scripts; `deno x --install-node-shims` writes `node`, `npx` and
+  `npm` executables that map onto the toolchain.
+- **`better-sqlite3` works**: its API is served over the built-in SQLite engine (the package's
+  native addon can't load), so Drizzle, Knex and Kysely on better-sqlite3 run unchanged
+  (`DENO_NO_BETTER_SQLITE3_COMPAT=1` loads the package's own code).
+- **Downloads from a desktop window.** A page's `<a download>`, `Content-Disposition: attachment`
+  response or blob export opens the platform's save dialog on every backend (it was inert or
+  cancelled), only for the app's own origins, with a sanitized file name and at most three save
+  dialogs per window in 10 s.
+- **Every Auth.js provider runs on the `next-auth` shim — 71 more, generated.** The OAuth / OIDC
+  providers denext had no preset for (`kakao`, `reddit`, `zitadel`, `workos`, `fusionauth`,
+  `salesforce`, … 71 in all) are generated from `@auth/core` 0.41.3's own `providers/` by
+  `deno task gen:auth-providers`: Auth.js's endpoints, scopes, token-endpoint authentication
+  (HTTP Basic unless the provider names `client_secret_post`), options (`issuer`, `apiBaseUrl`,
+  `tenantId`, `connection`, …) and its `profile()` mapping as data, checked against Auth.js's own
+  `profile()` on sample profiles. A drift test holds the checked-in modules, the provider list and
+  `deno.json`'s exports to the pinned list. `azure-ad` (Microsoft Entra ID under its old id) and
+  the HTTP-API email providers `sendgrid`, `postmark`, `mailgun`, `forwardemail` and `loops`
+  (`AUTH_<ID>_KEY`) are written by hand. Three providers are not provided (`azure-devops`,
+  `bankid-no`, `wechat`); Limitations lists why. The shim now ships 101 provider modules, up
+  from 22.
+- **The non-standard OAuth providers are generated too: Bungie, Dropbox, Foursquare, HubSpot,
+  LINE, NetSuite, Nextcloud, TikTok, Todoist, Trakt and VK.** Three hooks carry what their
+  Auth.js definitions do in code: `OAuthProvider.userinfoRequest` (a userinfo request of the
+  provider's own shape on the pinned provider fetch — a `POST`, API-key headers, the token as a
+  query parameter or in the path, an id from the token response such as Bungie's
+  `membership_id` or Nextcloud's `user_id`, the profile at a path of the response, VK's address
+  from the token response), `tokenRequestParams` (TikTok's `client_key`, never replacing the
+  flow's own parameters) and `idTokenAlg: "HS256"` (LINE's `id_token`, verified under the client
+  secret; no other algorithm is accepted from such a provider, and no other provider accepts an
+  HMAC token). The generator runs each Auth.js `userinfo.request` and custom fetch against a stub
+  and fails unless denext's data sends the same request and returns the same profile. NetSuite
+  takes the app's RESTlet as its `userinfo` option (https only), Bungie its API key as Auth.js's
+  documented `headers` option.
+- **A passkey ceremony through an Auth.js adapter finishes on any instance.** Its challenge now
+  lives in the app's cache store instead of the instance's memory: single-use (taken atomically by
+  the new optional `CacheStore.takeData`, which the SQLite, Postgres, Redis and Deno KV stores
+  implement and `cacheStoreContract` checks), expiring with the ceremony and untagged. A
+  multi-instance `next-auth` app with a shared cache store no longer needs sticky sessions; the
+  in-memory store keeps the old per-instance behaviour.
+- **A provider's `checks` decide PKCE and the OIDC `nonce`, as in Auth.js.** `OAuthProvider.checks`
+  (`"pkce"`, `"state"`, `"nonce"`, `"none"`) leaves PKCE out unless it lists `"pkce"` and the
+  `nonce` unless it lists `"nonce"`, so Reddit, ClickUp, EVE Online, Figma, Atlassian and the other
+  providers whose Auth.js definition says `checks: ["state"]` no longer get a `code_verifier` they
+  may refuse. The generated providers carry their definition's `checks`, and a `next-auth`
+  provider's own `checks` option is applied (an unknown value is a config error). Unset keeps
+  PKCE, plus a `nonce` for OIDC; `state` is sent and verified on every flow, whatever the list.
+- **`next-auth/providers/passkey` runs on denext's passkeys, with `next-auth/webauthn`.** Listing
+  `Passkey` (or `WebAuthn`) turns on `denextAuth({ passkeys })` under the auth base path, its
+  `relayingParty` and user verification mapped; `signIn("passkey")` from `next-auth/webauthn`
+  signs in with a passkey and `signIn("passkey", { action: "register" })` adds one for the
+  signed-in user. Through an Auth.js adapter, credentials are its `Authenticator` rows (and a
+  `webauthn` account each), as Auth.js stores them. Verified end to end in headless Chromium with
+  a CDP virtual authenticator: register, sign out, sign back in with the passkey.
+- **A plugin lists the routes it serves in the deploy manifest** with `ctx.addDeployRoutes?.(source)`
+  (plugin-kit; `PluginDeployRoutes`): `source` returns `DeployRoute`s, called when
+  `.denext/deploy-manifest.json` is collected and sorted in with the App Router's, so a deploy
+  adapter (and the `static` preset's refusal) sees a router plugin's pages and endpoints.
+  `@denext/tanstack-start` lists a Start app's pages, server routes and server functions.
+- **A plugin lists the files it serves in the deploy manifest** with
+  `ctx.addDeployAssets?.(source)` (plugin-kit; `PluginDeployAssets`): `source` returns
+  `DeployAssetGroup`s (`{ urlPrefix, dir, cacheControl, immutable, files }`), appended to the
+  manifest's `assets` after denext's own (a group with no files left out).
+  `@denext/tanstack-start` lists its `/_tss/` client files: the entry revalidated, the
+  content-hashed chunks and assets immutable.
+- **`denext fastlane`: a managed fastlane, no Ruby setup.** `denext fastlane ios beta` runs one
+  pinned fastlane (2.240.1) on a pinned portable Ruby (Homebrew's 4.0.7, the relocatable build
+  `brew` runs), installed on first use into the toolchain cache beside the Deno toolchain and
+  Gleam (`<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`). The Ruby tarball comes from
+  denext's own mirror (the `toolchain-assets` GitHub release), falling back to Homebrew's
+  `ghcr.io` registry, and either copy is checked against the one pinned SHA-256 and size before
+  it is extracted, and the gems against the checksums
+  in denext's pinned `Gemfile.lock` (Bundler refuses a mismatch). The install runs under the
+  cache lock in a temporary directory that is renamed into place. Several gems build C
+  extensions, so the first install needs a C compiler (the Command Line Tools on macOS, `cc` +
+  `make` on Linux), and denext says which one is missing. macOS and Linux on arm64 and x64;
+  Windows gets a clear "not supported". Runs drop the user's `GEM_*` / `BUNDLE_*` / `RUBY*`
+  variables. `denext toolchain install --with fastlane` installs it ahead of time, `toolchain
+  status` lists it, and `DENEXT_FASTLANE=<path>` runs another fastlane instead. The lanes and the
+  `--ci` workflow `denext mobile add fastlane` writes now run `denext fastlane` (the workflow has
+  no Ruby setup step, and caches the managed fastlane with `actions/cache`, keyed on the pin). The Gemfile stays for plugins (`fastlane/Pluginfile`), which need `bundle
+  exec`; `denext fastlane` warns when it finds them. `denext create --fastlane` (an opt-in picker
+  entry, which adds Capacitor) scaffolds the lanes into a new app. `denext mobile doctor
+  --release` checks that the managed fastlane can run on the host: Windows, a `DENEXT_FASTLANE`
+  that names no file, an install that no longer matches its pin, or no compiler for the first
+  install. It no longer asks for a Gemfile unless plugins need one. `deno task fastlane:pin` regenerates the pin (the Ruby
+  from Homebrew's ghcr index, checked byte for byte, and a fresh `Gemfile.lock` with CHECKSUMS).
+- **`denext migrate` moves a Fresh app** (Fresh 2 — `jsr:@fresh/core`, on Vite or Fresh's own
+  builder — and Fresh 1.x — `$fresh/`, `fresh.gen.ts`; `--from fresh` forces it). The route
+  modules stay as they are; migrate generates `app/` around them (a `page.tsx` per page, a
+  `route.ts` per handler-only route, a `layout.tsx` per `_layout` with the root one running
+  `_app`, `not-found.tsx` from `_404` / `_error`) and a `middleware.ts` that runs `main.ts`'s
+  `app.use()` middleware and code routes, the `_middleware` files and each route's handler as
+  Fresh does: `page(data)` / 1.x `ctx.render(data)` hands the data to the page, `ctx.state`
+  reaches layouts and pages, an `HttpError` renders the not-found or `_error` page, a form POST
+  re-renders the page, and a `routeOverride` or an `[[optional]]` / partial-segment pattern is
+  served through the middleware. Islands get `"use client"`, `static/` moves to `public/`, the
+  Vite client entry's stylesheets go to the root layout (Tailwind becomes `tailwind: { input,
+  output }`), and the app's `deno.json` is merged: `fresh`, `$fresh/*`, `preact`, `preact/*`
+  and `@preact/signals*` map to the new `denext/fresh`, `denext/fresh/runtime`,
+  `denext/preact` and `denext/signals`. `migrate --check` (source `fresh`) lists what does not
+  migrate: Partials, Vite's `import.meta.env`, inline scripts under the default CSP,
+  `FRESH_PUBLIC_*`, Vite and Fresh plugins, `useErrorBoundary`.
+- **`denext migrate` moves a Preact app** — Vite with `@preact/preset-vite` (what `npm create
+  preact` makes), preact-cli, WMR, or esbuild compiling JSX for Preact; `--from preact` forces
+  it. It takes the SPA path (`mode: "spa"`) with the Preact layer the Fresh path uses: `preact`,
+  `preact/hooks`, `preact/compat`, the JSX runtime and `@preact/signals` / `@preact/signals-core`
+  point at denext in `deno.json` and, for npm packages that import them, through `resolveAlias`.
+  preact-iso maps to the new `denext/preact-iso` (`LocationProvider`, `Router`, `Route`,
+  `useLocation`, `useRoute`, `lazy`, `ErrorBoundary`, `hydrate`, `prerender`), which implements
+  its router on denext; preact-router and wouter-preact keep running on the aliases and are listed
+  for review. `migrate --check` reports `source: "preact"` and what does not migrate
+  (preset-vite's `prerender`, `preact.config.js`, WMR plugins, `useErrorBoundary`, Preact's
+  `options` hooks). create-preact's Vite + preact-iso template is a migration bed: built, served,
+  and routed on the client in headless Chromium.
+- **`denext/signals`: Preact Signals' API** — `signal`, `computed`, `effect`, `batch`,
+  `untracked`, `action`, `Signal`, `useSignal`, `useComputed`, `useSignalEffect`,
+  `useLiveSignal`, `Show`, `For`. A component re-renders when a signal its render read changes,
+  a signal placed in JSX renders its value, a signal passed as a DOM prop is bound under Preact's
+  JSX runtime (`denext/preact/jsx-runtime`, which a migrated Fresh app compiles with), and a
+  signal a Server Component passes to a `"use client"` component arrives as a live signal (one
+  shared signal when two components get the same one). An app that does not import them ships
+  none of it.
+- **A compat middleware can hand a non-GET request to the page.** `RequestContext.renderPageForMethod`
+  lets a runtime that ran a page route's handler in `middleware.ts` (the Fresh compat) have the
+  page render for a POST; without it such a request to a page is still a 405.
+- **`ctx.servesRoutes()` in the plugin kit.** A plugin whose pages come from a route tree of its
+  own declares it in `setup` (`ctx.servesRoutes?.()`, optional so the plugin still runs on an
+  older denext); `denext doctor` then accepts a project with no `app/`. `@denext/pages-router`,
+  `@denext/tanstack-start` and `@denext/react-router` declare it. `setupAppPlugins()` reports the
+  declaring plugins as `routeServers`.
+- **Code-signed compiled binaries** (`denext build --compile --sign`, `compile.sign`). A macOS
+  binary is signed with `codesign` under the Hardened Runtime with a secure timestamp and the one
+  entitlement V8 needs (`allow-jit`; `disable-library-validation` too when `compile.permissions`
+  grants `ffi`), verified, then notarized with `xcrun notarytool submit --wait` when a keychain
+  profile (`DENEXT_NOTARY_PROFILE`) or an App Store Connect API key (`DENEXT_NOTARY_KEY`,
+  `DENEXT_NOTARY_KEY_ID`, `DENEXT_NOTARY_ISSUER`) is set; a bare executable cannot be stapled, so
+  Gatekeeper checks the ticket online on its first run. A Windows binary is Authenticode-signed
+  with `signtool` on Windows or `osslsigncode` from macOS and Linux (cross-compiled `--target
+  x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`), with the desktop packager's
+  `DENEXT_WINDOWS_CERT` / `DENEXT_WINDOWS_CERT_PASSWORD` (or `DENEXT_WINDOWS_CERT_THUMBPRINT` for
+  a certificate in the Windows store) and an RFC-3161 timestamp. Credentials come from the
+  environment only and are never printed. `--sign` fails without them; a configured
+  `compile.sign` warns and leaves the binary unsigned. `denext doctor` reports the signing
+  readiness when `compile.sign` is set, and `denext ui`'s Desktop panel has a "Compiled binary"
+  tab. The desktop packager and this path now share one signing module, and denext's own release
+  signs its Windows binaries the same way when the certificate secrets exist.
+- **File transfers with progress that outlive the app** (`denext/mobile`). `downloadToFile(url,
+  path, options)` gains `onProgress`, `signal`, `headers` and an `id`, and `uploadFile(url, path,
+  options)` sends a file as a `multipart/form-data` part (with text `fields`) or as the body
+  (`as: "binary"`, a presigned `PUT`). `denext mobile add file-transfer` installs denext's
+  `DenextTransfer` plugin: each transfer runs in a `URLSession` background session on iOS
+  (AppDelegate forwards `handleEventsForBackgroundURLSession`, so a transfer that finishes while
+  the app is suspended or terminated relaunches it to save the file) and as a WorkManager job on
+  Android (network-constrained, retried with backoff), and the plugin keeps each transfer's record.
+  `pauseFileTransfer` / `resumeFileTransfer` continue a download from its bytes so far (resume data
+  on iOS; a range request guarded by `If-Range` on Android and the web), `cancelFileTransfer` drops
+  it, and `fileTransfers()` / `onFileTransfer()` / `forgetFileTransfer()` report and clear them,
+  including those that finished while the page was gone. Without the plugin the page runs them:
+  `fetch` with the body streamed into OPFS, `XMLHttpRequest` for upload progress. Failures are a
+  `FileTransferError` with a `code` (`HTTP`, `NETWORK`, `CANCELLED`, …), the status and the body.
+  A new `native-plugins.yml` workflow builds examples/mobile with every denext plugin added (Gradle
+  and `xcodebuild`), and `tests/mobile-file-transfer-native.test.ts` runs the iOS manager on macOS
+  and the Android HTTP half on the JDK against a local server.
+- **Encrypted key-value stores and SQLite databases (SQLCipher).**
+  `openKeyValueStore(name, { encrypted: true })` (`denext/mobile`) keeps a store in its own
+  SQLCipher database, keyed with a random 256-bit key created on first use and kept in
+  `secureStore`. `denext mobile add storage --encrypted` links SQLCipher (the SQLCipher Swift
+  package in the Xcode app target; `net.zetetic:sqlcipher-android` (with `androidx.sqlite`) and `DenextStorageCipher.java`
+  on Android; storage template generation 2, re-run `denext mobile add storage`). The first
+  encrypted open moves the store's plain rows in and deletes them from the plain database with
+  `secure_delete`, truncating its WAL. An encrypted store never falls back to a plain one: on the
+  web, on Deno Desktop, on the `@capacitor-community/sqlite` / IndexedDB / memory backings, in a
+  build without SQLCipher, or with a `secureStore` that is not secret, every call rejects with
+  `KeyValueStoreError` (`ENCRYPTION_UNAVAILABLE`) and nothing is written; a key that does not open
+  the file is `WRONG_KEY`. `openSqlite(name, { encryptionKey })` and `PRAGMA key = '…'` as the
+  first statement (expo-sqlite's way, so the shim's apps keep working) key a database in the shell
+  through `@capacitor-community/sqlite`. The web engine and Deno Desktop refuse with
+  `SqliteEncryptionError` and run nothing; before, sqlite-wasm ran `PRAGMA key` as a no-op and
+  left the data unencrypted. `PRAGMA rekey` / `hexkey` are refused.
+  `tests/mobile-storage-cipher-native.test.ts` runs the Swift store on macOS against the system
+  SQLite and against SQLCipher from the Swift package, and the native-plugins workflow builds
+  examples/mobile with `storage --encrypted`.
+- **expo-calendar: `futureEvents` on Android splits the series.** `updateEventAsync(id, details,
+  { instanceStartDate, futureEvents: true })` no longer rejects on Android: `DenextCalendar`
+  (calendar template generation 2; re-run `denext mobile add calendar`) ends the repeating event
+  just before the occurrence (`UNTIL` in place of `COUNT` or a later `UNTIL`; earlier `EXDATE` /
+  `RDATE` values kept) and inserts a new event from it on with the changes, the rest of the rule
+  (a `COUNT` rule ends at the series' last occurrence), the later `EXDATE` / `RDATE` values, the
+  attendees and the reminders, and returns its id, as EventKit's `EKSpan.futureEvents` does on
+  iOS. Changed occurrences from that one on are replaced by the new values; cancelled ones stay
+  cancelled. From the first occurrence the event itself changes.
+- **Offline sync and PowerSync: a recipe and `examples/offline-sync`.** A new guide,
+  [Offline sync and PowerSync](https://denext.dev/docs/powersync), covers keeping an app's data in
+  SQLite on the device and syncing it: a sync loop over `openSqlite` with denext route handlers as
+  the backend, and PowerSync's own SDK in a denext app (its connector's token, JWKS and upload
+  routes on denext). It says plainly what `openSqlite` cannot do: it is not a PowerSync database
+  driver, since PowerSync's SDKs bring their own SQLite with its core extension, so the two keep
+  separate database files. `examples/offline-sync` is a local-first notes app (an SPA for the
+  Capacitor shell plus a `backend/` of two route handlers) whose writes queue offline in the same
+  transaction as the local change, upload in order, and take server changes only once the queue
+  is empty; its upload route accepts PowerSync's upload shape. Built and synced over HTTP in CI.
+- **Typed-API batching forwards the request headers an app lists, per item.**
+  `apiBatch: { forwardHeaders: ["x-tenant"] }` on the server and `createApiClient({ batch: {
+  forwardHeaders: ["x-tenant"] } })` on the client let calls carrying `x-tenant` ride the one
+  `POST /_denext/api-batch` (reads and mutations); each item's handler gets its own value, never
+  another item's, and the batch request's own copy reaches no item. A call with any other custom
+  header still goes alone. Credential, framing, trust and proxy headers (`cookie`,
+  `authorization`, `host`, `origin`, `x-forwarded-*`, `cf-*`, `x-denext-*`, the app's
+  `rateLimitHeader`, …) are refused by config validation and by the handler, and an item value
+  with a line break, a control character or over 1024 characters fails the whole batch.
+- **Opt-in sanitized raw HTML in the first-party Markdown renderer** (`@denext/content-collections`
+  0.7). Raw HTML in a `.md` entry stays escaped by default; `contentCollections({ markdown: {
+  html: "sanitize" } })` (or `renderContent(entry, { markdown })`, or `renderMarkdown(body, {
+  html: "sanitize" })`) keeps what a first-party, zero-dependency allowlist sanitizer allows. The
+  HTML is parsed into a tree and re-serialized from it, never passed through: GitHub's element set
+  with per-element attributes; no `script`, `style`, `iframe`, `object`, form controls, `svg`,
+  `math`, `template`, namespaced or custom elements, `on*`, `style`, `srcdoc`, `formaction` or
+  `xlink:*`; URLs scheme-checked after entity decoding and control-character stripping (`http`,
+  `https`, `mailto`, relative); `id` / `name` prefixed `user-content-`, with a `#fragment` link
+  rewritten to match only when the document's raw HTML defines that id or name (links to heading
+  ids keep working); `target="_blank"` only with `rel="noopener noreferrer nofollow"`. A block
+  container (`details`, `div`, `blockquote`, `figure`) an HTML block leaves open wraps the
+  Markdown blocks after it until a later HTML block closes it, so GitHub's `<details>` +
+  Markdown + `</details>` pattern works; everything else closes inside its block, and raw HTML
+  never closes the renderer's markup. `sanitize: { allowElements, allowAttributes,
+  allowDataImages }` only extends the allowlist. `sanitizeHtml()` is exported too.
+- **`@denext/tanstack-start` 0.2.0: checked options, Start's object `router`, and the rest of
+  `importProtection`.** `tanstackStart()` checks its options when `denext.config.ts` loads,
+  against the shapes Start's own plugin accepts, with `denext.config`'s field-scoped errors; a
+  key that is not an option is refused with the closest one suggested, so a typo in an
+  import-protection rule no longer turns it off. `router` also takes Start's object (`entry`,
+  `basepath`, the route generator's options); `importProtection.maxTraceDepth` caps a
+  violation's trace; `behavior` / `mockAccess` / `log` apply as in Start: unset, a `denext dev`
+  violation is mocked with Start's own mock modules and warned about, a build's fails, and a
+  `"mock"` asked of a build (`denext build`, `start`, `export`) ships Start's build mocks. With
+  `spa` on, `denext dev` renders every page as Start's SPA shell, as Start's dev server does.
+- **`denext create --template lustre`.** Scaffolds an app with a Gleam project
+  (`gleam/src/counter.gleam`), the `gleam()` plugin, the `@gleam/` import and a home page that
+  renders one Lustre counter as an island (`lustreIsland`), a custom element (`lustreElement`) and
+  a server component over Live (`defineLustreView`). The first `dev` / `build` downloads denext's
+  pinned Gleam, then Lustre from Hex.
+- **`denext migrate` takes TanStack Start apps.** An app with `@tanstack/react-start` and Start's
+  Vite plugin (`tanstackStart()` in `vite.config.ts`; a Vinxi-era `app.config.ts` is recognized
+  too, with a note) is wired to the `@denext/tanstack-start` plugin, sources untouched: a
+  `denext.config.ts` registering `tanstackStart()` with the Start options `vite.config.ts` passes
+  (`srcDirectory`, `router`, `importProtection`, `prerender`, `pages`) carried over as written
+  when they read nothing else from the file, and a `deno.json` mapping React to denext with
+  TanStack loaded from the app's `node_modules`. `migrate --check` names the source
+  (`tanstack-start`) and lists the options left behind (`tsr`, `server`, `spa`, a value built
+  from an import); `--from tanstack-start` forces the path. TanStack's own `start-basic` example
+  is a migration bed: migrated, built, served and hydrated in headless Chromium.
+- **`@denext/tanstack-start` emits Vite's asset imports:** an `app.css?url` link (a Tailwind
+  input compiled with the project's Tailwind), images and fonts land under `/_tss/assets/` with
+  content-hashed names, the same URL from both bundles, and `denext export` publishes them.
+  `compileCssAsset` joins `denext/build/next-compat` for router plugins.
+- **`denext migrate --from expo` names `@react-native-firebase/*`, `react-native-iap` and
+  `@stripe/stripe-react-native`**, one note per package with what replaces it on denext and a
+  link to the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes), in the summary
+  and in `migrate --check`'s won't-migrate list.
+- **Prisma `cockroachdb` datasources** go through the Postgres adapter path:
+  `@prisma/adapter-pg` injected at each `new PrismaClient()`, pinned, and set up by
+  `prisma:setup`. The server-database e2e runs against a live CockroachDB when
+  `DENEXT_E2E_COCKROACH_URL` is set.
+- **`denext create` and `denext migrate` ignore `.deno/`,** where the native TypeScript 7 check
+  and the tsgo language server keep their project cache; migrate adds the line once.
+
+### Changed
+
+- **`denext migrate` carries a TanStack Start app's `spa` and `sitemap` options** into
+  `tanstackStart({ … })`: `@denext/tanstack-start` now writes Start's SPA shell and sitemap in
+  `denext export`, so they are no longer listed as left behind.
+- **Hydrating a react-dom/server `<!--$!-->` boundary ships only with the compat `react-dom`
+  modules.** Only react-dom/server's synchronous `renderToString` writes such a client-rendered
+  boundary; denext's own renderers never do, so its hydration (suspense-hydration.ts) is installed
+  by `react-dom/client` / `react-dom` instead of riding every app's shared runtime (−375 B raw:
+  65,780 → 65,405 B for `examples/hello`, back under the 65,500 B budget).
+- **`@denext/openapi`'s `ui: "scalar"` docs page loads nothing from a CDN.** Scalar's API
+  reference (`@scalar/api-reference` 1.72.4, MIT, licence and notice beside it) is vendored in
+  the package like Swagger UI, checked against its recorded SHA-256 and served from
+  `<docs>/scalar/standalone.<hash>.js` with a year-long `immutable` cache. The page's CSP names no
+  other origin (`script-src 'self'` plus the hash of its inline start-up script, which turns off
+  Scalar's web fonts, telemetry, agent chat and hosted proxy), and a headless e2e
+  (`tests/e2e/openapi-scalar.e2e.test.ts`) holds it to zero third-party requests while Scalar
+  renders. `cdn: DOCS_CDN.scalar` opts back into jsDelivr. The package grows by about 4.4 MB
+  (1.3 MB gzipped).
+
+### Fixed
+
+- **The SPA source transforms run in a project reached through a symlink.** The plugin behind
+  Fast Refresh, the auto-memo compiler, the feature and platform folds and `require.context`
+  compared esbuild's module paths, which are real paths, with the project directory as given, so
+  a project under a symlinked directory (macOS's `/var` temp dirs, a linked checkout) had every
+  module skipped untransformed. Both sides are compared as real paths now.
+- **`denext export` on a ReFS volume (a Windows Dev Drive) no longer refuses a valid output
+  directory.** The output-directory guard compared directories by their 64-bit file index as well
+  as their real paths, and ReFS does not keep that index unique, so `out/` could read as
+  overlapping `app/`. On Windows it compares real paths only.
+- **JSX in an app's `.js` module builds in React Native mode.** The deno loader answered the app's
+  own `.js` modules as plain `js`, ignoring the `.js` → `jsx` loader React Native mode sets
+  (Metro parses JSX in every `.js` file), so the build failed with "The JSX syntax extension is
+  not currently enabled".
+- **expo-router 56+'s `<Stack.Screen>` children reach the stack.** Its `Stack.Screen` is
+  `StackScreen`, which expo-router's own Stack maps to the base `Screen` before reading the
+  children; the replacement Stack did not, so every screen's `options` (its title) were dropped
+  with "Layout children must be of type Screen".
+- **`unstable_NativeView` / `unstable_NativeText` import from `react-native`** in React Native
+  mode (React Native 0.83's root host components): react-native-web's `View` / `Text`. The import
+  failed the build.
+- **A `<>…</>` inside a `react-reconciler` renderer's tree is a fragment.** denext's fragment
+  marker is React's brand, `Symbol.for("react.fragment")` (it was `Symbol.for("denext.fragment")`,
+  which such a renderer refused with React error #130).
+- **`.wasm` client assets are precompressed at build.** A wasm module (CanvasKit is 8 MB) got no
+  `.gz` sibling, so the server gzipped it again on every request.
+- **A CEF desktop window keeps what the page just stored.** A quit that cut a `localStorage` or
+  IndexedDB write short no longer costs every later launch its writes (the runtime repairs the torn
+  log end before the window opens, and on macOS and Windows waits for the page's renderer to end
+  before shutting down); a macOS CEF quit no longer hangs while every core is busy; a CEF app
+  started elevated on Windows stays elevated instead of exiting; and a deep-link launch no longer
+  crashes at startup (runtime 2.9.7-denext.22).
+- **Node.js compatibility fixes in the pinned toolchain (2.9.7-denext.22).** A pipe from a stream
+  that old code flags as destroyed drains (zip extraction in installers no longer stalls), HTTPS
+  keep-alive continues after `res.end()`, an unread request body no longer stalls the next
+  keep-alive request, `async_hooks` reports promises with Node's ids, `node:test` has
+  `t.waitFor()` and per-test mocks, `spawnSync()` keeps an explicit `env` and numeric stdio, a
+  CommonJS main module behind a symlink loads, and `TLSSocket.setMaxSendFragment()` works (SQL
+  Server drivers over TLS). `Deno.serve` keeps reading a request body while it streams a response,
+  applies backpressure to a client that keeps sending, lets a graceful `shutdown()` finish a
+  request body, and answers a malformed `Host` with a 400.
+- **A `resolveAlias` target that is an import-map entry resolves.** An alias pointing at a
+  `deno.json` import (`"preact": "denext/preact"`) failed the SPA build with "[assert]
+  namespace is empty" when the entry maps to a file URL, and with "Could not resolve" for an
+  import inside an npm package, whose own scope has no import map. A bare target now resolves as
+  the app's own import would, wherever the import comes from.
+- **An inline SVG's `<title>` no longer becomes the page title.** The server hoisted every
+  `<title>` in the tree into the document head, so a page with an icon carrying an accessible
+  `<title>` (`<svg><title>Arrow</title>…</svg>`) showed the icon's name in the browser tab.
+  Nothing inside an `<svg>` hoists now, as in React, in the string, Flight, streaming and PPR
+  renderers alike.
+- **Jobs and services are found in a project whose path has a `_` or `.` directory above it.**
+  Discovery skips `_private` and dot entries in `jobs/` and `services/`, but matched them against
+  the whole path, so an app under `~/.apps/`, `/srv/_sites/` or a CI runner's `_temp` directory
+  registered no job or service at all (and `denext job --list`, the deploy manifest and `denext
+  ui` showed none). Only the path below `jobs/` / `services/` counts now.
+- **On Windows, a CLI run from JSR caches its verbs for offline use in the background again.**
+  The first run of a remote CLI starts a background `deno cache` of every verb's modules, meant
+  to outlive the run. On Windows a child process that is not detached ends with its parent, so
+  the warm-up died as soon as the command returned and the verbs stayed uncached; it is now
+  started detached.
+- **On Windows, the CLI's toolchain re-run keeps the `--config` it was started with.** A verb
+  that runs project code re-runs itself on denext's Deno toolchain and passes on the parent's
+  `--config` and resolution flags, read from the process's own command line. Windows had no
+  reader for it, so a local checkout started as `deno run -A --config <app>/deno.json cli.ts
+  build` re-ran under the checkout's own config, and loading `denext.config.ts` failed on any
+  import only the app's import map resolves (`Import "postgres" not a dependency`). The command
+  line now comes from `GetCommandLineW` there (with `--allow-ffi`, which `-A` grants).
+- **Windows: build paths and messages are `/`-separated and portable.** The build manifest's
+  `compatServerModules` (a next-compat app's source → server bundle map) was written with
+  Windows' `\` separators, so a build made on Windows and served on Linux (a CI build shipped to
+  a container) missed every entry; it is `/`-separated on every OS now. The inline
+  `"use server"` build error and the `"use server"` leak guard name modules as `app/x.tsx` on
+  Windows too, as on macOS and Linux.
+- **Windows: `next/font/local` measures a font given by an absolute `C:\…` path.** A
+  drive-letter `src` was taken for a project-relative one, so the metric-matched fallback face
+  (`adjustFontFallback`) was silently dropped.
+- **Windows: an edit to a drive-letter input rebuilds the prebuilt runtime.** The runtime cache
+  took an input such as `C:\app\x.ts` for a URL with scheme `C:` and never stamped it, so the
+  edit served the stale runtime.
+- **Windows: the next-compat bundles' `platform` fold and the inline-action refusal recognise
+  the project's own modules however their paths are spelled** (a `/` or `\` separator), by
+  `relative()` rather than a string prefix with the host separator.
+- **A stopped server closes its durable cache.** `denext dev` and `denext start` opened the
+  default `node:sqlite` cache (`.denext/cache.db`) and kept the handle for the life of the
+  process, so an in-process server left the file open after it drained (Windows then refuses to
+  remove the project's `.denext/`), and the next server started in the same process kept using
+  the first one's database. The drain now closes it and lets the next server resolve its own;
+  `sqliteCacheStore()` gains `close()` (its next call reopens the file), like the Postgres,
+  Redis and Deno KV stores.
+- **The dev server's background type check stops with the server.** The `deno check` a source
+  edit starts ran on after `denext dev` stopped, in the project directory; it is now cancelled
+  by the server's stop signal. Its filter also skips `.denext/` output on Windows, where the
+  watcher reports backslash paths.
+- **`denext stack` and the project UI's log viewer say Docker is missing instead of failing to
+  spawn.** `Deno.Command#output()` throws a missing program at once rather than rejecting, so
+  the "docker is not on PATH" hint never replaced the raw `Failed to spawn 'docker'` error.
+- **The esbuild fallback finds its binary in Deno's npm cache behind a registry with a port.**
+  It looked for `<DENO_DIR>/npm/<host>:<port>/…`, a folder Deno never writes (and a name Windows
+  refuses); it now follows Deno's own naming (`localhost_4873`, the port alone for an IP address,
+  the registry's path segments below it).
+- **The diagnostics explainer's "did you mean" for a missing relative module reads the right
+  directory.** The import was resolved against `file://` + the importing file's path, which is
+  no URL for a Windows path or a directory with `#` in its name.
+- **`denext migrate --check` prints a Windows `--denext-local-path` as the shell takes it.** The
+  suggested command JSON-escaped the path, doubling every backslash; it is now verbatim (quoted
+  when it has a space) on Windows and single-quoted when needed elsewhere.
+- **A Tailwind v4 input with import options no longer warns "could not compile stylesheet".**
+  The build's stylesheet walk runs every sheet through lightningcss, which refuses a whole sheet
+  over Tailwind v4's options on its import (`@import "tailwindcss" source("../")`, `prefix(…)`,
+  `theme(…)`, `important`), so a valid input such as a TanStack Start app's `src/styles/app.css`
+  (compiled through its `?url` import) printed the warning on every build. The walk now drops
+  the Tailwind import itself, options and all, and keeps the sheet's own rules; a sheet that does
+  not parse still warns.
+- **A raw `@import "tailwindcss"` no longer ships in the build's stylesheets.** The stylesheet
+  walk passed a Tailwind import (`@import "tailwindcss"`, `@import "tailwindcss/…"`) through
+  into the CSS it emitted for a sheet the Tailwind step compiles separately (a `?url` import, or
+  a second sheet beside the `tailwind` config's input), so the browser requested a `tailwindcss`
+  stylesheet that does not exist. The walk drops it; the `tailwind` config's own input is still
+  compiled and served as its output.
+- **"could not compile stylesheet" always gives a reason.** The warning printed the thrown
+  value's `.message`, so a value without one read `(undefined)`; it now prints the message, or
+  what was thrown, and the line and column an error object carries.
+- **`denext doctor` passes an app whose routes come from a plugin.** A Pages Router or TanStack
+  Start app has no `app/`; its routes come from the `@denext/pages-router` /
+  `@denext/tanstack-start` plugin. Doctor reported "app directory: FAIL" for it and exited 1. When
+  `app/` is missing, doctor now sets up the configured plugins in a registry of their own and
+  treats the check as satisfied when one of them declares that it serves the app's pages
+  (`ctx.servesRoutes()`, below), naming it ("not needed: routes come from
+  @denext/tanstack-start"). A plugin that only adds endpoints (`@denext/openapi`,
+  `@denext/backend`) does not count, so a project with only such plugins and no `app/` still
+  fails. Route conformance, which walks `app/`, is not probed for a plugin-routed app.
+- **`denext mobile add` lists a skipped platform once.** An installer that checks the Android
+  project after the shared plugin installer did (`file-transfer`, `storage --encrypted`) printed
+  "Android: no android/app/src/main" twice in an iOS-only project.
+- **A page whose only interactive part is a `defineLiveView` mounts in the browser.** The build
+  counted a route as needing a client entry only when it reached a `"use client"` module, so a
+  live-view-only page shipped no client JS and the `denext#LiveView` island and the Live socket
+  client never loaded: the view kept its server-rendered first paint and ignored clicks, natively
+  and under `compatibilityMode`. A route whose own modules define a live view is now a Flight route
+  in `denext build`, `dev`, `start` and `export`; a route without one still ships no Live client.
+- **`denext ui`'s Cron page says when an app's history store took too long, not that it printed
+  nothing.** A custom `jobs.history.store` is read through a `denext job --history` child with a
+  15 s deadline; a child killed at that deadline exits without an error, so its empty output was
+  reported as "printed nothing". The page now says `denext job --history did not finish within
+  15 s` (likewise `--clear-history`).
+- **Live views, server actions, channels and taint work under `compatibilityMode: true`.** A
+  compat build prebuilds `denext`, `denext/live` and the React compat modules into a graph of
+  their own, so the app and the server could load two copies of the same runtime module, each
+  with its own registry: a `defineLiveView` the page rendered was unknown to the Live hub (the view
+  never mounted), a `serverAction` registered in one copy could be missing from the dispatch in
+  the other, and a value tainted with `experimental_taintUniqueValue` / `taintObjectReference` in
+  one copy could slip past a Flight serializer reading the other. The live-view registry, the
+  server-action registries (actions, bound-reference decorator, `liveReadable`, subscription
+  definitions, module tagging), the channel registry and transport settings, the taint tables and
+  the client-module tagging now live on `globalThis` (one per process), as the Live view signing
+  key already did.
+- **Tailwind builds on Windows on Arm.** The standalone Tailwind download asked for
+  `tailwindcss-windows-arm64.exe`, which Tailwind does not publish (a 404 failed every build of a
+  Tailwind app); Windows on Arm now takes the x64 build, which it runs under emulation.
+- **A router plugin's on-demand dev build no longer runs down the page's request deadline.**
+  `@denext/pages-router` bundles its pages (and the project's CSS) on the first `denext dev`
+  request that renders one, through plugin-kit's `bundleRoutes` / `buildAppCss`. That time counted
+  against the 30 s `requestTimeout`, so on a loaded machine the first render of a page answered
+  `503 Service Unavailable (request timeout)`. Both now hold the request's deadline while they run,
+  as `denext dev`'s own on-demand builds do; only the page's own work counts.
+- **`denext build --compile` compiles next-compat (drop-in) and Pages Router apps.** A drop-in's
+  compile failed on the npm tree Deno writes beside the build's CSS config (`.denext/node_modules`
+  is no longer embedded); a Pages Router app without `app/` was refused as unbuilt, its `pages/`
+  were not embedded (every page a 404), and its stylesheet imports missed the binary's paths (the
+  compile's stylesheet redirects are now relative to its config). Both shapes now serve their
+  pages, API routes and static assets from the binary, with the project deleted.
+- **A Flight PPR response hydrates with the signal state its cached shell was rendered from.**
+  The resume re-walks the static shell to find the holes and could record a fresher value under
+  a shell component's id (a `useApi({ suspense: true })` answer that changed since the shell was
+  cached); that value replaced the shell's in `#__denext_state`, so hydration disagreed with the
+  HTML. The shell's state now wins on an id both recorded, as on an HTML route.
+- **An ISR page's cached document keeps its islands map and its signal state.** The document
+  stored for a `revalidate` route was built without `#__denext_islands` and `#__denext_state`,
+  so every response from the page cache — the first one included — shipped a Flight route's
+  deferred `client:*` islands with no map to hydrate them from, and made `useApi({ suspense:
+  true })` fetch again on mount. Both are now stored with the document.
+- **`cookies()` / `headers()` in an API route reached through `useApi` during a Cache Components
+  prerender postpone that call's `<Suspense>` instead of failing the page.** The prerender
+  turned the route's postpone into a `500` and the calling page into an `ApiClientError`; the
+  boundary now becomes a per-request hole that renders (and seeds) each visitor's own answer,
+  on the first request and on every cached one. A raw read of the inherited request does the
+  same.
+- **`denext desktop dev --lan` hands the window its per-launch desktop token**, so the capability
+  bridge (`secureStore`, `fs`, the OAuth sheet, the boot beacon) works against a dev server bound
+  to the LAN address. The token rides the proxied page only when the dev URL carries that server's
+  per-run session token (`?__denext_dev=…`, which `desktop dev --lan` passes the window), it still
+  goes only into a top-level document, and it is stripped from every request before the proxy
+  forwards it. The dev server still refuses any LAN request without its per-run token; a bare
+  client (no `Origin`, no `Sec-Fetch-Site`, as the window's proxy relays it) now reaches the dev
+  assets on a LAN address only when it presents that token in the `x-denext-dev-token` header.
+- **`denext desktop dev` pages hydrate and keep the desktop global.** Three faults kept a
+  live-reload window's page from ever reaching the bridge, with or without `--lan`: the `denext dev`
+  child inherited the CLI's CSS re-exec guard and loaded the app without its import map
+  (`Import "denext/desktop/…" not a dependency` in any project with a stylesheet); the dev server's
+  strict `Content-Security-Policy` header blocked the injected `globalThis.__denext` script (it
+  now carries the script's hash); and unbundled dev had no `@dep` bundle for `denext/desktop/client`,
+  `/window`, `/app` or `/clerk`, so a page importing one never hydrated. The desktop kitchen sink's
+  `test:lan-dev` drives it end to end.
+- **`cachedFetch(url, { revalidate, tags })` applies its options to the cached body.** The
+  helper passed them to its loader as an argument, so every entry was stored without expiry or
+  tags: `revalidateTag` never purged a cached body, and a `"use cache"` function reading one
+  carried no tag from it. The entry now expires after `revalidate` seconds, carries the tags,
+  reaches the page being rendered, and propagates to an outer `"use cache"` entry as an
+  `unstable_cache` call does; `revalidate: 0` is `fetch`'s no-store (fetched every time, nothing
+  stored). Entries are keyed per cache options too, so two call sites tagging one URL
+  differently never share an entry.
+- **A Suspense boundary that does not suspend renders inline in the streamed shell, as React's
+  renderer writes it.** Every streaming path (the App Router's HTML and `"use client"` routes,
+  `react-dom/server`'s `renderToReadableStream`, `renderToPipeableStream` and `prerender`) sent
+  every boundary as a fallback placeholder plus a `<template>` a script moved into place, even
+  when its content had finished with the shell, so that content was invisible with JavaScript
+  off, and a crawler or an `allReady` consumer got the fallback. A boundary is now decided when
+  the shell is written, as in React: content that finished by then (plain components, `use()` of
+  a promise already known to be settled) is written in place between `<!--$-->` /
+  `<!--/$-->`, with no fallback, placeholder, template or reveal script; content that suspended
+  (a thrown promise, an async component) streams as before. `renderToReadableStream` now writes
+  the shell on the first read, so `await stream.allReady` before reading (and `prerender`, and
+  piping from `onAllReady`) yields every boundary inline. A route whose boundaries all finished in
+  the shell is served as one buffered document. Hydration accepts both shapes without a mismatch
+  warning or a re-render: it passes over the boundary comments and unwraps a revealed
+  placeholder in place. Before, hydrating a streamed boundary through `hydrateRoot` warned and
+  re-created its content. A boundary that fails before the shell is written keeps its fallback in
+  a placeholder marked `data-dnx-failed`, which `denext doctor` reports as a stuck hole. Being
+  part of the shell, an inline boundary also behaves like it: `notFound()` / `forbidden()` /
+  `unauthorized()` thrown in it render the page's not-found (…) UI with its 404 (403, 401), and
+  `redirect()` is the response's 307 / 308, as in Next (the page renders buffered once the shell
+  sees the signal); a boundary that streams keeps the in-place replacement under a 200. Its
+  `<title>` / `<meta>` / `<link>` hoist into `<head>` as the shell's own do; a streamed
+  boundary's go out just before its template. `renderToString` (and react-dom/server's) now
+  brackets each boundary with React's `<!--$-->` / `<!--/$-->` markers, and a boundary a
+  synchronous render showed as its fallback with `<!--$!--><template></template>`, which the
+  client renders itself during hydration instead of reporting a mismatch;
+  `renderToStaticMarkup` writes none, as in React. A Cache Components (PPR) shell brackets the
+  boundaries its prerender resolves inline the same way (HTML and Flight routes, and a static
+  boundary inside a resumed hole), so hydration sees one shape whichever renderer wrote the page.
+- **`@denext/tanstack-start`: a page `denext export` prerenders works with JavaScript off.** The
+  export wrote each page as the server streamed it, so a route's content arrived as a
+  `<template>` that a script moves into its Suspense placeholder; with JavaScript off only the
+  fallback showed. Each page is now written with every boundary's content in place, the same DOM
+  the script produces, so it still hydrates.
+- **A Lustre island that unmounts stops taking its effects' messages.** `lustre.shutdown()` is a
+  TODO for a client app in Lustre (5.7.1 and `main`), so a timer or subscription an island's app
+  started kept updating it after `lustreIsland` unmounted. After every Gleam build denext now
+  fixes Lustre's client runtime (`spa.ffi.mjs`) so a stopped app ignores every later dispatch,
+  emit and context message.
+- **The fixes to Lustre's runtimes match the code, not one version's bytes.** The server-runtime
+  fix applied only to Lustre 5.7.1's exact file; both fixes now find the buggy code by pattern, so
+  a Lustre release that moves or reformats it is fixed too, one that fixed it upstream is left
+  alone silently, a file an earlier denext fixed counts as fixed, and a file of another shape gets
+  one warning naming what breaks. `defineLustreView` also builds a runtime whose constructor
+  dropped its unused first parameter.
+- **The Lustre helpers work under `compatibilityMode: true`.** A compat build treated
+  `denext/gleam` as a server-only module, so no Lustre island, custom element or server view ran
+  in the browser. It is now prebuilt into the compat runtime like `denext/live`, and the Lustre
+  view registry and the per-process Live view signing key are shared by every copy of their
+  modules in the process, so a view the app defines in the prebuilt graph mounts through the
+  server's Live hub. The Lustre example's e2e runs both ways.
+- **A `?url` stylesheet named through a path alias** (`~/styles/app.css?url`, `~/` mapped to
+  `./src/` in `deno.json`) is compiled and emitted like a relative one; before, the compat build
+  emitted an empty module in its place.
+- **`useApi({ suspense: true })` is seeded from a Cache Components (PPR) shell on a route that
+  doesn't use Flight.** An isomorphic route's static shell now records the results its prerender
+  resolved and caches them with the shell, so every response — the first and every cached hit —
+  carries them in `#__denext_state`, and a call inside a dynamic hole is recorded per request as
+  the hole resumes. The client adopts them and never fetches on mount (a headless e2e,
+  `tests/e2e/use-api-ppr.e2e.test.ts`, holds it to zero `/api` requests). It fetched on mount
+  before. Two `useId()` misalignments the seeds exposed are fixed with it, so a seed is filed
+  under the id the browser computes: the segments' not-found / forbidden / unauthorized
+  boundaries, which only the server renders, no longer take a component slot (every id below them
+  on an isomorphic route was offset from the browser entry's, so seeds on routes from a scanned
+  `app/` were never adopted and the call ran again on mount), and a PPR boundary or hole whose
+  content suspended and retried no longer shifts the ids inside it (Flight PPR included).
+- **The deployment guide's Dockerfile is the one `denext generate docker` writes.** The guide had
+  drifted from the generator (no `DENO_DIR`, no `STOPSIGNAL`, older comments); its block is now
+  the generator's output for a `denext create` project, and `tests/docs-deploy-dockerfile.test.ts`
+  diffs the two so they cannot drift again.
+- **`unstable_cache()` inside a `"use cache"` function propagates to the outer entry, as in
+  Next.js 16.** The call's `tags` reach the outer entry — `revalidateTag` on one of them drops
+  the outer entry with the loader's — and its `revalidate` caps the outer entry's revalidate
+  (the minimum wins; `false` never shortens it; the outer body's own `cacheLife()` still wins),
+  whether the loader's entry was a hit or a miss. A stale hit inside a cached function (a
+  `"use cache"` body or an `unstable_cache()` loader, in either direction) is now refreshed in
+  the foreground, so the outer entry never stores a stale value; outside one the stale value
+  is still served while it refreshes. A loader nested in another loader bypasses its own cache
+  (the outer entry holds the result), and `unstable_cache(fn, key, { revalidate: 0 })` — or a
+  negative or non-numeric `revalidate` — is refused when the wrapper is made, with Next.js's
+  messages. Before, a loader's tags and revalidate stopped at its own entry, so revalidating
+  its tag left an outer `"use cache"` entry serving the old data for the outer profile's
+  lifetime. A `"use cache"` function called inside a loader keeps its tags and lifetime to
+  itself, as before (Next.js's rule). `cacheStoreContract` gains a case proving a store keeps
+  every tag of an entry and purges it by any one of them.
+
+### Security
+
+- **The pinned Deno runtime's security fixes (2.9.7-denext.22).** Every RustSec advisory with a
+  fixed release is taken (rustls, the Postgres driver behind `Deno.SQL`, zip, quinn, quick-xml and
+  others; hickory 0.26 for DNS), a `--deny-read` / `--deny-write` scope holds through symlinks
+  (copying onto, removing under, or stat-ing through a link no longer reaches a denied path), an op
+  never lends JavaScript's shared or resizable buffer memory to native code as a slice (the op works
+  on a copy and writes back only what it changed), a worker's `permissions.import` covers its static
+  remote imports, and CR/LF is refused in a `node:http` proxy request target.
+- **A cached page no longer stores one visitor's answer from an in-process API call for every
+  visitor.** The typed client (`createApiClient` / `useApi`) called during a render runs the
+  route in-process under the visitor's cookie and authorization. A handler that read them
+  through `request.headers` (`get`, `has`, iteration, `forEach`) or a `NextRequest`'s
+  `cookies`, rather than `cookies()` / `headers()`, went untracked: an ISR page (`revalidate`)
+  or a Cache Components shell rendered for the first visitor was stored with their data and
+  served to everyone after. Any such read now makes the calling render per-visitor — an ISR
+  render is not stored, and a prerender postpones the enclosing `<Suspense>` into a per-request
+  hole (HTML and Flight routes alike). Reads the framework makes while routing don't count, and
+  a handler that reads no inherited header stays cacheable.
+- **The app's `middleware.ts` no longer launders a visitor's cookie into a cached in-process API
+  answer.** The middleware runs inside that in-process call under the same cookie and
+  authorization, and what it read it could hand on untracked: a rewrite (`/api/me?u=<user>`) or
+  a request header it sets for the handler. Its reads now count as the visitor's request read,
+  exactly like the handler's: `request.headers` (`get`, `has`, iteration, `forEach`), a
+  `NextRequest`'s `cookies`, and a matcher's `has` / `missing` condition on an inherited header
+  or a cookie (`cookies()` / `headers()` already did). A middleware that reads none of them
+  leaves the page cacheable.
+
 ## [4.3.1] - 2026-10-17
 
 ### Added
@@ -16328,7 +17004,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.3.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.4.0...development
+[4.4.0]: https://jsr.io/@denext/denext@4.4.0
 [4.3.1]: https://jsr.io/@denext/denext@4.3.1
 [4.3.0]: https://jsr.io/@denext/denext@4.3.0
 [4.2.0]: https://jsr.io/@denext/denext@4.2.0

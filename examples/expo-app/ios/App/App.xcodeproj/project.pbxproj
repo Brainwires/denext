@@ -18,6 +18,7 @@
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		82031965997DAC679A0623A2 /* DenextBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C1EAB3D60C2152A7DCDE21 /* DenextBridgeViewController.swift */; };
 		1EDA9BC78D626D94BB41B833 /* DenextStoragePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4776E1B125C418F433F32E4 /* DenextStoragePlugin.swift */; };
+		7B30C78BD6A3F5EF34C98A4E /* DenextStorageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF984F6480D085114CD48C1 /* DenextStorageStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +35,7 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		13C1EAB3D60C2152A7DCDE21 /* DenextBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextBridgeViewController.swift; sourceTree = "<group>"; };
 		C4776E1B125C418F433F32E4 /* DenextStoragePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextStoragePlugin.swift; sourceTree = "<group>"; };
+		CEF984F6480D085114CD48C1 /* DenextStorageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextStorageStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,6 +81,7 @@
 				50B271D01FEDC1A000F3C39B /* public */,
 				13C1EAB3D60C2152A7DCDE21 /* DenextBridgeViewController.swift */,
 				C4776E1B125C418F433F32E4 /* DenextStoragePlugin.swift */,
+				CEF984F6480D085114CD48C1 /* DenextStorageStore.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -168,6 +171,7 @@
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				82031965997DAC679A0623A2 /* DenextBridgeViewController.swift in Sources */,
 				1EDA9BC78D626D94BB41B833 /* DenextStoragePlugin.swift in Sources */,
+				7B30C78BD6A3F5EF34C98A4E /* DenextStorageStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

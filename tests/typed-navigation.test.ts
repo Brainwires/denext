@@ -13,6 +13,7 @@ import {
 } from "../src/client/navigation.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 const NAV = new URL("../src/client/navigation.ts", import.meta.url).href;
 
@@ -23,6 +24,7 @@ async function check(body: string): Promise<number> {
     await Deno.writeTextFile(`${dir}/t.ts`, body);
     const { code } = await new Deno.Command(Deno.execPath(), {
       args: ["check", `${dir}/t.ts`],
+      env: fileUrlCheckEnv(),
       stderr: "null",
       stdout: "null",
     }).output();

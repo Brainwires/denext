@@ -293,6 +293,9 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   // AVAudioSession, MPNowPlayingInfoCenter / MPRemoteCommandCenter and the artwork's URLSession
   // fetch use no required-reason API.
   "background-audio": [],
+  // URLSession, FileManager moves and sizes, and a JSON file of records use no required-reason
+  // API (no timestamps, disk space or UserDefaults).
+  "file-transfer": [],
   // The fixes themselves are the app's data to declare (Precise Location, when they leave the
   // device); the plugin's own API use is UserDefaults.
   "background-location": [{

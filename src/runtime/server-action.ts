@@ -4,6 +4,7 @@ import { detachedFromRequest } from "./root-context-bridge.ts";
 import { isChannel, registerChannelIfLoaded } from "./channel-brand.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 import type { ResolvedRestart } from "./restart.ts";
+import { processShared } from "./process-shared.ts";
 //
 // denext has no bundler transform of `"use server"`, so actions are registered
 // at runtime by id: `serverAction("id", handler)`. On the server the returned
@@ -30,12 +31,18 @@ type ActionHandler = (...args: unknown[]) => unknown;
 
 // Registry of server-side handlers, keyed by id. Populated only on the server
 // (when a module calls serverAction during import/render); unused in the browser.
-const registry = new Map<string, ActionHandler>();
+const registry = /* @__PURE__ */ processShared(
+  "serverActions",
+  () => new Map<string, ActionHandler>(),
+);
 
 // Dev: each platform target's own registrations (`tagServerModules`' `scope`). A target's loader
 // yields its own module instances (its platform files), so the same action id runs another
 // implementation per target. Production registers globally only.
-const scopedRegistries = new Map<string, Map<string, ActionHandler>>();
+const scopedRegistries = /* @__PURE__ */ processShared(
+  "scopedServerActions",
+  () => new Map<string, Map<string, ActionHandler>>(),
+);
 
 /** The registry `scope` registers into: the global one for `""`. */
 function registryFor(scope: string): Map<string, ActionHandler> {
@@ -45,9 +52,15 @@ function registryFor(scope: string): Map<string, ActionHandler> {
   return scoped;
 }
 
-// Server-only: gives each server reference a `bind` that keeps it one (installed by
-// src/server/action-bound.ts, which seals the bound values; never set in the browser).
-let decorateReference: ((fn: ActionHandler, id: string) => void) | null = null;
+/** The process's mutable server-action settings, shared by every copy of this module. */
+const shared = /* @__PURE__ */ processShared("serverActionState", () => ({
+  // Server-only: gives each server reference a `bind` that keeps it one (installed by
+  // src/server/action-bound.ts, which seals the bound values; never set in the browser).
+  decorateReference: null as ((fn: ActionHandler, id: string) => void) | null,
+  // Bumped by forgetTaggedServers: a tagging pass that started before the bump must not mark its
+  // (possibly pre-edit) module tagged after the set was cleared.
+  serverTagGeneration: 0,
+}));
 
 /**
  * Define a server action. Give it a **stable, explicit id** (unique per app) so
@@ -89,7 +102,7 @@ export function registerServerReference<A extends unknown[], R>(
 ): ServerActionRef<A, R> {
   registry.set(id, handler as (...args: unknown[]) => unknown);
   const ref = (...args: A) => Promise.resolve(handler(...args));
-  decorateReference?.(ref as unknown as ActionHandler, id);
+  shared.decorateReference?.(ref as unknown as ActionHandler, id);
   return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
 }
 
@@ -103,11 +116,11 @@ export function registerServerReference<A extends unknown[], R>(
 export function setServerReferenceDecorator(
   decorate: (fn: ActionHandler, id: string) => void,
 ): void {
-  decorateReference = decorate;
+  shared.decorateReference = decorate;
 }
 
 /** Readable `module#export` names behind the opaque ids (dev diagnostics only). */
-const actionNames = new Map<string, string>();
+const actionNames = /* @__PURE__ */ processShared("actionNames", () => new Map<string, string>());
 
 /**
  * The opaque, build-stable id of an exported server function: a hash of
@@ -162,7 +175,7 @@ export function tagServerExports(
       enumerable: false,
       configurable: true,
     });
-    decorateReference?.(value as ActionHandler, id);
+    shared.decorateReference?.(value as ActionHandler, id);
     // A `defineSubscription` export: its definition is registered (and made live-readable).
     const def = (value as { [SUBSCRIPTION_DEF]?: SubscriptionDef })[SUBSCRIPTION_DEF];
     if (def) registerSubscription(id, def);
@@ -183,11 +196,7 @@ export function clientActionStub<A extends unknown[], R>(id: string): ServerActi
 }
 
 // Server module ids already imported + tagged this process (per scope).
-const taggedServers = new Set<string>();
-// Bumped by forgetTaggedServers: a tagging pass that started before the bump must not mark its
-// (possibly pre-edit) module tagged after the set was cleared.
-let serverTagGeneration = 0;
-
+const taggedServers = /* @__PURE__ */ processShared("taggedServers", () => new Set<string>());
 /**
  * Import each `"use server"` module and auto-register its exports as server
  * references (see {@link tagServerExports}). Safe to call repeatedly; each module
@@ -204,7 +213,7 @@ export async function tagServerModules(
   scope = "",
 ): Promise<void> {
   const key = (moduleId: string) => scope ? `${scope}\0${moduleId}` : moduleId;
-  const generation = serverTagGeneration;
+  const generation = shared.serverTagGeneration;
   // Every module is tagged even when another fails to load: one broken module must not leave
   // the rest unregistered. The first failure is rethrown once all have settled.
   const results = await Promise.allSettled(
@@ -214,7 +223,7 @@ export async function tagServerModules(
       tagServerExports(mod as Record<string, unknown>, moduleId, scope);
       // `forgetTaggedServers` ran while this module loaded: what loaded may be the pre-edit
       // instance, so leave it untagged and let the next pass load the current one.
-      if (generation === serverTagGeneration) taggedServers.add(key(moduleId));
+      if (generation === shared.serverTagGeneration) taggedServers.add(key(moduleId));
     }),
   );
   const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
@@ -227,7 +236,7 @@ export async function tagServerModules(
  * instance and registers the same functions).
  */
 export function forgetTaggedServers(): void {
-  serverTagGeneration++;
+  shared.serverTagGeneration++;
   taggedServers.clear();
 }
 
@@ -246,7 +255,7 @@ export function getServerAction(id: string, scope = ""): ActionHandler | undefin
 // but not live-readable until marked — so the persistent socket can't be used to
 // run arbitrary registered actions. The Live hub also accepts a `canSubscribe`
 // policy as an alternative gate (see `installLiveHub`).
-const liveReadableIds = new Set<string>();
+const liveReadableIds = /* @__PURE__ */ processShared("liveReadableIds", () => new Set<string>());
 
 /**
  * Mark a server action as readable over the Live data channel (`useLive`), and
@@ -294,7 +303,10 @@ export const SUBSCRIPTION_DEF: unique symbol = /* @__PURE__ */ Symbol.for(
   "denext.subscriptionDef",
 ) as never;
 
-const subscriptionDefs = new Map<string, SubscriptionDef>();
+const subscriptionDefs = /* @__PURE__ */ processShared(
+  "subscriptionDefs",
+  () => new Map<string, SubscriptionDef>(),
+);
 
 /**
  * Register a subscription definition under `id`. Registering IS the live opt-in: a definition

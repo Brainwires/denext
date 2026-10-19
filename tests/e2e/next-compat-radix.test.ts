@@ -86,7 +86,7 @@ Deno.test("next-compat: real npm @radix-ui/react-dialog SSRs on denext's single 
       "client bundle must not contain npm React",
     );
     assert(
-      client.includes("denext.fragment") || client.includes("react.forward_ref"),
+      client.includes("denext.provider") || client.includes("denext.suspense"),
       "client bundle must contain denext's runtime",
     );
     assertStringIncludes(client, "aria-haspopup", "client bundle includes real Radix Dialog code");

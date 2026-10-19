@@ -6,9 +6,10 @@
 // too, with the guarantees separate requests in call order would give: each runs alone, after
 // every item queued before it has settled and before any item queued after it starts, and each
 // passes its route's own CSRF checks (the batch's `Origin`, verified like a Server Action's, is
-// the item's, and an item may carry its double-submit token). Items carry no other headers —
-// the batch request's cookies (and a fixed allowlist of its headers) are replayed to each item on
-// the server, so a caller can never smuggle a header through an item.
+// the item's, and an item may carry its double-submit token). Items carry no other headers but
+// the ones the app forwards (`apiBatch.forwardHeaders`, e.g. `x-tenant`), each item its own
+// value — the batch request's cookies (and a fixed allowlist of its headers) are replayed to
+// each item on the server, and no item can set a credential, framing or proxy header.
 
 /** The batch endpoint (same reserved prefix as Server Actions). */
 export const API_BATCH_PATH = "/_denext/api-batch";
@@ -44,6 +45,102 @@ export function isBatchMutation(m: string): m is BatchMutationMethod {
  */
 export const BATCH_ITEM_HEADERS = ["x-csrf-token"] as const;
 
+/**
+ * Request headers no batch item may carry, whatever an app's `forwardHeaders` lists: framing and
+ * hop-by-hop headers, the credentials every item inherits from the batch request itself
+ * (`cookie`, `authorization`), what the server derives an item's trust from (`origin`, `referer`,
+ * `host`, the request id), and what a reverse proxy sets or sanitizes on the OUTER request — an
+ * item value would otherwise reach a handler without passing the proxy.
+ */
+const NEVER_FORWARDED = new Set([
+  "accept",
+  "accept-encoding",
+  "accept-language",
+  "authorization",
+  "connection",
+  "content-encoding",
+  "content-length",
+  "content-type",
+  "cookie",
+  "expect",
+  "forwarded",
+  "host",
+  "keep-alive",
+  "origin",
+  "referer",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "true-client-ip",
+  "upgrade",
+  "user-agent",
+  "via",
+  "x-client-ip",
+  "x-cluster-client-ip",
+  "x-csrf-token",
+  "x-real-ip",
+  "x-request-id",
+]);
+
+/** Prefixes of header families no batch item may carry (see {@link NEVER_FORWARDED}). */
+const NEVER_FORWARDED_PREFIXES = [
+  "access-control-",
+  "cf-",
+  "fastly-",
+  "proxy-",
+  "sec-",
+  "x-denext-",
+  "x-forwarded-",
+  "x-original-",
+];
+
+/** An HTTP header name (RFC 9110 token), lower-case. */
+const HEADER_NAME = /^[a-z0-9!#$%&'*+.^_`|~-]{1,64}$/;
+
+/**
+ * May an app forward `name` per batch item (`apiBatch.forwardHeaders`)? A lower-case header
+ * token that is not a framing, credential, trust or proxy header (`x-csrf-token` is always an
+ * item header on a mutation, so it is not listed).
+ *
+ * @param name The lower-case header name.
+ * @returns Whether it may be listed.
+ */
+export function isForwardableBatchHeader(name: string): boolean {
+  return HEADER_NAME.test(name) && !NEVER_FORWARDED.has(name) &&
+    !NEVER_FORWARDED_PREFIXES.some((p) => name.startsWith(p));
+}
+
+/**
+ * The forwardable names of a `forwardHeaders` list, lower-cased (anything else dropped).
+ *
+ * @param list The configured names.
+ * @returns The names an item may carry.
+ */
+export function forwardableBatchHeaders(list: readonly unknown[] | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const raw of list ?? []) {
+    const name = typeof raw === "string" ? raw.toLowerCase() : "";
+    if (isForwardableBatchHeader(name)) out.add(name);
+  }
+  return out;
+}
+
+/** The longest value a batch item header may carry. */
+const MAX_BATCH_HEADER_VALUE = 1024;
+
+/**
+ * A header value an item may carry: visible ASCII / obs-text and inner spaces or tabs, no
+ * leading or trailing whitespace, no control character (no CR / LF / NUL: nothing can split or
+ * end a header), at most {@link MAX_BATCH_HEADER_VALUE} characters.
+ *
+ * @param v The value.
+ * @returns Whether it is acceptable.
+ */
+export function isBatchHeaderValue(v: unknown): v is string {
+  return typeof v === "string" && v.length <= MAX_BATCH_HEADER_VALUE &&
+    /^(?:[\x21-\x7e\x80-\xff](?:[\t\x20-\x7e\x80-\xff]*[\x21-\x7e\x80-\xff])?)?$/.test(v);
+}
+
 /** One request in a batch. */
 export interface BatchItem {
   /** Caller-assigned id, unique within the batch; results are matched on it. */
@@ -56,7 +153,10 @@ export interface BatchItem {
   b?: string;
   /** `1` when {@link b} carries wire-codec tags (sent as the item's `x-denext-wire`). */
   benc?: 1;
-  /** Item headers — only {@link BATCH_ITEM_HEADERS}. */
+  /**
+   * Item headers — {@link BATCH_ITEM_HEADERS} on a mutation, and the names the app forwards
+   * (`apiBatch.forwardHeaders`) on any item, each with this item's own value.
+   */
   h?: Record<string, string>;
 }
 

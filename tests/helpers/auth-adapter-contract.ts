@@ -888,7 +888,10 @@ const SSO_CASES: Record<string, Case> = {
   ) => {
     await adapter.createSsoProvider!(ssoProvider("p1", "https://idp", []));
     const user = await adapter.createUser({ email: "s@x.test" });
-    const record = (sessionId: string, nameId: string, expiresAt = at(3600)) => ({
+    // One expiry for every record: recomputing `at(3600)` for the comparison below read the
+    // next second when the clock ticked between the write and the assertion.
+    const inAnHour = at(3600);
+    const record = (sessionId: string, nameId: string, expiresAt = inAnHour) => ({
       sessionId,
       providerId: "p1",
       nameId,

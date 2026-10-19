@@ -54,6 +54,16 @@ export function seedFor(seed: number, name: string): number {
 }
 
 /**
+ * The environment variables {@linkcode jitterFromEnv} reads: the grant a least-privilege test run
+ * (the Vitest pass) needs for the preload.
+ */
+export const JITTER_ENV: readonly string[] = [
+  "DENEXT_STRESS_SEED",
+  "DENEXT_STRESS_MAX_MS",
+  "DENEXT_STRESS_P",
+];
+
+/**
  * The jitter options from the environment: `DENEXT_STRESS_SEED` (a fresh random seed when unset;
  * `fresh` says so), `DENEXT_STRESS_MAX_MS` and `DENEXT_STRESS_P`.
  *

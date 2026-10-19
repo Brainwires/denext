@@ -691,6 +691,16 @@ export interface ReactNativeConfig {
     /** The themes beyond `light` and `dark` (`withUniwindConfig`'s `extraThemes`). */
     extraThemes?: readonly string[];
   };
+  /**
+   * Build a [Unistyles 3](https://www.unistyl.es) app as its Babel plugin
+   * (`react-native-unistyles/plugin`) does, when the app has `react-native-unistyles`
+   * installed: `react-native` imported from the app's own modules gives Unistyles' wrapped
+   * components (`View`, `Text`, `Pressable`, …), and `styles.useVariants(…)` applies the variants
+   * to the rest of its block. `false` turns it off.
+   *
+   * @default true
+   */
+  unistyles?: boolean;
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
@@ -711,6 +721,18 @@ export interface ApiBatchConfig {
    * @default true
    */
   mutations?: boolean;
+  /**
+   * Request headers a batched call may carry, each item with its own value — a tenant or
+   * locale header such as `["x-tenant"]` (default none). The client batches a call carrying
+   * one only when it lists the same name (`createApiClient({ batch: { forwardHeaders } })`);
+   * a call with any other custom header goes as its own request. A header reaches only its own
+   * item's handler, never another item's, and never comes from the batch request itself. Names
+   * are lower-cased; a credential (`cookie`, `authorization`), framing or hop-by-hop header,
+   * `origin` / `referer` / `host`, a proxy-set header (`forwarded`, `x-forwarded-*`,
+   * `x-real-ip`, `cf-*`, …), `x-denext-*`, `sec-*` and the app's `rateLimitHeader` are refused.
+   * Each value is one line of at most 1024 characters; anything else fails the whole batch.
+   */
+  forwardHeaders?: string[];
   /**
    * Max items per batch (default 20, at most 100).
    *
@@ -1496,6 +1518,35 @@ export interface CompileConfig {
    * kind unscoped. `"all"` bakes `--allow-all` instead — an explicit opt-in.
    */
   permissions?: "all" | CompilePermissions;
+  /**
+   * Code-sign the binary after the compile (`denext build --compile --sign` asks for it once).
+   * A macOS target is signed with `codesign` (the Hardened Runtime, a secure timestamp and the
+   * JIT entitlement V8 needs) as `DENEXT_CODESIGN_IDENTITY`, then notarized when notary
+   * credentials are set; a Windows target is Authenticode-signed with `signtool` (Windows) or
+   * `osslsigncode` (macOS / Linux) with `DENEXT_WINDOWS_CERT`. Credentials come from the
+   * environment only. Without them a configured `sign` warns and leaves the binary unsigned,
+   * where `--sign` fails.
+   */
+  sign?: boolean | CompileSignConfig;
+}
+
+/** Options for {@link CompileConfig.sign}. */
+export interface CompileSignConfig {
+  /**
+   * An entitlements plist (project-relative) the macOS signature takes; the JIT entitlement is
+   * added unless the plist sets it. Default: `DENEXT_ENTITLEMENTS`.
+   */
+  entitlements?: string;
+  /**
+   * Notarize a macOS binary. Default: when notary credentials (`DENEXT_NOTARY_PROFILE`, or
+   * `DENEXT_NOTARY_KEY` + `DENEXT_NOTARY_KEY_ID`) are set; `true` requires them; `false` skips.
+   */
+  notarize?: boolean;
+  /**
+   * The RFC-3161 timestamp server for a Windows signature. Default: `DENEXT_SIGN_TIMESTAMP_URL`,
+   * else DigiCert's.
+   */
+  timestampUrl?: string;
 }
 
 /** Extra `--allow-*` for {@link CompileConfig.permissions}: permission kinds to Deno values. */

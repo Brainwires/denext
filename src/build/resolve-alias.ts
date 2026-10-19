@@ -8,7 +8,7 @@
 // bundles; the target is resolved through the same build, so it gets every other rule (a
 // package's `exports`, the platform files of an app module).
 
-import { resolve, SEPARATOR } from "@std/path";
+import { join, resolve, SEPARATOR } from "@std/path";
 import type * as esbuild from "./esbuild/mod.ts";
 import type { ResolveAliasConfig } from "../server/config.ts";
 
@@ -45,6 +45,9 @@ function literal(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
+/** The project module a bare alias target is resolved from (it need not exist). */
+const PROJECT_IMPORTER = "__denext_resolve_alias__.js";
+
 /** Marks the re-resolution of an alias target (`pluginData`), so it is not aliased again. */
 const REENTRY = "__denextResolveAlias";
 
@@ -72,14 +75,18 @@ function resolveAliasPlugin(
         if (args.importer && rule.except.some((name) => isPackageFile(args.importer, name))) {
           return undefined;
         }
-        const target = rule.to.startsWith("./") || rule.to.startsWith("../")
-          ? resolve(projectDir, rule.to)
-          : rule.to;
+        const local = rule.to.startsWith("./") || rule.to.startsWith("../");
+        const target = local ? resolve(projectDir, rule.to) : rule.to;
         const result = await build.resolve(target, {
           kind: args.kind,
-          importer: args.importer,
+          // A bare target resolves as the app's own import would (the import map applies), also
+          // for an importer inside an npm package, whose own scope has no import map.
+          importer: local ? args.importer : join(projectDir, PROJECT_IMPORTER),
           // A bare target resolves from the project, as the app's own imports do.
           resolveDir: projectDir,
+          // The importer's namespace: Deno's resolver refuses a resolve with none, which a
+          // target the import map sends to a file URL (`denext/preact`) reached.
+          namespace: args.namespace || "file",
           pluginData: { [REENTRY]: true },
         });
         if (result.errors.length > 0) return { errors: result.errors };

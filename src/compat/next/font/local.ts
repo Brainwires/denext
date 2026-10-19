@@ -123,6 +123,8 @@ function pickFallbackSource(srcs: LocalFontSource[]): LocalFontSource {
 /** Where a font `src` may live on disk (see `adjustFontFallback`). */
 function candidatePaths(path: string, cwd: string): string[] {
   if (path.startsWith("/")) return [`${cwd}/public${path}`, path];
+  // A drive-letter or UNC path (Windows): the file itself, never a project-relative guess.
+  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path)) return [path];
   const rel = path.replace(/^\.\//, "");
   return ["", "public/", "app/", "src/app/", "src/"].map((dir) => `${cwd}/${dir}${rel}`);
 }

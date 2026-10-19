@@ -65,6 +65,21 @@ function readEnv(name: string): string | undefined {
 }
 
 /**
+ * Whether `url` carries a well-formed session token as its {@linkcode DEV_TOKEN_PARAM} query
+ * parameter (the URL `denext dev` prints for a network bind).
+ *
+ * @param url A dev server URL.
+ * @returns `false` for an unparseable URL or a missing / malformed token.
+ */
+export function hasDevSessionToken(url: string): boolean {
+  try {
+    return TOKEN_SHAPE.test(new URL(url).searchParams.get(DEV_TOKEN_PARAM) ?? "");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * `url` with the token as its {@linkcode DEV_TOKEN_PARAM} query parameter (unchanged without one).
  *
  * @param url A dev server URL (`http://192.168.1.5:3000`).
@@ -105,6 +120,25 @@ function fromLoopback(request: Request, url: URL): boolean {
   return peer !== undefined ? isLoopbackHost(peer) : isLoopbackHost(url.hostname);
 }
 
+/**
+ * Requests a non-loopback peer authenticated with the {@linkcode DEV_TOKEN_HEADER} header: a dev
+ * client that is not a browser (the desktop dev proxy). A browser page cannot set that header on
+ * another origin's request, and the cookie or query parameter a browser carries is not counted.
+ */
+const headerTokenClients = new WeakSet<Request>();
+
+/**
+ * Whether the token gate admitted `request` from a non-loopback peer on the strength of its
+ * {@linkcode DEV_TOKEN_HEADER} header (see {@linkcode devTokenGate}). The dev origin gate lets
+ * such a client through without the `Origin` / `Sec-Fetch-Site` a browser would send.
+ *
+ * @param request A request that went through {@linkcode withDevTokenGate}.
+ * @returns `true` only for a header-token client.
+ */
+export function isDevTokenHeaderClient(request: Request): boolean {
+  return headerTokenClients.has(request);
+}
+
 /** Why a request without the token is refused (the body of the 403). */
 const NEED_TOKEN = "denext dev: this dev server is bound to a network address and needs its " +
   "session token. Open the URL `denext dev` printed (it ends in ?" + DEV_TOKEN_PARAM + "=…), or " +
@@ -138,13 +172,12 @@ export function devTokenGate(request: Request, token: string | undefined): Respo
     });
   }
   const header = request.headers.get(DEV_TOKEN_HEADER);
-  const cookie = cookieValue(request.headers.get("cookie"), DEV_TOKEN_COOKIE);
-  if (
-    (header !== null && sameToken(header, token)) ||
-    (cookie !== undefined && sameToken(cookie, token))
-  ) {
+  if (header !== null && sameToken(header, token)) {
+    headerTokenClients.add(request);
     return null;
   }
+  const cookie = cookieValue(request.headers.get("cookie"), DEV_TOKEN_COOKIE);
+  if (cookie !== undefined && sameToken(cookie, token)) return null;
   return new Response(NEED_TOKEN, {
     status: 403,
     headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },

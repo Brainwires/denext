@@ -190,6 +190,50 @@ Deno.test("dev handler behind the token: a bare LAN client gets 403 on @fs, dev-
   }
 });
 
+Deno.test("dev origin gate on a LAN host: a bare client passes only with the session token in its header", async () => {
+  const dir = await Deno.realPath(await tempApp());
+  try {
+    const st = createDevState({
+      paths: await resolveProject(dir),
+      unbundled: true,
+      allowedDevOrigins: ["192.168.1.5"],
+    });
+    st.load = defaultLoader;
+    const handler = withDevTokenGate(
+      createDevHandler(st, () => Promise.resolve(new Response("app"))),
+      TOKEN,
+    );
+    const url = "http://192.168.1.5:3000/_denext/dev-state";
+    // The desktop dev proxy relays a window that sends no Origin / Sec-Fetch-Site: its token
+    // header admits it to the dev endpoints.
+    const proxied = await handler(from(LAN_PEER, url, { headers: { [DEV_TOKEN_HEADER]: TOKEN } }));
+    assertEquals(proxied.status, 200);
+    await proxied.body?.cancel();
+    // The cookie (ambient in a browser) does not stand in for Sec-Fetch-Site.
+    const cookieOnly = await handler(
+      from(LAN_PEER, url, { headers: { cookie: `${DEV_TOKEN_COOKIE}=${TOKEN}` } }),
+    );
+    assertEquals(cookieOnly.status, 403);
+    await cookieOnly.body?.cancel();
+    // A wrong header token is refused by the token gate itself; a cross-site browser request with
+    // the right header is still refused by Sec-Fetch-Site.
+    const wrong = await handler(
+      from(LAN_PEER, url, { headers: { [DEV_TOKEN_HEADER]: "0".repeat(64) } }),
+    );
+    assertEquals(wrong.status, 403);
+    await wrong.body?.cancel();
+    const crossSite = await handler(
+      from(LAN_PEER, url, {
+        headers: { [DEV_TOKEN_HEADER]: TOKEN, "sec-fetch-site": "cross-site" },
+      }),
+    );
+    assertEquals(crossSite.status, 403);
+    await crossSite.body?.cancel();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop dev proxy: the token in the dev URL goes upstream as a header", () => {
   assertEquals(
     devProxyTokenHeaders(`http://192.168.1.5:3000/?${DEV_TOKEN_PARAM}=${TOKEN}`),

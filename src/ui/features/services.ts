@@ -19,6 +19,7 @@ import { renderView } from "../view.ts";
 import { readContained, uiSafeJoin } from "../security.ts";
 import type { ChildStatus, SupervisorStatus } from "../../server/supervise.ts";
 import { SERVICES_SNAPSHOT, type ServicesSnapshot } from "../../server/service-loader.ts";
+import { privateEntriesUnder } from "../../server/module-walk.ts";
 
 /** One request's reading of the project's services. */
 interface ServicesState {
@@ -46,7 +47,7 @@ async function serviceFiles(dir: string): Promise<string[]> {
         exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
         includeDirs: false,
         followSymlinks: false,
-        skip: [/[/\\]\.[^/\\]+/, /[/\\]_/],
+        skip: [privateEntriesUnder(root)],
       })
     ) {
       const rel = entry.path.slice(root.length).replace(/^[/\\]/, "");

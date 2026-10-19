@@ -148,6 +148,14 @@ export function setDispatcher(d: Dispatcher | null): Dispatcher | null {
   return prev;
 }
 
+/**
+ * Whether denext is rendering a component right now (its dispatcher is installed). React's
+ * hooks hand a call to a `react-reconciler` renderer's dispatcher only when denext is not.
+ */
+export function rendering(): boolean {
+  return ((globalThis as DispatcherHolder)[DISPATCHER_KEY] ?? null) !== null;
+}
+
 function dispatcher(): Dispatcher {
   const current = (globalThis as DispatcherHolder)[DISPATCHER_KEY] ?? null;
   if (!current) {

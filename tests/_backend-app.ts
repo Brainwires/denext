@@ -5,7 +5,12 @@
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import type { DenextPlugin } from "../src/plugin/mod.ts";
-import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
+import {
+  applyPlugins,
+  getPluginRequestHandler,
+  resetPlugins,
+  runPluginTeardown,
+} from "../src/plugin/mod.ts";
 import { createApp } from "../src/server/app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { backend, fs } from "../packages/backend/mod.ts";
@@ -95,6 +100,9 @@ export async function backendApp(
         ...init,
       }),
     async close() {
+      // The teardowns close what setup opened (the storage metadata database): Windows
+      // refuses to remove a directory with an open file in it.
+      await runPluginTeardown();
       resetPlugins();
       installRuntime(undefined);
       await Deno.remove(root, { recursive: true });

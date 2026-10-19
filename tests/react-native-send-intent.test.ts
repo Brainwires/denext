@@ -237,7 +237,7 @@ ${javaPutExtras()}
         stderr: "piped",
       }).output();
       assert(run.success, new TextDecoder().decode(run.stderr));
-      assertEquals(new TextDecoder().decode(run.stdout).trim().split("\n"), [
+      assertEquals(new TextDecoder().decode(run.stdout).trim().split(/\r?\n/), [
         "none: null",
         // A number is a double, whether JavaScript wrote 3 or 2.5 (React Native's rule).
         "types: [String s=x, boolean b=true, double i=3.0, double d=2.5]",
@@ -467,7 +467,7 @@ public final class Harness {
         stderr: "piped",
       }).output();
       assert(run.success, new TextDecoder().decode(run.stderr));
-      assertEquals(new TextDecoder().decode(run.stdout).trim().split("\n"), [
+      assertEquals(new TextDecoder().decode(run.stdout).trim().split(/\r?\n/), [
         "started: resolved",
         "nothing handles it: rejected unavailable: Could not launch Intent with action android.intent.action.CALL.",
         // React Native's IntentModule catches every exception and rejects with the same message.
@@ -564,7 +564,7 @@ public final class Harness {
         stderr: "piped",
       }).output();
       assert(run.success, new TextDecoder().decode(run.stderr));
-      assertEquals(new TextDecoder().decode(run.stdout).trim().split("\n"), [
+      assertEquals(new TextDecoder().decode(run.stdout).trim().split(/\r?\n/), [
         "no manager: resolved {notifications=[]}",
         "listed: resolved {notifications=[{id=7, threadId=chat-1, title=Ann}, " +
         "{id=0, tag=FCM-Notification:1}, {id=100, summary=true, threadId=chat-1}, {id=5}]}",

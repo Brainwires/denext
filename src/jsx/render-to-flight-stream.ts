@@ -43,9 +43,14 @@ import {
 } from "./render-shared.ts";
 import { VNodeRenderer } from "./renderer-base.ts";
 import type { FlightNode, FlightValue } from "./render-to-flight.ts";
-import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
+import { enterScope } from "./tree-id.ts";
 
 import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
+import {
+  InlineBoundarySignal,
+  type SettledBoundary,
+  StreamBoundaries,
+} from "./stream-boundaries.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
@@ -65,15 +70,25 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
 
   private id = 0;
   /**
-   * In-flight boundary renders: each **resolves, never rejects**, to id + streamed
-   * html + resolved flight + an `ok` flag (a failed boundary streams nothing extra,
-   * leaving its shell fallback — see {@link streamFlightHoles}).
+   * Every boundary's token in the HTML, decided inline or streamed when it flushes. Each
+   * boundary's render **resolves, never rejects**, to id + html + resolved flight + an `ok`
+   * flag (a failed boundary streams nothing extra, leaving its shell fallback).
    */
-  readonly active = new Set<
-    Promise<{ id: string; html: string; flight: FlightNode; ok: boolean }>
-  >();
+  readonly boundaries = new StreamBoundaries<HoleChunk>();
+  /** The boundaries the flushed HTML left to stream (each joins once its parent flushed). */
+  readonly streamed = new Set<Promise<HoleChunk>>();
   /** Resolved boundary flights, spliced into the shell flight at the end. */
   readonly holes = new Map<string, FlightNode>();
+
+  /**
+   * `flight` with the holes of every boundary written inline so far filled; a streamed
+   * boundary's hole stays for the client to fill from its own `data-dnx-f` chunk.
+   */
+  fillInlined(flight: FlightNode): FlightNode {
+    const inline = new Map<string, FlightNode>();
+    for (const id of this.boundaries.inlined) inline.set(id, this.holes.get(id) ?? null);
+    return fillFlightHoles(flight, inline, true);
+  }
   /** Told each error a streamed hole's render threw that nothing inside the hole caught. */
   onHoleError?: (error: unknown) => void;
   /**
@@ -133,50 +148,61 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
     return { html: "", flight: null };
   }
 
+  protected override suspended(scopes: ProviderScope[]): void {
+    this.boundaries.suspendedIn(scopes);
+  }
+
   protected text(value: string | number): Dual {
     return { html: escapeHtml(String(value)), flight: value };
   }
 
   /**
-   * Suspense: stream the HTML; the Flight tree gets a hole filled on resolve. The boundary
-   * is its own id scope (one slot in its parent); its streamed content is rooted at that
-   * position so it reproduces the client's ids.
+   * Suspense: the HTML gets a token the flush decides — the content inline when it has
+   * finished by then, else the fallback now and the content streamed (see
+   * {@link StreamBoundaries}); the Flight tree gets a hole filled on resolve. The boundary is
+   * its own id scope (one slot in its parent); its content is rooted at that position so it
+   * reproduces the client's ids.
    */
   protected async renderSuspense(
     props: Record<string, unknown>,
     scopes: ProviderScope[],
+    head: HeadCollector | null,
   ): Promise<Dual> {
     const id = `dnx${this.id++}`;
     const parentScope = this.ids.scope;
     const boundaryScope = enterScope(parentScope);
     // The id is captured in closure, so a rejected boundary still reports it (ok:false):
-    // its shell fallback stays and the rest of the stream is unaffected. A control signal
-    // thrown in the hole resolves to its replacement instead (`resolveHoleSignal`): a
-    // client-side redirect carries no Flight (the client is leaving), a signal boundary's
-    // UI carries its own so the tail Flight hydrates what was streamed.
-    const holeScope = rootScope(scopePrefix(boundaryScope));
-    this.active.add(
-      this.resolve(props.children as VNodeChildren, scopes, holeScope)
-        .catch((err) =>
-          this.resolveHoleSignal(err, scopes, holeScope, (html) => ({ html, flight: null }))
-        )
-        .then((d) => {
-          this.holes.set(id, d.flight);
-          return { id, html: d.html, flight: d.flight, ok: true };
-        })
-        .catch((err) => {
-          console.error("denext: streamed Flight boundary failed to resolve:", id, err);
-          reportHoleError(this.onHoleError, err);
-          return { id, html: "", flight: null, ok: false };
-        }),
-    );
+    // its shell fallback stays and the rest of the stream is unaffected. A control signal's
+    // replacement (`boundaryContent`): a client-side redirect carries no Flight (the client
+    // is leaving), a signal boundary's UI carries its own so the tail Flight hydrates what was
+    // streamed.
+    const redirectDual = (html: string): Dual => ({ html, flight: null });
+    const render: Promise<HoleChunk> = this.boundaryContent(
+      id,
+      props.children as VNodeChildren,
+      scopes,
+      boundaryScope,
+      this.boundaries,
+      head,
+      redirectDual,
+    )
+      .then(({ out, signal, head }) => {
+        this.holes.set(id, out.flight);
+        return { id, html: out.html, flight: out.flight, ok: true, signal, head };
+      })
+      .catch((err) => {
+        console.error("denext: streamed Flight boundary failed to resolve:", id, err);
+        reportHoleError(this.onHoleError, err);
+        return { id, html: "", flight: null, ok: false };
+      });
+    this.boundaries.track(id, render);
     this.ids.scope = boundaryScope;
     try {
       const fallback = await this.renderChildren(props.fallback as VNodeChildren, scopes);
       // The hole is a transient node type filled by fillFlightHoles before emit.
       const hole = { $: "$", r: id } as FlightHole;
       return {
-        html: `<div data-dnx-b="${id}">${fallback.html}</div>`,
+        html: this.boundaries.token(id, fallback.html),
         flight: hole as unknown as FlightNode,
       };
     } finally {
@@ -329,7 +355,10 @@ export interface FlightStreamOptions {
  * state — so the client hydrates the complete tree with its islands wired up.
  */
 export interface FlightShellRender {
-  /** The shell HTML (Suspense boundaries as `data-dnx-b` placeholders). */
+  /**
+   * The shell HTML: each Suspense boundary that finished during the shell render inline
+   * (between `<!--$-->` / `<!--/$-->`), each still rendering a `data-dnx-b` placeholder.
+   */
   shellHtml: string;
   /**
    * Whether the shell has any pending Suspense holes. When false there is nothing to
@@ -386,16 +415,24 @@ export async function renderFlightShell(
   let shell: Dual;
   try {
     shell = await renderer.resolve(node, [], undefined, head);
+    // React's shell pass: boundaries that never suspend finish here, so the shell writes them
+    // inline (and their `useServerInsertedHTML` markup is collected with the shell's).
+    await renderer.boundaries.quiet();
     flushServerInsertedHTML(sink.inserted, head);
+    // A boundary decided inline is part of the shell: a control signal it threw sets the
+    // whole response (a 404 page, a redirect) — the caller renders the page buffered.
+    const signal = renderer.boundaries.inlineSignal(shell.html);
+    if (signal !== undefined) throw new InlineBoundarySignal(signal);
   } catch (err) {
     endSignalCollection(); // reset the module collector even if the shell throws
     throw err;
   } finally {
     sink.end();
   }
+  const shellHtml = renderer.boundaries.expand(shell.html, renderer.streamed, head);
   return {
-    shellHtml: shell.html,
-    hasHoles: renderer.active.size > 0,
+    shellHtml,
+    hasHoles: renderer.streamed.size > 0,
     async streamHoles(controller, encoder, signal, streamData = true) {
       try {
         await drainShellHoles(renderer, controller, encoder, signal, streamData);
@@ -409,11 +446,8 @@ export async function renderFlightShell(
 }
 
 /** A settled Suspense hole (`ok: false` when it failed and keeps its shell fallback). */
-interface HoleChunk {
-  id: string;
-  html: string;
+interface HoleChunk extends SettledBoundary {
   flight: FlightNode;
-  ok: boolean;
 }
 
 /** The next settled piece of the stream: a Suspense hole or a deferred value. */
@@ -422,7 +456,7 @@ type StreamChunk = { hole: HoleChunk } | { value: ValueChunk };
 /** Wait for the next hole (and, with `values`, deferred value) to settle and take it. */
 async function nextChunk(renderer: StreamFlightRenderer, values: boolean): Promise<StreamChunk> {
   type Taken = { p: Promise<unknown>; chunk: StreamChunk };
-  const pending: Promise<Taken>[] = [...renderer.active].map((p) =>
+  const pending: Promise<Taken>[] = [...renderer.streamed].map((p) =>
     p.then((hole) => ({ p, chunk: { hole } }))
   );
   if (values) {
@@ -431,7 +465,7 @@ async function nextChunk(renderer: StreamFlightRenderer, values: boolean): Promi
     }
   }
   const { p, chunk } = await Promise.race(pending);
-  renderer.active.delete(p as Promise<HoleChunk>);
+  renderer.streamed.delete(p as Promise<HoleChunk>);
   renderer.valueActive.delete(p as Promise<ValueChunk>);
   return chunk;
 }
@@ -443,13 +477,22 @@ function dataScript(attr: "data-dnx-f" | "data-dnx-v", id: string, json: FlightV
   }</script>`;
 }
 
-/** A settled chunk as the bytes it streams (empty for a failed hole). */
-function chunkHtml(chunk: StreamChunk, streamData: boolean): string {
+/**
+ * A settled chunk as the bytes it streams (empty for a failed hole). A hole's Flight subtree
+ * carries the boundaries written inline into its HTML already filled.
+ */
+function chunkHtml(
+  renderer: StreamFlightRenderer,
+  chunk: StreamChunk,
+  streamData: boolean,
+): string {
   if ("value" in chunk) return dataScript("data-dnx-v", chunk.value.id, chunk.value.value);
-  const { id, html, flight, ok } = chunk.hole;
+  const { id, html, flight, ok, headHtml } = chunk.hole;
   if (!ok) return ""; // failed hole: leave its shell fallback
-  const template = `<template data-dnx-r="${id}">${html}</template>`;
-  return streamData ? template + dataScript("data-dnx-f", id, flight as FlightValue) : template;
+  // The hole's hoisted head tags go just before it (the document head has flushed).
+  const template = `${headHtml ?? ""}<template data-dnx-r="${id}">${html}</template>`;
+  if (!streamData) return template;
+  return template + dataScript("data-dnx-f", id, renderer.fillInlined(flight) as FlightValue);
 }
 
 /**
@@ -463,9 +506,9 @@ async function drainShellHoles(
   signal: AbortSignal | undefined,
   streamData: boolean,
 ): Promise<void> {
-  while (renderer.active.size > 0 || (streamData && renderer.valueActive.size > 0)) {
+  while (renderer.streamed.size > 0 || (streamData && renderer.valueActive.size > 0)) {
     if (signal?.aborted) break;
-    const html = chunkHtml(await nextChunk(renderer, streamData), streamData);
+    const html = chunkHtml(renderer, await nextChunk(renderer, streamData), streamData);
     if (html) controller.enqueue(encoder.encode(html));
   }
 }
@@ -492,7 +535,9 @@ async function finishFlightTail(
   if (resolvedValues.size > 0) {
     flight = substituteValueHoles(flight, resolvedValues) as FlightNode;
   }
-  if (streamData && inlinedRootFlight(flight) !== null) flight = root;
+  // Streamed: the shell tree with only its inline boundaries filled (the client fills the
+  // streamed ones from their chunks).
+  if (streamData && inlinedRootFlight(flight) !== null) flight = renderer.fillInlined(root);
   const signalState = endSignalCollection();
   return {
     flight,

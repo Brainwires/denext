@@ -206,6 +206,12 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * 64,610 → 65,030 B), with no budget change: the FragmentInstance itself is the on-demand
  * `fragment-instance-*` chunk, which imports no shared module (one that did split this graph into
  * more chunks, +2.5 KB). Its gate is asserted in {@link assertGatedRuntimeAbsent}.
+ * Inline Suspense boundaries in the shell (hydration passing over `<!--$-->` markers and
+ * unwrapping a streamed boundary's placeholder, +289 B) and hydrating react-dom/server's
+ * `<!--$!-->` client-rendered boundaries (+461 B) then took it to 65,780 B, over budget. Only
+ * react-dom/server's synchronous `renderToString` writes a `<!--$!-->` boundary, so that
+ * hydration moved to suspense-hydration.ts, which the compat `react-dom/client` / `react-dom`
+ * modules install; its gate is asserted in {@link assertGatedRuntimeAbsent}.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -280,6 +286,8 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     // `<Fragment ref>` a render reaches (fragment-ref-support.ts).
     ["reactFragments", "Fragment-ref runtime (fragment-instance.ts)"],
     ["observeUsing", "Fragment-ref runtime (fragment-instance.ts)"],
+    // Hydrating react-dom/server's `<!--$!-->` boundaries ships with the compat react-dom modules.
+    ['"$!"', "client-rendered boundary hydration (suspense-hydration.ts)"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

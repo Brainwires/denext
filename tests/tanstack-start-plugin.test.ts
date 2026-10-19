@@ -15,7 +15,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, resolve } from "@std/path";
 import {
   CLIENT_ENTRY,
   createHandler,
@@ -64,6 +64,7 @@ import {
   type StartApp,
   type StartBundles,
   startDefines,
+  startShell,
 } from "../packages/tanstack-start/src/bundles.ts";
 import {
   formatRefusals,
@@ -134,6 +135,34 @@ Deno.test("tanstack-start handler: requests go to Start's handler; the bundle is
     // A path with an extension that is no public file is Start's (a server route, its 404).
     await handle(new Request(ORIGIN + "/sitemap.xml"));
     assertEquals(seen.at(-1)?.url, ORIGIN + "/sitemap.xml");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("tanstack-start handler: the assets the bundles emit are served from assets/", async () => {
+  const { dir, handle, seen } = await handlerWithClient();
+  try {
+    await Deno.mkdir(join(dir, "assets"));
+    await Deno.writeTextFile(join(dir, "assets", "app-ABCDEFGH.css"), "body{color:red}");
+    await Deno.writeTextFile(join(dir, "assets", "logo-ABCDEFGH.svg"), "<svg/>");
+    await Deno.writeTextFile(join(dir, "assets", "data-ABCDEFGH.bin"), "x");
+    const css = await handle(new Request(ORIGIN + "/_tss/assets/app-ABCDEFGH.css"));
+    assertEquals(await css!.text(), "body{color:red}");
+    assertEquals(css!.headers.get("content-type"), "text/css; charset=utf-8");
+    assertStringIncludes(css!.headers.get("cache-control")!, "immutable");
+    const svg = await handle(new Request(ORIGIN + "/_tss/assets/logo-ABCDEFGH.svg"));
+    assertEquals(svg!.headers.get("content-type"), "image/svg+xml");
+    await svg!.body?.cancel();
+    const bin = await handle(new Request(ORIGIN + "/_tss/assets/data-ABCDEFGH.bin"));
+    assertEquals(bin!.headers.get("content-type"), "application/octet-stream");
+    await bin!.body?.cancel();
+    for (
+      const path of ["assets/nope.css", "assets/a/b.css", "assets/..%2F..%2Fdeno.json", "x.css"]
+    ) {
+      assertEquals((await handle(new Request(ORIGIN + "/_tss/" + path)))!.status, 404, path);
+    }
+    assertEquals(seen, [], "client files never reach Start's handler");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -628,9 +657,15 @@ function metafile(graph: Record<string, Array<string | [string, string]>>): Meta
   return { inputs, outputs: { "client.js": { entryPoint: ".denext/entry.tsx", inputs: shipped } } };
 }
 
-const P = "/p";
+// An absolute root on every OS (`C:\p` on Windows): the guard resolves the metafile's paths
+// against it, as it does the build's own.
+const P = resolve("/p");
+/** `rel` under {@link P}, as the guard names it. */
+const p = (rel: string) => join(P, rel);
+/** A guard path back to its `/`-separated path under {@link P}. */
+const rel = (path: string) => path.slice(P.length + 1).replaceAll("\\", "/");
 const startRules = (options?: ImportProtectionOptions) =>
-  compileImportProtection(options, P, `${P}/src`);
+  compileImportProtection(options, P, p("src"));
 
 /** A resolve record, as a build fills it. */
 function recorded(
@@ -663,27 +698,27 @@ Deno.test("tanstack-start import protection: Start's browser rules, in its words
   });
   const rules = startRules();
   const { record, actions } = recorded(rules, "client", [
-    ["@tanstack/react-start/server-only", "/p/src/marked.ts"],
-    ["@tanstack/react-start/server", "/p/src/routes/a.tsx"],
-    ["@tanstack/react-start/server", "/p/node_modules/x/y.js"],
-    ["@tanstack/react-start", "/p/src/a.ts"],
+    ["@tanstack/react-start/server-only", p("src/marked.ts")],
+    ["@tanstack/react-start/server", p("src/routes/a.tsx")],
+    ["@tanstack/react-start/server", p("node_modules/x/y.js")],
+    ["@tanstack/react-start", p("src/a.ts")],
   ]);
   // Start's server entry and its marker are an empty module in the browser; the rest resolves.
   assertEquals(actions, ["mock", "mock", "pass", "pass"]);
   const found = await importProtectionViolations(meta, P, rules, "client", record);
   assertEquals(found.map((v) => [v.type, v.importer, v.specifier, v.trace.map((s) => s.file)]), [
-    ["specifier", "/p/src/routes/a.tsx", "@tanstack/react-start/server", [
-      "/p/src/router.tsx",
-      "/p/src/routes/a.tsx",
+    ["specifier", p("src/routes/a.tsx"), "@tanstack/react-start/server", [
+      p("src/router.tsx"),
+      p("src/routes/a.tsx"),
     ]],
-    ["file", "/p/src/routes/a.tsx", "../db.server.ts", [
-      "/p/src/router.tsx",
-      "/p/src/routes/a.tsx",
+    ["file", p("src/routes/a.tsx"), "../db.server.ts", [
+      p("src/router.tsx"),
+      p("src/routes/a.tsx"),
     ]],
-    ["marker", "/p/src/marked.ts", "@tanstack/react-start/server-only", [
-      "/p/src/router.tsx",
-      "/p/src/routes/a.tsx",
-      "/p/src/marked.ts",
+    ["marker", p("src/marked.ts"), "@tanstack/react-start/server-only", [
+      p("src/router.tsx"),
+      p("src/routes/a.tsx"),
+      p("src/marked.ts"),
     ]],
   ]);
   const message = formatViolation(found[1], P);
@@ -718,7 +753,7 @@ Deno.test("tanstack-start import protection: tree-shaken imports do not count", 
   meta.outputs["client.js"].inputs["src/db.server.ts"].bytesInOutput = 0;
   meta.outputs["client.js"].inputs[deniedModulePath("x-secret")].bytesInOutput = 0;
   const rules = startRules({ client: { specifiers: ["x-secret"] } });
-  const { record } = recorded(rules, "client", [["x-secret", "/p/src/routes/a.tsx"]]);
+  const { record } = recorded(rules, "client", [["x-secret", p("src/routes/a.tsx")]]);
   assertEquals(await importProtectionViolations(meta, P, rules, "client", record), []);
 });
 
@@ -736,14 +771,14 @@ Deno.test("tanstack-start import protection: the server build refuses *.client.*
   });
   const rules = startRules();
   const { record, actions } = recorded(rules, "server", [
-    ["@tanstack/react-start/client-only", "/p/src/browser.ts"],
-    ["@tanstack/react-start/server-only", "/p/src/db.server.ts"],
+    ["@tanstack/react-start/client-only", p("src/browser.ts")],
+    ["@tanstack/react-start/server-only", p("src/db.server.ts")],
   ]);
   assertEquals(actions, ["pass", "pass"], "both markers resolve on the server");
   const found = await importProtectionViolations(meta, P, rules, "server", record);
   assertEquals(found.map((v) => [v.type, v.importer, v.resolved]), [
-    ["file", "/p/src/routes/a.tsx", "/p/src/widget.client.tsx"],
-    ["marker", "/p/src/browser.ts", undefined],
+    ["file", p("src/routes/a.tsx"), p("src/widget.client.tsx")],
+    ["marker", p("src/browser.ts"), undefined],
   ]);
   const message = formatViolation(found[0], P);
   assertStringIncludes(message, "[import-protection] Import denied in server environment");
@@ -752,13 +787,13 @@ Deno.test("tanstack-start import protection: the server build refuses *.client.*
   // The browser's rules leave *.client.* alone; the server's leave *.server.* alone.
   assertEquals(
     (await importProtectionViolations(meta, P, rules, "client")).map((v) => v.resolved),
-    ["/p/src/db.server.ts"],
+    [p("src/db.server.ts")],
   );
   // One module may not carry both markers.
   const both = newResolveRecord();
-  recordImport(rules, "server", both, "@tanstack/react-start/client-only", "/p/src/x.ts");
+  recordImport(rules, "server", both, "@tanstack/react-start/client-only", p("src/x.ts"));
   assertThrows(
-    () => recordImport(rules, "server", both, "@tanstack/react-start/server-only", "/p/src/x.ts"),
+    () => recordImport(rules, "server", both, "@tanstack/react-start/server-only", p("src/x.ts")),
     Error,
     'File "src/x.ts" has both server-only and client-only markers',
   );
@@ -780,15 +815,15 @@ Deno.test("tanstack-start import protection: the app's importProtection rules", 
     [deniedModulePath("@prisma/client")]: [],
   });
   const files = (found: ImportProtectionViolation[]) =>
-    found.map((v) => `${v.type}:${v.importer.slice(3)}>${v.resolved?.slice(3) ?? v.specifier}`);
+    found.map((v) => `${v.type}:${rel(v.importer)}>${v.resolved ? rel(v.resolved) : v.specifier}`);
   // client.specifiers add to Start's; client.files replace its *.server.* rule.
   const client = startRules({
     client: { specifiers: [/^@prisma\//], files: ["src/secret/**"] },
   });
   assertEquals(resolveFilter(client, "client").source, ".*", "a RegExp rule sees every import");
   const { record } = recorded(client, "client", [
-    ["@prisma/client", "/p/src/routes/a.tsx"],
-    ["@tanstack/react-start/server", "/p/src/routes/a.tsx"],
+    ["@prisma/client", p("src/routes/a.tsx")],
+    ["@tanstack/react-start/server", p("src/routes/a.tsx")],
   ]);
   assertEquals(record.denied.map((d) => d.specifier), [
     "@prisma/client",
@@ -823,7 +858,7 @@ Deno.test("tanstack-start import protection: the app's importProtection rules", 
   const server = startRules({ server: { files: ["**/legacy.*"], specifiers: ["@prisma/client"] } });
   assertEquals(resolveFilter(server, "server").test("@prisma/client"), true);
   assertEquals(resolveFilter(startRules(), "server").test("@prisma/client"), false);
-  const serverRecord = recorded(server, "server", [["@prisma/client", "/p/src/routes/a.tsx"]]);
+  const serverRecord = recorded(server, "server", [["@prisma/client", p("src/routes/a.tsx")]]);
   assertEquals(serverRecord.actions, ["mock"]);
   assertEquals(
     files(await importProtectionViolations(meta, P, server, "server", serverRecord.record)),
@@ -888,6 +923,18 @@ Deno.test({
       `export const read = createServerFn().handler(() => Deno.env.get("K"));\n`,
     );
     await file("ok.ts", `import { read } from "./fns.ts";\nexport const run = () => read();\n`);
+    // A server function whose handler alone uses a *.server.* module: the compiler drops the
+    // handler from the browser build, and with it the only use of the module.
+    await file("store.server.ts", `export const load = () => "STORE_SERVER_BODY";\n`);
+    await file(
+      "store.ts",
+      `import { load } from "./store.server.ts";\n` +
+        `export const read = createServerFn().handler(() => "HANDLER_BODY:" + load());\n`,
+    );
+    await file(
+      "uses-store.ts",
+      `import { read } from "./store.ts";\nexport const run = () => read();\n`,
+    );
     await file("bad.ts", `import { db } from "./db.server.ts";\nexport const run = () => db();\n`);
     // The fake compiler turns a server function into an RPC stub in the browser.
     const { tc } = fakeToolchain();
@@ -925,6 +972,13 @@ Deno.test({
     await build("ok.ts");
     const js = await Deno.readTextFile(join(dir, ".denext", "client", "client.js"));
     assert(!js.includes("Deno.env"), "the compiled module shipped, not the source");
+    // The emitted browser bundle has neither the *.server.* module nor the handler's body.
+    await build("uses-store.ts");
+    const shipped = await clientBundleText(join(dir, ".denext", "client"));
+    assertStringIncludes(shipped, "rpc()", "the server function is an RPC stub");
+    for (const body of ["STORE_SERVER_BODY", "HANDLER_BODY"]) {
+      assert(!shipped.includes(body), `the client bundle ships ${body}`);
+    }
     const err = await assertRejects(() => build("bad.ts"));
     assertStringIncludes(String(err), "[import-protection] Import denied in client environment");
     assertStringIncludes(String(err), "Denied by file pattern: **/*.server.*");
@@ -1087,7 +1141,13 @@ Deno.test({
             compileImportProtection(protection, dir, join(dir, "src")),
         })],
       });
-    await build("safe.ts");
+    // The emitted server bundle has no *.client.* module body: only createClientOnlyFn used it.
+    const safe = await build("safe.ts");
+    const serverJs = await Deno.readTextFile(
+      safe.get(join(dir, "src", "safe.ts"))!.split("#")[0],
+    );
+    assertStringIncludes(serverJs, "client only", "createClientOnlyFn's server stub");
+    assert(!serverJs.includes("WIDGET"), "the server bundle ships the .client module's body");
     const err = await assertRejects(() => build("bad.ts"));
     assertStringIncludes(String(err), "[import-protection] Import denied in server environment");
     assertStringIncludes(String(err), "Denied by file pattern: **/*.client.*");
@@ -1103,6 +1163,17 @@ Deno.test({
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+/** Every `.js` file a client build wrote, concatenated. */
+async function clientBundleText(dir: string): Promise<string> {
+  let js = "";
+  for await (const entry of Deno.readDir(dir)) {
+    if (entry.isFile && entry.name.endsWith(".js")) {
+      js += await Deno.readTextFile(join(dir, entry.name));
+    }
+  }
+  return js;
+}
 
 /** A Start app's layout under `dir`, as the plugin records it. */
 function startApp(dir: string): StartApp {
@@ -1164,6 +1235,7 @@ function fakeBundles(over: Partial<StartBundles> = {}) {
     prebuildServer: () => (calls.push("server"), Promise.resolve()),
     forgetServerBuild: () => (calls.push("forget"), Promise.resolve()),
     reset: () => {},
+    serverFunctions: () => Promise.resolve({}),
     ...over,
   };
   return { bundles, calls };
@@ -1446,6 +1518,23 @@ Deno.test("tanstack-start prerender: page options, redirects and the base path",
 Deno.test("tanstack-start: the export's server bundle is Start's prerendering build", () => {
   assertEquals(startDefines("")["process.env.TSS_PRERENDERING"], '"false"');
   assertEquals(startDefines("", true)["process.env.TSS_PRERENDERING"], '"true"');
+});
+
+Deno.test("tanstack-start: spa renders every dev page as the shell (Start's serve-mode TSS_SHELL)", () => {
+  assertEquals(startDefines("")["process.env.TSS_SHELL"], '"false"');
+  assertEquals(startDefines("", false, true)["process.env.TSS_SHELL"], '"true"');
+  // Start defines TSS_SHELL from `spa.enabled` (default true) in serve mode only.
+  assertEquals(startShell("dev", {}), true);
+  assertEquals(startShell("dev", { enabled: true, maskPath: "/app" }), true);
+  assertEquals(startShell("dev", { enabled: false }), false);
+  assertEquals(startShell("dev", undefined), false);
+  for (const mode of ["build", "prod", "export"] as const) {
+    assertEquals(
+      startShell(mode, {}),
+      false,
+      `${mode} renders each page (the shell is prerendered)`,
+    );
+  }
 });
 
 // TanStack's real compiler, from the example app's install (`deno install` in

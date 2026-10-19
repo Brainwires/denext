@@ -173,6 +173,12 @@ export const buildCommand: CommandSpec = {
       valueName: "<path>",
       help: "With --compile: the executable's path (default: dist/<name>)",
     },
+    {
+      name: "sign",
+      type: "boolean",
+      help: "With --compile: code-sign the executable (codesign + notarytool for macOS, " +
+        "signtool / osslsigncode for Windows; credentials from DENEXT_* env)",
+    },
   ],
   usage: "Writes .denext/deploy-manifest.json and runs denext.config's deploy.adapter (its\n" +
     "prepare) after the build: https://denext.dev/docs/deploy#deploy-adapters\n\n" +
@@ -180,12 +186,17 @@ export const buildCommand: CommandSpec = {
     "migrations into one executable that serves the app as `denext start` does (`./app`,\n" +
     "`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n" +
     "--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\n" +
-    "reads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
+    "reads its environment at run time. --sign (or compile.sign) code-signs it, and notarizes a\n" +
+    "macOS binary when notary credentials are set. Docs: https://denext.dev/docs/deployment-targets",
   run: async (ctx) => {
     applyRawFlag(ctx);
     const compile = ctx.flags.compile === true;
-    if (!compile && (ctx.flags.target !== undefined || ctx.flags.output !== undefined)) {
-      fail("denext build: --target and --output go with --compile.");
+    if (
+      !compile &&
+      (ctx.flags.target !== undefined || ctx.flags.output !== undefined ||
+        ctx.flags.sign !== undefined)
+    ) {
+      fail("denext build: --target, --output and --sign go with --compile.");
     }
     markBuildPhase();
     const { dir } = await appProject(ctx);
@@ -194,12 +205,18 @@ export const buildCommand: CommandSpec = {
     const target = ctx.flags.target as string | undefined;
     const result = compile
       ? await runBuildStep(
-        () => compileApp(dir, { target, output: ctx.flags.output as string | undefined }),
+        () =>
+          compileApp(dir, {
+            target,
+            output: ctx.flags.output as string | undefined,
+            sign: ctx.flags.sign === true,
+          }),
         "compile",
       )
       : undefined;
     if (result) {
       console.log(`\n  Compiled ${result.output}\n  Permissions: ${result.permissions.join(" ")}`);
+      if (result.signing) console.log(`  Signing: ${result.signing.detail}`);
     }
     // The deploy manifest (.denext/deploy-manifest.json) and the configured adapter's prepare.
     await runBuildStep(

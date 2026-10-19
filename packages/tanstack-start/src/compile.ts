@@ -16,8 +16,11 @@
 //   the rest of its source never ships (./use-server.ts), through denext's server-module stub.
 // - **The bundles' guard** once each is built: Start's import protection on both sides (server
 //   code the browser would get, browser code the server would run) and denext's server-only scan
-//   in the browser (./protect.ts) fail the build. The browser build's import graph is kept for
-//   the export's prerender (which routes reach a server function).
+//   in the browser (./protect.ts) fail the build. With Start's `"mock"` behavior (`denext dev`'s
+//   default, as in Start) a violation is a warning instead, and the denied module Start's mock
+//   (./mock.ts): its dev mocks in `denext dev`, its build mocks in a build. The browser
+//   build's import graph is kept for the export's prerender (which routes reach a server
+//   function).
 
 import { dirname, extname } from "@std/path";
 import {
@@ -25,8 +28,11 @@ import {
   bundleGraph,
   compileImportProtection,
   DENIED_NS,
+  deniedFilePattern,
   formatGuardError,
+  formatViolation,
   type ImportProtection,
+  type ImportProtectionViolation,
   importProtectionViolations,
   type Metafile,
   newResolveRecord,
@@ -34,7 +40,15 @@ import {
   resolveFilter,
   serverOnlyLeaks,
 } from "./protect.ts";
-import type { ServerFnInfo, StartCompilerLike, StartEnv, StartToolchain } from "./toolchain.ts";
+import {
+  loadStartMocks,
+  type ServerFnInfo,
+  type StartCompilerLike,
+  type StartEnv,
+  type StartMocks,
+  type StartToolchain,
+} from "./toolchain.ts";
+import { MOCK_ID, MOCK_NS, mockEdgeId, mockModuleSource, selfDenialSource } from "./mock.ts";
 import { browserServerModule } from "./use-server.ts";
 
 /** The query naming a server-function provider module (Start's `TSS_SERVERFN_SPLIT_PARAM`). */
@@ -67,6 +81,8 @@ export interface StartBuildOptions {
    * under the router module's directory checked.
    */
   protection?: ImportProtection;
+  /** Start's mock modules (default: loaded from the app when a `"mock"` needs them). */
+  mocks?: () => Promise<StartMocks>;
 }
 
 /** A minimal esbuild plugin shape (the plugin-kit build takes them as `unknown[]`). */
@@ -246,6 +262,16 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
   };
   const protection = opts.protection ??
     compileImportProtection(undefined, opts.projectRoot, dirname(opts.routerFile));
+  // A `"mock"`: what each module compiled to (a mock-edge module reads its importer's names), and
+  // Start's mock modules, loaded once.
+  const compiled = new Map<string, string>();
+  let mocksLoaded: Promise<StartMocks> | undefined;
+  const mocking: Mocking | null = protection.behavior === "mock"
+    ? {
+      mocks: () => (mocksLoaded ??= (opts.mocks ?? (() => loadStartMocks(opts.projectRoot)))()),
+      code: async (path) => compiled.get(path) ?? await Deno.readTextFile(path),
+    }
+    : null;
   let graph: ClientGraph | null = null;
   const plugin = {
     name: `@denext/tanstack-start:${opts.env}`,
@@ -297,11 +323,15 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
       }));
 
       build.onLoad({ filter: /\.[cm]?[jt]sx?$/, namespace: "file" }, async (args) => {
-        const out = await transformModule(args.path, args.suffix === SPLIT_SUFFIX, compiler!, opts);
-        if (out) await record(args.path, out.contents);
+        const out = (mocking && await selfDenial(args.path, opts.env, protection, mocking)) ??
+          await transformModule(args.path, args.suffix === SPLIT_SUFFIX, compiler!, opts);
+        if (out) {
+          await record(args.path, out.contents);
+          if (mocking) compiled.set(args.path, out.contents);
+        }
         return out;
       });
-      guardBundle(build, opts.env, protection, emitted, (meta, cwd) => {
+      guardBundle(build, { env: opts.env, protection, emitted, mocking }, (meta, cwd) => {
         if (opts.env !== "client") return;
         const serverFnModules = new Set<string>();
         for (const [path, code] of emittedAt) {
@@ -328,16 +358,51 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
   };
 }
 
+/** A `"mock"` build's mock modules and its modules' code (read by a mock-edge module). */
+interface Mocking {
+  mocks(): Promise<StartMocks>;
+  code(path: string): Promise<string>;
+}
+
+/**
+ * With a `"mock"` behavior, a file the environment's `files` rules deny is loaded as Start's
+ * self-denial module (its named exports over a mock) instead of itself; `null` otherwise.
+ */
+async function selfDenial(
+  path: string,
+  env: StartEnv,
+  protection: ImportProtection,
+  mocking: Mocking,
+): Promise<{ contents: string; loader: string; resolveDir: string } | null> {
+  if (deniedFilePattern(protection, env, path) === undefined) return null;
+  const source = await Deno.readTextFile(path);
+  const contents = selfDenialSource(await mocking.mocks(), protection, {
+    env,
+    file: path,
+    source,
+  });
+  return { contents, loader: "js", resolveDir: dirname(path) };
+}
+
+/** What a bundle's guard checks. */
+interface GuardOptions {
+  env: StartEnv;
+  protection: ImportProtection;
+  /** What the browser build compiled (the server-only scan reads it). */
+  emitted: Map<string, string>;
+  /** A `"mock"`: denied imports resolve to Start's mocks and violations warn. */
+  mocking: Mocking | null;
+}
+
 /**
  * Fail a build on what crossed sides: Start's import protection over the bundle's metafile (both
  * sides) and, in the browser, denext's server-only scan, each compiled module read as compiled.
+ * With a `"mock"` behavior a violation is a warning instead, and the import a mock.
  * `onGraph` receives the metafile of a build that passed.
  */
 function guardBundle(
   build: EsbuildPluginBuild,
-  env: StartEnv,
-  protection: ImportProtection,
-  emitted: Map<string, string>,
+  { env, protection, emitted, mocking }: GuardOptions,
   onGraph: (meta: Metafile, cwd: string) => void,
 ): void {
   if (!build.initialOptions || !build.onEnd) return;
@@ -347,11 +412,32 @@ function guardBundle(
   // recorded, and a denied one an empty module (CommonJS, so a named import still binds) until
   // the end decides whether the import survived.
   let record = newResolveRecord();
-  build.onResolve({ filter: resolveFilter(protection, env) }, (args) => {
+  build.onResolve({ filter: resolveFilter(protection, env) }, async (args) => {
     if (args.namespace !== "file") return undefined;
+    const denied = record.denied.length;
     const action = recordImport(protection, env, record, args.path, args.importer);
-    return action === "mock" ? { path: args.path, namespace: DENIED_NS } : undefined;
+    if (action !== "mock") return undefined;
+    // A denied specifier in a "mock": Start's mock-edge module (a marker stays empty).
+    if (mocking && record.denied.length > denied) {
+      const id = mockEdgeId(await mocking.mocks(), protection, {
+        env,
+        importer: args.importer,
+        importerCode: await mocking.code(args.importer),
+        specifier: args.path,
+      });
+      record.denied[denied].module = `${MOCK_NS}:${id}`;
+      return { path: id, namespace: MOCK_NS };
+    }
+    return { path: args.path, namespace: DENIED_NS };
   });
+  if (mocking) {
+    build.onResolve({ filter: MOCK_ID }, (args) => ({ path: args.path, namespace: MOCK_NS }));
+    build.onLoad({ filter: /.*/, namespace: MOCK_NS }, async (args) => ({
+      contents: mockModuleSource(await mocking.mocks(), args.path),
+      loader: "js",
+      resolveDir: cwd,
+    }));
+  }
   build.onLoad({ filter: /.*/, namespace: DENIED_NS }, () => ({
     contents: "module.exports = {};",
     loader: "js",
@@ -377,10 +463,29 @@ function guardBundle(
       leaks = (await serverOnlyLeaks(result.metafile, cwd, read))
         .filter((leak) => !marked.has(leak.module));
     }
-    const message = formatGuardError(violations, leaks, cwd);
+    if (mocking) warnMocked(violations, protection, cwd);
+    const message = formatGuardError(mocking ? [] : violations, leaks, cwd);
     if (message) throw new Error(message);
     onGraph(result.metafile, cwd);
   });
+}
+
+/**
+ * Warn about each mocked violation in Start's words, once per process (`log: "once"`) or on every
+ * build (`log: "always"`), as Start does.
+ */
+function warnMocked(
+  violations: ImportProtectionViolation[],
+  protection: ImportProtection,
+  cwd: string,
+): void {
+  for (const v of violations) {
+    if (
+      protection.reportsMocked(`${v.type}|${v.envType}|${v.importer}|${v.resolved ?? v.specifier}`)
+    ) {
+      console.warn(formatViolation(v, cwd));
+    }
+  }
 }
 
 /**

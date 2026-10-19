@@ -36,6 +36,7 @@ import {
   scopesWithProvider,
 } from "./render-shared.ts";
 import { safeRedirectLocation } from "../server/config.ts";
+import type { SettledBoundary, StreamBoundaries } from "./stream-boundaries.ts";
 
 /** A VNode's props with the null-props normalization applied. */
 type Props = Record<string, unknown>;
@@ -151,15 +152,28 @@ export abstract class VNodeRenderer<T> {
         idRoot.count = 0;
         idRoot.local = 0;
         this.ids.scope = idRoot;
+        // A retried boundary render starts its hoisted head tags over too.
+        if (head) {
+          head.tags.length = 0;
+          head.title = undefined;
+        }
       }
       try {
         return await this.renderChildren(children, scopes, head);
       } catch (err) {
         if (!isThenable(err)) throw err;
+        this.suspended(scopes);
         await err;
       }
     }
   }
+
+  /**
+   * The render on the `scopes` path is about to wait: a thrown thenable, or an async
+   * component's promise. A streaming renderer marks the enclosing Suspense boundary as
+   * suspended (React retries suspended work after the shell, so it streams); others ignore it.
+   */
+  protected suspended(_scopes: ProviderScope[]): void {}
 
   /** Dispatch one VNode by kind. */
   renderVNode(node: VNode, scopes: ProviderScope[], head: HeadCollector | null = null): Promise<T> {
@@ -265,6 +279,36 @@ export abstract class VNodeRenderer<T> {
   }
 
   /**
+   * A streamed Suspense boundary's content, rendered on its own (see stream-boundaries.ts):
+   * opened on `boundaries` so a suspension inside it is attributed, rooted at the boundary's
+   * position so it reproduces the client's ids, and — under a page's head collector — with a
+   * head collector of its own for the `<title>`/`<meta>`/`<link>` it hoists (decided inline
+   * they join the document head; streamed they go out before its template). A control signal
+   * thrown in it resolves to its replacement ({@link resolveHoleSignal}) and is kept with it:
+   * decided inline, the signal sets the whole response instead. Anything else rejects.
+   */
+  protected boundaryContent(
+    id: string,
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    boundaryScope: IdScope,
+    boundaries: StreamBoundaries<SettledBoundary>,
+    head: HeadCollector | null,
+    replacement: (html: string) => T,
+  ): Promise<{ out: T; signal?: unknown; head: HeadCollector | null }> {
+    const holeScope = rootScope(scopePrefix(boundaryScope));
+    const holeScopes = boundaries.open(id, scopes);
+    const holeHead: HeadCollector | null = head ? { tags: [] } : null;
+    return this.resolve(children, holeScopes, holeScope, holeHead)
+      .then((out) => ({ out, head: holeHead }))
+      .catch(async (err) => ({
+        out: await this.resolveHoleSignal(err, holeScopes, holeScope, replacement),
+        signal: err,
+        head: holeHead,
+      }));
+  }
+
+  /**
    * What an error boundary contributes to the output around its rendered children (or
    * fallback): nothing for HTML; a Flight renderer wraps a client `error.tsx` boundary
    * (see `dualBoundary`) so the client can catch post-hydration throws.
@@ -336,8 +380,9 @@ export abstract class VNodeRenderer<T> {
     head: HeadCollector | null,
   ): Promise<T> {
     const out = invokeServerComponent(type, props, scopes);
-    const rendered = out instanceof Promise ? await out : out;
-    return await this.renderChild(rendered, scopes, head);
+    if (!(out instanceof Promise)) return await this.renderChild(out, scopes, head);
+    this.suspended(scopes);
+    return await this.renderChild(await out, scopes, head);
   }
 }
 
@@ -374,6 +419,16 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
     return this.resolve(children, scopes);
   }
 
+  /**
+   * Render a hole's or fallback's subtree from this (sub-)renderer's root scope — the Suspense
+   * boundary's position. A retry after a suspension starts again from slot 0, as the boundary's
+   * retry does in every other renderer and on the client, so the subtree's ids don't shift by
+   * the suspended attempt.
+   */
+  resolveFromRoot(children: VNodeChildren, scopes: ProviderScope[]): Promise<T> {
+    return this.resolve(children, scopes, this.ids.scope);
+  }
+
   protected override resolveBoundaryChildren(
     children: VNodeChildren,
     scopes: ProviderScope[],
@@ -393,6 +448,13 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
     scopes: ProviderScope[],
     boundaryScope: IdScope,
   ): T;
+
+  /**
+   * A boundary resolved inline (its content, not a hole): bracketed with React's
+   * `<!--$-->` / `<!--/$-->` markers by the HTML-writing subclasses, as the streaming renderers
+   * write one decided before the flush, so hydration sees one document shape either way.
+   */
+  protected abstract inlineBoundary(content: T): T;
 
   /** A postponed boundary's shell output: its fallback, marked for the resume splice. */
   protected abstract postponedFallback(
@@ -424,11 +486,12 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
     const parentScope = this.ids.scope;
     const boundaryScope = enterScope(parentScope);
     // Render this boundary's real content inline in its own scope, restoring the parent
-    // scope afterward (the boundary already took its parent slot).
+    // scope afterward (the boundary already took its parent slot). The scope is the retry
+    // root: a child that suspends re-renders from slot 0 again, as the client numbers it —
+    // else the retry's ids (`useId`, a `useApi` seed's key) shift by the suspended attempt.
     const inScope = async (): Promise<T> => {
-      this.ids.scope = boundaryScope;
       try {
-        return await this.resolveChildren(children, scopes);
+        return this.inlineBoundary(await this.resolve(children, scopes, boundaryScope));
       } finally {
         this.ids.scope = parentScope;
       }

@@ -108,6 +108,11 @@ export interface ScreenOptions {
   readonly headerLeft?: VNodeChildren;
   /** Content at the header's trailing edge (client-only). */
   readonly headerRight?: VNodeChildren;
+  /**
+   * A whole custom header drawn in place of the stack's own (React Navigation's `header`
+   * option, already rendered). Hidden with the rest of the header by `headerShown: false`.
+   */
+  readonly header?: VNodeChildren;
 }
 
 /** One screen as the stack view draws it (bottom of the stack first). */

@@ -209,7 +209,8 @@ Deno.test("client: an unreachable server is a RedisConnectionError, then a retry
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const port = (listener.addr as Deno.NetAddr).port;
   listener.close();
-  const client = redisClient({ url: `redis://127.0.0.1:${port}`, connectTimeoutMs: 2000 });
+  // A timeout well past Windows' ~2 s of SYN retries before it reports a refused connect.
+  const client = redisClient({ url: `redis://127.0.0.1:${port}`, connectTimeoutMs: 10_000 });
   const error = await assertRejects(() => client.command("PING"), RedisConnectionError);
   assert(!error.message.includes("@"), "no credentials in the message");
   await assertRejects(() => client.command("PING"), RedisConnectionError, "cannot connect");

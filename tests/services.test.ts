@@ -28,6 +28,7 @@ import { runHealthChecks } from "../src/server/health.ts";
 import { loadInstrumentation } from "../src/server/instrumentation.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const SUPERVISE = new URL("../src/server/supervise.ts", import.meta.url).href;
 const EXACT = { initialMs: 100, maxMs: 1_000, factor: 2, jitter: 0 };
@@ -124,7 +125,7 @@ Deno.test("discoverServices names each services/ file by its path, skipping _pri
     assertEquals(await discoverServices(join(dir, "missing")), []);
   } finally {
     console.error = errors;
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -157,7 +158,7 @@ Deno.test("bootServices: a root `services` supervisor, a status snapshot, a heal
     assertEquals(await bootServices(await fixture({}), { outDir }), null, "no services/: nothing");
   } finally {
     await stopServices();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -187,7 +188,7 @@ Deno.test("bootServices: a tree that gives up fails the health check and calls o
     console.error = error;
     console.warn = warn;
     await stopServices();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
   assertEquals((await runHealthChecks()).checks.services, undefined);
 });
@@ -198,7 +199,7 @@ Deno.test("loadInstrumentation reads an onServiceError export", async () => {
     const instr = await loadInstrumentation(join(dir, "instrumentation.ts"));
     assertEquals(typeof instr.onServiceError, "function");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -266,6 +267,6 @@ Deno.test("dev server drain: services keep running through in-flight requests, t
     await stopServices();
     delete g.__svcLog;
     delete g.__svcGate;
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });

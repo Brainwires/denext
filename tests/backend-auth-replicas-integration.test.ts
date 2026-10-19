@@ -10,6 +10,7 @@
 //   DENEXT_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres \
 //     deno test -A tests/backend-auth-replicas-integration.test.ts
 
+import { fromFileUrl } from "@std/path";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { builtinSql } from "../src/server/postgres.ts";
 import { generateSupabaseKeys } from "../src/server/auth/gotrue/keys.ts";
@@ -46,8 +47,8 @@ interface Replica {
 }
 
 async function replica(env: Record<string, string>): Promise<Replica> {
-  const script = new URL("./helpers/auth-replica.ts", import.meta.url).pathname;
-  const config = new URL("../deno.json", import.meta.url).pathname;
+  const script = fromFileUrl(new URL("./helpers/auth-replica.ts", import.meta.url));
+  const config = fromFileUrl(new URL("../deno.json", import.meta.url));
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", "--config", config, script],
     env,

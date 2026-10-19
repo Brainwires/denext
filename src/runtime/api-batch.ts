@@ -47,7 +47,7 @@ export interface BatchCall {
   body?: string;
   /** The body carries wire-codec tags. */
   wire?: boolean;
-  /** Item headers (only the protocol's allowlist: `x-csrf-token`). */
+  /** Item headers (`x-csrf-token` on a mutation, and the names the client forwards). */
   headers?: Record<string, string>;
 }
 

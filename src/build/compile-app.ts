@@ -29,6 +29,11 @@ import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
+import {
+  type CompileSignDeps,
+  type CompileSignResult,
+  signCompiledBinary,
+} from "./compile-sign.ts";
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
 import {
   denortTargetKey,
@@ -55,6 +60,13 @@ export interface CompileAppOptions {
   output?: string;
   /** The `deno` to compile with (default: {@linkcode denoExecutable}, the toolchain). */
   deno?: string;
+  /**
+   * `--sign`: code-sign the binary, failing when a credential or tool is missing (without it,
+   * `compile.sign` signs and only warns). See ./compile-sign.ts.
+   */
+  sign?: boolean;
+  /** Seams for the signing step (tests). */
+  signDeps?: CompileSignDeps;
 }
 
 /** What {@linkcode compileApp} produced. */
@@ -63,13 +75,21 @@ export interface CompileAppResult {
   output: string;
   /** The `--allow-*` baked into it. */
   permissions: string[];
+  /** The signing step's outcome, when signing was asked for. */
+  signing?: CompileSignResult;
 }
 
 /** Where the generated entry and config live, under the out dir. */
 const COMPILE_DIR = "compile";
 
-/** The project's directories embedded whole (when present), beside the app dir and the build. */
+/**
+ * The project's directories embedded whole (when present), beside the app dir and the build:
+ * `pages/` is the Pages Router's (`@denext/pages-router` scans it at startup, so its modules are
+ * no import of the app dir's).
+ */
 const EMBEDDED_DIRS = [
+  "pages",
+  "src/pages",
   "public",
   "jobs",
   "services",
@@ -89,6 +109,9 @@ const EMBEDDED_FILES = [
 
 /** Build-dir entries that are run-time state or build scratch, never embedded. */
 const BUILD_DIR_EXCLUDES = [
+  // The npm tree Deno creates beside the build's CSS config (`nodeModulesDir`): the compile
+  // embeds its own npm snapshot, and these files are no modules of the binary.
+  "node_modules",
   "server-cache",
   "sourcemaps",
   "css-config.json",
@@ -264,11 +287,41 @@ async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<str
     (await readFrameworkJson("deno.json")).compilerOptions;
   const file = join(dir, "deno.json");
   const map = relocatableImportMap({ imports }, toFileUrl(file), dir, true) ?? { imports };
-  const config: Record<string, unknown> = { compilerOptions, ...map };
+  const mapped = Object.fromEntries(
+    Object.entries(map.imports ?? {}).filter(([key]) => !(key in cssRedirects)),
+  );
+  const config: Record<string, unknown> = {
+    compilerOptions,
+    ...map,
+    imports: { ...mapped, ...relativeCssRedirects(cssRedirects, toFileUrl(file).href) },
+  };
   const nmd = appCfg.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) config.nodeModulesDir = nmd;
   await Deno.writeTextFile(file, `${JSON.stringify(config, null, 2)}\n`);
   return file;
+}
+
+/**
+ * The stylesheet → shim redirects with both sides relative to the compile config at `configUrl`
+ * (the caller drops the absolute keys). Relative, they name the embedded copies at
+ * run time too: a module the binary loads without a server copy (a Pages Router page) imports its
+ * stylesheet at the binary's own path, which an absolute key — this checkout's — never matches.
+ *
+ * @param redirects The CSS import map's `.css` / `.scss` entries (absolute file URLs).
+ * @param configUrl The compile config's file URL.
+ * @returns The redirects, relative where both sides are local files.
+ */
+export function relativeCssRedirects(
+  redirects: Readonly<Record<string, string>>,
+  configUrl: string,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, target] of Object.entries(redirects)) {
+    const relKey = relativeSpecifier(configUrl, key);
+    const relTarget = relativeSpecifier(configUrl, target);
+    out[relKey ?? key] = relTarget ?? target;
+  }
+  return out;
 }
 
 /** The project-relative paths to embed (those that exist). */
@@ -320,6 +373,23 @@ async function excludedPaths(
   return [...out].sort();
 }
 
+/** `--sign` / `compile.sign` over the written binary (./compile-sign.ts). */
+function signOutput(
+  output: string,
+  projectDir: string,
+  compile: CompileConfig | undefined,
+  permissions: readonly string[],
+  options: CompileAppOptions,
+): Promise<CompileSignResult | undefined> {
+  return signCompiledBinary(output, {
+    explicit: options.sign === true,
+    config: compile?.sign,
+    target: options.target ?? Deno.build.target,
+    projectDir,
+    ffi: permissions.some((p) => p === "--allow-all" || p.startsWith("--allow-ffi")),
+  }, options.signDeps);
+}
+
 /**
  * Compile the built project in `projectDir` into one executable (see the module comment).
  * `denext build` must have run first.
@@ -339,7 +409,12 @@ export async function compileApp(
         "host (or the desktop packager) ship it.",
     );
   }
-  if (!(await exists(join(paths.outDir, "manifest.json")))) {
+  // An app without `app/` (a Pages Router app) builds no App Router manifest; its plugins' build
+  // output is the build.
+  const built = await exists(join(paths.appDir))
+    ? join(paths.outDir, "manifest.json")
+    : paths.outDir;
+  if (!(await exists(built))) {
     throw new Error(`No build output at ${paths.outDir}. Run \`denext build\` first.`);
   }
   if (options.target !== undefined && !COMPILE_TARGETS.includes(options.target)) {
@@ -389,5 +464,6 @@ export async function compileApp(
     stderr: "inherit",
   }).output();
   if (code !== 0) throw new Error(`deno compile failed (exit ${code})`);
-  return { output, permissions };
+  const signing = await signOutput(output, paths.projectDir, compile, permissions, options);
+  return { output, permissions, signing };
 }

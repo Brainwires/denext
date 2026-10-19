@@ -133,7 +133,8 @@ Deno.test("renderToPipeableStream: honours write() === false and resumes on 'dra
       onAllReady: () => (allReady = true),
     });
     pipe(sink as Any);
-    await tick();
+    // Every boundary suspended once, so each completes a macrotask after its data settles.
+    for (let i = 0; i < 100 && !allReady; i++) await tick(10);
     assertEquals(sink.writes, 1, "no write after write() returned false, before 'drain'");
     assert(allReady, "rendering (not flushing) completes while the destination is blocked");
     const produced = spy.count();

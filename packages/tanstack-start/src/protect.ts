@@ -23,7 +23,7 @@
 //
 // Either fails the build.
 
-import { globToRegExp, isAbsolute, relative, resolve, SEPARATOR } from "@std/path";
+import { globToRegExp, isAbsolute, relative, resolve } from "@std/path";
 import { findServerOnlyLeaks, type ServerOnlySignal } from "@denext/denext/build/next-compat";
 
 /** The slice of an esbuild metafile the guard reads. */
@@ -67,8 +67,8 @@ export interface ImportProtectionViolation {
   envType: ProtectionEnv;
   /** Which rule denied it. */
   type: "specifier" | "file" | "marker";
-  /** A violation always fails a denext build (Start's `error` behavior). */
-  behavior: "error";
+  /** What the violation does: fail the build (`"error"`), or a warning and a mock (`"mock"`). */
+  behavior: ImportProtectionBehavior;
   /** The pattern that matched (a specifier or file rule). */
   pattern?: Pattern;
   /** The import as written (for a marker: the marker's specifier). */
@@ -102,7 +102,35 @@ export interface ImportProtectionOptions {
   onViolation?: (
     violation: ImportProtectionViolation,
   ) => boolean | void | Promise<boolean | void>;
+  /**
+   * Start's violation behavior: `"error"`, `"mock"` (both commands), or one per command
+   * (`{ dev, build }`). Unset, or a command the object leaves out, takes Start's default:
+   * `"mock"` in `denext dev`, `"error"` in a build (`build`, `start`, `export`). A `"mock"` is
+   * Start's: a denied import resolves to Start's mock module, a denied file is replaced by one,
+   * and the violation is a warning; an `"error"` fails the build (in dev, the request that builds).
+   */
+  behavior?: ImportProtectionBehavior | {
+    dev?: ImportProtectionBehavior;
+    build?: ImportProtectionBehavior;
+  };
+  /**
+   * Start's runtime diagnostics for a mocked import in the browser (dev `"mock"` only): using the
+   * mock logs Start's `[import-protection] Mocked import used in dev client` with
+   * `console.error` (`"error"`, the default) or `console.warn` (`"warn"`), or nothing (`"off"`).
+   */
+  mockAccess?: "error" | "warn" | "off";
+  /** How many importers a violation's trace walks up at most (default 20, as in Start). */
+  maxTraceDepth?: number;
+  /**
+   * Start's repetition of its warnings: `"once"` (default) warns about each mocked violation once
+   * per process, `"always"` on every build. A violation that fails the build is reported on every
+   * build either way.
+   */
+  log?: "once" | "always";
 }
+
+/** Start's import-protection behavior. */
+export type ImportProtectionBehavior = "error" | "mock";
 
 const FRAMEWORKS = ["react", "solid", "vue"];
 
@@ -173,7 +201,43 @@ export interface ImportProtection {
   checksImporter(importer: string): boolean;
   /** The app's `onViolation` hook. */
   readonly onViolation?: ImportProtectionOptions["onViolation"];
+  /** How many importers a trace walks up at most. */
+  readonly maxTraceDepth: number;
+  /** The command the builds are for: it picks Start's dev or build mocks. */
+  readonly command: ProtectionCommand;
+  /** What a violation does in this command: `"mock"` (Start's mocks, a warning) or `"error"`. */
+  readonly behavior: ImportProtectionBehavior;
+  /** Start's `mockAccess`: the browser mock's runtime diagnostics. */
+  readonly mockAccess: "error" | "warn" | "off";
+  /**
+   * Whether a mocked violation is to be reported now (per `log`: once per process, or every
+   * build). Marks it reported.
+   */
+  reportsMocked(key: string): boolean;
 }
+
+/** Which command a build is for: `denext dev`, or a build (`build`, `export`, `start`). */
+export type ProtectionCommand = "dev" | "build";
+
+/**
+ * Start's behavior for a command: `importProtection.behavior` resolved as Start's plugin resolves
+ * it (a string for both; else `behavior?.dev ?? "mock"` in dev, `behavior?.build ?? "error"` in a
+ * build).
+ *
+ * @param options The app's `importProtection` options.
+ * @param command The command the build is for.
+ */
+export function effectiveBehavior(
+  options: ImportProtectionOptions | undefined,
+  command: ProtectionCommand,
+): ImportProtectionBehavior {
+  const behavior = options?.behavior;
+  if (typeof behavior === "string") return behavior;
+  return command === "dev" ? behavior?.dev ?? "mock" : behavior?.build ?? "error";
+}
+
+/** Start's default `maxTraceDepth`. */
+const DEFAULT_MAX_TRACE_DEPTH = 20;
 
 /**
  * Start's import protection for an app: its default rules merged with the app's
@@ -183,11 +247,13 @@ export interface ImportProtection {
  * @param root The project root.
  * @param srcDirectory The source directory (absolute): by default only importers under it are
  *   checked.
+ * @param command The command the build is for (default `"build"`): it resolves `behavior`.
  */
 export function compileImportProtection(
   options: ImportProtectionOptions | undefined,
   root: string,
   srcDirectory: string,
+  command: ProtectionCommand = "build",
 ): ImportProtection {
   const pick = (user: Pattern[] | undefined, fallback: Pattern[]) => [...(user ?? fallback)];
   const env = (name: ProtectionEnv): EnvMatchers => {
@@ -205,6 +271,7 @@ export function compileImportProtection(
     };
   };
   const rules = { client: env("client"), server: env("server") };
+  const reported = new Set<string>();
   const include = compileAll(options?.include ?? []);
   const exclude = compileAll([...(options?.exclude ?? []), ...(options?.ignoreImporters ?? [])]);
   return {
@@ -216,9 +283,18 @@ export function compileImportProtection(
       const rel = relativePath(importer, root);
       if (matchesAny(rel, exclude)) return false;
       if (include.length > 0) return !!matchesAny(rel, include);
-      return importer.startsWith(srcDirectory + SEPARATOR);
+      return isUnder(importer, srcDirectory);
     },
     onViolation: options?.onViolation,
+    maxTraceDepth: options?.maxTraceDepth ?? DEFAULT_MAX_TRACE_DEPTH,
+    command,
+    behavior: options?.enabled === false ? "error" : effectiveBehavior(options, command),
+    mockAccess: options?.mockAccess ?? "error",
+    reportsMocked(key) {
+      if (reported.has(key) && options?.log !== "always") return false;
+      reported.add(key);
+      return true;
+    },
   };
 }
 
@@ -236,6 +312,8 @@ export interface DeniedImport {
   specifier: string;
   /** The specifier rule that denied it. */
   pattern: Pattern;
+  /** The metafile id of the module it resolved to (default: {@link deniedModulePath}). */
+  module?: string;
 }
 
 /** What one build recorded while it resolved. */
@@ -319,9 +397,19 @@ function moduleId(path: string, cwd: string): string {
 
 const inNodeModules = (path: string) => /[\\/]node_modules[\\/]/.test(path);
 
+/**
+ * Whether the absolute `path` lies under `dir`, by `relative` rather than a string prefix: on
+ * Windows the two may differ in separator or in a drive letter `resolve` added (`\app` and
+ * `C:\app`), which a prefix test with the host separator calls outside.
+ */
+function isUnder(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return rel !== "" && !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== "..";
+}
+
 /** Whether `path` is one of the app's own modules (a file under `cwd`, not a package). */
 export function isAppModule(path: string, cwd: string): boolean {
-  return isAbsolute(path) && path.startsWith(cwd + SEPARATOR) && !inNodeModules(path);
+  return isAbsolute(path) && isUnder(path, cwd) && !inNodeModules(path);
 }
 
 /** A module the plugin generates (`.denext/`), left out of traces. */
@@ -369,28 +457,41 @@ export function bundleGraph(meta: Metafile, cwd: string): BundleGraph {
 /** Where each module was reached from, walking up from a violation's importer. */
 type Down = Map<string, { next: string; specifier: string }>;
 
+/** The breadth-first walk up from a violation's importer. */
+interface Walk {
+  target: string;
+  down: Down;
+  depth: Map<string, number>;
+  queue: string[];
+  maxDepth: number;
+}
+
 /** Queue the importers of `node` not reached yet; `node` itself when it is an entry. */
-function stepUp(graph: BundleGraph, node: string, target: string, down: Down, queue: string[]) {
+function stepUp(graph: BundleGraph, node: string, walk: Walk) {
   const from = graph.importers.get(node) ?? [];
-  if (node !== target && from.length === 0) return node;
+  if (node !== walk.target && from.length === 0) return node;
+  const depth = walk.depth.get(node) ?? 0;
+  if (depth >= walk.maxDepth) return null; // Start's maxTraceDepth: no further up from here
   for (const edge of from) {
-    if (edge.from === target || down.has(edge.from)) continue;
-    down.set(edge.from, { next: node, specifier: edge.specifier });
-    queue.push(edge.from);
+    if (edge.from === walk.target || walk.down.has(edge.from)) continue;
+    walk.down.set(edge.from, { next: node, specifier: edge.specifier });
+    walk.depth.set(edge.from, depth + 1);
+    walk.queue.push(edge.from);
   }
   return null;
 }
 
 /**
  * The shortest import path from an entry (a module nothing imports) to `target`, each step with
- * the specifier it imports the next one by (Start's `buildTrace`).
+ * the specifier it imports the next one by, walking at most `maxDepth` importers up (Start's
+ * `buildTrace`: with no entry within reach, the trace is `target` alone).
  */
-function shortestImportPath(graph: BundleGraph, target: string): TraceStep[] {
+function shortestImportPath(graph: BundleGraph, target: string, maxDepth: number): TraceStep[] {
   const down: Down = new Map();
-  const queue = [target];
+  const walk: Walk = { target, down, depth: new Map([[target, 0]]), queue: [target], maxDepth };
   let root: string | null = null;
-  for (let i = 0; i < queue.length && !root; i++) {
-    root = stepUp(graph, queue[i], target, down, queue);
+  for (let i = 0; i < walk.queue.length && !root; i++) {
+    root = stepUp(graph, walk.queue[i], walk);
   }
   const path: TraceStep[] = [];
   for (let at = root ?? target;;) {
@@ -402,8 +503,13 @@ function shortestImportPath(graph: BundleGraph, target: string): TraceStep[] {
 }
 
 /** The app modules (not packages, nor the plugin's generated entries) on the way to `target`. */
-function traceTo(graph: BundleGraph, target: string, cwd: string): TraceStep[] {
-  return shortestImportPath(graph, target).filter((s) =>
+function traceTo(
+  graph: BundleGraph,
+  target: string,
+  cwd: string,
+  maxDepth = DEFAULT_MAX_TRACE_DEPTH,
+): TraceStep[] {
+  return shortestImportPath(graph, target, maxDepth).filter((s) =>
     s.file === target || (isAppModule(s.file, cwd) && !isGenerated(s.file, cwd))
   );
 }
@@ -414,7 +520,9 @@ type Found = Omit<ImportProtectionViolation, "env" | "envType" | "behavior" | "t
 /** The recorded specifier denials whose importer and stand-in module the bundle kept. */
 function specifierViolations(graph: BundleGraph, record: ResolveRecord): Found[] {
   return record.denied
-    .filter((d) => graph.kept.has(d.importer) && graph.kept.has(deniedModulePath(d.specifier)))
+    .filter((d) =>
+      graph.kept.has(d.importer) && graph.kept.has(d.module ?? deniedModulePath(d.specifier))
+    )
     .map(({ importer, specifier, pattern }) => ({
       type: "specifier" as const,
       pattern,
@@ -423,14 +531,34 @@ function specifierViolations(graph: BundleGraph, record: ResolveRecord): Found[]
     }));
 }
 
+/** The `files` rule that denies `file` (absolute) unless `excludeFiles` exempts it. */
+function fileRuleMatch(rules: EnvMatchers, file: string, root: string): Matcher | undefined {
+  const rel = relativePath(file, root);
+  return matchesAny(rel, rules.excludeFiles) ? undefined : matchesAny(rel, rules.files);
+}
+
+/**
+ * The `files` pattern that denies the environment `file` (absolute), or `undefined`: Start's
+ * self-denial check, which with a `"mock"` behavior replaces the file with a mock.
+ *
+ * @param protection The app's import protection.
+ * @param env The build's environment.
+ * @param file The module.
+ */
+export function deniedFilePattern(
+  protection: ImportProtection,
+  env: ProtectionEnv,
+  file: string,
+): Pattern | undefined {
+  if (!protection.enabled) return undefined;
+  return fileRuleMatch(protection.rules(env), file, protection.root)?.pattern;
+}
+
 /** The kept imports, from a checked importer, of a file the environment's `files` deny. */
 function fileViolations(graph: BundleGraph, protection: ImportProtection, rules: EnvMatchers) {
   const found: Found[] = [];
-  const denial = (to: string) => {
-    if (!isAbsolute(to) || !graph.kept.has(to)) return undefined;
-    const rel = relativePath(to, protection.root);
-    return matchesAny(rel, rules.excludeFiles) ? undefined : matchesAny(rel, rules.files);
-  };
+  const denial = (to: string) =>
+    isAbsolute(to) && graph.kept.has(to) ? fileRuleMatch(rules, to, protection.root) : undefined;
   for (const [from, edges] of graph.imports) {
     if (!graph.kept.has(from) || !protection.checksImporter(from)) continue;
     for (const { to, specifier } of edges) {
@@ -488,9 +616,9 @@ export async function importProtectionViolations(
     found.set(key, {
       env,
       envType: env,
-      behavior: "error",
+      behavior: protection.behavior,
       ...v,
-      trace: traceTo(graph, v.importer, cwd),
+      trace: traceTo(graph, v.importer, cwd, protection.maxTraceDepth),
     });
   }
   const violations: ImportProtectionViolation[] = [];

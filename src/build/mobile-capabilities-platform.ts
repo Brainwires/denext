@@ -6,9 +6,18 @@
 // checked against its published package: a `@capacitor/core` peer range admitting 8 and (for
 // iOS) an SPM range covering capacitor-swift-pm 8.
 
-import type { CapabilityConfig, MobileCapability, NativeEdit } from "./mobile-capabilities.ts";
+import type {
+  CapabilityConfig,
+  CapabilityOptions,
+  MobileCapability,
+  NativeEdit,
+} from "./mobile-capabilities.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
-import { withManifestApplicationBlock, withPlistStringArray } from "./mobile-native-config.ts";
+import {
+  withAppDelegateBackgroundTransfers,
+  withManifestApplicationBlock,
+  withPlistStringArray,
+} from "./mobile-native-config.ts";
 import {
   capacitorConfigFile,
   readCapacitorConfig,
@@ -18,9 +27,10 @@ import { BACKGROUND_RUNNER_EVENT, BACKGROUND_RUNNER_FILE } from "./background-ru
 import { BACKGROUND_RUNNER_LABEL } from "../mobile/background.ts";
 import { ACCESSIBILITY_INSTALL } from "./mobile-accessibility-install.ts";
 import { CONTEXT_MENU_INSTALL, SYSTEM_ICONS_INSTALL } from "./mobile-context-menu-install.ts";
-import { STORAGE_INSTALL } from "./mobile-storage-install.ts";
+import { ENCRYPTED_STORAGE_INSTALL, STORAGE_INSTALL } from "./mobile-storage-install.ts";
 import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
 import { NOW_PLAYING_INSTALL, NOW_PLAYING_SERVICE } from "./mobile-now-playing-install.ts";
+import { TRANSFER_INSTALL } from "./mobile-transfer-install.ts";
 import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** The Capacitor major these pins target. */
@@ -348,6 +358,41 @@ function configureBackgroundAudio(): CapabilityConfig {
   };
 }
 
+// ---- storage ----------------------------------------------------------------------------------
+
+/**
+ * `storage`: denext's `DenextStorage` plugin; with `--encrypted`, SQLCipher linked for encrypted
+ * stores, whose keys live in secureStore (so the app needs `secure-store` too).
+ */
+function configureStorage(options: CapabilityOptions): CapabilityConfig {
+  if (!options.encrypted) return { install: STORAGE_INSTALL };
+  return {
+    install: ENCRYPTED_STORAGE_INSTALL,
+    manual: [
+      "openKeyValueStore(name, { encrypted: true }) keeps each store's key in secureStore: " +
+      "run `denext mobile add secure-store` too (without it an encrypted store is refused, " +
+      "never written in the clear)",
+    ],
+  };
+}
+
+// ---- file-transfer ----------------------------------------------------------------------------
+
+/**
+ * `file-transfer`: denext's `DenextTransfer` plugin (a background `URLSession` on iOS, WorkManager
+ * on Android) and AppDelegate forwarding the background session's events, so a transfer that
+ * finishes while the app is not running relaunches it to save the file.
+ */
+function configureFileTransfer(): CapabilityConfig {
+  return {
+    install: TRANSFER_INSTALL,
+    appDelegate: [{
+      label: "handleEventsForBackgroundURLSession → DenextTransferManager (background transfers)",
+      apply: withAppDelegateBackgroundTransfers,
+    }],
+  };
+}
+
 /** The platform capabilities, spread into `MOBILE_CAPABILITIES`. */
 export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   "app-review": {
@@ -432,8 +477,10 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   storage: {
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "openKeyValueStore(name) (durable key-value storage in the app's data folder, which " +
-      "the OS does not evict like WebView storage; React Native mode's AsyncStorage and MMKV use it)",
-    configure: () => ({ install: STORAGE_INSTALL }),
+      "the OS does not evict like WebView storage; React Native mode's AsyncStorage and MMKV use " +
+      "it); --encrypted links SQLCipher for openKeyValueStore(name, { encrypted: true })",
+    options: ["encrypted"],
+    configure: configureStorage,
   },
   "context-menu": {
     capacitorMajor: CAPACITOR_MAJOR,
@@ -459,6 +506,14 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
       "clearNowPlaying() (lock screen, Control Center and the media notification; the Media " +
       "Session API on the web)",
     configure: configureBackgroundAudio,
+  },
+  "file-transfer": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "downloadToFile / uploadFile with progress in the OS's background transfer service " +
+      "(URLSession background session on iOS, WorkManager on Android): pauseFileTransfer / " +
+      "resumeFileTransfer / cancelFileTransfer / fileTransfers / onFileTransfer (fetch and " +
+      "XMLHttpRequest in the page elsewhere)",
+    configure: configureFileTransfer,
   },
   "background-location": {
     npm: "@capgo/background-geolocation",

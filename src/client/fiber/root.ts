@@ -26,6 +26,7 @@ import { familyMatchActive, familyResolveActive, resolveFamilyCurrent } from "..
 import { createFiber, type Fiber, NoLane, SyncLane, TransitionLane } from "./fiber.ts";
 import { listenOn } from "./events.ts";
 import { bootMomentumSafeScroll } from "../momentum-boot.ts";
+import { nextMacrotask } from "../../runtime/next-macrotask.ts";
 
 // Wire the work loop into the scheduler (see `FlushHandlers` for why it is injected).
 setFlushHandlers(renderRoot, beginConcurrentRender, resumeConcurrent);
@@ -287,24 +288,4 @@ function hasPendingWork(): boolean {
     if (handle.pendingLanes !== NoLane) return true;
   }
   return false;
-}
-
-/**
- * Resolve on the next macrotask. A MessageChannel, as React's act uses where Node's
- * `setImmediate` is unavailable: fake timers replace `setTimeout`, which would stall the
- * wait. Both ports close afterwards so no handle outlives it.
- */
-function nextMacrotask(): Promise<void> {
-  if (typeof MessageChannel !== "function") {
-    return new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  return new Promise((resolve) => {
-    const channel = new MessageChannel();
-    channel.port1.onmessage = () => {
-      channel.port1.close();
-      channel.port2.close();
-      resolve();
-    };
-    channel.port2.postMessage(null);
-  });
 }

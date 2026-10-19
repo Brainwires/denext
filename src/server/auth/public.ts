@@ -291,6 +291,7 @@ export type {
   EmailProvider,
   NativeAppleConfig,
   NativeIdTokenProviderConfig,
+  OAuthCheck,
   OAuthProvider,
   PhoneProvider,
   ProfileInput,
@@ -299,5 +300,6 @@ export type {
   SendVerificationRequest,
   SignInFailedReason,
   TenantIssuer,
+  UserinfoRequestInput,
   VerificationRequestParams,
 } from "./types.ts";

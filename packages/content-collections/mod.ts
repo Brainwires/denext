@@ -21,11 +21,13 @@
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import { buildContent } from "./build.ts";
 import { createContentCommand } from "./command.ts";
+import type { MarkdownOptions } from "./markdown.ts";
 
 export { buildContent } from "./build.ts";
 export type { ContentBuildContext, ContentBuildReport, ContentDiagnostic } from "./build.ts";
 export { createContentCommand } from "./command.ts";
-export type { ContentCommandIo } from "./command.ts";
+export type { ContentCommandIo, ContentCommandOptions } from "./command.ts";
+export type { MarkdownHtmlMode, MarkdownOptions, SanitizeOptions } from "./markdown.ts";
 
 /** Options for the {@linkcode contentCollections} plugin. */
 export interface ContentCollectionsOptions {
@@ -35,11 +37,24 @@ export interface ContentCollectionsOptions {
    * lives elsewhere.
    */
   readonly watch?: string[];
+  /**
+   * How `<Content>` / `renderContent` render raw HTML in `.md` entries: `{ html: "escape" }` (the
+   * default) shows it as text; `{ html: "sanitize", sanitize?: { allowElements, allowAttributes,
+   * allowDataImages } }` keeps what denext's allowlist sanitizer allows (GitHub's element set; no
+   * scripts, styles, frames, forms, SVG/MathML, event handlers or script URLs, whatever is
+   * listed). Stored with each `.md` entry at build; a `renderContent` call's own `markdown`
+   * overrides it. `.mdx` entries are unaffected.
+   */
+  readonly markdown?: MarkdownOptions;
 }
 
 /** Log a completed content build (or its validation diagnostics) to the console. */
-async function runAndReport(projectRoot: string, outDir: string): Promise<void> {
-  const report = await buildContent({ projectRoot, outDir });
+async function runAndReport(
+  projectRoot: string,
+  outDir: string,
+  markdown: MarkdownOptions | undefined,
+): Promise<void> {
+  const report = await buildContent({ projectRoot, outDir, markdown });
   if (!report.configured) return; // no content.config.ts — nothing to do
   if (report.diagnostics.length > 0) {
     console.error(
@@ -72,8 +87,11 @@ export function contentCollections(options: ContentCollectionsOptions = {}): Den
   return {
     name: "@denext/content-collections",
     setup(ctx: PluginContext) {
-      ctx.addPrepareStep(({ projectRoot, outDir }) => runAndReport(projectRoot, outDir), { watch });
-      ctx.addCommand(createContentCommand());
+      ctx.addPrepareStep(
+        ({ projectRoot, outDir }) => runAndReport(projectRoot, outDir, options.markdown),
+        { watch },
+      );
+      ctx.addCommand(createContentCommand(undefined, { markdown: options.markdown }));
     },
   };
 }

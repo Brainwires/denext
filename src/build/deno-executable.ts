@@ -5,7 +5,7 @@
 // verb runs (`maybeReexecToolchain` in src/cli/self-exec.ts). This module only picks from what is
 // already on the machine, synchronously, and refuses with the fix when there is nothing to run.
 
-import { basename, join } from "@std/path";
+import { basename } from "@std/path";
 
 /** What {@linkcode resolveDenoExecutable} reads from the process (injectable for tests). */
 export interface DenoExecutableSeams {
@@ -29,6 +29,15 @@ export const NO_DENO_MESSAGE =
   "  If that fails (offline, an unsupported host), install Deno from https://deno.com, or point " +
   "DENO_BIN / DENEXT_DENO at a deno binary. (DENEXT_DENO=stock turns the toolchain off.)";
 
+/**
+ * `dir` and the names below it, joined with `seams.os`'s separator (never the host's: the seams
+ * may describe another OS).
+ */
+function joinFor(seams: DenoExecutableSeams, dir: string, ...names: string[]): string {
+  const sep = seams.os === "windows" ? "\\" : "/";
+  return [dir.replace(/[\\/]+$/, ""), ...names].join(sep);
+}
+
 /** The first `deno` on `path` (Windows: `deno.exe`), or null. */
 function denoOnPath(seams: DenoExecutableSeams): string | null {
   const windows = seams.os === "windows";
@@ -36,7 +45,7 @@ function denoOnPath(seams: DenoExecutableSeams): string | null {
   const path = seams.env("PATH") ?? (windows ? seams.env("Path") : undefined) ?? "";
   for (const dir of path.split(delimiter)) {
     if (dir === "") continue;
-    const candidate = join(dir, windows ? "deno.exe" : "deno");
+    const candidate = joinFor(seams, dir, windows ? "deno.exe" : "deno");
     if (seams.isFile(candidate)) return candidate;
   }
   return null;
@@ -63,7 +72,13 @@ export function resolveDenoExecutable(seams: DenoExecutableSeams): string {
   if (basename(exec).toLowerCase().replace(/\.exe$/, "") === "deno") return exec;
   const home = seams.env("HOME") ?? seams.env("USERPROFILE");
   if (home) {
-    const candidate = join(home, ".deno", "bin", seams.os === "windows" ? "deno.exe" : "deno");
+    const candidate = joinFor(
+      seams,
+      home,
+      ".deno",
+      "bin",
+      seams.os === "windows" ? "deno.exe" : "deno",
+    );
     if (seams.isFile(candidate)) return candidate;
   }
   if (!seams.standalone) return "deno";

@@ -12,7 +12,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { copy } from "@std/fs/copy";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   addGleamPackages,
   buildGleam,
@@ -91,7 +91,7 @@ Deno.test({
     assert(!wrong.ok);
     assertStringIncludes(wrong.out, "TS2345");
     // It runs, too.
-    const mod = await import(join(js, "greeter", "greeter.mjs"));
+    const mod = await import(toFileUrl(join(js, "greeter", "greeter.mjs")).href);
     assertEquals(mod.greet("Gleam"), "Hello, Gleam!");
   } finally {
     removeTempDirSync(app);

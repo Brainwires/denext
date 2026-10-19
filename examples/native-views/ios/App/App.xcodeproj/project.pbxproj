@@ -25,6 +25,7 @@
 		79699DD1118787E7F003BE30 /* ScannerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75522F0CE9212B10B8A6730C /* ScannerPlugin.swift */; };
 		0EB91636DC4D014A49619B9E /* DenextContextMenuPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5732AEBA9764E49ECB1620AC /* DenextContextMenuPlugin.swift */; };
 		02F167FC504898804F9284A4 /* DenextSystemIconPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D013506BD62E1D9937DBAC5 /* DenextSystemIconPlugin.swift */; };
+		F4A091ABB54CE67803E30C21 /* DenextStorageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78C0130A52AE0C124F0AD4B5 /* DenextStorageStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +49,7 @@
 		75522F0CE9212B10B8A6730C /* ScannerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerPlugin.swift; sourceTree = "<group>"; };
 		5732AEBA9764E49ECB1620AC /* DenextContextMenuPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextContextMenuPlugin.swift; sourceTree = "<group>"; };
 		3D013506BD62E1D9937DBAC5 /* DenextSystemIconPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextSystemIconPlugin.swift; sourceTree = "<group>"; };
+		78C0130A52AE0C124F0AD4B5 /* DenextStorageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextStorageStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -100,6 +102,7 @@
 				75522F0CE9212B10B8A6730C /* ScannerPlugin.swift */,
 				5732AEBA9764E49ECB1620AC /* DenextContextMenuPlugin.swift */,
 				3D013506BD62E1D9937DBAC5 /* DenextSystemIconPlugin.swift */,
+				78C0130A52AE0C124F0AD4B5 /* DenextStorageStore.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -196,6 +199,7 @@
 				79699DD1118787E7F003BE30 /* ScannerPlugin.swift in Sources */,
 				0EB91636DC4D014A49619B9E /* DenextContextMenuPlugin.swift in Sources */,
 				02F167FC504898804F9284A4 /* DenextSystemIconPlugin.swift in Sources */,
+				F4A091ABB54CE67803E30C21 /* DenextStorageStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -98,7 +98,9 @@ const {
   desktopRuntimeDenoFlags,
   desktopRuntimeEnv,
   desktopWithAppVersion,
+  macosCodesignArgs,
   macosSigningEntitlements,
+  notarytoolSubmitArgs,
   parseDesktopPackageArgs,
   syncDesktopAppConfig,
   V8_ENTITLEMENTS,
@@ -242,9 +244,7 @@ async function sign(
   provisioningProfile?: string,
   profileIdentifier?: string,
 ): Promise<void> {
-  const id = identity ?? "-";
-  const ts = identity ? "--timestamp" : "--timestamp=none";
-  const hardened = identity ? ["--options", "runtime"] : [];
+  // macosCodesignArgs: a secure timestamp + the Hardened Runtime with an identity; ad-hoc without.
   const mainExe = await mainExecutable(app);
   const bundleId = await infoPlistString(app, "CFBundleIdentifier");
   // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
@@ -288,31 +288,25 @@ async function sign(
       // the file. A helper app's executable signs its bundle, whose entitlements must survive.
       const besideMain = file.startsWith(macosDir) &&
         !file.slice(macosDir.length).includes("/");
-      const ident = besideMain ? ["--identifier", bundleId] : [];
-      await run([
-        "codesign",
-        "--force",
-        ts,
-        ...hardened,
-        ...await entitlementArgs(cefHelperEntitlements(file), file),
-        ...ident,
-        "-s",
-        id,
-        file,
-      ]);
+      await run(macosCodesignArgs(file, {
+        identity,
+        entitlementArgs: await entitlementArgs(
+          cefHelperEntitlements(file),
+          file,
+        ),
+        identifier: besideMain ? bundleId : undefined,
+      }));
     }
     // Explicit entitlements replace the ad-hoc pass's; either way, with an identity, the main
     // executable (V8) gets the JIT keys they do not set.
-    await run([
-      "codesign",
-      "--force",
-      ts,
-      ...hardened,
-      ...await entitlementArgs(V8_ENTITLEMENTS, app, entitlements),
-      "-s",
-      id,
-      app,
-    ]);
+    await run(macosCodesignArgs(app, {
+      identity,
+      entitlementArgs: await entitlementArgs(
+        V8_ENTITLEMENTS,
+        app,
+        entitlements,
+      ),
+    }));
   } finally {
     for (const file of written) await Deno.remove(file).catch(() => {});
   }
@@ -324,15 +318,9 @@ async function notarize(app: string, profile: string): Promise<void> {
   const zip = `${app}.zip`;
   try {
     await run(["ditto", "-c", "-k", "--keepParent", app, zip]);
-    await run([
-      "xcrun",
-      "notarytool",
-      "submit",
-      zip,
-      "--keychain-profile",
-      profile,
-      "--wait",
-    ]);
+    await run(
+      notarytoolSubmitArgs(zip, { kind: "keychain-profile", profile }),
+    );
     await run(["xcrun", "stapler", "staple", app]);
   } finally {
     // Remove the submission zip even if notarytool/staple failed.
@@ -393,15 +381,12 @@ async function makePkg(app: string, s: Signing): Promise<string> {
     pkg,
   ]);
   if (s.installerIdentity && s.notaryProfile) {
-    await run([
-      "xcrun",
-      "notarytool",
-      "submit",
-      pkg,
-      "--keychain-profile",
-      s.notaryProfile,
-      "--wait",
-    ]);
+    await run(
+      notarytoolSubmitArgs(pkg, {
+        kind: "keychain-profile",
+        profile: s.notaryProfile,
+      }),
+    );
     await run(["xcrun", "stapler", "staple", pkg]);
   } else if (!s.installerIdentity) {
     console.warn(

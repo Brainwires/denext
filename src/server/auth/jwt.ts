@@ -189,6 +189,33 @@ export interface VerifyIdTokenOptions {
    * allow / exclude lists.
    */
   tenantIssuer?: TenantIssuer;
+  /**
+   * A provider that signs its `id_token` with HMAC-SHA256 under the client secret (OIDC Core
+   * §10.1, `id_token_signed_response_alg: "HS256"`, as LINE does): the token must be `HS256`
+   * and verify under this secret; `jwks` is not consulted. Without it an `HS*` token is refused.
+   */
+  hmacSecret?: string;
+}
+
+/** Whether `signature` is the HMAC-SHA256 of `signingInput` under `secret` (constant time). */
+async function hmacVerifies(
+  secret: string,
+  signingInput: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret) as BufferSource,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  return await crypto.subtle.verify(
+    "HMAC",
+    key,
+    signature as BufferSource,
+    signingInput as BufferSource,
+  );
 }
 
 /**
@@ -202,6 +229,17 @@ export interface VerifyIdTokenOptions {
  */
 export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTokenClaims> {
   const { header, claims, signingInput, signature } = parseJws(options.idToken);
+  if (options.hmacSecret !== undefined) {
+    // HS256 only, and only for a provider configured for it: no other alg is accepted here.
+    if (header.alg !== "HS256" || !options.hmacSecret) {
+      throw new Error(`unsupported id_token alg: ${header.alg}`);
+    }
+    if (!(await hmacVerifies(options.hmacSecret, signingInput, signature))) {
+      throw new Error("id_token signature verification failed");
+    }
+    assertIdTokenClaims(claims, options);
+    return claims;
+  }
   const params = header.alg ? algParams(header.alg) : null;
   if (!params) throw new Error(`unsupported id_token alg: ${header.alg}`);
   // Pin the token type: an id_token is `typ:"JWT"` (or unset, or `id_token+jwt`).

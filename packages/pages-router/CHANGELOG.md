@@ -3,6 +3,11 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.13.0 - 2026-10-19
+
+- Requires `@denext/denext` ^4.4.0. The plugin reports that it serves the app's routes
+  (`ctx.servesRoutes()`), so `denext doctor` passes a Pages Router app with no `app/` directory.
+
 ## 0.12.0 - 2026-10-13
 
 - Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking

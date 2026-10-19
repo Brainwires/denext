@@ -50,11 +50,12 @@ import {
   fetchUserEmails,
   fetchUserInfo,
   makeProviderFetch,
+  type ProviderFetch,
   type TokenResponse,
 } from "./flow.ts";
 import { getJwks } from "./jwks-cache.ts";
 import { idTokenKid, isStrictAudienceError, verifyIdToken } from "./jwt.ts";
-import { buildAuthorizationUrl, generatePkce, randomToken } from "./oauth.ts";
+import { buildAuthorizationUrl, flowChecks, generatePkce, randomToken } from "./oauth.ts";
 import {
   applySignInCallback,
   type AuthRouteContext,
@@ -195,9 +196,11 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
   }
   try {
     const endpoints = await endpointsFor(ctx, provider);
-    const pkce = await generatePkce();
+    // `state` always; PKCE and the OIDC `nonce` unless the provider's `checks` leave them out.
+    const checks = flowChecks(provider);
+    const pkce = checks.pkce ? await generatePkce() : undefined;
     const state = randomToken();
-    const nonce = provider.type === "oidc" ? randomToken() : undefined;
+    const nonce = checks.nonce ? randomToken() : undefined;
     // Coerce the caller-supplied return target to a same-origin path before it rides
     // the transaction cookie (defense in depth; the callback coerces again).
     const rawReturn = ctx.url.searchParams.get("callbackUrl");
@@ -205,7 +208,8 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
       ? sameOriginRedirect(ctx.config, rawReturn, ctx.config.pages?.afterSignIn || "/")
       : undefined;
     const formPost = provider.responseMode === "form_post";
-    await setTx(ctx, { provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo }, {
+    const verifier = pkce?.verifier ?? "";
+    await setTx(ctx, { provider: provider.id, state, verifier, nonce, returnTo }, {
       crossSite: formPost,
     });
 
@@ -215,7 +219,7 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
       redirectUri: callbackUri(ctx, provider.id),
       scope: provider.scopes.join(" "),
       state,
-      codeChallenge: pkce.challenge,
+      codeChallenge: pkce?.challenge,
       nonce,
       extra: provider.authorizationParams,
       responseMode: formPost ? "form_post" : undefined,
@@ -590,11 +594,12 @@ export async function fetchOAuthProfile(
     ctx.config.dangerouslyAllowInsecureProviders,
     endpointHosts(endpoints),
   );
+  const checks = transactionChecks(provider, params.tx);
   const tokens = await exchangeCodeForTokens(
     provider,
     {
       code: params.code,
-      codeVerifier: params.tx.verifier,
+      codeVerifier: checks.pkce ? params.tx.verifier : undefined,
       redirectUri: params.redirectUri,
       tokenUrl: endpoints.tokenUrl,
     },
@@ -602,16 +607,15 @@ export async function fetchOAuthProfile(
   );
 
   const claims = provider.type === "oidc"
-    ? await verifyProviderIdToken(provider, endpoints, tokens.id_token, params.tx.nonce, doFetch)
+    ? await verifyProviderIdToken(
+      provider,
+      endpoints,
+      tokens.id_token,
+      checks.nonce ? params.tx.nonce : undefined,
+      doFetch,
+    )
     : undefined;
-  // Userinfo is fetched for a plain OAuth provider (which has no id_token to read) and
-  // for an OIDC provider that asked for it by configuring `userinfoUrl` — never just
-  // because a discovery document happens to advertise a `userinfo_endpoint`, which would
-  // add a round-trip to every OIDC login that an `id_token` already answers.
-  const wantsUserinfo = provider.type === "oauth" || !!provider.userinfoUrl;
-  const userinfo = wantsUserinfo && endpoints.userinfoUrl && tokens.access_token
-    ? await fetchUserInfo(endpoints.userinfoUrl, tokens.access_token, doFetch)
-    : undefined;
+  const userinfo = await readUserinfo(provider, endpoints.userinfoUrl, tokens, doFetch);
   // OAuth providers (no id_token `email_verified`) may expose a verified-email list —
   // fetch it so the mapper can avoid trusting an unverified `userinfo.email`.
   const emails = provider.userEmailsUrl && tokens.access_token
@@ -622,6 +626,40 @@ export async function fetchOAuthProfile(
     params.callbackParams ? { ...input, callbackParams: params.callbackParams } : input,
   );
   return { profile, tokens };
+}
+
+/**
+ * The checks this provider's flow runs, once the transaction is known to carry what they need
+ * (it is the one this provider's sign-in wrote, so it does).
+ */
+function transactionChecks(provider: OAuthProvider, tx: Transaction) {
+  const checks = flowChecks(provider);
+  if ((checks.pkce && !tx.verifier) || (checks.nonce && !tx.nonce)) {
+    throw new Error("the transaction lacks the PKCE verifier or nonce this provider needs");
+  }
+  return checks;
+}
+
+/**
+ * The userinfo, for a plain OAuth provider (which has no id_token to read) and for an OIDC
+ * provider that asked for it by configuring `userinfoUrl` — never just because a discovery
+ * document happens to advertise a `userinfo_endpoint`, which would add a round-trip to every
+ * OIDC login that an `id_token` already answers. A provider's own `userinfoRequest` replaces
+ * the Bearer `GET`.
+ */
+async function readUserinfo(
+  provider: OAuthProvider,
+  url: string | undefined,
+  tokens: TokenResponse,
+  doFetch: ProviderFetch,
+): Promise<Record<string, unknown> | undefined> {
+  if (provider.type !== "oauth" && !provider.userinfoUrl) return undefined;
+  if (provider.userinfoRequest) {
+    return await provider.userinfoRequest({ tokens, fetch: doFetch, url });
+  }
+  return url && tokens.access_token
+    ? await fetchUserInfo(url, tokens.access_token, doFetch)
+    : undefined;
 }
 
 /**
@@ -644,6 +682,17 @@ async function verifyProviderIdToken(
   doFetch: Parameters<typeof getJwks>[1],
 ): Promise<Record<string, unknown>> {
   if (!idToken) throw new Error("provider returned no id_token");
+  if (provider.idTokenAlg === "HS256" && endpoints.issuer) {
+    return await verifyIdToken({
+      idToken,
+      jwks: [],
+      hmacSecret: provider.clientSecret,
+      issuer: endpoints.issuer,
+      audience: provider.clientId,
+      nonce,
+      strictAudience: provider.strictAudience,
+    }) as Record<string, unknown>;
+  }
   if (!endpoints.issuer || !endpoints.jwksUrl) {
     throw new DiscoveryError(
       "missing_endpoint",

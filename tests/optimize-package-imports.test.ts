@@ -8,7 +8,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { fromFileUrl, join, SEPARATOR } from "@std/path";
+import { basename, fromFileUrl, join, SEPARATOR } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import {
   analyzeBarrel,
@@ -601,7 +601,7 @@ async function bundleShared(
       plugins,
     });
     const byName = new Map(
-      result.outputFiles!.map((f) => [f.path.slice(f.path.lastIndexOf("/") + 1), f.text]),
+      result.outputFiles!.map((f) => [basename(f.path), f.text]),
     );
     const seen = new Set<string>();
     const walk = (name: string) => {

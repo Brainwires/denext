@@ -1,0 +1,127 @@
+name: Native plugins
+
+# denext's own native plugins (`denext mobile add …` without an npm package, and the Expo SDK
+# plugins denext writes beside the pinned ones) compiled for real: each job takes examples/mobile,
+# builds it once (export + cap sync), runs `denext mobile add` for every plugin the committed
+# examples do not already carry, and builds the app again, so the Swift and the Java of each
+# template compile against Capacitor 8, the iOS SDK and the Android SDK (with the dependencies
+# the installers add, such as WorkManager). The examples' committed native projects are built
+# by mobile-build.yml; the unit-level native tests (javac harnesses, swiftc type-checks) run in
+# ci.yml.
+#
+#   android  a debug .apk (Gradle)
+#   ios      an unsigned Release build (xcodebuild; no certificates on the runner)
+#
+# Runs when a template or an installer changes on `development` (or on a `ci/*` branch), and on
+# manual dispatch. There is no scheduled run.
+on:
+  push:
+    branches: [development, "ci/**"]
+    paths:
+      - "src/build/native-templates/**"
+      - "src/build/*native-templates.ts"
+      - "src/build/native-templates.packed.ts"
+      - "src/build/mobile-*.ts"
+      - ".github/workflows/native-plugins.yml"
+  workflow_dispatch:
+    inputs:
+      ios:
+        description: Also build iOS (macOS runner minutes)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes its run. Never cancelled: a run on `main`, a pull
+# request's, and a dispatch (the event is part of the group, so a push never cancels a dispatched
+# run, such as the one a release is gated on).
+concurrency:
+  group: native-plugins-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
+
+env:
+  # The CLI from this checkout. --node-modules-dir=none: next to the example's package.json,
+  # Deno would otherwise resolve the CLI's own npm: imports from its node_modules.
+  DENEXT: deno run -A --node-modules-dir=none ../../cli.ts
+  # Every plugin examples/mobile does not commit (it already carries OTA, auth sessions, the
+  # share extension, widgets, Live Activities, settings, context menus and system icons).
+  # --encrypted: storage with SQLCipher (the Swift package, net.zetetic:sqlcipher-android).
+  PLUGINS: >-
+    file-transfer background-audio accessibility storage calendar contacts print brightness
+    --encrypted
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: examples/mobile
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.ref }}
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # match ci.yml
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Cache Deno and Gradle
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cache/deno
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-native-plugins-${{ hashFiles('deno.lock', 'examples/mobile/android/**/*.gradle', 'examples/mobile/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-native-plugins-
+      - name: Install the Capacitor packages
+        run: npm ci --no-audit --no-fund
+      # cap sync (run by `mobile add` for a plugin with an npm package) needs the exported UI.
+      - name: Build once (export + sync)
+        run: $DENEXT mobile build android --jobs 2
+      - name: Add every denext plugin
+        run: $DENEXT mobile add $PLUGINS
+      - name: Build with the plugins (.apk)
+        run: $DENEXT mobile build android --skip-export --jobs 2
+
+  ios:
+    if: github.event_name != 'workflow_dispatch' || inputs.ios
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: examples/mobile
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.ref }}
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Cache Deno and Swift packages
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/Library/Caches/deno
+            examples/mobile/.denext/mobile-build/ios/DerivedData/SourcePackages
+          key: ${{ runner.os }}-native-plugins-${{ hashFiles('deno.lock', 'examples/mobile/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-native-plugins-
+      - name: Install the Capacitor packages
+        run: npm ci --no-audit --no-fund
+      - name: Export the UI
+        run: $DENEXT export --platform ios
+      - name: Add every denext plugin
+        run: $DENEXT mobile add $PLUGINS
+      # Unsigned: no certificate or provisioning profile on the runner.
+      - name: Build with the plugins (unsigned Release)
+        run: $DENEXT mobile build ios --release --unsigned --skip-export

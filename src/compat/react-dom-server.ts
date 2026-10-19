@@ -16,7 +16,8 @@
  * Component outside a boundary throws a guided error. The **Node-stream** APIs
  * (`renderToPipeableStream` / `renderToStaticNodeStream`) are supported via a thin
  * `node:stream` adapter over the Web renderer (for npm libraries that hard-code them);
- * `onShellReady` fires at the shell flush (its first chunk), but the document is not
+ * `onShellReady` fires once the shell has rendered (it is written when `pipe()` first reads,
+ * so piping from `onAllReady` writes every boundary inline), but the document is not
  * `Writable`-backpressured — denext's own apps should use `renderToReadableStream`.
  *
  * @module
@@ -111,17 +112,18 @@ export async function renderToReadableStream(
     // React writes an `<html>` root as a document: `<!DOCTYPE html>` first, `</body></html>` last.
     documentShell: true,
   });
-  const reader = source.getReader();
   // React's contract: the promise resolves once the SHELL has rendered and REJECTS when the
   // shell itself throws (so `await renderToReadableStream()` in a try/catch can send a 500
-  // instead of a stream that errors after the headers went out). The first chunk is the shell.
-  let shell: ReadableStreamReadResult<Uint8Array>;
+  // instead of a stream that errors after the headers went out). The shell is not read here:
+  // it is written on the consumer's first read, with every boundary rendered by then inline —
+  // so `await stream.allReady` before reading yields the whole document inline, as in React.
   try {
-    shell = await reader.read();
+    await source.shellReady;
   } catch (error) {
     options.onError?.(error);
     throw error;
   }
+  const reader = source.getReader();
   const ready = deferred();
   // Never let a rejection go unhandled: a consumer that streams without awaiting
   // `allReady` (the idiomatic path) would otherwise crash the process on a render
@@ -139,16 +141,14 @@ export async function renderToReadableStream(
   // stops quietly rather than treating the closed controller as a render error.
   const state = { cancelled: false };
   const out = new ReadableStream<Uint8Array>({
-    start(c) {
-      if (!shell.done && shell.value) c.enqueue(shell.value);
-    },
     pull: (c) => pullSource(reader, c, source.allReady, state),
     cancel(reason) {
       state.cancelled = true;
       ready.resolve(); // consumer gave up; not an error
       reader.cancel(reason).catch(() => {}); // stop upstream flushing
     },
-  }) as ReactDOMServerReadableStream;
+    // No read-ahead: the shell is decided when the consumer first reads.
+  }, { highWaterMark: 0 }) as ReactDOMServerReadableStream;
   out.allReady = ready.promise;
   return out;
 }
@@ -223,12 +223,15 @@ export interface ServerRenderOptions {
  * @param options React-compatible options (`identifierPrefix` seeds the `useId` scope).
  */
 export function renderToString(element: VNodeChildren, options?: ServerRenderOptions): string {
-  return renderToStringSync(element, { idPrefix: options?.identifierPrefix });
+  return renderToStringSync(element, {
+    idPrefix: options?.identifierPrefix,
+    boundaryMarkers: true, // React's `<!--$-->` / `<!--$!-->` Suspense markers
+  });
 }
 
 /**
- * Like {@link renderToString} but for fully static markup. denext's base render emits no
- * hydration markers, so the output is identical — this is a straight alias.
+ * Like {@link renderToString} but for fully static markup: no Suspense boundary markers, as
+ * React's `renderToStaticMarkup` writes it.
  *
  * @param element The element tree to render.
  * @param options React-compatible options (`identifierPrefix` seeds the `useId` scope).

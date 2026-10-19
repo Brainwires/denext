@@ -63,7 +63,11 @@ Deno.test("react-dom/server: renderToString/renderToStaticMarkup render the sync
     null,
     h(Suspense, { fallback: h("em", null, "…"), children: h(Slow, null) }),
   );
-  assertEquals(serverRenderToString(sus), "<div><em>…</em></div>");
+  // React's marker for a boundary a sync render showed as its fallback (client-rendered).
+  assertEquals(
+    serverRenderToString(sus),
+    "<div><!--$!--><template></template><em>…</em><!--/$--></div>",
+  );
 
   // A genuinely async Server Component outside a boundary throws a guided error.
   const Async = async () => {

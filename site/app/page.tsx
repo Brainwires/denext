@@ -152,7 +152,7 @@ const PILLARS: Pillar[] = [
       {
         title: "Proven on real apps",
         body:
-          "Real codebases run on denext: the shadcn/ui site, the Next.js App Router playground, the Epic Stack (Remix) and a large real-world app on the web and the desktop. The playground and the Epic Stack are re-migrated nightly in CI.",
+          "Real codebases run on denext: the shadcn/ui site, the Next.js App Router playground, the Epic Stack (Remix) and a large real-world app on the web and the desktop. The playground and the Epic Stack are re-migrated in CI before each release.",
       },
       {
         title: "Bring your app in one pass",

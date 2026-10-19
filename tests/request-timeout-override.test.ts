@@ -133,3 +133,22 @@ Deno.test("@denext/backend: the deadline handler sets the surface's deadline and
   assertEquals(await at("/functions/v1/hello"), 160_000);
   assertEquals(await at("/app/other"), undefined);
 });
+
+Deno.test("plugin-kit: bundleRoutes and buildAppCss hold the request's deadline", async () => {
+  // A router plugin (@denext/pages-router) bundles its pages and CSS on the first dev request
+  // for a page; that build is framework work, so it must not run down the page's 30 s budget.
+  const kit = await import("../src/plugin/kit.ts");
+  const ctx = createRequestContext(new Request("http://localhost/account"));
+  const events: string[] = [];
+  ctx.holdDeadline = () => {
+    events.push("hold");
+    return () => events.push("release");
+  };
+  await runWithContext(ctx, async () => {
+    // The work itself may fail here (nothing to bundle); the hold is taken and released anyway.
+    await kit.bundleRoutes([], { configPath: "/no/deno.json" }).catch(() => {});
+    await kit.buildAppCss({ projectDir: "/no/app", configPath: "/no/deno.json", outDir: "/no/out" })
+      .catch(() => {});
+  });
+  assertEquals(events, ["hold", "release", "hold", "release"]);
+});

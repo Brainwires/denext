@@ -50,6 +50,11 @@ export type SqliteBackend = "native" | "opfs" | "memory";
 /** The calls a backing implements. Internal: the public face is `SqliteDatabase`. */
 export interface SqliteDriver {
   readonly backend: SqliteBackend;
+  /**
+   * Key the database with a SQLCipher passphrase (`PRAGMA key`, `encryptionKey`): only a backing
+   * with SQLCipher has it (`@capacitor-community/sqlite` in the shell).
+   */
+  encrypt?(passphrase: string): Promise<void>;
   exec(sql: string): Promise<void>;
   run(sql: string, params: SqliteParams): Promise<SqliteRunResult>;
   query(sql: string, params: SqliteParams): Promise<SqliteRows>;

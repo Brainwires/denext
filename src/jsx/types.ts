@@ -32,8 +32,12 @@ export type Component<P = Record<string, unknown>> = (
 // deno-lint-ignore no-explicit-any -- components accept heterogeneous prop shapes.
 export type VNodeType = string | Component<any> | typeof FRAGMENT;
 
-/** Marker used as a VNode `type` to group children without a wrapping element. */
-export const FRAGMENT: unique symbol = Symbol.for("denext.fragment");
+/**
+ * Marker used as a VNode `type` to group children without a wrapping element. It is React's own
+ * fragment brand (`Symbol.for("react.fragment")`), so a `<>…</>` written in denext JSX is a
+ * fragment to a `react-reconciler` renderer too (React Native Skia's `<Canvas>`, react-three-fiber).
+ */
+export const FRAGMENT: unique symbol = Symbol.for("react.fragment");
 /** `<Fragment>`'s props (React's `FragmentProps`): its children and, from React 19.3, a ref. */
 export interface FragmentProps {
   /** The grouped children. */

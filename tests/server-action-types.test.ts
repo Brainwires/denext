@@ -3,6 +3,7 @@
 // (Next types actions only within a module — denext types them wherever they're imported).
 import { assertEquals } from "@std/assert";
 import { serverAction } from "../src/runtime/server-action.ts";
+import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 Deno.test("serverAction: the ref runs the handler and carries a stable id (server side)", async () => {
   const add = serverAction("test/add", (a: number, b: number) => a + b);
@@ -29,6 +30,7 @@ Deno.test("serverAction: calls are type-checked (wrong args / return are compile
     );
     const { code } = await new Deno.Command(Deno.execPath(), {
       args: ["check", `${dir}/t.ts`],
+      env: fileUrlCheckEnv(),
       stderr: "null",
       stdout: "null",
     }).output();

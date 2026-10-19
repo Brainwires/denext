@@ -85,6 +85,23 @@ export interface DenoToolchainArtifact {
   readonly esbuild?: DenoToolchainEsbuild;
   /** The native TypeScript compiler inside the zip, when the release ships one. */
   readonly tsgo?: DenoToolchainTsgo;
+  /**
+   * Request headers the download needs (a registry's anonymous token, such as ghcr.io's for the
+   * portable Ruby behind denext's managed fastlane). Never a secret: pins are public.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * Where else the same file can be had, tried in order when `url` fails (offline, an HTTP error,
+   * a truncated or mismatching download). Every copy must hash to the one pinned `sha256`.
+   */
+  readonly fallbacks?: readonly DenoToolchainSource[];
+}
+
+/** One more place a pinned artifact can be downloaded from (see `fallbacks`). */
+export interface DenoToolchainSource {
+  readonly url: string;
+  /** Request headers this source needs (public, like `headers`). */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 /** The pinned toolchain release (`deno-toolchain-pin.json`). */
@@ -370,7 +387,10 @@ async function openDownload(
   }
   let res: Response;
   try {
-    res = await fetchImpl(artifact.url, { redirect: "follow" });
+    res = await fetchImpl(artifact.url, {
+      redirect: "follow",
+      ...(artifact.headers ? { headers: { ...artifact.headers } } : {}),
+    });
   } catch (err) {
     throw new DenoToolchainDownloadError(
       `denext: could not download denext's ${what} (${artifact.file}) from ` +
@@ -386,7 +406,7 @@ async function openDownload(
 }
 
 /** What a download's messages call it: the artifact, its name, and the way to fetch it ahead. */
-interface DownloadNames {
+export interface DownloadNames {
   readonly artifact: DenoToolchainArtifact;
   /** `Deno toolchain`, `denort`, `Gleam compiler`. */
   readonly what: string;
@@ -434,6 +454,64 @@ function checkDownload(slot: DownloadNames, got: { size: number; sha256: string 
         "tampered with.",
     );
   }
+}
+
+/**
+ * Download `names.artifact` into the new file `dest` and verify it against its pin (size, then
+ * SHA-256), deleting it unexecuted on any refusal. The artifact's `url` first, then each of its
+ * `fallbacks` in order, every copy checked against the same pinned hash. When all fail, a SHA-256
+ * refusal wins (it may be tampering); otherwise the first source's error, with the others' added.
+ * The same checks as the toolchain's own install.
+ *
+ * @param names The artifact and how messages name it.
+ * @param dest A new file (it must not exist).
+ * @param fetchImpl The fetch to use.
+ * @param log Where a fallback is announced (default `console.error`).
+ */
+export async function downloadPinned(
+  names: DownloadNames,
+  dest: string,
+  fetchImpl: typeof fetch = fetch,
+  log: (line: string) => void = (l) => console.error(l),
+): Promise<void> {
+  const { artifact } = names;
+  const sources: DenoToolchainSource[] = [
+    { url: artifact.url, headers: artifact.headers },
+    ...(artifact.fallbacks ?? []),
+  ];
+  const errors: unknown[] = [];
+  for (const [i, source] of sources.entries()) {
+    const one = { ...names, artifact: { ...artifact, url: source.url, headers: source.headers } };
+    try {
+      checkDownload(one, await download(one, dest, fetchImpl));
+      return;
+    } catch (err) {
+      await Deno.remove(dest).catch(() => {});
+      errors.push(err);
+      if (i + 1 < sources.length) {
+        log(
+          `  denext: ${errorText(err).split("\n")[0]}; trying ${new URL(sources[i + 1].url).host}…`,
+        );
+      }
+    }
+  }
+  throw combinedDownloadError(errors, sources);
+}
+
+/** An error's message. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** The error to report when every source failed (see {@linkcode downloadPinned}). */
+function combinedDownloadError(errors: unknown[], sources: DenoToolchainSource[]): unknown {
+  const hash = errors.find((e) => e instanceof DenoToolchainHashError);
+  if (hash) return hash;
+  if (errors.length === 1) return errors[0];
+  const rest = errors.slice(1).map((e, i) =>
+    `\n  also tried ${sources[i + 1].url}: ${errorText(e)}`
+  );
+  return new DenoToolchainDownloadError(errorText(errors[0]) + rest.join(""));
 }
 
 /**
@@ -671,12 +749,7 @@ async function install(
     (opts.log ?? ((l: string) => console.error(l)))(
       `  denext: downloading denext's ${slot.what} ${version} for ${target}${mb}…`,
     );
-    try {
-      checkDownload(slot, await download(slot, downloaded, opts.fetch ?? fetch));
-    } catch (err) {
-      await Deno.remove(downloaded).catch(() => {});
-      throw err;
-    }
+    await downloadPinned(slot, downloaded, opts.fetch ?? fetch, opts.log);
     const os = slot.os;
     const { binary, extracted } = await binaryFrom(artifact, downloaded, scratch, exe);
     if (os !== "windows" && Deno.build.os !== "windows") await Deno.chmod(binary, 0o755);
@@ -899,6 +972,41 @@ async function queryMissingGrants(cacheRoot: string): Promise<string[]> {
     if (state !== "granted") missing.push(flag);
   }
   return missing;
+}
+
+/** A pinned tool's status under a `<NAME>=<path>` override (`DENEXT_GLEAM`, `DENEXT_FASTLANE`). */
+export interface PathOverrideStatus {
+  readonly mode: "path";
+  readonly state: "n/a";
+  /** The override, resolved. */
+  readonly path: string;
+  /** Whether it names a file. */
+  readonly ok: boolean;
+  /** One line for a report. */
+  readonly detail: string;
+}
+
+/**
+ * The status line of a `<NAME>=<path>` override: the path resolved, and whether it is a file (it
+ * is run unverified).
+ *
+ * @param raw The variable's value ({@linkcode toolchainEnvValue}).
+ * @param envName The variable's name, for the report.
+ * @returns The status fields.
+ */
+export async function pathOverrideStatus(
+  raw: string,
+  envName: string,
+): Promise<PathOverrideStatus> {
+  const path = resolve(raw);
+  const exists = (await Deno.stat(path).catch(() => null))?.isFile === true;
+  return {
+    mode: "path",
+    state: "n/a",
+    path,
+    ok: exists,
+    detail: `${envName}=${path} (unverified)${exists ? "" : " — NOT FOUND"}`,
+  };
 }
 
 /**

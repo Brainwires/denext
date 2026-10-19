@@ -35,12 +35,10 @@ if git diff --cached --name-only --diff-filter=ACM | grep -q .; then
   git diff --cached --name-only --diff-filter=ACM -z | xargs -0 git add --
 fi
 
-# `check:fix` also refreshed the test-count badge (`deno task badge:tests`); stage it when
-# the count moved, so the committed badge always matches the committed tests (CI runs
-# `badge:tests --check`).
-if ! git diff --quiet -- .github/badges/tests.json; then
-  git add -- .github/badges/tests.json
-fi
+# The test-count badge (.github/badges/tests.json) is deliberately NOT refreshed here: its
+# count moves with every test file a commit adds, so a per-commit badge put parallel commits
+# in conflict on it at nearly every rebase. The README shows `main`'s badge, so the release
+# script regenerates it before the tag and CI checks it on `main` and the release PR.
 
 # `check:fix` also regenerated the CLI's verb table (`deno task gen:command-table`): the
 # entrypoint parses from it, so a flag added to a verb — or pulled in by a rebase — that the
@@ -63,11 +61,15 @@ fi
 # The generated docs corpus (packages/docs-corpus/mod.ts, `@denext/docs-corpus`) and llms files (site/public/llms*.txt) are
 # derived from the docs pages, the root guides, the example READMEs and their generators. Parallel
 # docs edits each leave them stale against the combined tip (CI: tests/mcp-docs-corpus.test.ts,
-# tests/docs-generated.test.ts). When the commit stages any input, regenerate both and stage them.
-# Only then, so every other commit stays fast.
+# tests/docs-generated.test.ts). When the commit stages a file that MAY be an input, regenerate
+# both and stage them. Only then, so every other commit stays fast — and `--if-stale` leaves the
+# corpus alone when the inputs it actually reads are unchanged (a CHANGELOG entry under
+# [Unreleased], say: the corpus holds released versions only), so unchanged inputs never rewrite
+# it. Both generators are deterministic: the same inputs give the same bytes on any machine, so
+# two commits regenerating from the same docs never differ on these files.
 if git diff --cached --name-only --diff-filter=ACMDR \
   | grep -Eq '^(site/app/docs/|AGENTS\.md$|[^/]+\.md$|examples/[^/]+/README\.md$|site/lib/examples\.ts$|site/lib/markdown\.ts$|site/components/ui\.tsx$|scripts/(gen-docs-corpus|gen-llms-txt)\.ts$|scripts/lib/docs-corpus\.ts$|src/mcp/(guide|tools)\.ts$)'; then
-  "$DENO" task docs:corpus
+  "$DENO" task docs:corpus --if-stale
   "$DENO" task docs:llms
   git add -- packages/docs-corpus/mod.ts site/public/llms.txt site/public/llms-full.txt
 fi

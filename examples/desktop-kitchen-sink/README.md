@@ -13,7 +13,8 @@ rendered and hydrated instead of the plain web file) and the full-app updater (a
 installed, left unconfirmed and rolled back).
 
 CI runs it on Linux, macOS (Apple silicon and Intel) and Windows
-(`.github/workflows/desktop-window.yml`): nightly, and on pushes that touch the desktop code.
+(`.github/workflows/desktop-window.yml`): dispatched before a release, and on pushes that touch the
+desktop code.
 
 ## Run it
 
@@ -22,7 +23,14 @@ denext task desktop            # export + open the window (denext's pinned runti
 denext task desktop:package    # write scripts/package-*.ts from the scaffold, then package
 denext task test:window        # package, launch and assert every check (exits 1 on a failure)
 denext task drive start        # launch the last build in drive mode (the manual checks, scripted)
+denext task test:lan-dev       # `desktop dev --lan`: the proxied page keeps its bridge (secureStore)
 ```
+
+`test:lan-dev` runs `denext desktop dev --lan` against a `denext dev` on this machine's LAN address
+and asserts that the live-reload window's page holds the per-launch desktop token and round-trips
+`secureStore`, and that the dev server still refuses a LAN request without its per-run session
+token. It needs a LAN IPv4 address and, on Linux, a session with a Secret Service:
+`e2e/wm-session.sh --wayland sway -- deno task test:lan-dev` runs it headless.
 
 ### `test:window` flags
 
@@ -48,7 +56,7 @@ The results document (`e2e/.run/results.json`, `--results`, `--json`) is the mac
   "schema": 1,
   "os": "linux", "arch": "x86_64", "target": "x86_64-unknown-linux-gnu",
   "backend": "cef",
-  "runtime": { "mode": "pinned", "version": "2.9.7-denext.21", "dir": null },
+  "runtime": { "mode": "pinned", "version": "2.9.7-denext.22", "dir": null },
   "flags": { "noPackage": false, "backend": "cef", … },
   "ok": false,
   "summary": { "pass": 70, "skip": 3, "fail": 1, "problems": 1 },

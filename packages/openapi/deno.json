@@ -1,6 +1,6 @@
 {
   "name": "@denext/openapi",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -10,7 +10,7 @@
     "./clients": "./clients/mod.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.3.1",
+    "@denext/denext": "jsr:@denext/denext@^4.4.0",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {
@@ -48,11 +48,16 @@
       "types.ts",
       "clients/",
       "swagger-ui.ts",
+      "vendored.ts",
+      "scalar-ui.ts",
       "vendor/swagger-ui/swagger-ui-bundle.js",
       "vendor/swagger-ui/swagger-ui.css",
       "vendor/swagger-ui/LICENSE",
       "vendor/swagger-ui/NOTICE",
       "vendor/swagger-ui/swagger-ui-bundle.js.LICENSE.txt",
+      "vendor/scalar/standalone.js",
+      "vendor/scalar/LICENSE",
+      "vendor/scalar/NOTICE",
       "README.md",
       "CHANGELOG.md",
       "LICENSE",

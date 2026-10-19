@@ -3,6 +3,11 @@
 All notable changes to this package are documented here. It follows its own
 semver, independent of `@denext/denext`.
 
+## [0.5.0] - 2026-10-19
+
+- Requires `@denext/denext` ^4.4.0. The plugin reports that it serves the app's routes
+  (`ctx.servesRoutes()`), so `denext doctor` passes a React Router app with no App Router tree.
+
 ## [0.4.0] - 2026-10-16
 
 - **Route typegen.** Each scan writes React Router's `+types/<route>.ts` modules under

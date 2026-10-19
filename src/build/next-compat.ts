@@ -64,6 +64,7 @@ import {
   transformInlineServerActions,
 } from "./inline-server-action.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
+import { NEXT_AUTH_PROVIDER_MODULES } from "../compat/next-auth/providers/list.ts";
 import * as esbuild from "./esbuild/mod.ts";
 import {
   basename,
@@ -184,6 +185,8 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/image": "next-image.js",
   // Auth.js v5's client (`useSession`, `signIn`), for the app and for libraries that import it.
   "next-auth/react": "next-auth-react.js",
+  // Auth.js v5's WebAuthn client (`signIn("passkey")`), on denext's passkey client.
+  "next-auth/webauthn": "next-auth-webauthn.js",
   "next/og": "next-og.js",
   "next/cache": "next-cache.js",
   "next/server": "next-server.js",
@@ -209,30 +212,7 @@ export const NEXT_AUTH_SERVER_SPECIFIERS: ReadonlySet<string> = new Set([
   "next-auth/middleware",
   "next-auth/adapters",
   "next-auth/providers",
-  ...[
-    "apple",
-    "auth0",
-    "cognito",
-    "credentials",
-    "discord",
-    "email",
-    "facebook",
-    "github",
-    "gitlab",
-    "google",
-    "keycloak",
-    "linkedin",
-    "microsoft-entra-id",
-    "nodemailer",
-    "notion",
-    "okta",
-    "resend",
-    "slack",
-    "spotify",
-    "twitch",
-    "twitter",
-    "zoom",
-  ].map((p) => `next-auth/providers/${p}`),
+  ...NEXT_AUTH_PROVIDER_MODULES.map((p) => `next-auth/providers/${p}`),
 ]);
 
 /** The `next/*` / `next-auth/*` specifiers the compat bundles alias (an esbuild filter). */
@@ -334,6 +314,10 @@ function platformRuntimeEntries(u: EntryUrl): Record<string, string> {
     "virtual-masonry": u("src/virtual-masonry.ts"),
     // `denext/mvu` — useMvu / MvuView; shares the one hooks instance.
     "mvu": u("src/mvu.ts"),
+    // `denext/gleam` — the Lustre helpers (`lustreIsland`, `lustreElement`, the view island):
+    // client components whose hooks and Live socket must be the one instance. Its `gleam()`
+    // build plugin loads its own code only when set up (by denext.config.ts, never a bundle).
+    "gleam": u("src/gleam.ts"),
     // `denext/desktop/{client,window,app}` — the Deno Desktop page APIs (no hooks; prebuilt so
     // the unbundled dev loop can serve them like the other `denext/*` client modules).
     "desktop-client": u("src/desktop/client.ts"),
@@ -358,6 +342,7 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     "next-intl-routing": u("src/compat/next-intl/routing.ts"),
     // `next-auth/react` (the Auth.js client) — its SessionProvider shares the one hooks instance.
     "next-auth-react": u("src/compat/next-auth/react.ts"),
+    "next-auth-webauthn": u("src/compat/next-auth/webauthn.ts"),
     // `next/head` for libraries (the app's own stays the Pages Router plugin's).
     "next-head": u("src/compat/next/head.ts"),
     // The empty module behind the runtime-free subpaths (`denext/client-only`,
@@ -383,6 +368,23 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     // The Remix compat runtime (`denext/remix`) — prebuilt into the same graph so a
     // migrated Remix app's client components share the one denext instance.
     "remix": u("src/compat/remix/mod.ts"),
+    // The Preact / Preact Signals / Fresh compat client runtimes (a migrated Fresh or Preact
+    // app's islands and components), sharing the one denext instance.
+    ...preactRuntimeEntries(u),
+  };
+}
+
+/** The Preact, Preact Signals and Fresh client runtimes (see `DENEXT_RUNTIME_FILES`). */
+function preactRuntimeEntries(u: EntryUrl): Record<string, string> {
+  return {
+    "preact": u("src/compat/preact/mod.ts"),
+    "preact-hooks": u("src/compat/preact/hooks.ts"),
+    "preact-compat": u("src/compat/preact/compat.ts"),
+    "preact-jsx-runtime": u("src/compat/preact/jsx-runtime.ts"),
+    "preact-iso": u("src/compat/preact/iso.ts"),
+    "signals": u("src/compat/preact/signals.ts"),
+    "fresh": u("src/compat/fresh/mod.ts"),
+    "fresh-runtime": u("src/compat/fresh/runtime.ts"),
   };
 }
 
@@ -877,6 +879,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/navigation": "navigation.js",
   "denext/virtual-masonry": "virtual-masonry.js",
   "denext/mvu": "mvu.js",
+  "denext/gleam": "gleam.js",
   // The Deno Desktop page APIs (deep-link scheme ownership, the window, the app menu / tray).
   "denext/desktop/client": "desktop-client.js",
   "denext/desktop/window": "desktop-window.js",
@@ -900,6 +903,15 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/compiler-runtime": "compiler-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
   "denext/remix": "remix.js",
+  // The Preact / Preact Signals / Fresh compat runtimes (a migrated Fresh or Preact app).
+  "denext/preact": "preact.js",
+  "denext/preact/hooks": "preact-hooks.js",
+  "denext/preact/compat": "preact-compat.js",
+  "denext/preact/jsx-runtime": "preact-jsx-runtime.js",
+  "denext/preact-iso": "preact-iso.js",
+  "denext/signals": "signals.js",
+  "denext/fresh": "fresh.js",
+  "denext/fresh/runtime": "fresh-runtime.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
   ...expoRuntimeFiles(),
   // React Native mode's shell overlay (see react-native.ts).
@@ -931,6 +943,7 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/auth",
   "denext/server-only",
   "denext/remix/server",
+  "denext/fresh/server",
   "denext/next-intl/server",
   "denext/next-intl/middleware",
   // The `next-auth` shim's server modules (`NextAuth()`, `next-auth/jwt`, the providers).
@@ -940,28 +953,7 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/next-auth/middleware",
   "denext/next-auth/adapters",
   "denext/next-auth/providers",
-  "denext/next-auth/providers/apple",
-  "denext/next-auth/providers/auth0",
-  "denext/next-auth/providers/cognito",
-  "denext/next-auth/providers/credentials",
-  "denext/next-auth/providers/discord",
-  "denext/next-auth/providers/email",
-  "denext/next-auth/providers/facebook",
-  "denext/next-auth/providers/github",
-  "denext/next-auth/providers/gitlab",
-  "denext/next-auth/providers/google",
-  "denext/next-auth/providers/keycloak",
-  "denext/next-auth/providers/linkedin",
-  "denext/next-auth/providers/microsoft-entra-id",
-  "denext/next-auth/providers/nodemailer",
-  "denext/next-auth/providers/notion",
-  "denext/next-auth/providers/okta",
-  "denext/next-auth/providers/resend",
-  "denext/next-auth/providers/slack",
-  "denext/next-auth/providers/spotify",
-  "denext/next-auth/providers/twitch",
-  "denext/next-auth/providers/twitter",
-  "denext/next-auth/providers/zoom",
+  ...NEXT_AUTH_PROVIDER_MODULES.map((p) => `denext/next-auth/providers/${p}`),
   "denext/better-sqlite3",
   "denext/testing",
   // The `denext ui` form components, rendered to HTML on the server (plugin pages, project verbs).
@@ -970,8 +962,6 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/cli/command",
   "denext/plugin-kit",
   "denext/plugin-kit/vite-emitter",
-  // The `gleam()` build plugin: imported by denext.config.ts, it runs the Gleam compiler.
-  "denext/gleam",
   "denext/lint-plugin",
   "denext/bundle",
   "denext/build/css",
@@ -1606,15 +1596,22 @@ export interface AssetOptions {
   compileCss?: (path: string) => Promise<Uint8Array>;
 }
 
-/** The absolute path of a `?url`-imported stylesheet to compile (null: not one, or unresolvable here). */
-function cssUrlPath(
+/**
+ * The absolute path of a `?url`-imported stylesheet to compile (null: not one, or unresolvable
+ * here): relative, absolute, or through one of the app's import-map path aliases
+ * (`~/styles/app.css?url`, where `~/` maps to `./src/`).
+ */
+async function cssUrlPath(
   assets: AssetOptions,
   base: string,
   args: esbuild.OnResolveArgs,
-): string | null {
+  aliases: () => Promise<LocalAliases | null>,
+): Promise<string | null> {
   if (!assets.emitDir || !assets.compileCss || !/\.css$/i.test(base)) return null;
   if (isAbsolute(base)) return base;
-  return base.startsWith(".") ? join(args.resolveDir || dirname(args.importer), base) : null;
+  if (base.startsWith(".")) return join(args.resolveDir || dirname(args.importer), base);
+  const local = await aliases();
+  return local ? aliasBase(base, local) : null;
 }
 
 /** Asset extensions {@link AssetOptions.emitDir} emits as URL-exporting modules. */
@@ -2427,7 +2424,12 @@ function workerStub(url: string): string {
 export function viteAssetPlugin(
   assets: AssetOptions,
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
+  configPath?: string,
 ): esbuild.Plugin {
+  // The app's path aliases (its deno.json), read once, for a `?url` stylesheet named through one.
+  let aliases: Promise<LocalAliases> | undefined;
+  const appAliases = () =>
+    configPath ? (aliases ??= readLocalAliases(configPath)) : Promise.resolve(null);
   const QUERY = /\?(url|raw|inline|worker)(&[^?]*)?$/;
   const workerCache = new Map<string, string>();
   /** Emit (once per resolved path) the worker's own bundle and return its public URL. */
@@ -2450,7 +2452,7 @@ export function viteAssetPlugin(
         const flag = args.path.slice(qIdx + 1).split("&")[0];
         // A stylesheet's `?url` wants the PROCESSED css file, not the css-shim module the
         // chain would resolve the sheet to: locate the file directly (relative/absolute).
-        const sheet = flag === "url" ? cssUrlPath(assets, base, args) : null;
+        const sheet = flag === "url" ? await cssUrlPath(assets, base, args, appAliases) : null;
         if (sheet) return { path: sheet, namespace: "vite-css-url" };
         // Resolve the real module through the full chain (skip our own plugin — the
         // query is stripped, so it can't re-match — avoiding recursion).
@@ -2799,7 +2801,7 @@ async function sourcePlugins(
     (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
   );
   return [
-    ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild)] : []),
+    ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild, options.configPath)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
     ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true })] : []),

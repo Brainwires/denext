@@ -45,15 +45,23 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   context-menu keyboard checks included; a `desktop package --arch arm64` `.msi`, installed per
   user and per machine, upgraded, launched and uninstalled; and a server binary from
   `denext build --compile --target aarch64-pc-windows-msvc` (an Arm64 executable that serves
-  pages). Not yet run there: a physical Arm64 PC (GPU rendering), Authenticode-signed builds and
-  the trusted-update checks, and denext's own test suites (CI's `windows-11-arm` job is still
-  optional). A `desktop run` / `dev` window loads the VC++ runtime
+  pages). denext's unit and integration suites run there too; what fails on that VM fails the
+  same way on Windows x64, which no CI job runs those suites on. CI's `windows-11-arm` job (desktop
+  suites, `install.ps1`, the Arm64 `.msi`) is required for a release. Not yet run on Arm64: a
+  physical PC (GPU rendering), Authenticode-signed builds and the trusted-update checks. A
+  `desktop run` / `dev` window loads the VC++ runtime
   from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
   bundle carries the runtime next to its `.exe`.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline
   before either has happened fails to load. The compiled binary embeds every verb.
+- **The native type check on runtime 2.9.7-denext.22 can't resolve an absolute `file:` import.**
+  `import { x } from "file:///abs/path/mod.ts"` (in source, or an import-map target that is a
+  `file:` URL) reports TS2307 under TypeScript 7, inside the project or outside it, where Deno and
+  the in-process TypeScript resolve it. Until a runtime with the fix is pinned, type-check such a
+  project with `DENEXT_NATIVE_CHECK=0` (`DENO_CHECK_ENGINE=tsc` for a plain `deno check`), or
+  import by a relative path or an import-map alias to a relative path.
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 
@@ -91,18 +99,19 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   a reconnect that lands on another instance, or any reconnect after
   `live.limits.viewResumeSeconds`, re-runs `init`; a model the wire codec cannot encode (a
   function, a class instance) stays in its process. A view resumed elsewhere carries on from the
-  model as last stored, while the parked copy runs on where it was until its window ends. With
-  JavaScript disabled only the first render works.
+  model as last stored; the resuming instance announces it over the channel transport, and the
+  instance that parked the view stops its copy at once. With JavaScript disabled only the first
+  render works.
 - **Channels carry state unless they keep a log:** without `history`, no replay on reconnect,
   at-most-once, latest-wins, 16 ms coalescing, `seq` ordered per instance. A log replays what
   it retains (`size` per key, `ttlSeconds`); the in-memory one is per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
-- **A batched call carries no custom headers but `x-csrf-token`** (one that needs another goes as
-  its own request), and **`useApi({ suspense: true })` is not seeded from a Cache Components
-  (PPR) shell of a non-Flight route** (it fetches on mount there).
+- **A batched call carries no custom headers but `x-csrf-token` and the ones the app forwards**
+  (`apiBatch.forwardHeaders`, listed on the client too; one that needs another goes as its own
+  request).
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
   custom middleware's responses appear only as `default` until it is tagged with
-  `documentsErrors`; `scalar` loads from a CDN (`swagger` is vendored).
+  `documentsErrors`.
 - **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
   `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
   dev-server restart after an edit (a module-path `schema` always reloads).
@@ -116,14 +125,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   paint is replaced by Lustre's own render when the view mounts (not adopted), and Lustre's
   contexts (`provide` / `subscribe`) and client-sent attribute or property changes are not
   carried over Live.
-- **A stopped Lustre app's own effects keep running:** Lustre gives no way to cancel an app's
-  timers or subscriptions from outside. A stopped server component drops what they dispatch;
-  `lustreIsland` clears its root on unmount, but `lustre.shutdown()` does nothing for a client app
-  in Lustre 5.7.1, so they still dispatch into the detached runtime.
-- **denext fixes Lustre 5.7.1's server runtime only:** the post-build fix applies to that version's
-  exact file; another Lustre version or a changed file is left as it is, with a warning.
-- **The Lustre helpers need the App Router without `compatibilityMode`:** in a compat build
-  `denext/gleam` is a server-only subpath.
+- **A stopped Lustre app's timers keep firing:** Lustre gives no way to cancel an app's timers or
+  subscriptions from outside. A stopped server component, and (with denext's post-build fix to
+  Lustre's client runtime) a stopped `lustreIsland`, ignore what they dispatch, but the timer
+  itself runs until the page goes. A render frame Lustre scheduled just before the stop still runs
+  once.
+- **A Lustre runtime file of an unrecognised shape is not fixed:** the post-build fixes match the
+  buggy code's pattern; a rewritten runtime is left as it is, with one warning.
 
 ### First-party auth (`denextAuth`)
 
@@ -162,11 +170,20 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### `next-auth` (Auth.js v5 and NextAuth.js v4) compat
 
-- **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, GitLab, X (Twitter),
-  LinkedIn, Facebook, Slack, Twitch, Spotify, Okta, Auth0, Keycloak, Cognito, Zoom, Notion,
-  Credentials, Resend, Nodemailer / Email, and custom OAuth / OIDC objects. Auth.js's other
-  `next-auth/providers/*` modules are not shipped; write one as a custom provider object.
-  WebAuthn (`next-auth/providers/passkey`) is not mapped — denext's own `passkeys` are.
+- **Providers:** every `next-auth/providers/*` module of `@auth/core` 0.41.3 (`next-auth@5.0.0-beta.32`)
+  except three: `azure-devops` (a JWT assertion exchange instead of an authorization code, and
+  deprecated by Microsoft), `bankid-no` (userinfo as a signed JWT, which denext doesn't verify)
+  and `wechat` (its `platformType` option switches the authorization URL and scope, which the
+  generated data can't express). Write one as a custom provider object where its API allows.
+- **Passkeys (`next-auth/providers/passkey`, `…/webauthn`):** registration is for a signed-in
+  user with a verified address after a recent sign-in (Auth.js's sign-up by passkey is not
+  offered); the relying party needs `AUTH_URL` or `relayingParty: { id, origin }`. Through an
+  Auth.js adapter the ceremony challenge lives in the app's cache store, so instances sharing one
+  (Postgres, Redis, Deno KV, or one host's SQLite file) need no sticky sessions; with the
+  in-memory cache store (the default on Deno Deploy, or `cache: { store: "memory" }`) a ceremony
+  must finish on the instance that began it. The counter update is a read-then-write (Auth.js's port has no
+  compare-and-swap), and removing a passkey needs a denext-only `deleteAuthenticator` method. The
+  built-in sign-in page lists no passkey button.
 - **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs
   users, accounts, verification tokens and database sessions. Roles, bans and
   `sessionsValidAfter` need its two optional extension methods (`getUserExtension` /
@@ -177,8 +194,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **NextAuth.js v4:** `next-auth/middleware` reads the JWT strategy's token only, as v4 does, so
   with `session: { strategy: "database" }` every gated request is sent to sign in. A Pages API
   route's `NextAuth(req, res, …)` takes the body the Pages Router already parsed (string fields
-  only). v4's `next-auth/client` (v3's API) and the `next-auth/providers/*` modules this list
-  doesn't name are not shipped.
+  only). v4's `next-auth/client` (v3's API) is not shipped; v4's providers are the v5 ones
+  above.
 
 ### Backend (`@denext/backend`)
 
@@ -221,8 +238,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
-  `build` and `export` stay on the CLI. next-compat builds and the Pages Router are untested in a
-  binary.
+  `build` and `export` stay on the CLI.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -236,8 +252,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   build steps don't run, so a route served from build output renders on demand (a Pages Router
   `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
   on first use). `jobs/` and `services/` are not started.
-- **The first-party Markdown renderer escapes raw HTML** (it is not passed through). Use an `.mdx`
-  entry for raw HTML or components.
+- **The first-party Markdown renderer escapes raw HTML by default**; `markdown: { html:
+  "sanitize" }` keeps what an allowlist sanitizer allows, never passing HTML through. Only the
+  block containers (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when
+  allowlisted) stay open across Markdown blocks, and only when an HTML block of their own opens
+  them; an inline element (`<b>`, `<span>`, …) is closed at the end of the paragraph, heading,
+  cell or item it was written in. Use an `.mdx` entry for components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
   ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
   file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party
@@ -253,21 +273,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   located notes. A session the old server's store held does not carry over, `cspNonce` is
   `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **Prisma auto-migration wires SQLite, Postgres and MySQL only:** a `sqlserver`, `mongodb` or
-  `cockroachdb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
+- **Prisma auto-migration wires SQLite, Postgres (CockroachDB too) and MySQL only:** a
+  `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
   `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). Postgres runs over npm
   `pg`, not denext's `Deno.SQL`, whose results carry no column types for a Prisma adapter.
 
 ### TanStack Start
 
-- **`@denext/tanstack-start`:** an import-protection violation always fails the build, in
-  `denext dev` too, where Start's dev server mocks the import and warns (Start's `behavior`,
-  `mockAccess`, `log` and `maxTraceDepth` options are not applied). `denext export` writes no
-  sitemap (Start's `sitemap` and `spa` options are not applied), and with
-  `generateRouteTree: false` it prerenders only the `pages` listed and their links, refusing no
-  route by kind. The deploy manifest lists App Router routes only, so the `static` deploy preset
-  does not refuse a Start app's server routes; `denext export` lists them. The server render and the client bundle are compiled onto denext's React, so an
-  app's own `react` import must resolve to denext (`compatibilityMode`).
+- **`@denext/tanstack-start`:** a mocked import's runtime message (`denext dev`) lists no
+  import trace. With `generateRouteTree: false` `denext export` prerenders only the `pages`
+  listed and their links, refusing no route by kind, and the deploy manifest lists its server
+  functions alone. The server render and the client bundle are compiled onto denext's React, so
+  an app's own `react` import must resolve to denext (`compatibilityMode`).
 
 ## Mobile (Capacitor shell)
 
@@ -305,6 +322,13 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   fields (silent mode, earpiece routing, background recording) are accepted without effect. A
   native `selectionLimit` holds on iOS and Android 13+ (elsewhere, and on the web, the result is
   cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+.
+- **File transfers (`denext mobile add file-transfer`)** are compiled and tested against a local
+  server (the iOS manager through macOS's `URLSession`, the Android HTTP half through the JDK), not
+  yet run on a device in the background. Android's WorkManager stops a job after about ten
+  minutes: a download resumes from its `.part` file on the next run, an upload starts over; uploads
+  cannot pause anywhere. iOS may defer a background transfer started while the app is already in
+  the background. On the web a transfer lasts as long as the page, and a Deno Desktop
+  `downloadToFile` reports no progress.
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
@@ -315,6 +339,13 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   binary, so rotating it takes a store release; the fingerprint gate can't see native code pulled
   in from outside `ios/`, `android/` and the declared plugins; an iOS web-content crash during a
   trial is reloaded by Capacitor, not the plugin.
+- **`denext fastlane` (the managed fastlane)** runs on macOS and Linux only (arm64, x64); Windows
+  is not supported. Its first install needs a C compiler, because several of fastlane's gems
+  build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the
+  project's Gemfile and `bundle exec`. The Ruby comes from denext's own mirror (the `toolchain-assets`
+  GitHub release), with Homebrew's `ghcr.io` registry as the fallback, both pinned by SHA-256. It has been run on
+  macOS x64, Linux x64 (Ubuntu) and Linux arm64 (Fedora, SELinux enforcing); on macOS arm64 the
+  Ruby is pinned and its hash checked, but the install has not been run there yet.
 - **Won't:** native UIs for watches, cars and App Clips; hosted services (an Expo Go-style
   client, push relay, build/submit, OTA CDN); install attribution; MDM configuration wrappers;
   code obfuscation (keep secrets on the server).
@@ -329,7 +360,12 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **No JSI, so nothing synchronous across the bridge:** native-module methods return Promises;
   Expo's `*Sync` APIs and `expo-secure-store`'s `getItem`/`setItem` are omitted
   (`denext/expo/manifest` lists each shim's omissions); `react-native-mmkv` reads an in-memory
-  copy and refuses encryption.
+  copy and refuses encryption (use `openKeyValueStore(name, { encrypted: true })`).
+- **SQLite encryption is native only, and expo-sqlite's keys share one passphrase.** SQLCipher
+  runs in the iOS / Android app; the web build (sqlite-wasm) and Deno Desktop refuse
+  `PRAGMA key` and encrypted stores rather than keep the data in the clear.
+  `@capacitor-community/sqlite` keeps one passphrase for all of an app's databases, so
+  `PRAGMA key` with a second, different passphrase is refused; `PRAGMA rekey` is not supported.
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.
@@ -356,9 +392,19 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Not verified on a device yet:** the `DenextCalendar`, `DenextContacts`, `DenextPrint` and
   `DenextBrightness` plugins `denext mobile add calendar | contacts | print | brightness` write
   are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
-  yet run on a phone. On Android, splitting a repeating event from one occurrence on
-  (`updateEventAsync` with `instanceStartDate` and `futureEvents`) is refused, and
+  yet run on a phone (Android's split of a repeating event from one occurrence on included), and
   `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
+- **Renderers built on `react-reconciler` see no denext context** (React Native Skia's
+  `<Canvas>`, react-three-fiber, react-konva): a component inside their tree reads a context's default
+  value (as in React, contexts don't cross renderers), and a provider placed inside the tree does
+  not reach it either (in React it would); pass the values as props. A class component inside such
+  a tree is not supported. React Native Skia with Reanimated, and in the Capacitor shell's
+  WebViews, is not yet verified.
+- **Unistyles' Babel plugin is ported in part:** the component swap and `useVariants` run, the
+  per-style dependency pass does not (the theme is CSS variables; a style that depends on the
+  breakpoint or another runtime value updates when its component renders again). Tamagui's
+  optimizing compiler (`@tamagui/babel-plugin`) is not run; its runtime styles the components.
+  `require.context` takes literal arguments only.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web
@@ -463,5 +509,4 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   ([checklist](https://denext.dev/docs/contributing#manual-desktop-checks-before-a-final-release)).
 - **No Touch Bar.** `react-native-windows` / `-macos` native
   modules don't run (write a desktop extension); their extra components are DOM stand-ins.
-- **`denext desktop dev` runs under the `deno` CLI only;** with `--lan` the per-launch token is
-  not injected, so token-gated features are refused.
+- **`denext desktop dev` runs under the `deno` CLI only.**

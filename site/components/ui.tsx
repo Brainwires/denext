@@ -58,6 +58,7 @@ export const NAV: {
       { slug: "react-native", label: "React Native / Expo" },
       { slug: "native-code", label: "Your own native code" },
       { slug: "native-sdk-recipes", label: "Native SDK recipes" },
+      { slug: "powersync", label: "Offline sync and PowerSync" },
       { slug: "pages-router", label: "Pages Router" },
       { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },

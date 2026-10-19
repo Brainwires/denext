@@ -32,6 +32,7 @@ import { type LiveViewContext, signLiveViewToken } from "../runtime/live-view.ts
 import { prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import type { LustreApp } from "./kit.ts";
 import type { LustreServerKit } from "./server-kit.ts";
+import { processShared } from "../runtime/process-shared.ts";
 
 /** A DOM event a Lustre view's client sent, after the built-in shape check. */
 export interface LustreEventPayload {
@@ -76,7 +77,8 @@ export interface LustreViewComponent<Props> {
 /** What the hub needs from a registered view (the config, untyped). */
 export type LustreViewDef = LustreViewConfig<unknown, unknown>;
 
-const views = /* @__PURE__ */ new Map<string, LustreViewDef>();
+/** Every Lustre view by id, shared by every copy of this module (see process-shared.ts). */
+const views = /* @__PURE__ */ processShared("lustreViews", () => new Map<string, LustreViewDef>());
 
 /**
  * The Lustre view registered under `id` (the hub mounts by it).

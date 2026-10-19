@@ -21,9 +21,14 @@ import type {
   AdapterAccountRef,
   AdapterUser,
   AuthAdapter,
+  PasskeyChallengeRecord,
+  PasskeyRecord,
   VerificationTokenRecord,
   VerificationTokenRef,
 } from "../../server/auth/adapter.ts";
+import { decodeCbor } from "../../server/auth/cbor.ts";
+import { type CacheStore, getCacheStore } from "../../server/cache.ts";
+import { base64UrlDecode } from "../../server/auth/oauth.ts";
 import type { SessionStore } from "../../server/auth/session-store.ts";
 import type { AuthSession } from "../../server/auth/types.ts";
 
@@ -87,6 +92,26 @@ export interface AuthJsVerificationToken {
   expires: Date;
 }
 
+/** An authenticator row as Auth.js adapters store it (WebAuthn / passkey credentials). */
+export interface AuthJsAdapterAuthenticator {
+  /** The credential ID, base64. */
+  credentialID: string;
+  /** The user it belongs to. */
+  userId: string;
+  /** The account row it hangs off (the credential ID too). */
+  providerAccountId: string;
+  /** The credential public key (a COSE_Key), base64. */
+  credentialPublicKey: string;
+  /** The signature counter. */
+  counter: number;
+  /** `"multiDevice"` for a credential that may be synced (backup eligible), else `"singleDevice"`. */
+  credentialDeviceType: string;
+  /** Whether it is backed up. */
+  credentialBackedUp: boolean;
+  /** The transports, comma-separated. */
+  transports?: string | null;
+}
+
 /**
  * The denext user fields an Auth.js schema has no column for, as the optional extension methods
  * store them. Times are epoch seconds; `null` clears a field.
@@ -138,6 +163,24 @@ export interface AuthJsAdapter {
   useVerificationToken?(
     ref: { identifier: string; token: string },
   ): Awaitable<AuthJsVerificationToken | null>;
+  /** A WebAuthn authenticator by credential ID. */
+  getAuthenticator?(credentialID: string): Awaitable<AuthJsAdapterAuthenticator | null>;
+  /** Insert a WebAuthn authenticator. */
+  createAuthenticator?(
+    authenticator: AuthJsAdapterAuthenticator,
+  ): Awaitable<AuthJsAdapterAuthenticator>;
+  /** A user's WebAuthn authenticators. */
+  listAuthenticatorsByUserId?(userId: string): Awaitable<AuthJsAdapterAuthenticator[]>;
+  /** Set an authenticator's signature counter. */
+  updateAuthenticatorCounter?(
+    credentialID: string,
+    newCounter: number,
+  ): Awaitable<AuthJsAdapterAuthenticator>;
+  /**
+   * denext-only: delete a WebAuthn authenticator (Auth.js's adapters have no such method; without
+   * it, denext's `DELETE {basePath}/passkeys/:id` fails).
+   */
+  deleteAuthenticator?(credentialID: string): Awaitable<unknown>;
   /**
    * denext-only: a user's {@linkcode AuthJsUserExtension} (roles, ban, `sessionsValidAfter`),
    * or `null` when none is stored. With {@linkcode updateUserExtension}, those features work
@@ -264,6 +307,201 @@ function verificationTokens(adapter: AuthJsAdapter): Partial<AuthAdapter> {
   };
 }
 
+/** Standard base64 (Auth.js's encoding of credential IDs and keys) as base64url. */
+function base64ToUrl(value: string): string {
+  return value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** base64url as standard, padded base64. */
+function urlToBase64(value: string): string {
+  const std = value.replace(/-/g, "+").replace(/_/g, "/");
+  return std + "=".repeat((4 - std.length % 4) % 4);
+}
+
+/** The COSE algorithm (label 3) of a stored public key; `0` when it has none. */
+function coseAlgorithm(publicKey: string): number {
+  try {
+    const map = decodeCbor(base64UrlDecode(publicKey));
+    const alg = map instanceof Map ? map.get(3) : undefined;
+    return typeof alg === "number" ? alg : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** An Auth.js authenticator row as a denext passkey record. */
+function passkeyOf(row: AuthJsAdapterAuthenticator): PasskeyRecord {
+  const publicKey = base64ToUrl(row.credentialPublicKey);
+  const record: PasskeyRecord = {
+    id: base64ToUrl(row.credentialID),
+    userId: String(row.userId),
+    publicKey,
+    alg: coseAlgorithm(publicKey),
+    signCount: Number(row.counter) || 0,
+    backupEligible: row.credentialDeviceType === "multiDevice",
+    backedUp: !!row.credentialBackedUp,
+    // Auth.js's schema keeps no registration time.
+    createdAt: 0,
+  };
+  if (row.transports) record.transports = row.transports.split(",").filter(Boolean);
+  return record;
+}
+
+/** How long an unredeemed in-memory passkey challenge is kept at most, in seconds. */
+const CHALLENGE_CAP_SECONDS = 15 * 60;
+/** The most in-memory passkey challenges kept at once (the oldest go first). */
+const MAX_CHALLENGES = 10_000;
+
+/** The cache-store key a challenge's record lives under (its hash names it). */
+const CHALLENGE_KEY = "denext:passkey-challenge:";
+
+/** The port's challenge pair. */
+type ChallengeGroup = Pick<
+  Required<AuthAdapter>,
+  "createPasskeyChallenge" | "usePasskeyChallenge"
+>;
+
+/** A record read back from a store, when it is one this bridge wrote. */
+function challengeRecord(value: unknown): PasskeyChallengeRecord | undefined {
+  const record = value as Partial<PasskeyChallengeRecord> | null | undefined;
+  if (
+    typeof record?.hash !== "string" || typeof record.data !== "string" ||
+    typeof record.expiresAt !== "number"
+  ) {
+    return undefined;
+  }
+  return record as PasskeyChallengeRecord;
+}
+
+/**
+ * Passkey challenges in the app's cache store when it can take an entry atomically
+ * (`takeData`): an Auth.js schema has no table for them (Auth.js keeps its challenge in a
+ * cookie), and a shared store lets any instance finish a ceremony another began. Each is
+ * single-use (an atomic take), expires with the ceremony (15 minutes at most) and carries no
+ * tag a revalidation could reach. A store without `takeData` falls back to `memory`.
+ */
+function storeChallenges(store: () => CacheStore, memory: ChallengeGroup): ChallengeGroup {
+  const nowSeconds = () => Math.floor(Date.now() / 1000);
+  return {
+    async createPasskeyChallenge(record) {
+      const cache = store();
+      if (!cache.takeData) return await memory.createPasskeyChallenge(record);
+      const expiresAt = Math.min(record.expiresAt, nowSeconds() + CHALLENGE_CAP_SECONDS);
+      await cache.setData(`${CHALLENGE_KEY}${record.hash}`, {
+        value: { ...record, expiresAt },
+        expiresAt: expiresAt * 1000,
+        tags: [],
+      });
+    },
+    async usePasskeyChallenge(hash) {
+      const cache = store();
+      if (!cache.takeData) return await memory.usePasskeyChallenge(hash);
+      const record = challengeRecord((await cache.takeData(`${CHALLENGE_KEY}${hash}`))?.value);
+      if (!record || record.hash !== hash || record.expiresAt <= nowSeconds()) return undefined;
+      return record;
+    },
+  };
+}
+
+/**
+ * Passkey challenges in this instance's memory, for a cache store that can't take an entry
+ * atomically. Single-use and expiring, as the adapter port requires.
+ */
+function memoryChallenges(): ChallengeGroup {
+  const challenges = new Map<string, PasskeyChallengeRecord>();
+  return {
+    createPasskeyChallenge(record) {
+      const now = Math.floor(Date.now() / 1000);
+      for (const [hash, stored] of challenges) {
+        if (stored.expiresAt <= now) challenges.delete(hash);
+      }
+      while (challenges.size >= MAX_CHALLENGES) {
+        challenges.delete(challenges.keys().next().value!);
+      }
+      const expiresAt = Math.min(record.expiresAt, now + CHALLENGE_CAP_SECONDS);
+      challenges.set(record.hash, { ...record, expiresAt });
+    },
+    usePasskeyChallenge(hash) {
+      const record = challenges.get(hash);
+      challenges.delete(hash);
+      if (!record || record.expiresAt <= Math.floor(Date.now() / 1000)) return undefined;
+      return record;
+    },
+  };
+}
+
+/**
+ * The passkey group on Auth.js's authenticator methods (`getAuthenticator`,
+ * `createAuthenticator`, `listAuthenticatorsByUserId`, `updateAuthenticatorCounter`), when the
+ * adapter has all four: a registration links a `webauthn` account (provider `providerId`, the
+ * credential ID) and stores the authenticator, as Auth.js does, so the rows stay Auth.js's.
+ */
+function passkeyGroup(
+  adapter: AuthJsAdapter,
+  providerId: string,
+  linkAccount: NonNullable<AuthJsAdapter["linkAccount"]>,
+  challengeStore: () => CacheStore,
+): Partial<AuthAdapter> {
+  const get = adapter.getAuthenticator?.bind(adapter);
+  const create = adapter.createAuthenticator?.bind(adapter);
+  const list = adapter.listAuthenticatorsByUserId?.bind(adapter);
+  const update = adapter.updateAuthenticatorCounter?.bind(adapter);
+  if (!get || !create || !list || !update) return {};
+  const remove = adapter.deleteAuthenticator?.bind(adapter);
+  return {
+    async createPasskey(record) {
+      const credentialID = urlToBase64(record.id);
+      if (await get(credentialID)) return false;
+      await linkAccount({
+        userId: record.userId,
+        type: "webauthn",
+        provider: providerId,
+        providerAccountId: credentialID,
+      });
+      try {
+        await create(defined({
+          credentialID,
+          userId: record.userId,
+          providerAccountId: credentialID,
+          credentialPublicKey: urlToBase64(record.publicKey),
+          counter: record.signCount,
+          credentialDeviceType: record.backupEligible ? "multiDevice" : "singleDevice",
+          credentialBackedUp: record.backedUp,
+          transports: record.transports?.join(","),
+        }));
+      } catch {
+        // The credential ID is unique in Auth.js's schema: a racing registration took it.
+        return false;
+      }
+      return true;
+    },
+    async getPasskey(id) {
+      const row = await get(urlToBase64(id));
+      return row ? passkeyOf(row) : undefined;
+    },
+    async listPasskeys(userId) {
+      return (await list(userId)).map(passkeyOf);
+    },
+    async updatePasskey(id, fromSignCount, next) {
+      // Auth.js's port has no compare-and-swap: read, check, write.
+      const credentialID = urlToBase64(id);
+      const row = await get(credentialID);
+      if (!row || (Number(row.counter) || 0) !== fromSignCount) return false;
+      await update(credentialID, next.signCount);
+      return true;
+    },
+    async deletePasskey(id) {
+      if (!remove) {
+        throw new Error(
+          "next-auth: the Auth.js adapter has no deleteAuthenticator, so a passkey can't be removed",
+        );
+      }
+      await remove(urlToBase64(id));
+    },
+    ...storeChallenges(challengeStore, memoryChallenges()),
+  };
+}
+
 /** A user's session row as a denext session payload (no `authTime`: it never slides). */
 function sessionPayload(
   row: AuthJsAdapterSession,
@@ -341,6 +579,15 @@ export interface FromAuthJsAdapterOptions {
   warn: (message: string) => void;
   /** Told about every user row the bridge updated (Auth.js's `updateUser` event). */
   onUpdateUser?: (user: AuthJsAdapterUser) => void | Promise<void>;
+  /** The WebAuthn provider's id (`"passkey"`), when the app has one: its accounts' provider. */
+  webAuthnProvider?: string;
+  /**
+   * Where passkey ceremony challenges live: the app's cache store (`cache.store` /
+   * `setCacheStore`) by default, read on every call. A store with `takeData` (SQLite, Postgres,
+   * Redis, Deno KV) holds them, so every instance sharing it can finish a ceremony; one without
+   * (the in-memory store) leaves them in this instance's memory.
+   */
+  challengeStore?: () => CacheStore;
 }
 
 /**
@@ -433,6 +680,14 @@ export function fromAuthJsAdapter(
       }));
     },
     ...verificationTokens(adapter),
+    ...(options.webAuthnProvider
+      ? passkeyGroup(
+        adapter,
+        options.webAuthnProvider,
+        linkAccount,
+        options.challengeStore ?? getCacheStore,
+      )
+      : {}),
   };
   if (adapter.unlinkAccount) {
     const unlink = adapter.unlinkAccount.bind(adapter);

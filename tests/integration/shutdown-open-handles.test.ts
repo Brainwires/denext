@@ -157,6 +157,10 @@ async function startThenStop(
 
 Deno.test({
   name: "denext start: an open pool no longer holds the process past the drain deadline",
+  // Windows has no SIGTERM: Deno's `kill("SIGTERM")` there is `TerminateProcess`, a hard stop no
+  // handler sees, and a console Ctrl+C cannot be sent to another process. The drain this test
+  // times is only observable on POSIX (as in tests/integration/cli-ui.test.ts).
+  ignore: Deno.build.os === "windows",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async (t) => {

@@ -7,7 +7,7 @@
 // key it does not declare, or a result field it does not return fails here.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { EXPO_SDK_CAPABILITIES } from "../src/build/mobile-capabilities-expo.ts";
 import {
   caretAdmits,
@@ -16,9 +16,10 @@ import {
   PLUGIN_BASELINE_DIR,
   readVendoredIndex,
 } from "../scripts/parity/native/expo-plugins.ts";
+import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 const ROOT = new URL("../", import.meta.url);
-const CONFIG = new URL("deno.json", ROOT).pathname;
+const CONFIG = fromFileUrl(new URL("deno.json", ROOT));
 
 /** A copy of `source` (the shim at `shimPath`) with its relative imports made absolute. */
 function absolutized(source: string, shimPath: string): string {
@@ -41,7 +42,7 @@ async function typeCheck(files: Record<string, string>): Promise<{ ok: boolean; 
     }
     const res = await new Deno.Command(Deno.execPath(), {
       args: ["check", "--quiet", "--config", CONFIG, ...paths],
-      env: { NO_COLOR: "1" },
+      env: { NO_COLOR: "1", ...fileUrlCheckEnv() },
       stdout: "piped",
       stderr: "piped",
     }).output();

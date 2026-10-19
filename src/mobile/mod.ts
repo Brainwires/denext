@@ -58,7 +58,11 @@
  *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
  * - Files and media: {@linkcode readFile} / {@linkcode writeFile} / {@linkcode deleteFile} /
- *   {@linkcode listDir} / {@linkcode downloadToFile} (app storage natively, OPFS on the web),
+ *   {@linkcode listDir} (app storage natively, OPFS on the web); {@linkcode downloadToFile} /
+ *   {@linkcode uploadFile} with progress, in the OS's background transfer service in the shell
+ *   (`denext mobile add file-transfer`; {@linkcode pauseFileTransfer} /
+ *   {@linkcode resumeFileTransfer} / {@linkcode cancelFileTransfer} / {@linkcode fileTransfers} /
+ *   {@linkcode onFileTransfer}),
  *   {@linkcode pickImage} (camera or photo library), {@linkcode pickMedia} (several photos and
  *   videos from the library, or a recorded video) and {@linkcode pickDocument} (the system
  *   document picker; each a hidden file input on the web), and {@linkcode scanBarcode}
@@ -288,6 +292,7 @@ export {
   type AppFileDirectory,
   deleteFile,
   downloadToFile,
+  type DownloadToFileOptions,
   type FileDirectory,
   type FileEncoding,
   type FileEntry,
@@ -297,9 +302,28 @@ export {
   type PickedHandle,
   readFile,
   type ReadFileOptions,
+  uploadFile,
+  type UploadFileOptions,
   writeFile,
   type WriteFileOptions,
 } from "./filesystem.ts";
+export {
+  cancelFileTransfer,
+  FileTransferError,
+  type FileTransferErrorCode,
+  type FileTransferEvent,
+  type FileTransferInfo,
+  type FileTransferKind,
+  type FileTransferOptions,
+  type FileTransferProgress,
+  fileTransfers,
+  type FileTransferState,
+  forgetFileTransfer,
+  onFileTransfer,
+  pauseFileTransfer,
+  resumeFileTransfer,
+  type UploadFileResult,
+} from "./file-transfer.ts";
 export {
   type ImageSource,
   pickDocument,
@@ -341,6 +365,8 @@ export {
   type SqliteBackend,
   type SqliteBindValue,
   type SqliteDatabase,
+  SqliteEncryptionError,
+  type SqliteEncryptionErrorCode,
   type SqliteOptions,
   type SqliteParams,
   type SqliteRow,
@@ -551,7 +577,14 @@ export {
   useReducedMotion,
   useScreenReader,
 } from "./accessibility.ts";
-export { type KeyValueBackend, type KeyValueStore, openKeyValueStore } from "./kv-store.ts";
+export {
+  type KeyValueBackend,
+  type KeyValueStore,
+  KeyValueStoreError,
+  type KeyValueStoreErrorCode,
+  type KeyValueStoreOptions,
+  openKeyValueStore,
+} from "./kv-store.ts";
 export {
   nativeViewEmbedScroller,
   type NativeViewPlacement,

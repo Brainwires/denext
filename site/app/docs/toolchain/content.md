@@ -173,6 +173,22 @@ lists its version and whether it is cached. Offline (or with `--deny-net`) befor
 a command that needs it stops with an error naming that command. `DENEXT_GLEAM=<path>` runs another
 `gleam` instead, unverified; a `gleam` on `PATH` is never used unless you name it there.
 
+## fastlane
+
+`denext fastlane <args…>` runs a managed [fastlane](/docs/mobile-build#managed-fastlane): one
+pinned fastlane release on a pinned portable Ruby (Homebrew's, the build `brew` runs), installed on
+first use into `<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`. The Ruby tarball, from
+denext's mirror or else Homebrew's registry, is verified against its pinned SHA-256 before it is
+extracted, and the gems against the checksums in
+denext's pinned `Gemfile.lock`. The install runs under the same cache lock, in a temporary
+directory renamed into place. The gems build C extensions, so the first install needs a C
+compiler (the Command Line Tools on macOS, `cc` and `make` on Linux). macOS and Linux (arm64, x64)
+are supported, and Windows is not.
+
+`denext toolchain install --with fastlane` installs it ahead of time, and `denext toolchain status`
+lists it. `DENEXT_FASTLANE=<path>` runs another fastlane instead, unverified; a `fastlane` on `PATH`
+is never used unless you name it there.
+
 ## `denext task`, `deno task` and tests
 
 `denext task <name>` is Deno's `deno task`, run on the toolchain with every argument verbatim. Inside
@@ -257,7 +273,8 @@ Finding a project's verbs means importing its `denext.config.ts` (and running ev
 ```sh
 denext toolchain install       # download + verify now (fails when it can't)
 denext toolchain install --with gleam   # …and the pinned Gleam compiler
-denext toolchain status        # pinned versions (Deno, Gleam), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
+denext toolchain install --with fastlane   # …and the managed fastlane (portable Ruby + gems)
+denext toolchain status        # pinned versions (Deno, Gleam, fastlane), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
@@ -285,8 +302,12 @@ skipping V8's code cache, the HTTP connection-pool fix and the `rand` security u
 each release also ships its own `denort` per platform (the standalone runtime `deno compile`
 builds onto), pinned and verified beside the CLI, so a binary from `denext build --compile` (or
 the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` included.
-`2.9.7-denext.21` (the build denext pins today) adds Windows on Arm (`aarch64-pc-windows-msvc`)
-builds of the CLI and `denort`, and a compiled program keeps `--unstable-no-legacy-abort`. Each new Deno
+`2.9.7-denext.21` adds Windows on Arm (`aarch64-pc-windows-msvc`) builds of the CLI and `denort`,
+and a compiled program keeps `--unstable-no-legacy-abort`. `2.9.7-denext.22` (the build denext
+pins today) type-checks with the native TypeScript 7 compiler, shipped in the CLI zip and pinned
+like the binary, and runs npm packages more as Node.js does; that check doesn't resolve an absolute
+`file:` import yet, so such a project sets `DENEXT_NATIVE_CHECK=0`
+([known limitations](/docs/limitations)). Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 

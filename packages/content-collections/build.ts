@@ -10,6 +10,7 @@
 import { dirname, join, toFileUrl } from "@std/path";
 import { compileMdxSource } from "@denext/denext/plugin-kit";
 import type { ContentConfig, StandardIssue } from "./config.ts";
+import type { MarkdownOptions } from "./markdown.ts";
 import { generateContentTypes } from "./codegen.ts";
 
 /** Where a content build reads/writes. */
@@ -18,6 +19,11 @@ export interface ContentBuildContext {
   readonly projectRoot: string;
   /** Absolute `.denext` output dir (the store + generated types are written here). */
   readonly outDir: string;
+  /**
+   * How `renderContent` renders the `.md` entries' raw HTML (the plugin's `markdown` option),
+   * stored with each `.md` entry. Omitted: escaped.
+   */
+  readonly markdown?: MarkdownOptions;
 }
 
 /** A per-file validation failure. */
@@ -88,7 +94,14 @@ function issuePath(issue: StandardIssue): string {
  * component module precompiled to `.denext/content/<collection>/<id>.js` (whose `v` — a hash of
  * the source — cache-busts the module import when the entry changes in dev).
  */
-type StoreEntry = { id: string; data: unknown; body?: string; format?: "md" | "mdx"; v?: string };
+type StoreEntry = {
+  id: string;
+  data: unknown;
+  body?: string;
+  format?: "md" | "mdx";
+  v?: string;
+  markdown?: MarkdownOptions;
+};
 
 /** The entry's render format from its source extension (absent for data / other text). */
 function formatOf(filePath: string | undefined): "md" | "mdx" | undefined {
@@ -180,6 +193,29 @@ async function validateEntry(
   };
 }
 
+/**
+ * Finish a validated entry for the store: compile an `.mdx` body (its module version on `v`), or
+ * carry the `markdown` option on an `.md` one. Returns the diagnostic of a failed MDX compile.
+ */
+async function finishEntry(
+  collection: string,
+  built: StoreEntry,
+  filePath: string | undefined,
+  ctx: ContentBuildContext,
+): Promise<ContentDiagnostic | undefined> {
+  // Only a non-default setting is stored: an escaping store stays byte-identical.
+  if (built.format === "md" && ctx.markdown?.html === "sanitize") built.markdown = ctx.markdown;
+  if (built.format !== "mdx" || built.body === undefined) return undefined;
+  const compiled = await compileMdxEntry(
+    collection,
+    { id: built.id, body: built.body, filePath },
+    ctx,
+  );
+  if ("diagnostic" in compiled) return compiled.diagnostic;
+  built.v = compiled.v;
+  return undefined;
+}
+
 /** Load + validate one collection into its (sorted) store entries plus any diagnostics. */
 async function buildCollection(
   name: string,
@@ -214,19 +250,9 @@ async function buildCollection(
       continue;
     }
     const built = result.entry;
-    if (built.format === "mdx" && built.body !== undefined) {
-      const compiled = await compileMdxEntry(
-        name,
-        { id: built.id, body: built.body, filePath: entry.filePath },
-        ctx,
-      );
-      if ("diagnostic" in compiled) {
-        diagnostics.push(compiled.diagnostic);
-        continue;
-      }
-      built.v = compiled.v;
-    }
-    entries.push(built);
+    const finished = await finishEntry(name, built, entry.filePath, ctx);
+    if (finished) diagnostics.push(finished);
+    else entries.push(built);
   }
   entries.sort((a, b) => a.id.localeCompare(b.id));
   return { entries, diagnostics };

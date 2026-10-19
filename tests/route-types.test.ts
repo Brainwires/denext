@@ -3,6 +3,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { generateRouteTypes } from "../src/build/route-types.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiRoute, PageRoute, RouteManifest } from "../src/router/manifest.ts";
+import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 const pat = (rp: string) => (rp === "/" ? [] : parsePattern(rp.slice(1)));
 const page = (
@@ -63,6 +64,7 @@ Deno.test("route-types: registering routes narrows Href and rejects unknown path
       await Deno.writeTextFile(`${dir}/t.ts`, body);
       const { code } = await new Deno.Command(Deno.execPath(), {
         args: ["check", `${dir}/t.ts`],
+        env: fileUrlCheckEnv(),
         stderr: "null",
         stdout: "null",
       }).output();
@@ -114,6 +116,7 @@ Deno.test("route-types: the generated module compiles and its types are usable",
     );
     const { code, stderr } = await new Deno.Command(Deno.execPath(), {
       args: ["check", `${dir}/consumer.ts`],
+      env: fileUrlCheckEnv(),
       stderr: "piped",
       stdout: "null",
     }).output();

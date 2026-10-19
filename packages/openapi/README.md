@@ -29,7 +29,7 @@ and `denext build` writes `openapi.json` into the output directory.
 denext plugin add @denext/openapi
 ```
 
-Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.6.0"` to `deno.json`'s
+Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.7.0"` to `deno.json`'s
 `imports` and the plugin to `denext.config.ts` as above.
 
 ## What gets described
@@ -99,16 +99,27 @@ For an interactive "try it" console:
 
 ```ts
 openapi({ ui: "swagger" }); // Swagger UI, vendored, served from your origin
-openapi({ ui: "scalar" }); // Scalar API Reference, from cdn.jsdelivr.net
-openapi({ ui: "scalar", cdn: "/vendor/scalar.js" }); // self-hosted
+openapi({ ui: "scalar" }); // Scalar API Reference, vendored, served from your origin
+openapi({ ui: "scalar", cdn: DOCS_CDN.scalar }); // opt back into a CDN
 ```
 
 `swagger` serves Swagger UI (swagger-ui-dist 5.32.15, Apache-2.0 — `vendor/swagger-ui/`, with
 its license and notice) from `<docs>/swagger-ui/`: no CDN, no inline script, and each file is
 checked against the SHA-256 recorded in `swagger-ui.ts` before it is served. Every docs page
 answers with its own strict `content-security-policy` (`'self'` only for `builtin` and
-`swagger`). Scalar still loads from a CDN — its page's CSP names that host — unless you
-self-host the bundle and point `cdn` at it.
+`swagger`).
+
+`scalar` serves Scalar's API reference (@scalar/api-reference 1.72.4, MIT — `vendor/scalar/`,
+with its license and a notice) the same way: the standalone bundle is checked against the SHA-256
+recorded in `scalar-ui.ts` and served from `<docs>/scalar/standalone.<hash>.js` with
+`cache-control: public, max-age=31536000, immutable` (a re-vendor changes the URL). Its page's
+CSP names no other origin: `script-src 'self'` plus the SHA-256 hash of the page's one inline
+start-up script, which turns off every call Scalar makes to its own services (web fonts,
+telemetry, the agent chat, the hosted request proxy) so "try it" calls your API directly;
+`connect-src` adds only the document's absolute `servers`. Scalar styles its components inline,
+so `style-src` allows inline styles. The bundle adds about 4.4 MB to the package (1.3 MB
+gzipped). Re-vendor with `deno run -A scripts/vendor-scalar.ts <version>` from the denext
+repository.
 
 ## Authorization (the "Authorize" button)
 
@@ -258,7 +269,7 @@ const { document, warnings } = await buildOpenApi({
 | `docs`            | `/docs`           | Where the docs page is served; `false` disables it                        |
 | `expose`          | `"always"`        | `"always"` serves in every mode; `"dev"` serves only under `denext dev`   |
 | `ui`              | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
-| `cdn`             | per renderer      | Scalar script URL / a Swagger dist base URL instead of the vendored copy  |
+| `cdn`             | none (vendored)   | Scalar script URL / a Swagger dist base URL instead of the vendored copy  |
 | `info`            | dir name, `0.0.0` | `title`, `version`, `description`                                         |
 | `servers`         | —                 | `servers` entries                                                         |
 | `securitySchemes` | —                 | `Record<string, OpenApiSecurityScheme>` → `components.securitySchemes`    |
@@ -286,7 +297,8 @@ const { document, warnings } = await buildOpenApi({
   `pathVariants`, `API_ERROR_SCHEMA`), `@denext/openapi/command` (`createOpenapiCommand`,
   `formatWarning`), `@denext/openapi/types` (`emitTypes`); the root also exports
   `renderDocsHtml`, `renderSchema`, `docsCsp`, `DOCS_CSS`, `DOCS_CDN`, `SWAGGER_UI_ASSETS`,
-  `SWAGGER_UI_VERSION`, `readSwaggerAsset`.
+  `SWAGGER_UI_VERSION`, `readSwaggerAsset`, `SCALAR_VERSION`, `SCALAR_ASSET`,
+  `SCALAR_BUNDLE_NAME`, `SCALAR_BOOT`, `SCALAR_BOOT_HASH`, `readScalarBundle`.
 
 ## Security notes
 

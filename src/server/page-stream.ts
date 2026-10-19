@@ -5,6 +5,7 @@
 import type { PageContext, PageFlightShellResult } from "./render-page.ts";
 import { renderPageFlightShell, renderPageShell } from "./render-page.ts";
 import { beginSignalCollection } from "../runtime/signal-state.ts";
+import { InlineBoundarySignal } from "../jsx/stream-boundaries.ts";
 import { pageCacheTiming } from "./cache.ts";
 import {
   renderDocument,
@@ -83,7 +84,7 @@ async function signalPageResponse(
 }
 
 /** Stream an HTML route's shell + holes, or buffer it when the shell has no holes. */
-async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<Response> {
+async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<Response | null> {
   const { request, ctx } = pr.state;
   // The route hydrates as one client bundle: the signal state its shell and holes record
   // (`useApi({ suspense: true })` results, `useSignal` values) seeds that hydration.
@@ -150,7 +151,10 @@ function drainFlightTail(
  * branch) so a fully-static Flight route stays CDN-cacheable instead of being forced
  * no-store, and no useless swap runtime is emitted.
  */
-async function streamFlightRoute(pr: PageRequest, prepared: PageContext): Promise<Response> {
+async function streamFlightRoute(
+  pr: PageRequest,
+  prepared: PageContext,
+): Promise<Response | null> {
   const { request, ctx } = pr.state;
   const shellResult = await renderPageFlightShell(
     pr.page,
@@ -195,13 +199,22 @@ async function streamFlightRoute(pr: PageRequest, prepared: PageContext): Promis
  * (revalidate/force-static → non-null timing) is buffered and cached instead (a streamed
  * no-store response would never populate the cache). PPR (cacheComponents) already
  * handled a cacheable route before this; a plain cacheable route falls through to the
- * buffered render (null).
+ * buffered render (null). A shell whose inline Suspense boundary threw a control signal
+ * resolves null too: nothing was sent, so the page renders buffered, where the signal sets
+ * the status (a 404 page) or redirects, as in Next.
  */
-export function serveStreamed(pr: PageRequest, prepared: PageContext): Promise<Response> | null {
+export function serveStreamed(
+  pr: PageRequest,
+  prepared: PageContext,
+): Promise<Response | null> | null {
   const { config } = pr.state.app;
   const willIsrCache = pr.cacheable && pageCacheTiming(prepared.config) !== null;
   if (config.streaming === false || pr.soft || willIsrCache || pr.state.request.method !== "GET") {
     return null;
   }
-  return pr.useFlight ? streamFlightRoute(pr, prepared) : streamHtmlRoute(pr, prepared);
+  const route = pr.useFlight ? streamFlightRoute(pr, prepared) : streamHtmlRoute(pr, prepared);
+  return route.catch((err) => {
+    if (err instanceof InlineBoundarySignal) return null;
+    throw err;
+  });
 }

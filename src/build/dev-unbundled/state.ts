@@ -50,6 +50,13 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_mvu": "src/mvu.ts",
   // SPA mode's `client:*` deferred mounts: the island rewrite's import (spa-islands.ts).
   "denext_spa-island": "src/spa-island.ts",
+  // A Deno Desktop window's page APIs, imported from "use client" modules (`denext desktop dev`
+  // serves the page through this dev server): the bridge client, the window, the app chrome and
+  // the Clerk bridge. Missing, the page's module graph 404s and it never hydrates.
+  "denext_desktop_client": "src/desktop/client.ts",
+  "denext_desktop_window": "src/desktop/window.ts",
+  "denext_desktop_app": "src/desktop/app.ts",
+  "denext_desktop_clerk": "src/desktop/clerk.ts",
 };
 
 /** denext runtime specifiers → their prebuilt runtime file (compat client graph). */

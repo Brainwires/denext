@@ -66,6 +66,56 @@ export interface SqliteOptions {
    * the engine from elsewhere.
    */
   readonly web?: SqliteWasmUrls;
+  /**
+   * Open it encrypted (SQLCipher) with this passphrase, as `PRAGMA key = '…'` does: only in the
+   * shell, through `@capacitor-community/sqlite` with encryption on in `capacitor.config.ts`
+   * (`plugins.CapacitorSQLite.iosIsEncryption` / `androidIsEncryption: true`). The plugin keeps
+   * ONE passphrase for every database of the app (in the Keychain / Keystore): a different one
+   * is refused (`WRONG_KEY`). A plain database of that name is encrypted in place. The web
+   * engine and Deno Desktop have no SQLCipher: they refuse with `ENCRYPTION_UNAVAILABLE` before
+   * anything is opened. Keep the passphrase itself in `secureStore`. (`openSqlite` only;
+   * ignored by `deleteSqlite`.)
+   */
+  readonly encryptionKey?: string;
+}
+
+/** Why {@linkcode SqliteEncryptionError} was thrown. */
+export type SqliteEncryptionErrorCode =
+  | "ENCRYPTION_UNAVAILABLE"
+  | "WRONG_KEY"
+  | "KEY_REQUIRED"
+  | "UNSUPPORTED";
+
+/**
+ * A refused encryption request: `ENCRYPTION_UNAVAILABLE` (this backing has no SQLCipher, or the
+ * plugin has encryption off; nothing ran), `WRONG_KEY` (another passphrase than the one the
+ * plugin keeps), `KEY_REQUIRED` (the database is encrypted: run `PRAGMA key` first) or
+ * `UNSUPPORTED` (a key pragma other than `PRAGMA key = '…'` as the first statement, such as
+ * `PRAGMA rekey`).
+ */
+export class SqliteEncryptionError extends Error {
+  /** Why. */
+  readonly code: SqliteEncryptionErrorCode;
+
+  /**
+   * A refusal with its code.
+   *
+   * @param code Why.
+   * @param message What happened and what to do.
+   */
+  constructor(code: SqliteEncryptionErrorCode, message: string) {
+    super(message);
+    this.name = "SqliteEncryptionError";
+    this.code = code;
+  }
+}
+
+/** The encryption methods of `@capacitor-community/sqlite`. */
+interface CapacitorSqliteCipher {
+  isSecretStored(): Promise<{ result?: boolean }>;
+  setEncryptionSecret(options: { passphrase: string }): Promise<void>;
+  checkEncryptionSecret(options: { passphrase: string }): Promise<{ result?: boolean }>;
+  isDatabaseEncrypted(options: { database: string }): Promise<{ result?: boolean }>;
 }
 
 /** The slice of `@capacitor-community/sqlite`'s native plugin this module calls. */
@@ -103,6 +153,15 @@ interface CapacitorSqlitePlugin {
     result?: boolean;
   }>;
   deleteDatabase(options: { database: string; readonly: boolean }): Promise<void>;
+}
+
+/** The plugin's encryption methods, when it has them all. */
+function cipherOf(plugin: CapacitorSqlitePlugin): CapacitorSqliteCipher | undefined {
+  const p = plugin as Partial<CapacitorSqliteCipher>;
+  const all = [p.isSecretStored, p.setEncryptionSecret, p.checkEncryptionSecret];
+  return all.every((fn) => typeof fn === "function") && typeof p.isDatabaseEncrypted === "function"
+    ? plugin as unknown as CapacitorSqliteCipher
+    : undefined;
 }
 
 /** The native plugin, when the shell has it. */
@@ -313,46 +372,143 @@ function nativeName(name: string): string {
 /** Whether the plugin's leftover connections were reset for this page. */
 let nativeReset: Promise<unknown> | null = null;
 
+/** An error's message. */
+function messageOf(err: unknown): string {
+  return String((err as Error)?.message ?? err);
+}
+
+/** The plugin's "encryption is off" refusal, as an {@linkcode SqliteEncryptionError}. */
+function nativeFailure(name: string, err: unknown): unknown {
+  if (!/no encryption set in capacitor\.config|'no encryption'/i.test(messageOf(err))) return err;
+  return new SqliteEncryptionError(
+    "ENCRYPTION_UNAVAILABLE",
+    `openSqlite("${name}"): @capacitor-community/sqlite has encryption off; set ` +
+      "plugins.CapacitorSQLite.iosIsEncryption and androidIsEncryption to true in " +
+      "capacitor.config.ts, then rebuild the app.",
+  );
+}
+
+/** A plugin call that failed because the plugin dropped the connection (another database keyed). */
+function lostConnection(err: unknown): boolean {
+  return /no available connection|connection to .* not available/i.test(messageOf(err));
+}
+
 /**
  * Open `name` through the plugin. A page reload keeps the native side's connections, so the
  * first open of a page closes them all (the plugin's own consistency check with an empty
- * list), then opens fresh.
+ * list), then opens fresh. With `passphrase` it opens encrypted; without, an encrypted file is
+ * left locked until `PRAGMA key` ({@linkcode SqliteDriver.encrypt}).
  */
-async function openNative(plugin: CapacitorSqlitePlugin, name: string): Promise<SqliteDriver> {
+async function openNative(
+  plugin: CapacitorSqlitePlugin,
+  name: string,
+  passphrase?: string,
+): Promise<SqliteDriver> {
   const database = nativeName(name);
   const conn = { database, readonly: false };
   nativeReset ??= plugin.checkConnectionsConsistency({ dbNames: [], openModes: [] })
     .catch(() => {});
   await nativeReset;
-  try {
-    await plugin.createConnection({
-      database,
-      version: 1,
-      encrypted: false,
-      mode: "no-encryption",
-      readonly: false,
-    });
-  } catch (err) {
-    if (!/already exists/i.test(String((err as Error)?.message ?? err))) throw err;
-  }
-  if (!(await plugin.isDBOpen(conn)).result) await plugin.open(conn);
-  const run = async (statement: string, values: SqliteBindValue[]) => {
-    const res = await plugin.run({
-      ...conn,
-      statement,
-      values: nativeValues(values),
-      transaction: false,
-      returnMode: "no",
-    });
-    return {
-      changes: Math.max(0, res.changes?.changes ?? 0),
-      lastInsertRowId: Math.max(0, res.changes?.lastId ?? 0),
-    };
+  let encrypted = false;
+  /** Whether the file is encrypted and no key was given yet. */
+  let locked = false;
+  /** Whether the page closed it (a dropped connection is then not reopened). */
+  let closed = false;
+  const connect = async (mode: string) => {
+    try {
+      await plugin.createConnection({
+        database,
+        version: 1,
+        encrypted: mode !== "no-encryption",
+        mode,
+        readonly: false,
+      });
+    } catch (err) {
+      if (!/already exists/i.test(messageOf(err))) throw nativeFailure(name, err);
+    }
+    if (!(await plugin.isDBOpen(conn)).result) await plugin.open(conn);
   };
-  const query = async (statement: string, values: SqliteBindValue[]) =>
-    nativeRows((await plugin.query({ ...conn, statement, values: nativeValues(values) })).values);
+  const encrypt = async (key: string) => {
+    const cipher = cipherOf(plugin);
+    if (!cipher) {
+      throw new SqliteEncryptionError(
+        "ENCRYPTION_UNAVAILABLE",
+        `openSqlite("${name}"): this @capacitor-community/sqlite has no encryption methods.`,
+      );
+    }
+    try {
+      if (!(await cipher.isSecretStored()).result) {
+        await cipher.setEncryptionSecret({ passphrase: key });
+      } else if (!(await cipher.checkEncryptionSecret({ passphrase: key })).result) {
+        throw new SqliteEncryptionError(
+          "WRONG_KEY",
+          `openSqlite("${name}"): @capacitor-community/sqlite keeps one passphrase for every ` +
+            "database of the app, and this one is not it.",
+        );
+      }
+      // Setting or checking the secret closed every connection the plugin had: open anew,
+      // encrypting a plain file in place, else opening (or creating) an encrypted one.
+      const plain = await cipher.isDatabaseEncrypted({ database })
+        .then((r) => r.result !== true, () => false);
+      await plugin.closeConnection(conn).catch(() => {});
+      await connect(plain ? "encryption" : "secret");
+    } catch (err) {
+      throw err instanceof SqliteEncryptionError ? err : nativeFailure(name, err);
+    }
+    encrypted = true;
+    locked = false;
+  };
+  if (passphrase !== undefined) {
+    await encrypt(passphrase);
+  } else {
+    try {
+      await connect("no-encryption");
+    } catch (err) {
+      const cipher = cipherOf(plugin);
+      const isEncrypted = cipher &&
+        await cipher.isDatabaseEncrypted({ database }).then((r) => r.result === true, () => false);
+      if (!isEncrypted) throw err;
+      locked = true;
+    }
+  }
+  /** Run `call`, reconnecting once when the plugin dropped the connection. */
+  const live = async <T>(call: () => Promise<T>): Promise<T> => {
+    if (locked) {
+      throw new SqliteEncryptionError(
+        "KEY_REQUIRED",
+        `openSqlite("${name}"): the database is encrypted; run PRAGMA key = '…' first (or open ` +
+          "it with encryptionKey).",
+      );
+    }
+    try {
+      return await call();
+    } catch (err) {
+      if (closed || !lostConnection(err)) throw err;
+      await connect(encrypted ? "secret" : "no-encryption");
+      return await call();
+    }
+  };
+  const run = (statement: string, values: SqliteBindValue[]) =>
+    live(async () => {
+      const res = await plugin.run({
+        ...conn,
+        statement,
+        values: nativeValues(values),
+        transaction: false,
+        returnMode: "no",
+      });
+      return {
+        changes: Math.max(0, res.changes?.changes ?? 0),
+        lastInsertRowId: Math.max(0, res.changes?.lastId ?? 0),
+      };
+    });
+  const query = (statement: string, values: SqliteBindValue[]) =>
+    live(async () =>
+      nativeRows((await plugin.query({ ...conn, statement, values: nativeValues(values) })).values)
+    );
   return {
     backend: "native",
+    encrypt,
     async exec(sql) {
       for (const statement of splitSqlStatements(sql)) {
         if (returnsRows(statement)) await query(statement, []);
@@ -372,6 +528,7 @@ async function openNative(plugin: CapacitorSqlitePlugin, name: string): Promise<
       return (await plugin.isTransactionActive(conn)).result === true;
     },
     async close() {
+      closed = true;
       await plugin.close(conn).catch(() => {});
       await plugin.closeConnection(conn);
     },
@@ -407,22 +564,99 @@ function checkName(fn: string, name: string): void {
   }
 }
 
-/** The public face over a driver. */
+/** A SQLCipher key pragma's name: `key`, `rekey`, `hexkey`, `textrekey`, … */
+const KEY_PRAGMA = /^\s*pragma\s+(?:[\w"`[\]]+\s*\.\s*)?((?:hex|text)?(?:re)?key)\b/i;
+
+/** `'…'` / `"…"` as its text (doubled quotes undone), or undefined for anything else. */
+function quotedText(text: string): string | undefined {
+  const m = /^\s*(?:=\s*|\(\s*)('(?:[^']|'')*'|"(?:[^"]|"")*")\s*\)?\s*$/.exec(text);
+  if (!m) return undefined;
+  const q = m[1][0];
+  return m[1].slice(1, -1).replaceAll(q + q, q);
+}
+
+/**
+ * The passphrase of the `PRAGMA key = '…'` that `sql` starts with, and the statements after it;
+ * null when `sql` runs no key pragma. Any other key pragma (`rekey`, `hexkey`, one that is not
+ * first) is refused.
+ */
+function keyPragma(name: string, sql: string): { passphrase: string; rest: string[] } | null {
+  if (!/pragma/i.test(sql) || !/key/i.test(sql)) return null;
+  const statements = splitSqlStatements(sql);
+  const at = statements.findIndex((st) => KEY_PRAGMA.test(st));
+  if (at === -1) return null;
+  const m = KEY_PRAGMA.exec(statements[at])!;
+  const passphrase = quotedText(statements[at].slice(m.index + m[0].length));
+  if (at !== 0 || m[1].toLowerCase() !== "key" || passphrase === undefined) {
+    throw new SqliteEncryptionError(
+      "UNSUPPORTED",
+      `openSqlite("${name}"): only PRAGMA key = '<passphrase>', as the first statement, is ` +
+        `supported (not "${statements[at].trim()}"); nothing ran.`,
+    );
+  }
+  if (statements.slice(1).some((st) => KEY_PRAGMA.test(st))) {
+    throw new SqliteEncryptionError(
+      "UNSUPPORTED",
+      `openSqlite("${name}"): one key pragma per call; nothing ran.`,
+    );
+  }
+  return { passphrase, rest: statements.slice(1) };
+}
+
+/** Why `driver` cannot encrypt. */
+function noCipher(name: string, driver: SqliteDriver): SqliteEncryptionError {
+  const where = driver.backend === "native"
+    ? "the Deno Desktop runtime's SQLite"
+    : "the web build's SQLite (@sqlite.org/sqlite-wasm)";
+  return new SqliteEncryptionError(
+    "ENCRYPTION_UNAVAILABLE",
+    `openSqlite("${name}"): encryption needs SQLCipher, which ${where} does not have, so the ` +
+      "database would stay unencrypted; nothing ran. Encrypted databases run in the iOS / " +
+      "Android app (`denext mobile add sqlite`).",
+  );
+}
+
+/** The public face over a driver; a `PRAGMA key` keys the database through the driver. */
 function database(name: string, driver: SqliteDriver): SqliteDatabase {
+  /** Run `sql`'s key pragma; the statements after it, or null when it has none. */
+  const keyed = async (sql: string): Promise<string[] | null> => {
+    const pragma = keyPragma(name, sql);
+    if (!pragma) return null;
+    if (!driver.encrypt) throw noCipher(name, driver);
+    await driver.encrypt(pragma.passphrase);
+    return pragma.rest;
+  };
+  const query = async (sql: string, params: SqliteParams): Promise<SqliteRows> => {
+    const rest = await keyed(sql);
+    if (rest === null) return await driver.query(sql, params);
+    return rest.length === 0
+      ? { columns: [], rows: [] }
+      : await driver.query(rest.join(";"), params);
+  };
   return {
     name,
     backend: driver.backend,
-    exec: (sql) => driver.exec(sql),
-    run: (sql, params = []) => driver.run(sql, params),
+    async exec(sql) {
+      const rest = await keyed(sql);
+      if (rest === null) return await driver.exec(sql);
+      if (rest.length > 0) await driver.exec(rest.join(";\n"));
+    },
+    async run(sql, params = []) {
+      const rest = await keyed(sql);
+      if (rest === null) return await driver.run(sql, params);
+      return rest.length === 0
+        ? { changes: 0, lastInsertRowId: 0 }
+        : await driver.run(rest.join(";"), params);
+    },
     async query<T>(sql: string, params: SqliteParams = []): Promise<T[]> {
-      const { columns, rows } = await driver.query(sql, params);
+      const { columns, rows } = await query(sql, params);
       return rows.map((row) => {
         const obj: SqliteRow = {};
         columns.forEach((column, i) => (obj[column] = row[i]));
         return obj as T;
       });
     },
-    queryRows: (sql, params = []) => driver.query(sql, params),
+    queryRows: (sql, params = []) => query(sql, params),
     inTransaction: () => driver.inTransaction(),
     close: () => driver.close(),
   };
@@ -446,6 +680,12 @@ function database(name: string, driver: SqliteDriver): SqliteDatabase {
  * Integers beyond 2^53 lose precision (rows carry JS numbers). Natively, parameters bind
  * positionally, so a named record is reordered to SQLite's parameter numbering.
  *
+ * Encryption (SQLCipher): `encryptionKey`, or `PRAGMA key = '…'` as the first statement run on
+ * it (expo-sqlite's way), keys the database in the shell through `@capacitor-community/sqlite`
+ * (see {@linkcode SqliteOptions.encryptionKey}). The web engine and Deno Desktop have no
+ * SQLCipher, so both refuse with a {@linkcode SqliteEncryptionError} and run nothing, rather
+ * than leave the data unencrypted.
+ *
  * @example
  * ```ts
  * import { openSqlite } from "denext/mobile";
@@ -457,16 +697,24 @@ function database(name: string, driver: SqliteDriver): SqliteDatabase {
  * ```
  *
  * @param name The database name (a file name: no slashes).
- * @param options Where the web engine is, when the build does not provide it.
+ * @param options Where the web engine is, when the build does not provide it, and the
+ * `encryptionKey`.
  * @returns The open database.
  */
 export async function openSqlite(name: string, options?: SqliteOptions): Promise<SqliteDatabase> {
   checkName("openSqlite", name);
+  const key = options?.encryptionKey;
+  if (key !== undefined && (typeof key !== "string" || key === "")) {
+    throw new TypeError("openSqlite: encryptionKey must be a non-empty string");
+  }
+  const plugin = onDesktop() ? undefined : sqlitePlugin();
+  if (key !== undefined && !plugin) {
+    throw noCipher(name, { backend: onDesktop() ? "native" : "opfs" } as SqliteDriver);
+  }
   const desktop = onDesktop() && await viaDesktop("sqlite", (d) => d.openDesktopSqlite(name), true);
   if (desktop) return database(name, desktop.value);
-  const plugin = sqlitePlugin();
   const driver = plugin
-    ? await openNative(plugin, name)
+    ? await openNative(plugin, name, key)
     : await openWebSqlite(name, await webUrls(options));
   return database(name, driver);
 }

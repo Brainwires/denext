@@ -3,7 +3,83 @@
 All notable changes to this package are documented here. It follows its own semver, independent
 of `@denext/denext`.
 
-## [0.1.0] - Unreleased
+## [0.2.0] - 2026-10-19
+
+- Requires `@denext/denext` ^4.4.0 (the plugin-kit's `servesRoutes`, `addDeployRoutes` and
+  `addDeployAssets`).
+
+- **The deploy manifest lists the `/_tss/` client files** as asset groups (through the
+  plugin-kit's `addDeployAssets`), with the `Cache-Control` the plugin serves them with: the entry
+  (`client.js`, `no-cache`) and the content-hashed chunks and `assets/` (immutable), the files
+  the handler serves and nothing else, so a deploy adapter can put them on a CDN.
+- **`spa` renders every page as the shell in `denext dev`**, as Start's dev server does (it
+  defines `TSS_SHELL` from `spa.enabled` in serve mode): the server renders the root route alone
+  and the browser renders the route, so dev behaves as the static host the export is for.
+  `spa: { enabled: false }` turns it off; `denext build` and `start` are unchanged.
+- **The deploy manifest lists a Start app's routes** (`.denext/deploy-manifest.json`, through
+  the plugin-kit's `addDeployRoutes`), so a deploy adapter sees them: server routes and server
+  functions (at `/_serverFn/<id>`, the URL Start's RPC calls) are `"route-handler"`s, a server
+  route with the methods its `handlers` name; pages are classified as `denext export` classifies
+  them, `"dynamic"` when the route chain reaches a server function in the browser, is a server
+  route or has a dynamic segment, else `"static"`. Paths use the manifest's pattern syntax
+  (`/posts/$postId` → `/posts/[postId]`). The `static` deploy preset now refuses a Start app's
+  server routes and server-function pages, as `denext export` lists them.
+- **Start's `spa` and `sitemap` options in `denext export`.** `spa` adds Start's SPA shell, as
+  its post-build does: the mask path (default `/`) rendered with Start's `X-TSS_SHELL` header
+  (the root route alone) to `_shell.html`, the file a static host falls back to; it is never
+  refused, turns the prerender on and stays out of the sitemap. `sitemap` runs Start's own
+  `buildSitemap` (loaded from the app's `@tanstack/start-plugin-core`) over every page the
+  prerender met, writing `sitemap.xml` and `pages.json` at the export's root; a page's `sitemap`
+  entry is checked against Start's shape. `denext migrate` now carries both options.
+
+- **Windows: import protection and the export's server-route report see the app's own modules**
+  however their paths are spelled: the importer check, the trace's app-module test and the
+  refusal list's relative paths go through `relative()` rather than a string prefix with the
+  host separator, which called a module outside the app when its root and path differed in
+  separator or drive spelling (`\app` vs `C:\app`).
+
+- **The options are checked** when `tanstackStart()` is called, so a bad config fails as
+  `denext.config.ts` loads: each option against the shape Start's own plugin accepts (`router`,
+  `importProtection`, `prerender`, `pages`) or the plugin's own, with `denext.config`'s
+  field-scoped errors (``invalid tanstackStart() options: `importProtection.client.files[1]` must
+  be a string (a glob) or a RegExp``). A key that is not an option is refused with the closest
+  one suggested, so a typo in a security rule (`cleint`, `ignoreImporter`) no longer turns it off.
+- **Start's remaining `importProtection` keys**: `maxTraceDepth` (default 20) caps how far up a
+  violation's trace walks, as Start's does. **`behavior` applies as in Start**: a string for
+  every command, else (or unset) `"mock"` in `denext dev` and `"error"` in a build, as Start's
+  `behavior?.dev ?? 'mock'` / `behavior?.build ?? 'error'`. So a dev violation no longer fails by
+  default: a denied file is Start's self-denial module and a denied specifier Start's mock-edge
+  module (Start's own, loaded from the app's `@tanstack/start-plugin-core`), the violation a
+  warning in Start's words, once per process or, with `log: "always"`, on every build;
+  `mockAccess` sets the browser mock's runtime diagnostics (`console.error`, `console.warn` or
+  none). A `"mock"` asked of a build (`"mock"`, or `{ build: "mock" }`) now applies in `denext
+  build`, `start` and `export` with Start's build mocks (silent; a denied file a self-contained
+  mock module) instead of failing.
+- **Start's object form of `router`**: `entry` (under `srcDirectory`, the extension optional),
+  `basepath` (it must match the app's `basePath`; a different one is refused) and the route
+  generator's options (`routesDirectory` and `generatedRouteTree` relative to `srcDirectory`, the
+  rest over `tsr.config.json`, the app's generator plugins kept). `target` and
+  `addExtensions: false` are refused, with the reason. In dev the generator re-runs on an edit in
+  the routes directory the app configured.
+- **An exported page works with JavaScript off.** `denext export` wrote each page as the server
+  streamed it, so a route's content (behind a Suspense boundary, as TanStack Router renders its
+  matches) arrived as a `<template>` that a script moves into place: with JavaScript off the
+  page showed only the fallback. Each page is now written as its final HTML, every boundary's
+  content in its placeholder, which is the DOM the script would have produced, so it hydrates the
+  same way.
+- The tests assert on the emitted bundles: the server bundle has no `*.client.*` module body, and
+  the browser bundle neither a `*.server.*` module that only a server function's handler used nor
+  the handler's body. The example keeps its notes in `notes.server.ts`, and its static export is
+  checked with JavaScript off: the pages render from their HTML and a link loads the next
+  exported file.
+- **Vite's asset imports work in both bundles:** `import appCss from "~/styles/app.css?url"` (a
+  Tailwind input compiled with the project's Tailwind), images and fonts are emitted under
+  `/_tss/assets/` with content-hashed names, the same URL on the server and in the browser, and
+  `denext export` publishes them. Requires `@denext/denext`'s `compileCssAsset` (the release
+  after 4.3.1).
+- **`denext migrate` wires the plugin into a Start app** (see the denext CHANGELOG).
+
+## [0.1.0] - 2026-10-17
 
 Initial release: a TanStack Start app on denext. The plugin generates the route tree with
 TanStack's generator and answers every request with Start's own handler

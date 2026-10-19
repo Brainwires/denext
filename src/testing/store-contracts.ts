@@ -163,6 +163,17 @@ const CACHE_CASES: Record<string, (store: CacheStore) => Promise<void>> = {
     expectSame((await store.getData("d2"))?.value, 2, "untagged data");
     await store.deleteByTag("no-such-tag");
   },
+  "an entry keeps its tags in order and any one of them purges it": async (store) => {
+    // The tags a nested cached call propagates to an outer entry ride on the same array.
+    const tags = ["posts", "user-1", "feed"];
+    await store.setData("n", { value: 1, expiresAt: Infinity, tags });
+    await store.setPage("p", page("/n", tags));
+    expectSame((await store.getData("n"))?.tags, tags, "data tags");
+    expectSame((await store.getPage("p"))?.tags, tags, "page tags");
+    await store.deleteByTag("feed");
+    expectSame(await store.getData("n"), undefined, "data purged by its last tag");
+    expectSame(await store.getPage("p"), undefined, "page purged by its last tag");
+  },
   "a rewrite without a tag drops the old tag": async (store) => {
     await store.setData("d", { value: 1, expiresAt: Infinity, tags: ["a"] });
     await store.setData("d", { value: 2, expiresAt: Infinity, tags: ["b"] });
@@ -189,6 +200,28 @@ const CACHE_CASES: Record<string, (store: CacheStore) => Promise<void>> = {
     await store.expireByTag("a", { staleAt, expiresAt: Date.now() - 1 });
     expectSame(await store.getData("d"), undefined, "expired by a past hard expiry");
   },
+  "takeData hands a fresh entry out once, even to racing takers (when supported)": async (
+    store,
+  ) => {
+    if (!store.takeData) return;
+    const entry = { value: { hash: "h", n: 1 }, expiresAt: Date.now() + 60_000, tags: ["t"] };
+    await store.setData("once", entry);
+    expectSame(await store.takeData("once"), entry, "the first take");
+    expectSame(await store.takeData("once"), undefined, "a second take");
+    expectSame(await store.getData("once"), undefined, "taken is gone");
+    await store.setData("race", entry);
+    const takes = await Promise.all(Array.from({ length: 5 }, () => store.takeData!("race")));
+    expectSame(takes.filter(Boolean).length, 1, "racing takers: exactly one gets it");
+    await store.setData("old", { value: 1, expiresAt: Date.now() - 1, tags: [] });
+    expectSame(await store.takeData("old"), undefined, "an expired entry is a miss");
+    expectSame(await store.takeData("never"), undefined, "an unknown key");
+    // A taken entry's tags no longer reach it: re-set without the tag, the purge spares it.
+    await store.setData("tagged", entry);
+    await store.takeData("tagged");
+    await store.setData("tagged", { ...entry, tags: [] });
+    await store.deleteByTag("t");
+    expectSame((await store.getData("tagged"))?.value, entry.value, "re-set after a take");
+  },
   "sweepPages keeps one key prefix and counts the rest (when supported)": async (store) => {
     if (!store.sweepPages) return;
     await store.setPage("v2:new:/a", page("/a", ["t"]));
@@ -204,8 +237,8 @@ const CACHE_CASES: Record<string, (store: CacheStore) => Promise<void>> = {
 
 /**
  * The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,
- * `deleteByPath`, `deleteByTag` (and that a rewrite drops a tag), and `expireByTag` /
- * `sweepPages` when the store implements them.
+ * `deleteByPath`, `deleteByTag` (every tag of an entry purges it, and a rewrite drops a tag), and
+ * `expireByTag` / `sweepPages` / `takeData` (single-use, atomic) when the store implements them.
  *
  * @param t Where the cases run (a `Deno.TestContext`).
  * @param make A fresh, empty store per case.

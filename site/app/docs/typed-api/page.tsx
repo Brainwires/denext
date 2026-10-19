@@ -190,6 +190,23 @@ try {
           <code>apiBatch: {"{ mutations: false }"}</code> on the server) keeps them out.
         </li>
         <li>
+          <strong>Forwarded headers.</strong>{" "}
+          A call carrying a custom header goes as its own request, unless the app forwards that
+          header: list it on both sides —{" "}
+          <code>apiBatch: {'{ forwardHeaders: ["x-tenant"] }'}</code> in the config and{" "}
+          <code>createApiClient({'{ batch: { forwardHeaders: ["x-tenant"] } }'})</code>{" "}
+          (pass that client to <code>useApi</code> as{" "}
+          <code>client</code>) — and calls carrying it ride the batch, each item reaching its
+          handler with its own value. A value never crosses to another item, and the batch request's
+          own copy of the header reaches no item. The items keep the batch request's{" "}
+          <code>cookie</code> and <code>authorization</code>{" "}
+          (neither can be forwarded, nor can framing headers, <code>origin</code>
+          /<code>referer</code>/<code>host</code>, proxy-set headers such as{" "}
+          <code>x-forwarded-*</code>, or the app&apos;s <code>rateLimitHeader</code>
+          ), and a value with a line break, a control character or over 1024 characters fails the
+          whole batch.
+        </li>
+        <li>
           <strong>In-process on the server.</strong>{" "}
           A call made inside a request never goes over loopback HTTP: it runs through the pipeline
           under the caller's cookies, and with <code>next: {"{ tags }"}</code>{" "}
@@ -225,7 +242,8 @@ export function Post({ id }: { id: string }) {
 
 // Suspense mode: the server runs the call in-process inside <Suspense>, records the value under
 // the hook's useId(), and the client adopts it — hydration never refetches (Flight routes and
-// isomorphic ones, buffered or streamed, and an isomorphic soft navigation).
+// isomorphic ones, buffered or streamed, an isomorphic soft navigation, and a Cache Components
+// (PPR) shell, whose seed is cached with it).
 const { data } = useApi("/api/posts/[id]", "GET", { params: { id } }, { suspense: true });
 
 // Refetch when the server revalidates a tag (needs the Live transport):

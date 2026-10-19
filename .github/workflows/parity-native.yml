@@ -38,8 +38,12 @@ on:
       - "src/build/next-compat.ts"
       - "src/build/esbuild/**" # the vendored esbuild API every bundle above runs through
       - "src/build/reanimated*.ts"
+      - "src/build/require-context.ts" # Metro's require.context in React Native mode
+      - "src/build/spa-onload.ts"
+      - "src/build/swc-ast.ts"
       - "src/build/tailwind.ts"
       - "src/server/config.ts"
+      - "src/compat/next-auth/providers/list.ts" # the provider ids scripts/parity/spec.ts lists
       - "src/client/virtual/**"
       - "src/mobile/**"
       - "src/desktop/window.ts"
@@ -60,6 +64,13 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same branch supersedes its run. Never cancelled: a run on `main`, a pull
+# request's, and a dispatch (the event is part of the group, so a push never cancels a dispatched
+# run, such as the one a release is gated on).
+concurrency:
+  group: parity-native-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 jobs:
   native-parity:

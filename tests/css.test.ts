@@ -3,6 +3,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   buildAppCss,
   concatCss,
+  cssFailureReason,
   discoverCssFiles,
   extractRouteCss,
   generateCssAssets,
@@ -68,6 +69,101 @@ Deno.test("generateCssAssets scopes a .module.scss and exports the class map", a
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/** `generateCssAssets` over one sheet, with the warnings it printed. */
+async function walkOne(text: string): Promise<{ css: string; warnings: string[] }> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_tw4_" });
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    const file = join(dir, "app.css");
+    await Deno.writeTextFile(file, text);
+    const assets = await generateCssAssets([file], dir);
+    return { css: assets.css.get(file)!, warnings };
+  } finally {
+    console.warn = warn;
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("generateCssAssets takes Tailwind v4's import options without a warning", async () => {
+  for (
+    const head of [
+      `@import "tailwindcss" source('../');`,
+      `@import 'tailwindcss' source(none) prefix(tw);`,
+      `@import "tailwindcss" important;`,
+      `@import "tailwindcss/theme.css" theme(static);`,
+    ]
+  ) {
+    const { css, warnings } = await walkOne(`${head}\n.card { color: red }\n`);
+    assertEquals(warnings, [], head);
+    assertStringIncludes(css, ".card"); // the sheet's own rules still compile
+    assert(!css.includes("tailwindcss"), `${head} → ${css}`); // and no dead import ships
+  }
+});
+
+Deno.test("generateCssAssets drops a raw Tailwind import the Tailwind step compiles", async () => {
+  // A Tailwind input reaching the walk (a `?url` import, or a second sheet beside the `tailwind`
+  // config's input) is compiled by the Tailwind step; the walk's copy kept `@import
+  // "tailwindcss"`, which the browser would request and 404 on.
+  const { css, warnings } = await walkOne(
+    `@import "tailwindcss";\n@import 'tailwindcss/utilities.css' layer(utilities);\n` +
+      `@import "tailwindcss-animate";\n@import "./theme.css";\n.card { color: red }\n`,
+  );
+  assertEquals(warnings, []);
+  assert(!/@import\s+["']tailwindcss["'/]/.test(css), css);
+  assertStringIncludes(css, "tailwindcss-animate"); // another package's import is not Tailwind's
+  assertStringIncludes(css, "./theme.css"); // the sheet's own imports stay
+  assertStringIncludes(css, ".card");
+});
+
+Deno.test("generateCssAssets still warns about a stylesheet that does not parse", async () => {
+  for (const text of [`@import "tailwindcss" source('../');\n.a { color: }}}`, `@media (`]) {
+    const { css, warnings } = await walkOne(text);
+    assertEquals(warnings.length, 1, text);
+    assertStringIncludes(warnings[0], "could not compile stylesheet");
+    assertEquals(css, "");
+  }
+});
+
+Deno.test("generateCssAssets's warning names the reason and where it failed", async () => {
+  const { warnings } = await walkOne(`.a { color: red }}`);
+  assertStringIncludes(warnings[0], "(Unexpected end of input at ");
+  assert(/app\.css:\d+:\d+\)/.test(warnings[0]), warnings[0]);
+  assert(!warnings[0].includes("(undefined)"), warnings[0]);
+});
+
+Deno.test("cssFailureReason gives a real reason for any thrown value", () => {
+  const file = "/app/a.css";
+  assertEquals(
+    cssFailureReason("Unexpected token at /app/a.css:0:3", file),
+    "Unexpected token at /app/a.css:0:3",
+  );
+  assertEquals(cssFailureReason(new Error("bad"), file), "bad");
+  // An error object without a message but with a location (lightningcss's napi build, PostCSS).
+  assertEquals(
+    cssFailureReason({ loc: { line: 3, column: 7 }, data: { type: "x" } }, file),
+    'the compiler threw { loc: { line: 3, column: 7 }, data: { type: "x" } } with no message' +
+      " at /app/a.css:3:7",
+  );
+  assertEquals(
+    cssFailureReason({ message: "Unknown word", fileName: "/app/b.css", loc: { line: 2 } }, file),
+    "Unknown word at /app/b.css:2",
+  );
+  // An Error whose message is missing, and a bare `undefined`, never print "undefined" alone.
+  const odd = new Error("x");
+  Object.defineProperty(odd, "message", { value: undefined });
+  assertEquals(
+    cssFailureReason(odd, file),
+    "the compiler threw " + Deno.inspect(odd, { depth: 2, compact: true }) + " with no message",
+  );
+  assertEquals(cssFailureReason(undefined, file), "the compiler threw undefined with no message");
+  class SassException extends Error {
+    override name = "SassException";
+  }
+  assertEquals(cssFailureReason(new SassException(""), file), "SassException");
 });
 
 Deno.test("transformCss scopes module classes + resolves composes", async () => {

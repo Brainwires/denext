@@ -12,7 +12,7 @@ import { actionIdFor } from "../src/runtime/server-action.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageRoute } from "../src/router/manifest.ts";
 import { assertNoDevServerOnlyLeaks } from "../src/build/dev-unbundled/entries.ts";
-import type { UnbundledState } from "../src/build/dev-unbundled/state.ts";
+import { fsUrlPath, type UnbundledState } from "../src/build/dev-unbundled/state.ts";
 
 function route(filePath: string): PageRoute {
   return {
@@ -121,7 +121,7 @@ Deno.test('unbundled dev serves a "use server" module as its action stub', async
     const actions = join(dir, "app", "actions.ts");
     for (const importer of ["Alias.tsx", "Hash.tsx"]) {
       const code = (await dev._internal.transform(join(dir, "app", importer))).code;
-      assertStringIncludes(code, `/_denext/@fs${actions}`); // resolved to the module's URL…
+      assertStringIncludes(code, fsUrlPath(actions)); // resolved to the module's URL…
     }
     const served = (await dev._internal.transform(actions)).code; // …which serves the stub
     assertEquals(served.includes("DEV_SECRET_99"), false);

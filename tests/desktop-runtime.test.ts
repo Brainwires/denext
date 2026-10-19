@@ -11,6 +11,7 @@ import {
   stripDesktopCredentials,
 } from "../src/build/desktop.ts";
 import { isLoopbackHost } from "../src/utils/loopback.ts";
+import { symlinkDir } from "./helpers/temp.ts";
 
 Deno.test("isLoopbackHost: strict — a `127.`-prefix / `.localhost`-suffix DNS name is NOT loopback", () => {
   // Genuine loopback.
@@ -49,17 +50,20 @@ Deno.test("desktopDevProxyDecision: runtime loopback + packaged enforcement (the
     proxy: true,
     target: "http://127.0.0.1:3000",
     allowNonLoopback: false,
+    injectToken: true,
   });
   assertEquals(desktopDevProxyDecision("http://localhost:3000", false, DENO_CLI).proxy, true);
   // Non-loopback WITHOUT the --lan opt-in → REFUSED (serve static), even under the deno CLI.
   const refused = desktopDevProxyDecision("http://192.168.1.5:3000", false, DENO_CLI);
   assertEquals(refused.proxy, false);
   assert(refused.proxy === false && refused.refused);
-  // Non-loopback WITH --lan → proxy + allowNonLoopback.
+  // Non-loopback WITH --lan → proxy + allowNonLoopback; no session token on the URL → no
+  // desktop token for the page (see the --lan injection test below).
   assertEquals(desktopDevProxyDecision("http://192.168.1.5:3000", true, DENO_CLI), {
     proxy: true,
     target: "http://192.168.1.5:3000",
     allowNonLoopback: true,
+    injectToken: false,
   });
   // PACKAGED binary → the env is IGNORED even for a loopback target (the release-proxy hole).
   const packagedLoopback = desktopDevProxyDecision("http://127.0.0.1:3000", false, PACKAGED);
@@ -84,8 +88,120 @@ Deno.test("desktopDevProxyDecision: runtime loopback + packaged enforcement (the
     proxy: true,
     target: "http://127.0.0.2:3000",
     allowNonLoopback: false,
+    injectToken: true,
   });
   assertEquals(desktopDevProxyDecision("http://[::1]:3000", false, DENO_CLI).proxy, true);
+});
+
+Deno.test("desktopDevProxyDecision --lan: the desktop token rides a page from a token-gated dev server", () => {
+  // `desktop dev --lan` hands the window the dev URL with the server's per-run session token, so
+  // the page gets the per-launch desktop token and its bridge (`secureStore`, …) works.
+  const sessionToken = "ab".repeat(32);
+  const gated = `http://192.168.1.5:3000/?__denext_dev=${sessionToken}&__denext_platform=linux`;
+  assertEquals(desktopDevProxyDecision(gated, true, DENO_CLI), {
+    proxy: true,
+    target: gated,
+    allowNonLoopback: true,
+    injectToken: true,
+  });
+  // A LAN target without a (well-formed) session token is an ungated server: no desktop token.
+  for (
+    const url of [
+      "http://192.168.1.5:3000/",
+      "http://192.168.1.5:3000/?__denext_dev=",
+      "http://192.168.1.5:3000/?__denext_dev=not-a-token",
+      `http://192.168.1.5:3000/?other=${sessionToken}`,
+    ]
+  ) {
+    const d = desktopDevProxyDecision(url, true, DENO_CLI);
+    assert(d.proxy && !d.injectToken, url);
+  }
+  // The session token does not lift the --lan opt-in, nor the packaged-binary rule.
+  assertEquals(desktopDevProxyDecision(gated, false, DENO_CLI).proxy, false);
+  assertEquals(desktopDevProxyDecision(gated, true, PACKAGED).proxy, false);
+});
+
+Deno.test("desktop handler --lan: a token-gated dev page gets the desktop token; the token never goes upstream", async () => {
+  const dir = await exportDir();
+  try {
+    const token = "tok-lan-xyz";
+    const upstream: Request[] = [];
+    const devProxy = (req: Request) => {
+      upstream.push(req);
+      return new Response("<html><head></head><body>dev</body></html>", {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    };
+    const decision = desktopDevProxyDecision(
+      `http://192.168.1.5:3000/?__denext_dev=${"cd".repeat(32)}`,
+      true,
+      DENO_CLI,
+    );
+    assert(decision.proxy);
+    const handle = createDesktopHandler(
+      {},
+      dir,
+      undefined,
+      token,
+      undefined, // onBooted
+      devProxy,
+      decision.injectToken, // devInjectToken, as runDesktop computes it
+    );
+    const page = await handle(
+      new Request("http://127.0.0.1:8000/", {
+        headers: { accept: "text/html", "x-denext-desktop-token": token },
+      }),
+      new URL("http://127.0.0.1:8000/"),
+    );
+    assertStringIncludes(await page.text(), token);
+    // The desktop credential is stripped before the request reaches the LAN dev server.
+    assertEquals(upstream.length, 1);
+    assertEquals(upstream[0].headers.has("x-denext-desktop-token"), false);
+    // A subframe still gets no token.
+    const frame = await handle(
+      new Request("http://127.0.0.1:8000/", {
+        headers: { accept: "text/html", "sec-fetch-dest": "iframe" },
+      }),
+      new URL("http://127.0.0.1:8000/"),
+    );
+    assertEquals((await frame.text()).includes(token), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop handler dev proxy: the dev server's CSP header allows the injected desktop global", async () => {
+  const dir = await exportDir();
+  try {
+    const token = "tok-csp-xyz";
+    const policies = [
+      "default-src 'self'; script-src 'self'; connect-src 'self'",
+      "default-src 'self'; connect-src 'self'", // no script-src: default-src governs scripts
+    ];
+    for (const policy of policies) {
+      const devProxy = () =>
+        new Response("<html><head></head><body>dev</body></html>", {
+          headers: { "content-type": "text/html", "content-security-policy": policy },
+        });
+      const handle = createDesktopHandler({}, dir, undefined, token, undefined, devProxy, true);
+      const res = await handle(
+        new Request("http://127.0.0.1:8000/", { headers: { accept: "text/html" } }),
+        new URL("http://127.0.0.1:8000/"),
+      );
+      const html = await res.text();
+      const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+      assert(script?.includes(token), "the desktop global carries the token");
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(script));
+      const hash = `'sha256-${btoa(String.fromCharCode(...new Uint8Array(digest)))}'`;
+      const csp = res.headers.get("content-security-policy") ?? "";
+      const scriptSrc = /(?:^|;)\s*script-src([^;]*)/.exec(csp)?.[1] ?? "";
+      assertStringIncludes(scriptSrc, "'self'", policy);
+      assertStringIncludes(scriptSrc, hash, policy);
+      assertStringIncludes(csp, "connect-src 'self'", "the rest of the policy is kept");
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 async function exportDir(): Promise<string> {
@@ -153,7 +269,7 @@ Deno.test("desktop handler: a multi-page export's routes load their own page, no
       "<!doctype html><head></head><main>ABOUT</main>",
     );
     await Deno.writeTextFile(join(outside, "index.html"), "<main>OUTSIDE</main>");
-    await Deno.symlink(outside, join(dir, "leak"));
+    await symlinkDir(outside, join(dir, "leak"));
     const handle = createDesktopHandler({}, dir, undefined, "tok-pages");
     const get = (path: string, headers: Record<string, string>) =>
       handle(

@@ -5,9 +5,11 @@
 // It runs Lustre's JavaScript server-component `Runtime` directly. `lustre.start_server_component`
 // can't be used: in Lustre 5.7.1 it calls `new Runtime(init, update, view, config, flags)` against a
 // constructor declared `(_, init, update, view, config, flags)`, so every argument lands one slot
-// off and the first update throws. The runtime is subclassed so that a message that arrives after
-// the view stopped (a timer an effect armed, say) is dropped instead of throwing into the event
-// loop, and an error inside Lustre's `update` / `view` reaches the caller instead of the process.
+// off and the first update throws. A Lustre whose constructor drops the unused first parameter
+// (five declared, `(init, update, view, config, flags)`) is built without the placeholder. The
+// runtime is subclassed so that a message that arrives after the view stopped (a timer an effect
+// armed, say) is dropped instead of throwing into the event loop, and an error inside Lustre's
+// `update` / `view` reaches the caller instead of the process.
 
 import type { GleamResult, LustreApp } from "./kit.ts";
 import type { LustreViewIslandProps } from "./view-island.ts";
@@ -106,7 +108,10 @@ export function lustreServerKit(modules: LustreServerModules): LustreServerKit {
     render: (app, flags) => modules.to_string(app.view(app.init(flags)[0])),
     start(app, flags, onError) {
       const config = modules.configure_server_component(app.config);
-      const runtime = new GuardedRuntime(undefined, app.init, app.update, app.view, config, flags);
+      const args = [app.init, app.update, app.view, config, flags];
+      const runtime = modules.Runtime.length === args.length
+        ? new GuardedRuntime(...args)
+        : new GuardedRuntime(undefined, ...args);
       onErrors.set(runtime, onError);
       return runtime as unknown as LustreServerRuntime;
     },

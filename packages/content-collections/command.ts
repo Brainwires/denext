@@ -12,6 +12,7 @@
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
 import { join, resolve } from "@std/path";
 import { buildContent, type ContentBuildReport } from "./build.ts";
+import type { MarkdownOptions } from "./markdown.ts";
 
 /** How the command talks to the world — injectable so tests need no process. */
 export interface ContentCommandIo {
@@ -29,8 +30,22 @@ const defaultIo: ContentCommandIo = {
   exit: (c) => Deno.exit(c),
 };
 
-/** Build the `denext content` command spec. */
-export function createContentCommand(io: ContentCommandIo = defaultIo): CommandSpec {
+/** What the `denext content` command builds with (the plugin's own options). */
+export interface ContentCommandOptions {
+  /** The plugin's `markdown` option, stored with each `.md` entry (see `buildContent`). */
+  readonly markdown?: MarkdownOptions;
+}
+
+/**
+ * Build the `denext content` command spec.
+ *
+ * @param io Where output goes (the console by default).
+ * @param options The plugin options the rebuilt store carries.
+ */
+export function createContentCommand(
+  io: ContentCommandIo = defaultIo,
+  options: ContentCommandOptions = {},
+): CommandSpec {
   return {
     name: "content",
     summary: "Build, list or validate content collections",
@@ -54,7 +69,7 @@ export function createContentCommand(io: ContentCommandIo = defaultIo): CommandS
         buildDir: "exclusive",
       }),
     } as Partial<CommandSpec>),
-    run: (ctx) => runContent(ctx, io),
+    run: (ctx) => runContent(ctx, io, options),
   };
 }
 
@@ -72,11 +87,15 @@ function printReport(report: ContentBuildReport, io: ContentCommandIo): void {
   }
 }
 
-async function runContent(ctx: CommandContext, io: ContentCommandIo): Promise<void> {
+async function runContent(
+  ctx: CommandContext,
+  io: ContentCommandIo,
+  options: ContentCommandOptions,
+): Promise<void> {
   const projectRoot = resolve(ctx.global.cwd ?? ".");
   const outDir = join(projectRoot, ".denext");
   const action = ctx.positionals[0] ?? "build";
-  const report = await buildContent({ projectRoot, outDir });
+  const report = await buildContent({ projectRoot, outDir, markdown: options.markdown });
   if (!report.configured) {
     io.error("content: no content.config.ts found in this project");
     io.exit(1);

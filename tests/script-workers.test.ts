@@ -3,7 +3,7 @@
 // script, and publishing + serving the files (build, dev, prod, export).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { Script, scriptWorkerNonce, setScriptWorkers } from "../src/runtime/script.ts";
@@ -451,7 +451,7 @@ export default function About() {
 `,
     );
     await fakePartytown(dir, "@builder.io/partytown");
-    const cli = new URL("../cli.ts", import.meta.url).pathname;
+    const cli = fromFileUrl(new URL("../cli.ts", import.meta.url));
     const out = await new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", cli, "export", dir],
       cwd: dir,

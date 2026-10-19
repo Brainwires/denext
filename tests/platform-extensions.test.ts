@@ -168,7 +168,7 @@ Deno.test("probePlatformSource: each target picks its own file, then the plain o
         platformResolution(config, platform),
         probeSourceFile,
         SOURCE_EXTS,
-      )?.slice(dir.length + 1);
+      )?.slice(dir.length + 1).replaceAll("\\", "/");
     assertEquals(probe("B", "web"), "B.tsx");
     assertEquals(probe("B", "ios"), "B.ios.tsx");
     assertEquals(probe("B", "android"), "B.mobile.ts");
@@ -219,7 +219,10 @@ Deno.test("scanPlatformGroups → platformRedirects / platformGaps per target", 
   });
   try {
     const groups = await scanPlatformGroups(dir);
-    assertEquals(groups.map((g) => g.stem.slice(dir.length + 1)), ["src/Card", "src/Pad"]);
+    assertEquals(
+      groups.map((g) => g.stem.slice(dir.length + 1).replaceAll("\\", "/")),
+      ["src/Card", "src/Pad"],
+    );
     assertEquals(groups[0].plain, join(dir, "src/Card.tsx"));
     assertEquals(groups[1].plain, null);
     assertEquals(chooseVariant(groups[1], platformResolution({}, "web")!), null);
@@ -261,7 +264,7 @@ Deno.test("platform scan: skips dot-folders and build output at any depth", asyn
   });
   try {
     const files = (await Array.fromAsync(projectSourceFiles(dir))).map((f) =>
-      f.slice(dir.length + 1)
+      f.slice(dir.length + 1).replaceAll("\\", "/")
     );
     assertEquals(files.sort(), ["apps/web/src/j.ios.ts", "src/a.ios.ts", "src/a.ts"]);
   } finally {
@@ -296,7 +299,8 @@ Deno.test("platform scanner: one walk, kept until a platform file comes or goes"
     await scanner.redirects({}, "web");
     await Deno.writeTextFile(join(dir, "src/a.web.ts"), "");
     assertEquals(
-      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.includes("/a")),
+      // The module's own key, not any path with an `/a` in it (a runner's `D:/a/…` checkout).
+      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.endsWith("/a")),
       false,
       "the kept scan is used until invalidated",
     );

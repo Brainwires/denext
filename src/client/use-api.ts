@@ -11,8 +11,9 @@
 //   (the typed client's dispatcher) inside the nearest `<Suspense>`, and the fulfilled value is
 //   recorded under the hook's `useId()` into the `#__denext_state` island — on a Flight route
 //   and on an isomorphic one (the whole route hydrated as one client bundle) alike, buffered or
-//   streamed, and in an isomorphic soft navigation's payload; the client adopts it before its
-//   first render, so it hydrates with the data and never refetches.
+//   streamed, from a Cache Components (PPR) shell (cached with the shell; a dynamic hole's call
+//   recorded per request), and in an isomorphic soft navigation's payload; the client adopts it
+//   before its first render, so it hydrates with the data and never refetches.
 //
 // Where entries live is the security-relevant part: in the browser one module-level table,
 // ref-counted by mounted hooks (an entry is dropped when its last hook unmounts and it is not
@@ -24,6 +25,7 @@
 // no-op with a one-time dev warning — this module never imports the socket, so an app that
 // doesn't use Live bundles none of it.
 
+import { isPostpone } from "../runtime/postpone.ts";
 import { useEffect, useId, useSyncExternalStore } from "../runtime/hooks.ts";
 import { use } from "../runtime/suspense.ts";
 import { adoptedSignal, recordSignal } from "../runtime/signal-state.ts";
@@ -180,6 +182,17 @@ function startFetch(e: Entry, run: () => Promise<unknown>): Promise<unknown> {
       return value;
     },
     (err: unknown) => {
+      // A prerender postponed this call (its route read the visitor's request): not a result.
+      // Leave the entry unsettled so the per-request pass (the PPR hole's resume, in the same
+      // request) runs the call for real instead of replaying the postpone as an error.
+      if (isPostpone(err)) {
+        if (e.promise === p) {
+          e.status = "idle";
+          e.promise = null;
+          e.snapshot = null;
+        }
+        throw err;
+      }
       settle(() => {
         e.status = "rejected";
         e.error = isApiClientError(err) ? err : wrapUnknown(err);

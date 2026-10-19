@@ -338,7 +338,9 @@ import java.util.regex.Pattern;
  *       {@code instanceStartDate}, one occurrence becomes an exception
  *       ({@code Events.CONTENT_EXCEPTION_URI}) carrying the changes, and its new id is
  *       resolved; without, the event row itself changes. {@code futureEvents} with an
- *       occurrence is refused (splitting a series is not supported). Resolves {@code { id }}.
+ *       occurrence splits the series there ({@code EKSpan.futureEvents}): the series ends
+ *       before it and a new event carries the rest with the changes, whose id is resolved
+ *       (see {@code DenextCalendarRecurrence}). Resolves {@code { id }}.
  *   <li>{@code openEvent({ id, instanceStartDate? })} / {@code editEvent(...)}: the calendar
  *       app's event screen ({@code ACTION_VIEW} / {@code ACTION_EDIT}); Android does not
  *       report how it ended, so both resolve {@code { action: "done" }} once it opens.
@@ -760,10 +762,16 @@ public class DenextCalendarPlugin extends Plugin {
             long target = id;
             if (at != null) {
                 if (Boolean.TRUE.equals(call.getBoolean("futureEvents", false))) {
-                    call.reject(
-                        "Changing an occurrence and the ones after it is not supported on Android.",
-                        "ERR_UNAVAILABLE"
-                    );
+                    target = splitSeries(resolver, id, Math.round(at), values);
+                    if (target < 0) {
+                        call.reject("There is no event with that id.", "E_EVENT_NOT_FOUND");
+                        return;
+                    }
+                    JSArray alarms = call.getArray("alarms");
+                    if (alarms != null) writeAlarms(resolver, target, alarms);
+                    JSObject result = new JSObject();
+                    result.put("id", String.valueOf(target));
+                    call.resolve(result);
                     return;
                 }
                 values.put(Events.ORIGINAL_INSTANCE_TIME, Math.round(at));
@@ -790,6 +798,208 @@ public class DenextCalendarPlugin extends Plugin {
         } catch (Exception e) {
             call.reject("The event was not saved.", "E_EVENT_NOT_SAVED", e);
         }
+    }
+
+    /** The columns a split copies from the series to the event carrying its rest. */
+    private static final String[] SERIES_COLUMNS = {
+        Events.CALENDAR_ID,
+        Events.TITLE,
+        Events.DESCRIPTION,
+        Events.EVENT_LOCATION,
+        Events.EVENT_TIMEZONE,
+        Events.EVENT_END_TIMEZONE,
+        Events.ALL_DAY,
+        Events.AVAILABILITY,
+        Events.ACCESS_LEVEL,
+        Events.STATUS,
+        Events.ORGANIZER,
+        Events.EVENT_COLOR,
+        Events.GUESTS_CAN_MODIFY,
+        Events.GUESTS_CAN_INVITE_OTHERS,
+        Events.GUESTS_CAN_SEE_GUESTS,
+        Events.CUSTOM_APP_PACKAGE,
+        Events.CUSTOM_APP_URI
+    };
+
+    /** Copy the string / integer columns {@code columns} of row {@code c} into {@code into}. */
+    private static void copyColumns(Cursor c, String[] columns, ContentValues into) {
+        for (String column : columns) {
+            int i = c.getColumnIndex(column);
+            if (i < 0 || c.isNull(i)) continue;
+            if (c.getType(i) == Cursor.FIELD_TYPE_INTEGER) into.put(column, c.getLong(i));
+            else into.put(column, c.getString(i));
+        }
+    }
+
+    /**
+     * The start of the last occurrence of series {@code id} from {@code at} on (its own instances
+     * and the original times of its exceptions), or null when the provider lists none.
+     */
+    private static Long lastOccurrence(ContentResolver resolver, long id, long at) {
+        Long last = null;
+        Uri.Builder range = Instances.CONTENT_URI.buildUpon();
+        ContentUris.appendId(range, at);
+        ContentUris.appendId(range, at + 200L * 366 * DenextCalendarRecurrence.DAY);
+        try (
+            Cursor c = resolver.query(
+                range.build(),
+                new String[] { Instances.BEGIN },
+                Instances.EVENT_ID + " = ?",
+                new String[] { String.valueOf(id) },
+                null
+            )
+        ) {
+            while (c != null && c.moveToNext()) last = last == null ? c.getLong(0) : Math.max(last, c.getLong(0));
+        }
+        try (
+            Cursor c = resolver.query(
+                Events.CONTENT_URI,
+                new String[] { Events.ORIGINAL_INSTANCE_TIME },
+                Events.ORIGINAL_ID + " = ?",
+                new String[] { String.valueOf(id) },
+                null
+            )
+        ) {
+            while (c != null && c.moveToNext()) {
+                if (!c.isNull(0)) last = last == null ? c.getLong(0) : Math.max(last, c.getLong(0));
+            }
+        }
+        return last;
+    }
+
+    /** Copy event {@code from}'s attendees and reminders to event {@code to}. */
+    private static void copyGuestsAndReminders(ContentResolver resolver, long from, long to) {
+        String[] attendeeColumns = {
+            Attendees.ATTENDEE_NAME,
+            Attendees.ATTENDEE_EMAIL,
+            Attendees.ATTENDEE_RELATIONSHIP,
+            Attendees.ATTENDEE_TYPE,
+            Attendees.ATTENDEE_STATUS
+        };
+        try (Cursor c = Attendees.query(resolver, from, attendeeColumns)) {
+            while (c != null && c.moveToNext()) {
+                ContentValues attendee = new ContentValues();
+                copyColumns(c, attendeeColumns, attendee);
+                attendee.put(Attendees.EVENT_ID, to);
+                resolver.insert(Attendees.CONTENT_URI, attendee);
+            }
+        }
+        String[] reminderColumns = { Reminders.MINUTES, Reminders.METHOD };
+        try (Cursor c = Reminders.query(resolver, from, reminderColumns)) {
+            while (c != null && c.moveToNext()) {
+                ContentValues reminder = new ContentValues();
+                copyColumns(c, reminderColumns, reminder);
+                reminder.put(Reminders.EVENT_ID, to);
+                resolver.insert(Reminders.CONTENT_URI, reminder);
+            }
+        }
+    }
+
+    /**
+     * {@code futureEvents} for the occurrence of series {@code id} that starts at {@code at}
+     * (EventKit's {@code EKSpan.futureEvents}): the series ends before it, and a new event
+     * carries the rest of it with {@code values} applied; its id is returned. From the first
+     * occurrence (or for an event that does not repeat) the event itself changes. Changed
+     * occurrences from {@code at} on are removed (the new values replace them) and cancelled
+     * ones stay cancelled (an {@code EXDATE} of the new event). Returns -1 when there is no
+     * such event.
+     */
+    private static long splitSeries(ContentResolver resolver, long id, long at, ContentValues values) {
+        String[] columns = new String[SERIES_COLUMNS.length + 6];
+        System.arraycopy(SERIES_COLUMNS, 0, columns, 0, SERIES_COLUMNS.length);
+        String[] own = { Events.DTSTART, Events.DTEND, Events.DURATION, Events.RRULE, Events.EXDATE, Events.RDATE };
+        System.arraycopy(own, 0, columns, SERIES_COLUMNS.length, own.length);
+        ContentValues next = new ContentValues();
+        long dtStart;
+        String rule;
+        String exDates;
+        String rDates;
+        String duration;
+        Long dtEnd;
+        try (Cursor c = resolver.query(ContentUris.withAppendedId(Events.CONTENT_URI, id), columns, null, null, null)) {
+            if (c == null || !c.moveToFirst()) return -1;
+            copyColumns(c, SERIES_COLUMNS, next);
+            dtStart = c.getLong(c.getColumnIndexOrThrow(Events.DTSTART));
+            dtEnd = longOrNull(c, Events.DTEND);
+            duration = stringOrNull(c, Events.DURATION);
+            rule = stringOrNull(c, Events.RRULE);
+            exDates = stringOrNull(c, Events.EXDATE);
+            rDates = stringOrNull(c, Events.RDATE);
+        }
+        if ((rule == null && rDates == null) || at <= dtStart) {
+            Long end = values.getAsLong(Events.DTEND);
+            if (rule != null && end != null) {
+                // A repeating event keeps a duration, not an end.
+                Long begin = values.getAsLong(Events.DTSTART);
+                boolean wholeDay = Long.valueOf(1).equals(values.containsKey(Events.ALL_DAY) ? values.getAsLong(Events.ALL_DAY) : next.getAsLong(Events.ALL_DAY));
+                values.remove(Events.DTEND);
+                values.put(Events.DURATION, DenextCalendarRecurrence.duration(end - (begin != null ? begin : dtStart), wholeDay));
+            }
+            if (values.size() > 0) resolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, id), values, null, null);
+            return id;
+        }
+        Long allDayValue = next.getAsLong(Events.ALL_DAY);
+        boolean allDay = values.containsKey(Events.ALL_DAY)
+            ? Long.valueOf(1).equals(values.getAsLong(Events.ALL_DAY))
+            : allDayValue != null && allDayValue == 1;
+        String zoneId = next.getAsString(Events.EVENT_TIMEZONE);
+        TimeZone zone = TimeZone.getTimeZone(zoneId == null ? "UTC" : zoneId);
+        long length = duration != null ? durationMs(duration) : (dtEnd != null ? dtEnd - dtStart : 0);
+        Long newStart = values.getAsLong(Events.DTSTART);
+        long start = newStart != null ? newStart : at;
+        Long newEnd = values.getAsLong(Events.DTEND);
+        if (newEnd != null) length = newEnd - start;
+        long delta = start - at;
+        Long last = rule != null && DenextCalendarRecurrence.part(rule, "COUNT") != null ? lastOccurrence(resolver, id, at) : null;
+
+        // The occurrences from \`at\` on that were changed or cancelled.
+        java.util.List<Long> cancelled = new java.util.ArrayList<>();
+        java.util.List<Long> exceptions = new java.util.ArrayList<>();
+        try (
+            Cursor c = resolver.query(
+                Events.CONTENT_URI,
+                new String[] { Events._ID, Events.ORIGINAL_INSTANCE_TIME, Events.STATUS },
+                Events.ORIGINAL_ID + " = ? AND " + Events.ORIGINAL_INSTANCE_TIME + " >= ?",
+                new String[] { String.valueOf(id), String.valueOf(at) },
+                null
+            )
+        ) {
+            while (c != null && c.moveToNext()) {
+                exceptions.add(c.getLong(0));
+                Long status = longOrNull(c, Events.STATUS);
+                if (status != null && status == Events.STATUS_CANCELED) cancelled.add(c.getLong(1) + delta);
+            }
+        }
+
+        // The rest of the series, with the changes.
+        next.putAll(values);
+        next.remove(Events.DTEND);
+        next.remove(Events.ORIGINAL_INSTANCE_TIME);
+        next.put(Events.DTSTART, start);
+        next.put(Events.DURATION, DenextCalendarRecurrence.duration(length, allDay));
+        if (next.getAsString(Events.EVENT_TIMEZONE) == null) next.put(Events.EVENT_TIMEZONE, zone.getID());
+        String[] ex = DenextCalendarRecurrence.splitDates(exDates, at, delta, allDay, zone);
+        String[] r = DenextCalendarRecurrence.splitDates(rDates, at, delta, allDay, zone);
+        if (rule != null) next.put(Events.RRULE, DenextCalendarRecurrence.ruleFrom(rule, last, delta, allDay, zone));
+        String nextExDates = DenextCalendarRecurrence.appendDates(ex[1], cancelled, allDay);
+        if (nextExDates != null) next.put(Events.EXDATE, nextExDates);
+        if (r[1] != null) next.put(Events.RDATE, r[1]);
+        if (rule == null && r[1] == null) next.remove(Events.RDATE);
+        Uri made = resolver.insert(Events.CONTENT_URI, next);
+        if (made == null) throw new IllegalStateException("The rest of the series was not saved.");
+        long created = ContentUris.parseId(made);
+
+        // The series ends before the occurrence.
+        ContentValues before = new ContentValues();
+        if (rule != null) before.put(Events.RRULE, DenextCalendarRecurrence.ruleBefore(rule, at, allDay));
+        before.put(Events.EXDATE, ex[0]);
+        before.put(Events.RDATE, r[0]);
+        resolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, id), before, null, null);
+        for (Long exception : exceptions) {
+            resolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, exception), null, null);
+        }
+        copyGuestsAndReminders(resolver, id, created);
+        return created;
     }
 
     /** Replace the alarms of event {@code eventId} with {@code alarms} (minutes from the start). */
@@ -837,6 +1047,173 @@ public class DenextCalendarPlugin extends Plugin {
     @PluginMethod
     public void editEvent(PluginCall call) {
         show(call, Intent.ACTION_EDIT);
+    }
+}
+`,
+  "DenextCalendarRecurrence.java":
+    `// Generated by \`denext mobile add calendar\` (denext calendar: expo-calendar). Safe to commit;
+// re-run it after upgrading denext (then ship a new binary). See https://denext.dev/docs/mobile.
+
+package dev.denext.calendar;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.TimeZone;
+
+/**
+ * The recurrence arithmetic behind {@code DenextCalendarPlugin.updateEvent} with
+ * {@code futureEvents}: splitting a repeating event at one occurrence, the way EventKit's
+ * {@code EKSpan.futureEvents} does. Plain Java (no Android types), so it is unit-tested on a JDK.
+ *
+ * <p>The series before the occurrence keeps its row, its rule ending just before the occurrence
+ * ({@code UNTIL}, in place of {@code COUNT} or an {@code UNTIL} after it); a new event carries the
+ * rest of the series from the occurrence on. A {@code COUNT} rule's remainder ends at the
+ * series' last occurrence ({@code UNTIL}), which the caller reads from the provider's instances.
+ * {@code EXDATE} / {@code RDATE} values are divided at the occurrence, the later ones shifted by
+ * the start's change.
+ */
+public final class DenextCalendarRecurrence {
+
+    /** One day, in ms. */
+    public static final long DAY = 86_400_000L;
+
+    private DenextCalendarRecurrence() {}
+
+    private static SimpleDateFormat format(String pattern, TimeZone zone) {
+        SimpleDateFormat f = new SimpleDateFormat(pattern, Locale.US);
+        f.setTimeZone(zone);
+        f.setLenient(false);
+        return f;
+    }
+
+    /**
+     * An RFC 5545 date-time in UTC ({@code 20261007T120000Z}), or a date ({@code 20261007}) for an
+     * all-day event (whose times are UTC midnights on Android).
+     */
+    public static String formatDate(long ms, boolean allDay) {
+        TimeZone utc = TimeZone.getTimeZone("UTC");
+        return allDay ? format("yyyyMMdd", utc).format(ms) : format("yyyyMMdd'T'HHmmss'Z'", utc).format(ms);
+    }
+
+    /**
+     * An RFC 5545 date or date-time in ms: {@code …Z} is UTC, a floating date-time is in
+     * {@code zone}, a date is UTC midnight. Null when unreadable.
+     */
+    public static Long parseDate(String value, TimeZone zone) {
+        String v = value == null ? "" : value.trim();
+        try {
+            if (v.matches("[0-9]{8}T[0-9]{6}Z")) {
+                return format("yyyyMMdd'T'HHmmss'Z'", TimeZone.getTimeZone("UTC")).parse(v).getTime();
+            }
+            if (v.matches("[0-9]{8}T[0-9]{6}")) return format("yyyyMMdd'T'HHmmss", zone).parse(v).getTime();
+            if (v.matches("[0-9]{8}")) return format("yyyyMMdd", TimeZone.getTimeZone("UTC")).parse(v).getTime();
+        } catch (ParseException e) {
+            return null;
+        }
+        return null;
+    }
+
+    /** The value of {@code name} in {@code rule} ({@code FREQ=DAILY;COUNT=5}), or null. */
+    public static String part(String rule, String name) {
+        if (rule == null) return null;
+        for (String piece : rule.split(";")) {
+            int eq = piece.indexOf('=');
+            if (eq > 0 && piece.substring(0, eq).trim().equalsIgnoreCase(name)) return piece.substring(eq + 1).trim();
+        }
+        return null;
+    }
+
+    /** {@code rule} without its {@code COUNT} and {@code UNTIL} parts. */
+    private static String unbounded(String rule) {
+        StringBuilder out = new StringBuilder();
+        for (String piece : rule.split(";")) {
+            String name = piece.contains("=") ? piece.substring(0, piece.indexOf('=')).trim() : piece.trim();
+            if (piece.trim().isEmpty() || name.equalsIgnoreCase("COUNT") || name.equalsIgnoreCase("UNTIL")) continue;
+            if (out.length() > 0) out.append(';');
+            out.append(piece.trim());
+        }
+        return out.toString();
+    }
+
+    /**
+     * The rule of the series before the occurrence at {@code at}: its last occurrence ends before
+     * {@code at} (a second before it; for an all-day event, the day before).
+     */
+    public static String ruleBefore(String rule, long at, boolean allDay) {
+        String until = formatDate(allDay ? at - DAY : at - 1000, allDay);
+        return unbounded(rule) + ";UNTIL=" + until;
+    }
+
+    /**
+     * The rule of the series from the occurrence on. {@code lastStart} is the start of the
+     * original series' last occurrence (null for an unbounded rule, or when unknown: an
+     * {@code UNTIL} rule then keeps its bound, shifted); {@code delta} is how far the occurrence's
+     * start moved. A rule without {@code COUNT} or {@code UNTIL} stays unbounded.
+     */
+    public static String ruleFrom(String rule, Long lastStart, long delta, boolean allDay, TimeZone zone) {
+        String count = part(rule, "COUNT");
+        String until = part(rule, "UNTIL");
+        if (count == null && until == null) return unbounded(rule);
+        Long end = lastStart;
+        if (end == null && until != null) end = parseDate(until, zone);
+        if (end == null) return rule;
+        return unbounded(rule) + ";UNTIL=" + formatDate(end + delta, allDay);
+    }
+
+    /**
+     * An {@code EXDATE} / {@code RDATE} column divided at {@code at}: {@code [before, from]},
+     * either null when empty. Lines may carry a {@code TZID=…;} prefix and hold comma-separated
+     * values; the earlier values are kept as written, the later ones shifted by {@code delta}
+     * and written in UTC (a date for an all-day event).
+     */
+    public static String[] splitDates(String column, long at, long delta, boolean allDay, TimeZone zone) {
+        if (column == null || column.trim().isEmpty()) return new String[] { null, null };
+        List<String> beforeLines = new ArrayList<>();
+        List<String> from = new ArrayList<>();
+        for (String line : column.split("\\n")) {
+            if (line.trim().isEmpty()) continue;
+            String prefix = "";
+            String values = line.trim();
+            TimeZone lineZone = zone;
+            int semi = values.lastIndexOf(';');
+            if (semi >= 0) {
+                prefix = values.substring(0, semi + 1);
+                values = values.substring(semi + 1);
+                String tzid = part(prefix, "TZID");
+                if (tzid != null) lineZone = TimeZone.getTimeZone(tzid);
+            }
+            List<String> before = new ArrayList<>();
+            for (String value : values.split(",")) {
+                if (value.trim().isEmpty()) continue;
+                Long ms = parseDate(value, lineZone);
+                if (ms == null || ms < at) before.add(value.trim());
+                else from.add(formatDate(ms + delta, allDay));
+            }
+            if (!before.isEmpty()) beforeLines.add(prefix + String.join(",", before));
+        }
+        return new String[] {
+            beforeLines.isEmpty() ? null : String.join("\\n", beforeLines),
+            from.isEmpty() ? null : String.join(",", from)
+        };
+    }
+
+    /** {@code dates} (a column or null) with {@code more} appended, as a column; null when empty. */
+    public static String appendDates(String dates, List<Long> more, boolean allDay) {
+        StringBuilder out = new StringBuilder(dates == null ? "" : dates);
+        for (Long ms : more) {
+            if (out.length() > 0) out.append(',');
+            out.append(formatDate(ms, allDay));
+        }
+        return out.length() == 0 ? null : out.toString();
+    }
+
+    /** A duration for a repeating event's {@code DURATION} column: {@code P<n>D} all day, else {@code P<n>S}. */
+    public static String duration(long ms, boolean allDay) {
+        if (allDay) return "P" + Math.max(1, (ms + DAY - 1) / DAY) + "D";
+        return "P" + Math.max(0, ms / 1000) + "S";
     }
 }
 `,

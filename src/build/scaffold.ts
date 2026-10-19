@@ -9,6 +9,7 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { mfs } from "./migrate-io.ts";
 import { DESKTOP_RUNTIME_CONFIG_FILE, desktopRuntimeConfigText } from "./desktop-app-config.ts";
 import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
+import { addFastlaneToProject } from "./mobile-fastlane.ts";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
@@ -19,10 +20,17 @@ import {
   mcpTaskCommand,
   writeMcpClientConfigs,
 } from "./mcp-template.ts";
+import {
+  LUSTRE_CONFIG_IMPORT,
+  LUSTRE_CONFIG_LINES,
+  LUSTRE_GITIGNORE,
+  LUSTRE_IMPORTS,
+  lustreTemplateFiles,
+} from "./scaffold-lustre.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
 /** Named starter templates `denext create --template <name>` can choose. */
-export const SCAFFOLD_TEMPLATES = ["default", "minimal"] as const;
+export const SCAFFOLD_TEMPLATES = ["default", "minimal", "lustre"] as const;
 export type ScaffoldTemplate = (typeof SCAFFOLD_TEMPLATES)[number];
 
 export interface ScaffoldOptions {
@@ -30,8 +38,9 @@ export interface ScaffoldOptions {
   dir: string;
   /**
    * Starter template: `"default"` (a Server Component page rendering a `"use client"`
-   * counter island — the SSR + hydration round-trip) or `"minimal"` (a bare page).
-   * Defaults to `"default"`.
+   * counter island — the SSR + hydration round-trip), `"minimal"` (a bare page) or `"lustre"`
+   * (a Gleam project with one Lustre counter used as an island, a custom element and a server
+   * component, compiled by the `gleam()` plugin). Defaults to `"default"`.
    */
   template?: ScaffoldTemplate;
   /**
@@ -58,6 +67,12 @@ export interface ScaffoldOptions {
    * a `package.json` for Capacitor's CLI, and `export`/`mobile:*` tasks.
    */
   capacitor?: boolean;
+  /**
+   * Add fastlane lanes over `denext mobile build` (what `denext mobile add fastlane` writes:
+   * `fastlane/Appfile`, `Fastfile`, `Matchfile`, `.gitignore` and a `Gemfile`), run with
+   * `denext fastlane`. Implies {@linkcode capacitor}.
+   */
+  fastlane?: boolean;
   /**
    * Add React + Next import-map aliases (`react`, `react-dom`, `next/*`) so code
    * and libraries that import from `"react"`/`"next"` resolve to denext.
@@ -107,11 +122,7 @@ function readme(opts: ScaffoldOptions, appBase: string): string {
         "`error.tsx`, `middleware.ts`). They are Server Components: they can be `async`, read " +
         "the database directly, and ship no JavaScript.",
     ),
-    opts.template === "minimal" ? "" : item(
-      `\`${appBase}/counter.tsx\` — a \`"use client"\` island: the one file that ships to the ` +
-        "browser. Hooks and event handlers live in files like this one; the page passes it " +
-        "serialisable props (and Server Actions).",
-    ),
+    templateReadmeItem(opts, appBase),
     item(
       "`denext.config.ts` — redirects, rewrites, headers, images, i18n, CSP, `cacheComponents`.",
     ),
@@ -155,6 +166,33 @@ ${item("Guide + API: https://denext.dev/docs")}${
       "`denext doctor` checks the toolchain; `denext generate page|component|route|test` scaffolds.",
     )
   }`;
+}
+
+/** The README's entry for the template's own files: the island, the Lustre project, or none. */
+function templateReadmeItem(opts: ScaffoldOptions, appBase: string): string {
+  if (opts.template === "lustre") return lustreReadmeItem(appBase);
+  if (opts.template === "minimal") return "";
+  return wrapProse(
+    `\`${appBase}/counter.tsx\` — a \`"use client"\` island: the one file that ships to the ` +
+      "browser. Hooks and event handlers live in files like this one; the page passes it " +
+      "serialisable props (and Server Actions).",
+    "- ",
+    "  ",
+  );
+}
+
+/** The README's entry for the `lustre` template's Gleam project and counters. */
+function lustreReadmeItem(appBase: string): string {
+  return wrapProse(
+    "`gleam/src/counter.gleam` — a Lustre counter in Gleam, rendered three ways by " +
+      `\`${appBase}/page.tsx\`: an island (\`counter-island.tsx\`), a custom element ` +
+      "(`counter-element.tsx`) and a server component over Live (`counter-view.ts`). The " +
+      "`gleam()` plugin compiles it with denext's pinned Gleam (downloaded on first use) and " +
+      "Lustre comes from Hex, so the first `dev` / `build` needs the network. See " +
+      "https://denext.dev/docs/gleam.",
+    "- ",
+    "  ",
+  );
 }
 
 /** The README task rows `--fallow` adds. */
@@ -254,6 +292,8 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     "denext/deploy": `${dep}/deploy`,
     // `denext generate test` writes tests against @std/assert.
     "@std/assert": "jsr:@std/assert@^1",
+    // The `lustre` template: the Lustre helpers and the Gleam build's import prefix.
+    ...(opts.template === "lustre" ? { "denext/gleam": `${dep}/gleam`, ...LUSTRE_IMPORTS } : {}),
     // Native-target deps as bare, versioned specifiers (the lint plugin forbids
     // inline `jsr:`/`npm:` in source).
     ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
@@ -621,8 +661,10 @@ function denextConfig(opts: ScaffoldOptions): string {
       `  },`,
     );
   }
+  if (opts.template === "lustre") lines.push(...LUSTRE_CONFIG_LINES);
+  const lustreImport = opts.template === "lustre" ? `${LUSTRE_CONFIG_IMPORT}\n` : "";
   return `import type { DenextConfig } from "denext/server";
-
+${lustreImport}
 export default {
 ${lines.join("\n")}
 } satisfies DenextConfig;
@@ -643,12 +685,16 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     { path: ".gitignore", content: scaffoldGitignore(opts, appBase) },
     { path: "README.md", content: readme(opts, appBase) },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
-    {
+  ];
+  if (opts.template === "lustre") {
+    files.push(...lustreTemplateFiles(appBase, opts.tailwind === true));
+  } else {
+    files.push({
       path: `${appBase}/page.tsx`,
       content: opts.template === "minimal" ? minimalPage(opts) : page(opts),
-    },
-  ];
-  if (opts.template !== "minimal") {
+    });
+  }
+  if (opts.template === undefined || opts.template === "default") {
     files.push({ path: `${appBase}/counter.tsx`, content: counter(opts) });
   }
   if (opts.tailwind) {
@@ -658,7 +704,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   }
   // `desktop.capabilities` and the rest of the desktop settings live in `./denext.config.ts`, so
   // a desktop scaffold always needs the config file even without tailwind/compiler.
-  if (opts.tailwind || opts.compiler || opts.desktop) {
+  if (opts.tailwind || opts.compiler || opts.desktop || opts.template === "lustre") {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
   if (opts.desktop) files.push(...desktopScaffoldFiles());
@@ -678,12 +724,14 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
 
 /** The scaffold's `.gitignore`: generated / build outputs to keep out of version control. */
 function scaffoldGitignore(opts: ScaffoldOptions, appBase: string): string {
-  // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
-  const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
+  // `.denext/` (build output), `out/` (`denext export`), `.deno/` (the native TypeScript 7
+  // check's and the tsgo language server's project cache), env files with secrets.
+  const ignore = [".denext/", "out/", ".deno/", ".env*.local", "*.local", "patches/.work/"];
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
   if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
+  if (opts.template === "lustre") ignore.push(...LUSTRE_GITIGNORE);
   return ignore.join("\n") + "\n";
 }
 
@@ -715,8 +763,9 @@ function desktopScaffoldFiles(): ScaffoldFile[] {
  * @returns The relative paths written.
  */
 export async function scaffoldProject(
-  opts: ScaffoldOptions,
+  options: ScaffoldOptions,
 ): Promise<string[]> {
+  const opts = options.fastlane ? { ...options, capacitor: true } : options;
   const files = scaffoldFiles(opts);
   await refuseToClobber(files, opts);
   for (const f of files) {
@@ -730,6 +779,10 @@ export async function scaffoldProject(
     await ensureVscodeDeno(opts.dir, vscode);
     // `/`-separated like every other scaffolded path, on Windows too.
     written.push(...vscode.map((p) => relative(opts.dir, p).split(SEPARATOR).join("/")));
+  }
+  if (opts.fastlane) {
+    // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
+    written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
   }
   if (opts.mcp) {
     // Merged like the .vscode files: `init` may meet a client config that already lists servers.
@@ -959,7 +1012,9 @@ const {
   desktopRuntimeDenoFlags,
   desktopRuntimeEnv,
   desktopWithAppVersion,
+  macosCodesignArgs,
   macosSigningEntitlements,
+  notarytoolSubmitArgs,
   parseDesktopPackageArgs,
   syncDesktopAppConfig,
   V8_ENTITLEMENTS,
@@ -1103,9 +1158,7 @@ async function sign(
   provisioningProfile?: string,
   profileIdentifier?: string,
 ): Promise<void> {
-  const id = identity ?? "-";
-  const ts = identity ? "--timestamp" : "--timestamp=none";
-  const hardened = identity ? ["--options", "runtime"] : [];
+  // macosCodesignArgs: a secure timestamp + the Hardened Runtime with an identity; ad-hoc without.
   const mainExe = await mainExecutable(app);
   const bundleId = await infoPlistString(app, "CFBundleIdentifier");
   // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
@@ -1149,31 +1202,25 @@ async function sign(
       // the file. A helper app's executable signs its bundle, whose entitlements must survive.
       const besideMain = file.startsWith(macosDir) &&
         !file.slice(macosDir.length).includes("/");
-      const ident = besideMain ? ["--identifier", bundleId] : [];
-      await run([
-        "codesign",
-        "--force",
-        ts,
-        ...hardened,
-        ...await entitlementArgs(cefHelperEntitlements(file), file),
-        ...ident,
-        "-s",
-        id,
-        file,
-      ]);
+      await run(macosCodesignArgs(file, {
+        identity,
+        entitlementArgs: await entitlementArgs(
+          cefHelperEntitlements(file),
+          file,
+        ),
+        identifier: besideMain ? bundleId : undefined,
+      }));
     }
     // Explicit entitlements replace the ad-hoc pass's; either way, with an identity, the main
     // executable (V8) gets the JIT keys they do not set.
-    await run([
-      "codesign",
-      "--force",
-      ts,
-      ...hardened,
-      ...await entitlementArgs(V8_ENTITLEMENTS, app, entitlements),
-      "-s",
-      id,
-      app,
-    ]);
+    await run(macosCodesignArgs(app, {
+      identity,
+      entitlementArgs: await entitlementArgs(
+        V8_ENTITLEMENTS,
+        app,
+        entitlements,
+      ),
+    }));
   } finally {
     for (const file of written) await Deno.remove(file).catch(() => {});
   }
@@ -1185,15 +1232,9 @@ async function notarize(app: string, profile: string): Promise<void> {
   const zip = \`\${app}.zip\`;
   try {
     await run(["ditto", "-c", "-k", "--keepParent", app, zip]);
-    await run([
-      "xcrun",
-      "notarytool",
-      "submit",
-      zip,
-      "--keychain-profile",
-      profile,
-      "--wait",
-    ]);
+    await run(
+      notarytoolSubmitArgs(zip, { kind: "keychain-profile", profile }),
+    );
     await run(["xcrun", "stapler", "staple", app]);
   } finally {
     // Remove the submission zip even if notarytool/staple failed.
@@ -1254,15 +1295,12 @@ async function makePkg(app: string, s: Signing): Promise<string> {
     pkg,
   ]);
   if (s.installerIdentity && s.notaryProfile) {
-    await run([
-      "xcrun",
-      "notarytool",
-      "submit",
-      pkg,
-      "--keychain-profile",
-      s.notaryProfile,
-      "--wait",
-    ]);
+    await run(
+      notarytoolSubmitArgs(pkg, {
+        kind: "keychain-profile",
+        profile: s.notaryProfile,
+      }),
+    );
     await run(["xcrun", "stapler", "staple", pkg]);
   } else if (!s.installerIdentity) {
     console.warn(

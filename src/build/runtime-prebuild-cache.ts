@@ -63,6 +63,9 @@ async function stampOf(path: string): Promise<string> {
   }
 }
 
+const WINDOWS_DRIVE = /^[a-z]:[\\/]/i;
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
 /**
  * The local files among an esbuild metafile's inputs, absolute. Inputs are paths relative to
  * the build's working directory (or `file:` URLs); one with another scheme (`https:` JSR
@@ -72,7 +75,8 @@ function localInputs(inputs: Iterable<string>, cwd: string): string[] {
   const out: string[] = [];
   for (const input of inputs) {
     if (input.startsWith("file://")) out.push(fromFileUrl(input));
-    else if (!/^[a-z][a-z0-9+.-]*:/i.test(input)) out.push(resolve(cwd, input));
+    // A drive letter (`C:\x.ts`, a Windows path) is no scheme: that file is stamped too.
+    else if (WINDOWS_DRIVE.test(input) || !URL_SCHEME.test(input)) out.push(resolve(cwd, input));
   }
   return out;
 }

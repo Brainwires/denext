@@ -8,7 +8,7 @@
 // `listen` / `listenToPosition` subscribers.
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
-import { dirname, join } from "@std/path";
+import { dirname, fromFileUrl, join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { act, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -33,7 +33,7 @@ import { denextListSurfaces, listGaps } from "../scripts/parity/native/lists.ts"
 import { fireEventOn } from "../src/testing/dom.ts";
 import { all, measureAll, scrollerOf, scrollTo, withRO } from "./helpers/virtual-list.ts";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
 // ── API: the DOM build's props, ref methods and exports vs the pinned @legendapp/list ──────
 

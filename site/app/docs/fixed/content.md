@@ -40,38 +40,39 @@ Add `--json` for a machine-readable report. See
 
 ## Index
 
-| Problem                                                                                                                                                         | Stack                                         | Kind       |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---------- |
-| [One codebase for web, iOS, Android and desktop](#one-codebase-for-web-ios-android-and-desktop)                                                                 | Next.js / Vite + React Native + Electron      | capability |
-| [A Vite React SPA as a desktop app, without Electron](#a-vite-react-spa-as-a-desktop-app-without-electron)                                                      | Vite + React                                  | capability |
-| [Desktop apps without full system privileges](#desktop-apps-without-full-system-privileges)                                                                     | Electron                                      | capability |
-| [iOS momentum scrolling stops when a virtual list corrects its scroll position](#ios-momentum-scrolling-stops-when-a-virtual-list-corrects-its-scroll-position) | React virtual lists on iOS WebKit             | fix        |
-| [Middleware bypass through x-middleware-subrequest (CVE-2025-29927)](#middleware-bypass-through-x-middleware-subrequest-cve-2025-29927)                         | Next.js (self-hosted, middleware)             | fix        |
-| [Cache poisoning of rendered pages (CVE-2024-46982, CVE-2025-49826)](#cache-poisoning-of-rendered-pages-cve-2024-46982-cve-2025-49826)                          | Next.js                                       | fix        |
-| [Image optimizer abuse (CVE-2024-47831, CVE-2025-55173, CVE-2025-57752)](#image-optimizer-abuse-cve-2024-47831-cve-2025-55173-cve-2025-57752)                   | Next.js image optimization                    | fix        |
-| [Server Components payload deserialization (CVE-2025-55182, CVE-2025-55184)](#server-components-payload-deserialization-cve-2025-55182-cve-2025-55184)          | React Server Components in Next.js App Router | fix        |
-| [Server-only code bundled for the browser](#server-only-code-bundled-for-the-browser)                                                                           | Next.js App Router                            | fix        |
-| [Event handlers passed from a Server Component](#event-handlers-passed-from-a-server-component)                                                                 | Next.js App Router                            | difference |
-| [A page that uses hooks without "use client"](#a-page-that-uses-hooks-without-use-client)                                                                       | Next.js App Router                            | trade-off  |
-| [A strict Content Security Policy without nonces or dynamic rendering](#a-strict-content-security-policy-without-nonces-or-dynamic-rendering)                   | Next.js App Router                            | difference |
-| ["process is not defined" in the browser](#process-is-not-defined-in-the-browser)                                                                               | React apps bundling npm libraries             | fix        |
-| ["Invalid hook call" from two copies of React](#invalid-hook-call-from-two-copies-of-react)                                                                     | React apps with linked or nested dependencies | fix        |
-| [Child components re-render when their props did not change](#child-components-re-render-when-their-props-did-not-change)                                       | React                                         | difference |
-| [Error boundaries do not catch errors thrown in event handlers](#error-boundaries-do-not-catch-errors-thrown-in-event-handlers)                                 | React                                         | difference |
-| [Icon and utility barrels pulling whole libraries into the bundle](#icon-and-utility-barrels-pulling-whole-libraries-into-the-bundle)                           | React apps on Vite or other bundlers          | capability |
-| [End-to-end typed API calls without tRPC](#end-to-end-typed-api-calls-without-trpc)                                                                             | Next.js route handlers                        | capability |
-| [Live updates and subscriptions without a separate WebSocket server](#live-updates-and-subscriptions-without-a-separate-websocket-server)                       | Next.js route handlers on serverless hosts    | capability |
-| [Scheduled jobs without a platform cron service](#scheduled-jobs-without-a-platform-cron-service)                                                               | Next.js                                       | capability |
-| [A self-hosted data cache that survives restarts](#a-self-hosted-data-cache-that-survives-restarts)                                                             | Next.js self-hosted                           | difference |
-| [Rate limits bypassed with a forged X-Forwarded-For](#rate-limits-bypassed-with-a-forged-x-forwarded-for)                                                       | any server reading x-forwarded-for            | capability |
-| [Inverted FlatList on the web scrolls the wrong way](#inverted-flatlist-on-the-web-scrolls-the-wrong-way)                                                       | react-native-web FlatList                     | fix        |
-| [Reanimated on the web without the Babel plugin](#reanimated-on-the-web-without-the-babel-plugin)                                                               | react-native-reanimated on the web            | fix        |
-| [Over-the-air UI updates without a hosted update service](#over-the-air-ui-updates-without-a-hosted-update-service)                                             | Expo / React Native apps                      | capability |
-| [Will my existing app run?](#will-my-existing-app-run)                                                                                                          | Next.js App Router, Remix                     | capability |
-| [Pages Router apps](#pages-router-apps)                                                                                                                         | Next.js Pages Router                          | capability |
-| [next.config wrappers and MDX plugins carried over](#nextconfig-wrappers-and-mdx-plugins-carried-over)                                                          | Next.js with @next/mdx or config plugins      | capability |
-| [tsconfig path aliases (@/*) in monorepos](#tsconfig-path-aliases--in-monorepos)                                                                                | TypeScript apps                               | capability |
-| [React Compiler memoization kept when moving a Vite app](#react-compiler-memoization-kept-when-moving-a-vite-app)                                               | Vite + React with babel-plugin-react-compiler | capability |
+| Problem                                                                                                                                                         | Stack                                           | Kind       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------- |
+| [One codebase for web, iOS, Android and desktop](#one-codebase-for-web-ios-android-and-desktop)                                                                 | Next.js / Vite + React Native + Electron        | capability |
+| [A Vite React SPA as a desktop app, without Electron](#a-vite-react-spa-as-a-desktop-app-without-electron)                                                      | Vite + React                                    | capability |
+| [Desktop apps without full system privileges](#desktop-apps-without-full-system-privileges)                                                                     | Electron                                        | capability |
+| [iOS momentum scrolling stops when a virtual list corrects its scroll position](#ios-momentum-scrolling-stops-when-a-virtual-list-corrects-its-scroll-position) | React virtual lists on iOS WebKit               | fix        |
+| [Middleware bypass through x-middleware-subrequest (CVE-2025-29927)](#middleware-bypass-through-x-middleware-subrequest-cve-2025-29927)                         | Next.js (self-hosted, middleware)               | fix        |
+| [Cache poisoning of rendered pages (CVE-2024-46982, CVE-2025-49826)](#cache-poisoning-of-rendered-pages-cve-2024-46982-cve-2025-49826)                          | Next.js                                         | fix        |
+| [Image optimizer abuse (CVE-2024-47831, CVE-2025-55173, CVE-2025-57752)](#image-optimizer-abuse-cve-2024-47831-cve-2025-55173-cve-2025-57752)                   | Next.js image optimization                      | fix        |
+| [Server Components payload deserialization (CVE-2025-55182, CVE-2025-55184)](#server-components-payload-deserialization-cve-2025-55182-cve-2025-55184)          | React Server Components in Next.js App Router   | fix        |
+| [Server-only code bundled for the browser](#server-only-code-bundled-for-the-browser)                                                                           | Next.js App Router                              | fix        |
+| [Event handlers passed from a Server Component](#event-handlers-passed-from-a-server-component)                                                                 | Next.js App Router                              | difference |
+| [A page that uses hooks without "use client"](#a-page-that-uses-hooks-without-use-client)                                                                       | Next.js App Router                              | trade-off  |
+| [A strict Content Security Policy without nonces or dynamic rendering](#a-strict-content-security-policy-without-nonces-or-dynamic-rendering)                   | Next.js App Router                              | difference |
+| ["process is not defined" in the browser](#process-is-not-defined-in-the-browser)                                                                               | React apps bundling npm libraries               | fix        |
+| ["Invalid hook call" from two copies of React](#invalid-hook-call-from-two-copies-of-react)                                                                     | React apps with linked or nested dependencies   | fix        |
+| [Child components re-render when their props did not change](#child-components-re-render-when-their-props-did-not-change)                                       | React                                           | difference |
+| [Error boundaries do not catch errors thrown in event handlers](#error-boundaries-do-not-catch-errors-thrown-in-event-handlers)                                 | React                                           | difference |
+| [Icon and utility barrels pulling whole libraries into the bundle](#icon-and-utility-barrels-pulling-whole-libraries-into-the-bundle)                           | React apps on Vite or other bundlers            | capability |
+| [End-to-end typed API calls without tRPC](#end-to-end-typed-api-calls-without-trpc)                                                                             | Next.js route handlers                          | capability |
+| [Live updates and subscriptions without a separate WebSocket server](#live-updates-and-subscriptions-without-a-separate-websocket-server)                       | Next.js route handlers on serverless hosts      | capability |
+| [Scheduled jobs without a platform cron service](#scheduled-jobs-without-a-platform-cron-service)                                                               | Next.js                                         | capability |
+| [A self-hosted data cache that survives restarts](#a-self-hosted-data-cache-that-survives-restarts)                                                             | Next.js self-hosted                             | difference |
+| [Rate limits bypassed with a forged X-Forwarded-For](#rate-limits-bypassed-with-a-forged-x-forwarded-for)                                                       | any server reading x-forwarded-for              | capability |
+| [Inverted FlatList on the web scrolls the wrong way](#inverted-flatlist-on-the-web-scrolls-the-wrong-way)                                                       | react-native-web FlatList                       | fix        |
+| [Reanimated on the web without the Babel plugin](#reanimated-on-the-web-without-the-babel-plugin)                                                               | react-native-reanimated on the web              | fix        |
+| [Over-the-air UI updates without a hosted update service](#over-the-air-ui-updates-without-a-hosted-update-service)                                             | Expo / React Native apps                        | capability |
+| [Will my existing app run?](#will-my-existing-app-run)                                                                                                          | Next.js App Router, Remix                       | capability |
+| [Pages Router apps](#pages-router-apps)                                                                                                                         | Next.js Pages Router                            | capability |
+| [next.config wrappers and MDX plugins carried over](#nextconfig-wrappers-and-mdx-plugins-carried-over)                                                          | Next.js with @next/mdx or config plugins        | capability |
+| [tsconfig path aliases (@/*) in monorepos](#tsconfig-path-aliases--in-monorepos)                                                                                | TypeScript apps                                 | capability |
+| [React Compiler memoization kept when moving a Vite app](#react-compiler-memoization-kept-when-moving-a-vite-app)                                               | Vite + React with babel-plugin-react-compiler   | capability |
+| [A Fresh app moved without rewriting its routes and islands](#a-fresh-app-moved-without-rewriting-its-routes-and-islands)                                       | Fresh 2 (Vite or Fresh's builder) and Fresh 1.x | capability |
 
 ## Write once, ship everywhere
 
@@ -576,7 +577,7 @@ More: [/docs/mobile](/docs/mobile).
 
 **Why it happens.** Framework migrations usually start with rewriting imports, config and routes.
 
-**What denext does.** `denext migrate` writes config only (a `deno.json` alias map and a `denext.config.ts`), so the app's own source is unchanged for Next.js. Two public apps are migrated, built and rendered by a nightly test: Vercel's App Router playground and the Epic Stack (Remix). `denext migrate --check` reports what would change for your app first.
+**What denext does.** `denext migrate` writes config only (a `deno.json` alias map and a `denext.config.ts`), so the app's own source is unchanged for Next.js. Two public apps are migrated, built and rendered by a test: Vercel's App Router playground and the Epic Stack (Remix). `denext migrate --check` reports what would change for your app first.
 
 **Evidence.**
 
@@ -652,3 +653,21 @@ More: [/docs/migrating](/docs/migrating).
 - [`tests/migrate-spa.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/migrate-spa.test.ts): "migrate SPA: React Compiler in the Vite config enables denext's auto-memo compiler"
 
 More: [/docs/spa](/docs/spa).
+
+### A Fresh app moved without rewriting its routes and islands
+
+**Stack:** Fresh 2 (Vite or Fresh's builder) and Fresh 1.x (1.x, 2.x) · **Kind:** capability
+
+**The problem.** Moving a Fresh app (Preact islands, file routes with handlers and middleware, Preact Signals) to another framework means rewriting every route, handler and island for that framework's conventions and component runtime.
+
+**Why it happens.** Fresh's routing, handler and island conventions and its Preact runtime are its own; a React-shaped framework expects different files and components.
+
+**What denext does.** `denext migrate` recognizes a Fresh app and generates denext's `app/` tree and `middleware.ts` around the unchanged route modules: handlers, `_middleware` state, `page()` data, layouts, `_error` / `_404` pages and form POSTs run as in Fresh (`denext/fresh/server`). Islands become `"use client"` components, `static/` moves to `public/`, and Preact and Preact Signals map to denext — a signal a page passes to an island stays live in the browser. `denext migrate --check` lists what has no equivalent (Partials, Vite's `import.meta.env`, inline scripts under the default CSP).
+
+**Evidence.**
+
+- [`tests/migrate-fresh.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/migrate-fresh.test.ts): "migrate: a Fresh 2 app — app/ and middleware.ts around routes/, islands, static, styles"
+- [`tests/fresh-runtime.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/fresh-runtime.test.ts): "Fresh 2: middleware state, page data, layouts, code routes, route handlers"
+- [`tests/preact-signals.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/preact-signals.test.ts): "a signal prop crosses the Flight boundary as one live signal per server signal"
+
+More: [/docs/migrating](/docs/migrating).

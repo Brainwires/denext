@@ -243,6 +243,8 @@ export interface PprShell {
   inTreeTitle: string | undefined;
   documentAttrs?: CachedPage["documentAttrs"];
   routeCsp: CspSetting | undefined;
+  /** An HTML shell's own signal state (a Flight shell carries it in `flight`). */
+  signalState?: Record<string, unknown>;
   flight?: {
     shell: FlightNode;
     islands: IslandPayload[];
@@ -262,6 +264,7 @@ export function shellFromCache(hit: CachedPage): PprShell {
     inTreeTitle: hit.inTreeTitle,
     documentAttrs: hit.documentAttrs,
     routeCsp: hit.routeCsp,
+    signalState: hit.shellSignalState,
     flight: hit.flightShell !== undefined
       ? {
         shell: hit.flightShell,
@@ -284,6 +287,7 @@ export function shellFromPrerender(
     headExtras: pre.headExtras,
     inTreeTitle: pre.inTreeTitle,
     routeCsp: pre.config.csp,
+    signalState: pre.shellSignalState,
     flight: useFlight
       ? {
         shell: flightPre.flightShell,
@@ -325,7 +329,7 @@ async function resumeHtmlShell(
   cacheState: CacheState,
   loader: ModuleLoader,
 ): Promise<ResumedShell> {
-  const { holes, metadata, viewport } = await resumePageHolesStream(
+  const { holes, metadata, viewport, finishSignals } = await resumePageHolesStream(
     pr.page,
     pr.state.request,
     loader,
@@ -341,6 +345,8 @@ async function resumeHtmlShell(
     viewport,
     ...doc,
     holes,
+    shellSignalState: shell.signalState,
+    finishSignals,
     signal: pr.state.ctx.signal,
     onHoleError: holeErrorReporter(pr),
   });

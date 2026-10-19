@@ -485,8 +485,27 @@ async function historyPath(dir: string): Promise<string | null> {
 const HISTORY_ESCAPED = `.denext/${JOB_HISTORY_DB} resolves outside the project — the UI does ` +
   "not follow it";
 
-/** How long a `denext job --history` / `--clear-history` child may take. */
+/** How long a `denext job --history` / `--clear-history` child may take by default. */
 const HISTORY_CHILD_BUDGET_MS = 15_000;
+
+/** The history-child deadline in force ({@linkcode setCronHistoryBudget} changes it). */
+let historyBudgetMs = HISTORY_CHILD_BUDGET_MS;
+
+/**
+ * Lengthen (or shorten) how long a `denext job --history` / `--clear-history` child may take.
+ * The child is a cold CLI start that loads the project's config (three Deno processes: the CLI,
+ * the toolchain re-exec and the project-module re-exec), which a heavily loaded machine can
+ * spend longer than the default on, as with discovery ({@linkcode setCronDiscoveryBudget}).
+ *
+ * @internal Test seam.
+ * @param ms The new deadline in milliseconds.
+ * @returns The deadline that was in force before.
+ */
+export function setCronHistoryBudget(ms: number): number {
+  const previous = historyBudgetMs;
+  historyBudgetMs = ms;
+  return previous;
+}
 
 /** A read that produced nothing, saying why. */
 function unavailable(reason: string): JobHistory {
@@ -514,15 +533,16 @@ async function historyChild(
     "--cwd",
     dir,
   ];
+  const budget = historyBudgetMs;
+  const signal = AbortSignal.timeout(budget);
+  const late = `denext job ${flag} did not finish within ${Math.round(budget / 1000)} s`;
   try {
-    await runDeno(argv, {
-      cwd: dir,
-      onLine: (line) => lines.push(line),
-      signal: AbortSignal.timeout(HISTORY_CHILD_BUDGET_MS),
-    });
+    await runDeno(argv, { cwd: dir, onLine: (line) => lines.push(line), signal });
   } catch {
-    return `denext job ${flag} did not finish`;
+    return signal.aborted ? late : `denext job ${flag} did not finish`;
   }
+  // A child the deadline killed exits without throwing; its partial output is not an answer.
+  if (signal.aborted) return late;
   const doc = parseJsonDocument<Record<string, unknown>>(lines.join("\n"));
   if (doc && typeof doc === "object") return doc;
   const why = lastMeaningful(lines);

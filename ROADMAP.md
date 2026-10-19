@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.3.1**; 4.x patch and minor releases are cut from
+> The current release is denext **4.4.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
 ## Deno toolchain
@@ -49,15 +49,16 @@
   `DenextContacts` (containers, change events, Android's full updates), `DenextPrint` (HTML to
   PDF, the printer picker, printing to a picked printer) and `DenextBrightness` (Android's system
   brightness and the `WRITE_SETTINGS` screen, iOS's change events) are compiled and type-checked
-  only. Then: splitting a repeating Android event from one occurrence on (`futureEvents` with
-  `instanceStartDate`, refused today).
+  only, Android's split of a repeating event from one occurrence on (`futureEvents` with
+  `instanceStartDate`) included.
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **`denext migrate --from expo` advice** for the most-used native-only SDKs
-  (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
-  the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
-- **Capabilities:** file transfer with progress, a notification service extension and badges,
-  SQLite encryption, a PowerSync recipe.
-- **On a device:** background audio with the lock-screen / notification controls
+- **Capabilities:** a notification service extension and badges.
+- **On a device:** encrypted key-value stores (`denext mobile add storage --encrypted`: SQLCipher
+  linked into the iOS and Android builds, a store moved out of the plain database, its key in the
+  Keychain / Keystore) and `PRAGMA key` through `@capacitor-community/sqlite`, background file
+  transfers (`denext mobile add file-transfer`: a download that
+  finishes with the app suspended or terminated, a pause and a resume, Android's WorkManager runs),
+  background audio with the lock-screen / notification controls
   (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
   the controls reaching the page, the Android foreground service), and `pickMedia`'s
   multi-select and video picks, on an iPhone and an Android phone.
@@ -65,12 +66,6 @@
   verification.
 
 ## `denext ui` and DevTools
-
-## Router plugins
-
-- **TanStack Start, the rest:** `@denext/tanstack-start` runs a Start app (server functions,
-  server routes, streamed pages); `denext export` prerendering of Start routes, Start's import
-  protection, and `denext migrate` recognizing a Start app are next.
 
 ## Build toolchain: waiting on `deno bundle`
 
@@ -96,9 +91,3 @@ rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 tr
   but runs several times slower on every compat build and dev session.
 - **Maintenance:** track each vendored codec's upstream CVEs, rebuild SHA-256-pinned and
   regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.
-
-## Docs
-
-- **Make the deployment guide's Dockerfile byte-comparable** with what `denext generate docker`
-  emits (the dependency-cache layer, least-privilege run flags, `PORT` vs `--port`), with a test
-  that diffs the guide's fenced block against the template.

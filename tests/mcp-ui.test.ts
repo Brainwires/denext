@@ -8,6 +8,7 @@ import { UI_ROUTES } from "../src/ui/routes.ts";
 import { panelOf, UI_PANELS } from "../src/ui/panels.ts";
 import { UI_TOOL_NAMES, UiBridge, uiCallRefusal, uiTools } from "../src/mcp/ui.ts";
 import { TOOL_GROUPS, TOOLS } from "../src/mcp/tools.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const generate = UI_PANELS.find((p) => p.id === "generate")!;
 
@@ -100,7 +101,7 @@ Deno.test({
   } finally {
     const { stopUiBridges } = await import("../src/mcp/ui.ts");
     stopUiBridges();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -125,6 +126,6 @@ Deno.test({
     await res.body?.cancel();
   } finally {
     bridge.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });

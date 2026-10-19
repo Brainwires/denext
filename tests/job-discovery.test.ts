@@ -3,6 +3,7 @@ import { join } from "@std/path";
 import { bootScheduledJobs, discoverJobs } from "../src/server/job-loader.ts";
 import { clearJobs, getJob, jobNames, runJob } from "../src/server/jobs.ts";
 import { readJobHistory } from "../src/server/job-history.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 async function fixture(files: Record<string, string>): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext-jobs-" });
@@ -32,14 +33,14 @@ Deno.test("discoverJobs registers every jobs/ file by its path-name, incl. neste
   assertEquals(getJob("cleanup")?.description, "purge stale rows");
   const out = await runJob("cleanup", { n: 1 });
   assertEquals(out, { ran: "cleanup", payload: { n: 1 } });
-  await Deno.remove(dir, { recursive: true });
+  await removeTempDir(dir);
 });
 
 Deno.test("discoverJobs on a missing jobs/ dir returns [] (no error)", async () => {
   clearJobs();
   const dir = await Deno.makeTempDir({ prefix: "denext-nojobs-" });
   assertEquals(await discoverJobs(join(dir, "jobs")), []);
-  await Deno.remove(dir, { recursive: true });
+  await removeTempDir(dir);
 });
 
 Deno.test("bootScheduledJobs discovers + schedules; a disposer stops the scheduler", async () => {
@@ -51,7 +52,7 @@ Deno.test("bootScheduledJobs discovers + schedules; a disposer stops the schedul
   assertEquals(typeof dispose, "function");
   assert(jobNames().includes("warm"));
   dispose();
-  await Deno.remove(dir, { recursive: true });
+  await removeTempDir(dir);
 });
 
 /** Whether a path exists. */
@@ -89,7 +90,7 @@ Deno.test("run history is off unless the project asks — and then it records", 
     assertEquals(history.recent[0].ok, true);
     assertEquals(history.recent[0].trigger, "manual");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -106,7 +107,7 @@ Deno.test("the disposer stops recording, so a later run is not attributed to a d
     const history = readJobHistory({ path: join(out, "jobs.db") });
     assertEquals(history.recent.length, 1, "only the run made while recording was kept");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -132,6 +133,6 @@ Deno.test("history is recorded on Deno Deploy too, but the caveat is said out lo
     console.warn = realWarn;
     if (had === undefined) Deno.env.delete("DENO_DEPLOYMENT_ID");
     else Deno.env.set("DENO_DEPLOYMENT_ID", had);
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });

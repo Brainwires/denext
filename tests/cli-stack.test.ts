@@ -229,6 +229,28 @@ Deno.test("dockerCli: runs docker, or says it is missing", async () => {
   }
 });
 
+Deno.test("dockerCli: a machine without docker gets the install hint, not a spawn error", async () => {
+  // `Command.output()` throws a missing binary synchronously; a child with an empty PATH has no
+  // docker on any OS.
+  const empty = await Deno.makeTempDir({ prefix: "dnx-no-docker-" });
+  try {
+    const stack = new URL("../src/cli/commands/stack.ts", import.meta.url).href;
+    const code = `const { dockerCli } = await import(${JSON.stringify(stack)});
+try { await dockerCli(["--version"], ".", true); console.log("ran"); }
+catch (error) { console.log(error.message); }`;
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--no-check", code],
+      env: { PATH: empty, Path: empty },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+    assertStringIncludes(text, "docker is not on PATH");
+  } finally {
+    await Deno.remove(empty, { recursive: true });
+  }
+});
+
 Deno.test("stack up: a missing .env over an existing database volume is refused, not regenerated", async () => {
   // Re-running `stack up` after deleting .env wrote a NEW POSTGRES_PASSWORD that the existing
   // db-data volume (initialised with the old one) refused; the app then failed every query.

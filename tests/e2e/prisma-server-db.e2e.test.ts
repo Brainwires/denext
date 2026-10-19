@@ -1,5 +1,5 @@
 // Networked e2e for `denext migrate` on a Prisma app whose datasource is a database SERVER
-// (Postgres, MySQL): migrate a Node-shaped Next + Prisma app (tests/fixtures/prisma-server-db),
+// (Postgres, CockroachDB, MySQL): migrate a Node-shaped Next + Prisma app (tests/fixtures/prisma-server-db),
 // run the `prisma:setup` task it writes (install → `prisma generate` → `prisma migrate deploy`
 // of a real SQL migration), drive the migrated client against the live database (CRUD over
 // JSON / Decimal / BigInt / Bytes / DateTime, relations, interactive + batch transactions,
@@ -10,7 +10,10 @@
 // drops the `users`, `posts` and `_prisma_migrations` tables first), so point it at a
 // throwaway one:
 //   DENEXT_E2E_POSTGRES_URL=postgres://u:p@host:5432/db
+//   DENEXT_E2E_COCKROACH_URL=postgresql://root@host:26257/db?sslmode=disable
 //   DENEXT_E2E_MYSQL_URL=mysql://u:p@host:3306/db
+// (a throwaway CockroachDB: `docker run -d --rm -p 26257:26257 cockroachdb/cockroach:v25.2.4
+// start-single-node --insecure`, then `CREATE DATABASE db`).
 // NETWORK + CODEGEN-REQUIRED (npm installs and the Prisma CLI): `deno task test:e2e`.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
@@ -25,7 +28,7 @@ const PRISMA = "npm:prisma@6.19.3";
 
 const SETUP_TIMEOUT_MS = 300_000;
 const STEP_TIMEOUT_MS = 180_000;
-const READY_TIMEOUT_MS = 60_000;
+const READY_TIMEOUT_MS = 120_000;
 
 /** Run a command in `cwd` with `env` merged in; bounded (the harness's `runDeno` takes no env). */
 async function run(
@@ -56,8 +59,13 @@ async function prepareApp(provider: string, env: Record<string, string>): Promis
   const dir = await Deno.makeTempDir({ prefix: `denext-prisma-${provider}-` });
   await copy(FIXTURE, dir, { overwrite: true });
   const schemaPath = join(dir, "prisma/schema.prisma");
-  const schema = await Deno.readTextFile(schemaPath);
-  await Deno.writeTextFile(schemaPath, schema.replace("__PROVIDER__", provider));
+  let schema = (await Deno.readTextFile(schemaPath)).replace("__PROVIDER__", provider);
+  // CockroachDB's autoincrement() is a 64-bit unique_rowid(), which Prisma allows on BigInt
+  // only; an Int id takes a sequence there.
+  if (provider === "cockroachdb") {
+    schema = schema.replaceAll("@default(autoincrement())", "@default(sequence())");
+  }
+  await Deno.writeTextFile(schemaPath, schema);
   const diff = await run(
     ["run", "-A", "--no-config", PRISMA, "migrate", "diff", "--from-empty"]
       .concat(["--to-schema-datamodel", "prisma/schema.prisma", "--script"]),
@@ -91,6 +99,7 @@ async function prepareApp(provider: string, env: Record<string, string>): Promis
 for (
   const [provider, urlVar, adapter] of [
     ["postgresql", "DENEXT_E2E_POSTGRES_URL", "@prisma/adapter-pg"],
+    ["cockroachdb", "DENEXT_E2E_COCKROACH_URL", "@prisma/adapter-pg"],
     ["mysql", "DENEXT_E2E_MYSQL_URL", "@prisma/adapter-mariadb"],
   ] as const
 ) {
@@ -130,7 +139,7 @@ for (
       });
 
       await t.step("build, serve, read through a page and write through a route", async () => {
-        const built = await run(["run", "-A", CLI, "build", "."], dir, env);
+        const built = await run(["run", "-A", CLI, "build", "."], dir, env, SETUP_TIMEOUT_MS);
         assert(built.ok, "denext build failed:\n" + built.out);
         Deno.env.set("DATABASE_URL", url!);
         const server = await startCliServer(dir, READY_TIMEOUT_MS);

@@ -7,6 +7,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
 import { capacitorIosDir, stabilizeSpmPluginPaths } from "../src/build/spm-plugin-paths.ts";
 import { createMobileCommand } from "../src/cli/commands/mobile.ts";
+import { symlinkDir } from "./helpers/temp.ts";
 
 const STORE =
   "node_modules/.pnpm/@scope+plugin@8.0.1_@capacitor+core@8.5.3/node_modules/@scope/plugin";
@@ -37,7 +38,7 @@ async function project(iosPath: string | null): Promise<{ app: string; swift: st
   await Deno.mkdir(real, { recursive: true });
   await Deno.writeTextFile(join(real, "package.json"), JSON.stringify({ name: "@scope/plugin" }));
   await Deno.mkdir(join(app, "node_modules/@scope"), { recursive: true });
-  await Deno.symlink(real, join(app, "node_modules/@scope/plugin"));
+  await symlinkDir(real, join(app, "node_modules/@scope/plugin"));
   await Deno.writeTextFile(join(app, "package.json"), "{}");
   await Deno.writeTextFile(
     join(app, "capacitor.config.json"),

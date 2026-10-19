@@ -13,7 +13,7 @@
     "@types/react-dom": "19.3.0",
     "@types/react-is": "19.3.0"
   },
-  "capturedAt": "2026-10-17T10:18:39.869Z",
+  "capturedAt": "2026-10-19T04:21:51.419Z",
   "surfaces": [
     {
       "specifier": "react",
@@ -134,6 +134,156 @@
             }
           ],
           "typeParamCount": 1
+        },
+        "Children": {
+          "name": "Children",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "count",
+            "forEach",
+            "map",
+            "only",
+            "toArray"
+          ]
+        },
+        "Fragment": {
+          "name": "Fragment",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "StrictMode": {
+          "name": "StrictMode",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Suspense": {
+          "name": "Suspense",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "version": {
+          "name": "version",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "Profiler": {
+          "name": "Profiler",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Component": {
+          "name": "Component",
+          "kind": "interface",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "propTypes",
+            "prototype"
+          ]
+        },
+        "PureComponent": {
+          "name": "PureComponent",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "propTypes",
+            "prototype"
+          ]
         },
         "createRef": {
           "name": "createRef",
@@ -553,6 +703,34 @@
           ],
           "typeParamCount": 0
         },
+        "Activity": {
+          "name": "Activity",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ViewTransition": {
+          "name": "ViewTransition",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "addTransitionType": {
           "name": "addTransitionType",
           "kind": "function",
@@ -581,19 +759,93 @@
           ],
           "typeParamCount": 0
         },
-        "Children": {
-          "name": "Children",
+        "unstable_useCacheRefresh": {
+          "name": "unstable_useCacheRefresh",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_SuspenseList": {
+          "name": "unstable_SuspenseList",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "experimental_taintUniqueValue": {
+          "name": "experimental_taintUniqueValue",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "experimental_taintObjectReference": {
+          "name": "experimental_taintObjectReference",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_startGestureTransition": {
+          "name": "unstable_startGestureTransition",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "optimisticKey": {
+          "name": "optimisticKey",
           "kind": "value",
           "isValue": true,
           "isType": false,
           "members": [
-            "count",
-            "forEach",
-            "map",
-            "only",
-            "toArray"
+            "description",
+            "toString",
+            "valueOf"
           ]
-        },
+        }
+      }
+    },
+    {
+      "specifier": "react/jsx-runtime",
+      "resolved": true,
+      "symbols": {
         "Fragment": {
           "name": "Fragment",
           "kind": "function",
@@ -608,8 +860,42 @@
           ],
           "typeParamCount": 0
         },
-        "StrictMode": {
-          "name": "StrictMode",
+        "jsx": {
+          "name": "jsx",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "jsxs": {
+          "name": "jsxs",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "react/jsx-dev-runtime",
+      "resolved": true,
+      "symbols": {
+        "Fragment": {
+          "name": "Fragment",
           "kind": "function",
           "isValue": true,
           "isType": false,
@@ -622,15 +908,40 @@
           ],
           "typeParamCount": 0
         },
-        "Suspense": {
-          "name": "Suspense",
+        "jsxDEV": {
+          "name": "jsxDEV",
           "kind": "function",
           "isValue": true,
           "isType": false,
           "callSignatures": [
             {
-              "arity": 1,
-              "requiredArity": 1,
+              "arity": 6,
+              "requiredArity": 4,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "react/compiler-runtime",
+      "resolved": true,
+      "symbols": {}
+    },
+    {
+      "specifier": "react-dom",
+      "resolved": true,
+      "symbols": {
+        "createPortal": {
+          "name": "createPortal",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
               "restParam": false
             }
           ],
@@ -694,258 +1005,6 @@
             "trimStart",
             "valueOf"
           ]
-        },
-        "Profiler": {
-          "name": "Profiler",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "Component": {
-          "name": "Component",
-          "kind": "interface",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "contextType",
-            "propTypes",
-            "prototype"
-          ]
-        },
-        "PureComponent": {
-          "name": "PureComponent",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "contextType",
-            "propTypes",
-            "prototype"
-          ]
-        },
-        "Activity": {
-          "name": "Activity",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "ViewTransition": {
-          "name": "ViewTransition",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "unstable_useCacheRefresh": {
-          "name": "unstable_useCacheRefresh",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 0,
-              "requiredArity": 0,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "experimental_taintUniqueValue": {
-          "name": "experimental_taintUniqueValue",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 3,
-              "requiredArity": 3,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "experimental_taintObjectReference": {
-          "name": "experimental_taintObjectReference",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 2,
-              "requiredArity": 2,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "unstable_startGestureTransition": {
-          "name": "unstable_startGestureTransition",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 3,
-              "requiredArity": 2,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "unstable_SuspenseList": {
-          "name": "unstable_SuspenseList",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "optimisticKey": {
-          "name": "optimisticKey",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "description",
-            "toString",
-            "valueOf"
-          ]
-        }
-      }
-    },
-    {
-      "specifier": "react/jsx-runtime",
-      "resolved": true,
-      "symbols": {
-        "jsx": {
-          "name": "jsx",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 3,
-              "requiredArity": 2,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "jsxs": {
-          "name": "jsxs",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 3,
-              "requiredArity": 2,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "Fragment": {
-          "name": "Fragment",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        }
-      }
-    },
-    {
-      "specifier": "react/jsx-dev-runtime",
-      "resolved": true,
-      "symbols": {
-        "jsxDEV": {
-          "name": "jsxDEV",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 6,
-              "requiredArity": 4,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "Fragment": {
-          "name": "Fragment",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        }
-      }
-    },
-    {
-      "specifier": "react/compiler-runtime",
-      "resolved": true,
-      "symbols": {}
-    },
-    {
-      "specifier": "react-dom",
-      "resolved": true,
-      "symbols": {
-        "createPortal": {
-          "name": "createPortal",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 3,
-              "requiredArity": 2,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
         },
         "flushSync": {
           "name": "flushSync",
@@ -1124,65 +1183,6 @@
             }
           ],
           "typeParamCount": 0
-        },
-        "version": {
-          "name": "version",
-          "kind": "value",
-          "isValue": true,
-          "isType": false,
-          "members": [
-            "anchor",
-            "at",
-            "big",
-            "blink",
-            "bold",
-            "charAt",
-            "charCodeAt",
-            "codePointAt",
-            "concat",
-            "endsWith",
-            "fixed",
-            "fontcolor",
-            "fontsize",
-            "includes",
-            "indexOf",
-            "isWellFormed",
-            "italics",
-            "lastIndexOf",
-            "length",
-            "link",
-            "localeCompare",
-            "match",
-            "matchAll",
-            "normalize",
-            "padEnd",
-            "padStart",
-            "repeat",
-            "replace",
-            "replaceAll",
-            "search",
-            "slice",
-            "small",
-            "split",
-            "startsWith",
-            "strike",
-            "sub",
-            "substr",
-            "substring",
-            "sup",
-            "toLocaleLowerCase",
-            "toLocaleUpperCase",
-            "toLowerCase",
-            "toString",
-            "toUpperCase",
-            "toWellFormed",
-            "trim",
-            "trimEnd",
-            "trimLeft",
-            "trimRight",
-            "trimStart",
-            "valueOf"
-          ]
         }
       }
     },
@@ -1994,20 +1994,6 @@
       "specifier": "next/link",
       "resolved": true,
       "symbols": {
-        "default": {
-          "name": "default",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
         "useLinkStatus": {
           "name": "useLinkStatus",
           "kind": "function",
@@ -2021,13 +2007,7 @@
             }
           ],
           "typeParamCount": 0
-        }
-      }
-    },
-    {
-      "specifier": "next/head",
-      "resolved": true,
-      "symbols": {
+        },
         "default": {
           "name": "default",
           "kind": "function",
@@ -2041,7 +2021,13 @@
             }
           ],
           "typeParamCount": 0
-        },
+        }
+      }
+    },
+    {
+      "specifier": "next/head",
+      "resolved": true,
+      "symbols": {
         "defaultHead": {
           "name": "defaultHead",
           "kind": "function",
@@ -2055,13 +2041,7 @@
             }
           ],
           "typeParamCount": 0
-        }
-      }
-    },
-    {
-      "specifier": "next/image",
-      "resolved": true,
-      "symbols": {
+        },
         "default": {
           "name": "default",
           "kind": "function",
@@ -2075,9 +2055,29 @@
             }
           ],
           "typeParamCount": 0
-        },
+        }
+      }
+    },
+    {
+      "specifier": "next/image",
+      "resolved": true,
+      "symbols": {
         "getImageProps": {
           "name": "getImageProps",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "default": {
+          "name": "default",
           "kind": "function",
           "isValue": true,
           "isType": false,
@@ -2096,20 +2096,6 @@
       "specifier": "next/script",
       "resolved": true,
       "symbols": {
-        "default": {
-          "name": "default",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
         "handleClientScriptLoad": {
           "name": "handleClientScriptLoad",
           "kind": "function",
@@ -2137,13 +2123,7 @@
             }
           ],
           "typeParamCount": 0
-        }
-      }
-    },
-    {
-      "specifier": "next/dynamic",
-      "resolved": true,
-      "symbols": {
+        },
         "default": {
           "name": "default",
           "kind": "function",
@@ -2151,13 +2131,19 @@
           "isType": false,
           "callSignatures": [
             {
-              "arity": 2,
+              "arity": 1,
               "requiredArity": 1,
               "restParam": false
             }
           ],
-          "typeParamCount": 1
-        },
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next/dynamic",
+      "resolved": true,
+      "symbols": {
         "noSSR": {
           "name": "noSSR",
           "kind": "function",
@@ -2167,6 +2153,20 @@
             {
               "arity": 2,
               "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
               "restParam": false
             }
           ],
@@ -2226,6 +2226,34 @@
           ],
           "typeParamCount": 0
         },
+        "ServerInsertedHTMLContext": {
+          "name": "ServerInsertedHTMLContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useServerInsertedHTML": {
+          "name": "useServerInsertedHTML",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "useRouter": {
           "name": "useRouter",
           "kind": "function",
@@ -2277,34 +2305,6 @@
             {
               "arity": 1,
               "requiredArity": 0,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "ServerInsertedHTMLContext": {
-          "name": "ServerInsertedHTMLContext",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "useServerInsertedHTML": {
-          "name": "useServerInsertedHTML",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
               "restParam": false
             }
           ],
@@ -2481,60 +2481,6 @@
       "specifier": "next/cache",
       "resolved": true,
       "symbols": {
-        "cacheLife": {
-          "name": "cacheLife",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
         "unstable_cache": {
           "name": "unstable_cache",
           "kind": "function",
@@ -2643,6 +2589,60 @@
               "arity": 1,
               "requiredArity": 0,
               "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "cacheLife": {
+          "name": "cacheLife",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
             }
           ],
           "typeParamCount": 0
@@ -30099,6 +30099,44 @@
       "specifier": "next/router",
       "resolved": true,
       "symbols": {
+        "Router": {
+          "name": "Router",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "events",
+            "prototype"
+          ]
+        },
+        "withRouter": {
+          "name": "withRouter",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "useRouter": {
+          "name": "useRouter",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "default": {
           "name": "default",
           "kind": "value",
@@ -30130,44 +30168,6 @@
             "route",
             "router"
           ]
-        },
-        "useRouter": {
-          "name": "useRouter",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 0,
-              "requiredArity": 0,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "Router": {
-          "name": "Router",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "events",
-            "prototype"
-          ]
-        },
-        "withRouter": {
-          "name": "withRouter",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 2
         }
       }
     },
@@ -30175,14 +30175,25 @@
       "specifier": "next/document",
       "resolved": true,
       "symbols": {
-        "default": {
-          "name": "default",
+        "Head": {
+          "name": "Head",
           "kind": "class",
           "isValue": true,
           "isType": true,
           "members": [
             "contextType",
-            "getInitialProps",
+            "propTypes",
+            "prototype"
+          ]
+        },
+        "NextScript": {
+          "name": "NextScript",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "getInlineScriptSource",
             "propTypes",
             "prototype"
           ]
@@ -30215,25 +30226,14 @@
           ],
           "typeParamCount": 0
         },
-        "Head": {
-          "name": "Head",
+        "default": {
+          "name": "default",
           "kind": "class",
           "isValue": true,
           "isType": true,
           "members": [
             "contextType",
-            "propTypes",
-            "prototype"
-          ]
-        },
-        "NextScript": {
-          "name": "NextScript",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "contextType",
-            "getInlineScriptSource",
+            "getInitialProps",
             "propTypes",
             "prototype"
           ]
@@ -30244,6 +30244,115 @@
       "specifier": "next-intl",
       "resolved": true,
       "symbols": {
+        "IntlError": {
+          "name": "IntlError",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "isError",
+            "prototype"
+          ]
+        },
+        "IntlErrorCode": {
+          "name": "IntlErrorCode",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ENVIRONMENT_FALLBACK",
+            "FORMATTING_ERROR",
+            "INSUFFICIENT_PATH",
+            "INVALID_KEY",
+            "INVALID_MESSAGE",
+            "MISSING_FORMAT",
+            "MISSING_MESSAGE"
+          ]
+        },
+        "createTranslator": {
+          "name": "createTranslator",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "createFormatter": {
+          "name": "createFormatter",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "initializeConfig": {
+          "name": "initializeConfig",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "_createIntlFormatters": {
+          "name": "_createIntlFormatters",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "_createCache": {
+          "name": "_createCache",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasLocale": {
+          "name": "hasLocale",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
         "IntlProvider": {
           "name": "IntlProvider",
           "kind": "function",
@@ -30369,115 +30478,6 @@
             }
           ],
           "typeParamCount": 0
-        },
-        "IntlError": {
-          "name": "IntlError",
-          "kind": "class",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "isError",
-            "prototype"
-          ]
-        },
-        "IntlErrorCode": {
-          "name": "IntlErrorCode",
-          "kind": "namespace",
-          "isValue": true,
-          "isType": true,
-          "members": [
-            "ENVIRONMENT_FALLBACK",
-            "FORMATTING_ERROR",
-            "INSUFFICIENT_PATH",
-            "INVALID_KEY",
-            "INVALID_MESSAGE",
-            "MISSING_FORMAT",
-            "MISSING_MESSAGE"
-          ]
-        },
-        "createTranslator": {
-          "name": "createTranslator",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 2
-        },
-        "createFormatter": {
-          "name": "createFormatter",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "initializeConfig": {
-          "name": "initializeConfig",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 1
-        },
-        "_createIntlFormatters": {
-          "name": "_createIntlFormatters",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "_createCache": {
-          "name": "_createCache",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 0,
-              "requiredArity": 0,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
-        "hasLocale": {
-          "name": "hasLocale",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 2,
-              "requiredArity": 2,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 1
         }
       }
     },
@@ -31989,20 +31989,6 @@
       "specifier": "next-auth",
       "resolved": true,
       "symbols": {
-        "default": {
-          "name": "default",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
         "AuthError": {
           "name": "AuthError",
           "kind": "class",
@@ -32034,6 +32020,20 @@
             "toString",
             "valueOf"
           ]
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     },
@@ -32041,6 +32041,20 @@
       "specifier": "next-auth/react",
       "resolved": true,
       "symbols": {
+        "SessionContext": {
+          "name": "SessionContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "useSession": {
           "name": "useSession",
           "kind": "function",
@@ -32148,16 +32162,27 @@
             }
           ],
           "typeParamCount": 0
-        },
-        "SessionContext": {
-          "name": "SessionContext",
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/webauthn",
+      "resolved": true,
+      "symbols": {
+        "signIn": {
+          "name": "signIn",
           "kind": "function",
           "isValue": true,
           "isType": false,
           "callSignatures": [
             {
-              "arity": 1,
-              "requiredArity": 1,
+              "arity": 3,
+              "requiredArity": 0,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 0,
               "restParam": false
             }
           ],
@@ -32214,7 +32239,67 @@
       }
     },
     {
+      "specifier": "next-auth/providers/42-school",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/apple",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/asgardeo",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/atlassian",
       "resolved": true,
       "symbols": {
         "default": {
@@ -32254,6 +32339,206 @@
       }
     },
     {
+      "specifier": "next-auth/providers/authentik",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/azure-ad",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/azure-ad-b2c",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/battlenet",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/beyondidentity",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/bitbucket",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/box",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/boxyhq-saml",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/bungie",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/click-up",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/cognito",
       "resolved": true,
       "symbols": {
@@ -32270,6 +32555,46 @@
             }
           ],
           "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/coinbase",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/concept2",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     },
@@ -32294,7 +32619,87 @@
       }
     },
     {
+      "specifier": "next-auth/providers/descope",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/discord",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/dribbble",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/dropbox",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/duende-identity-server6",
       "resolved": true,
       "symbols": {
         "default": {
@@ -32334,7 +32739,187 @@
       }
     },
     {
+      "specifier": "next-auth/providers/eventbrite",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/eveonline",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/facebook",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/faceit",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/figma",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/forwardemail",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/foursquare",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/freshbooks",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/frontegg",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/fusionauth",
       "resolved": true,
       "symbols": {
         "default": {
@@ -32414,7 +32999,147 @@
       }
     },
     {
+      "specifier": "next-auth/providers/hubspot",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/huggingface",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/identity-server4",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/instagram",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/kakao",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/keycloak",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/kinde",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/line",
       "resolved": true,
       "symbols": {
         "default": {
@@ -32454,7 +33179,247 @@
       }
     },
     {
+      "specifier": "next-auth/providers/logto",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/loops",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/mailchimp",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/mailgun",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/mailru",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/mastodon",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/mattermost",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/medium",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/microsoft-entra-id",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/naver",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/netlify",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/netsuite",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/nextcloud",
       "resolved": true,
       "symbols": {
         "default": {
@@ -32534,6 +33499,246 @@
       }
     },
     {
+      "specifier": "next-auth/providers/onelogin",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/ory-hydra",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/osso",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/osu",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/passage",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/passkey",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/patreon",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/ping-id",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/pinterest",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/pipedrive",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/postmark",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/reddit",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/resend",
       "resolved": true,
       "symbols": {
@@ -32550,6 +33755,86 @@
             }
           ],
           "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/roblox",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/salesforce",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/sendgrid",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/simplelogin",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
         }
       }
     },
@@ -32575,6 +33860,106 @@
     },
     {
       "specifier": "next-auth/providers/spotify",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/strava",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/threads",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/tiktok",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/todoist",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/trakt",
       "resolved": true,
       "symbols": {
         "default": {
@@ -32634,6 +34019,299 @@
       }
     },
     {
+      "specifier": "next-auth/providers/united-effects",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/vipps",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/vk",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/webauthn",
+      "resolved": true,
+      "symbols": {
+        "DEFAULT_WEBAUTHN_TIMEOUT": {
+          "name": "DEFAULT_WEBAUTHN_TIMEOUT",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "DEFAULT_SIMPLEWEBAUTHN_BROWSER_VERSION": {
+          "name": "DEFAULT_SIMPLEWEBAUTHN_BROWSER_VERSION",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/webex",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/wikimedia",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/wordpress",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/workos",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/yandex",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/zitadel",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth/providers/zoho",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "next-auth/providers/zoom",
       "resolved": true,
       "symbols": {
@@ -32657,30 +34335,6 @@
       "specifier": "next-auth@4",
       "resolved": true,
       "symbols": {
-        "default": {
-          "name": "default",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 3,
-              "requiredArity": 3,
-              "restParam": false
-            },
-            {
-              "arity": 3,
-              "requiredArity": 3,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
-        },
         "getServerSession": {
           "name": "getServerSession",
           "kind": "function",
@@ -32708,6 +34362,30 @@
             }
           ],
           "typeParamCount": 2
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     },
@@ -32715,6 +34393,30 @@
       "specifier": "next-auth@4/next",
       "resolved": true,
       "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "getServerSession": {
           "name": "getServerSession",
           "kind": "function",
@@ -32742,30 +34444,6 @@
             }
           ],
           "typeParamCount": 2
-        },
-        "default": {
-          "name": "default",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            },
-            {
-              "arity": 3,
-              "requiredArity": 3,
-              "restParam": false
-            },
-            {
-              "arity": 3,
-              "requiredArity": 3,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
         }
       }
     },
@@ -32773,8 +34451,8 @@
       "specifier": "next-auth@4/middleware",
       "resolved": true,
       "symbols": {
-        "default": {
-          "name": "default",
+        "withAuth": {
+          "name": "withAuth",
           "kind": "function",
           "isValue": true,
           "isType": false,
@@ -32817,8 +34495,8 @@
           ],
           "typeParamCount": 0
         },
-        "withAuth": {
-          "name": "withAuth",
+        "default": {
+          "name": "default",
           "kind": "function",
           "isValue": true,
           "isType": false,
@@ -32867,6 +34545,20 @@
       "specifier": "next-auth@4/react",
       "resolved": true,
       "symbols": {
+        "SessionContext": {
+          "name": "SessionContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
         "useSession": {
           "name": "useSession",
           "kind": "function",
@@ -32964,20 +34656,6 @@
             }
           ],
           "typeParamCount": 0
-        },
-        "SessionContext": {
-          "name": "SessionContext",
-          "kind": "function",
-          "isValue": true,
-          "isType": false,
-          "callSignatures": [
-            {
-              "arity": 1,
-              "requiredArity": 1,
-              "restParam": false
-            }
-          ],
-          "typeParamCount": 0
         }
       }
     },
@@ -33035,7 +34713,52 @@
       "symbols": {}
     },
     {
+      "specifier": "next-auth@4/providers/42-school",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
       "specifier": "next-auth@4/providers/apple",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/asgardeo",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/atlassian",
       "resolved": true,
       "symbols": {
         "default": {
@@ -33075,6 +34798,161 @@
       }
     },
     {
+      "specifier": "next-auth@4/providers/authentik",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/azure-ad",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/azure-ad-b2c",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/battlenet",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/beyondidentity",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/bitbucket",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/box",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/boxyhq-saml",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/bungie",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/click-up",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
       "specifier": "next-auth@4/providers/cognito",
       "resolved": true,
       "symbols": {
@@ -33093,6 +34971,31 @@
           "typeParamCount": 1
         }
       }
+    },
+    {
+      "specifier": "next-auth@4/providers/coinbase",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/concept2",
+      "resolved": false,
+      "symbols": {}
     },
     {
       "specifier": "next-auth@4/providers/credentials",
@@ -33115,7 +35018,57 @@
       }
     },
     {
+      "specifier": "next-auth@4/providers/descope",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
       "specifier": "next-auth@4/providers/discord",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/dribbble",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/dropbox",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/duende-identity-server6",
       "resolved": true,
       "symbols": {
         "default": {
@@ -33155,7 +35108,127 @@
       }
     },
     {
+      "specifier": "next-auth@4/providers/eventbrite",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/eveonline",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
       "specifier": "next-auth@4/providers/facebook",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/faceit",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/figma",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/forwardemail",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/foursquare",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/freshbooks",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/frontegg",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/fusionauth",
       "resolved": true,
       "symbols": {
         "default": {
@@ -33235,7 +35308,117 @@
       }
     },
     {
+      "specifier": "next-auth@4/providers/hubspot",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/huggingface",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/identity-server4",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/instagram",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/kakao",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
       "specifier": "next-auth@4/providers/keycloak",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/kinde",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/line",
       "resolved": true,
       "symbols": {
         "default": {
@@ -33275,7 +35458,142 @@
       }
     },
     {
+      "specifier": "next-auth@4/providers/logto",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/loops",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/mailchimp",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/mailgun",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/mailru",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/mastodon",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/mattermost",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/medium",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "next-auth@4/providers/microsoft-entra-id",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/naver",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/netlify",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/netsuite",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/nextcloud",
       "resolved": false,
       "symbols": {}
     },
@@ -33310,7 +35628,222 @@
       }
     },
     {
+      "specifier": "next-auth@4/providers/onelogin",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/ory-hydra",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/osso",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/osu",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/passage",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/passkey",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/patreon",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/ping-id",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/pinterest",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/pipedrive",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/postmark",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/reddit",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "next-auth@4/providers/resend",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/roblox",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/salesforce",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/sendgrid",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/simplelogin",
       "resolved": false,
       "symbols": {}
     },
@@ -33336,6 +35869,76 @@
     },
     {
       "specifier": "next-auth@4/providers/spotify",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/strava",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/threads",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/tiktok",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/todoist",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/trakt",
       "resolved": true,
       "symbols": {
         "default": {
@@ -33405,6 +36008,181 @@
             }
           ],
           "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/united-effects",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/vipps",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/vk",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/webauthn",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/webex",
+      "resolved": false,
+      "symbols": {}
+    },
+    {
+      "specifier": "next-auth@4/providers/wikimedia",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/wordpress",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/workos",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/yandex",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/zitadel",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "next-auth@4/providers/zoho",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     },

@@ -63,9 +63,9 @@ Deno.test("resolveDenoExecutable: DENO_BIN, then a deno execPath, then ~/.deno/b
   );
   assertEquals(
     resolveDenoExecutable(
-      seams({ os: "windows", vars: { Path: "C:\\x;C:\\y" }, files: ["C:\\y/deno.exe"] }),
+      seams({ os: "windows", vars: { Path: "C:\\x;C:\\y" }, files: ["C:\\y\\deno.exe"] }),
     ),
-    "C:\\y/deno.exe",
+    "C:\\y\\deno.exe",
   );
 });
 

@@ -91,6 +91,16 @@ export interface FlightSet {
   v: FlightValue[];
 }
 
+/** A serialized signal (`denext/signals`): its wire id and current value. */
+export interface FlightSignal {
+  /** Discriminant: signal. */
+  $: "sg";
+  /** The signal's wire id (shared by every prop that passes the same signal). */
+  i: number;
+  /** Its value. */
+  v: FlightValue;
+}
+
 /** A serialized `createChannel` reference (the client subscribes by id). */
 export interface FlightChannelRef {
   /** Discriminant: channel reference. */
@@ -172,6 +182,7 @@ export type FlightValue =
   | FlightUrl
   | FlightMap
   | FlightSet
+  | FlightSignal
   | FlightChannelRef
   | FlightEventHandler;
 

@@ -161,7 +161,7 @@ a step after each build with `denext mobile submit` (see
 themselves can also be one `denext mobile build ios --release` / `denext mobile build android
 --release` each, with the signing inputs in the environment; this template spells the
 `xcodebuild` and Gradle calls out so every flag is visible. The denext repository runs that
-pipeline nightly on `examples/mobile` (`.github/workflows/mobile-build.yml`).
+pipeline on `examples/mobile`, dispatched before a release (`.github/workflows/mobile-build.yml`).
 
 ## Try the pieces locally
 

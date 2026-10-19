@@ -14,7 +14,9 @@ import { VERSION } from "../../../mod.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
 import { runDenoPassthrough } from "./deno-toolchain.ts";
-import { resolveProject } from "../../build/paths.ts";
+import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
+import { setupAppPlugins } from "../../plugin/mod.ts";
+import { defaultLoader } from "../../server/default-loader.ts";
 import { type ConformanceReport, probeApp } from "../../testing/conformance.ts";
 import {
   type BundleChunk,
@@ -32,6 +34,13 @@ import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
 import { backendChecks } from "./doctor-backend.ts";
+import {
+  signingReadiness,
+  type SigningReadinessDeps,
+  signingReadinessLines,
+  signingReady,
+} from "../../build/code-signing.ts";
+import { hasCommand, listSigningIdentities } from "../../ui/signing.ts";
 
 /** Whether `path` is an existing directory. */
 async function isDirectory(path: string): Promise<boolean> {
@@ -154,6 +163,46 @@ async function appDirCheck(appDir: string): Promise<Check> {
     detail: ok ? appDir : `missing: ${appDir}`,
     critical: true,
   };
+}
+
+/**
+ * The names of the configured plugins that serve the app's pages from a route tree of their own
+ * (they call `ctx.servesRoutes()` — the Pages Router, TanStack Start and React Router plugins), so
+ * the app needs no `app/`. A plugin that only adds endpoints (an API, OpenAPI docs, auth, storage)
+ * does not count, whatever handlers it registers. The plugins are set up in a registry of their own
+ * (as the route probe does), then torn down. Empty when none declares it, or when setup fails.
+ */
+async function routingPlugins(paths: ProjectPaths): Promise<readonly string[]> {
+  const config = paths.config;
+  if (!config?.plugins?.length) return [];
+  try {
+    const set = await setupAppPlugins({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      config,
+      mode: "dev",
+      load: defaultLoader,
+    });
+    await set.teardown();
+    return set.routeServers;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The app-directory check, satisfied without `app/` when a plugin serves the routes (the Pages
+ * Router and TanStack Start plugins route from their own trees).
+ */
+async function appOrPluginRoutesCheck(
+  paths: ProjectPaths,
+): Promise<{ check: Check; hasAppDir: boolean }> {
+  const check = await appDirCheck(paths.appDir);
+  if (check.ok) return { check, hasAppDir: true };
+  const routing = await routingPlugins(paths);
+  if (routing.length === 0) return { check, hasAppDir: false };
+  const detail = `not needed: routes come from ${routing.join(", ")}`;
+  return { check: { ...check, ok: true, detail }, hasAppDir: false };
 }
 
 /** The route-conformance check (the old `probe`), plus the full report it summarizes. */
@@ -342,6 +391,31 @@ export async function desktopRuntimeCheck(
   return { name: "desktop runtime", ok: status.ok, detail: status.detail, critical: false };
 }
 
+/**
+ * The compiled binary's signing readiness, when `compile.sign` is configured (null otherwise):
+ * the macOS identity (and whether the keychain holds it), the notary credentials, the Windows
+ * certificate and the Authenticode tools. Advisory — `compile.sign` without credentials only
+ * warns at build time. Reads no secret.
+ */
+export async function compileSigningCheck(
+  config: DenextConfig | null | undefined,
+  deps: Partial<SigningReadinessDeps> = {},
+): Promise<Check | null> {
+  const sign = config?.compile?.sign;
+  if (sign === undefined || sign === false) return null;
+  const readiness = await signingReadiness({
+    has: (cmd) => hasCommand(cmd),
+    identities: () => listSigningIdentities(),
+    ...deps,
+  });
+  return {
+    name: "compile signing",
+    ok: signingReady(readiness, deps.os),
+    detail: signingReadinessLines(readiness).join("; "),
+    critical: false,
+  };
+}
+
 /** A task command that runs `deno test` itself (stock Deno under `deno task`). */
 const STOCK_DENO_TEST = /(?:^|[;&|(]\s*)deno\s+test\b/;
 
@@ -439,9 +513,10 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   const isSpa = paths.config?.mode === "spa";
   let appOk = true;
   if (!isSpa) {
-    const appCheck = await appDirCheck(paths.appDir);
-    appOk = appCheck.ok;
-    checks.push(appCheck);
+    const { check, hasAppDir } = await appOrPluginRoutesCheck(paths);
+    // The route probe walks `app/`: a plugin-routed app has none to walk.
+    appOk = hasAppDir;
+    checks.push(check);
   }
   // Reaching here means the config loaded and passed validation → report correctness.
   checks.push({
@@ -466,6 +541,8 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   if (desktopOrigin) checks.push(desktopOrigin);
   const desktopRuntime = await desktopRuntimeCheck(dir);
   if (desktopRuntime) checks.push(desktopRuntime);
+  const signing = await compileSigningCheck(paths.config);
+  if (signing) checks.push(signing);
   checks.push(...await backendChecks(paths.projectDir, paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
@@ -489,7 +566,10 @@ function cell(s: string): string {
 /** The `## Routes` section body: a per-route table, or why routes weren't probed. */
 function routesSection(rep: ConformanceReport | null): string[] {
   if (!rep) {
-    return ["_Not probed — SPA mode, a missing app directory, or a config failure above._"];
+    return [
+      "_Not probed — SPA mode, a missing app directory, routes served by a plugin, or a config " +
+      "failure above._",
+    ];
   }
   if (rep.routes.length === 0) return ["_No routes found._"];
   const lines = [

@@ -48,10 +48,13 @@ export async function dockerCli(
   capture: boolean,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const io = capture ? "piped" : "inherit";
-  const out = await new Deno.Command("docker", { args, cwd, stdout: io, stderr: io }).output()
-    .catch((error) => {
-      throw error instanceof Deno.errors.NotFound ? new Error(NO_DOCKER) : error;
-    });
+  let out: Deno.CommandOutput;
+  try {
+    // `output()` throws a missing binary synchronously, so a `.catch()` on it never sees one.
+    out = await new Deno.Command("docker", { args, cwd, stdout: io, stderr: io }).output();
+  } catch (error) {
+    throw error instanceof Deno.errors.NotFound ? new Error(NO_DOCKER) : error;
+  }
   const text = (b: Uint8Array) => new TextDecoder().decode(b);
   return {
     code: out.code,

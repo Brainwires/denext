@@ -263,6 +263,7 @@ Deno.test("desktopDevProxyDecision: a dev build proxies; a packaged app still ig
     proxy: true,
     target: "http://localhost:3000",
     allowNonLoopback: false,
+    injectToken: true,
   });
   // The mark does not lift the loopback rule.
   assertEquals(

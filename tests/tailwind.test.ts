@@ -19,6 +19,8 @@ Deno.test("tailwindAssetName maps os/arch to release assets", () => {
   assertEquals(tailwindAssetName("linux", "x86_64"), "tailwindcss-linux-x64");
   assertEquals(tailwindAssetName("linux", "aarch64"), "tailwindcss-linux-arm64");
   assertEquals(tailwindAssetName("windows", "x86_64"), "tailwindcss-windows-x64.exe");
+  // No Windows Arm64 build is published (its URL is a 404): Windows on Arm runs the x64 one.
+  assertEquals(tailwindAssetName("windows", "aarch64"), "tailwindcss-windows-x64.exe");
   assertThrows(() => tailwindAssetName("plan9", "x86_64"), Error, "unsupported OS");
   assertThrows(() => tailwindAssetName("linux", "sparc"), Error, "unsupported architecture");
 });
@@ -134,6 +136,8 @@ async function assertInputAliasedToOutput(dir: string, assets: CssAssets): Promi
     ".tw-generated",
     "importing the Tailwind input collects the compiled output CSS (not an unstyled build)",
   );
+  // The Tailwind step resolved the raw import: none reaches the route's stylesheet.
+  assert(!routeCss.includes("tailwindcss"), routeCss);
 }
 
 // A stub Tailwind binary: a tiny shell script that honors `-i`/`-o`, so the whole

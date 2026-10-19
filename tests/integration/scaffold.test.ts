@@ -12,6 +12,7 @@ import {
   type MacosSigningEntitlementsOptions,
   V8_ENTITLEMENTS,
 } from "../../src/build/desktop-macos-signing.ts";
+import { macosCodesignArgs } from "../../src/build/code-signing.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
@@ -30,6 +31,9 @@ Deno.test("scaffoldFiles: plain project", () => {
   assertStringIncludes(denoJson, "jsr:@denext/denext");
   assertStringIncludes(denoJson, '"jsxImportSource": "denext"');
   assert(!files.some((f) => f.path === "denext.config.ts"), "no config without options");
+  // The native TypeScript 7 check and the tsgo language server cache into `.deno/`.
+  const gitignore = files.find((f) => f.path === ".gitignore")!.content.split("\n");
+  assert(gitignore.includes(".deno/"), gitignore.join("\n"));
 });
 
 Deno.test("scaffoldFiles: the page is a Server Component and the counter is a 'use client' island", () => {
@@ -66,6 +70,60 @@ Deno.test("scaffoldFiles: the minimal template has no island", () => {
   const page = files.find((f) => f.path === "app/page.tsx")!.content;
   assert(!page.includes("counter"), "minimal's page imports nothing");
   assert(!files.find((f) => f.path === "README.md")!.content.includes("counter.tsx"));
+});
+
+Deno.test("scaffoldFiles: the lustre template is a Gleam project with an island, an element and a view", () => {
+  const files = scaffoldFiles({ dir: "/x", template: "lustre" });
+  const get = (path: string) => files.find((f) => f.path === path)?.content ?? "";
+  assertEquals(files.map((f) => f.path).sort(), [
+    ".gitignore",
+    "README.md",
+    "app/counter-element.tsx",
+    "app/counter-island.tsx",
+    "app/counter-view.ts",
+    "app/layout.tsx",
+    "app/page.tsx",
+    "denext.config.ts",
+    "deno.json",
+    "gleam/gleam.toml",
+    "gleam/src/counter.gleam",
+    "public/styles.css",
+  ]);
+  const denoJson = JSON.parse(get("deno.json"));
+  assertEquals(denoJson.imports["@gleam/"], "./gleam/build/dev/javascript/");
+  assertStringIncludes(denoJson.imports["denext/gleam"], "jsr:@denext/denext@");
+  const config = get("denext.config.ts");
+  assertStringIncludes(config, 'import { gleam } from "denext/gleam";');
+  assertStringIncludes(config, "plugins: [gleam()],");
+  assertStringIncludes(get(".gitignore"), "gleam/build/");
+  const toml = get("gleam/gleam.toml");
+  assertStringIncludes(toml, 'target = "javascript"');
+  assertStringIncludes(toml, "typescript_declarations = true");
+  assertStringIncludes(toml, "lustre = ");
+  // One helper each, from client modules where the browser runs it.
+  assert(get("app/counter-island.tsx").startsWith('"use client";'));
+  assertStringIncludes(get("app/counter-island.tsx"), "lustreIsland(lustre, counter.app()");
+  assert(get("app/counter-element.tsx").startsWith('"use client";'));
+  assertStringIncludes(get("app/counter-element.tsx"), '"lustre-counter"');
+  assert(!get("app/counter-view.ts").includes("use client"), "the view is a server module");
+  assertStringIncludes(get("app/counter-view.ts"), 'from "../.denext/lustre-server.ts"');
+  const page = get("app/page.tsx");
+  for (const tag of ["<CounterIsland", "<CounterElement", "<CounterView"]) {
+    assertStringIncludes(page, tag);
+  }
+  assert(!page.includes("use client"), "the page is a Server Component");
+  assertStringIncludes(get("README.md"), "gleam/src/counter.gleam");
+  assert(!get("README.md").includes("app/counter.tsx"));
+  // Under src/, the kits are one directory further up.
+  const src = scaffoldFiles({ dir: "/x", template: "lustre", srcDir: true });
+  assertStringIncludes(
+    src.find((f) => f.path === "src/app/counter-island.tsx")!.content,
+    'from "../../.denext/lustre.ts"',
+  );
+  // With Tailwind, the page carries the classes as the other templates' pages do.
+  const tw = scaffoldFiles({ dir: "/x", template: "lustre", tailwind: true });
+  assertStringIncludes(tw.find((f) => f.path === "app/page.tsx")!.content, "max-w-xl");
+  assert(!page.includes("max-w-xl"));
 });
 
 Deno.test("scaffoldFiles: tailwind wires globals import + input + config", () => {
@@ -328,6 +386,7 @@ async function runScaffoldedSign(
     "cefHelperEntitlements",
     "macosSigningEntitlements",
     "V8_ENTITLEMENTS",
+    "macosCodesignArgs",
     `${code}\nreturn sign;`,
   );
   await sign(
@@ -348,6 +407,7 @@ async function runScaffoldedSign(
         readSigned: (path) => Promise.resolve(signed[path] ?? ""),
       }),
     V8_ENTITLEMENTS,
+    macosCodesignArgs,
   )(app, identity, entitlements, undefined, undefined);
   return { calls, plists };
 }

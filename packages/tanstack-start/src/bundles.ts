@@ -9,12 +9,19 @@ import type { PluginBuildContext, PluginContext } from "@denext/denext/server";
 import {
   buildNextCompatClientEntries,
   buildNextCompatModules,
+  compileCssAsset,
   createNextCompatServerLoader,
 } from "@denext/denext/build/next-compat";
 import { join, relative } from "@std/path";
 import { type ClientGraph, type StartBuild, startBuild } from "./compile.ts";
 import { clientEntrySource } from "./entries.ts";
-import { CLIENT_ENTRY, CLIENT_PREFIX, routerManifest, SERVER_FN_SEGMENT } from "./handler.ts";
+import {
+  ASSETS_DIR,
+  CLIENT_ENTRY,
+  CLIENT_PREFIX,
+  routerManifest,
+  SERVER_FN_SEGMENT,
+} from "./handler.ts";
 import {
   formatRefusals,
   PAGES_DIR,
@@ -22,11 +29,20 @@ import {
   type PrerenderOptions,
   prerenderPages,
   type RouteInfo,
+  type SitemapOptions,
+  type SpaOptions,
+  spaShellPage,
   type StartPage,
 } from "./prerender.ts";
 import type { ImportProtection } from "./protect.ts";
 import { coversServerFns, scanServerFns } from "./server-fns.ts";
-import { loadStartToolchain, type ServerFnInfo, type StartEnv } from "./toolchain.ts";
+import {
+  loadSitemapBuilder,
+  loadStartToolchain,
+  type ServerFnInfo,
+  type SitemapBuilder,
+  type StartEnv,
+} from "./toolchain.ts";
 
 /** Where a Start app's modules are, and where the plugin writes. */
 export interface StartApp {
@@ -68,6 +84,8 @@ export interface StartBundles {
   forgetServerBuild(): Promise<void>;
   /** Forget both bundles: the next request builds them again (an edit in dev). */
   reset(): void;
+  /** The app's server functions, by id (a scan of the sources, as the server build starts). */
+  serverFunctions(): Promise<Record<string, ServerFnInfo>>;
 }
 
 /**
@@ -75,14 +93,19 @@ export interface StartBundles {
  *
  * @param basePath The app's `basePath` (`""` when none).
  * @param prerendering The bundle is the export's server bundle (Start's `TSS_PRERENDERING`).
+ * @param shell Every page renders as the SPA shell (Start's `TSS_SHELL`; see {@link startShell}).
  */
-export function startDefines(basePath: string, prerendering = false): Record<string, string> {
+export function startDefines(
+  basePath: string,
+  prerendering = false,
+  shell = false,
+): Record<string, string> {
   const values: Record<string, string> = {
     TSS_SERVER_FN_BASE: `${basePath}${SERVER_FN_SEGMENT}`,
     TSS_ROUTER_BASEPATH: basePath || "/",
     TSS_DEV_SERVER: "false",
     TSS_PRERENDERING: String(prerendering),
-    TSS_SHELL: "false",
+    TSS_SHELL: String(shell),
     TSS_INLINE_CSS_ENABLED: "false",
     TSS_DEV_SSR_STYLES_ENABLED: "false",
     // denext's own same-origin check guards server functions (see the handler).
@@ -94,16 +117,30 @@ export function startDefines(basePath: string, prerendering = false): Record<str
 }
 
 /**
+ * Whether every page renders as Start's SPA shell (the root route alone, no route's loader): in
+ * `denext dev` with `spa` enabled, as Start's dev server defines `TSS_SHELL` from `spa.enabled`
+ * (default `true`) in serve mode. A build leaves it off: the export prerenders the shell page.
+ *
+ * @param mode The plugin's pipeline.
+ * @param spa Start's `spa` option.
+ */
+export function startShell(mode: PluginContext["mode"], spa: SpaOptions | undefined): boolean {
+  return mode === "dev" && spa !== undefined && spa.enabled !== false;
+}
+
+/**
  * The bundles of the Start app `app`.
  *
  * @param ctx The plugin context (mode, config, module loader).
  * @param app The app's modules and output paths.
  * @param protection Start's import protection, as the app configures it.
+ * @param spa Start's `spa` option (in dev it renders every page as the shell).
  */
 export function createBundles(
   ctx: PluginContext,
   app: StartApp,
   protection?: ImportProtection,
+  spa?: SpaOptions,
 ): StartBundles {
   let tc: ReturnType<typeof loadStartToolchain> | undefined;
   const toolchain = () => (tc ??= loadStartToolchain(app.projectRoot));
@@ -115,7 +152,14 @@ export function createBundles(
     // TanStack Router's error boundaries are class components.
     classComponents: ctx.config.classComponents !== false,
     resolveAllNodeModules: ctx.config.nodeResolve !== false,
-    define: startDefines(app.basePath, ctx.mode === "export"),
+    define: startDefines(app.basePath, ctx.mode === "export", startShell(ctx.mode, spa)),
+    // Vite's asset imports (`logo.svg`, `app.css?url`, a Tailwind input compiled): both bundles
+    // emit them into the client dir's `assets/` under the same content-hashed URL.
+    assets: {
+      publicPath: `${app.basePath}${CLIENT_PREFIX}`,
+      emitDir: app.clientDir,
+      compileCss: (path: string) => compileCssAsset(app.projectRoot, path, ctx.mode !== "dev"),
+    },
   };
   const startOf = async (
     env: StartEnv,
@@ -200,6 +244,7 @@ export function createBundles(
       server = undefined;
       built = undefined;
     },
+    serverFunctions: async () => scanServerFns(await toolchain(), app.root, app.src),
   };
 }
 
@@ -238,10 +283,19 @@ async function readServerRecord(path: string, app: StartApp): Promise<Map<string
   return new Map([[app.serverEntry, `${join(app.outDir, record.bundle)}#${record.key}`]]);
 }
 
-/** What `denext export` prerenders: Start's `prerender` and `pages` options, and the routes. */
+/**
+ * What `denext export` prerenders and writes: Start's `prerender`, `pages`, `spa` and `sitemap`
+ * options, and the routes.
+ */
 export interface ExportPlan {
   options: PrerenderOptions;
   pages: StartPage[];
+  /** Start's `spa`: the SPA shell to write. */
+  spa?: SpaOptions;
+  /** Start's `sitemap`: the sitemap to write. */
+  sitemap?: SitemapOptions;
+  /** Start's `buildSitemap` (default: loaded from the app's `@tanstack/start-plugin-core`). */
+  sitemapBuilder?: () => Promise<SitemapBuilder>;
   /** The route tree the prepare step generated (`null` when the plugin does not generate it). */
   routes(): RouteInfo[] | null;
   /** The project root and the app's `basePath`. */
@@ -267,13 +321,16 @@ export async function buildStep(
   plan?: ExportPlan,
 ): Promise<void> {
   if (mode === "export") {
-    if (build && plan && plan.options.enabled !== false) {
+    // Start's SPA shell turns the prerender on.
+    if (build && plan && (plan.options.enabled !== false || spaShellPage(plan.spa))) {
       return await exportStep(build, bundles, plan);
     }
     console.warn(
       "[@denext/tanstack-start] prerender is off (`prerender.enabled: false`): the export has " +
         "no TanStack routes; `denext start` serves them.",
     );
+    // Start still writes the sitemap, of the pages listed.
+    if (build && plan) await writeSitemap(build, plan, plan.pages);
     return;
   }
   await bundles.forgetServerBuild();
@@ -297,15 +354,17 @@ async function exportStep(
 ): Promise<void> {
   await Deno.remove(join(build.outDir, PAGES_DIR), { recursive: true }).catch(() => {});
   const clientDir = await bundles.client();
-  for await (const entry of Deno.readDir(clientDir)) {
-    if (!entry.isFile) continue;
-    const source = await Deno.readFile(join(clientDir, entry.name));
-    await build.emitFile({ fileName: `${CLIENT_PREFIX.slice(1)}${entry.name}`, source });
+  for (const name of await clientFiles(clientDir)) {
+    const source = await Deno.readFile(join(clientDir, name));
+    await build.emitFile({ fileName: `${CLIENT_PREFIX.slice(1)}${name}`, source });
   }
   const server = await bundles.loadServerEntry();
-  const { written, refused } = await prerenderPages({
+  // Start's post-build: the SPA shell is one more page, after the app's own.
+  const shell = spaShellPage(plan.spa);
+  const { written, refused, pages } = await prerenderPages({
     options: plan.options,
-    pages: plan.pages,
+    pages: shell ? [...plan.pages, shell] : plan.pages,
+    shellOutputPath: shell?.prerender?.outputPath,
     routes: plan.routes(),
     client: bundles.clientGraph(),
     projectRoot: plan.projectRoot,
@@ -316,4 +375,43 @@ async function exportStep(
   console.log(`[@denext/tanstack-start] prerendered ${written.length} page(s)`);
   const report = formatRefusals(refused, plan.projectRoot);
   if (report) console.warn(report);
+  await writeSitemap(build, plan, pages);
+}
+
+/**
+ * Start's sitemap, when `sitemap` is enabled: its own `buildSitemap` over the pages the prerender
+ * met (`sitemap.xml` at `sitemap.outputPath` and `pages.json`), written beside the pages so the
+ * export publishes them at its root.
+ */
+async function writeSitemap(
+  build: PluginBuildContext,
+  plan: ExportPlan,
+  pages: StartPage[],
+): Promise<void> {
+  if (!plan.sitemap || plan.sitemap.enabled === false) return;
+  const publicDir = join(build.outDir, PAGES_DIR);
+  await Deno.mkdir(publicDir, { recursive: true });
+  const builder = await (plan.sitemapBuilder ?? (() => loadSitemapBuilder(plan.projectRoot)))();
+  // Start's schema defaults (`enabled: true`, `outputPath: "sitemap.xml"`).
+  const sitemap = {
+    ...plan.sitemap,
+    enabled: true,
+    outputPath: plan.sitemap.outputPath ?? "sitemap.xml",
+  };
+  await builder({ startConfig: { sitemap, pages }, publicDir });
+}
+
+/** The client bundle's files, and the assets it emitted under `assets/` (`/`-separated). */
+async function clientFiles(clientDir: string): Promise<string[]> {
+  const names: string[] = [];
+  for (const dir of ["", ASSETS_DIR]) {
+    try {
+      for await (const entry of Deno.readDir(join(clientDir, dir))) {
+        if (entry.isFile) names.push(dir ? `${dir}/${entry.name}` : entry.name);
+      }
+    } catch (err) {
+      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    }
+  }
+  return names;
 }

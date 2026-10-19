@@ -1199,6 +1199,18 @@ const UPDATE_VERSION = "99.0.0";
 
 /** Checks for one update phase: run on that launch only, then the app installs or quits. */
 export const PHASE_CHECKS: Readonly<Record<string, readonly Check[]>> = {
+  // `e2e/lan-dev-test.ts`: the page comes from `denext dev` on this machine's LAN address,
+  // through `denext desktop dev --lan`'s proxy, and must still hold the desktop bridge.
+  "lan-dev": [
+    ["lan dev: the proxied page holds the per-launch desktop token", () => {
+      const g = (globalThis as { __denext?: { desktop?: unknown; token?: unknown } }).__denext;
+      assert(g?.desktop === true, "no desktop global on the proxied page");
+      assert(typeof g.token === "string" && g.token.length > 0, "no desktop token");
+      eq(runtimePlatform(), "desktop", "runtimePlatform()");
+      return "token injected";
+    }],
+    ...storageChecks.slice(0, 1),
+  ],
   "update-install": [
     ["update install: a copied install, not on trial", async () => {
       const s = await kitchen.updateStatus({});

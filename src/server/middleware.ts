@@ -6,6 +6,7 @@
 import { getCookies } from "@std/http/cookie";
 import { safeRedirectLocation } from "./config.ts";
 import { after } from "./request-context.ts";
+import { noteMatcherHeaderRead, trackMiddlewareReads } from "./inherited-read-tracking.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 
 /** Internal marker symbol keying a {@linkcode NextCommand}. */
@@ -442,9 +443,13 @@ function conditionHolds(c: MatcherCondition, ctx: MatchContext): boolean {
 function conditionValue(c: MatcherCondition, ctx: MatchContext): string | null {
   switch (c.type) {
     case "header":
-      return c.key ? ctx.request.headers.get(c.key) : null;
+      if (!c.key) return null;
+      noteMatcherHeaderRead(c.key);
+      return ctx.request.headers.get(c.key);
     case "cookie":
-      return c.key ? getCookies(ctx.request.headers)[c.key] ?? null : null;
+      if (!c.key) return null;
+      noteMatcherHeaderRead("cookie");
+      return getCookies(ctx.request.headers)[c.key] ?? null;
     case "query":
       return c.key ? ctx.url.searchParams.get(c.key) : null;
     case "host":
@@ -511,7 +516,8 @@ async function callHandler(
   url: URL,
 ): Promise<MiddlewareResult> {
   try {
-    return await entry.handler(requestAdapter(request), {
+    // Inside a self-call the handler's reads of the visitor's inherited headers are tracked.
+    return await entry.handler(trackMiddlewareReads(request, requestAdapter(request)), {
       url,
       waitUntil: (promise) => after(() => promise),
     });

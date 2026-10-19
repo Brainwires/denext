@@ -411,6 +411,8 @@
     "PluginBuildContext:interface",
     "PluginBuildStep:typeAlias",
     "PluginContext:interface",
+    "PluginDeployAssets:typeAlias",
+    "PluginDeployRoutes:typeAlias",
     "PluginMode:typeAlias",
     "PluginPrepareContext:interface",
     "PluginPrepareStep:typeAlias",
@@ -634,6 +636,7 @@
     "ChildStatus:interface",
     "CompileConfig:interface",
     "CompilePermissions:interface",
+    "CompileSignConfig:interface",
     "CompiledPattern:interface",
     "Component:typeAlias",
     "CompressConfig:interface",
@@ -710,6 +713,7 @@
     "FlightPrimitive:typeAlias",
     "FlightProps:typeAlias",
     "FlightSet:interface",
+    "FlightSignal:interface",
     "FlightStreamOptions:interface",
     "FlightUrl:interface",
     "FlightValue:typeAlias",
@@ -846,6 +850,7 @@
     "OAuthAuthorizationExpect:interface",
     "OAuthAuthorizationPatch:typeAlias",
     "OAuthAuthorizationRecord:interface",
+    "OAuthCheck:typeAlias",
     "OAuthClientOptions:interface",
     "OAuthClientRecord:interface",
     "OAuthConsentRecord:interface",
@@ -888,6 +893,8 @@
     "PluginBuildContext:interface",
     "PluginBuildStep:typeAlias",
     "PluginContext:interface",
+    "PluginDeployAssets:typeAlias",
+    "PluginDeployRoutes:typeAlias",
     "PluginMode:typeAlias",
     "PluginPrepareContext:interface",
     "PluginPrepareStep:typeAlias",
@@ -1093,6 +1100,7 @@
     "TypedRequest:interface",
     "TypedResponse:interface",
     "UserAgent:interface",
+    "UserinfoRequestInput:interface",
     "VNode:interface",
     "VNodeChild:typeAlias",
     "VNodeChildren:typeAlias",
@@ -1462,6 +1470,7 @@
     "OAuthAuthorizationExpect:interface",
     "OAuthAuthorizationPatch:typeAlias",
     "OAuthAuthorizationRecord:interface",
+    "OAuthCheck:typeAlias",
     "OAuthClientOptions:interface",
     "OAuthClientRecord:interface",
     "OAuthConsentRecord:interface",
@@ -1536,6 +1545,7 @@
     "TotpQrSvgOptions:interface",
     "TotpVerifyOptions:interface",
     "TotpVerifyResult:typeAlias",
+    "UserinfoRequestInput:interface",
     "VerificationPurpose:typeAlias",
     "VerificationRequestParams:interface",
     "VerificationTokenRecord:interface",
@@ -1921,7 +1931,9 @@
     "DesktopWindowSize:interface",
     "DesktopWindowsArch:typeAlias",
     "LAUFEY_LAUNCH_FILE:variable",
+    "MacosCodesignOptions:interface",
     "MacosSigningEntitlementsOptions:interface",
+    "NotaryCredentials:typeAlias",
     "PickMode:typeAlias",
     "PickedPaths:class",
     "PickedTarget:interface",
@@ -1991,7 +2003,9 @@
     "injectDesktopGlobal:function",
     "installWindowCloseHandler:function",
     "isDenoCliExecPath:function",
+    "macosCodesignArgs:function",
     "macosSigningEntitlements:function",
+    "notarytoolSubmitArgs:function",
     "parseDesktopPackageArgs:function",
     "planDesktopInstallers:function",
     "prepareDesktopPackage:function",
@@ -2382,6 +2396,7 @@
     "DeliveredNotification:interface",
     "DeliveredNotificationSelector:interface",
     "DeviceInfo:interface",
+    "DownloadToFileOptions:interface",
     "EndLiveActivityOptions:interface",
     "EntitlementInfo:interface",
     "EntitlementState:interface",
@@ -2389,6 +2404,14 @@
     "FileEncoding:typeAlias",
     "FileEntry:interface",
     "FileLocationOptions:interface",
+    "FileTransferError:class",
+    "FileTransferErrorCode:typeAlias",
+    "FileTransferEvent:interface",
+    "FileTransferInfo:interface",
+    "FileTransferKind:typeAlias",
+    "FileTransferOptions:interface",
+    "FileTransferProgress:interface",
+    "FileTransferState:typeAlias",
     "FlexibleUpdateProgress:interface",
     "GeoPosition:interface",
     "GeoPositionOptions:interface",
@@ -2400,6 +2423,9 @@
     "ImageSource:typeAlias",
     "KeyValueBackend:typeAlias",
     "KeyValueStore:interface",
+    "KeyValueStoreError:class",
+    "KeyValueStoreErrorCode:typeAlias",
+    "KeyValueStoreOptions:interface",
     "KeyboardAvoidingBehavior:typeAlias",
     "KeyboardAvoidingView:function",
     "KeyboardAvoidingViewProps:interface",
@@ -2540,6 +2566,8 @@
     "SqliteBackend:typeAlias",
     "SqliteBindValue:typeAlias",
     "SqliteDatabase:interface",
+    "SqliteEncryptionError:class",
+    "SqliteEncryptionErrorCode:typeAlias",
     "SqliteOptions:interface",
     "SqliteParams:typeAlias",
     "SqliteRow:typeAlias",
@@ -2557,6 +2585,8 @@
     "SystemIconProps:interface",
     "SystemIconWeight:typeAlias",
     "TrackingStatus:typeAlias",
+    "UploadFileOptions:interface",
+    "UploadFileResult:interface",
     "UseLocationOptions:interface",
     "UsePermissionOptions:interface",
     "WriteFileOptions:interface",
@@ -2565,6 +2595,7 @@
     "attachContextMenu:function",
     "authenticateBiometric:function",
     "cancelAllNotifications:function",
+    "cancelFileTransfer:function",
     "cancelNotification:function",
     "checkForUiUpdate:function",
     "checkPermission:function",
@@ -2583,6 +2614,8 @@
     "deviceInfo:function",
     "downloadToFile:function",
     "endLiveActivity:function",
+    "fileTransfers:function",
+    "forgetFileTransfer:function",
     "getAlbums:function",
     "getAppUpdateInfo:function",
     "getCurrentPosition:function",
@@ -2620,6 +2653,7 @@
     "onBack:function",
     "onBackProgress:function",
     "onDeepLink:function",
+    "onFileTransfer:function",
     "onFlexibleUpdateProgress:function",
     "onFontScaleChange:function",
     "onKeyboardChange:function",
@@ -2651,6 +2685,7 @@
     "otaReset:function",
     "otaSignaturePayload:function",
     "otaStatus:function",
+    "pauseFileTransfer:function",
     "pendingNotifications:function",
     "performImmediateUpdate:function",
     "pickDocument:function",
@@ -2674,6 +2709,7 @@
     "requestTrackingPermission:function",
     "restorePurchases:function",
     "restoreRouteOnRelaunch:function",
+    "resumeFileTransfer:function",
     "revealInFileManager:function",
     "runBackgroundTask:function",
     "runtimePlatform:function",
@@ -2700,6 +2736,7 @@
     "stopBackgroundLocation:function",
     "unlockOrientation:function",
     "updateLiveActivity:function",
+    "uploadFile:function",
     "useAppResume:function",
     "useBackHandler:function",
     "useBackProgress:function",
@@ -4938,12 +4975,14 @@
     "PureClassComponent:class",
     "PureComponent:variable",
     "ReactChild:typeAlias",
+    "ReactDispatcher:typeAlias",
     "ReactElement:typeAlias",
     "ReactEventHandler:typeAlias",
     "ReactFragment:typeAlias",
     "ReactNode:typeAlias",
     "ReactPortal:typeAlias",
     "ReactSVG:interface",
+    "ReactSharedInternals:interface",
     "ReactText:typeAlias",
     "React_ComponentProps:typeAlias",
     "Reducer:typeAlias",
@@ -4969,6 +5008,7 @@
     "UIEvent:interface",
     "ViewTransition:function",
     "WheelEvent:interface",
+    "__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE:variable",
     "act:function",
     "addTransitionType:function",
     "cache:function",
@@ -4987,26 +5027,26 @@
     "memo:function",
     "optimisticKey:variable",
     "startTransition:function",
-    "use:function",
-    "useActionState:function",
-    "useCallback:function",
-    "useContext:function",
-    "useDebugValue:function",
-    "useDeferredValue:function",
-    "useEffect:function",
-    "useEffectEvent:function",
-    "useFormState:function",
-    "useId:function",
-    "useImperativeHandle:function",
-    "useInsertionEffect:function",
-    "useLayoutEffect:function",
-    "useMemo:function",
-    "useOptimistic:function",
-    "useReducer:function",
-    "useRef:function",
-    "useState:function",
-    "useSyncExternalStore:function",
-    "useTransition:function",
+    "use:variable",
+    "useActionState:variable",
+    "useCallback:variable",
+    "useContext:variable",
+    "useDebugValue:variable",
+    "useDeferredValue:variable",
+    "useEffect:variable",
+    "useEffectEvent:variable",
+    "useFormState:variable",
+    "useId:variable",
+    "useImperativeHandle:variable",
+    "useInsertionEffect:variable",
+    "useLayoutEffect:variable",
+    "useMemo:variable",
+    "useOptimistic:variable",
+    "useReducer:variable",
+    "useRef:variable",
+    "useState:variable",
+    "useSyncExternalStore:variable",
+    "useTransition:variable",
     "version:variable"
   ],
   "denext/react-dom": [
@@ -5262,6 +5302,7 @@
     "Account:typeAlias",
     "Adapter:interface",
     "AdapterAccount:interface",
+    "AdapterAuthenticator:interface",
     "AdapterSession:interface",
     "AdapterUser:interface",
     "AdapterUserExtension:interface",
@@ -5326,6 +5367,11 @@
     "signOut:function",
     "useSession:function"
   ],
+  "denext/next-auth/webauthn": [
+    "SignInOptions:interface",
+    "SignInResponse:interface",
+    "signIn:function"
+  ],
   "denext/next-auth/jwt": [
     "GetTokenParams:interface",
     "JWT:interface",
@@ -5360,6 +5406,7 @@
   "denext/next-auth/adapters": [
     "Adapter:interface",
     "AdapterAccount:interface",
+    "AdapterAuthenticator:interface",
     "AdapterSession:interface",
     "AdapterUser:interface",
     "AdapterUserExtension:interface",
@@ -5372,6 +5419,8 @@
     "EmailUserConfig:interface",
     "EndpointConfig:typeAlias",
     "EnvReader:typeAlias",
+    "GeneratedUserConfig:interface",
+    "HttpEmailUserConfig:interface",
     "NodemailerUserConfig:interface",
     "OAuthConfig:interface",
     "OAuthUserConfig:interface",
@@ -5380,18 +5429,81 @@
     "ProviderDescriptor:interface",
     "ResendUserConfig:interface",
     "SendVerificationRequestParams:interface",
-    "SmtpServerOptions:interface"
+    "SmtpServerOptions:interface",
+    "WebAuthnCeremonyOptions:interface",
+    "WebAuthnUserConfig:interface"
+  ],
+  "denext/next-auth/providers/42-school": [
+    "FortyTwoProfile:typeAlias",
+    "default:function"
   ],
   "denext/next-auth/providers/apple": [
     "AppleProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/asgardeo": [
+    "AsgardeoProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/atlassian": [
+    "AtlassianProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/auth0": [
     "Auth0Profile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/authentik": [
+    "AuthentikProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/azure-ad": [
+    "AzureADProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/azure-ad-b2c": [
+    "AzureADB2CProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/battlenet": [
+    "BattleNetProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/beyondidentity": [
+    "BeyondIdentityProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/bitbucket": [
+    "BitbucketProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/box": [
+    "BoxProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/boxyhq-saml": [
+    "SAMLJacksonProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/bungie": [
+    "BungieProfile:typeAlias",
+    "BungieUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/click-up": [
+    "ClickUpProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/cognito": [
     "CognitoProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/coinbase": [
+    "CoinbaseProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/concept2": [
+    "Concept2Profile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/credentials": [
@@ -5400,15 +5512,69 @@
     "CredentialsConfig:interface",
     "default:function"
   ],
+  "denext/next-auth/providers/descope": [
+    "DescopeProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/discord": [
     "DiscordProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/dribbble": [
+    "DribbbleProfile:typeAlias",
+    "DribbbleUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/dropbox": [
+    "DropboxProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/duende-identity-server6": [
+    "DuendeIdentityServer6Profile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/email": [
     "default:function"
   ],
+  "denext/next-auth/providers/eventbrite": [
+    "EventbriteProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/eveonline": [
+    "EVEOnlineProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/facebook": [
     "FacebookProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/faceit": [
+    "FACEITProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/figma": [
+    "FigmaProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/forwardemail": [
+    "default:function"
+  ],
+  "denext/next-auth/providers/foursquare": [
+    "FoursquareProfile:typeAlias",
+    "FoursquareUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/freshbooks": [
+    "FreshbooksProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/frontegg": [
+    "FronteggProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/fusionauth": [
+    "FusionAuthProfile:typeAlias",
+    "FusionAuthUserConfig:interface",
     "default:function"
   ],
   "denext/next-auth/providers/github": [
@@ -5423,16 +5589,93 @@
     "GoogleProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/hubspot": [
+    "HubSpotProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/huggingface": [
+    "HuggingfaceProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/identity-server4": [
+    "IdentityServer4Profile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/instagram": [
+    "InstagramProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/kakao": [
+    "KakaoProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/keycloak": [
     "KeycloakProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/kinde": [
+    "KindeProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/line": [
+    "LINEProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/linkedin": [
     "LinkedInProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/logto": [
+    "LogtoProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/loops": [
+    "LoopsUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/mailchimp": [
+    "MailchimpProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/mailgun": [
+    "MailgunUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/mailru": [
+    "MailruProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/mastodon": [
+    "MastodonProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/mattermost": [
+    "MattermostProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/medium": [
+    "MediumProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/microsoft-entra-id": [
     "MicrosoftEntraIDProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/naver": [
+    "NaverProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/netlify": [
+    "NetlifyProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/netsuite": [
+    "NetSuiteProfile:typeAlias",
+    "NetSuiteUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/nextcloud": [
+    "NextcloudProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/nodemailer": [
@@ -5450,8 +5693,71 @@
     "OktaProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/onelogin": [
+    "OneLoginProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/ory-hydra": [
+    "OryHydraProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/osso": [
+    "OssoProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/osu": [
+    "OsuProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/passage": [
+    "PassageProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/passkey": [
+    "WebAuthnCeremonyOptions:interface",
+    "WebAuthnUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/patreon": [
+    "PatreonProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/ping-id": [
+    "PingIdProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/pinterest": [
+    "PinterestProviderProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/pipedrive": [
+    "PipedriveProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/postmark": [
+    "default:function"
+  ],
+  "denext/next-auth/providers/reddit": [
+    "RedditProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/resend": [
     "ResendUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/roblox": [
+    "RobloxProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/salesforce": [
+    "SalesforceProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/sendgrid": [
+    "default:function"
+  ],
+  "denext/next-auth/providers/simplelogin": [
+    "SimpleLoginProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/slack": [
@@ -5462,6 +5768,26 @@
     "SpotifyProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/strava": [
+    "StravaProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/threads": [
+    "ThreadsProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/tiktok": [
+    "TikTokProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/todoist": [
+    "TodoistProviderProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/trakt": [
+    "TraktProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/twitch": [
     "TwitchProfile:typeAlias",
     "default:function"
@@ -5469,6 +5795,55 @@
   "denext/next-auth/providers/twitter": [
     "TwitterProfile:typeAlias",
     "TwitterUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/united-effects": [
+    "UnitedEffectsProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/vipps": [
+    "VippsProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/vk": [
+    "VKProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/webauthn": [
+    "DEFAULT_SIMPLEWEBAUTHN_BROWSER_VERSION:variable",
+    "DEFAULT_WEBAUTHN_TIMEOUT:variable",
+    "WebAuthnCeremonyOptions:interface",
+    "WebAuthnUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/webex": [
+    "WebexProfile:typeAlias",
+    "WebexUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/wikimedia": [
+    "WikimediaProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/wordpress": [
+    "WordPressProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/workos": [
+    "WorkOSProfile:typeAlias",
+    "WorkOSUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/yandex": [
+    "YandexProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/zitadel": [
+    "ZITADELProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/zoho": [
+    "ZohoProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/zoom": [
@@ -5797,6 +6172,355 @@
     "unstable_createMemoryUploadHandler:function",
     "unstable_parseMultipartFormData:function"
   ],
+  "denext/fresh": [
+    "App:class",
+    "AppContext:typeAlias",
+    "AppProps:typeAlias",
+    "AsyncRoute:typeAlias",
+    "CORSOptions:interface",
+    "CSPOptions:interface",
+    "ComponentChildren:typeAlias",
+    "Context:class",
+    "CsrfOptions:interface",
+    "Define:interface",
+    "ErrorHandlerContext:typeAlias",
+    "ErrorPageProps:typeAlias",
+    "FreshConfig:interface",
+    "FreshContext:reference",
+    "Handler:typeAlias",
+    "HandlerByMethod:typeAlias",
+    "HandlerContext:typeAlias",
+    "HandlerFn:interface",
+    "Handlers:typeAlias",
+    "HttpError:class",
+    "IpFilterOptions:interface",
+    "IpFilterRules:interface",
+    "Island:interface",
+    "LayoutConfig:interface",
+    "LayoutContext:typeAlias",
+    "LayoutProps:typeAlias",
+    "Lazy:typeAlias",
+    "LegacyPageProps:interface",
+    "ListenOptions:interface",
+    "MaybeLazy:typeAlias",
+    "Method:typeAlias",
+    "Middleware:typeAlias",
+    "MiddlewareFn:typeAlias",
+    "MiddlewareHandler:typeAlias",
+    "MiddlewareHandlerContext:typeAlias",
+    "PageProps:typeAlias",
+    "PageResponse:interface",
+    "Plugin:interface",
+    "ResolvedFreshConfig:interface",
+    "RouteConfig:interface",
+    "RouteContext:typeAlias",
+    "RouteData:typeAlias",
+    "RouteHandler:typeAlias",
+    "STATUS_CODE:variable",
+    "UnknownHandlerContext:typeAlias",
+    "UnknownPageProps:typeAlias",
+    "WebSocketHandlers:interface",
+    "WebSocketUpgradeOptions:interface",
+    "cors:function",
+    "createDefine:function",
+    "csp:function",
+    "csrf:function",
+    "defineApp:function",
+    "defineConfig:function",
+    "defineLayout:function",
+    "defineRoute:function",
+    "ipFilter:function",
+    "page:function",
+    "start:function",
+    "staticFiles:function",
+    "trailingSlashes:function"
+  ],
+  "denext/fresh/runtime": [
+    "ContentSecurityPolicy:interface",
+    "Head:function",
+    "HeadProps:interface",
+    "HttpError:class",
+    "IS_BROWSER:variable",
+    "NONE:variable",
+    "Partial:function",
+    "PartialProps:interface",
+    "SELF:variable",
+    "STRICT_DYNAMIC:variable",
+    "UNSAFE_EVAL:variable",
+    "UNSAFE_HASHES:variable",
+    "UNSAFE_INLINE:variable",
+    "asset:function",
+    "assetSrcSet:function",
+    "nonce:function",
+    "useCSP:function"
+  ],
+  "denext/fresh/server": [
+    "FreshAppSpec:interface",
+    "FreshFileOptions:interface",
+    "FreshLayoutEntry:interface",
+    "FreshLayoutOptions:interface",
+    "FreshMiddlewareEntry:interface",
+    "FreshModule:interface",
+    "FreshPageOptions:interface",
+    "FreshRouteEntry:interface",
+    "freshLayout:function",
+    "freshMiddleware:function",
+    "freshNotFound:function",
+    "freshPage:function",
+    "freshRouteHandler:function"
+  ],
+  "denext/preact": [
+    "AnyComponent:typeAlias",
+    "Attributes:interface",
+    "Component:variable",
+    "ComponentChild:typeAlias",
+    "ComponentChildren:typeAlias",
+    "ComponentProps:typeAlias",
+    "ComponentType:typeAlias",
+    "Context:typeAlias",
+    "Fragment:variable",
+    "FunctionComponent:interface",
+    "FunctionalComponent:typeAlias",
+    "JSX:namespace",
+    "PreactContext:typeAlias",
+    "Ref:typeAlias",
+    "RefCallback:typeAlias",
+    "RefObject:interface",
+    "RenderableProps:typeAlias",
+    "VNode:interface",
+    "cloneElement:function",
+    "createContext:function",
+    "createElement:variable",
+    "createRef:function",
+    "h:function",
+    "hydrate:function",
+    "isValidElement:function",
+    "options:variable",
+    "render:function",
+    "toChildArray:function"
+  ],
+  "denext/preact/hooks": [
+    "useCallback:variable",
+    "useContext:variable",
+    "useDebugValue:variable",
+    "useEffect:variable",
+    "useErrorBoundary:function",
+    "useId:variable",
+    "useImperativeHandle:variable",
+    "useLayoutEffect:variable",
+    "useMemo:variable",
+    "useReducer:variable",
+    "useRef:variable",
+    "useState:variable"
+  ],
+  "denext/preact/compat": [
+    "Activity:function",
+    "AnchorHTMLAttributes:interface",
+    "AnimationEvent:interface",
+    "AriaAttributes:interface",
+    "Attributes:interface",
+    "ButtonHTMLAttributes:interface",
+    "CSSProperties:interface",
+    "ChangeEvent:interface",
+    "ChangeEventHandler:typeAlias",
+    "Children:variable",
+    "ChildrenApi:interface",
+    "ClassComponent:class",
+    "ClipboardEvent:interface",
+    "Component:variable",
+    "ComponentClass:interface",
+    "ComponentInstance:interface",
+    "ComponentProps:typeAlias",
+    "ComponentPropsWithRef:typeAlias",
+    "ComponentPropsWithoutRef:typeAlias",
+    "ComponentRef:typeAlias",
+    "ComponentType:typeAlias",
+    "CompositionEvent:interface",
+    "CompositionEventHandler:typeAlias",
+    "Consumer:interface",
+    "ConsumerProps:interface",
+    "Context:typeAlias",
+    "ContextType:typeAlias",
+    "DOMAttributes:interface",
+    "DependencyList:typeAlias",
+    "DetailedHTMLProps:typeAlias",
+    "Dispatch:typeAlias",
+    "DispatchWithoutAction:typeAlias",
+    "DragEvent:interface",
+    "EffectCallback:typeAlias",
+    "ElementRef:typeAlias",
+    "ElementType:typeAlias",
+    "EventHandler:typeAlias",
+    "ExoticComponent:interface",
+    "FC:typeAlias",
+    "FocusEvent:interface",
+    "FocusEventHandler:typeAlias",
+    "FormEvent:interface",
+    "FormEventHandler:typeAlias",
+    "FormHTMLAttributes:interface",
+    "ForwardRefExoticComponent:interface",
+    "ForwardRefRenderFunction:typeAlias",
+    "ForwardedRef:typeAlias",
+    "Fragment:variable",
+    "FragmentInstance:interface",
+    "FunctionComponent:interface",
+    "HTMLAttributes:interface",
+    "HTMLProps:typeAlias",
+    "ImgHTMLAttributes:interface",
+    "InputHTMLAttributes:interface",
+    "IntrinsicElementInstances:interface",
+    "JSX:namespace",
+    "JSXElementConstructor:typeAlias",
+    "Key:typeAlias",
+    "KeyboardEvent:interface",
+    "KeyboardEventHandler:typeAlias",
+    "LabelHTMLAttributes:interface",
+    "LegacyRef:typeAlias",
+    "MemoExoticComponent:interface",
+    "MouseEvent:interface",
+    "MouseEventHandler:typeAlias",
+    "MutableRefObject:interface",
+    "NamedExoticComponent:interface",
+    "OlHTMLAttributes:interface",
+    "OptionHTMLAttributes:interface",
+    "PointerEvent:interface",
+    "PointerEventHandler:typeAlias",
+    "Profiler:function",
+    "PropsWithChildren:typeAlias",
+    "PropsWithRef:typeAlias",
+    "PropsWithoutRef:typeAlias",
+    "Provider:interface",
+    "ProviderProps:interface",
+    "PureClassComponent:class",
+    "PureComponent:variable",
+    "ReactChild:typeAlias",
+    "ReactDispatcher:typeAlias",
+    "ReactElement:typeAlias",
+    "ReactEventHandler:typeAlias",
+    "ReactFragment:typeAlias",
+    "ReactNode:typeAlias",
+    "ReactPortal:typeAlias",
+    "ReactSVG:interface",
+    "ReactSharedInternals:interface",
+    "ReactText:typeAlias",
+    "React_ComponentProps:typeAlias",
+    "Reducer:typeAlias",
+    "ReducerAction:typeAlias",
+    "ReducerState:typeAlias",
+    "ReducerWithoutAction:typeAlias",
+    "Ref:typeAlias",
+    "RefAttributes:interface",
+    "RefCallback:typeAlias",
+    "RefObject:interface",
+    "SVGAttributes:interface",
+    "SVGProps:typeAlias",
+    "SelectHTMLAttributes:interface",
+    "SetStateAction:typeAlias",
+    "StrictMode:function",
+    "Suspense:function",
+    "SuspenseList:function",
+    "SyntheticEvent:interface",
+    "TdHTMLAttributes:interface",
+    "TextareaHTMLAttributes:interface",
+    "TouchEvent:interface",
+    "TransitionEvent:interface",
+    "UIEvent:interface",
+    "ViewTransition:function",
+    "WheelEvent:interface",
+    "__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE:variable",
+    "act:function",
+    "addTransitionType:function",
+    "cache:function",
+    "cacheSignal:function",
+    "captureOwnerStack:function",
+    "cloneElement:function",
+    "createContext:function",
+    "createElement:variable",
+    "createPortal:function",
+    "createRef:function",
+    "default:variable",
+    "experimental_taintObjectReference:function",
+    "experimental_taintUniqueValue:function",
+    "flushSync:function",
+    "forwardRef:function",
+    "hydrate:function",
+    "isValidElement:function",
+    "lazy:variable",
+    "memo:function",
+    "optimisticKey:variable",
+    "render:function",
+    "startTransition:function",
+    "unstable_batchedUpdates:function",
+    "use:variable",
+    "useActionState:variable",
+    "useCallback:variable",
+    "useContext:variable",
+    "useDebugValue:variable",
+    "useDeferredValue:variable",
+    "useEffect:variable",
+    "useEffectEvent:variable",
+    "useFormState:variable",
+    "useId:variable",
+    "useImperativeHandle:variable",
+    "useInsertionEffect:variable",
+    "useLayoutEffect:variable",
+    "useMemo:variable",
+    "useOptimistic:variable",
+    "useReducer:variable",
+    "useRef:variable",
+    "useState:variable",
+    "useSyncExternalStore:variable",
+    "useTransition:variable",
+    "version:variable"
+  ],
+  "denext/preact/jsx-runtime": [
+    "Fragment:variable",
+    "JSX:namespace",
+    "jsx:function",
+    "jsxDEV:function",
+    "jsxs:function"
+  ],
+  "denext/preact-iso": [
+    "ErrorBoundary:function",
+    "ErrorBoundaryProps:interface",
+    "LazyComponent:typeAlias",
+    "LocationHook:interface",
+    "LocationProvider:variable",
+    "LocationProviderProps:interface",
+    "MatchProps:interface",
+    "Route:function",
+    "RouteHook:interface",
+    "RouteProps:interface",
+    "Router:function",
+    "RouterProps:interface",
+    "exec:function",
+    "hydrate:function",
+    "lazy:function",
+    "locationStub:function",
+    "prerender:function",
+    "useLocation:function",
+    "useRoute:function"
+  ],
+  "denext/signals": [
+    "Computation:interface",
+    "EffectDispose:typeAlias",
+    "For:function",
+    "ForProps:interface",
+    "ReadonlySignal:interface",
+    "Show:function",
+    "ShowProps:interface",
+    "Signal:class",
+    "action:function",
+    "batch:function",
+    "computed:function",
+    "effect:function",
+    "signal:function",
+    "untracked:function",
+    "useComputed:function",
+    "useLiveSignal:function",
+    "useSignal:function",
+    "useSignalEffect:function"
+  ],
   "denext/build/next-compat": [
     "AssetLoader:typeAlias",
     "AssetOptions:interface",
@@ -5818,6 +6542,7 @@
     "buildNextCompatClientEntries:function",
     "buildNextCompatFlightEntry:function",
     "buildNextCompatModules:function",
+    "compileCssAsset:function",
     "createNextCompatServerLoader:function",
     "detectNextCompat:function",
     "findServerOnlyLeaks:function"

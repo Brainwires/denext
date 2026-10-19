@@ -13,6 +13,10 @@
 // compared case-insensitively where the project's filesystem ignores case (so `.GIT` is
 // `.git` on APFS), and, where both sides exist, by `dev`+`ino` as well, so a symlinked
 // parent or any other alias of a protected directory is caught however it is spelled.
+// Windows compares real paths only: its `ino` is the 64-bit file index, which ReFS (a Dev
+// Drive, a CI runner's work volume) does not keep unique, so two sibling directories could
+// read as one; the real path already resolves the aliases Windows has (symlinks, junctions,
+// short names), and a directory there has no hard links.
 
 import { ensureDir } from "@std/fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
@@ -38,11 +42,25 @@ function protectedPaths(paths: ProjectPaths, root: string): string[] {
   ].map((p) => resolve(p));
 }
 
-/** `dev:ino` of the entry at `path` (symlinks followed), or null when it is absent. */
+/**
+ * The identity the guard compares for a stat result: `dev:ino`, or null where the platform's
+ * inode number does not identify an entry (none reported, or Windows; see the module header).
+ *
+ * @param info The entry's `dev` and `ino`.
+ * @param os The platform (default: this one).
+ * @returns The identity, or null.
+ */
+export function statIdentity(
+  info: Pick<Deno.FileInfo, "dev" | "ino">,
+  os: typeof Deno.build.os = Deno.build.os,
+): string | null {
+  return info.ino === null || os === "windows" ? null : `${info.dev}:${info.ino}`;
+}
+
+/** The identity ({@linkcode statIdentity}) of the entry at `path` (symlinks followed), or null. */
 async function fileId(path: string): Promise<string | null> {
   try {
-    const { dev, ino } = await Deno.stat(path);
-    return ino === null ? null : `${dev}:${ino}`;
+    return statIdentity(await Deno.stat(path));
   } catch {
     return null;
   }
@@ -92,8 +110,7 @@ async function probeCaseInsensitive(realRoot: string): Promise<boolean | null> {
   const real = await fileId(realRoot);
   if (flipped === realRoot || real === null) return null;
   try {
-    const { dev, ino } = await Deno.stat(flipped);
-    return `${dev}:${ino}` === real;
+    return statIdentity(await Deno.stat(flipped)) === real;
   } catch (err) {
     return err instanceof Deno.errors.NotFound ? false : null;
   }

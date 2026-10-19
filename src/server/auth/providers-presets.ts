@@ -33,7 +33,7 @@ export interface OAuthClientOptions {
  * shipped it as the STRING `"false"` / `"true"`; a strict `=== false` check would treat the
  * string `"false"` as verified. Unknown shapes → `undefined` (no claim made).
  */
-function emailVerifiedClaim(value: unknown): boolean | undefined {
+export function emailVerifiedClaim(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
   if (value === "true") return true;
   if (value === "false") return false;

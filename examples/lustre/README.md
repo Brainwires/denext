@@ -10,6 +10,10 @@ One Lustre counter, written in Gleam (`gleam/src/counter.gleam`), used three way
 - **a server component** (`defineLustreView`, [`app/counter-view.ts`](./app/counter-view.ts)): the
   model lives on the server, and Lustre's patches travel over denext's Live socket.
 
+A fourth section, the ticker ([`gleam/src/ticker.gleam`](./gleam/src/ticker.gleam),
+[`app/ticker.tsx`](./app/ticker.tsx)), is an island that can be hidden: its effect starts a timer,
+and once the island unmounts the stopped app takes none of the timer's messages.
+
 The `gleam()` plugin in [`denext.config.ts`](./denext.config.ts) compiles `gleam/` at dev startup,
 on every `.gleam` change and at build, with denext's pinned Gleam (downloaded on first use), and
 writes the `.denext/lustre*.ts` modules the app imports. Lustre comes from Hex, so the first build

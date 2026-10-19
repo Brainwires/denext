@@ -5,16 +5,17 @@ name: CI
 # tagged from sixty commits none of which had been through CI. So every push to `development`
 # runs the fast `check` job (and the `bundle-budget` and macOS `ios-export-router` jobs); the
 # heavy jobs (integration builds, real-npm next-compat, the coverage re-run, the backend suites
-# against real Postgres + MinIO) run on pull requests, `main` and a manual dispatch, not on a
-# plain push — a dozen pushes a day to the working branch would otherwise queue an hour of
-# runners each.
+# against real Postgres + MinIO, the unit + integration suites on Windows) run on pull requests,
+# `main` and a manual dispatch, not on a plain push — a dozen pushes a day to the working branch
+# would otherwise queue an hour of runners each.
 #
 # A release is cut from a commit these heavy jobs passed on: `deno task release` refuses to tag
 # unless the newest ci.yml run on HEAD that ran them has every job green. On `development` that
 # run is a dispatch: `gh workflow run ci.yml --ref development`, then `gh run watch`.
 #
 # A newer push to `development` cancels the push run before it; dispatch, `main` and PR runs are
-# never cancelled (the event is part of the concurrency group, so a push never cancels a dispatch).
+# never cancelled (the event is part of the concurrency group, so a push never cancels a dispatch,
+# such as the one a release is gated on).
 on:
   push:
     branches: [main, development]
@@ -79,7 +80,12 @@ jobs:
       - name: Test-count badge is current
         # Deterministic, source-derived count (like `deno fmt --check`): fails if
         # .github/badges/tests.json drifts from the number of Deno.test cases.
-        # Regenerate with `deno task badge:tests` and commit.
+        # Regenerate with `deno task badge:tests` and commit. The README shows `main`'s
+        # badge and the release script refreshes it before the tag, so the check runs
+        # where it is displayed — `main` and the development → main PR — not on every
+        # push to `development`, where the pre-commit hook no longer regenerates it
+        # (a per-commit badge put parallel commits in conflict at nearly every rebase).
+        if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
         run: deno task badge:tests --check
 
       - name: Doc lint (JSR documentation coverage)
@@ -152,7 +158,7 @@ jobs:
   # Real-npm next-compat compatibility tests: SSR of Radix / recharts / react-hook-
   # form / dnd-kit / framer-motion / lucide through the next-compat build. They
   # install real npm packages (needs Node) but drive NO browser, so — unlike the
-  # headless-Chromium e2e suite (nightly, e2e.yml) — they run on every PR to catch
+  # headless-Chromium e2e suite (dispatched before a release, e2e.yml) — they run on every PR to catch
   # npm-React compat regressions early. Runs in parallel with `check`/`integration`.
   next-compat:
     runs-on: ubuntu-latest
@@ -380,9 +386,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.21
-      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.21-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 1debf5762fbafdaacc4995225e13a7140b8d3f3d20f959e35f8e646ce5a8a471
+      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.22
+      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.22-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: b4a3b1d50211e68af1590b77ef84f30d14258977f773ddb87df5547ca39df638
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -511,6 +517,67 @@ jobs:
           deno test -A --unstable-kv tests/ota-reverify.test.ts 2>&1 | tee "$RUNNER_TEMP/ota-reverify.txt"
           grep -E 'the Swift store compiles and refuses a tampered UI \.\.\. ok' "$RUNNER_TEMP/ota-reverify.txt"
           grep -E 'the plugin and the store type-check against UIKit and a Capacitor stub \.\.\. ok' "$RUNNER_TEMP/ota-reverify.txt"
+
+      - name: Storage and file transfers (the Swift halves compiled and run; SQLCipher via SwiftPM)
+        env:
+          NO_COLOR: "1"
+        run: |
+          set -o pipefail
+          deno test -A --unstable-kv tests/mobile-storage-cipher-native.test.ts tests/mobile-file-transfer-native.test.ts 2>&1 | tee "$RUNNER_TEMP/native-storage.txt"
+          grep -E 'without SQLCipher a key is refused and nothing is written in the clear \.\.\. ok' "$RUNNER_TEMP/native-storage.txt"
+          grep -E 'with SQLCipher \(the Swift package\) a store is encrypted, moved and keyed \.\.\. ok' "$RUNNER_TEMP/native-storage.txt"
+          grep -E 'storage \(iOS\): the plugin and the store type-check against UIKit and a Capacitor stub \.\.\. ok' "$RUNNER_TEMP/native-storage.txt"
+          grep -E 'the manager downloads, pauses, resumes and uploads \(macOS URLSession\) \.\.\. ok' "$RUNNER_TEMP/native-storage.txt"
+          grep -E 'the plugin and the manager type-check against UIKit and a Capacitor stub \.\.\. ok' "$RUNNER_TEMP/native-storage.txt"
+
+  # The unit and integration suites on Windows: the same tasks as `check` and `integration`, so a
+  # drive letter, a backslash or a file Windows keeps locked fails here rather than on a user's
+  # machine. Heavy (both suites on one runner): PRs, `main` and a manual dispatch, like
+  # `integration`. The JDK is there for the same reason as in `check` (the Android templates).
+  windows-tests:
+    runs-on: windows-latest
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+
+      - name: Set up a JDK
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          # Default DENO_DIR on Windows (%LOCALAPPDATA%\deno).
+          path: ~\AppData\Local\deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: Deno
+      # 2.9 resolves a config's `file:` targets on another drive as `file:///C:/D:/…` (and loses
+      # the framework's own import map for its modules there), so a temp app on C: that imports
+      # this checkout on D: fails in Deno, not in denext. runner.temp has no 8.3 short names.
+      - name: Unit tests
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: deno task test:unit
+
+      - name: Integration tests
+        if: ${{ !cancelled() }}
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          DENEXT_TEST_COMPILED_CLI: "1"
+          DENEXT_TEST_REMOTE_CLI: "1"
+        run: deno task test:integration
 
   # Module resolution on Windows: the esbuild deno-loader's WASM spells drive paths `/C:/…`,
   # which Windows refuses, so a build that passed on Linux and macOS could fail here (a bare

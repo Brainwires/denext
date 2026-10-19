@@ -7,6 +7,7 @@ import { resolveCors } from "../cors.ts";
 import { ROUTE_CSP_KEYS } from "../segment-config.ts";
 import { validateAppLinks } from "../app-links.ts";
 import { parseCidr } from "../remote-addr.ts";
+import { isForwardableBatchHeader } from "../../runtime/api-batch-protocol.ts";
 import { didYouMean, unknownKeyMessage } from "./keys.ts";
 import { type Fail, num, numArray, type NumOpts } from "./shared.ts";
 
@@ -112,7 +113,7 @@ export function validateSecurity(config: DenextConfig, fail: Fail): void {
   validateCsp("csp", config.csp, fail);
   validateCsp("spa.csp", config.spa?.csp, fail);
   validateHsts(config.hsts, fail);
-  validateApiBatch(config.apiBatch, fail);
+  validateApiBatch(config.apiBatch, fail, config.rateLimitHeader);
   validateCors(config.cors, fail);
   validateAppLinks(config.appLinks, fail);
   if (config.apiMaxBodyBytes !== undefined) {
@@ -233,8 +234,37 @@ function validateCors(cors: DenextConfig["cors"], fail: Fail): void {
   }
 }
 
+/**
+ * `apiBatch.forwardHeaders`: header names a batch item may carry — never a credential, framing,
+ * trust or proxy header (`isForwardableBatchHeader`), nor the `rateLimitHeader` a limiter keys on.
+ */
+function validateForwardHeaders(
+  list: unknown,
+  fail: Fail,
+  rateLimitHeader: string | undefined,
+): void {
+  if (list === undefined) return;
+  if (!Array.isArray(list)) {
+    return fail("apiBatch.forwardHeaders", "must be an array of header names");
+  }
+  for (const name of list) {
+    const lower = typeof name === "string" ? name.toLowerCase() : "";
+    if (!isForwardableBatchHeader(lower) || lower === rateLimitHeader?.toLowerCase()) {
+      fail(
+        "apiBatch.forwardHeaders",
+        `${JSON.stringify(name)} cannot be forwarded per batch item (a credential, framing, ` +
+          "proxy or denext header, or not a header name)",
+      );
+    }
+  }
+}
+
 /** `apiBatch` caps are finite whole numbers in sane ranges; `enabled` / `mutations` are booleans. */
-function validateApiBatch(apiBatch: DenextConfig["apiBatch"], fail: Fail): void {
+function validateApiBatch(
+  apiBatch: DenextConfig["apiBatch"],
+  fail: Fail,
+  rateLimitHeader: string | undefined,
+): void {
   if (apiBatch === undefined) return;
   if (typeof apiBatch !== "object" || apiBatch === null) {
     return fail("apiBatch", "must be an object");
@@ -244,6 +274,7 @@ function validateApiBatch(apiBatch: DenextConfig["apiBatch"], fail: Fail): void 
       fail(`apiBatch.${key}`, "must be a boolean");
     }
   }
+  validateForwardHeaders(apiBatch.forwardHeaders, fail, rateLimitHeader);
   if (apiBatch.maxItems !== undefined) {
     num(fail, "apiBatch.maxItems", apiBatch.maxItems, { int: true, min: 1, max: 100 });
   }

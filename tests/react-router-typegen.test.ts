@@ -105,7 +105,7 @@ Deno.test("typegen: route modules type-check against the generated +types (rootD
       rootFile: join(dir, "app", "root.ts"),
     });
     assertEquals(
-      written.map((f) => f.slice(dir.length + 1)).sort(),
+      written.map((f) => f.slice(dir.length + 1).replaceAll("\\", "/")).sort(),
       [
         ".react-router/types/app/+types/root.ts",
         ".react-router/types/app/routes/+types/home.ts",

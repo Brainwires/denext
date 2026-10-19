@@ -61,9 +61,10 @@ export default function Mobile() {
         <a href="#background-audio">
           background audio
         </a>{" "}
-        and its lock-screen controls, multi-select and video picks (<code>pickMedia</code>), and the
-        bottom safe-area inset. Android is compiled and unit-tested, not run on a device: its halves
-        of <code>denext/mobile</code>{" "}
+        and its lock-screen controls, multi-select and video picks (<code>pickMedia</code>),{" "}
+        <a href="#file-transfers">background file transfers</a>, and the bottom safe-area inset.
+        Android is compiled and unit-tested, not run on a device: its halves of{" "}
+        <code>denext/mobile</code>{" "}
         and of the generators have not run on Android at all, and a whole-app comparison ran on an
         emulator only. The details, and every open limit, are in{" "}
         <a href="/docs/limitations">Known limitations</a> (Mobile) and the open work in the{" "}
@@ -592,7 +593,8 @@ denext mobile add haptics share network secure-store`}
           <code>@sqlite.org/sqlite-wasm</code>{" "}
           on the Origin Private File System (install it yourself; without it <code>openSqlite</code>
           {" "}
-          reports the engine is missing).
+          reports the engine is missing). Syncing it with a backend, and running PowerSync beside
+          it: <a href="/docs/powersync">Offline sync and PowerSync</a>.
         </li>
         <li>
           <code>readFile</code> / <code>writeFile</code> / <code>deleteFile</code> /{" "}
@@ -600,7 +602,11 @@ denext mobile add haptics share network secure-store`}
           (<code>filesystem</code>): the app's files in <code>"data"</code>,{" "}
           <code>"documents"</code> or{" "}
           <code>"cache"</code>, as text or base64; the Origin Private File System on the web (a
-          top-level folder per directory).
+          top-level folder per directory). <code>downloadToFile</code> and <code>uploadFile</code>
+          {" "}
+          report progress and, with{" "}
+          <code>file-transfer</code>, run in the OS&apos;s background transfer service: see{" "}
+          <a href="#file-transfers">file transfers</a>.
         </li>
         <li>
           <code>pickImage({"{ source }"})</code>{" "}
@@ -2101,6 +2107,82 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         only for a non-mixing session (<code>interruption: "exclusive"</code>) that is playing.
       </Callout>
 
+      <h2 id="file-transfers">File transfers with progress</h2>
+      <p>
+        <code>downloadToFile(url, path, options)</code> and{" "}
+        <code>uploadFile(url, path, options)</code>{" "}
+        move a file between a URL and the app&apos;s folders with an <code>onProgress</code>{" "}
+        callback, an <code>AbortSignal</code>, request <code>headers</code> and an <code>id</code>.
+        {" "}
+        <code>denext mobile add file-transfer</code> installs denext&apos;s{" "}
+        <code>DenextTransfer</code>{" "}
+        plugin, which runs each transfer in the OS&apos;s background transfer service: a{" "}
+        <code>URLSession</code>{" "}
+        background session on iOS (AppDelegate forwards its events, so a transfer that finishes
+        while the app is suspended or terminated relaunches it in the background to save the file),
+        and a WorkManager job on Android (it runs with the app in the background and after the
+        process is gone, whenever there is a network). The body never passes through the WebView,
+        and CORS does not apply. Without the plugin the page runs it: <code>fetch</code>{" "}
+        with the body streamed into the Origin Private File System for a download, and{" "}
+        <code>XMLHttpRequest</code>{" "}
+        (upload progress) for an upload, so it lasts as long as the page.
+      </p>
+      <Code lang="tsx">
+        {`import {
+  cancelFileTransfer, downloadToFile, fileTransfers, onFileTransfer, pauseFileTransfer,
+  resumeFileTransfer, uploadFile,
+} from "denext/mobile";
+
+await downloadToFile("https://cdn.example.com/maps/region.pmtiles", "maps/region.pmtiles", {
+  id: "region-map",
+  onProgress: ({ bytes, total }) => setProgress(total ? bytes / total : null),
+});
+
+const { status, body } = await uploadFile("https://api.example.com/photos", "camera/1.jpg", {
+  field: "photo", // multipart by default; as: "binary" sends the file as the body (a presigned PUT)
+  fields: { album: "trip" },
+  headers: { authorization: \`Bearer \${token}\` },
+});
+
+await pauseFileTransfer("region-map"); // a download keeps its bytes
+await resumeFileTransfer("region-map"); // a range request continues it where the server allows
+
+// After a relaunch: the plugin kept every transfer's record.
+for (const t of await fileTransfers()) if (t.state === "done") useFile(t.file);
+onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.total));`}
+      </Code>
+      <p>
+        A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
+        file on Android, the OPFS file on the web) and resumes with a range request guarded by the
+        response&apos;s <code>ETag</code> (or <code>Last-Modified</code>); a server that answers
+        {" "}
+        <code>200</code> to it starts the download over. Uploads cannot pause.{" "}
+        <code>cancelFileTransfer(id)</code>{" "}
+        drops a download&apos;s partial file and rejects its promise with a{" "}
+        <code>FileTransferError</code> of code <code>"CANCELLED"</code> (an aborted{" "}
+        <code>signal</code>{" "}
+        rejects with the signal&apos;s reason). A non-2xx answer rejects with code{" "}
+        <code>"HTTP"</code>, its <code>status</code> and <code>body</code>; a network failure with
+        {" "}
+        <code>"NETWORK"</code>, <code>resumable</code> when the bytes so far can be kept.{" "}
+        <code>fileTransfers()</code>{" "}
+        lists the plugin&apos;s records (running, paused, and finished ones the app has not dropped
+        with{" "}
+        <code>forgetFileTransfer(id)</code>), so a transfer that finished while the page was gone is
+        still reported. In a Deno Desktop window <code>downloadToFile</code>{" "}
+        fetches in the Deno process (no progress) and <code>uploadFile</code>{" "}
+        reads the file through the runtime and sends it from the page.
+      </p>
+      <Callout kind="note">
+        <strong>Android&apos;s limits.</strong>{" "}
+        WorkManager stops a job after about ten minutes; the next run resumes a download from its
+        {" "}
+        <code>.part</code>{" "}
+        file, but an upload starts over. A network error is retried with backoff (six runs in all)
+        before the transfer fails. iOS may defer a background transfer that starts while the app is
+        already in the background; one started in the foreground runs at once.
+      </Callout>
+
       <h2 id="screen-readers">Screen readers</h2>
       <p>
         <code>accessibility</code> has no npm package: it writes denext&apos;s{" "}
@@ -2236,8 +2318,8 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
       </Code>
       <p>
         Values are strings (<code>JSON.stringify</code>{" "}
-        anything else), not encrypted: tokens and passwords go in{" "}
-        <code>secureStore</code>. React Native mode&apos;s{" "}
+        anything else). A plain store is not encrypted: tokens and passwords go in{" "}
+        <code>secureStore</code>, or in an encrypted store (below). React Native mode&apos;s{" "}
         <code>@react-native-async-storage/async-storage</code> and <code>react-native-mmkv</code>
         {" "}
         run on this store (see <a href="/docs/react-native#durable-storage">React Native mode</a>).
@@ -2247,6 +2329,67 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
         {" "}
         / IndexedDB, and about AsyncStorage, MMKV or <code>openKeyValueStore</code>{" "}
         in a project without a durable native store.
+      </p>
+      <h3 id="encrypted-storage">Encrypted stores</h3>
+      <p>
+        <code>openKeyValueStore(name, {"{ encrypted: true }"})</code>{" "}
+        keeps the store encrypted at rest with SQLCipher.{" "}
+        <code>denext mobile add storage --encrypted</code>{" "}
+        links it into the app: the SQLCipher Swift package in the Xcode app target, and{" "}
+        <code>net.zetetic:sqlcipher-android</code> with a <code>DenextStorageCipher.java</code>{" "}
+        beside the plugin on Android. Each encrypted store is its own database file, keyed with a
+        random 256-bit key that is created on first use and kept in <code>secureStore</code>{" "}
+        (the Keychain / Keystore, so also run{" "}
+        <code>denext mobile add secure-store</code>). The first encrypted open moves the
+        store&apos;s rows out of the plain database, which deletes them with{" "}
+        <code>secure_delete</code>{" "}
+        and truncates its write-ahead log, so no plaintext copy stays behind.
+      </p>
+      <Code lang="ts">
+        {`import { KeyValueStoreError, openKeyValueStore } from "denext/mobile";
+
+const vault = openKeyValueStore("vault", { encrypted: true });
+try {
+  await vault.set("pin", pin);
+} catch (err) {
+  if (err instanceof KeyValueStoreError && err.code === "ENCRYPTION_UNAVAILABLE") {
+    // the browser, Deno Desktop, a build without --encrypted, or no secure-store:
+    // nothing was written
+  }
+}`}
+      </Code>
+      <p>
+        An encrypted store never falls back to a plain one. Where it cannot be encrypted, every call
+        rejects with a <code>KeyValueStoreError</code> whose code is{" "}
+        <code>ENCRYPTION_UNAVAILABLE</code>{" "}
+        and nothing is written. That covers the browser (IndexedDB), Deno Desktop, the{" "}
+        <code>@capacitor-community/sqlite</code> and memory backings, a build whose{" "}
+        <code>DenextStorage</code> has no SQLCipher (including one from an older denext), and a{" "}
+        <code>secureStore</code>{" "}
+        that is not secret, where the key would sit in plain WebView storage. If the key in{" "}
+        <code>secureStore</code> does not open the store&apos;s file, the call rejects with{" "}
+        <code>WRONG_KEY</code>.
+      </p>
+      <p>
+        <code>openSqlite(name, {"{ encryptionKey }"})</code>, and{" "}
+        <code>PRAGMA key = &apos;…&apos;</code>{" "}
+        as the first statement run on a database (the way the expo-sqlite shim&apos;s apps key
+        theirs), open a SQLCipher database in the shell through{" "}
+        <code>@capacitor-community/sqlite</code>. Encryption has to be on in{" "}
+        <code>capacitor.config.ts</code> (<code>plugins.CapacitorSQLite.iosIsEncryption</code> and
+        {" "}
+        <code>androidIsEncryption: true</code>). The plugin keeps a single passphrase for all of the
+        app&apos;s databases, so a different one is refused with{" "}
+        <code>WRONG_KEY</code>. A plain database is encrypted in place, and an encrypted one opened
+        without a key waits for its <code>PRAGMA key</code>{" "}
+        (<code>KEY_REQUIRED</code>). The web engine and Deno Desktop have no SQLCipher. On those,
+        {" "}
+        <code>PRAGMA key</code> and <code>encryptionKey</code> reject with a{" "}
+        <code>SqliteEncryptionError</code>{" "}
+        (<code>ENCRYPTION_UNAVAILABLE</code>) and nothing runs. sqlite-wasm would otherwise treat
+        the pragma as a no-op and leave the data unencrypted. <code>PRAGMA rekey</code>,{" "}
+        <code>hexkey</code>{" "}
+        and a key pragma that is not the first statement are refused (<code>UNSUPPORTED</code>).
       </p>
 
       <h2 id="in-app-purchases">In-app purchases</h2>
@@ -2440,8 +2583,9 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         {" "}
         <code>MainActivity</code>, upgraded in place while unedited): <code>DenextCalendar</code>
         {" "}
-        (attendees, an event by id, one occurrence's changes and its time zone, the system event
-        viewer), <code>DenextContacts</code>{" "}
+        (attendees, an event by id, one occurrence's changes and its time zone, an Android series
+        split from one occurrence on for <code>futureEvents</code>, the system event viewer),{" "}
+        <code>DenextContacts</code>{" "}
         (containers on iOS, change events, and the postal addresses, URLs, birthday and photo an
         Android update would drop), <code>DenextPrint</code>{" "}
         (<code>printToFileAsync</code>: HTML to a PDF file; on iOS the printer picker and printing

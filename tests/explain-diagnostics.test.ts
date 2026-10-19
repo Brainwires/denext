@@ -4,7 +4,7 @@
 // own, the `denext_explain_error` MCP tool, and the dev-server and build hooks.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, resolve } from "@std/path";
 import { explainFixture, FIXTURE_APP_DIR } from "../scripts/capture-explain-fixtures.ts";
 import {
   explainDiagnostic,
@@ -90,7 +90,8 @@ Deno.test("parseDiagnostics: TS blocks, related locations, lint blocks, Deno and
     Deno.readTextFileSync(join(FIXTURES, "assignable-object.raw.txt")),
   );
   assertEquals(ts.length, 1);
-  assertEquals(ts[0].file, `${FIXTURE_APP_DIR}/assignable-object.ts`);
+  // Printed as `file:///app/…`: the path this OS reads it as (`\\app\\…` on Windows).
+  assertEquals(ts[0].file, fromFileUrl(`file://${FIXTURE_APP_DIR}/assignable-object.ts`));
   assertEquals([ts[0].line, ts[0].column, ts[0].length], [8, 12, 4]);
   assertEquals(ts[0].related[0].line, 3);
 
@@ -106,13 +107,17 @@ Deno.test("parseDiagnostics: TS blocks, related locations, lint blocks, Deno and
   const deno = parseDiagnostics(
     'error: Module not found "file:///app/x.ts".\n    at file:///app/main.ts:1:21\n',
   );
-  assertEquals([deno[0].code, deno[0].file, deno[0].line], ["module-not-found", "/app/main.ts", 1]);
+  assertEquals([deno[0].code, deno[0].file, deno[0].line], [
+    "module-not-found",
+    fromFileUrl("file:///app/main.ts"),
+    1,
+  ]);
 
   const esbuild = parseDiagnostics(
     'Build failed with 1 error:\napp/page.tsx:2:26: ERROR: Could not resolve "./utlis"',
     "/proj",
   );
-  assertEquals(esbuild[0].file, "/proj/app/page.tsx");
+  assertEquals(esbuild[0].file, resolve("/proj", "app/page.tsx"));
   assertEquals(esbuild[0].column, 27, "esbuild columns are 0-based");
 
   assertEquals(
@@ -297,4 +302,28 @@ Deno.test("explainBuildFailure: an unresolved import gets a did-you-mean after t
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("module-not-found: a relative import resolves from its file as a path, not a URL", () => {
+  // `file://` + the file's path is no URL when the path has a `#` (or a drive, on Windows): the
+  // directory listed for the did-you-mean must be the file's own.
+  const dir = resolve("/proj/a#b");
+  const listed: string[] = [];
+  const e = explainDiagnostic(
+    fromStructured({
+      code: "TS2307",
+      message: "Cannot find module './utlis.ts' or its corresponding type declarations.",
+      file: join(dir, "main.ts"),
+      line: 1,
+      column: 1,
+    }),
+    {
+      listDir: (d) => {
+        listed.push(d);
+        return ["utils.ts", "main.ts"];
+      },
+    },
+  )!;
+  assertEquals(listed, [dir]);
+  assertEquals(e.title, 'Module "./utlis.ts" not found — did you mean "./utils.ts"?');
 });

@@ -99,12 +99,34 @@ document (`{ h1: Heading, Callout }`).
   nested lists, fenced and indented code, code spans of any backtick-run length, blockquotes /
   `> [!NOTE]` callouts, GFM pipe tables, inline and reference-style links and images, GFM
   footnotes (`[^1]`, a numbered section with back-links), emphasis; raw HTML is escaped, and
-  `javascript:`/`data:` link and image targets are dropped). A document that needs components or
-  raw HTML is an `.mdx` entry. A `.mdx` entry is compiled **at build** (and at dev
+  `javascript:`/`data:` link and image targets are dropped). A document that needs components is
+  an `.mdx` entry. A `.mdx` entry is compiled **at build** (and at dev
   startup / on change) into a component module under `.denext/content/<collection>/<id>.js`
   with denext's build-time `@mdx-js/mdx` — nothing MDX-related runs at request time — and
   `renderContent(entry, { components })` passes `components` to the document. `format` on each
   entry says which (`"md"` / `"mdx"`; absent for data collections, which have nothing to render).
+- **Raw HTML in `.md` (opt-in):** `contentCollections({ markdown: { html: "sanitize" } })` keeps
+  the raw HTML in `.md` entries that passes a first-party allowlist sanitizer instead of escaping
+  it (the default, `html: "escape"`). The HTML is parsed into a tree and re-serialized — never
+  passed through — keeping GitHub's element set (`kbd`, `details`/`summary`, `sub`/`sup`,
+  tables, `img`, `picture`/`source`, …) with per-element attributes; `script`, `style`,
+  `iframe`, `object`, `form` controls, `svg`, `math`, `template`, any namespaced or custom
+  element, `on*` handlers, `style`, `srcdoc`, `formaction` and `xlink:*` never survive. URLs are
+  entity-decoded and control-stripped before the scheme check (`http`, `https`, `mailto`,
+  relative and `#fragment` only); `id` / `name` get GitHub's `user-content-` prefix, and a
+  `#fragment` link follows it when the document's raw HTML defines that id or name (a link to a
+  Markdown heading's id is left as written); `class` is stripped; `target="_blank"` comes with
+  `rel="noopener noreferrer nofollow"`; comments and doctypes are removed. A block container
+  (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when allowlisted) that an
+  HTML block leaves open wraps the Markdown blocks after it until a later HTML block closes it
+  (or the document ends), so GitHub's `<details>` + blank line + Markdown + `</details>` pattern
+  works; anything else is closed inside the block it was written in, and raw HTML never closes
+  the renderer's own markup. `sanitize: { allowElements, allowAttributes,
+  allowDataImages }` only adds to the allowlist (`{ "*": ["class"] }` keeps `class`;
+  `allowDataImages` admits base64 PNG/GIF/JPEG/WebP on `<img src>`), never the denied set. The
+  option is stored with each `.md` entry at build; `renderContent(entry, { markdown })` overrides
+  it per call, and `renderMarkdown(body, { html: "sanitize" })` / `sanitizeHtml(html)` from
+  `@denext/content-collections/markdown` are the functions behind it.
 - **YAML dates:** unquoted `date: 2026-09-01` parses as a `Date`, not a string — quote it, or use a
   date schema.
 

@@ -216,6 +216,8 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
       });
 
       ctx.addRequestHandler(handle);
+      // The pages come from `pages/`: the app needs no `app/` (`denext doctor`).
+      ctx.servesRoutes?.();
 
       // Build step (seam 3): pre-bundle every route's client entry, then prerender
       // static (`getStaticProps`) pages to disk for `denext start` to serve — and for a

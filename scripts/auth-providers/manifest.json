@@ -1,0 +1,3323 @@
+{
+  "authjsCore": "0.41.3",
+  "all": [
+    "42-school",
+    "apple",
+    "asgardeo",
+    "atlassian",
+    "auth0",
+    "authentik",
+    "azure-ad",
+    "azure-ad-b2c",
+    "azure-devops",
+    "bankid-no",
+    "battlenet",
+    "beyondidentity",
+    "bitbucket",
+    "box",
+    "boxyhq-saml",
+    "bungie",
+    "click-up",
+    "cognito",
+    "coinbase",
+    "concept2",
+    "credentials",
+    "descope",
+    "discord",
+    "dribbble",
+    "dropbox",
+    "duende-identity-server6",
+    "email",
+    "eventbrite",
+    "eveonline",
+    "facebook",
+    "faceit",
+    "figma",
+    "forwardemail",
+    "foursquare",
+    "freshbooks",
+    "frontegg",
+    "fusionauth",
+    "github",
+    "gitlab",
+    "google",
+    "hubspot",
+    "huggingface",
+    "identity-server4",
+    "instagram",
+    "kakao",
+    "keycloak",
+    "kinde",
+    "line",
+    "linkedin",
+    "logto",
+    "loops",
+    "mailchimp",
+    "mailgun",
+    "mailru",
+    "mastodon",
+    "mattermost",
+    "medium",
+    "microsoft-entra-id",
+    "naver",
+    "netlify",
+    "netsuite",
+    "nextcloud",
+    "nodemailer",
+    "notion",
+    "okta",
+    "onelogin",
+    "ory-hydra",
+    "osso",
+    "osu",
+    "passage",
+    "passkey",
+    "patreon",
+    "ping-id",
+    "pinterest",
+    "pipedrive",
+    "postmark",
+    "reddit",
+    "resend",
+    "roblox",
+    "salesforce",
+    "sendgrid",
+    "simplelogin",
+    "slack",
+    "spotify",
+    "strava",
+    "threads",
+    "tiktok",
+    "todoist",
+    "trakt",
+    "twitch",
+    "twitter",
+    "united-effects",
+    "vipps",
+    "vk",
+    "webauthn",
+    "webex",
+    "wechat",
+    "wikimedia",
+    "wordpress",
+    "workos",
+    "yandex",
+    "zitadel",
+    "zoho",
+    "zoom"
+  ],
+  "handWritten": [
+    "apple",
+    "auth0",
+    "azure-ad",
+    "cognito",
+    "credentials",
+    "discord",
+    "email",
+    "facebook",
+    "forwardemail",
+    "github",
+    "gitlab",
+    "google",
+    "keycloak",
+    "linkedin",
+    "loops",
+    "mailgun",
+    "microsoft-entra-id",
+    "nodemailer",
+    "notion",
+    "okta",
+    "passkey",
+    "postmark",
+    "resend",
+    "sendgrid",
+    "slack",
+    "spotify",
+    "twitch",
+    "twitter",
+    "webauthn",
+    "zoom"
+  ],
+  "unsupported": {
+    "azure-devops": "Azure DevOps OAuth exchanges a JWT assertion (`response_type=Assertion`) instead of an authorization code, and Microsoft has deprecated it: use `microsoft-entra-id`.",
+    "bankid-no": "BankID Norge returns userinfo as a signed JWT (`userinfo_signed_response_alg`); denext reads userinfo as JSON.",
+    "wechat": "WeChat's `platformType` option switches the authorization URL and scope between two fixed pairs, which the generated data (one URL, options filled into it) can't express."
+  },
+  "generated": {
+    "42-school": {
+      "exportName": "FortyTwo",
+      "spec": {
+        "id": "42-school",
+        "name": "42 School",
+        "type": "oauth",
+        "scopes": [
+          "public"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://api.intra.42.fr/oauth/authorize",
+        "token": "https://api.intra.42.fr/oauth/token",
+        "userinfo": "https://api.intra.42.fr/v2/me",
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "usual_full_name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "image",
+                "link"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "asgardeo": {
+      "exportName": "Asgardeo",
+      "spec": {
+        "id": "asgardeo",
+        "name": "Asgardeo",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}/oauth2/token"
+      }
+    },
+    "atlassian": {
+      "exportName": "Atlassian",
+      "spec": {
+        "id": "atlassian",
+        "name": "Atlassian",
+        "type": "oauth",
+        "scopes": [
+          "read:me"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://auth.atlassian.com/authorize",
+        "token": "https://auth.atlassian.com/oauth/token",
+        "userinfo": "https://api.atlassian.com/me",
+        "params": {
+          "audience": "api.atlassian.com"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "account_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "picture"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "authentik": {
+      "exportName": "Authentik",
+      "spec": {
+        "id": "authentik",
+        "name": "Authentik",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "azure-ad-b2c": {
+      "exportName": "AzureADB2C",
+      "spec": {
+        "id": "azure-ad-b2c",
+        "name": "Azure AD B2C",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "sub"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            },
+            {
+              "p": [
+                "p",
+                "preferred_username"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "emails",
+                "0"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "battlenet": {
+      "exportName": "BattleNet",
+      "spec": {
+        "id": "battlenet",
+        "name": "Battle.net",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "sub"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "battle_tag"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "beyondidentity": {
+      "exportName": "BeyondIdentity",
+      "spec": {
+        "id": "beyondidentity",
+        "name": "Beyond Identity",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "sub"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ],
+          "preferred_username": [
+            {
+              "p": [
+                "p",
+                "preferred_username"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "bitbucket": {
+      "exportName": "Bitbucket",
+      "spec": {
+        "id": "bitbucket",
+        "name": "Bitbucket",
+        "type": "oauth",
+        "scopes": [
+          "account"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://bitbucket.org/site/oauth2/authorize",
+        "token": "https://bitbucket.org/site/oauth2/access_token",
+        "userinfo": "https://api.bitbucket.org/2.0/user",
+        "profile": {
+          "name": [
+            {
+              "p": [
+                "p",
+                "display_name"
+              ]
+            },
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "id": [
+            {
+              "p": [
+                "p",
+                "account_id"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "links",
+                "avatar",
+                "href"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "box": {
+      "exportName": "Box",
+      "spec": {
+        "id": "box",
+        "name": "Box",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://account.box.com/api/oauth2/authorize",
+        "token": "https://api.box.com/oauth2/token",
+        "userinfo": "https://api.box.com/2.0/users/me",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "login"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "boxyhq-saml": {
+      "exportName": "SAMLJackson",
+      "spec": {
+        "id": "boxyhq-saml",
+        "name": "BoxyHQ SAML",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "{issuer}/api/oauth/authorize",
+        "token": "{issuer}/api/oauth/token",
+        "userinfo": "{issuer}/api/oauth/userinfo",
+        "params": {
+          "provider": "saml"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "join": [
+                [
+                  "p",
+                  "firstName"
+                ],
+                [
+                  "p",
+                  "lastName"
+                ]
+              ],
+              "sep": " "
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "bungie": {
+      "exportName": "Bungie",
+      "spec": {
+        "id": "bungie",
+        "name": "Bungie",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://www.bungie.net/en/OAuth/Authorize",
+        "token": "https://www.bungie.net/platform/app/oauth/token/",
+        "userinfo": "https://www.bungie.net/platform/User/GetBungieAccount/{token.membership_id}/254/",
+        "userinfoRequest": {
+          "headersOption": "headers"
+        },
+        "params": {
+          "reauth": "true"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "Response",
+                "bungieNetUser",
+                "membershipId"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "Response",
+                "bungieNetUser",
+                "displayName"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "url": "https://www.bungie.net",
+              "path": [
+                "p",
+                "Response",
+                "bungieNetUser",
+                "profilePicturePath"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "click-up": {
+      "exportName": "ClickUp",
+      "spec": {
+        "id": "click-up",
+        "name": "ClickUp",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://app.clickup.com/api",
+        "token": "https://api.clickup.com/api/v2/oauth/token",
+        "userinfo": "https://api.clickup.com/api/v2/user",
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "user",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "user",
+                "username"
+              ]
+            }
+          ],
+          "profilePicture": [
+            {
+              "p": [
+                "p",
+                "user",
+                "profilePicture"
+              ]
+            }
+          ],
+          "color": [
+            {
+              "p": [
+                "p",
+                "user",
+                "color"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "coinbase": {
+      "exportName": "Coinbase",
+      "spec": {
+        "id": "coinbase",
+        "name": "Coinbase",
+        "type": "oauth",
+        "scopes": [
+          "wallet:user:email",
+          "wallet:user:read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://login.coinbase.com/oauth2/auth",
+        "token": "https://login.coinbase.com/oauth2/token",
+        "userinfo": "https://api.coinbase.com/v2/user",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "data",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "data",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "concept2": {
+      "exportName": "Concept2",
+      "spec": {
+        "id": "concept2",
+        "name": "Concept2",
+        "type": "oauth",
+        "scopes": [
+          "user:read,results:write"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://log.concept2.com/oauth/authorize",
+        "token": "https://log.concept2.com/oauth/access_token",
+        "userinfo": "https://log.concept2.com/api/users/me",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "data",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "username"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "data",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "profile_image"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "descope": {
+      "exportName": "Descope",
+      "spec": {
+        "id": "descope",
+        "name": "Descope",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state"
+        ],
+        "issuer": "{issuer}",
+        "options": {
+          "issuer": {
+            "default": "https://api.descope.com/{clientId}",
+            "raw": true
+          }
+        }
+      }
+    },
+    "dribbble": {
+      "exportName": "Dribbble",
+      "spec": {
+        "id": "dribbble",
+        "name": "Dribbble",
+        "type": "oauth",
+        "scopes": [],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://dribbble.com/oauth/authorize",
+        "token": "https://dribbble.com/oauth/token",
+        "userinfo": "https://api.dribbble.com/v2/user",
+        "scopeOption": "scope",
+        "options": {
+          "scope": {}
+        },
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "dropbox": {
+      "exportName": "Dropbox",
+      "spec": {
+        "id": "dropbox",
+        "name": "Dropbox",
+        "type": "oauth",
+        "scopes": [
+          "account_info.read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://www.dropbox.com/oauth2/authorize",
+        "token": "https://api.dropboxapi.com/oauth2/token",
+        "userinfo": "https://api.dropboxapi.com/2/users/get_current_account",
+        "userinfoRequest": {
+          "method": "POST"
+        },
+        "params": {
+          "token_access_type": "offline"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "account_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name",
+                "display_name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "profile_photo_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "duende-identity-server6": {
+      "exportName": "DuendeIdentityServer6",
+      "spec": {
+        "id": "duende-identity-server6",
+        "name": "DuendeIdentityServer6",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "eventbrite": {
+      "exportName": "Eventbrite",
+      "spec": {
+        "id": "eventbrite",
+        "name": "Eventbrite",
+        "type": "oauth",
+        "scopes": [
+          "user.profile"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://www.eventbrite.com/oauth/authorize",
+        "token": "https://www.eventbrite.com/oauth/token",
+        "userinfo": "https://www.eventbriteapi.com/v3/users/me/",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "find": [
+                "p",
+                "emails"
+              ],
+              "where": "primary",
+              "pick": "email"
+            }
+          ],
+          "image": [
+            {
+              "when": [
+                "p",
+                "image_id"
+              ],
+              "then": {
+                "t": [
+                  "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F",
+                  [
+                    "p",
+                    "image_id"
+                  ],
+                  "%2F1%2Foriginal.jpg"
+                ]
+              },
+              "else": {
+                "c": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "eveonline": {
+      "exportName": "EVEOnline",
+      "spec": {
+        "id": "eveonline",
+        "name": "EVE Online",
+        "type": "oauth",
+        "scopes": [
+          "publicData"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://login.eveonline.com/v2/oauth/authorize",
+        "token": "https://login.eveonline.com/v2/oauth/token",
+        "userinfo": "https://login.eveonline.com/oauth/verify",
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "CharacterID"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "CharacterName"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "t": [
+                "https://image.eveonline.com/Character/",
+                [
+                  "p",
+                  "CharacterID"
+                ],
+                "_128.jpg"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "faceit": {
+      "exportName": "FACEIT",
+      "spec": {
+        "id": "faceit",
+        "name": "FACEIT",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://accounts.faceit.com/accounts",
+        "token": "https://api.faceit.com/auth/v1/oauth/token",
+        "userinfo": "https://api.faceit.com/auth/v1/resources/userinfo",
+        "params": {
+          "redirect_popup": "true"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "guid"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "picture"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "figma": {
+      "exportName": "Figma",
+      "spec": {
+        "id": "figma",
+        "name": "Figma",
+        "type": "oauth",
+        "scopes": [
+          "files:read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://www.figma.com/oauth",
+        "token": "https://api.figma.com/v1/oauth/token",
+        "userinfo": "https://api.figma.com/v1/me",
+        "profile": {
+          "name": [
+            {
+              "p": [
+                "p",
+                "handle"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "img_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "foursquare": {
+      "exportName": "Foursquare",
+      "spec": {
+        "id": "foursquare",
+        "name": "Foursquare",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://foursquare.com/oauth2/authenticate",
+        "token": "https://foursquare.com/oauth2/access_token",
+        "userinfo": "https://api.foursquare.com/v2/users/self?v={apiVersion}",
+        "userinfoRequest": {
+          "token": {
+            "query": "oauth_token"
+          }
+        },
+        "options": {
+          "apiVersion": {
+            "default": "20230131"
+          }
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "response",
+                "user",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "t": [
+                [
+                  "p",
+                  "response",
+                  "user",
+                  "firstName"
+                ],
+                " ",
+                [
+                  "p",
+                  "response",
+                  "user",
+                  "lastName"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "response",
+                "user",
+                "contact",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "when": [
+                "p",
+                "response",
+                "user",
+                "photo"
+              ],
+              "then": {
+                "t": [
+                  [
+                    "p",
+                    "response",
+                    "user",
+                    "photo",
+                    "prefix"
+                  ],
+                  "original",
+                  [
+                    "p",
+                    "response",
+                    "user",
+                    "photo",
+                    "suffix"
+                  ]
+                ]
+              },
+              "else": {
+                "c": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "freshbooks": {
+      "exportName": "Freshbooks",
+      "spec": {
+        "id": "freshbooks",
+        "name": "Freshbooks",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://auth.freshbooks.com/service/auth/oauth/authorize",
+        "token": "https://api.freshbooks.com/auth/oauth/token",
+        "userinfo": "https://api.freshbooks.com/auth/api/v1/users/me",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "response",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "t": [
+                [
+                  "p",
+                  "response",
+                  "first_name"
+                ],
+                " ",
+                [
+                  "p",
+                  "response",
+                  "last_name"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "response",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "frontegg": {
+      "exportName": "Frontegg",
+      "spec": {
+        "id": "frontegg",
+        "name": "Frontegg",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "fusionauth": {
+      "exportName": "FusionAuth",
+      "spec": {
+        "id": "fusionauth",
+        "name": "FusionAuth",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "offline_access",
+          "email",
+          "profile"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state"
+        ],
+        "issuer": "{issuer}",
+        "params": {
+          "tenantId": "{tenantId}"
+        },
+        "options": {
+          "tenantId": {}
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "sub"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            },
+            {
+              "p": [
+                "p",
+                "preferred_username"
+              ]
+            },
+            {
+              "join": [
+                [
+                  "p",
+                  "given_name"
+                ],
+                [
+                  "p",
+                  "middle_name"
+                ],
+                [
+                  "p",
+                  "family_name"
+                ]
+              ],
+              "sep": " "
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "picture"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "hubspot": {
+      "exportName": "HubSpot",
+      "spec": {
+        "id": "hubspot",
+        "name": "HubSpot",
+        "type": "oauth",
+        "scopes": [
+          "oauth"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://app.hubspot.com/oauth/authorize",
+        "token": "https://api.hubapi.com/oauth/v1/token",
+        "userinfo": "https://api.hubapi.com/oauth/v1/access-tokens/{token.access_token}",
+        "userinfoRequest": {
+          "token": "none",
+          "headers": {
+            "content-type": "application/json"
+          }
+        },
+        "params": {
+          "client_id": "{clientId}"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "user_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "user"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "user"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "huggingface": {
+      "exportName": "Huggingface",
+      "spec": {
+        "id": "huggingface",
+        "name": "Hugging Face",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state",
+          "pkce"
+        ],
+        "issuer": "https://huggingface.co"
+      }
+    },
+    "identity-server4": {
+      "exportName": "IdentityServer4",
+      "spec": {
+        "id": "identity-server4",
+        "name": "IdentityServer4",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "instagram": {
+      "exportName": "Instagram",
+      "spec": {
+        "id": "instagram",
+        "name": "Instagram",
+        "type": "oauth",
+        "scopes": [
+          "user_profile"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://api.instagram.com/oauth/authorize",
+        "token": "https://api.instagram.com/oauth/access_token",
+        "userinfo": "https://graph.instagram.com/me?fields=id,username,account_type,name",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "kakao": {
+      "exportName": "Kakao",
+      "spec": {
+        "id": "kakao",
+        "name": "Kakao",
+        "type": "oauth",
+        "scopes": [],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://kauth.kakao.com/oauth/authorize",
+        "token": "https://kauth.kakao.com/oauth/token",
+        "userinfo": "https://kapi.kakao.com/v2/user/me",
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "kakao_account",
+                "profile",
+                "nickname"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "kakao_account",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "kakao_account",
+                "profile",
+                "profile_image_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "kinde": {
+      "exportName": "Kinde",
+      "spec": {
+        "id": "kinde",
+        "name": "Kinde",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state",
+          "pkce"
+        ],
+        "issuer": "{issuer}"
+      }
+    },
+    "line": {
+      "exportName": "LINE",
+      "spec": {
+        "id": "line",
+        "name": "LINE",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "idTokenAlg": "HS256",
+        "checks": [
+          "state"
+        ],
+        "issuer": "https://access.line.me"
+      }
+    },
+    "logto": {
+      "exportName": "Logto",
+      "spec": {
+        "id": "logto",
+        "name": "Logto",
+        "type": "oidc",
+        "scopes": [
+          "offline_access",
+          "openid",
+          "email",
+          "profile"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "sub"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            },
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "picture"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "mailchimp": {
+      "exportName": "Mailchimp",
+      "spec": {
+        "id": "mailchimp",
+        "name": "Mailchimp",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://login.mailchimp.com/oauth2/authorize",
+        "token": "https://login.mailchimp.com/oauth2/token",
+        "userinfo": "https://login.mailchimp.com/oauth2/metadata",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "login",
+                "login_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "accountname"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "login",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "mailru": {
+      "exportName": "Mailru",
+      "spec": {
+        "id": "mailru",
+        "name": "Mail.ru",
+        "type": "oauth",
+        "scopes": [
+          "userinfo"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://oauth.mail.ru/login",
+        "token": "https://oauth.mail.ru/token",
+        "userinfo": "https://oauth.mail.ru/userinfo"
+      }
+    },
+    "mastodon": {
+      "exportName": "Mastodon",
+      "spec": {
+        "id": "mastodon",
+        "name": "Mastodon",
+        "type": "oauth",
+        "scopes": [
+          "read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "{issuer}/oauth/authorize",
+        "token": "{issuer}/oauth/token",
+        "userinfo": "{issuer}/api/v1/accounts/verify_credentials",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_static"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "mattermost": {
+      "exportName": "Mattermost",
+      "spec": {
+        "id": "mattermost",
+        "name": "Mattermost",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "{issuer}/oauth/authorize",
+        "token": "{issuer}/oauth/access_token",
+        "userinfo": "{issuer}/api/v4/users/me",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            },
+            {
+              "t": [
+                [
+                  "p",
+                  "first_name"
+                ],
+                " ",
+                [
+                  "p",
+                  "last_name"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "medium": {
+      "exportName": "Medium",
+      "spec": {
+        "id": "medium",
+        "name": "Medium",
+        "type": "oauth",
+        "scopes": [
+          "basicProfile"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://medium.com/m/oauth/authorize",
+        "token": "https://api.medium.com/v1/tokens",
+        "userinfo": "https://api.medium.com/v1/me",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "data",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "imageUrl"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "naver": {
+      "exportName": "Naver",
+      "spec": {
+        "id": "naver",
+        "name": "Naver",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://nid.naver.com/oauth2.0/authorize",
+        "token": "https://nid.naver.com/oauth2.0/token",
+        "userinfo": "https://openapi.naver.com/v1/nid/me",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "response",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "response",
+                "nickname"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "response",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "response",
+                "profile_image"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "netlify": {
+      "exportName": "Netlify",
+      "spec": {
+        "id": "netlify",
+        "name": "Netlify",
+        "type": "oauth",
+        "scopes": [],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://app.netlify.com/authorize",
+        "token": "https://api.netlify.com/oauth/token",
+        "userinfo": "https://api.netlify.com/api/v1/user",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "full_name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "netsuite": {
+      "exportName": "NetSuite",
+      "spec": {
+        "id": "netsuite",
+        "name": "NetSuite",
+        "type": "oauth",
+        "scopes": [
+          "restlets",
+          "rest_webservices"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://{accountID}.app.netsuite.com/app/login/oauth2/authorize.nl",
+        "token": "https://{accountID}.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token",
+        "userinfo": "{userinfo}",
+        "options": {
+          "accountID": {},
+          "userinfo": {
+            "raw": true
+          }
+        },
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "nextcloud": {
+      "exportName": "Nextcloud",
+      "spec": {
+        "id": "nextcloud",
+        "name": "Nextcloud",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "{issuer}/apps/oauth2/authorize",
+        "token": "{issuer}/apps/oauth2/api/v1/token",
+        "userinfo": "{issuer}/ocs/v1.php/cloud/users/{token.user_id}",
+        "userinfoRequest": {
+          "headers": {
+            "OCS-APIRequest": "true"
+          },
+          "pick": [
+            "ocs",
+            "data"
+          ]
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "displayname"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "t": [
+                "{issuer}/avatar/",
+                [
+                  "p",
+                  "id"
+                ],
+                "/512"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "onelogin": {
+      "exportName": "OneLogin",
+      "spec": {
+        "id": "onelogin",
+        "name": "OneLogin",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}/oidc/2"
+      }
+    },
+    "ory-hydra": {
+      "exportName": "OryHydra",
+      "spec": {
+        "id": "hydra",
+        "name": "Hydra",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "osso": {
+      "exportName": "Osso",
+      "spec": {
+        "id": "osso",
+        "name": "Osso",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "{issuer}oauth/authorize",
+        "token": "{issuer}oauth/token",
+        "userinfo": "{issuer}oauth/me"
+      }
+    },
+    "osu": {
+      "exportName": "Osu",
+      "spec": {
+        "id": "osu",
+        "name": "osu!",
+        "type": "oauth",
+        "scopes": [
+          "identify"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://osu.ppy.sh/oauth/authorize",
+        "token": "https://osu.ppy.sh/oauth/token",
+        "userinfo": "https://osu.ppy.sh/api/v2/me",
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "passage": {
+      "exportName": "Passage",
+      "spec": {
+        "id": "passage",
+        "name": "Passage",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "patreon": {
+      "exportName": "Patreon",
+      "spec": {
+        "id": "patreon",
+        "name": "Patreon",
+        "type": "oauth",
+        "scopes": [
+          "identity",
+          "identity[email]"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://www.patreon.com/oauth2/authorize",
+        "token": "https://www.patreon.com/api/oauth2/token",
+        "userinfo": "https://www.patreon.com/api/oauth2/api/current_user",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "data",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "attributes",
+                "full_name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "data",
+                "attributes",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "attributes",
+                "image_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "ping-id": {
+      "exportName": "PingId",
+      "spec": {
+        "id": "ping-id",
+        "name": "Ping Identity",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "pinterest": {
+      "exportName": "PinterestProvider",
+      "spec": {
+        "id": "pinterest",
+        "name": "Pinterest",
+        "type": "oauth",
+        "scopes": [
+          "user_accounts:read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://www.pinterest.com/oauth",
+        "token": "https://api.pinterest.com/v5/oauth/token",
+        "userinfo": "https://api.pinterest.com/v5/user_account",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "profile_image"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "pipedrive": {
+      "exportName": "Pipedrive",
+      "spec": {
+        "id": "pipedrive",
+        "name": "Pipedrive",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://oauth.pipedrive.com/oauth/authorize",
+        "token": "https://oauth.pipedrive.com/oauth/token",
+        "userinfo": "https://api.pipedrive.com/users/me",
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "data",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "data",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "icon_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "reddit": {
+      "exportName": "Reddit",
+      "spec": {
+        "id": "reddit",
+        "name": "Reddit",
+        "type": "oauth",
+        "scopes": [
+          "identity"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://www.reddit.com/api/v1/authorize",
+        "token": "https://www.reddit.com/api/v1/access_token",
+        "userinfo": "https://oauth.reddit.com/api/v1/me"
+      }
+    },
+    "roblox": {
+      "exportName": "Roblox",
+      "spec": {
+        "id": "roblox",
+        "name": "Roblox",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state"
+        ],
+        "issuer": "https://apis.roblox.com/oauth/"
+      }
+    },
+    "salesforce": {
+      "exportName": "Salesforce",
+      "spec": {
+        "id": "salesforce",
+        "name": "Salesforce",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state",
+          "nonce"
+        ],
+        "issuer": "https://login.salesforce.com",
+        "profileFromUserinfo": true
+      }
+    },
+    "simplelogin": {
+      "exportName": "SimpleLogin",
+      "spec": {
+        "id": "simplelogin",
+        "name": "SimpleLogin",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "https://app.simplelogin.io",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "sub"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "strava": {
+      "exportName": "Strava",
+      "spec": {
+        "id": "strava",
+        "name": "Strava",
+        "type": "oauth",
+        "scopes": [
+          "read"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://www.strava.com/api/v3/oauth/authorize",
+        "token": "https://www.strava.com/api/v3/oauth/token",
+        "userinfo": "https://www.strava.com/api/v3/athlete",
+        "params": {
+          "approval_prompt": "auto"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "t": [
+                [
+                  "p",
+                  "firstname"
+                ],
+                " ",
+                [
+                  "p",
+                  "lastname"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "profile"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "threads": {
+      "exportName": "Threads",
+      "spec": {
+        "id": "threads",
+        "name": "Threads",
+        "type": "oauth",
+        "scopes": [
+          "threads_basic"
+        ],
+        "tokenAuth": "client_secret_post",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://threads.net/oauth/authorize",
+        "token": "https://graph.threads.net/oauth/access_token",
+        "userinfo": "https://graph.threads.net/v1.0/me?fields=id,username,threads_profile_picture_url",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "data",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "username"
+              ]
+            },
+            {
+              "c": null
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "threads_profile_picture_url"
+              ]
+            },
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "tiktok": {
+      "exportName": "TikTok",
+      "spec": {
+        "id": "tiktok",
+        "name": "TikTok",
+        "type": "oauth",
+        "scopes": [
+          "user.info.basic"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://www.tiktok.com/v2/auth/authorize",
+        "token": "https://open.tiktokapis.com/v2/oauth/token/",
+        "userinfo": "https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name",
+        "tokenParams": {
+          "client_key": "{clientId}"
+        },
+        "params": {
+          "client_key": "{clientId}"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "data",
+                "user",
+                "open_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "user",
+                "display_name"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "user",
+                "avatar_url"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "todoist": {
+      "exportName": "TodoistProvider",
+      "spec": {
+        "id": "todoist",
+        "name": "Todoist",
+        "type": "oauth",
+        "scopes": [
+          "data:read"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://todoist.com/oauth/authorize",
+        "token": "https://todoist.com/oauth/access_token",
+        "userinfo": "https://api.todoist.com/sync/v9/sync",
+        "userinfoRequest": {
+          "method": "POST",
+          "json": {
+            "sync_token": "*",
+            "resource_types": "[\"user\"]"
+          },
+          "pick": [
+            "user"
+          ]
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "full_name"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_big"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "trakt": {
+      "exportName": "Trakt",
+      "spec": {
+        "id": "trakt",
+        "name": "Trakt",
+        "type": "oauth",
+        "scopes": [],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://trakt.tv/oauth/authorize",
+        "token": "https://api.trakt.tv/oauth/token",
+        "userinfo": "https://api.trakt.tv/users/me?extended=full",
+        "userinfoRequest": {
+          "headers": {
+            "trakt-api-version": "2",
+            "trakt-api-key": "{clientId}"
+          }
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "ids",
+                "slug"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "images",
+                "avatar",
+                "full"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "united-effects": {
+      "exportName": "UnitedEffects",
+      "spec": {
+        "id": "united-effects",
+        "name": "United Effects",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "email",
+          "profile"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}",
+        "params": {
+          "resource": "{issuer}"
+        }
+      }
+    },
+    "vipps": {
+      "exportName": "Vipps",
+      "spec": {
+        "id": "vipps",
+        "name": "Vipps",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "name",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state",
+          "nonce"
+        ],
+        "issuer": "https://api.vipps.no/access-management-1.0/access/",
+        "profileFromUserinfo": true
+      }
+    },
+    "vk": {
+      "exportName": "VK",
+      "spec": {
+        "id": "vk",
+        "name": "VK",
+        "type": "oauth",
+        "scopes": [
+          "email"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://oauth.vk.com/authorize",
+        "token": "https://oauth.vk.com/access_token?v=5.131",
+        "userinfo": "https://api.vk.com/method/users.get?fields=photo_100&v=5.131",
+        "userinfoRequest": {
+          "pick": [
+            "response",
+            "0"
+          ],
+          "fromToken": {
+            "email": "email"
+          }
+        },
+        "params": {
+          "v": "5.131"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "join": [
+                [
+                  "p",
+                  "first_name"
+                ],
+                [
+                  "p",
+                  "last_name"
+                ]
+              ],
+              "sep": " "
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            },
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "photo_100"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "webex": {
+      "exportName": "Webex",
+      "spec": {
+        "id": "webex",
+        "name": "Webex",
+        "type": "oauth",
+        "scopes": [
+          "spark:kms",
+          "spark:people_read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "{apiBaseUrl}/authorize",
+        "token": "{apiBaseUrl}/access_token",
+        "userinfo": "{apiBaseUrl}/people/me",
+        "options": {
+          "apiBaseUrl": {
+            "default": "https://webexapis.com/v1",
+            "raw": true
+          }
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "emails",
+                "0"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "displayName"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "wikimedia": {
+      "exportName": "Wikimedia",
+      "spec": {
+        "id": "wikimedia",
+        "name": "Wikimedia",
+        "type": "oauth",
+        "scopes": [],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://meta.wikimedia.org/w/rest.php/oauth2/authorize",
+        "token": "https://meta.wikimedia.org/w/rest.php/oauth2/access_token",
+        "userinfo": "https://meta.wikimedia.org/w/rest.php/oauth2/resource/profile",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "sub"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "username"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "wordpress": {
+      "exportName": "WordPress",
+      "spec": {
+        "id": "wordpress",
+        "name": "WordPress.com",
+        "type": "oauth",
+        "scopes": [
+          "auth"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://public-api.wordpress.com/oauth2/authorize",
+        "token": "https://public-api.wordpress.com/oauth2/token",
+        "userinfo": "https://public-api.wordpress.com/rest/v1/me",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "ID"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "display_name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_URL"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "workos": {
+      "exportName": "WorkOS",
+      "spec": {
+        "id": "workos",
+        "name": "WorkOS",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "{issuer}sso/authorize",
+        "token": "{issuer}sso/token",
+        "userinfo": "{issuer}sso/profile",
+        "params": {
+          "connection": "{connection}"
+        },
+        "options": {
+          "issuer": {
+            "default": "https://api.workos.com/",
+            "raw": true
+          },
+          "connection": {}
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "t": [
+                [
+                  "p",
+                  "first_name"
+                ],
+                " ",
+                [
+                  "p",
+                  "last_name"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "raw_attributes",
+                "picture"
+              ]
+            },
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "yandex": {
+      "exportName": "Yandex",
+      "spec": {
+        "id": "yandex",
+        "name": "Yandex",
+        "type": "oauth",
+        "scopes": [
+          "login:info",
+          "login:email",
+          "login:avatar"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://oauth.yandex.ru/authorize",
+        "token": "https://oauth.yandex.ru/token",
+        "userinfo": "https://login.yandex.ru/info?format=json",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "display_name"
+              ]
+            },
+            {
+              "p": [
+                "p",
+                "real_name"
+              ]
+            },
+            {
+              "p": [
+                "p",
+                "first_name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "default_email"
+              ]
+            },
+            {
+              "p": [
+                "p",
+                "emails",
+                "0"
+              ]
+            },
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "zitadel": {
+      "exportName": "ZITADEL",
+      "spec": {
+        "id": "zitadel",
+        "name": "ZITADEL",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "issuer": "{issuer}"
+      }
+    },
+    "zoho": {
+      "exportName": "Zoho",
+      "spec": {
+        "id": "zoho",
+        "name": "Zoho",
+        "type": "oauth",
+        "scopes": [
+          "AaaServer.profile.Read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://accounts.zoho.com/oauth/v2/auth",
+        "token": "https://accounts.zoho.com/oauth/v2/token",
+        "userinfo": "https://accounts.zoho.com/oauth/user/info",
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "ZUID"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "t": [
+                [
+                  "p",
+                  "First_Name"
+                ],
+                " ",
+                [
+                  "p",
+                  "Last_Name"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "Email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    }
+  }
+}

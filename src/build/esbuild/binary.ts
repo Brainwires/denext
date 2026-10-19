@@ -347,6 +347,27 @@ function registryBase(env: EnvGet): string {
 }
 
 /**
+ * The directory Deno's npm cache keeps a registry's packages in, as path segments under
+ * `<DENO_DIR>/npm/` — Deno's own `root_url_to_safe_local_dirname`: the domain (none for an IP
+ * address), `_<port>` for a non-default port, then the URL's path segments, with `/`, `\` and
+ * the characters some file system bans (`<>:"|?` and the asterisk) made `_` — never `host:port`
+ * itself (`:` is no file name character on Windows).
+ *
+ * @internal
+ * @param registry The registry URL.
+ * @returns The segments (`["registry.npmjs.org"]`, `["localhost_4873"]`, `["4873"]`).
+ */
+export function denoNpmRegistryDir(registry: string): string[] {
+  const url = new URL(registry);
+  const safe = (text: string) => text.replace(/[<>:"|?*/\\]/g, "_");
+  const ip = /^\d+(\.\d+){3}$/.test(url.hostname) || url.hostname.startsWith("[");
+  let first = ip ? "" : safe(url.hostname);
+  if (url.port) first += `${first ? "_" : ""}${url.port}`;
+  const rest = url.pathname.split("/").filter((s) => s !== "").map(safe);
+  return [first, ...rest].filter((s) => s !== "");
+}
+
+/**
  * A verified copy of the binary in Deno's npm cache (`<DENO_DIR>/npm/<registry host>/<pkg>/<ver>/`),
  * which a stock-Deno project that ever resolved `npm:esbuild@0.25.5` already has; `null` when there
  * is none or it does not hash to the pin.
@@ -356,13 +377,20 @@ async function fromDenoNpmCache(
   denoDir: string,
   env: EnvGet,
 ): Promise<string | null> {
-  let host: string;
+  let registry: string[];
   try {
-    host = new URL(registryBase(env)).host;
+    registry = denoNpmRegistryDir(registryBase(env));
   } catch {
     return null;
   }
-  const candidate = join(denoDir, "npm", host, ...a.pkg.split("/"), ESBUILD_VERSION, a.binary);
+  const candidate = join(
+    denoDir,
+    "npm",
+    ...registry,
+    ...a.pkg.split("/"),
+    ESBUILD_VERSION,
+    a.binary,
+  );
   const info = await Deno.stat(candidate).catch(() => null);
   if (!info?.isFile || info.size !== a.size) return null;
   return await sha256File(candidate) === a.sha256 ? candidate : null;

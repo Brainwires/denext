@@ -23,7 +23,8 @@ export function tailwindVersion(): string {
 
 /**
  * Map a Deno `(os, arch)` pair to the Tailwind standalone release asset name.
- * Throws for platforms Tailwind does not publish a standalone binary for.
+ * Throws for platforms Tailwind does not publish a standalone binary for. Windows on Arm takes the
+ * x64 build: Tailwind publishes no Arm64 one for Windows, and Windows 11 on Arm runs x64 binaries.
  *
  * @param os `Deno.build.os` (e.g. `"darwin"`, `"linux"`, `"windows"`).
  * @param arch `Deno.build.arch` (`"x86_64"` or `"aarch64"`).
@@ -37,7 +38,7 @@ export function tailwindAssetName(os: string, arch: string): string {
     case "linux":
       return `tailwindcss-linux-${cpu}`;
     case "windows":
-      return `tailwindcss-windows-${cpu}.exe`;
+      return "tailwindcss-windows-x64.exe";
     default:
       throw new Error(`Tailwind: unsupported OS "${os}".`);
   }

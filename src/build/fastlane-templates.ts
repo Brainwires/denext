@@ -1,5 +1,6 @@
 // The files `denext mobile add fastlane` writes into a Capacitor project: fastlane's Appfile,
-// Fastfile and Matchfile, a Gemfile pinning fastlane, fastlane/.gitignore for what a run
+// Fastfile and Matchfile, a Gemfile pinning fastlane (for `bundle exec` and plugins; the lanes run
+// with `denext fastlane`, denext's managed fastlane), fastlane/.gitignore for what a run
 // generates, and (with `--ci`) a GitHub Actions workflow. Build-time only; never imported by a
 // shipped bundle.
 //
@@ -10,11 +11,10 @@
 // tracks, store metadata, its plugins. No credential is ever written into these files: they
 // name environment variables.
 
+import { fastlanePinHash } from "./fastlane-toolchain.ts";
+
 /** The fastlane release the Gemfile pins (`~>`: any 2.x from this one on). */
 export const FASTLANE_VERSION = "2.240";
-
-/** The Ruby the generated workflow installs. */
-const FASTLANE_RUBY = "3.3";
 
 /** Where each file lands, relative to the Capacitor project. */
 export const FASTLANE_FILES = {
@@ -80,7 +80,7 @@ export function matchfileTemplate(appId: string): string {
 # (and an App Store profile per app id) in one encrypted store that every machine and CI share.
 #
 # Create it once, from a Mac with access to the Apple account:
-#   MATCH_GIT_URL=… bundle exec fastlane match appstore
+#   MATCH_GIT_URL=… denext fastlane match appstore
 # The iOS lanes then run match read-only before each build whenever MATCH_GIT_URL (or
 # MATCH_STORAGE_MODE) is set, so the build signs with that certificate instead of minting a new
 # one. The passphrase is MATCH_PASSWORD; a private git store over HTTPS takes
@@ -95,8 +95,10 @@ app_identifier([${rubyString(appId)}])
 
 /** The Gemfile: fastlane pinned, and fastlane's Pluginfile (written by `fastlane add_plugin`). */
 export function gemfileTemplate(): string {
-  return `# Written by \`denext mobile add fastlane\`. Run fastlane through bundler so every machine and CI
-# use the same version: \`bundle install\` (commit Gemfile.lock), then \`bundle exec fastlane …\`.
+  return `# Written by \`denext mobile add fastlane\`. \`denext fastlane …\` runs denext's own pinned fastlane
+# (installed on first use; no Ruby setup) and does not read this file. It is for running fastlane
+# through your own Ruby instead, which fastlane plugins need: \`bundle install\` (commit
+# Gemfile.lock), then \`bundle exec fastlane …\`.
 source "https://rubygems.org"
 
 gem "fastlane", "~> ${FASTLANE_VERSION}"
@@ -138,8 +140,11 @@ export function fastfileTemplate(): string {
 const FASTFILE =
   `# Written by \`denext mobile add fastlane\`: fastlane lanes over denext's own build pipeline.
 #
-#   bundle exec fastlane ios build|beta|release     [flavor:staging] [build_number:42] …
-#   bundle exec fastlane android build|beta|release [flavor:staging] [track:internal] …
+#   denext fastlane ios build|beta|release     [flavor:staging] [build_number:42] …
+#   denext fastlane android build|beta|release [flavor:staging] [track:internal] …
+#
+# \`denext fastlane\` runs denext's pinned fastlane (installed on first use into denext's toolchain
+# cache); with plugins in fastlane/Pluginfile, run \`bundle exec fastlane …\` through the Gemfile.
 #
 # Every lane builds with \`denext mobile build <platform> --release\`, which runs \`denext export\`,
 # the flavor's edits and \`npx cap sync\` before Xcode / Gradle, so the binary always carries the
@@ -482,8 +487,24 @@ function yamlPath(path: string): string {
 }
 
 /**
- * The GitHub Actions workflow: a manual dispatch that runs `bundle exec fastlane <platform>
- * <lane>` for Android on Ubuntu and iOS on macOS, with every credential a repository secret.
+ * The `actions/cache` step for denext's managed fastlane (the portable Ruby + the built gems) under
+ * the runner's Deno cache (`denoDir`: Linux and macOS defaults), keyed on the fastlane pin this
+ * workflow is written for, so a run after the first skips the install (minutes of C builds). A
+ * newer denext with another pin re-installs (the stamp no longer matches) until this file is
+ * regenerated with the new key.
+ */
+function fastlaneCacheStep(denoDir: string): string {
+  return "      # denext's managed fastlane (Ruby + gems), keyed on the pin it was written for.\n" +
+    "      - uses: actions/cache@v4\n" +
+    "        with:\n" +
+    `          path: ${denoDir}/denext-deno/fastlane\n` +
+    "          key: denext-fastlane-${{ runner.os }}-${{ runner.arch }}-" +
+    `${fastlanePinHash()}\n`;
+}
+
+/**
+ * The GitHub Actions workflow: a manual dispatch that runs `denext fastlane <platform> <lane>`
+ * (denext's managed fastlane) for Android on Ubuntu and iOS on macOS, with every credential a repository secret.
  *
  * @param opts Where the project is and how its packages install.
  */
@@ -503,13 +524,8 @@ export function workflowTemplate(opts: WorkflowOptions): string {
         "          distribution: temurin\n" +
         '          java-version: "21"\n'
       : "") +
-    "      # Gemfile + Gemfile.lock: the pinned fastlane, cached between runs.\n" +
-    "      - uses: ruby/setup-ruby@v1\n" +
-    "        with:\n" +
-    `          ruby-version: "${FASTLANE_RUBY}"\n` +
-    "          bundler-cache: true\n" +
-    `          working-directory: ${wd}\n` +
-    installSteps(opts.install, opts.locked);
+    installSteps(opts.install, opts.locked) +
+    fastlaneCacheStep(java ? "~/.cache/deno" : "~/Library/Caches/deno");
   return `# Written by \`denext mobile add fastlane --ci\`: denext builds, fastlane ships.
 #   Actions → "Mobile release" → Run workflow: the lane (beta: TestFlight / a Play testing
 #   track; release: the App Store / Play production), a flavor (optional) and the platforms.
@@ -549,7 +565,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The denext CLI the lanes run (pin it to the version the app uses).
+  # The denext CLI that runs fastlane and that the lanes run (pin it to the version the app uses).
+  # Its \`fastlane\` verb installs denext's pinned fastlane on the runner (a few minutes: the gems
+  # build C extensions).
   DENEXT_CLI: ${opts.cli}
   FASTLANE_SKIP_UPDATE_CHECK: "1"
   FASTLANE_HIDE_CHANGELOG: "1"
@@ -570,7 +588,7 @@ ${setup(true)}      - name: Upload keystore
         env:
           ANDROID_KEYSTORE_BASE64: \${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       - name: fastlane android
-        run: bundle exec fastlane android "$LANE" \${FLAVOR:+"flavor:$FLAVOR"}
+        run: $DENEXT_CLI fastlane android "$LANE" \${FLAVOR:+"flavor:$FLAVOR"}
         env:
           SUPPLY_JSON_KEY_DATA: \${{ secrets.SUPPLY_JSON_KEY_DATA }}
           DENEXT_ANDROID_KEYSTORE: \${{ runner.temp }}/upload.jks
@@ -587,7 +605,7 @@ ${setup(true)}      - name: Upload keystore
         working-directory: ${wd}
     steps:
 ${setup(false)}      - name: fastlane ios
-        run: bundle exec fastlane ios "$LANE" \${FLAVOR:+"flavor:$FLAVOR"}
+        run: $DENEXT_CLI fastlane ios "$LANE" \${FLAVOR:+"flavor:$FLAVOR"}
         env:
           MATCH_GIT_URL: \${{ secrets.MATCH_GIT_URL }}
           MATCH_PASSWORD: \${{ secrets.MATCH_PASSWORD }}

@@ -18,6 +18,7 @@ import {
   type ServerOnlyLeak,
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
+import { holdRequestDeadline } from "../server/request-context.ts";
 import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
 import { findInlineServerActions, inlineServerActionError } from "./inline-server-action.ts";
 import {
@@ -1885,7 +1886,17 @@ export interface MultiBundleOutput {
  * @param opts Bundle config + minify flag (import-map redirects apply to all).
  * @returns The per-key entry basenames and every emitted file.
  */
-export async function bundleRoutes(
+export function bundleRoutes(
+  routeEntries: Array<{ key: string; source: string }>,
+  opts: BundleOptions,
+): Promise<MultiBundleOutput> {
+  // Framework work done on a request's behalf (a router plugin bundling its pages on the first dev
+  // request): its time does not count against the request's deadline.
+  return holdRequestDeadline(() => bundleRoutesNow(routeEntries, opts));
+}
+
+/** {@linkcode bundleRoutes}' work. */
+async function bundleRoutesNow(
   routeEntries: Array<{ key: string; source: string }>,
   opts: BundleOptions,
 ): Promise<MultiBundleOutput> {

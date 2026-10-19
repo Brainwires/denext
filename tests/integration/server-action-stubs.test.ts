@@ -15,8 +15,12 @@ import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
 import { actionEndpoint, actionIdFor, encodeActionArgs } from "../../src/runtime/server-action.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
+import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
+import { removeTempDir } from "../helpers/temp.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
+/** The checkout as a file URL: an import map's target (a `C:\…` path is no specifier on Windows). */
+const FW_URL = toFileUrl(FW).href;
 const SECRET = "SERVER_SECRET_123";
 /** What the action returns for `"hi"`: the secret's length, so the result never carries it. */
 const RESULT = `${SECRET.length}:hi`;
@@ -77,12 +81,12 @@ export function Island() {
     "deno.json": JSON.stringify({
       compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
       imports: {
-        "denext": `${FW}mod.ts`,
-        "denext/": `${FW}src/`,
-        "denext/jsx-runtime": `${FW}src/jsx/jsx-runtime.ts`,
-        "denext/jsx-dev-runtime": `${FW}src/jsx/jsx-runtime.ts`,
-        "denext/server": `${FW}src/server/mod.ts`,
-        "denext/client": `${FW}src/client/mod.ts`,
+        "denext": `${FW_URL}mod.ts`,
+        "denext/": `${FW_URL}src/`,
+        "denext/jsx-runtime": `${FW_URL}src/jsx/jsx-runtime.ts`,
+        "denext/jsx-dev-runtime": `${FW_URL}src/jsx/jsx-runtime.ts`,
+        "denext/server": `${FW_URL}src/server/mod.ts`,
+        "denext/client": `${FW_URL}src/client/mod.ts`,
         "@/": "./",
         "#actions": "./app/actions.ts",
       },
@@ -242,7 +246,7 @@ async function devModules(origin: string): Promise<Map<string, string>> {
     [...text.matchAll(/["'](\/_denext\/[^"'\s]+)["']/g)].map((m) => m[1])
       // The framework's own modules (dependencies, or its checkout's sources) hold no app code.
       .filter((u) =>
-        !u.startsWith("/_denext/@dep/") && !u.startsWith(`/_denext/@fs${FW}`) &&
+        !u.startsWith("/_denext/@dep/") && !u.startsWith(fsUrlPath(FW)) &&
         !u.endsWith(".css")
       );
   let queue = find(html);
@@ -291,7 +295,7 @@ for (const spelling of SPELLINGS) {
         await srv.stop();
       }
     } finally {
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 
@@ -309,7 +313,7 @@ for (const spelling of SPELLINGS) {
           assert([...files.values()].some((t) => t.includes(id)), `stub missing (${flags})`);
         }
       } finally {
-        await Deno.remove(dir, { recursive: true });
+        await removeTempDir(dir);
       }
     },
   );
@@ -334,7 +338,7 @@ for (const spelling of SPELLINGS) {
       assertEquals(await callAction(srv.origin, id), RESULT);
     } finally {
       await srv.stop();
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }
@@ -366,7 +370,7 @@ Deno.test({
       await srv.stop();
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -378,14 +382,14 @@ Deno.test(
       const built = await cli(dir, ["build"]);
       assert(built.code !== 0, "a SPA has no server to call: the build must fail");
       assertStringIncludes(built.output, `a "use server" module would ship to the browser`);
-      assertStringIncludes(built.output, join("app", "actions.ts"));
-      assertStringIncludes(built.output, join("components", "Island.tsx"));
+      assertStringIncludes(built.output, "app/actions.ts"); // `/` on every OS
+      assertStringIncludes(built.output, "components/Island.tsx");
       for await (const e of walk(join(dir, ".denext"), { includeDirs: false })) {
         const text = await Deno.readTextFile(e.path).catch(() => "");
         assert(!text.includes(SECRET), `the action's secret was written to ${e.path}`);
       }
     } finally {
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   },
 );
@@ -399,7 +403,7 @@ Deno.test({ name: "SPA dev: the action module is served as its stub", ...opts },
     assertStringIncludes(direct, "clientActionStub");
   } finally {
     await srv.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -446,7 +450,7 @@ for (const verb of ["start", "dev"] as const) {
         await srv.stop();
       }
     } finally {
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }

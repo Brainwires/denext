@@ -8,10 +8,10 @@ convert the app.
 > _convert and run_ a real third-party app end-to-end (clone → `package.json`→
 > `deno.json` → build → render), recording exactly where drop-in holds. See
 > [The drop-in verifier](#the-drop-in-verifier-convertts--verify-dropinsh)
-> below. Its successor is the **migration-bed nightly**
+> below. Its successor is the **migration beds**
 > (`tests/migration-bed/`, `denext task test:migration-bed`): SHA-pinned real apps
 > cloned, run through `denext migrate`, built, served and render-asserted on
-> every nightly CI run — the same walk, with the real `migrate` command and a
+> every e2e.yml run — the same walk, with the real `migrate` command and a
 > failing test instead of a report table.
 
 > **Status update (superseded on `v-1.0`):** the punch-list findings below —

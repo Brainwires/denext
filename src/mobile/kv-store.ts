@@ -14,6 +14,12 @@
  *
  * Each named store is its own key space inside the one backing.
  *
+ * `openKeyValueStore(name, { encrypted: true })` keeps the store in its own SQLCipher database
+ * (`denext mobile add storage --encrypted`), keyed with a random key kept in
+ * {@linkcode secureStore} (`denext mobile add secure-store`). Anywhere that cannot encrypt (the
+ * browser, Deno Desktop, the fallbacks above, a build without SQLCipher, a secureStore that is not
+ * secret) refuses with {@linkcode KeyValueStoreError} `ENCRYPTION_UNAVAILABLE` and writes nothing.
+ *
  * @module
  */
 
@@ -30,10 +36,50 @@ import type { SqliteParams, SqliteRows } from "./sqlite-web.ts";
  */
 export type KeyValueBackend = "native" | "sqlite" | "desktop" | "indexeddb" | "memory";
 
+/** Options for {@linkcode openKeyValueStore}. */
+export interface KeyValueStoreOptions {
+  /**
+   * Keep the store encrypted at rest: its own SQLCipher database in the iOS / Android app
+   * (`denext mobile add storage --encrypted`), keyed with a random 256-bit key that is created on
+   * first use and kept in {@linkcode secureStore} (the Keychain / Keystore; `denext mobile add
+   * secure-store`). The store's plain rows from before move into it on the first open. Where
+   * that is not possible every call rejects with `ENCRYPTION_UNAVAILABLE` and nothing is
+   * written: the browser, Deno Desktop, `@capacitor-community/sqlite` or IndexedDB backings, a
+   * build without SQLCipher, or a secureStore that is not secret.
+   */
+  readonly encrypted?: boolean;
+}
+
+/** Why an encrypted store refused a call ({@linkcode KeyValueStoreError.code}). */
+export type KeyValueStoreErrorCode = "ENCRYPTION_UNAVAILABLE" | "WRONG_KEY";
+
+/**
+ * A refusal from an encrypted store: `ENCRYPTION_UNAVAILABLE` (nothing here can encrypt it, so
+ * nothing was written) or `WRONG_KEY` (the key in secureStore does not open the store's file).
+ */
+export class KeyValueStoreError extends Error {
+  /** Why. */
+  readonly code: KeyValueStoreErrorCode;
+
+  /**
+   * A refusal with its code.
+   *
+   * @param code Why.
+   * @param message What happened and what to do.
+   */
+  constructor(code: KeyValueStoreErrorCode, message: string) {
+    super(message);
+    this.name = "KeyValueStoreError";
+    this.code = code;
+  }
+}
+
 /** A named, durable string store ({@linkcode openKeyValueStore}). */
 export interface KeyValueStore {
   /** The store's name. */
   readonly name: string;
+  /** Whether it was opened `encrypted` ({@linkcode KeyValueStoreOptions.encrypted}). */
+  readonly encrypted: boolean;
   /** Where the data lives (resolves once the backing is open). */
   backend(): Promise<KeyValueBackend>;
   /** The value of `key`, or `null`. */
@@ -56,14 +102,23 @@ export interface KeyValueStore {
   clear(): Promise<void>;
 }
 
-/** One backing, shared by every store (`store` is the key space). Internal. */
+/**
+ * One backing, shared by every store (`store` is the key space). Internal. `key` is an encrypted
+ * store's key: only a driver with `cipher` is ever given one.
+ */
 export interface KvDriver {
   readonly kind: KeyValueBackend;
-  getMany(store: string, keys: readonly string[]): Promise<(string | null)[]>;
-  setMany(store: string, entries: ReadonlyArray<readonly [string, string]>): Promise<void>;
-  removeMany(store: string, keys: readonly string[]): Promise<void>;
-  keys(store: string): Promise<string[]>;
-  clear(store: string): Promise<void>;
+  getMany(store: string, keys: readonly string[], key?: string): Promise<(string | null)[]>;
+  setMany(
+    store: string,
+    entries: ReadonlyArray<readonly [string, string]>,
+    key?: string,
+  ): Promise<void>;
+  removeMany(store: string, keys: readonly string[], key?: string): Promise<void>;
+  keys(store: string, key?: string): Promise<string[]>;
+  clear(store: string, key?: string): Promise<void>;
+  /** Whether it can keep an encrypted store (the native plugin with SQLCipher linked). */
+  cipher?(): Promise<boolean>;
 }
 
 /** The SQLite file (native plugin fallback, desktop) and the IndexedDB database name. */
@@ -73,13 +128,18 @@ const IDB_STORE = "kv";
 /** Keys per SQL statement (well under SQLite's bound-parameter limit). */
 const CHUNK = 200;
 
+/** An encrypted store's key on the wire (absent for a plain store). */
+type Keyed = { key?: string };
+
 /** The JS side of the native `DenextStorage` plugin (`denext mobile add storage`). */
 interface StoragePlugin {
-  getMany(o: { store: string; keys: string[] }): Promise<{ values?: unknown[] }>;
-  setMany(o: { store: string; entries: [string, string][] }): Promise<unknown>;
-  removeMany(o: { store: string; keys: string[] }): Promise<unknown>;
-  keys(o: { store: string }): Promise<{ keys?: unknown[] }>;
-  clear(o: { store: string }): Promise<unknown>;
+  getMany(o: { store: string; keys: string[] } & Keyed): Promise<{ values?: unknown[] }>;
+  setMany(o: { store: string; entries: [string, string][] } & Keyed): Promise<unknown>;
+  removeMany(o: { store: string; keys: string[] } & Keyed): Promise<unknown>;
+  keys(o: { store: string } & Keyed): Promise<{ keys?: unknown[] }>;
+  clear(o: { store: string } & Keyed): Promise<unknown>;
+  /** Whether SQLCipher is linked (templates from denext 4.5 on; older ones lack it). */
+  cipher?(): Promise<{ available?: unknown }>;
 }
 
 /** `items` in slices of at most `size`. */
@@ -96,27 +156,50 @@ function str(value: unknown): string | null {
 
 // --- native plugin -----------------------------------------------------------------------------
 
+/** `{ key }` for an encrypted store's call, nothing for a plain one (the wire stays as it was). */
+function keyed(key: string | undefined): Keyed {
+  return key === undefined ? {} : { key };
+}
+
+/** A plugin rejection, as a {@linkcode KeyValueStoreError} when it carries one of its codes. */
+async function coded<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    const code = (err as { code?: unknown })?.code;
+    if (code === "ENCRYPTION_UNAVAILABLE" || code === "WRONG_KEY") {
+      throw new KeyValueStoreError(code, String((err as Error).message ?? err));
+    }
+    throw err;
+  }
+}
+
 /** A driver over the `DenextStorage` plugin. */
 function pluginDriver(plugin: StoragePlugin): KvDriver {
   return {
     kind: "native",
-    async getMany(store, keys) {
-      const out = await plugin.getMany({ store, keys: [...keys] });
+    async getMany(store, keys, key) {
+      const out = await coded(() => plugin.getMany({ store, keys: [...keys], ...keyed(key) }));
       const values = Array.isArray(out?.values) ? out.values : [];
       return keys.map((_, i) => str(values[i]));
     },
-    async setMany(store, entries) {
-      await plugin.setMany({ store, entries: entries.map(([k, v]) => [k, v]) });
+    async setMany(store, entries, key) {
+      const list = entries.map(([k, v]): [string, string] => [k, v]);
+      await coded(() => plugin.setMany({ store, entries: list, ...keyed(key) }));
     },
-    async removeMany(store, keys) {
-      await plugin.removeMany({ store, keys: [...keys] });
+    async removeMany(store, keys, key) {
+      await coded(() => plugin.removeMany({ store, keys: [...keys], ...keyed(key) }));
     },
-    async keys(store) {
-      const out = await plugin.keys({ store });
+    async keys(store, key) {
+      const out = await coded(() => plugin.keys({ store, ...keyed(key) }));
       return (Array.isArray(out?.keys) ? out.keys : []).filter((k) => typeof k === "string");
     },
-    async clear(store) {
-      await plugin.clear({ store });
+    async clear(store, key) {
+      await coded(() => plugin.clear({ store, ...keyed(key) }));
+    },
+    async cipher() {
+      if (typeof plugin.cipher !== "function") return false;
+      return (await plugin.cipher())?.available === true;
     },
   };
 }
@@ -283,6 +366,8 @@ function memoryDriver(): KvDriver {
 
 /** The page's one backing (opened on first use). */
 let driver: Promise<KvDriver> | null = null;
+/** Each encrypted store's key, read (or created) once per page. */
+const storeKeys = new Map<string, Promise<string>>();
 /** Whether the shell's evictable-fallback warning was printed. */
 let warnedEvictable = false;
 
@@ -381,6 +466,80 @@ function checkValue(fn: string, key: string, value: unknown): string {
   return value;
 }
 
+/** The secureStore entry an encrypted store's key lives under. */
+const KEY_PREFIX = "denext.kv.key.";
+
+/** Why `kind` cannot keep an encrypted store. */
+function noCipher(kind: KeyValueBackend): string {
+  switch (kind) {
+    case "native":
+      return "this app's DenextStorage plugin has no SQLCipher: run `denext mobile add storage " +
+        "--encrypted`, then rebuild the app";
+    case "sqlite":
+      return "the store is backed by @capacitor-community/sqlite; encrypted stores need " +
+        "denext's own plugin (`denext mobile add storage --encrypted`)";
+    case "desktop":
+      return "the Deno Desktop runtime's SQLite has no encryption";
+    default:
+      return "the browser's storage (IndexedDB) is not encrypted; encrypted stores run in the " +
+        "iOS / Android app (`denext mobile add storage --encrypted`)";
+  }
+}
+
+/** The key of encrypted store `name`: from secureStore, created there on first use. */
+async function readOrCreateKey(name: string, kind: KeyValueBackend): Promise<string> {
+  const { secureStore, secureStoreIsSecret } = await import("./secure-store.ts");
+  const refuse = (why: string) =>
+    new KeyValueStoreError(
+      "ENCRYPTION_UNAVAILABLE",
+      `openKeyValueStore("${name}", { encrypted: true }): ${why}. Nothing was written.`,
+    );
+  if (!(await secureStoreIsSecret())) {
+    throw refuse(
+      `secureStore is not secret here, so the store's key would sit in plain ${
+        kind === "native" ? "WebView" : "browser"
+      } storage (\`denext mobile add secure-store\`)`,
+    );
+  }
+  const saved = await secureStore.get(KEY_PREFIX + name);
+  if (saved) return saved;
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const { stored } = await secureStore.set(KEY_PREFIX + name, key);
+  if (stored !== "keychain") {
+    await secureStore.delete(KEY_PREFIX + name).catch(() => {});
+    throw refuse("secureStore did not keep the key in the OS store");
+  }
+  return key;
+}
+
+/** The key of encrypted store `name`, once `d` is known to encrypt it; refuses where it cannot. */
+async function checkedKey(name: string, d: KvDriver): Promise<string> {
+  if (!(await d.cipher?.())) {
+    throw new KeyValueStoreError(
+      "ENCRYPTION_UNAVAILABLE",
+      `openKeyValueStore("${name}", { encrypted: true }): ${
+        noCipher(d.kind)
+      }. Nothing was written.`,
+    );
+  }
+  return await readOrCreateKey(name, d.kind);
+}
+
+/**
+ * The key an encrypted store's calls carry: checked and read once per page (a refusal is not
+ * kept, so the next call asks again).
+ */
+function storeKey(name: string, d: KvDriver): Promise<string> {
+  let key = storeKeys.get(name);
+  if (!key) {
+    key = checkedKey(name, d);
+    storeKeys.set(name, key);
+    key.catch(() => storeKeys.delete(name));
+  }
+  return key;
+}
+
 /**
  * Open the durable key-value store `name` (default `"default"`). Nothing is opened until the
  * first call; every store shares one backing, and each has its own keys.
@@ -390,7 +549,12 @@ function checkValue(fn: string, key: string, value: unknown): string {
  * the way it may evict a WebView's `localStorage` and IndexedDB under storage pressure.
  * `backend()` says where it went; see the module docs for the fallbacks.
  *
+ * With `{ encrypted: true }` the store is encrypted at rest (SQLCipher, `denext mobile add
+ * storage --encrypted`), its key kept in secureStore; anywhere that cannot encrypt it, every call
+ * rejects with a {@linkcode KeyValueStoreError} (`ENCRYPTION_UNAVAILABLE`) and nothing is written.
+ *
  * @param name The store's name (its key space).
+ * @param options `encrypted` ({@linkcode KeyValueStoreOptions}).
  * @returns The store.
  * @example
  * ```ts
@@ -399,19 +563,34 @@ function checkValue(fn: string, key: string, value: unknown): string {
  * const prefs = openKeyValueStore("prefs");
  * await prefs.set("theme", "dark");
  * const [theme, font] = await prefs.getMany(["theme", "font"]);
+ *
+ * const vault = openKeyValueStore("vault", { encrypted: true });
+ * await vault.set("pin", "4321"); // SQLCipher in the app; refused on the web
  * ```
  */
-export function openKeyValueStore(name = "default"): KeyValueStore {
+export function openKeyValueStore(
+  name = "default",
+  options: KeyValueStoreOptions = {},
+): KeyValueStore {
   if (typeof name !== "string" || name === "") {
     throw new TypeError("openKeyValueStore: the name must be a non-empty string");
   }
+  const encrypted = options?.encrypted === true;
+  /** The backing and, for an encrypted store, its key (checked before every call). */
+  const target = async (): Promise<[KvDriver, string | undefined]> => {
+    const d = await backing();
+    return [d, encrypted ? await storeKey(name, d) : undefined];
+  };
   const store: KeyValueStore = {
     name,
+    encrypted,
     backend: async () => (await backing()).kind,
     get: async (key) => (await store.getMany([checkKey("get", key)]))[0],
     async getMany(keys) {
       const list = keys.map((k) => checkKey("getMany", k));
-      return list.length === 0 ? [] : await (await backing()).getMany(name, list);
+      if (list.length === 0) return [];
+      const [d, key] = await target();
+      return await d.getMany(name, list, key);
     },
     set: (key, value) => store.setMany([[key, value]]),
     async setMany(entries) {
@@ -419,14 +598,21 @@ export function openKeyValueStore(name = "default"): KeyValueStore {
         const key = checkKey("setMany", k);
         return [key, checkValue("setMany", key, v)];
       });
-      if (list.length > 0) await (await backing()).setMany(name, list);
+      if (list.length === 0) return;
+      const [d, key] = await target();
+      await d.setMany(name, list, key);
     },
     remove: (key) => store.removeMany([key]),
     async removeMany(keys) {
       const list = keys.map((k) => checkKey("removeMany", k));
-      if (list.length > 0) await (await backing()).removeMany(name, list);
+      if (list.length === 0) return;
+      const [d, key] = await target();
+      await d.removeMany(name, list, key);
     },
-    keys: async () => await (await backing()).keys(name),
+    async keys() {
+      const [d, key] = await target();
+      return await d.keys(name, key);
+    },
     async entries() {
       const keys = await store.keys();
       const values = await store.getMany(keys);
@@ -434,13 +620,17 @@ export function openKeyValueStore(name = "default"): KeyValueStore {
         values[i] === null ? [] : [[k, values[i]!] as [string, string]]
       );
     },
-    clear: async () => await (await backing()).clear(name),
+    async clear() {
+      const [d, key] = await target();
+      await d.clear(name, key);
+    },
   };
   return store;
 }
 
-/** Forget the opened backing and the warning (tests). */
+/** Forget the opened backing, the store keys read and the warning (tests). */
 export function resetKeyValueStoreForTesting(): void {
   driver = null;
+  storeKeys.clear();
   warnedEvictable = false;
 }

@@ -4,7 +4,7 @@
 // is exercised by the example's browser e2e (tests/e2e/lustre.e2e.test.ts).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { render } from "../src/testing/mod.ts";
@@ -252,7 +252,8 @@ Deno.test('lustreVersion: a manifest version that is not a version is "unknown",
 });
 
 Deno.test("denext/gleam: importable from client code (no static path to the build plugin)", async () => {
-  const entry = fromFileUrl(new URL("../src/gleam.ts", import.meta.url));
+  // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
+  const entry = new URL("../src/gleam.ts", import.meta.url).href;
   const out = await new Deno.Command(Deno.execPath(), {
     args: ["info", "--json", entry],
     env: { NO_COLOR: "1" },

@@ -28,19 +28,26 @@ export interface ResumedFlightHole {
 /**
  * Recursively fill `{$:"$",r}` Suspense holes in a Flight tree with their resolved
  * subtrees. A hole with no resolved subtree collapses to `null` (its shell fallback
- * stays in the HTML). Pure structural work — no re-render.
+ * stays in the HTML) — or, with `keepMissing`, stays a hole for a later fill (a streamed
+ * render fills the boundaries it wrote inline and leaves the streamed ones to the client).
+ * Pure structural work — no re-render.
  */
-export function fillFlightHoles(node: FlightNode, holes: Map<string, FlightNode>): FlightNode {
+export function fillFlightHoles(
+  node: FlightNode,
+  holes: Map<string, FlightNode>,
+  keepMissing = false,
+): FlightNode {
   if (node === null || typeof node !== "object") return node;
-  if (Array.isArray(node)) return node.map((n) => fillFlightHoles(n, holes));
+  if (Array.isArray(node)) return node.map((n) => fillFlightHoles(n, holes, keepMissing));
   const tag = (node as { $?: string }).$;
   if (tag === "$") {
     const filled = holes.get((node as unknown as FlightHole).r);
-    return filled === undefined ? null : fillFlightHoles(filled, holes);
+    if (filled === undefined) return keepMissing ? node : null;
+    return fillFlightHoles(filled, holes, keepMissing);
   }
   if (tag === "h" || tag === "c") {
     const n = node as { c: FlightNode[] };
-    return { ...node, c: n.c.map((c) => fillFlightHoles(c, holes)) } as FlightNode;
+    return { ...node, c: n.c.map((c) => fillFlightHoles(c, holes, keepMissing)) } as FlightNode;
   }
   return node;
 }

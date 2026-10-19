@@ -138,8 +138,9 @@ async function invokeJson(dir: string, flags: Record<string, unknown>): Promise<
 function customStoreConfig(): string {
   const history = new URL("../src/server/job-history.ts", import.meta.url).href;
   return `import { sqliteJobHistoryStore } from "${history}";\n` +
+    'import { fileURLToPath } from "node:url";\n' +
     "export default { jobs: { history: { store: sqliteJobHistoryStore({ path: " +
-    "new URL('./custom.db', import.meta.url).pathname }) } } };\n";
+    "fileURLToPath(new URL('./custom.db', import.meta.url)) }) } } };\n";
 }
 
 Deno.test("a custom store: runs land in it; --history and --clear-history go through it", async () => {
@@ -180,7 +181,8 @@ Deno.test("--read-only: --history tells the store, --clear-history is refused be
   const history = new URL("../src/server/job-history.ts", import.meta.url).href;
   // A store of the app's own that writes down how it was read, and what it was asked to clear.
   const dir = await project(`import { sqliteJobHistoryStore } from "${history}";
-const inner = sqliteJobHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
+import { fileURLToPath } from "node:url";
+const inner = sqliteJobHistoryStore({ path: fileURLToPath(new URL("./custom.db", import.meta.url)) });
 const note = (line) => Deno.writeTextFileSync(new URL("./calls.log", import.meta.url), line + "\\n", { append: true });
 export default { jobs: { history: { store: {
   record: (run) => inner.record(run),

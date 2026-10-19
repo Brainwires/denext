@@ -56,14 +56,39 @@ export function expoRouterNavigatorsSource(spec: string): string {
   const lines = [
     `import * as __core from ${JSON.stringify(CORE)};`,
     `import { withLayoutContext as __withLayoutContext } from ${expoRouter};`,
+    `import { Screen as __BaseScreen } from ${
+      JSON.stringify(`expo-router/build/views/Screen?${REAL}`)
+    };`,
+    `import { Children as __Children, createElement as __h, isValidElement as __isElement } from "react";`,
     `import * as __real from ${real};`,
     `import { createBottomTabNavigatorFactory as __tabs, createNativeStackNavigatorFactory as __stack } from "denext/navigation";`,
     `export * from ${real};`,
   ];
   if (wantsStack) {
+    // expo-router 56+'s `Stack.Screen` is `StackScreen` (header composition children), which its
+    // own Stack maps to the base `Screen` before `withLayoutContext` reads the children; without
+    // that every `<Stack.Screen>` was dropped ("Layout children must be of type Screen") and its
+    // `options` (the title) with it.
     lines.push(
       `const __RealStack = __real.Stack ?? __real.default;`,
-      `export const Stack = Object.assign(__withLayoutContext(__stack(__core)().Navigator), {`,
+      `function __stackScreens(children) {`,
+      `  return __Children.map(children, (child) => {`,
+      `    if (!__isElement(child)) return child;`,
+      `    if (child.type === __RealStack?.Screen && child.type !== __BaseScreen) {`,
+      `      const { children: _headerItems, ...rest } = child.props;`,
+      `      return __h(__BaseScreen, { ...rest, key: rest.name ?? child.key });`,
+      `    }`,
+      `    if (child.type === __RealStack?.Protected) {`,
+      `      return __h(child.type, { ...child.props, key: child.key, children: __stackScreens(child.props.children) });`,
+      `    }`,
+      `    return child;`,
+      `  });`,
+      `}`,
+      `const __StackNavigator = __withLayoutContext(__stack(__core)().Navigator);`,
+      `function __Stack(props) {`,
+      `  return __h(__StackNavigator, { ...props, children: __stackScreens(props.children) });`,
+      `}`,
+      `export const Stack = Object.assign(__Stack, __StackNavigator, {`,
       `  Screen: __RealStack?.Screen,`,
       `  Protected: __RealStack?.Protected,`,
       `});`,

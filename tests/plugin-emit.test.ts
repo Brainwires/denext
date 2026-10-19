@@ -20,6 +20,7 @@ import { staticExport } from "../src/build/export.ts";
 import { build } from "../src/build/build.ts";
 import { startSpaProdServer } from "../src/build/spa/prod-server.ts";
 import { startProdServer } from "../src/build/prod-server.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -323,7 +324,7 @@ for (const compat of [false, true]) {
       assertEquals(robots, "emitted");
     } finally {
       resetPlugins();
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }
@@ -358,7 +359,7 @@ Deno.test({
     assertEquals(robots, "emitted");
   } finally {
     resetPlugins();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -399,7 +400,7 @@ Deno.test({
     );
   } finally {
     resetPlugins();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 

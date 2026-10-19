@@ -128,15 +128,16 @@ Deno.test("the generated migrate job: a file with its own transaction, and a nam
       "BEGIN;\nCREATE TABLE own (x INTEGER);\n" +
         "CREATE TRIGGER own_t AFTER INSERT ON own BEGIN\n  UPDATE own SET x = x;\nEND;\nCOMMIT;\n",
     );
-    // `#`, `?` and `%` are part of the name, not URL syntax.
-    await Deno.writeTextFile(
-      join(dir, "migrations", "20990101000001_odd#name?50%.sql"),
-      "CREATE TABLE odd (x INTEGER);\n",
-    );
+    // `#`, `?` and `%` are part of the name, not URL syntax (Windows forbids `?` in a file name,
+    // so there the name has the other two).
+    const odd = Deno.build.os === "windows"
+      ? "20990101000001_odd#name50%.sql"
+      : "20990101000001_odd#name?50%.sql";
+    await Deno.writeTextFile(join(dir, "migrations", odd), "CREATE TABLE odd (x INTEGER);\n");
     const migrate = join(dir, "jobs", "migrate.ts");
     const applied = String(await runGeneratedJob(migrate));
     assert(applied.includes("20990101000000_own_tx.sql"), applied);
-    assert(applied.includes("20990101000001_odd#name?50%.sql"), applied);
+    assert(applied.includes(odd), applied);
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(join(dir, "app.db"));
     try {
@@ -345,7 +346,7 @@ Deno.test("generate vector-search: a migration with pgvector's match_<table> rec
   try {
     const { written } = await generateArtifact(dir, "vector-search", "");
     assertEquals(written.length, 1);
-    assert(/\/migrations\/\d{14}_documents_vector_search\.sql$/.test(written[0]), written[0]);
+    assert(/[\\/]migrations[\\/]\d{14}_documents_vector_search\.sql$/.test(written[0]), written[0]);
     const sql = await Deno.readTextFile(written[0]);
     for (
       const part of [

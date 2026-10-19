@@ -81,6 +81,13 @@ Deno.test("a local input's stamp changes with its content, its mtime, or its rem
   }
 });
 
+Deno.test("a Windows drive-letter input is a local file, not a URL with scheme `C:`", async () => {
+  // A Windows metafile input like `C:\\app\\in.ts` was taken for a URL and never stamped, so
+  // an edit to it never rebuilt the runtime. (On another OS the path is merely missing.)
+  const stamps = await stampInputs(["C:\\app\\in.ts", "C:/app/b.ts", "https://jsr.io/x.ts"], "/");
+  assertEquals(stamps.size, 2);
+});
+
 Deno.test("cachedRuntime: one build per key, shared by concurrent callers, rebuilt when stale or failed", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_runtime_cache_" });
   try {

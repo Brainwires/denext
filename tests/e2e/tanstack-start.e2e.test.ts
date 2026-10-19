@@ -1,14 +1,19 @@
 // Networked e2e for examples/tanstack-start: a TanStack Start app run by the
 // `@denext/tanstack-start` plugin, end to end through the real CLI — `deno install` →
-// `denext build` (the client and the server bundle) → `denext start` (which loads the server
-// bundle the build made) — then a real (headless) Chromium. Start's own handler answers
+// `denext build` (the client and the server bundle, and the deploy manifest listing Start's
+// routes and server functions, and its `/_tss/` client files as asset groups) → `denext start`
+// (which loads the server bundle the build made) — then a real (headless) Chromium. Start's own handler answers
 // every request: pages stream through the matched routes (a nested layout, a deferred loader
 // promise streaming in after the shell, a route's error component), server routes answer with
 // their handlers, and server functions (`createServerFn`) are called over Start's RPC — from a
 // loader on the server, and from the browser after hydration, with middleware and validation.
 // denext refuses a cross-origin server function POST before Start sees it. Then `denext export`:
 // Start's prerender writes the static pages (and the crawled dynamic ones), lists the routes that
-// need a server, and the static site hydrates and navigates on the client in Chromium.
+// need a server, writes Start's SPA shell and sitemap, and the static site hydrates and navigates
+// on the client in Chromium (a path with no file served Start's SPA shell, which the app renders)
+// — and, with JavaScript off, renders from its HTML and follows a link with a full page load.
+// Then `denext dev`: with Start's `spa` on, every page is the SPA shell (Start's dev server
+// defines `TSS_SHELL` so), which the browser hydrates and renders.
 //
 // Opt-in + NETWORK-REQUIRED (`deno install` fetches the TanStack packages from npm):
 // `deno task test:e2e`. Skipped automatically if the install can't reach npm.
@@ -18,6 +23,7 @@ import { fromFileUrl, join } from "@std/path";
 import {
   assertNoConsoleErrors,
   collectConsoleErrors,
+  killTree,
   launchBrowser,
   runDeno,
   startCliServer,
@@ -72,6 +78,30 @@ Deno.test({
   const record = JSON.parse(await Deno.readTextFile(join(out, "server.json")));
   const serverBundle = join(out, record.bundle);
   const builtAt = (await Deno.stat(serverBundle)).mtime?.getTime();
+  // The deploy manifest lists Start's server routes, pages and server functions.
+  const manifest = JSON.parse(
+    await Deno.readTextFile(join(EXAMPLE, ".denext", "deploy-manifest.json")),
+  ) as {
+    routes: Array<{ path: string; kind: string; source: string; methods?: string[] }>;
+    assets: Array<{ urlPrefix: string; cacheControl: string; immutable: boolean; files: string[] }>;
+  };
+  const kinds = new Map(manifest.routes.map((r) => [r.path, r.kind]));
+  assertEquals(kinds.get("/about"), "static");
+  assertEquals(kinds.get("/notes"), "dynamic", "it calls a server function");
+  assertEquals(kinds.get("/posts/[postId]"), "dynamic");
+  const hello = manifest.routes.find((r) => r.path === "/api/hello");
+  assertEquals([hello?.kind, hello?.methods], ["route-handler", ["GET", "POST"]]);
+  const fns = manifest.routes.filter((r) => r.path.startsWith("/_serverFn/"));
+  assertEquals(fns.length, 2, "the GET and the POST server function");
+  assert(fns.every((r) => r.kind === "route-handler" && r.source === "src/functions/notes.ts"));
+  // …and the client files it serves under /_tss/, with the Cache-Control the server sends.
+  const tss = manifest.assets.filter((g) => g.urlPrefix === "/_tss/");
+  assertEquals(tss.map((g) => [g.cacheControl, g.immutable]), [
+    ["no-cache", false],
+    ["public, max-age=31536000, immutable", true],
+  ]);
+  assertEquals(tss[0].files, ["client.js"]);
+  assert(tss[1].files.length > 0 && !tss[1].files.includes("client.js"), "the hashed files");
 
   const server = await startCliServer(EXAMPLE, 60_000);
   try {
@@ -109,7 +139,18 @@ Deno.test({
         }
       }
       assertStringIncludes(js, "/_serverFn/", "server functions are RPC stubs");
-      for (const leak of ["notes.push", "A note needs some text", 'searchParams.get("name")']) {
+      // src/functions/notes.server.ts (only the server functions' handlers use it), the
+      // handlers' bodies and a server route's handler: none of it ships.
+      for (
+        const leak of [
+          "notes.push",
+          "notes.server.ts stored note",
+          "Server functions run on the server",
+          "saveNote(",
+          "readNotes(",
+          'searchParams.get("name")',
+        ]
+      ) {
         assert(!js.includes(leak), `the client bundle leaks ${leak}`);
       }
       assert(!js.includes("AsyncLocalStorage"), "Start's server-only context stayed on the server");
@@ -265,13 +306,24 @@ Deno.test({
   }
 });
 
-/** Serve a static export as a static host would: `<path>/index.html`, then the file itself. */
-function serveStatic(root: string): { origin: string; close(): Promise<void> } {
+/**
+ * Serve a static export as a static host would: `<path>/index.html`, then the file itself, then
+ * (a page path with no file) the `fallback` file when one is given.
+ * `served` lists each file answered, relative to the export (`posts/2/index.html`).
+ */
+function serveStatic(
+  root: string,
+  fallback?: string,
+): { origin: string; served: string[]; close(): Promise<void> } {
+  const served: string[] = [];
   const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, async (req) => {
     const path = decodeURIComponent(new URL(req.url).pathname);
-    for (const candidate of [join(root, path, "index.html"), join(root, path)]) {
+    const candidates = [join(root, path, "index.html"), join(root, path)];
+    if (fallback && !/\.\w+$/.test(path)) candidates.push(join(root, fallback));
+    for (const candidate of candidates) {
       const body = await Deno.readFile(candidate).catch(() => null);
       if (!body) continue;
+      served.push(candidate.slice(root.length + 1).replace(/\\/g, "/"));
       const type = candidate.endsWith(".js")
         ? "text/javascript; charset=utf-8"
         : "text/html; charset=utf-8";
@@ -279,7 +331,11 @@ function serveStatic(root: string): { origin: string; close(): Promise<void> } {
     }
     return new Response("Not Found", { status: 404 });
   });
-  return { origin: `http://127.0.0.1:${server.addr.port}`, close: () => server.shutdown() };
+  return {
+    origin: `http://127.0.0.1:${server.addr.port}`,
+    served,
+    close: () => server.shutdown(),
+  };
 }
 
 Deno.test({
@@ -299,7 +355,10 @@ Deno.test({
   await t.step("the static pages, the crawled ones and the client bundle are written", async () => {
     for (
       const page of [
-        "index.html",
+        // Start's SPA shell takes `/` (spa.maskPath), as in Start: no index.html.
+        "_shell.html",
+        "sitemap.xml",
+        "pages.json",
         "about/index.html",
         "deferred/index.html",
         "posts/index.html",
@@ -321,6 +380,29 @@ Deno.test({
     );
   });
 
+  await t.step("Start's SPA shell and sitemap are written", async () => {
+    const shell = await Deno.readTextFile(join(out, "_shell.html"));
+    assert(shell.startsWith("<!DOCTYPE html><html"), "a whole document");
+    assertStringIncludes(shell, "/_tss/client.js");
+    assert(!shell.includes('id="home"'), "the shell renders no route: the root route alone");
+    assertEquals(
+      await Deno.stat(join(out, "index.html")).then(() => true, () => false),
+      false,
+      "the shell takes its mask path",
+    );
+    const sitemap = await Deno.readTextFile(join(out, "sitemap.xml"));
+    assertStringIncludes(
+      sitemap,
+      "<!--This file was automatically generated by TanStack Start.-->",
+    );
+    assertStringIncludes(sitemap, "<loc>https://example.com/about</loc>");
+    assertStringIncludes(sitemap, "<loc>https://example.com/posts/3</loc>");
+    assert(!sitemap.includes("<loc>https://example.com/</loc>"), "the shell is not listed");
+    const pages = JSON.parse(await Deno.readTextFile(join(out, "pages.json")));
+    assertEquals(pages.host, "https://example.com");
+    assertStringIncludes(exported.out, "[sitemap] Building Sitemap...");
+  });
+
   await t.step("the routes that need a server are listed and left out", async () => {
     assertStringIncludes(exported.out, "2 route(s) need a server and are not in the export");
     assertStringIncludes(exported.out, "/api/hello  (src/routes/api/hello.ts) — a server route");
@@ -334,9 +416,24 @@ Deno.test({
     }
   });
 
-  const host = serveStatic(out);
+  // A static host whose fallback is Start's SPA shell.
+  const host = serveStatic(out, "_shell.html");
   const browser = await launchBrowser();
   try {
+    await t.step("a path with no file gets the SPA shell, and the app renders it", async () => {
+      const page = await browser.newPage(host.origin + "/");
+      const errors = collectConsoleErrors(page);
+      await hydrated(page);
+      // The index route's loader ran in the browser: the shell rendered no route on the server.
+      assertEquals(
+        await textWhen(page, "#rendered-on", (t) => t.includes("browser")),
+        "loader ran on the browser",
+      );
+      assert(host.served.includes("_shell.html"), "the fallback answered");
+      assertNoConsoleErrors(errors);
+      await page.close();
+    });
+
     await t.step("a static page hydrates and navigates on the client", async () => {
       const page = await browser.newPage(host.origin + "/posts");
       const errors = collectConsoleErrors(page);
@@ -359,8 +456,117 @@ Deno.test({
       assertNoConsoleErrors(errors);
       await page.close();
     });
+
+    await t.step(
+      "with JavaScript off, the pages render and a link loads the next file",
+      async () => {
+        const page = await browser.newPage();
+        // deno-lint-ignore no-explicit-any
+        const cdp = page.unsafelyGetCelestialBindings() as any;
+        await cdp.Emulation.setScriptExecutionDisabled({ value: true });
+        host.served.length = 0;
+        await page.goto(host.origin + "/posts", { waitUntil: "load" });
+        const list = await page.evaluate(() => document.querySelector("#posts")?.textContent ?? "");
+        assertStringIncludes(list, "Every page arrives rendered", "the list is in the HTML");
+        const pages = () => host.served.filter((f) => f.endsWith(".html"));
+        assertEquals(pages(), ["posts/index.html"]);
+        // Marks this document: a full page load drops the mark, a client navigation keeps it.
+        await page.evaluate(() => {
+          (globalThis as unknown as { __sameDocument: boolean }).__sameDocument = true;
+        });
+        const navigated = page.waitForNavigation({ waitUntil: "load" });
+        await (await page.$('#posts a[href="/posts/2"]'))!.click();
+        await navigated;
+        const state = await page.evaluate(() => ({
+          path: location.pathname,
+          sameDocument:
+            (globalThis as unknown as { __sameDocument?: boolean }).__sameDocument === true,
+          layout: !!document.querySelector("#posts-layout #post"),
+          text: document.querySelector("#post")?.textContent ?? "",
+        }));
+        assertEquals(state.path, "/posts/2");
+        assert(!state.sameDocument, "a full page load, not a client navigation");
+        assert(state.layout, "the post renders inside its layout, from the exported HTML");
+        assertStringIncludes(state.text, "Then the router takes over");
+        assertEquals(pages(), ["posts/index.html", "posts/2/index.html"], "the exported file");
+        await page.close();
+      },
+    );
   } finally {
     await browser.close();
     await host.close();
+  }
+});
+
+/** `denext dev` for the example on a free port, once it answers. */
+async function startDev(): Promise<{ origin: string; close(): Promise<void> }> {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (listener.addr as Deno.NetAddr).port;
+  listener.close();
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", CLI, "dev", ".", "--host", "127.0.0.1", "--port", String(port)],
+    cwd: EXAMPLE,
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  const origin = `http://127.0.0.1:${port}`;
+  const close = async () => {
+    await killTree(child.pid);
+    await child.status.catch(() => {});
+  };
+  for (let i = 0; i < 240; i++) {
+    try {
+      const res = await fetch(origin + "/_tss/client.js");
+      await res.body?.cancel();
+      if (res.ok) return { origin, close };
+    } catch { /* not listening yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await close();
+  throw new Error("denext dev did not answer within 120 s");
+}
+
+Deno.test({
+  name: "e2e: examples/tanstack-start in denext dev renders every page as Start's SPA shell",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const install = await runDeno(["install"], EXAMPLE, 180_000);
+  if (!install.ok) {
+    console.warn("e2e: `deno install` failed (npm unreachable?) — skipping.\n" + install.out);
+    return;
+  }
+  const dev = await startDev();
+  const browser = await launchBrowser();
+  try {
+    await t.step("the server renders the root route alone, for any page", async () => {
+      for (const path of ["/", "/about", "/posts/2"]) {
+        const html = await (await fetch(dev.origin + path, {
+          headers: { "user-agent": BROWSER_UA },
+        })).text();
+        assert(html.startsWith("<!DOCTYPE html><html"), `${path}: the shellComponent's document`);
+        assertStringIncludes(html, '<script type="module" src="/_tss/client.js"');
+        for (const id of ['id="home"', 'id="about"', 'id="post"']) {
+          assert(!html.includes(id), `${path}: the shell renders no route (${id})`);
+        }
+      }
+    });
+
+    await t.step("the browser renders the route from the shell", async () => {
+      const page = await browser.newPage(dev.origin + "/");
+      const errors = collectConsoleErrors(page);
+      await hydrated(page);
+      assertEquals(
+        await textWhen(page, "#rendered-on", (t) => t.includes("browser")),
+        "loader ran on the browser",
+      );
+      await page.goto(dev.origin + "/about", { waitUntil: "load" });
+      await page.waitForSelector("#about", { timeout: 20_000 });
+      assertNoConsoleErrors(errors);
+      await page.close();
+    });
+  } finally {
+    await browser.close();
+    await dev.close();
   }
 });

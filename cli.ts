@@ -204,6 +204,18 @@ function denoBeforeParse(
   return { ...verbatimFrom(argv, at), forwarded: true };
 }
 
+/**
+ * `denext [globals…] fastlane …`: fastlane's arguments verbatim (its own `--verbose`, `--env`
+ * and `--help` included) and the directory `--cwd` picks, or null for anything else. A help or
+ * version flag before the verb is denext's, as for `deno`.
+ */
+function fastlaneBeforeParse(argv: string[]): { args: string[]; cwd: string } | null {
+  const at = verbIndex(argv);
+  if (at < 0 || argv[at] !== "fastlane") return null;
+  if (argv.slice(0, at).some((tok) => isHelpToken(tok) || isVersionToken(tok))) return null;
+  return { args: argv.slice(at + 1), cwd: verbatimFrom(argv, at).cwd };
+}
+
 /** Whether a token asks for the version (`--version` / `-v`). */
 function isVersionToken(token: string): boolean {
   return token === "--version" || token === "-v";
@@ -277,6 +289,13 @@ async function main(): Promise<void> {
   await warmRemoteCli();
   const early = denoBeforeParse(Deno.args);
   if (early) return await runDenoPassthrough(early.args, early.cwd, early.forwarded);
+  const fastlane = fastlaneBeforeParse(Deno.args);
+  if (fastlane) {
+    const { runFastlane } = await lazy<typeof import("./src/cli/commands/fastlane.ts")>(
+      "./commands/fastlane.ts",
+    );
+    Deno.exit(await runFastlane(fastlane.args, fastlane.cwd));
+  }
   const registry = buildLazyRegistry();
   const outcome = await resolveOutcome(registry);
   // Completions enumerate the whole verb set, so they load project verbs up front — under a

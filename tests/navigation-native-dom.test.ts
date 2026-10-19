@@ -7,7 +7,7 @@
 // wrap; and the React Navigation / Expo Router adapters.
 
 import "./helpers/activity-runtime.ts";
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStrictEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -37,6 +37,7 @@ import {
   mapStackOptions,
   nativeStackTint,
   type ReactNavigationCore,
+  withCustomHeader,
 } from "../src/navigation/react-navigation.ts";
 import {
   expoRouterNavigatorsPlugin,
@@ -864,6 +865,46 @@ Deno.test("mapStackOptions translates native-stack options", () => {
   );
 });
 
+Deno.test("native-stack `header`: the screen's own header replaces the stack's", () => {
+  // React Navigation's `header` option (Unistyles' example app draws its theme switcher there);
+  // the stack drew its own header and dropped it.
+  const calls: Any[] = [];
+  const header = (props: Any) => (calls.push(props), h("p", { "data-testid": "mine" }, "custom"));
+  const descriptors: Any = {
+    a: { options: { title: "Home" } },
+    b: { navigation: { id: "nav" }, options: { title: "Detail", header } },
+  };
+  const base = mapStackOptions(descriptors.b.options, { canGoBack: true, routeName: "detail" });
+  const o = withCustomHeader(
+    base,
+    descriptors.b,
+    { key: "b", name: "detail" },
+    { key: "a", name: "index" },
+    descriptors,
+  );
+  assertEquals(calls[0].route, { key: "b", name: "detail" });
+  assertEquals(calls[0].back, { title: "Home", href: undefined });
+  assertEquals(calls[0].navigation, { id: "nav" });
+  assertStrictEquals(
+    withCustomHeader(base, descriptors.a, { key: "a", name: "index" }, undefined, descriptors),
+    base,
+  );
+
+  const { container } = docWithData({});
+  const root = createRoot(container as Any);
+  root.render(h(StackView, { entries: [entry("b", "body", o)], onPop: () => {}, platform: "ios" }));
+  flushSync();
+  assertEquals(findAll(container, "data-testid").map((e: Any) => e.textContent), ["custom"]);
+  assert(!container.textContent.includes("Detail"), "the stack's own title is not drawn");
+  root.render(h(StackView, {
+    entries: [entry("b", "body", { ...o, headerShown: false })],
+    onPop: () => {},
+    platform: "ios",
+  }));
+  flushSync();
+  assertEquals(findAll(container, "data-testid").length, 0, "headerShown: false hides it too");
+});
+
 Deno.test("native-stack header tint: headerTintColor, else the theme's primary (iOS) / text (Android)", async () => {
   assertEquals(
     mapStackOptions({ headerTintColor: "red" }, { canGoBack: true }).headerTintColor,
@@ -1134,7 +1175,7 @@ Deno.test("expo-router adapter source overrides Stack / Tabs and keeps the rest"
   assertStringIncludes(src, `export * from "expo-router?denext-real";`);
   assertStringIncludes(
     src,
-    "export const Stack = Object.assign(__withLayoutContext(__stack(__core)().Navigator)",
+    "export const Stack = Object.assign(__Stack, __StackNavigator",
   );
   assertStringIncludes(src, "export const Tabs = ");
   assertStringIncludes(src, `from "denext/navigation"`);

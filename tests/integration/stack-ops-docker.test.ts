@@ -16,13 +16,15 @@ async function dockerReady(): Promise<boolean> {
       stderr: "null",
     }).output();
     if (!out.success) return false;
+    // The stack's images are Linux images: a Windows-containers engine (GitHub's windows-latest
+    // runner) has no manifest for them.
     const info = await new Deno.Command("docker", {
-      args: ["info"],
-      stdout: "null",
+      args: ["info", "--format", "{{.OSType}}"],
+      stdout: "piped",
       stderr: "null",
     })
       .output();
-    return info.success;
+    return info.success && new TextDecoder().decode(info.stdout).trim() === "linux";
   } catch {
     return false;
   }

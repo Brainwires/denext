@@ -5,7 +5,12 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
 import { publishedFiles } from "./_published-files.ts";
-import { bumpVersion, docSpecifierPattern, printBumpResult } from "../scripts/bump-version.ts";
+import {
+  bumpVersion,
+  currentVersionPattern,
+  docSpecifierPattern,
+  printBumpResult,
+} from "../scripts/bump-version.ts";
 import {
   foldedAnchorRewrites,
   foldPrereleases,
@@ -332,4 +337,15 @@ Deno.test("no published generated file over 50 KiB ships uncompressed", async ()
   for (const file of Object.keys(UNCOMPRESSED_GENERATED_OK)) {
     assert(files.has(file), `UNCOMPRESSED_GENERATED_OK lists ${file}, which is not published`);
   }
+});
+
+Deno.test("bump: an npm dependency that shares denext's version keeps its own", () => {
+  const text = `{ "version": "4.3.1", "a": "jsr:@denext/denext@^4.3.1/server",
+  "tus-js-client": "npm:tus-js-client@4.3.1", "b": "npm:@scope/x@^4.3.1", "c": "14.3.1" }`;
+  const out = text.replace(currentVersionPattern("4.3.1"), "4.4.0");
+  assertStringIncludes(out, `"version": "4.4.0"`);
+  assertStringIncludes(out, "jsr:@denext/denext@^4.4.0/server");
+  assertStringIncludes(out, "npm:tus-js-client@4.3.1");
+  assertStringIncludes(out, "npm:@scope/x@^4.3.1");
+  assertStringIncludes(out, `"14.3.1"`);
 });

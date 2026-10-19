@@ -349,6 +349,29 @@ Deno.test("prisma migrate: `postgres` (Prisma's alias) wires the pg adapter too"
   await Deno.remove(dir, { recursive: true });
 });
 
+Deno.test("prisma migrate: a cockroachdb datasource goes through the Postgres adapter path", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "cockroachdb"\n  url      = env("CRDB_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.provider, "cockroachdb");
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-pg");
+  assertEquals(r.prisma?.warnings, []);
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(db, `import { PrismaPg as __PrismaPg } from "@prisma/adapter-pg";`);
+  assertStringIncludes(db, `connectionString: Deno.env.get("CRDB_URL")`);
+  assertStringIncludes(db, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+  const deno = JSON.parse(await read(dir, "deno.json")) as {
+    links?: string[];
+    imports?: Record<string, string>;
+  };
+  assertEquals(deno.links, undefined, "pg is pure JS: no `links` substitution");
+  assertEquals(deno.imports?.["@prisma/adapter-pg"], "npm:@prisma/adapter-pg@6.19.3");
+  assertStringIncludes(
+    await read(dir, "scripts/denext-prisma-setup.ts"),
+    `const URL_VAR = "CRDB_URL";`,
+  );
+  await Deno.remove(dir, { recursive: true });
+});
+
 Deno.test("prisma migrate: a mysql datasource gets @prisma/adapter-mariadb", async () => {
   const dir = await scaffoldPrismaApp(`provider = "mysql"\n  url      = env("DATABASE_URL")`);
   const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
@@ -395,7 +418,7 @@ Deno.test("prisma migrate: readDatasource / wiredProvider", () => {
   assertEquals(wiredProvider("postgres"), "postgresql");
   assertEquals(wiredProvider("mysql"), "mysql");
   assertEquals(wiredProvider("mongodb"), null);
-  assertEquals(wiredProvider("cockroachdb"), null);
+  assertEquals(wiredProvider("cockroachdb"), "postgresql");
 });
 
 async function exists(path: string): Promise<boolean> {

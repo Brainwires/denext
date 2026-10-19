@@ -377,14 +377,25 @@ async function dispatchApi(
     onError: (err) =>
       reportRequestError(config, err, state.request, state.pathname, { routeType: "route" }),
   });
-  const fallThroughToPage = apiRes.status === 405 && isReadMethod(state.request) &&
+  const fallThroughToPage = apiRes.status === 405 && rendersPage(state) &&
     matchPage(manifest, routingPath, { soft: false }) !== null;
   if (!fallThroughToPage) return finalize(state, apiRes);
   state.dispatchRouteType = "render"; // handed off to the page render
   return null;
 }
 
-/** Pages: GET/HEAD, plus a soft-nav POST carrying an over-large render payload. */
+/**
+ * Whether this request's method renders a page: GET / HEAD, or any method a compat middleware
+ * handled and handed to the page ({@link RequestContext.renderPageForMethod}).
+ */
+function rendersPage(state: RequestState): boolean {
+  return isReadMethod(state.request) || state.ctx.renderPageForMethod === true;
+}
+
+/**
+ * Pages: GET/HEAD, plus a soft-nav POST carrying an over-large render payload, and a request a
+ * compat middleware handed to the page.
+ */
 function dispatchPage(
   state: RequestState,
   manifest: RouteManifest,
@@ -392,7 +403,7 @@ function dispatchPage(
   localeInfo: PeeledLocale | null,
   softNavPost: boolean,
 ): Promise<Response> | null {
-  if (!isReadMethod(state.request) && !softNavPost) return null;
+  if (!rendersPage(state) && !softNavPost) return null;
   // Soft (client) navigations carry x-denext-nav; enables interception.
   const soft = state.request.headers.get("x-denext-nav") === "1";
   const matched = matchPage(manifest, routingPath, { soft });

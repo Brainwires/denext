@@ -133,6 +133,7 @@ interface CacheStore {
   deleteByPath(path: string): void | Promise<void>;
   expireByTag?(tag: string, timing: CacheEntryTiming): void | Promise<void>; // SWR soft-expire; optional
   sweepPages?(keep: string): number | Promise<number>; // drop other builds' pages; optional
+  takeData?(key: string): DataEntry | undefined | Promise<DataEntry | undefined>; // atomic read + delete; optional
 }
 ```
 
@@ -140,7 +141,11 @@ The contract: every method may be sync or async (denext awaits); `get*` must
 return only **fresh** entries — treating `expiresAt` in the past as a miss is
 the store's job (a `DataEntry` also carries `staleAt` and `tags`; a `CachedPage`
 carries its own timing); a store without `expireByTag` gets a hard `deleteByTag`
-instead of stale-while-revalidate.
+instead of stale-while-revalidate. `takeData` reads and deletes one data entry atomically —
+of racing callers on any instance, exactly one gets it — for single-use records: the `next-auth`
+shim keeps a passkey ceremony's challenge there when the app uses an Auth.js adapter, so a
+ceremony begun on one instance finishes on another. The SQLite, Postgres, Redis and Deno KV
+stores implement it; the in-memory one doesn't (those challenges stay in the instance's memory).
 
 ```ts
 // denext.config.ts

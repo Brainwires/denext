@@ -167,7 +167,20 @@ Deno.test("native: every denext specifier a transformed module imports has an @d
     rewriteSpecifier(st, "denext/jsx-dev-runtime", null, e),
     `${DEP_PREFIX}denext_jsx-runtime.js`,
   );
-  for (const spec of ["denext", "denext/jsx-runtime", "denext/jsx-dev-runtime", "denext/client"]) {
+  // The desktop window's page APIs: `denext desktop dev` serves pages importing them through
+  // this dev server, whose graph 404'd on each and never hydrated.
+  for (
+    const spec of [
+      "denext",
+      "denext/jsx-runtime",
+      "denext/jsx-dev-runtime",
+      "denext/client",
+      "denext/desktop/client",
+      "denext/desktop/window",
+      "denext/desktop/app",
+      "denext/desktop/clerk",
+    ]
+  ) {
     const url = rewriteSpecifier(st, spec, null, e);
     const slug = url.slice(DEP_PREFIX.length).replace(/\.js$/, "");
     assert(slug in DEP_ENTRYPOINTS, `${spec} → ${url} has no @dep entry`);

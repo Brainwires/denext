@@ -6,7 +6,6 @@ import {
   type CiJob,
   type CiRun,
   DESKTOP_CI_JOBS,
-  DESKTOP_CI_OPTIONAL_JOBS,
   desktopCiVerdict,
   RELEASE_CI_JOBS,
   releaseCiHint,
@@ -58,6 +57,7 @@ Deno.test("release CI gate: the jobs a release needs, and what is unmet", () => 
     "backend-integration",
     "ios-export-router",
     "windows-resolve",
+    "windows-tests",
   ]);
   assertEquals(unmetCiJobs(jobs("success")), []);
   assertEquals(
@@ -149,15 +149,17 @@ Deno.test("desktop CI gate: the newest desktop-ci run on HEAD, push or dispatch,
     }).gh,
   );
   assertStringIncludes(extra.reason, "cross-launch (linux-to-windows): failure");
-  // An optional job (Windows on Arm, until it is reliably green) may fail or be missing.
-  const [optional] = DESKTOP_CI_OPTIONAL_JOBS;
-  const optionalRed = await desktopCiVerdict(
+  // Windows on Arm is required like every other job: its failure refuses the release.
+  const arm = "windows on arm (windows-11-arm — desktop tests, install.ps1, Arm64 .msi)";
+  assert(DESKTOP_CI_JOBS.includes(arm), "Windows on Arm is a required job");
+  const armRed = await desktopCiVerdict(
     SHA,
     fakeGh([run(6, "push", "2026-10-06T10:00:00Z")], {
-      6: desktopJobs("success", { [optional]: "failure" }),
+      6: desktopJobs("success", { [arm]: "failure" }),
     }).gh,
   );
-  assert(optionalRed.ok, optionalRed.reason);
+  assert(!armRed.ok);
+  assertStringIncludes(armRed.reason, `${arm}: failure`);
   const missing = await desktopCiVerdict(
     SHA,
     fakeGh([run(4, "push", "2026-10-06T10:00:00Z")], {
@@ -181,10 +183,8 @@ Deno.test("desktop CI gate: every required job is named in desktop-ci.yml", asyn
   const workflow = await Deno.readTextFile(
     new URL("../.github/workflows/desktop-ci.yml", import.meta.url),
   );
-  for (const job of DESKTOP_CI_OPTIONAL_JOBS) {
-    assert(!DESKTOP_CI_JOBS.includes(job), `${job} is required or optional, not both`);
-    assertStringIncludes(workflow, `name: ${job}\n`, job);
-  }
+  // No job may fail without failing the run: a release needs every one of them green.
+  assert(!/^\s*continue-on-error:/m.test(workflow), "a desktop-ci.yml job has continue-on-error");
   for (const job of DESKTOP_CI_JOBS) {
     // A matrix leg `<name> (<os>)` comes from `name: <name> (${{ matrix.os }})` and that os.
     const leg = /^(.*) \(((?:windows|macos|ubuntu)-latest)\)$/.exec(job);

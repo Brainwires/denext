@@ -7,7 +7,37 @@
  * @module
  */
 
+import type { OAuthCheck } from "./types.ts";
+
 const encoder = new TextEncoder();
+
+/** Every value {@linkcode OAuthCheck} takes. */
+export const OAUTH_CHECKS: readonly OAuthCheck[] = ["pkce", "state", "nonce", "none"];
+
+/** Which of the optional protections one flow runs (`state` always runs). */
+export interface FlowChecks {
+  /** Send a PKCE challenge, and redeem the code with its verifier. */
+  pkce: boolean;
+  /** Send a `nonce`, and require it in the `id_token`. */
+  nonce: boolean;
+}
+
+/**
+ * The protections a provider's flow runs: PKCE, plus a `nonce` for OIDC, unless its `checks`
+ * say otherwise (Auth.js's semantics; `state` is never optional).
+ *
+ * @param provider The provider's type and `checks`.
+ * @returns Whether the flow sends PKCE and a `nonce`.
+ */
+export function flowChecks(
+  provider: { type: "oauth" | "oidc"; checks?: readonly OAuthCheck[] },
+): FlowChecks {
+  const { checks } = provider;
+  return {
+    pkce: !checks || checks.includes("pkce"),
+    nonce: provider.type === "oidc" && (!checks || checks.includes("nonce")),
+  };
+}
 
 /** URL-safe base64 of bytes (no padding) — the encoding OAuth/JOSE expect. */
 export function base64UrlEncode(bytes: Uint8Array): string {
@@ -74,8 +104,8 @@ export interface AuthorizationUrlParams {
   scope: string;
   /** CSRF `state` value (also carries the post-login return path when you choose). */
   state: string;
-  /** PKCE S256 challenge. */
-  codeChallenge: string;
+  /** PKCE S256 challenge (left out for a provider whose `checks` don't list `"pkce"`). */
+  codeChallenge?: string;
   /** OIDC `nonce` (omit for plain OAuth 2.0 providers). */
   nonce?: string;
   /** Extra provider-specific query params (e.g. `access_type: "offline"`). */
@@ -85,7 +115,8 @@ export interface AuthorizationUrlParams {
 }
 
 /**
- * Build the provider authorization URL for the Authorization Code + PKCE flow.
+ * Build the provider authorization URL for the Authorization Code flow (+ PKCE when the
+ * challenge is given).
  *
  * @param params {@link AuthorizationUrlParams}.
  * @returns The full authorization URL to redirect the user to.
@@ -99,8 +130,10 @@ export function buildAuthorizationUrl(params: AuthorizationUrlParams): string {
   // A provider that takes its scopes from the app registration (Zoom, Notion) gets none.
   if (params.scope) q.set("scope", params.scope);
   q.set("state", params.state);
-  q.set("code_challenge", params.codeChallenge);
-  q.set("code_challenge_method", "S256");
+  if (params.codeChallenge) {
+    q.set("code_challenge", params.codeChallenge);
+    q.set("code_challenge_method", "S256");
+  }
   if (params.nonce) q.set("nonce", params.nonce);
   if (params.responseMode === "form_post") q.set("response_mode", "form_post");
   for (const [k, v] of Object.entries(params.extra ?? {})) q.set(k, v);

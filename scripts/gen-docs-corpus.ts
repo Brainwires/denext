@@ -135,6 +135,8 @@ async function pageSources(slug: string): Promise<{ files: CorpusInput[]; rootMd
     const path = `site/app/docs/${slug}/${e.name}`;
     files.push({ path, text: await Deno.readTextFile(`${ROOT}${path}`) });
   }
+  // readDir's order is the filesystem's: sort, so the same sources give the same bytes anywhere.
+  files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   const page = files.find((f) => f.path.endsWith("/page.tsx"));
   const hasContent = files.some((f) => f.path.endsWith("/content.md"));
   return { files, rootMd: !hasContent && page ? rootMdOf(page.text) : null };
@@ -303,7 +305,31 @@ export function corpusModule(
   return Promise.resolve({ text, jsonBytes: bytes.byteLength });
 }
 
+/**
+ * Whether the corpus module at `out` was generated from the current inputs: its embedded
+ * `CORPUS_SOURCE_HASH` equals the inputs' fingerprint. Reading and hashing the inputs costs
+ * about a second; generating the corpus renders every page and compresses the result, so the
+ * pre-commit hook asks this first (`--if-stale`) and leaves a current module untouched.
+ *
+ * @param out The corpus module to check (the committed one by default).
+ * @returns `true` when the module matches the inputs; `false` when it is missing or stale.
+ */
+export async function corpusIsCurrent(out: string = CORPUS_OUT): Promise<boolean> {
+  let text: string;
+  try {
+    text = await Deno.readTextFile(out);
+  } catch {
+    return false;
+  }
+  const committed = text.match(/^export const CORPUS_SOURCE_HASH: string = "([0-9a-f]+)";$/m)?.[1];
+  return committed !== undefined && committed === await fingerprint(await corpusInputs());
+}
+
 if (import.meta.main) {
+  if (Deno.args.includes("--if-stale") && await corpusIsCurrent()) {
+    console.log(`docs corpus: current (inputs unchanged) → ${CORPUS_OUT}`);
+    Deno.exit(0);
+  }
   const corpus = await buildCorpus();
   const { text, jsonBytes } = await corpusModule(corpus);
   await Deno.writeTextFile(CORPUS_OUT, text);

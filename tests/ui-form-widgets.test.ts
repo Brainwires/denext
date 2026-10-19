@@ -84,7 +84,7 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     if (widgetFor(node, path, false).kind === "code") readOnly.add(pathKey(path));
   });
   assertEquals([...readOnly].sort(), [
-    // `CacheStore` is an object of methods: seven opaque `{}` nodes.
+    // `CacheStore` is an object of methods: nine opaque `{}` nodes.
     "cache.store.deleteByPath",
     "cache.store.deleteByTag",
     "cache.store.expireByTag",
@@ -93,6 +93,7 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "cache.store.setData",
     "cache.store.setPage",
     "cache.store.sweepPages",
+    "cache.store.takeData",
     // A project command's handler (its `flags`/`positionals` are typed lists).
     "commands[].run",
     // A deploy adapter's functions (its `name` is a text field).

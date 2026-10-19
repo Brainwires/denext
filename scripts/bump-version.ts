@@ -34,7 +34,7 @@
 // section — this tool deliberately stays limited to the version-string pins.
 
 import { walk } from "@std/fs";
-import { dirname, fromFileUrl, join } from "@std/path";
+import { dirname, fromFileUrl, join, SEPARATOR } from "@std/path";
 
 const ROOT = dirname(dirname(fromFileUrl(import.meta.url)));
 
@@ -72,7 +72,7 @@ async function targetFiles(): Promise<string[]> {
   for await (
     const entry of walk(join(ROOT, "packages"), {
       includeDirs: false,
-      match: [/packages\/[^/]+\/deno\.json$/],
+      match: [/packages[\\/][^\\/]+[\\/]deno\.json$/], // `\` on Windows
       maxDepth: 2,
     })
   ) {
@@ -83,7 +83,7 @@ async function targetFiles(): Promise<string[]> {
   for await (
     const entry of walk(join(ROOT, "examples"), {
       includeDirs: false,
-      match: [/examples\/[^/]+\/deno\.json$/],
+      match: [/examples[\\/][^\\/]+[\\/]deno\.json$/],
       maxDepth: 2,
     })
   ) {
@@ -99,7 +99,7 @@ const DOC_SPEC_ROOTS = ["README.md", "site/app/docs", "examples"];
 const DOC_SPEC_EXTS = [".md", ".mdx", ".ts", ".tsx", ".json", ".yml", ".yaml"];
 
 /** Never descend into installed or generated trees. */
-const DOC_SPEC_SKIP = /(^|\/)(node_modules|\.denext|out|dist|ios|android)(\/|$)/;
+const DOC_SPEC_SKIP = /(^|[\\/])(node_modules|\.denext|out|dist|ios|android)([\\/]|$)/;
 
 /**
  * The docs' prerelease specifiers to rewrite for `newVersion`: `^<core>-<anything>` where
@@ -144,6 +144,16 @@ export interface BumpResult {
 }
 
 /**
+ * The old version as `bumpVersion` matches it: never inside a longer number (bumping
+ * "2.0.0-rc.3" leaves "2.0.0-rc.30" alone, and "0.1.0" is not matched inside "10.1.0"), and
+ * never as an npm dependency's own version (`npm:tus-js-client@4.3.1` is that package's, not
+ * denext's — the 4.4.0 bump rewrote it to a version npm does not have).
+ */
+export function currentVersionPattern(oldVersion: string): RegExp {
+  return new RegExp(`(?<!npm:[^"'\\s]*@[\\^~]?)(?<![\\d.])${escapeRe(oldVersion)}(?![\\d.])`, "g");
+}
+
+/**
  * Replace every current-version reference (`oldVersion` from root deno.json) with
  * `newVersion` across the fixed target-file list. Writes files unless `opts.dry`.
  * Throws if the current version already equals `newVersion`.
@@ -156,10 +166,7 @@ export async function bumpVersion(
   if (oldVersion === newVersion) {
     throw new Error(`current version is already ${newVersion} — nothing to do`);
   }
-  // Match the old version only when it is not part of a longer number (so bumping
-  // "2.0.0-rc.3" never mangles a hypothetical "2.0.0-rc.30", and a core like "0.1.0"
-  // is not matched inside "10.1.0").
-  const re = new RegExp(`(?<![\\d.])${escapeRe(oldVersion)}(?![\\d.])`, "g");
+  const re = currentVersionPattern(oldVersion);
   const results: Array<{ file: string; hits: number }> = [];
   for (const file of await targetFiles()) {
     const r = await bumpFile(file, re, newVersion, opts.dry === true);
@@ -170,7 +177,7 @@ export async function bumpVersion(
   if (docSpec) {
     const done = new Set(results.map((r) => r.file));
     for (const file of await docSpecifierFiles()) {
-      if (done.has(file.slice(ROOT.length + 1))) continue;
+      if (done.has(file.slice(ROOT.length + 1).replaceAll(SEPARATOR, "/"))) continue;
       const r = await bumpFile(file, docSpec, newVersion, opts.dry === true);
       if (r && r.hits > 0) results.push(r);
     }
@@ -188,7 +195,7 @@ export async function bumpVersion(
 
 /** The docs corpus's version and denext's exact import of it (scripts/lib/docs-corpus-package.ts). */
 const CORPUS_SPOTS: Array<[file: string, re: RegExp]> = [
-  [join("packages", "docs-corpus", "deno.json"), /(?<="version":\s*")[^"]*(?=")/],
+  ["packages/docs-corpus/deno.json", /(?<="version":\s*")[^"]*(?=")/],
   ["deno.json", /(?<="jsr:@denext\/docs-corpus@)[^"]*(?=")/],
 ];
 
@@ -224,7 +231,8 @@ async function bumpFile(
   if (text === null) return null; // a listed file may not exist in every checkout
   const hits = text.match(re)?.length ?? 0;
   if (hits > 0 && !dry) await Deno.writeTextFile(file, text.replace(re, newVersion));
-  return { file: file.slice(ROOT.length + 1), hits };
+  // Reported repo-relative with `/` on every OS (Windows paths carry `\\`).
+  return { file: file.slice(ROOT.length + 1).replaceAll(SEPARATOR, "/"), hits };
 }
 
 async function readOrNull(file: string): Promise<string | null> {

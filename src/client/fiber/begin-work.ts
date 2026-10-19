@@ -2,7 +2,7 @@
 // that renders / reconciles the fiber's children.
 
 import { devHydrationActive, isClassBoundary, isPlainUnkeyedFragment } from "./fiber-utils.ts";
-import { beginHostHydration } from "./hydration.ts";
+import { beginHostHydration, suspenseHydrationStep } from "./hydration.ts";
 import { resetBoundary } from "./boundaries.ts";
 import { renderComponent } from "./render-component.ts";
 import { cloneChildFibers, reconcileChildren } from "./reconcile-children.ts";
@@ -318,6 +318,7 @@ function beginSuspense(wip: Fiber): Fiber | null {
   if (wip.idScope === undefined) {
     wip.idScope = enterScope(wip.idParentScope ?? rootScope());
   }
+  suspenseHydrationStep(wip, true);
   // Under a SuspenseList, reveal order decides whether this boundary may show
   // content yet, show its fallback, or stay hidden (tail policy).
   const st = wip.ext?.listState;

@@ -1,5 +1,5 @@
 // The Capacitor examples commit the native files `denext mobile add …` / `add-ota` wrote into
-// their ios/ and android/ projects, and the nightly mobile build (mobile-build.yml) compiles those
+// their ios/ and android/ projects, and the mobile build (mobile-build.yml) compiles those
 // committed files. When a template moves on (a new generation of the OTA plugin, a MainActivity
 // that forwards one more signal) and the examples are not regenerated, that build keeps compiling
 // the old code instead of what `denext mobile add` writes today. This test fails on such drift:
@@ -175,7 +175,7 @@ async function isDir(path: string): Promise<boolean> {
   }
 }
 
-Deno.test("examples: the nightly mobile build compiles every committed native project", async () => {
+Deno.test("examples: the mobile build compiles every committed native project", async () => {
   // Regenerated files that are never compiled can break unnoticed: each example's android/ and
   // ios/ project must be built by a job of mobile-build.yml (its working directory, or a matrix
   // entry of a job whose working directory is `examples/${{ matrix.example }}`).

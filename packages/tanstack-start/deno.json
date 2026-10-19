@@ -1,13 +1,13 @@
 {
   "name": "@denext/tanstack-start",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.3.1",
-    "@denext/denext/plugin-kit": "jsr:@denext/denext@^4.3.1/plugin-kit",
+    "@denext/denext": "jsr:@denext/denext@^4.4.0",
+    "@denext/denext/plugin-kit": "jsr:@denext/denext@^4.4.0/plugin-kit",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {
@@ -23,7 +23,9 @@
         "allowedOrigins",
         "importProtection",
         "prerender",
-        "pages"
+        "pages",
+        "sitemap",
+        "spa"
       ]
     }
   },

@@ -216,7 +216,15 @@ dbus-run-session -- sh -c '
   "$@"
 ' wm-session "$@" || status=$?
 if [ "$status" -eq 0 ]; then
-  rm -rf "$scratch"
+  # The session's document portal mounts a FUSE file system under the private runtime dir, and
+  # it can outlive the bus by a moment: unmount it, then remove the scratch folder.
+  for _ in 1 2 3 4 5; do
+    fusermount3 -u "$scratch/run/doc" 2>/dev/null || fusermount -u "$scratch/run/doc" 2>/dev/null ||
+      true
+    rm -rf "$scratch" 2>/dev/null && break
+    sleep 1
+  done
+  [ ! -e "$scratch" ] || echo "wm-session: could not remove $scratch" >&2
 else
   echo "wm-session: exit $status; the session's log and scratch folder are kept in $scratch" >&2
 fi

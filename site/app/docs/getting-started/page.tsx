@@ -130,8 +130,10 @@ denext task dev`}
         {" "}
         <code>.vscode</code> files that turn on the Deno language server (see{" "}
         <a href="#editor-setup">Editor setup</a>; <code>--no-vscode</code> skips them).{" "}
-        <code>--template minimal</code> is a bare page. Or start by hand — the minimum is a{" "}
-        <code>deno.json</code>, a root layout, and a page.
+        <code>--template minimal</code> is a bare page; <code>--template lustre</code> is a{" "}
+        <a href="/docs/gleam#lustre">Lustre</a>{" "}
+        counter in Gleam, used as an island, a custom element and a server component. Or start by
+        hand — the minimum is a <code>deno.json</code>, a root layout, and a page.
       </p>
 
       <h2>deno.json</h2>

@@ -268,15 +268,39 @@ a small plain-JSON event, then the view's optional `events` schema.
 - **shutdown**: a view's runtime stops when the page leaves it, when its resume
   window ends, and when the server drains.
 
-### Lustre 5.7.1's server runtime
+### Fixes to Lustre's runtimes
 
-Lustre's JavaScript server-component runtime has two bugs in 5.7.1:
-`lustre.start_server_component` passes every argument one slot off, and three
-lines read a binding in its own temporal dead zone, so every message throws
-`Cannot access 'message' before initialization`. denext never calls
-`start_server_component` (it builds the runtime directly), and after every Gleam
-build it fixes the three lines in `lustre/runtime/server/runtime.ffi.mjs` —
-only in Lustre 5.7.1, only when the file is byte for byte the published one,
-and nothing else in it. Any other version or content is left as it is, with one
-warning. See [Known limitations](/docs/limitations) for what Lustre itself
-leaves running after a stop.
+After every Gleam build denext fixes two of Lustre's JavaScript runtime files
+(Lustre 5.7.1, and `main` as of October 2026):
+
+- **The server-component runtime** (`lustre/runtime/server/runtime.ffi.mjs`):
+  three lines read a binding in its own temporal dead zone, so every message
+  throws `Cannot access 'message' before initialization`. The fix renames or
+  reassigns the binding and changes nothing else. denext also never calls
+  `lustre.start_server_component`, which passes every argument one slot off: it
+  builds the runtime directly (with or without the constructor's unused first
+  parameter).
+- **The client runtime** (`lustre/runtime/client/spa.ffi.mjs`):
+  `lustre.shutdown()` is a TODO for a client app, so a `lustreIsland` that
+  unmounted kept taking what its effects dispatched (a timer, a subscription).
+  The fix makes a stopped app ignore every later dispatch, emit and context
+  message. The timer itself still fires; nothing it sends reaches `update`.
+
+Both fixes match the code's pattern rather than one version's bytes, so a Lustre
+release that moves or reformats the code is fixed too, and one that fixed the
+bug upstream is left alone. A file whose shape denext doesn't recognise is left
+as it is, with one warning naming what breaks without the fix.
+
+### Under `compatibilityMode`
+
+The helpers work the same in a compat (Next drop-in) build: `lustreIsland`,
+`lustreElement` and `defineLustreView` are imported from `denext/gleam` as
+above.
+
+### A new app: `denext create --template lustre`
+
+`denext create my-app --template lustre` scaffolds an app with a `gleam/`
+project (`gleam/src/counter.gleam`), the `gleam()` plugin in
+`denext.config.ts`, the `@gleam/` import, and a home page that renders the
+counter as an island, a custom element and a server component. Its first `dev`
+or `build` downloads denext's pinned Gleam, then Lustre from Hex.

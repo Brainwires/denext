@@ -3,10 +3,13 @@
 // Start's Vite plugin runs (`@tanstack/start-plugin-core`), its server-function resolver module,
 // and the Babel helpers it parses and prints with (`@tanstack/router-utils`, `@babel/core`).
 // `@tanstack/start-plugin-core` is a dependency of `@tanstack/react-start`, so it is resolved
-// from there; the plugin itself depends on no npm package. These run at build time only.
+// from there; the plugin itself depends on no npm package. These run at build time only. The
+// same package's sitemap builder (`denext export`) and import-protection mocks (a `"mock"`
+// behavior) are loaded from it on demand.
 
 import { createRequire } from "node:module";
 import { dirname, join, toFileUrl } from "@std/path";
+import type { SitemapOptions, StartPage } from "./prerender.ts";
 
 /** The environment a module is compiled for. */
 export type StartEnv = "client" | "server";
@@ -70,11 +73,10 @@ function resolveFrom(fromFile: string, specifier: string): string {
 const importFile = (path: string) => import(toFileUrl(path).href);
 
 /**
- * Load TanStack Start's compiler from the app at `projectRoot`.
- *
- * @param projectRoot The app root (its `package.json` lists `@tanstack/react-start`).
+ * The app's `@tanstack/start-plugin-core` (a dependency of its `@tanstack/react-start`): its
+ * `package.json`, and an importer of its built modules (`dist/esm/<rel>`).
  */
-export async function loadStartToolchain(projectRoot: string): Promise<StartToolchain> {
+function startCore(projectRoot: string) {
   let startPkg: string;
   try {
     startPkg = resolveFrom(join(projectRoot, "package.json"), "@tanstack/react-start/package.json");
@@ -85,7 +87,88 @@ export async function loadStartToolchain(projectRoot: string): Promise<StartTool
     );
   }
   const corePkg = resolveFrom(startPkg, "@tanstack/start-plugin-core/package.json");
-  const core = (rel: string) => importFile(join(dirname(corePkg), "dist", "esm", rel));
+  return {
+    corePkg,
+    core: (rel: string) => importFile(join(dirname(corePkg), "dist", "esm", rel)),
+  };
+}
+
+/** What Start's `buildSitemap` reads: the `sitemap` option and the pages its prerender met. */
+export interface SitemapInput {
+  startConfig: { sitemap?: SitemapOptions; pages: StartPage[] };
+  /** The directory the files are written to (the export's root). */
+  publicDir: string;
+}
+
+/** Start's `buildSitemap`: writes `sitemap.xml` (at `sitemap.outputPath`) and `pages.json`. */
+export type SitemapBuilder = (input: SitemapInput) => void | Promise<void>;
+
+/**
+ * Start's own `buildSitemap` (`@tanstack/start-plugin-core`'s `build-sitemap`), from the app at
+ * `projectRoot`.
+ *
+ * @param projectRoot The app root (its `package.json` lists `@tanstack/react-start`).
+ */
+export async function loadSitemapBuilder(projectRoot: string): Promise<SitemapBuilder> {
+  const mod = await startCore(projectRoot).core("build-sitemap.js");
+  return mod.buildSitemap as SitemapBuilder;
+}
+
+/** What Start's import-protection mocks are made of (its `virtualModules` and `analysis`). */
+export interface StartMocks {
+  /** The id prefixes and the silent mock's id (`tanstack-start-import-protection:…`). */
+  MOCK_MODULE_ID: string;
+  MOCK_EDGE_PREFIX: string;
+  MOCK_RUNTIME_PREFIX: string;
+  /** A build mock's id prefix (a build's mock-edge runtime: Start's silent mock). */
+  MOCK_BUILD_PREFIX: string;
+  /** The runtime mock's id for a violation (diagnostics in the browser, per `mockAccess`). */
+  mockRuntimeModuleIdFromViolation(
+    info: { env: string; importer: string; specifier: string; trace: unknown[] },
+    mode: "error" | "warn" | "off",
+    root: string,
+  ): string;
+  /** A mock-edge module's id: the named exports the importer expects, over a runtime mock. */
+  makeMockEdgeModuleId(exports: string[], runtimeId: string): string;
+  loadSilentMockModule(): { code: string };
+  loadMockEdgeModule(payload: string): { code: string };
+  loadMockRuntimeModule(payload: string): { code: string };
+  /** The module a denied file becomes in a build: its named exports over a mock of its own. */
+  generateSelfContainedMockModule(exports: string[]): { code: string };
+  /** The module a denied file becomes in dev: its named exports, over a runtime mock. */
+  generateDevSelfDenialModule(exports: string[], runtimeId: string): { code: string };
+  /** The names each import source is used by in `code` (named imports, member accesses). */
+  getMockExportNamesBySource(code: string): Map<string, string[]>;
+  /** A module's named exports. */
+  getNamedExports(code: string, filename: string): string[];
+}
+
+/**
+ * Start's own import-protection mocks (`@tanstack/start-plugin-core`'s `import-protection`
+ * modules), from the app at `projectRoot`.
+ *
+ * @param projectRoot The app root (its `package.json` lists `@tanstack/react-start`).
+ */
+export async function loadStartMocks(projectRoot: string): Promise<StartMocks> {
+  const { core } = startCore(projectRoot);
+  const [modules, analysis] = await Promise.all([
+    core("import-protection/virtualModules.js"),
+    core("import-protection/analysis.js"),
+  ]);
+  return {
+    ...modules,
+    getMockExportNamesBySource: analysis.getMockExportNamesBySource,
+    getNamedExports: analysis.getNamedExports,
+  } as StartMocks;
+}
+
+/**
+ * Load TanStack Start's compiler from the app at `projectRoot`.
+ *
+ * @param projectRoot The app root (its `package.json` lists `@tanstack/react-start`).
+ */
+export async function loadStartToolchain(projectRoot: string): Promise<StartToolchain> {
+  const { corePkg, core } = startCore(projectRoot);
   const [host, compiler, config, resolver] = await Promise.all([
     core("start-compiler/host.js"),
     core("start-compiler/compiler.js"),

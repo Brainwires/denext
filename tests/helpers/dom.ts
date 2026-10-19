@@ -69,6 +69,16 @@ class FakeText extends FakeNode {
   }
 }
 
+/** A comment node (`<!--…-->`): the Suspense boundary markers server HTML carries. */
+export class FakeComment extends FakeNode {
+  override nodeType = 8;
+  nodeValue: string;
+  constructor(value: string) {
+    super();
+    this.nodeValue = value;
+  }
+}
+
 type Listener = (event: FakeEvent) => void;
 
 interface FakeEvent {
@@ -150,7 +160,6 @@ export class FakeElement extends FakeNode {
     if (name === "style") return this.style.size ? this.style.cssText : null;
     return this.attributes.has(name) ? this.attributes.get(name)! : null;
   }
-  // fallow-ignore-next-line unused-class-member -- the islands runtime calls it through the DOM
   hasAttribute(name: string): boolean {
     return this.getAttribute(name) !== null;
   }
@@ -258,6 +267,7 @@ export interface FakeElement extends ListenerMethods<Listener> {}
 function serialize(node: FakeNode): string {
   if (node instanceof FakeText) return node.nodeValue;
   if (node instanceof FakeElement) return node.outerHTML;
+  if (node instanceof FakeComment) return `<!--${node.nodeValue}-->`;
   return "";
 }
 function textOf(node: FakeNode): string {

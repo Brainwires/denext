@@ -68,3 +68,16 @@ export function makeTempDirUntilExit(prefix: string): string {
   untilExit.add(dir);
   return dir;
 }
+
+/**
+ * Link the directory `target` at `path`. On Windows a directory junction, which (unlike a
+ * symbolic link) needs no privilege — the link pnpm itself makes there — elsewhere a symlink.
+ *
+ * @param target The existing directory (absolute: a junction cannot be relative).
+ * @param path Where the link goes.
+ */
+export function symlinkDir(target: string, path: string): Promise<void> {
+  return Deno.build.os === "windows"
+    ? Deno.symlink(target, path, { type: "junction" })
+    : Deno.symlink(target, path);
+}

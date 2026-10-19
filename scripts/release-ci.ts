@@ -1,7 +1,7 @@
 // The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs and every
 // desktop-ci.yml job passed on.
-// A push to `development` runs only the fast jobs (integration, next-compat, coverage and
-// backend-integration stay on pull requests, `main` and a manual dispatch), so `deno task release`
+// A push to `development` runs only the fast jobs (integration, next-compat, coverage,
+// backend-integration and windows-tests stay on pull requests, `main` and a manual dispatch), so `deno task release`
 // asks GitHub for the ci.yml runs on HEAD and refuses unless the newest one that ran those jobs
 // has every required job green. desktop-ci.yml runs on a push only when the desktop surface
 // changed (its `paths` filter), so the release asks for its newest run on HEAD, push or dispatch,
@@ -18,6 +18,7 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "backend-integration",
   "ios-export-router",
   "windows-resolve",
+  "windows-tests",
 ];
 
 /**
@@ -37,14 +38,6 @@ export const DESKTOP_CI_JOBS: readonly string[] = [
   "installers (ubuntu-latest — .deb via apt, .rpm via dnf)",
   "installers (macos-latest — .dmg mounted, .pkg installed; unsigned)",
   "scaffold + package-script drift",
-];
-
-/**
- * desktop-ci.yml jobs a release does not wait on: one that fails does not refuse the release, and
- * one that is missing is fine. Windows on Arm (`windows-11-arm`) is here until its runs are
- * reliably green; then it moves to {@linkcode DESKTOP_CI_JOBS}.
- */
-export const DESKTOP_CI_OPTIONAL_JOBS: readonly string[] = [
   "windows on arm (windows-11-arm — desktop tests, install.ps1, Arm64 .msi)",
 ];
 
@@ -163,8 +156,7 @@ async function runJobs(run: CiRun, gh: GhJson): Promise<CiJob[]> {
 
 /**
  * Check desktop-ci.yml on `sha`: its newest run there (a push or a dispatch) must have finished
- * with every {@linkcode DESKTOP_CI_JOBS} job green and no other job failed (but those of
- * {@linkcode DESKTOP_CI_OPTIONAL_JOBS}).
+ * with every {@linkcode DESKTOP_CI_JOBS} job green and no other job failed.
  *
  * @param sha The commit to release (HEAD).
  * @param gh How `gh` is reached (default: the GitHub CLI).
@@ -177,8 +169,7 @@ export async function desktopCiVerdict(sha: string, gh: GhJson = ghJson): Promis
   }
   const jobs = await runJobs(run, gh);
   const others = jobs.filter((j) =>
-    !DESKTOP_CI_JOBS.includes(j.name) && !DESKTOP_CI_OPTIONAL_JOBS.includes(j.name) &&
-    j.conclusion !== "success" && j.conclusion !== "skipped"
+    !DESKTOP_CI_JOBS.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
   ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
   const unmet = [...unmetCiJobs(jobs, DESKTOP_CI_JOBS), ...others];
   return unmet.length === 0

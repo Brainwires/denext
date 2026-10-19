@@ -5,11 +5,13 @@
 // copy of the runtime beside the dependency chunk's — two reconcilers on one page, which broke
 // react-native-gesture-handler's ref callback in tests/e2e/reanimated.e2e.test.ts (dev only).
 import { assertEquals } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { resolveFirstParty } from "../src/build/dev-unbundled/resolve.ts";
 import { createUnbundledState, norm } from "../src/build/dev-unbundled/state.ts";
 
-const FW = fromFileUrl(new URL("../", import.meta.url)); // the denext checkout
+// The denext checkout, as a URL: an import map's targets are URLs (a Windows `C:\…` path would
+// read as one with scheme "c").
+const FW = new URL("../", import.meta.url).href;
 
 Deno.test("dev aliases: a prefix alias into the framework checkout is not a first-party module", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_fw_alias_" }));
@@ -26,7 +28,7 @@ Deno.test("dev aliases: a prefix alias into the framework checkout is not a firs
           "denext": `${FW}mod.ts`,
           "denext/": `${FW}src/`,
           "~/": "./src/",
-          "@shared/": `${shared}/`,
+          "@shared/": `${toFileUrl(shared).href}/`,
         },
       }),
     );

@@ -1,4 +1,4 @@
-// The e2e copies this fixture and sets the datasource provider (postgresql / mysql).
+// The e2e copies this fixture and sets the datasource provider (postgresql / cockroachdb / mysql).
 datasource db {
   provider = "__PROVIDER__"
   url      = env("DATABASE_URL")

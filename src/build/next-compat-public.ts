@@ -35,4 +35,7 @@ export type {
 // `server-only` marker, the `Deno` global), for a router plugin whose client bundle carries
 // modules it compiled itself (it passes their compiled source).
 export { findServerOnlyLeaks } from "./server-only-scan.ts";
+// The bytes a `?url`-imported stylesheet serves (a Tailwind input compiled with the project's
+// Tailwind), for a router plugin's {@link AssetOptions.compileCss}.
+export { compileCssAsset } from "./css-url.ts";
 export type { ServerOnlyLeak, ServerOnlySignal } from "./server-only-scan.ts";

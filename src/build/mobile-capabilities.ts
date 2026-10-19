@@ -75,6 +75,8 @@ export interface CapabilityOptions {
   readonly configurable: readonly string[];
   /** `--ci`: also write a CI workflow (fastlane). */
   readonly ci?: boolean;
+  /** `--encrypted`: link SQLCipher for encrypted stores (storage). */
+  readonly encrypted?: boolean;
 }
 
 /** One text edit to a native file, with the line the plan prints for it. */
@@ -1035,6 +1037,8 @@ export interface AddCapabilitiesOptions {
   readonly force?: boolean;
   /** `--ci`: also write a CI workflow (fastlane). */
   readonly ci?: boolean;
+  /** `--encrypted`: link SQLCipher for encrypted stores (storage). */
+  readonly encrypted?: boolean;
 }
 
 const INFO_PLIST = "ios/App/App/Info.plist";
@@ -1325,6 +1329,7 @@ function capabilityOptions(
     names: [...new Set(opts.names ?? [])],
     configurable: [...new Set(opts.configurable ?? [])],
     ci: opts.ci === true,
+    encrypted: opts.encrypted === true,
   };
   const flags = [
     ["schemes", "--scheme"],
@@ -1340,6 +1345,11 @@ function capabilityOptions(
   }
   if (options.ci && !names.some((n) => table[n].options?.includes("ci"))) {
     throw new Error(`--ci is only for ${takersOf(table, "ci")}; add it or drop --ci.`);
+  }
+  if (options.encrypted && !names.some((n) => table[n].options?.includes("encrypted"))) {
+    throw new Error(
+      `--encrypted is only for ${takersOf(table, "encrypted")}; add it or drop --encrypted.`,
+    );
   }
   return options;
 }
@@ -1714,7 +1724,7 @@ function pushNew(list: string[], items: readonly string[]): void {
 function mergeInstall(report: AddCapabilitiesReport, done: NativeInstallReport): void {
   pushNew(report.written, done.written);
   pushNew(report.unchanged, done.unchanged);
-  report.skipped.push(...nativeTexts(report.plan.root, [...done.skipped]));
+  pushNew(report.skipped, nativeTexts(report.plan.root, [...done.skipped]));
   pushNew(report.manual, nativeTexts(report.plan.root, [...done.manual]));
 }
 

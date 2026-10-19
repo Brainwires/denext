@@ -3,6 +3,7 @@
 // `graphql-ws` protocol, driven here by the real `graphql-ws` client), and the dev schema reload.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
 import { createClient } from "graphql-ws";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
@@ -413,7 +414,7 @@ Deno.test("graphql dev: a schema-module edit reloads the schema; in-flight subsc
     const hello = async () =>
       (await (await fetch(post(srv.origin, "{ hello }"))).json()).data.hello as string;
     assertEquals(await hello(), "world");
-    assertEquals(loads, ["/tmp/proj/graphql/schema.ts"]);
+    assertEquals(loads, [join("/tmp/proj", "graphql/schema.ts")]); // the host's separator
 
     attached = Promise.withResolvers();
     const live = c.iterate({ query: 'subscription { room(name: "dev") { text } }' });

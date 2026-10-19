@@ -188,7 +188,10 @@ function validateAppRouterReactNative(
   }
 }
 
-/** `reactNative`'s object options: `lists`, `desktopPackage`, `aliases`, `uniwind`, `fonts`. */
+/**
+ * `reactNative`'s object options: `lists`, `desktopPackage`, `aliases`, `uniwind`, `unistyles`,
+ * `fonts`.
+ */
 function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): void {
   if (value.lists !== undefined && value.lists !== "denext" && value.lists !== "library") {
     fail("reactNative.lists", 'must be "denext" or "library"');
@@ -201,6 +204,9 @@ function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): 
   }
   validateReactNativeAliases(value.aliases, fail);
   validateUniwind(value.uniwind, fail);
+  if (value.unistyles !== undefined && typeof value.unistyles !== "boolean") {
+    fail("reactNative.unistyles", "must be a boolean");
+  }
   validateRnFonts(value.fonts, fail);
 }
 

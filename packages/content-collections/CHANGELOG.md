@@ -1,5 +1,22 @@
 # @denext/content-collections
 
+## [0.7.0] - 2026-10-19
+
+- Requires `@denext/denext` ^4.4.0.
+
+### Added
+
+- **Opt-in sanitized raw HTML in `.md` entries:** the plugin's `markdown: { html: "sanitize",
+  sanitize? }` option (stored with each `.md` entry at build, also honoured by `denext content
+  build`), `renderContent(entry, { markdown })` / `<Content markdown={…} />` per call, and
+  `renderMarkdown(body, { html: "sanitize" })` keep raw HTML that passes a first-party allowlist
+  sanitizer, re-serialized from a parsed tree (never passed through), instead of escaping it.
+  The default stays `"escape"`. `sanitizeHtml(html, options)` is exported from
+  `@denext/content-collections/markdown`; `createContentCommand(io, { markdown })` takes the
+  option. A `<details>` / `<div>` / `<blockquote>` / `<figure>` HTML block left open wraps the
+  Markdown blocks after it until a later HTML block closes it, and a `#fragment` link follows the
+  `user-content-` prefix only when the document's raw HTML defines that id.
+
 ## [0.6.0]
 
 ### Added

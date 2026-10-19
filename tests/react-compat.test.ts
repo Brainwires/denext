@@ -48,8 +48,18 @@ Deno.test("react: createElement is denext's h and produces a VNode", () => {
   assertEquals(el.type, "div");
 });
 
-Deno.test("react: hooks are the real denext hooks (same identity)", () => {
-  assertEquals(useState, denextUseState);
+Deno.test("react: hooks run denext's own hooks (no foreign renderer)", async () => {
+  // React's `useState` is denext's, behind the dispatcher hand-off a react-reconciler renderer
+  // uses (react-internals.ts): with no foreign dispatcher installed it is denext's hook.
+  assertEquals(useState.name, denextUseState.name);
+  const { render } = await import("../src/testing/mod.ts");
+  function Counter() {
+    const [n] = useState(7);
+    return h("p", null, `n=${n}`);
+  }
+  const screen = await render(h(Counter, null));
+  screen.getByText("n=7");
+  await screen.unmount();
   assertEquals(lazy, denextLazy); // React.lazy is the real suspending lazy (not dynamic)
   assertEquals(version, REACT_COMPAT_VERSION);
 });

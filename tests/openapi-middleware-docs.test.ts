@@ -208,7 +208,10 @@ Deno.test("swagger-ui: CSPs — builtin and swagger allow no other origin and no
     docsCsp("swagger", "https://unpkg.com/swagger-ui-dist@5/"),
     "script-src 'self' https://unpkg.com;",
   );
-  assertStringIncludes(docsCsp("scalar"), "script-src https://cdn.jsdelivr.net;");
+  assertStringIncludes(
+    docsCsp("scalar", "https://cdn.jsdelivr.net/npm/x.js"),
+    "script-src https://cdn.jsdelivr.net;",
+  );
 });
 
 Deno.test("openapi plugin (swagger): serves the page under its CSP and the vendored files", async () => {

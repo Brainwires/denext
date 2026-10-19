@@ -10,6 +10,7 @@
 
 import { join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
+import { getPluginDeployAssets, getPluginDeployRoutes } from "../plugin/mod.ts";
 import type { DenextConfig } from "../server/config.ts";
 import { VERSION } from "../version.ts";
 import {
@@ -74,7 +75,10 @@ function metadataRoutes(
   }));
 }
 
-/** Every route of an App Router app: pages, route handlers, metadata routes, the middleware. */
+/**
+ * Every route: an App Router app's pages, route handlers and metadata routes, the middleware, and
+ * the routes plugins contribute (`addDeployRoutes`: a router plugin's pages and endpoints).
+ */
 async function collectRoutes(paths: ProjectPaths, mode: DeployManifest["mode"]) {
   const routes: DeployRoute[] = [];
   if (mode === "app") {
@@ -101,10 +105,14 @@ async function collectRoutes(paths: ProjectPaths, mode: DeployManifest["mode"]) 
       ...(matcher ? { matcher } : {}),
     });
   }
+  routes.push(...await getPluginDeployRoutes());
   return routes.sort(byPathAndKind);
 }
 
-/** The directories the production server serves files from as they are. */
+/**
+ * The directories the production server serves files from as they are, then the plugins' own
+ * ({@linkcode getPluginDeployAssets}).
+ */
 async function collectAssets(paths: ProjectPaths): Promise<DeployAssetGroup[]> {
   const buildDir = rel(paths.projectDir, paths.outDir);
   const groups: Omit<DeployAssetGroup, "files">[] = [
@@ -134,6 +142,7 @@ async function collectAssets(paths: ProjectPaths): Promise<DeployAssetGroup[]> {
     const files = await filesUnder(join(paths.projectDir, group.dir), skip);
     if (files.length) out.push({ ...group, files });
   }
+  out.push(...await getPluginDeployAssets());
   return out;
 }
 

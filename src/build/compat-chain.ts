@@ -10,7 +10,7 @@
 // transforms on its output.
 
 import type * as esbuild from "./esbuild/mod.ts";
-import { relative, SEPARATOR, toFileUrl } from "@std/path";
+import { isAbsolute, relative, toFileUrl } from "@std/path";
 import { foldBuildConstants, PLATFORM_SPECIFIER } from "./feature-transform.ts";
 import { wrapOnLoad } from "./onload-wrap.ts";
 import { inNodeModules } from "./path-segments.ts";
@@ -86,8 +86,14 @@ async function refuseInline(code: string, path: string, projectDir?: string): Pr
   throw new Error(inlineServerActionError(new Map([[shown, at]])));
 }
 
+/**
+ * Whether `path` lies under `dir`, by `relative` rather than a string prefix: on Windows either
+ * may be spelled with `/` or a backslash (a drive-less `/p` resolves against the current drive), and
+ * a prefix test with the host separator misses the other spelling.
+ */
 function isInside(path: string, dir: string): boolean {
-  return path.startsWith(dir.endsWith(SEPARATOR) ? dir : dir + SEPARATOR);
+  const rel = relative(dir, path);
+  return rel !== "" && !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== "..";
 }
 
 /**

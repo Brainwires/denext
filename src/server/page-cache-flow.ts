@@ -370,6 +370,12 @@ export async function cacheAndServeBuffered(
     metadata: rendered.metadata,
     ...documentOptions(pr),
     flight: rendered.flight,
+    // What hydration needs, stored with the document so every cached hit carries it too:
+    // the deferred `client:*` islands map, and the signal state (`useApi({ suspense: true })`
+    // seeds, `useSignal` values). Neither is per-visitor: a render that read the visitor's
+    // request is never stored (`usedDynamicApi`).
+    islands: rendered.islands,
+    signalState: rendered.signalState,
     viewport: rendered.viewport,
   });
   const csp = await resolveCsp(cachedDoc, rendered.config.csp, config.csp);

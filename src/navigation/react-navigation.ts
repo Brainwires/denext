@@ -209,6 +209,32 @@ export function mapStackOptions(
 }
 
 /**
+ * `options` with React Navigation's custom `header` rendered into them, when the screen sets
+ * one: `header({ navigation, route, options, back })`, where `back` is the screen below's title
+ * (undefined on the first screen), as native-stack calls it.
+ */
+export function withCustomHeader(
+  options: ScreenOptions,
+  // deno-lint-ignore no-explicit-any
+  d: any,
+  route: { key: string; name: string },
+  below: { key: string; name: string } | undefined,
+  // deno-lint-ignore no-explicit-any
+  descriptors: Record<string, any>,
+): ScreenOptions {
+  const render = d.options?.header;
+  if (typeof render !== "function") return options;
+  const belowOptions = below ? descriptors[below.key]?.options ?? {} : undefined;
+  const back = below
+    ? { title: belowOptions.title ?? belowOptions.headerTitle ?? below.name, href: undefined }
+    : undefined;
+  return {
+    ...options,
+    header: render({ navigation: d.navigation, route, options: d.options, back }) as VNodeChildren,
+  };
+}
+
+/**
  * native-stack's default header tint: the theme's `colors.primary` on iOS, `colors.text` on
  * Android (React Navigation's `headerTintColor` default), or none without a theme.
  *
@@ -256,14 +282,15 @@ export function createNativeStackNavigatorFactory(
     const headerTint = nativeStackTint(core.useTheme?.(), detectPlatform());
     const entries: StackViewEntry[] = state.routes.map((route, i) => {
       const d = descriptors[route.key];
+      const options = mapStackOptions(d.options, {
+        canGoBack: i > 0,
+        headerTint,
+        routeName: route.name,
+      });
       return {
         id: route.key,
         element: d.render(),
-        options: mapStackOptions(d.options, {
-          canGoBack: i > 0,
-          headerTint,
-          routeName: route.name,
-        }),
+        options: withCustomHeader(options, d, route, state.routes[i - 1], descriptors),
       };
     });
     return h(

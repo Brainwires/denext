@@ -166,6 +166,8 @@ Deno.test("react-native entry: every added name binds from its source", async ()
   assertEquals(RN.DrawerLayoutAndroid, "DENEXT_DrawerLayoutAndroid", "no longer a build error");
   assertEquals(RN.Settings, "DENEXT_Settings");
   assertEquals(RN.ProgressBarAndroid, "RNW_PROGRESS_BAR", "react-native-web's ProgressBar");
+  // React Native 0.83's root host components (an app importing them failed the build).
+  assertEquals([RN.unstable_NativeView, RN.unstable_NativeText], ["RNW_VIEW", "RNW_TEXT"]);
   assertEquals(
     RN.TouchableNativeFeedback,
     "DENEXT_TouchableNativeFeedback(RNW_PRESS)",

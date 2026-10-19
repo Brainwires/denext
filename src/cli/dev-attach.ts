@@ -53,6 +53,30 @@ async function answersHttp(url: string): Promise<boolean> {
 }
 
 /**
+ * The re-exec loop guards `run-verb.ts` sets once THIS process runs under its CSS / module config.
+ * A `denext dev` child must not inherit them: it would skip its own re-exec and load the app
+ * without the merged import map (`Import "…" not a dependency` for a project with a stylesheet).
+ */
+export const REEXEC_GUARD_ENV: readonly string[] = ["DENEXT_CSS_ACTIVE", "DENEXT_MODULE_ACTIVE"];
+
+/**
+ * The environment a `denext dev` child starts with: `parent` without the re-exec guards
+ * ({@linkcode REEXEC_GUARD_ENV}), plus `extra`.
+ *
+ * @param parent This process's environment (`Deno.env.toObject()`).
+ * @param extra Variables to add (the dev session token).
+ * @returns The child's whole environment.
+ */
+export function devChildEnv(
+  parent: Record<string, string>,
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  const env = { ...parent };
+  for (const name of REEXEC_GUARD_ENV) delete env[name];
+  return { ...env, ...extra };
+}
+
+/**
  * Spawn `deno <args>` in `cwd` (inheriting stdout/stderr), reduced to `{ finished, stop }`.
  * `stop` sends SIGTERM and awaits exit; a child already gone is ignored. `finished` resolves on
  * exit, and `hasExited()` reports it synchronously for a poll loop.
@@ -62,12 +86,19 @@ async function answersHttp(url: string): Promise<boolean> {
  */
 export function spawnDenoChild(
   args: string[],
-  opts: { cwd: string; stdin: "null" | "inherit"; env?: Record<string, string> },
+  opts: {
+    cwd: string;
+    stdin: "null" | "inherit";
+    env?: Record<string, string>;
+    /** `env` is the child's whole environment (nothing inherited). */
+    clearEnv?: boolean;
+  },
 ): SpawnedChild {
   const child = new Deno.Command(denoExecutable(), {
     args,
     cwd: opts.cwd,
     env: opts.env,
+    clearEnv: opts.clearEnv === true,
     stdin: opts.stdin,
     stdout: "inherit",
     stderr: "inherit",
@@ -115,7 +146,13 @@ export async function startOrAttachDevServer(
   const token = network ? newDevToken() : undefined;
   const { finished, stop, hasExited } = spawnDenoChild(
     [...cliInvocation({ dir: project }), "dev", project, "--host", host, "--port", port],
-    { cwd: project, stdin: "null", ...(token ? { env: { [DEV_TOKEN_ENV]: token } } : {}) },
+    {
+      cwd: project,
+      stdin: "null",
+      // Never the re-exec guards of this process: the dev server re-execs under its own config.
+      env: devChildEnv(Deno.env.toObject(), token ? { [DEV_TOKEN_ENV]: token } : {}),
+      clearEnv: true,
+    },
   );
   for (const deadline = Date.now() + 120_000; !(await answersHttp(url));) {
     if (hasExited() || Date.now() > deadline) {

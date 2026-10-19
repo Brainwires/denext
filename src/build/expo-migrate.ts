@@ -566,6 +566,39 @@ export interface NativeOnlyPackage {
   readonly kind: string;
 }
 
+/** The docs page with what replaces the most-used native-only SDKs on denext. */
+const NATIVE_SDK_RECIPES_URL = "https://denext.dev/docs/native-sdk-recipes";
+
+/** A native-only SDK the native SDK recipes cover, and what replaces it. */
+export interface NativeSdkAdvice {
+  readonly name: string;
+  /** What replaces it on denext, and where the recipe is. */
+  readonly advice: string;
+}
+
+/** The SDKs {@link NATIVE_SDK_RECIPES_URL} covers: a name pattern and its replacement. */
+const NATIVE_SDK_ADVICE: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /^@react-native-firebase\//,
+    "Firebase: push through `denext mobile add push` and `sendPush`, the Firebase JS SDK for " +
+    "auth, Firestore and the rest",
+  ],
+  [
+    /^react-native-iap$/,
+    "in-app purchases: `denext mobile add purchases` (RevenueCat), or a Capacitor billing plugin",
+  ],
+  [
+    /^@stripe\/stripe-react-native$/,
+    "Stripe: Stripe.js and the Payment Element in the WebView, or a Capacitor Stripe plugin",
+  ],
+];
+
+/** The recipe advice for `name`, or null when the recipes do not cover it. */
+function nativeSdkAdvice(name: string): string | null {
+  const hit = NATIVE_SDK_ADVICE.find(([re]) => re.test(name));
+  return hit ? `${hit[1]}; see ${NATIVE_SDK_RECIPES_URL}` : null;
+}
+
 /** The dependency report. */
 export interface ExpoDependencyReport {
   readonly expo: ExpoPackageStatus[];
@@ -575,6 +608,11 @@ export interface ExpoDependencyReport {
    */
   readonly community: CommunityPackageStatus[];
   readonly nativeOnly: NativeOnlyPackage[];
+  /**
+   * Native-only SDKs the native SDK recipes cover (Firebase, `react-native-iap`, Stripe), with
+   * what replaces each; listed here instead of {@link nativeOnly}, installed or not.
+   */
+  readonly nativeSdks: NativeSdkAdvice[];
   /** Dependencies not installed, so not classified. */
   readonly notInstalled: string[];
 }
@@ -729,6 +767,7 @@ export async function expoDependencyReport(
   const expo: ExpoPackageStatus[] = [];
   const community: CommunityPackageStatus[] = [];
   const nativeOnly: NativeOnlyPackage[] = [];
+  const nativeSdks: NativeSdkAdvice[] = [];
   const notInstalled: string[] = [];
   for (const [name, spec] of Object.entries(deps).sort(([a], [b]) => a.localeCompare(b))) {
     const expoStatus = expoPackageStatus(name);
@@ -747,6 +786,11 @@ export async function expoDependencyReport(
       continue;
     }
     if (SKIP_DEPS.test(name)) continue;
+    const advice = nativeSdkAdvice(name);
+    if (advice) {
+      nativeSdks.push({ name, advice });
+      continue;
+    }
     const root = await packageDir(dir, name, spec);
     if (!root) {
       notInstalled.push(name);
@@ -755,7 +799,7 @@ export async function expoDependencyReport(
     const kind = await nativeOnlyKind(name, root);
     if (kind) nativeOnly.push({ name, kind });
   }
-  return { expo, community, nativeOnly, notInstalled };
+  return { expo, community, nativeOnly, nativeSdks, notInstalled };
 }
 
 /**

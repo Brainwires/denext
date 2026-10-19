@@ -94,11 +94,58 @@ export function beginHostHydration(wip: Fiber): void {
   else islandHydration?.(wip);
 }
 
-/** The server node at the hydration cursor (null past the end, or with no cursor). */
+/**
+ * The server node at the hydration cursor (null past the end, or with no cursor). Server
+ * markup the client tree has no node for is passed over, as React's hydration does: a
+ * comment (a Suspense boundary's `<!--$-->` / `<!--/$-->` markers, a PPR hole's markers),
+ * and a streamed Suspense boundary's `<div data-dnx-b>` placeholder, which is unwrapped in
+ * place — its children (the revealed content) moved up into its position — so the content
+ * hydrates where a boundary rendered inline would have put it.
+ */
 export function cursorNode(): Node | null {
-  return hydrationCursor
-    ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
-    : null;
+  const cursor = hydrationCursor;
+  if (!cursor) return null;
+  for (;;) {
+    const node = cursor.parent.childNodes[cursor.index] ?? null;
+    if (node === null) return null;
+    if (node.nodeType === 8) cursor.index++;
+    else if (isBoundaryPlaceholder(node)) unwrap(node as Element);
+    else return node;
+  }
+}
+
+/**
+ * The client-rendered boundary step (suspense-hydration.ts): given a Suspense fiber entering
+ * (`true`) or completing, and the cursor, the cursor to continue with. Only react-dom/server's
+ * synchronous `renderToString` writes such a boundary (`<!--$!-->`), so the compat
+ * `react-dom/client` / `react-dom` install it; denext's own renderers never do.
+ */
+let suspenseHydration:
+  | ((wip: Fiber, cursor: Cursor | null, entering: boolean) => Cursor | null)
+  | null = null;
+
+/** Install {@link suspenseHydration}. */
+export function setSuspenseHydration(
+  fn: (wip: Fiber, cursor: Cursor | null, entering: boolean) => Cursor | null,
+): void {
+  suspenseHydration = fn;
+}
+
+/** Entering (`true`) or completing a Suspense fiber: a `<!--$!-->` boundary renders client-side. */
+export function suspenseHydrationStep(wip: Fiber, entering: boolean): void {
+  if (suspenseHydration) hydrationCursor = suspenseHydration(wip, hydrationCursor, entering);
+}
+
+/** A streamed Suspense boundary's placeholder (`<div data-dnx-b="id">`). */
+function isBoundaryPlaceholder(node: Node): boolean {
+  return node.nodeType === 1 && (node as Element).getAttribute?.("data-dnx-b") != null;
+}
+
+/** Replace `el` by its own children, which keep their identity (nothing is re-created). */
+function unwrap(el: Element): void {
+  const parent = el.parentNode!;
+  while (el.firstChild) parent.insertBefore(el.firstChild, el);
+  parent.removeChild(el);
 }
 
 function claimHost(wip: Fiber): void {

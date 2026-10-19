@@ -595,7 +595,8 @@ Deno.test("stack backup: a dump by default, a full tar with a manifest; restore 
     const start = docker.indexOf("start web");
     const pgRestore = restore.pipes.findIndex((p) => p.args.join(" ").includes("pg_restore"));
     assert(stop !== -1 && start > stop && pgRestore !== -1, "the app is stopped around it");
-    assert(docker.some((c) => /^cp .*\/storage\/\. minio:\/tmp\/denext-restore$/.test(c)));
+    // The extracted directory is a host path (`C:\…\storage/.` on Windows, which docker takes).
+    assert(docker.some((c) => /^cp .*[\\/]storage\/\. minio:\/tmp\/denext-restore$/.test(c)));
   } finally {
     await Deno.remove(root, { recursive: true });
   }

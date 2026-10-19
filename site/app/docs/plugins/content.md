@@ -192,6 +192,62 @@ const watcher = Deno.watchFs(ctx.appDir);
 ctx.addTeardown(() => watcher.close());
 ```
 
+### Declaring that a plugin serves the pages
+
+A router plugin whose pages come from a route tree of its own (a `pages/` directory, a
+TanStack Start route tree, React Router's `routes.ts`) calls `ctx.servesRoutes?.()` in
+`setup`. The app then needs no `app/`: `denext doctor` passes its "app directory" check
+naming the plugin, where it fails a project with neither. Registering a request handler or a
+route synthesizer does not say this on its own: a plugin that only adds endpoints beside the
+app's pages (an API, OpenAPI docs, auth, storage) leaves it out, and a project with only such
+plugins and no `app/` still fails the check. `@denext/pages-router`, `@denext/tanstack-start`
+and `@denext/react-router` declare it.
+
+```ts
+ctx.addRequestHandler(renderMyRoutes);
+ctx.servesRoutes?.(); // optional chaining: still runs on a denext from before it existed
+```
+
+### Listing a plugin's routes in the deploy manifest
+
+`ctx.addDeployRoutes?.(source)` contributes the routes a plugin serves to the deploy manifest
+(`.denext/deploy-manifest.json`), so a [deploy adapter](/docs/deploy#deploy-adapters) sees them:
+`source` returns `DeployRoute`s (`{ path, kind, source, reason?, methods? }`, the type from
+`denext/plugin-kit`), called when the manifest is collected (after `denext build`, and by
+`denext deploy`) and sorted in with the App Router's. A page `denext export` writes is `"static"`,
+one rendered per request `"dynamic"`, an endpoint `"route-handler"`; the `static` preset refuses
+everything but `"static"`. `@denext/tanstack-start` lists its pages, server routes and server
+functions this way.
+
+```ts
+ctx.addDeployRoutes?.(async () => [
+  {
+    path: "/api/hello",
+    kind: "route-handler",
+    source: "src/routes/api/hello.ts",
+    methods: ["GET"],
+  },
+  { path: "/about", kind: "static", source: "src/routes/about.tsx" },
+]);
+```
+
+`ctx.addDeployAssets?.(source)` does the same for the files a plugin serves as they are: `source`
+returns `DeployAssetGroup`s (`{ urlPrefix, dir, cacheControl, immutable, files }`, `dir` and
+`files` project-relative), appended to the manifest's `assets` after denext's own; a group with
+no files is left out. `immutable` says the names are content-hashed, so a CDN may cache them
+forever. `@denext/tanstack-start` lists its `/_tss/` client files: `client.js` with `no-cache`, the
+hashed chunks and `assets/` immutable.
+
+```ts
+ctx.addDeployAssets?.(async () => [{
+  urlPrefix: "/_rpc/",
+  dir: ".denext/rpc/client",
+  cacheControl: "public, max-age=31536000, immutable",
+  immutable: true,
+  files: await listClientFiles(),
+}]);
+```
+
 ### Seam 5 — contribute a CLI verb
 
 `ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can
@@ -426,12 +482,24 @@ compiled onto denext's React with `@denext/denext/build/next-compat`, as `pages-
 an npm-React app, with TanStack's own compiler run over them as extra esbuild plugins (denext's
 `"use cache"` transform still runs on what it compiles). Both builds fail on Start's import
 protection (its rules, the app's `importProtection` options, Start's messages), read from each
-bundle's esbuild metafile so only what tree-shaking kept counts; the client build also fails on
+bundle's esbuild metafile so only what tree-shaking kept counts; a `behavior: "mock"` (in
+`denext dev` the default, as in Start; in a build when the app asks for it) loads Start's own
+mock modules instead (a denied file as its self-denial module, a denied specifier as a
+mock-edge module, both resolved in an esbuild namespace of the plugin's; Start's dev or build
+mocks by command) and turns each violation into a warning; the client build also fails on
 denext's server-only scan (`findServerOnlyLeaks`), and `serverModuleSource` lets it serve a
-`"use server"` module's server functions as RPC stubs. Under `denext export` the same build step
-runs Start's prerender against the server bundle: the pages go to `<outDir>/pages-static/`
-(which an export with no `app/` copies to its root, as for `pages-router`), the client bundle is
-published with `emitFile`, and the routes that need a server are listed.
+`"use server"` module's server functions as RPC stubs. The plugin's options are checked when
+`tanstackStart()` is called, against the shapes Start's own plugin accepts (`router` as a filename
+or Start's object, `importProtection`, `prerender`, `pages`, `sitemap`, `spa`), with
+`denext.config`'s field-scoped errors and a did-you-mean for a key that is not an option. Under
+`denext export` the same build step runs Start's prerender against the server bundle: the pages go
+to `<outDir>/pages-static/` (which an export with no `app/` copies to its root, as for
+`pages-router`), the client bundle is published with `emitFile`, and the routes that need a server
+are listed. Start's `spa` option adds its SPA shell (the mask path rendered with Start's
+`X-TSS_SHELL` header, the root route alone, to `_shell.html`, the file a static host falls back
+to; in `denext dev` both bundles are built with Start's `TSS_SHELL`, so every page is the shell,
+as in Start's dev server), and its `sitemap` option writes `sitemap.xml` and `pages.json` with Start's own
+`buildSitemap` over every page the prerender met.
 
 ## The first-party catalog
 

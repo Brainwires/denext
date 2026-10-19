@@ -13,6 +13,7 @@ import {
   spliceShellHoles,
 } from "../src/jsx/render-to-ppr.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
+import { renderShell } from "../src/jsx/render-to-stream.ts";
 import { serverAction } from "../src/runtime/server-action.ts";
 import { streamPprDocument } from "../src/server/document.ts";
 import { useId } from "../src/runtime/hooks.ts";
@@ -131,18 +132,50 @@ Deno.test("C3: a hole nested inside a static boundary keeps ids aligned across p
 
   const pre = await prerender(tree, "carol");
   assertEquals(pre.dynamic, false);
-  // The outer boundary is static (consumes id dnx0 but is transparent); only the
-  // inner boundary (dnx1) is a hole.
+  // The outer boundary is static (consumes id dnx0, resolved inline between React's
+  // `<!--$-->` / `<!--/$-->` markers, as the streaming renderer writes it); only the inner
+  // boundary (dnx1) is a hole.
   assertEquals(pre.postponedIds, ["dnx1"]);
   assertEquals(
     pre.shell,
-    `<section><p>static</p><div data-dnx-b="dnx1"><!--dnx-h:dnx1--><i>L1</i><!--/dnx-h:dnx1--></div></section>`,
+    `<!--$--><section><p>static</p><div data-dnx-b="dnx1"><!--dnx-h:dnx1--><i>L1</i><!--/dnx-h:dnx1--></div></section><!--/$-->`,
   );
 
   const res = await resume(tree, pre.postponedIds, "carol");
   assertEquals(res.holes.length, 1);
   assertEquals(res.holes[0].id, "dnx1");
   assertEquals(await res.holes[0].html, "<span>in:carol</span>");
+});
+
+Deno.test("C3: a boundary the prerender resolves inline has the streaming renderer's markers", async () => {
+  // One document shape for hydration: a boundary decided inline is bracketed with React's
+  // `<!--$-->` / `<!--/$-->` whether the streaming renderer or the PPR prerender wrote it.
+  const tree = h("main", null, [
+    boundary(h(Static, null), "L0"),
+    boundary(h("section", null, boundary(h(Static, null), "L2")), "L1"),
+  ]);
+  const pre = await prerender(tree);
+  assertEquals(pre.postponedIds, []);
+  assertEquals(
+    pre.shell,
+    "<main><!--$--><p>static</p><!--/$--><!--$--><section><!--$--><p>static</p><!--/$-->" +
+      "</section><!--/$--></main>",
+  );
+  const streamed = await renderShell(tree, null);
+  assertEquals(pre.shell, streamed.shell);
+
+  // A static boundary inside a resumed hole keeps them too.
+  const hole = boundary(
+    h("div", null, [h(Dyn, { k: "in" }), boundary(h(Static, null), "Ls")]),
+    "Lh",
+  );
+  const withHole = await prerender(h("main", null, hole));
+  assertEquals(withHole.postponedIds, ["dnx0"]);
+  const res = await resume(h("main", null, hole), withHole.postponedIds);
+  assertEquals(
+    await res.holes[0].html,
+    "<div><span>in:alice</span><!--$--><p>static</p><!--/$--></div>",
+  );
 });
 
 Deno.test("C3: sibling holes get distinct, ordered ids resolved independently on resume", async () => {

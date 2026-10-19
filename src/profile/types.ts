@@ -49,4 +49,9 @@ export interface ProfileResult {
   minified: boolean;
   /** The `filter` the self-time rows were narrowed by, when one was given. */
   filter?: string;
+  /**
+   * The Android device the run profiled (`denext profile --android`): the adb serial, the
+   * WebView's DevTools socket and the app's package when it was resolved. Absent for a local run.
+   */
+  device?: { serial: string; socket: string; package?: string };
 }

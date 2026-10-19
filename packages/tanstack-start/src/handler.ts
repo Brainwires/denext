@@ -109,16 +109,58 @@ async function capBody(request: Request, maxBytes: number): Promise<Request | Re
   return bufferedRequest(request, body);
 }
 
+/** The client bundle's sub-directory for the assets the bundles emit (content-hashed names). */
+export const ASSETS_DIR = "assets";
+
+/** The `Cache-Control` of the client entry: it keeps its name across builds. */
+export const ENTRY_CACHE_CONTROL = "no-cache";
+
+/** The `Cache-Control` of every other client file: content-hashed, cached forever. */
+export const HASHED_CACHE_CONTROL = "public, max-age=31536000, immutable";
+
+/**
+ * The content type of a client file the plugin serves, by extension (null: not served).
+ *
+ * @param name The file's path under the client directory, `/`-separated.
+ */
+export function clientFileType(name: string): string | null {
+  if (/^[\w.-]+\.js$/.test(name)) return "text/javascript; charset=utf-8";
+  const asset = new RegExp(`^${ASSETS_DIR}/[\\w.-]+\\.(\\w+)$`).exec(name);
+  if (!asset || name.includes("..")) return null;
+  return ASSET_TYPES[asset[1].toLowerCase()] ?? "application/octet-stream";
+}
+
+/** Content types of the assets the bundles emit (Vite's asset imports). */
+const ASSET_TYPES: Record<string, string> = {
+  css: "text/css; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  svg: "image/svg+xml",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  ico: "image/x-icon",
+  woff: "font/woff",
+  woff2: "font/woff2",
+  ttf: "font/ttf",
+  otf: "font/otf",
+  wasm: "application/wasm",
+  json: "application/json",
+};
+
 async function clientFile(opts: HandlerOptions, path: string): Promise<Response> {
   const name = path.slice(CLIENT_PREFIX.length);
-  if (!/^[\w.-]+\.js$/.test(name)) return new Response("Not Found", { status: 404 });
-  const body = await Deno.readFile(join(await opts.client(), name)).catch(() => null);
+  const type = clientFileType(name);
+  if (type === null) return new Response("Not Found", { status: 404 });
+  const body = await Deno.readFile(join(await opts.client(), ...name.split("/"))).catch(() => null);
   if (body === null) return new Response("Not Found", { status: 404 });
   return new Response(body, {
     headers: {
-      "content-type": "text/javascript; charset=utf-8",
+      "content-type": type,
       // The entry keeps its name across builds; the chunks it imports are content-hashed.
-      "cache-control": name === CLIENT_ENTRY ? "no-cache" : "public, max-age=31536000, immutable",
+      "cache-control": name === CLIENT_ENTRY ? ENTRY_CACHE_CONTROL : HASHED_CACHE_CONTROL,
     },
   });
 }

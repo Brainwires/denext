@@ -78,6 +78,8 @@
 //
 // The SPA shell's root style lives with the shell (spa/shared.ts).
 
+import { requireContextPlugins } from "./require-context.ts";
+import { unistylesEnabled, unistylesPlugins } from "./react-native-unistyles.ts";
 import { basename, dirname, join } from "@std/path";
 import type * as esbuild from "./esbuild/mod.ts";
 import { type DenextConfig, reactNativeOptions } from "../server/config.ts";
@@ -221,6 +223,10 @@ export const WEB_ENTRY_EXPORTS: Readonly<Record<string, string>> = {
   InputAccessoryView: "InputAccessoryView",
   NativeAppEventEmitter: "DeviceEventEmitter",
   ProgressBarAndroid: "ProgressBar",
+  // React Native 0.83+ exports its host components from the root; react-native-web's `View` /
+  // `Text` are the host components on the web (Unistyles' examples import them).
+  unstable_NativeText: "Text",
+  unstable_NativeView: "View",
 };
 
 /**
@@ -1179,9 +1185,14 @@ export function reactNativeBundleOptions(
       // Ahead of the react-native-web resolver too: with uniwind installed, `react-native` is
       // its web components (which then import react-native-web through the resolver below).
       ...(appRouter ? [] : uniwindPlugins(config, projectDir)),
+      // Also ahead of it: with react-native-unistyles installed, the app's `react-native` is
+      // Unistyles' wrapped components (and `useVariants` is rewritten as its Babel plugin does).
+      ...(unistylesEnabled(config) ? unistylesPlugins(projectDir) : []),
       reactNativeWebPlugin(projectDir),
       reactNativePatchesPlugin(),
       ...expoRouterPlugins(projectDir, appRouter),
+      // Metro's `require.context` in the app's own modules (an Expo app's own root).
+      ...requireContextPlugins(projectDir),
       ...(options.expoShims === false ? [] : [expoShimPlugin()]),
       ...(options.lists === "library" ? [] : [listAdaptersPlugin(projectDir)]),
       reanimatedWorkletsPlugin(projectDir, { dev }),

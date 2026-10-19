@@ -81,6 +81,49 @@ denext profile --interact burst.js --compare before.json`}
         and a <code>--budget</code> is judged on the whole run.
       </p>
 
+      <h2 id="android">On an Android device</h2>
+      <p>
+        <code>denext profile --android</code>{" "}
+        profiles the app's WebView on a phone or emulator (a Capacitor shell, or any debuggable
+        WebView) with the same CPU, heap and leak report. Nothing is built or served: the app is
+        profiled as installed, at the WebView's own origin (<code>https://localhost</code>{" "}
+        in a Capacitor shell). It takes the path chrome://inspect takes: <code>adb devices</code>
+        {" "}
+        picks the device, <code>/proc/net/unix</code> names the app's{" "}
+        <code>webview_devtools_remote_&lt;pid&gt;</code> socket, <code>adb forward tcp:0</code>{" "}
+        forwards a free local port to it (removed when the run ends), and the run speaks the Chrome
+        DevTools Protocol to the page listed at <code>/json/list</code>. The heap is read with{" "}
+        <code>Runtime.getHeapUsage</code>, which is exact where a WebView's{" "}
+        <code>performance.memory</code> is rounded.
+      </p>
+      <Code lang="bash">
+        {`DENEXT_NO_MINIFY=1 denext export && npx cap run android   # a debug build, readable names
+denext profile --android --route /settings
+denext profile --android --interact toggle.js --iterations 5 --budget perf.json`}
+      </Code>
+      <ul>
+        <li>
+          The WebView must be debuggable: a debug build, or{" "}
+          <code>android.webContentsDebuggingEnabled: true</code> (never in a release).
+        </li>
+        <li>
+          <code>--package &lt;appId&gt;</code>{" "}
+          picks the app's process; it defaults to the Capacitor config's{" "}
+          <code>appId</code>, and without either the single debuggable WebView is used.{" "}
+          <code>--device &lt;serial&gt;</code> picks a device when several are attached. adb is{" "}
+          <code>$ADB</code> when set, else the <code>adb</code> on the PATH.
+        </li>
+        <li>
+          Close chrome://inspect's DevTools window first: a page takes one DevTools client at a
+          time.
+        </li>
+        <li>
+          Startup mode reloads the page at{" "}
+          <code>--route</code>; interaction mode loads it, then runs the script.{" "}
+          <code>--minify</code> does not apply: build the app unminified instead, as above.
+        </li>
+      </ul>
+
       <h2>Flags</h2>
       <ul>
         <li>
@@ -113,6 +156,12 @@ denext profile --interact burst.js --compare before.json`}
         <li>
           <code>--filter &lt;text&gt;</code>{" "}
           — show only functions whose name or source contains the text.
+        </li>
+        <li>
+          <code>--android</code>{" "}
+          — profile the installed app's WebView on an Android device over adb (see above);{" "}
+          <code>--device &lt;serial&gt;</code> and <code>--package &lt;appId&gt;</code>{" "}
+          pick the device and the app.
         </li>
         <li>
           <code>--out &lt;file&gt;</code> — save the run as JSON.

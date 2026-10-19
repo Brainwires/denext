@@ -7,7 +7,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { fromFileUrl, join } from "@std/path";
+import { basename, fromFileUrl, join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { filterAdmits, tanstackCodeSplitPlugin } from "../src/build/tanstack-code-split.ts";
 
@@ -38,7 +38,7 @@ async function bundle(dir: string, plugins: esbuild.Plugin[]): Promise<Map<strin
     plugins,
   });
   const out = new Map<string, string>();
-  for (const f of result.outputFiles) out.set(f.path.slice(f.path.lastIndexOf("/") + 1), f.text);
+  for (const f of result.outputFiles) out.set(basename(f.path), f.text);
   return out;
 }
 

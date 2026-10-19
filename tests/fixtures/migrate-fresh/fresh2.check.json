@@ -1,0 +1,133 @@
+{
+  "schema": "denext.migrate-check/1",
+  "command": "denext migrate --denext-local-path <repo>/",
+  "source": "fresh",
+  "verdict": "review",
+  "changes": [
+    {
+      "path": ".gitignore",
+      "action": "create"
+    },
+    {
+      "path": ".vscode/extensions.json",
+      "action": "create"
+    },
+    {
+      "path": ".vscode/settings.json",
+      "action": "create"
+    },
+    {
+      "path": "app/(marketing)/about/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/(marketing)/layout.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/api/[name]/route.ts",
+      "action": "create"
+    },
+    {
+      "path": "app/blog/[slug]/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/docs/[...rest]/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/lang/fresh-route-lang-lang/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/layout.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/not-found.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "client.ts",
+      "action": "delete"
+    },
+    {
+      "path": "denext.config.ts",
+      "action": "create"
+    },
+    {
+      "path": "deno.json",
+      "action": "modify"
+    },
+    {
+      "path": "instrumentation-client.ts",
+      "action": "create"
+    },
+    {
+      "path": "islands/Counter.tsx",
+      "action": "modify"
+    },
+    {
+      "path": "middleware.ts",
+      "action": "create"
+    },
+    {
+      "path": "public/img/a.txt",
+      "action": "move",
+      "from": "static/img/a.txt"
+    },
+    {
+      "path": "public/logo.svg",
+      "action": "move",
+      "from": "static/logo.svg"
+    },
+    {
+      "path": "routes/(marketing)/(_islands)/Wave.tsx",
+      "action": "modify"
+    },
+    {
+      "path": "vite.config.ts",
+      "action": "delete"
+    }
+  ],
+  "wontMigrate": [
+    {
+      "item": "vite.config.ts: inspect()",
+      "reason": "a Vite plugin; denext builds the app without Vite. Port what it does (a build step, an emitted file) to denext.config.ts (`plugins`, `viteEmitterPlugin`)"
+    },
+    {
+      "item": "useErrorBoundary",
+      "reason": "Preact's useErrorBoundary never sees an error on denext; catch with <ErrorBoundary> from denext (or an error.tsx) instead (islands/Counter.tsx)"
+    }
+  ],
+  "review": [
+    {
+      "item": "routes/lang/[[lang]].tsx",
+      "reason": "its URL pattern /lang{/:lang}? has no app/ folder equivalent: middleware.ts rewrites matching requests to the page generated for it"
+    },
+    {
+      "item": "routes/raw.ts",
+      "reason": "its URL pattern /@:version/:path* has no app/ folder equivalent: middleware.ts answers it with the route's handler"
+    }
+  ],
+  "dependencies": {
+    "aliased": [
+      "fresh",
+      "preact",
+      "@preact/signals"
+    ],
+    "passthrough": [],
+    "dropped": [
+      "@fresh/plugin-vite",
+      "vite",
+      "@types/babel__core",
+      "@tailwindcss/vite"
+    ],
+    "flagged": []
+  }
+}

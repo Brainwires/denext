@@ -23,7 +23,10 @@ export type MigrateSource =
   | "vite"
   | "cra"
   | "generic-react"
-  | "expo";
+  | "expo"
+  | "tanstack-start"
+  | "fresh"
+  | "preact";
 
 /** Something the migration leaves to the user, with the reason. */
 export interface MigrateFinding {
@@ -91,6 +94,21 @@ function migrateSource(r: MigrateResult): MigrateSource {
   }
 }
 
+/**
+ * `path` as one argument of a command line the user pastes into this OS's shell. A Windows path
+ * keeps its backslashes (cmd and PowerShell read them literally; JSON-escaping doubled them), in
+ * double quotes when it has a space; elsewhere it is single-quoted when anything in it is special.
+ *
+ * @internal
+ * @param path The path.
+ * @param os The OS whose shell reads the line (`Deno.build.os`).
+ * @returns The argument.
+ */
+export function shellPathArg(path: string, os: string): string {
+  if (os === "windows") return /[\s&()^%!;,]/.test(path) ? `"${path}"` : path;
+  return /[^\w@%+=:,./-]/.test(path) ? `'${path.replaceAll("'", `'\\''`)}'` : path;
+}
+
 /** The `denext migrate` command line that runs the checked migration. */
 function migrateCommandLine(options: MigrateOptions): string {
   const parts = ["denext migrate"];
@@ -101,7 +119,7 @@ function migrateCommandLine(options: MigrateOptions): string {
   parts.push(...capacitorFlags(options));
   if (options.denextLocalPath) {
     const path = options.denextLocalPath;
-    parts.push(`--denext-local-path ${/[\s"'$`\\]/.test(path) ? JSON.stringify(path) : path}`);
+    parts.push(`--denext-local-path ${shellPathArg(path, Deno.build.os)}`);
   }
   return parts.join(" ");
 }
@@ -139,6 +157,7 @@ function existingConfigFindings(r: MigrateResult): MigrateFinding[] {
   if (configKept) {
     const plugins = [
       ...(r.pagesRouter ? ['pagesRouter() from "@denext/pages-router"'] : []),
+      ...(r.tanstackStart ? ['tanstackStart() from "@denext/tanstack-start"'] : []),
       ...(r.effect ? ['effect() from "@denext/effect"'] : []),
     ];
     out.push({
@@ -218,6 +237,10 @@ function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: Migra
       reason: `native-only (${p.kind}); no web build, so give the importing module a .web.ts ` +
         'or map the package to a web stub in deno.json "imports"',
     })),
+    ...e.deps.nativeSdks.map((p) => ({
+      item: p.name,
+      reason: `native-only, with no alias in React Native mode; ${p.advice}`,
+    })),
     ...e.deps.expo.filter((p) => p.status === "none" && p.advice).map((p) => ({
       item: p.name,
       reason: `no denext/expo shim: ${p.advice}`,
@@ -266,6 +289,24 @@ function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: Migra
       : []),
   ];
   return { wont, review };
+}
+
+/** The Start options left behind, and the notes on the app's Start config. */
+function tanstackStartFindings(r: MigrateResult): MigrateFinding[] {
+  const t = r.tanstackStart;
+  if (!t) return [];
+  return [
+    ...t.dropped.map((d) => ({ item: `${t.file}: ${d.key}`, reason: d.note })),
+    ...t.notes.map((reason) => ({ item: t.file ?? "TanStack Start", reason })),
+  ];
+}
+
+/** What a Fresh or Preact app leaves to the user (the migration's findings). */
+function freshFindings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
+  return {
+    wont: [...r.fresh?.wontMigrate ?? [], ...r.preact?.wontMigrate ?? []],
+    review: [...r.fresh?.review ?? [], ...r.preact?.review ?? []],
+  };
 }
 
 /** A desktop proxy whose prefixes migrate could not read (built in code in vite.config). */
@@ -330,19 +371,23 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
   const next = nextConfigFindings(r);
   const expo = expoFindings(r);
   const cap = capacitorFindings(r);
+  const fresh = freshFindings(r);
   return {
     wont: [
       ...dependencyFindings(r),
       ...existingConfigFindings(r),
       ...next.wont,
       ...expo.wont,
+      ...fresh.wont,
       ...cap.wont,
     ],
     review: [
       ...next.review,
+      ...fresh.review,
       ...spaProxyFindings(r),
       ...viteEmitterFindings(r),
       ...transformFindings(r),
+      ...tanstackStartFindings(r),
       ...expo.review,
       ...appIconFindings(r),
       ...cap.review,

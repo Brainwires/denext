@@ -151,11 +151,16 @@ function fixtureSources(): Map<string, string> {
  */
 export function explainFixture(raw: string): string {
   const sources = fixtureSources();
+  // The captures print `file:///app/…`, which Windows reads back as `\app\…`: the fixture
+  // sources are keyed by the POSIX spelling either way.
+  const posix = (path: string) => path.replaceAll("\\", "/");
   return explainDiagnosticsText(raw, {
     rootDir: FIXTURE_APP_DIR,
-    readSource: (path) => sources.get(path),
+    readSource: (path) => sources.get(posix(path)),
     listDir: (dir) =>
-      dir === FIXTURE_APP_DIR ? [...sources.keys()].map((p) => p.slice(dir.length + 1)) : [],
+      posix(dir) === FIXTURE_APP_DIR
+        ? [...sources.keys()].map((p) => p.slice(FIXTURE_APP_DIR.length + 1))
+        : [],
   }).text + "\n";
 }
 

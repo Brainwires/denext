@@ -126,11 +126,13 @@ export function openSqliteFile(
  * of hard-expired rows.
  *
  * @param options File path, row caps, and an optional open hook.
- * @returns A store to pass to {@linkcode setCacheStore}.
+ * @returns A store to pass to {@linkcode setCacheStore}; its `close()` closes the database
+ *   handle (the next call reopens it), so the file can be moved or removed — Windows refuses
+ *   to delete a file that is still open.
  */
 export function sqliteCacheStore(
   options: SqliteCacheStoreOptions = {},
-): CacheStore {
+): CacheStore & { close(): void } {
   return new SqliteCache(options);
 }
 
@@ -232,6 +234,17 @@ function liveRow<T extends { expires_at: number | null }>(
   return row;
 }
 
+/** A data row as the entry it stores. */
+function dataEntryOf(row: DataRow): DataEntry {
+  return {
+    value: JSON.parse(row.value),
+    expiresAt: fromDbExpiry(row.expires_at),
+    // NULL ⇒ never stale (DataEntry.staleAt absent); a finite epoch ⇒ SWR point.
+    ...(row.stale_at == null ? {} : { staleAt: row.stale_at }),
+    tags: JSON.parse(row.tags),
+  };
+}
+
 /** The {@link CacheStore} behind {@linkcode sqliteCacheStore}. */
 class SqliteCache implements CacheStore {
   readonly #path: string;
@@ -258,6 +271,13 @@ class SqliteCache implements CacheStore {
     // access retries rather than permanently disabling the cache.
     this.#db = d;
     return d;
+  }
+
+  /** Close the database handle, if open; the next call opens it again. */
+  close(): void {
+    const d = this.#db;
+    this.#db = undefined;
+    d?.close();
   }
 
   // Proactively reclaim hard-expired rows (finite expires_at in the past). Throttled so a
@@ -297,14 +317,22 @@ class SqliteCache implements CacheStore {
 
   getData(key: string): DataEntry | undefined {
     const row = liveRow<DataRow>(this.#getDb(), "data", "value, expires_at, stale_at, tags", key);
-    if (!row) return undefined;
-    return {
-      value: JSON.parse(row.value),
-      expiresAt: fromDbExpiry(row.expires_at),
-      // NULL ⇒ never stale (DataEntry.staleAt absent); a finite epoch ⇒ SWR point.
-      ...(row.stale_at == null ? {} : { staleAt: row.stale_at }),
-      tags: JSON.parse(row.tags),
-    };
+    return row && dataEntryOf(row);
+  }
+
+  takeData(key: string): DataEntry | undefined {
+    const d = this.#getDb();
+    let row: DataRow | undefined;
+    // DELETE … RETURNING: one statement, so of two racing takers exactly one gets the row.
+    tx(d, () => {
+      row = d.query<DataRow>(
+        "DELETE FROM data WHERE key = ? RETURNING value, expires_at, stale_at, tags",
+        [key],
+      )[0];
+      if (row) d.exec("DELETE FROM tags WHERE ns = 'data' AND key = ?", [key]);
+    });
+    if (!row || isStale(row.expires_at)) return undefined;
+    return dataEntryOf(row);
   }
 
   setData(key: string, entry: DataEntry): void {

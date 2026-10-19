@@ -5,17 +5,18 @@
 //
 // Skip vs. fail: a clone, dependency install or post-migrate setup command (`afterMigrate`:
 // Prisma engines, a seed) that fails for NETWORK reasons skips the bed (warn + return, the
-// `tests/e2e/drizzle.e2e.test.ts` idiom — the nightly runner may be offline or npm may be
+// `tests/e2e/drizzle.e2e.test.ts` idiom — the CI runner may be offline or npm may be
 // down); `denext migrate`, the build, serving and the route assertions are real failures,
 // because that is where a denext regression shows up. `denext doctor` runs last as an informational
 // report (printed, not asserted) until its route expectations are tunable per bed.
 //
 // Run: `deno task test:migration-bed` (NETWORK-REQUIRED; the `migration-beds` job in
-// .github/workflows/e2e.yml runs it nightly). Never part of `deno task check`/`test`.
+// .github/workflows/e2e.yml runs it when dispatched before a release). Never part of `deno task check`/`test`.
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { killTree, startCliServer } from "../e2e/harness.ts";
+import type { Page } from "@astral/astral";
+import { killTree, launchBrowser, pollFor, startCliServer } from "../e2e/harness.ts";
 
 /** One route to render-assert after the migrated app is built and served. */
 interface BedRoute {
@@ -27,7 +28,39 @@ interface BedRoute {
   contains: string;
   /** For a redirect: a substring the `Location` header must contain (redirects are not followed). */
   location?: string;
+  /** Request headers (a browser's `Accept`, for an app that answers by it). */
+  headers?: Record<string, string>;
 }
+
+/**
+ * A page to open in headless Chromium after the route assertions: it must hydrate, and with
+ * `navigate`, a click must navigate on the client (the document stays the same one).
+ */
+interface BedBrowserCheck {
+  /** Path to open. */
+  path: string;
+  /** A JS expression, polled in the page until truthy: the app hydrated. */
+  hydrated: string;
+  /** A link to click (a CSS selector) and an expression that is truthy once it navigated. */
+  navigate?: BedAction;
+  /**
+   * An interaction on the hydrated page: a control to click (a CSS selector) and an expression
+   * that is truthy once the page reacted (an island's state changed), on the same document.
+   */
+  interact?: BedAction;
+}
+
+/**
+ * A click and the expression that is truthy once the page reacted: `click` is a CSS selector
+ * (a real mouse click on it); `press` is a JS expression that clicks a control a selector cannot
+ * name (a button known only by its text), run in the page instead.
+ */
+type BedAction =
+  & { until: string }
+  & ({ click: string; press?: never } | {
+    press: string;
+    click?: never;
+  });
 
 /**
  * A setup command with its own deadline. `expect` marks success by output: a script that does
@@ -54,6 +87,11 @@ export interface Bed {
   install: string[][];
   /** App-specific setup after the install and before migrate (an env file, a DB seed). */
   prepare?: (appDir: string) => Promise<void>;
+  /**
+   * An edit after migrate and before build — the hand fix `migrate --check` asked for (a source
+   * line denext cannot run as written), applied the way the report says to.
+   */
+  afterMigrateEdit?: (appDir: string) => Promise<void>;
   /** Extra `denext migrate` flags (`["--from", "remix"]`). */
   migrate?: string[];
   /**
@@ -69,6 +107,8 @@ export interface Bed {
   allowFlagged?: string[];
   /** Routes to render-assert. */
   routes: BedRoute[];
+  /** A page to hydrate (and navigate from) in headless Chromium. */
+  browser?: BedBrowserCheck;
 }
 
 const REPO = fromFileUrl(new URL("../../", import.meta.url));
@@ -237,6 +277,7 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
     });
 
     if (bed.afterMigrate && !(await runCommands(bed, bed.afterMigrate, app))) return;
+    await bed.afterMigrateEdit?.(app);
 
     await t.step("denext build", async () => {
       const r = await denext(["build", "."], app, BUILD_TIMEOUT_MS);
@@ -248,7 +289,10 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       await t.step("routes render", async () => {
         const failures: string[] = [];
         for (const route of bed.routes) {
-          const res = await fetch(server.origin + route.path, { redirect: "manual" });
+          const res = await fetch(server.origin + route.path, {
+            redirect: "manual",
+            headers: route.headers,
+          });
           const body = await res.text();
           const want = route.status ?? 200;
           const location = res.headers.get("location") ?? "";
@@ -268,6 +312,10 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
         }
         assertEquals(failures, [], `${bed.name}: route assertions failed`);
       });
+      if (bed.browser) {
+        const check = bed.browser;
+        await t.step("the page hydrates in headless Chromium", () => browserCheck(server, check));
+      }
     } finally {
       await server.close();
     }
@@ -285,6 +333,35 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
+}
+
+/** Open `check.path`, wait for it to hydrate, then (optionally) navigate on the client. */
+async function browserCheck(server: { origin: string }, check: BedBrowserCheck): Promise<void> {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage(server.origin + check.path);
+    await pollFor(page, check.hydrated, READY_TIMEOUT_MS);
+    if (check.interact) {
+      await act(page, check.interact, "reloaded the page instead of updating it");
+    }
+    if (check.navigate) {
+      await act(page, check.navigate, "reloaded the page instead of navigating on the client");
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+/** Perform `action` on the page and wait for it to take, on the same document. */
+async function act(page: Page, action: BedAction, reloaded: string): Promise<void> {
+  await page.evaluate("globalThis.__bedSameDocument = true");
+  if (action.press) await page.evaluate(action.press);
+  else await (await page.$(action.click!))!.click();
+  await pollFor(page, action.until, READY_TIMEOUT_MS);
+  assert(
+    await page.evaluate("globalThis.__bedSameDocument === true"),
+    `${action.click ?? action.press} ${reloaded}`,
+  );
 }
 
 /**

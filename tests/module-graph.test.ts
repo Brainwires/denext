@@ -162,6 +162,45 @@ Deno.test("H1: a client island imported only by a layout is discovered (not just
   }
 });
 
+Deno.test("a route whose only interactive part is a live view is a Flight route", async () => {
+  const app = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    // The framework's own `denext/live` (it names `defineLiveView` too, and must not count).
+    const live = new URL("../src/live.ts", import.meta.url).href;
+    await Deno.mkdir(join(app, "view"));
+    await Deno.mkdir(join(app, "plain"));
+    await Deno.writeTextFile(
+      join(app, "view", "counter.ts"),
+      `import { defineLiveView } from "${live}";\n` +
+        `export const Counter = defineLiveView({ id: "c", init: () => [0], update: (_m, n) => [n], view: () => null });\n`,
+    );
+    await Deno.writeTextFile(
+      join(app, "view", "page.tsx"),
+      `import { Counter } from "./counter.ts";\nexport default function Page() { return Counter({}); }\n`,
+    );
+    // A page that imports `denext/live` but renders no live view stays off Flight.
+    await Deno.writeTextFile(
+      join(app, "plain", "page.tsx"),
+      `import { useSubscription } from "${live}";\nexport default function Page() { return String(useSubscription); }\n`,
+    );
+    const route = (dir: string) => ({
+      routePath: `/${dir}`,
+      filePath: join(app, dir, "page.tsx"),
+      layoutChain: [] as string[],
+      templateChain: [] as string[],
+    });
+    const flightRoutes = await computeBoundaryRoutes(app, [route("view"), route("plain")]);
+    assert(flightRoutes.has("/view"), "a live-view-only route must ship the Flight entry");
+    assertEquals(
+      flightRoutes.has("/plain"),
+      false,
+      "a route with no live view ships no Live client",
+    );
+  } finally {
+    await Deno.remove(app, { recursive: true });
+  }
+});
+
 Deno.test("an interactive `use client` error boundary flags the route as Flight (no isomorphic layout leak)", async () => {
   const app = await Deno.makeTempDir();
   try {

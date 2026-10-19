@@ -74,11 +74,18 @@ function budgetLines(result: ProfileResult): string[] {
   ];
 }
 
+/** What was profiled: the local build's minification, or the Android device's app as installed. */
+function buildLabel(result: ProfileResult): string {
+  const d = result.device;
+  if (!d) return result.minified ? "minified" : "unminified";
+  return `Android ${d.serial}${d.package ? ` ${d.package}` : ""}, the installed build`;
+}
+
 /** The full terminal report for a profiling run. */
 export function profileReportLines(result: ProfileResult): string[] {
-  const header = `denext profile ▸ ${result.route}  (${
-    result.minified ? "minified" : "unminified"
-  })${result.filter ? `  filter ${JSON.stringify(result.filter)}` : ""}`;
+  const header = `denext profile ▸ ${result.route}  (${buildLabel(result)})${
+    result.filter ? `  filter ${JSON.stringify(result.filter)}` : ""
+  }`;
   return [header, "", ...cpuLines(result), ...heapLines(result), ...budgetLines(result)];
 }
 

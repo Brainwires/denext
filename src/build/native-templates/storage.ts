@@ -12,15 +12,15 @@ export const STORAGE_IOS_FILES: Readonly<Record<string, string>> = {
 
 @preconcurrency import Capacitor
 import Foundation
-import SQLite3
 
 /// The native side of \`openKeyValueStore()\` from \`denext/mobile\` (and React Native mode's
 /// AsyncStorage and MMKV), reached from the web app as \`window.Capacitor.Plugins.DenextStorage\`.
 /// \`DenextBridgeViewController\` registers it.
 ///
-/// One SQLite file, \`Library/Application Support/denext/kv.sqlite\`: the app's own data, which
-/// iOS does not purge the way it may purge a WKWebView's website data. Table
-/// \`kv (store, key, value)\`; every method is one batch, run on a serial queue.
+/// The data lives in \`DenextStorageStore\`'s SQLite files under \`Library/Application Support/denext/\`:
+/// the app's own data, which iOS does not purge the way it may purge a WKWebView's website data.
+/// Every method is one batch, run on a serial queue; a call with a \`key\` uses the store's
+/// SQLCipher database (\`cipher()\` says whether this build has SQLCipher).
 @objc(DenextStoragePlugin)
 public class DenextStoragePlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "DenextStoragePlugin"
@@ -30,88 +30,19 @@ public class DenextStoragePlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendab
         CAPPluginMethod(name: "setMany", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "removeMany", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "keys", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "clear", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "clear", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cipher", returnType: CAPPluginReturnPromise)
     ]
 
-    private struct StorageError: Error, CustomStringConvertible {
-        let description: String
-    }
-
-    /// SQLite copies bound text (SQLITE_TRANSIENT).
-    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-
     private let queue = DispatchQueue(label: "dev.denext.storage")
-    private var db: OpaquePointer?
+    private let store = DenextStorageStore()
 
-    deinit {
-        if let db = db { sqlite3_close(db) }
-    }
-
-    /// The database, opened (and created) on first use. Runs on \`queue\`.
-    private func database() throws -> OpaquePointer {
-        if let db = db { return db }
-        let fm = FileManager.default
-        let dir = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("denext", isDirectory: true)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        var handle: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
-        let path = dir.appendingPathComponent("kv.sqlite").path
-        guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK, let opened = handle else {
-            let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "cannot open \\(path)"
-            if let handle = handle { sqlite3_close(handle) }
-            throw StorageError(description: message)
-        }
-        try exec(opened, "PRAGMA journal_mode=WAL")
-        try exec(opened, "CREATE TABLE IF NOT EXISTS kv (store TEXT NOT NULL, key TEXT NOT NULL, " +
-            "value TEXT NOT NULL, PRIMARY KEY (store, key)) WITHOUT ROWID")
-        db = opened
-        return opened
-    }
-
-    private func failure(_ db: OpaquePointer) -> StorageError {
-        StorageError(description: String(cString: sqlite3_errmsg(db)))
-    }
-
-    private func exec(_ db: OpaquePointer, _ sql: String) throws {
-        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw failure(db) }
-    }
-
-    private func prepare(_ db: OpaquePointer, _ sql: String) throws -> OpaquePointer {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let prepared = stmt else {
-            throw failure(db)
-        }
-        return prepared
-    }
-
-    private func bind(_ stmt: OpaquePointer, _ index: Int32, _ text: String) {
-        sqlite3_bind_text(stmt, index, text, -1, DenextStoragePlugin.transient)
-    }
-
-    /// Run \`statement\` once per item of \`items\` inside one transaction.
-    private func batch<T>(_ db: OpaquePointer, _ sql: String, _ items: [T], _ fill: (OpaquePointer, T) -> Void) throws {
-        try exec(db, "BEGIN IMMEDIATE")
-        do {
-            let stmt = try prepare(db, sql)
-            defer { sqlite3_finalize(stmt) }
-            for item in items {
-                fill(stmt, item)
-                guard sqlite3_step(stmt) == SQLITE_DONE else { throw failure(db) }
-                sqlite3_reset(stmt)
-                sqlite3_clear_bindings(stmt)
-            }
-            try exec(db, "COMMIT")
-        } catch {
-            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
-            throw error
-        }
-    }
-
-    private func run(_ call: CAPPluginCall, _ work: @escaping @Sendable (OpaquePointer) throws -> [String: Any]) {
+    private func run(_ call: CAPPluginCall, _ work: @escaping @Sendable () throws -> [String: Any]) {
         queue.async {
             do {
-                call.resolve(try work(try self.database()))
+                call.resolve(try work())
+            } catch let error as DenextStorageError {
+                call.reject(error.description, error.code)
             } catch {
                 call.reject("\\(error)", "STORAGE_ERROR")
             }
@@ -126,78 +57,330 @@ public class DenextStoragePlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendab
         (call.getArray(key) ?? []).compactMap { $0 as? String }
     }
 
+    @objc func cipher(_ call: CAPPluginCall) {
+        queue.async { call.resolve(["available": DenextStorageStore.cipherAvailable()]) }
+    }
+
     @objc func getMany(_ call: CAPPluginCall) {
-        let store = storeName(call)
+        let name = storeName(call)
         let keys = strings(call, "keys")
-        run(call) { db in
-            let stmt = try self.prepare(db, "SELECT value FROM kv WHERE store = ?1 AND key = ?2")
-            defer { sqlite3_finalize(stmt) }
-            var values: [Any] = []
-            for key in keys {
-                self.bind(stmt, 1, store)
-                self.bind(stmt, 2, key)
-                if sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) {
-                    values.append(String(cString: text))
-                } else {
-                    values.append(NSNull())
-                }
-                sqlite3_reset(stmt)
-                sqlite3_clear_bindings(stmt)
-            }
-            return ["values": values]
+        let key = call.getString("key")
+        run(call) {
+            ["values": try self.store.getMany(name, keys, key: key).map { $0 ?? NSNull() as Any }]
         }
     }
 
     @objc func setMany(_ call: CAPPluginCall) {
-        let store = storeName(call)
+        let name = storeName(call)
+        let key = call.getString("key")
         let entries: [(String, String)] = (call.getArray("entries") ?? []).compactMap { entry in
             guard let pair = entry as? [Any], pair.count == 2,
-                  let key = pair[0] as? String, let value = pair[1] as? String else { return nil }
-            return (key, value)
+                  let item = pair[0] as? String, let value = pair[1] as? String else { return nil }
+            return (item, value)
         }
-        run(call) { db in
-            try self.batch(db, "INSERT OR REPLACE INTO kv (store, key, value) VALUES (?1, ?2, ?3)", entries) { stmt, entry in
-                self.bind(stmt, 1, store)
-                self.bind(stmt, 2, entry.0)
-                self.bind(stmt, 3, entry.1)
-            }
+        run(call) {
+            try self.store.setMany(name, entries, key: key)
             return [:]
         }
     }
 
     @objc func removeMany(_ call: CAPPluginCall) {
-        let store = storeName(call)
+        let name = storeName(call)
         let keys = strings(call, "keys")
-        run(call) { db in
-            try self.batch(db, "DELETE FROM kv WHERE store = ?1 AND key = ?2", keys) { stmt, key in
-                self.bind(stmt, 1, store)
-                self.bind(stmt, 2, key)
-            }
+        let key = call.getString("key")
+        run(call) {
+            try self.store.removeMany(name, keys, key: key)
             return [:]
         }
     }
 
     @objc func keys(_ call: CAPPluginCall) {
-        let store = storeName(call)
-        run(call) { db in
-            let stmt = try self.prepare(db, "SELECT key FROM kv WHERE store = ?1 ORDER BY key")
-            defer { sqlite3_finalize(stmt) }
-            self.bind(stmt, 1, store)
-            var keys: [String] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let text = sqlite3_column_text(stmt, 0) { keys.append(String(cString: text)) }
-            }
-            return ["keys": keys]
-        }
+        let name = storeName(call)
+        let key = call.getString("key")
+        run(call) { ["keys": try self.store.keys(name, key: key)] }
     }
 
     @objc func clear(_ call: CAPPluginCall) {
-        let store = storeName(call)
-        run(call) { db in
-            try self.batch(db, "DELETE FROM kv WHERE store = ?1", [store]) { stmt, name in
-                self.bind(stmt, 1, name)
-            }
+        let name = storeName(call)
+        let key = call.getString("key")
+        run(call) {
+            try self.store.clear(name, key: key)
             return [:]
+        }
+    }
+}
+`,
+  "DenextStorageStore.swift":
+    `// Generated by \`denext mobile add storage\` (denext durable key-value storage). Safe to
+// commit; re-run it after upgrading denext (then ship a new binary). See https://denext.dev/docs/mobile.
+
+import Foundation
+#if canImport(SQLCipher)
+import SQLCipher
+#else
+import SQLite3
+#endif
+
+/// A storage failure, with the code the page sees (\`STORAGE_ERROR\`, \`ENCRYPTION_UNAVAILABLE\`,
+/// \`WRONG_KEY\`).
+struct DenextStorageError: Error, CustomStringConvertible {
+    let code: String
+    let description: String
+}
+
+/// The databases behind \`DenextStoragePlugin\` (and so \`openKeyValueStore()\` in \`denext/mobile\`).
+///
+/// - \`kv.sqlite\` in \`Library/Application Support/denext/\`: every plain store, table
+///   \`kv (store, key, value)\`, WAL.
+/// - An encrypted store (a call with a \`key\`) is its own SQLCipher database,
+///   \`kv-<store as hex>.cipher.sqlite\`, keyed with \`PRAGMA key\`. It needs SQLCipher linked into
+///   the app (\`denext mobile add storage --encrypted\` adds the SQLCipher package), and the store
+///   checks it at run time (\`PRAGMA cipher_version\`), so a build that only has the system SQLite
+///   refuses a key with \`ENCRYPTION_UNAVAILABLE\` instead of writing plaintext. The first open of
+///   an encrypted store moves that store's rows out of \`kv.sqlite\` into it. A wrong key is
+///   \`WRONG_KEY\`.
+///
+/// Every call runs on the caller's queue: the plugin serialises them on one queue.
+final class DenextStorageStore {
+    /// SQLite copies bound text (SQLITE_TRANSIENT).
+    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    let folder: URL
+    private var plain: OpaquePointer?
+    private var encrypted: [String: (key: String, db: OpaquePointer)] = [:]
+
+    /// - Parameter folder: Where the databases live (default \`Application Support/denext\`).
+    init(folder: URL? = nil) {
+        self.folder = folder ?? ((try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        ))?.appendingPathComponent("denext", isDirectory: true) ?? FileManager.default.temporaryDirectory)
+    }
+
+    deinit {
+        if let plain { sqlite3_close(plain) }
+        for (_, entry) in encrypted { sqlite3_close(entry.db) }
+    }
+
+    // MARK: SQLite
+
+    private static func failure(_ db: OpaquePointer, _ code: String = "STORAGE_ERROR") -> DenextStorageError {
+        DenextStorageError(code: code, description: String(cString: sqlite3_errmsg(db)))
+    }
+
+    private static func exec(_ db: OpaquePointer, _ sql: String) throws {
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw failure(db) }
+    }
+
+    private static func prepare(_ db: OpaquePointer, _ sql: String) throws -> OpaquePointer {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let prepared = stmt else {
+            throw failure(db)
+        }
+        return prepared
+    }
+
+    private static func bind(_ stmt: OpaquePointer, _ index: Int32, _ text: String) {
+        sqlite3_bind_text(stmt, index, text, -1, transient)
+    }
+
+    /// The first column of the first row of \`sql\`, as text, or nil.
+    private static func scalar(_ db: OpaquePointer, _ sql: String) -> String? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let prepared = stmt else { return nil }
+        defer { sqlite3_finalize(prepared) }
+        guard sqlite3_step(prepared) == SQLITE_ROW, let text = sqlite3_column_text(prepared, 0) else { return nil }
+        return String(cString: text)
+    }
+
+    private static func open(_ path: String) throws -> OpaquePointer {
+        var handle: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK, let opened = handle else {
+            let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "cannot open \\(path)"
+            if let handle { sqlite3_close(handle) }
+            throw DenextStorageError(code: "STORAGE_ERROR", description: message)
+        }
+        return opened
+    }
+
+    private static let schema = "CREATE TABLE IF NOT EXISTS kv (store TEXT NOT NULL, key TEXT NOT NULL, " +
+        "value TEXT NOT NULL, PRIMARY KEY (store, key)) WITHOUT ROWID"
+
+    /// Whether this build's SQLite is SQLCipher (it answers \`PRAGMA cipher_version\`).
+    static func cipherAvailable() -> Bool {
+        guard let db = try? open(":memory:") else { return false }
+        defer { sqlite3_close(db) }
+        return !(scalar(db, "PRAGMA cipher_version") ?? "").isEmpty
+    }
+
+    // MARK: databases
+
+    private func ensureFolder() throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    /// The plain database, opened (and created) on first use.
+    private func plainDatabase() throws -> OpaquePointer {
+        if let plain { return plain }
+        try ensureFolder()
+        let db = try DenextStorageStore.open(folder.appendingPathComponent("kv.sqlite").path)
+        do {
+            try DenextStorageStore.exec(db, "PRAGMA journal_mode=WAL")
+            try DenextStorageStore.exec(db, DenextStorageStore.schema)
+        } catch {
+            sqlite3_close(db)
+            throw error
+        }
+        plain = db
+        return db
+    }
+
+    /// The file an encrypted store lives in.
+    func encryptedFile(_ store: String) -> URL {
+        let hex = store.utf8.map { String(format: "%02x", $0) }.joined()
+        return folder.appendingPathComponent("kv-\\(hex).cipher.sqlite")
+    }
+
+    /// The encrypted database of \`store\`, keyed with \`key\` (opened, checked and migrated once).
+    private func encryptedDatabase(_ store: String, _ key: String) throws -> OpaquePointer {
+        if let entry = encrypted[store] {
+            if entry.key == key { return entry.db }
+            sqlite3_close(entry.db)
+            encrypted[store] = nil
+        }
+        guard DenextStorageStore.cipherAvailable() else {
+            throw DenextStorageError(
+                code: "ENCRYPTION_UNAVAILABLE",
+                description: "this build has no SQLCipher: run \`denext mobile add storage --encrypted\` and rebuild"
+            )
+        }
+        try ensureFolder()
+        let db = try DenextStorageStore.open(encryptedFile(store).path)
+        do {
+            let quoted = key.replacingOccurrences(of: "'", with: "''")
+            try DenextStorageStore.exec(db, "PRAGMA key = '\\(quoted)'")
+            guard sqlite3_exec(db, "SELECT count(*) FROM sqlite_master", nil, nil, nil) == SQLITE_OK else {
+                throw DenextStorageError(code: "WRONG_KEY", description: "the key does not open this store")
+            }
+            try DenextStorageStore.exec(db, "PRAGMA journal_mode=WAL")
+            try DenextStorageStore.exec(db, DenextStorageStore.schema)
+            try migrate(store, into: db)
+        } catch {
+            sqlite3_close(db)
+            throw error
+        }
+        encrypted[store] = (key, db)
+        return db
+    }
+
+    /// Move \`store\`'s rows out of the plain database into its encrypted one (one transaction
+    /// each side; the plain copy is deleted only after the encrypted one committed).
+    private func migrate(_ store: String, into db: OpaquePointer) throws {
+        guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("kv.sqlite").path) else { return }
+        let source = try plainDatabase()
+        let rows = try select(source, "SELECT key, value FROM kv WHERE store = ?1", store) { stmt in
+            (String(cString: sqlite3_column_text(stmt, 0)), String(cString: sqlite3_column_text(stmt, 1)))
+        }
+        if rows.isEmpty { return }
+        // OR IGNORE: rows left behind by a move that stopped before the delete below must not
+        // overwrite values written to the encrypted store since.
+        try batch(db, "INSERT OR IGNORE INTO kv (store, key, value) VALUES (?1, ?2, ?3)", rows) { stmt, row in
+            DenextStorageStore.bind(stmt, 1, store)
+            DenextStorageStore.bind(stmt, 2, row.0)
+            DenextStorageStore.bind(stmt, 3, row.1)
+        }
+        // Overwrite the plain copy as it is deleted, and fold the WAL into the file, so the rows
+        // do not linger in free pages or the log.
+        try DenextStorageStore.exec(source, "PRAGMA secure_delete = ON")
+        defer { sqlite3_exec(source, "PRAGMA secure_delete = OFF", nil, nil, nil) }
+        try batch(source, "DELETE FROM kv WHERE store = ?1", [store]) { stmt, name in
+            DenextStorageStore.bind(stmt, 1, name)
+        }
+        try DenextStorageStore.exec(source, "PRAGMA wal_checkpoint(TRUNCATE)")
+    }
+
+    /// The database a call uses: the store's encrypted one with a key, else the plain one.
+    private func database(_ store: String, _ key: String?) throws -> OpaquePointer {
+        if let key { return try encryptedDatabase(store, key) }
+        return try plainDatabase()
+    }
+
+    // MARK: statements
+
+    private func select<T>(_ db: OpaquePointer, _ sql: String, _ store: String, _ row: (OpaquePointer) -> T) throws -> [T] {
+        let stmt = try DenextStorageStore.prepare(db, sql)
+        defer { sqlite3_finalize(stmt) }
+        DenextStorageStore.bind(stmt, 1, store)
+        var out: [T] = []
+        while sqlite3_step(stmt) == SQLITE_ROW { out.append(row(stmt)) }
+        return out
+    }
+
+    /// Run \`sql\` once per item inside one transaction.
+    private func batch<T>(_ db: OpaquePointer, _ sql: String, _ items: [T], _ fill: (OpaquePointer, T) -> Void) throws {
+        try DenextStorageStore.exec(db, "BEGIN IMMEDIATE")
+        do {
+            let stmt = try DenextStorageStore.prepare(db, sql)
+            defer { sqlite3_finalize(stmt) }
+            for item in items {
+                fill(stmt, item)
+                guard sqlite3_step(stmt) == SQLITE_DONE else { throw DenextStorageStore.failure(db) }
+                sqlite3_reset(stmt)
+                sqlite3_clear_bindings(stmt)
+            }
+            try DenextStorageStore.exec(db, "COMMIT")
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
+        }
+    }
+
+    // MARK: the plugin's calls
+
+    /// The value of each key (nil when missing), in order.
+    func getMany(_ store: String, _ keys: [String], key: String?) throws -> [String?] {
+        let db = try database(store, key)
+        let stmt = try DenextStorageStore.prepare(db, "SELECT value FROM kv WHERE store = ?1 AND key = ?2")
+        defer { sqlite3_finalize(stmt) }
+        var values: [String?] = []
+        for item in keys {
+            DenextStorageStore.bind(stmt, 1, store)
+            DenextStorageStore.bind(stmt, 2, item)
+            if sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) {
+                values.append(String(cString: text))
+            } else {
+                values.append(nil)
+            }
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+        }
+        return values
+    }
+
+    func setMany(_ store: String, _ entries: [(String, String)], key: String?) throws {
+        try batch(try database(store, key), "INSERT OR REPLACE INTO kv (store, key, value) VALUES (?1, ?2, ?3)", entries) { stmt, entry in
+            DenextStorageStore.bind(stmt, 1, store)
+            DenextStorageStore.bind(stmt, 2, entry.0)
+            DenextStorageStore.bind(stmt, 3, entry.1)
+        }
+    }
+
+    func removeMany(_ store: String, _ keys: [String], key: String?) throws {
+        try batch(try database(store, key), "DELETE FROM kv WHERE store = ?1 AND key = ?2", keys) { stmt, item in
+            DenextStorageStore.bind(stmt, 1, store)
+            DenextStorageStore.bind(stmt, 2, item)
+        }
+    }
+
+    func keys(_ store: String, key: String?) throws -> [String] {
+        try select(try database(store, key), "SELECT key FROM kv WHERE store = ?1 ORDER BY key", store) { stmt in
+            String(cString: sqlite3_column_text(stmt, 0))
+        }
+    }
+
+    func clear(_ store: String, key: String?) throws {
+        try batch(try database(store, key), "DELETE FROM kv WHERE store = ?1", [store]) { stmt, name in
+            DenextStorageStore.bind(stmt, 1, name)
         }
     }
 }
@@ -223,6 +406,13 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.File;
+import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.json.JSONArray;
@@ -238,9 +428,49 @@ import org.json.JSONObject;
  * system does not clear the way it may clear a WebView's storage. Table
  * {@code kv (store, key, value)}; every method is one batch (a write batch is one transaction),
  * run on a single worker thread.
+ *
+ * <p>A call with a {@code key} uses the store's own SQLCipher database,
+ * {@code databases/denext-kv-<store as hex>.cipher.db}, through {@code DenextStorageCipher}, which
+ * {@code denext mobile add storage --encrypted} writes with the SQLCipher dependency. Without it a
+ * key is refused ({@code ENCRYPTION_UNAVAILABLE}), never written in the clear; a wrong key is
+ * {@code WRONG_KEY}. The first open of an encrypted store moves that store's rows out of the plain
+ * database (deleted with {@code secure_delete}, the WAL checkpointed).
  */
 @CapacitorPlugin(name = "DenextStorage")
 public class DenextStoragePlugin extends Plugin {
+
+    /** One store database: the plain one, or an encrypted store's. */
+    public interface Db {
+        /** The value of each key (null when missing), in order. */
+        String[] getMany(String store, List<String> keys);
+
+        /** Store every {@code [key, value]} pair, in one transaction. */
+        void setMany(String store, List<String[]> pairs);
+
+        void removeMany(String store, List<String> keys);
+
+        List<String> keys(String store);
+
+        /** Every {@code [key, value]} pair of {@code store}. */
+        List<String[]> rows(String store);
+
+        /** Add every pair whose key {@code store} does not hold yet (a move from the plain database). */
+        void adopt(String store, List<String[]> pairs);
+
+        void clear(String store);
+
+        void close();
+    }
+
+    /** A failure with the code the page sees. */
+    static final class Coded extends Exception {
+        final String code;
+
+        Coded(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+    }
 
     private static final class Helper extends SQLiteOpenHelper {
         Helper(Context context) {
@@ -260,32 +490,158 @@ public class DenextStoragePlugin extends Plugin {
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {}
     }
 
-    private interface Work {
-        JSObject run(SQLiteDatabase db) throws Exception;
+    /** The plain database, through the framework's SQLite. */
+    private static final class PlainDb implements Db {
+        private final Helper helper;
+
+        PlainDb(Context context) {
+            helper = new Helper(context);
+        }
+
+        private SQLiteDatabase db() {
+            return helper.getWritableDatabase();
+        }
+
+        private interface Fill<T> {
+            void bind(SQLiteStatement stmt, T item);
+        }
+
+        private <T> void batch(String sql, Iterable<T> items, Fill<T> fill) {
+            SQLiteDatabase db = db();
+            db.beginTransaction();
+            try {
+                SQLiteStatement stmt = db.compileStatement(sql);
+                try {
+                    for (T item : items) {
+                        stmt.clearBindings();
+                        fill.bind(stmt, item);
+                        stmt.execute();
+                    }
+                } finally {
+                    stmt.close();
+                }
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+            }
+        }
+
+        @Override
+        public String[] getMany(String store, List<String> keys) {
+            String[] out = new String[keys.size()];
+            for (int i = 0; i < keys.size(); i++) {
+                try (
+                    Cursor cursor = db().rawQuery(
+                        "SELECT value FROM kv WHERE store = ? AND key = ?",
+                        new String[] { store, keys.get(i) }
+                    )
+                ) {
+                    out[i] = cursor.moveToFirst() ? cursor.getString(0) : null;
+                }
+            }
+            return out;
+        }
+
+        @Override
+        public void setMany(String store, List<String[]> pairs) {
+            batch("INSERT OR REPLACE INTO kv (store, key, value) VALUES (?, ?, ?)", pairs, (stmt, pair) -> {
+                stmt.bindString(1, store);
+                stmt.bindString(2, pair[0]);
+                stmt.bindString(3, pair[1]);
+            });
+        }
+
+        @Override
+        public void removeMany(String store, List<String> keys) {
+            batch("DELETE FROM kv WHERE store = ? AND key = ?", keys, (stmt, key) -> {
+                stmt.bindString(1, store);
+                stmt.bindString(2, key);
+            });
+        }
+
+        @Override
+        public List<String> keys(String store) {
+            List<String> out = new ArrayList<>();
+            try (Cursor cursor = db().rawQuery("SELECT key FROM kv WHERE store = ? ORDER BY key", new String[] { store })) {
+                while (cursor.moveToNext()) out.add(cursor.getString(0));
+            }
+            return out;
+        }
+
+        @Override
+        public List<String[]> rows(String store) {
+            List<String[]> out = new ArrayList<>();
+            try (Cursor cursor = db().rawQuery("SELECT key, value FROM kv WHERE store = ?", new String[] { store })) {
+                while (cursor.moveToNext()) out.add(new String[] { cursor.getString(0), cursor.getString(1) });
+            }
+            return out;
+        }
+
+        @Override
+        public void adopt(String store, List<String[]> pairs) {
+            batch("INSERT OR IGNORE INTO kv (store, key, value) VALUES (?, ?, ?)", pairs, (stmt, pair) -> {
+                stmt.bindString(1, store);
+                stmt.bindString(2, pair[0]);
+                stmt.bindString(3, pair[1]);
+            });
+        }
+
+        @Override
+        public void clear(String store) {
+            db().delete("kv", "store = ?", new String[] { store });
+        }
+
+        /** Delete {@code store}'s rows overwriting them, and fold the WAL into the file. */
+        void purge(String store) {
+            SQLiteDatabase db = db();
+            pragma(db, "PRAGMA secure_delete = ON");
+            try {
+                clear(store);
+            } finally {
+                pragma(db, "PRAGMA secure_delete = OFF");
+            }
+            pragma(db, "PRAGMA wal_checkpoint(TRUNCATE)");
+        }
+
+        private static void pragma(SQLiteDatabase db, String sql) {
+            try (Cursor cursor = db.rawQuery(sql, null)) {
+                cursor.moveToFirst();
+            }
+        }
+
+        @Override
+        public void close() {
+            helper.close();
+        }
     }
 
-    private interface Fill<T> {
-        void bind(SQLiteStatement stmt, T item);
+    private interface Work {
+        JSObject run() throws Exception;
     }
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private Helper helper;
+    private PlainDb plain;
+    /** Each encrypted store's database and the key it was opened with. */
+    private final Map<String, Object[]> encrypted = new HashMap<>();
 
     @Override
     public void load() {
-        helper = new Helper(getContext());
+        plain = new PlainDb(getContext());
     }
 
     @Override
     protected void handleOnDestroy() {
         executor.shutdown();
-        if (helper != null) helper.close();
+        if (plain != null) plain.close();
+        for (Object[] entry : encrypted.values()) ((Db) entry[1]).close();
     }
 
     private void run(PluginCall call, Work work) {
         executor.execute(() -> {
             try {
-                call.resolve(work.run(helper.getWritableDatabase()));
+                call.resolve(work.run());
+            } catch (Coded e) {
+                call.reject(e.getMessage(), e.code, e);
             } catch (Exception e) {
                 String message = e.getMessage() != null ? e.getMessage() : e.toString();
                 call.reject(message, "STORAGE_ERROR", e);
@@ -293,7 +649,260 @@ public class DenextStoragePlugin extends Plugin {
         });
     }
 
-    private static <T> void batch(SQLiteDatabase db, String sql, Iterable<T> items, Fill<T> fill) {
+    /** {@code DenextStorageCipher}, when {@code denext mobile add storage --encrypted} wrote it. */
+    private static Class<?> cipherClass() {
+        try {
+            return Class.forName("dev.denext.storage.DenextStorageCipher");
+        } catch (ClassNotFoundException e) {
+            return null;
+        }
+    }
+
+    private static String hex(String text) {
+        StringBuilder out = new StringBuilder();
+        for (byte b : text.getBytes(StandardCharsets.UTF_8)) out.append(String.format("%02x", b));
+        return out.toString();
+    }
+
+    /** The encrypted database of {@code store}, keyed with {@code key} (opened and migrated once). */
+    private Db cipherDb(String store, String key) throws Exception {
+        Object[] entry = encrypted.get(store);
+        if (entry != null && entry[0].equals(key)) return (Db) entry[1];
+        if (entry != null) {
+            ((Db) entry[1]).close();
+            encrypted.remove(store);
+        }
+        Class<?> cipher = cipherClass();
+        if (cipher == null || !cipherLoads(cipher)) {
+            throw new Coded(
+                "ENCRYPTION_UNAVAILABLE",
+                "this build has no SQLCipher: run \`denext mobile add storage --encrypted\` and rebuild"
+            );
+        }
+        File dir = getContext().getDatabasePath("denext-kv.db").getParentFile();
+        File file = new File(dir, "denext-kv-" + hex(store) + ".cipher.db");
+        Db db;
+        try {
+            db = (Db) cipher.getMethod("open", File.class, String.class).invoke(null, file, key);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            String message = String.valueOf(cause.getMessage());
+            if (message.startsWith("WRONG_KEY")) throw new Coded("WRONG_KEY", "the key does not open this store");
+            throw new Coded("STORAGE_ERROR", message);
+        }
+        // OR IGNORE: rows left behind by a move that stopped before the purge must not overwrite
+        // values written to the encrypted store since.
+        List<String[]> rows = plain.rows(store);
+        if (!rows.isEmpty()) {
+            db.adopt(store, rows);
+            plain.purge(store);
+        }
+        encrypted.put(store, new Object[] { key, db });
+        return db;
+    }
+
+    /** The database a call uses: the store's encrypted one with a key, else the plain one. */
+    private Db db(PluginCall call, String store) throws Exception {
+        String key = call.getString("key");
+        return key != null ? cipherDb(store, key) : plain;
+    }
+
+    private static String storeName(PluginCall call) {
+        String store = call.getString("store");
+        return store != null ? store : "default";
+    }
+
+    private static List<String> strings(PluginCall call, String name) {
+        JSArray array = call.getArray(name, new JSArray());
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) {
+            Object item = array.opt(i);
+            if (item instanceof String) out.add((String) item);
+        }
+        return out;
+    }
+
+    /** Whether SQLCipher's native library loads ({@code DenextStorageCipher.available()}). */
+    private static boolean cipherLoads(Class<?> cipher) {
+        try {
+            return Boolean.TRUE.equals(cipher.getMethod("available").invoke(null));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @PluginMethod
+    public void cipher(PluginCall call) {
+        run(call, () -> {
+            Class<?> cipher = cipherClass();
+            JSObject result = new JSObject();
+            result.put("available", cipher != null && cipherLoads(cipher));
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void getMany(PluginCall call) {
+        String store = storeName(call);
+        JSArray keys = call.getArray("keys", new JSArray());
+        run(call, () -> {
+            List<String> wanted = new ArrayList<>();
+            for (int i = 0; i < keys.length(); i++) {
+                Object key = keys.opt(i);
+                wanted.add(key instanceof String ? (String) key : null);
+            }
+            List<String> asked = new ArrayList<>();
+            for (String key : wanted) if (key != null) asked.add(key);
+            String[] found = db(call, store).getMany(store, asked);
+            JSArray values = new JSArray();
+            int at = 0;
+            for (String key : wanted) {
+                String value = key == null ? null : found[at++];
+                values.put(value == null ? JSONObject.NULL : value);
+            }
+            JSObject result = new JSObject();
+            result.put("values", values);
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void setMany(PluginCall call) {
+        String store = storeName(call);
+        JSArray entries = call.getArray("entries", new JSArray());
+        List<String[]> pairs = new ArrayList<>();
+        for (int i = 0; i < entries.length(); i++) {
+            JSONArray pair = entries.optJSONArray(i);
+            if (pair == null || pair.length() != 2) continue;
+            Object key = pair.opt(0);
+            Object value = pair.opt(1);
+            if (key instanceof String && value instanceof String) {
+                pairs.add(new String[] { (String) key, (String) value });
+            }
+        }
+        run(call, () -> {
+            db(call, store).setMany(store, pairs);
+            return new JSObject();
+        });
+    }
+
+    @PluginMethod
+    public void removeMany(PluginCall call) {
+        String store = storeName(call);
+        List<String> keys = strings(call, "keys");
+        run(call, () -> {
+            db(call, store).removeMany(store, keys);
+            return new JSObject();
+        });
+    }
+
+    @PluginMethod
+    public void keys(PluginCall call) {
+        String store = storeName(call);
+        run(call, () -> {
+            JSArray keys = new JSArray();
+            for (String key : db(call, store).keys(store)) keys.put(key);
+            JSObject result = new JSObject();
+            result.put("keys", keys);
+            return result;
+        });
+    }
+
+    @PluginMethod
+    public void clear(PluginCall call) {
+        String store = storeName(call);
+        run(call, () -> {
+            db(call, store).clear(store);
+            return new JSObject();
+        });
+    }
+}
+`,
+};
+
+/** The Android file `--encrypted` adds beside them (SQLCipher for Android). */
+export const STORAGE_CIPHER_ANDROID_FILES: Readonly<Record<string, string>> = {
+  "DenextStorageCipher.java":
+    `// Generated by \`denext mobile add storage --encrypted\` (denext encrypted key-value storage). Safe to
+// commit; re-run it after upgrading denext (then ship a new binary). See https://denext.dev/docs/mobile.
+
+package dev.denext.storage;
+
+import android.database.Cursor;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import net.zetetic.database.sqlcipher.SQLiteDatabase;
+import net.zetetic.database.sqlcipher.SQLiteDatabaseHook;
+import net.zetetic.database.sqlcipher.SQLiteStatement;
+
+/**
+ * An encrypted store's database for {@link DenextStoragePlugin}: SQLCipher for Android
+ * ({@code net.zetetic:sqlcipher-android}, which {@code denext mobile add storage --encrypted} adds
+ * to the app's dependencies), one file per store, table {@code kv (store, key, value)}, keyed with
+ * the store's key. The plugin reaches it by name, so an app without SQLCipher still compiles (and
+ * refuses a key).
+ */
+public final class DenextStorageCipher implements DenextStoragePlugin.Db {
+
+    private static boolean loaded = false;
+    private final SQLiteDatabase db;
+
+    private DenextStorageCipher(SQLiteDatabase db) {
+        this.db = db;
+    }
+
+    private static synchronized void load() {
+        if (!loaded) {
+            System.loadLibrary("sqlcipher");
+            loaded = true;
+        }
+    }
+
+    /** Whether SQLCipher's native library loads. */
+    public static boolean available() {
+        try {
+            load();
+            return true;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /**
+     * Open (creating when missing) the encrypted database at {@code file} with {@code key}. A key
+     * that does not open it throws an exception whose message starts with {@code WRONG_KEY}.
+     */
+    public static DenextStoragePlugin.Db open(File file, String key) {
+        load();
+        File parent = file.getParentFile();
+        if (parent != null) parent.mkdirs();
+        SQLiteDatabase db = SQLiteDatabase.openDatabase(
+            file.getAbsolutePath(),
+            key,
+            null,
+            SQLiteDatabase.CREATE_IF_NECESSARY | SQLiteDatabase.OPEN_READWRITE,
+            (SQLiteDatabaseHook) null
+        );
+        try (Cursor cursor = db.rawQuery("SELECT count(*) FROM sqlite_master", new String[0])) {
+            cursor.moveToFirst();
+        } catch (RuntimeException e) {
+            db.close();
+            throw new IllegalArgumentException("WRONG_KEY: " + e.getMessage(), e);
+        }
+        db.enableWriteAheadLogging();
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS kv (store TEXT NOT NULL, key TEXT NOT NULL, "
+                + "value TEXT NOT NULL, PRIMARY KEY (store, key)) WITHOUT ROWID"
+        );
+        return new DenextStorageCipher(db);
+    }
+
+    private interface Fill<T> {
+        void bind(SQLiteStatement stmt, T item);
+    }
+
+    private <T> void batch(String sql, Iterable<T> items, Fill<T> fill) {
         db.beginTransaction();
         try {
             SQLiteStatement stmt = db.compileStatement(sql);
@@ -312,108 +921,74 @@ public class DenextStoragePlugin extends Plugin {
         }
     }
 
-    private static String storeName(PluginCall call) {
-        String store = call.getString("store");
-        return store != null ? store : "default";
-    }
-
-    private static java.util.List<String> strings(PluginCall call, String name) {
-        JSArray array = call.getArray(name, new JSArray());
-        java.util.List<String> out = new java.util.ArrayList<>();
-        for (int i = 0; i < array.length(); i++) {
-            Object item = array.opt(i);
-            if (item instanceof String) out.add((String) item);
+    @Override
+    public String[] getMany(String store, List<String> keys) {
+        String[] out = new String[keys.size()];
+        for (int i = 0; i < keys.size(); i++) {
+            try (
+                Cursor cursor = db.rawQuery(
+                    "SELECT value FROM kv WHERE store = ? AND key = ?",
+                    new String[] { store, keys.get(i) }
+                )
+            ) {
+                out[i] = cursor.moveToFirst() ? cursor.getString(0) : null;
+            }
         }
         return out;
     }
 
-    @PluginMethod
-    public void getMany(PluginCall call) {
-        String store = storeName(call);
-        JSArray keys = call.getArray("keys", new JSArray());
-        run(call, db -> {
-            JSArray values = new JSArray();
-            for (int i = 0; i < keys.length(); i++) {
-                Object key = keys.opt(i);
-                if (!(key instanceof String)) {
-                    values.put(JSONObject.NULL);
-                    continue;
-                }
-                try (
-                    Cursor cursor = db.rawQuery(
-                        "SELECT value FROM kv WHERE store = ? AND key = ?",
-                        new String[] { store, (String) key }
-                    )
-                ) {
-                    values.put(cursor.moveToFirst() ? cursor.getString(0) : JSONObject.NULL);
-                }
-            }
-            JSObject result = new JSObject();
-            result.put("values", values);
-            return result;
+    @Override
+    public void setMany(String store, List<String[]> pairs) {
+        batch("INSERT OR REPLACE INTO kv (store, key, value) VALUES (?, ?, ?)", pairs, (stmt, pair) -> {
+            stmt.bindString(1, store);
+            stmt.bindString(2, pair[0]);
+            stmt.bindString(3, pair[1]);
         });
     }
 
-    @PluginMethod
-    public void setMany(PluginCall call) {
-        String store = storeName(call);
-        JSArray entries = call.getArray("entries", new JSArray());
-        java.util.List<String[]> pairs = new java.util.ArrayList<>();
-        for (int i = 0; i < entries.length(); i++) {
-            JSONArray pair = entries.optJSONArray(i);
-            if (pair == null || pair.length() != 2) continue;
-            Object key = pair.opt(0);
-            Object value = pair.opt(1);
-            if (key instanceof String && value instanceof String) {
-                pairs.add(new String[] { (String) key, (String) value });
-            }
+    @Override
+    public void removeMany(String store, List<String> keys) {
+        batch("DELETE FROM kv WHERE store = ? AND key = ?", keys, (stmt, key) -> {
+            stmt.bindString(1, store);
+            stmt.bindString(2, key);
+        });
+    }
+
+    @Override
+    public List<String> keys(String store) {
+        List<String> out = new ArrayList<>();
+        try (Cursor cursor = db.rawQuery("SELECT key FROM kv WHERE store = ? ORDER BY key", new String[] { store })) {
+            while (cursor.moveToNext()) out.add(cursor.getString(0));
         }
-        run(call, db -> {
-            batch(db, "INSERT OR REPLACE INTO kv (store, key, value) VALUES (?, ?, ?)", pairs, (stmt, pair) -> {
-                stmt.bindString(1, store);
-                stmt.bindString(2, pair[0]);
-                stmt.bindString(3, pair[1]);
-            });
-            return new JSObject();
+        return out;
+    }
+
+    @Override
+    public List<String[]> rows(String store) {
+        List<String[]> out = new ArrayList<>();
+        try (Cursor cursor = db.rawQuery("SELECT key, value FROM kv WHERE store = ?", new String[] { store })) {
+            while (cursor.moveToNext()) out.add(new String[] { cursor.getString(0), cursor.getString(1) });
+        }
+        return out;
+    }
+
+    @Override
+    public void adopt(String store, List<String[]> pairs) {
+        batch("INSERT OR IGNORE INTO kv (store, key, value) VALUES (?, ?, ?)", pairs, (stmt, pair) -> {
+            stmt.bindString(1, store);
+            stmt.bindString(2, pair[0]);
+            stmt.bindString(3, pair[1]);
         });
     }
 
-    @PluginMethod
-    public void removeMany(PluginCall call) {
-        String store = storeName(call);
-        java.util.List<String> keys = strings(call, "keys");
-        run(call, db -> {
-            batch(db, "DELETE FROM kv WHERE store = ? AND key = ?", keys, (stmt, key) -> {
-                stmt.bindString(1, store);
-                stmt.bindString(2, key);
-            });
-            return new JSObject();
-        });
+    @Override
+    public void clear(String store) {
+        db.delete("kv", "store = ?", new String[] { store });
     }
 
-    @PluginMethod
-    public void keys(PluginCall call) {
-        String store = storeName(call);
-        run(call, db -> {
-            JSArray keys = new JSArray();
-            try (
-                Cursor cursor = db.rawQuery("SELECT key FROM kv WHERE store = ? ORDER BY key", new String[] { store })
-            ) {
-                while (cursor.moveToNext()) keys.put(cursor.getString(0));
-            }
-            JSObject result = new JSObject();
-            result.put("keys", keys);
-            return result;
-        });
-    }
-
-    @PluginMethod
-    public void clear(PluginCall call) {
-        String store = storeName(call);
-        run(call, db -> {
-            db.delete("kv", "store = ?", new String[] { store });
-            return new JSObject();
-        });
+    @Override
+    public void close() {
+        db.close();
     }
 }
 `,

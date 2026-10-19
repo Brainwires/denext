@@ -9,7 +9,8 @@ modules: they have no web build and no denext alias, so in [React Native mode](/
 their imports resolve to the real packages and fail when called. Each has a replacement that
 runs in the Capacitor shell, and usually in a browser too. Some are denext APIs; others are the
 vendor's web SDK or a community Capacitor plugin, which denext neither wraps nor tests. This page
-says which is which.
+says which is which. `denext migrate --from expo` (and `migrate --check`) names each of these
+packages an app depends on, with its replacement and a link here.
 
 To move an existing React Native call site, put the calls behind a module of your own (say
 `lib/payments.ts`) and give it a `.web.ts` twin: React Native mode picks the `.web.*` file, and

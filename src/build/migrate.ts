@@ -43,6 +43,29 @@ import {
 } from "./mobile-icon-source.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
+  isTanstackStartApp,
+  readTanstackStartOptions,
+  tanstackStartConfigSource,
+  type TanstackStartMigrateInfo,
+} from "./migrate-tanstack-start.ts";
+import {
+  detectFresh,
+  droppedFreshImports,
+  freshAliasImports,
+  freshDenoJson,
+  type FreshMigrateInfo,
+  transformFreshApp,
+} from "./migrate-fresh.ts";
+import {
+  type PreactMigrateInfo,
+  preactMigrateInfo,
+  preactResolveAlias,
+  preactRouterImports,
+  type PreactTooling,
+  preactTooling,
+} from "./migrate-preact.ts";
+import { PREACT_ALIASES, preactAliasImports } from "./preact-layer.ts";
+import {
   capacitorConfigSource,
   capacitorIdentity,
   expoApiUsage,
@@ -143,6 +166,8 @@ const RR_TYPES_DIR = ".react-router/types";
 
 /** The `@denext/react-router` package the RR7 framework-mode plugin path pins. */
 const REACT_ROUTER_SPEC = catalogSpec("@denext/react-router");
+/** The `@denext/tanstack-start` package a TanStack Start app runs on. */
+const TANSTACK_START_SPEC = catalogSpec("@denext/tanstack-start");
 /**
  * The `@denext/effect` bridge specifier, mapped (and its `effect()` plugin wired into the
  * generated `denext.config.ts`) whenever the app depends on the npm `effect` package. The
@@ -171,6 +196,11 @@ const SOFT_DROP = new Set([
   // `tsr generate`), its devtools Vite plugin has no dev server to hook. (`@tanstack/router-cli`
   // stays: the app still runs it.)
   "@tailwindcss/vite",
+  // Preact's build tooling (a Preact app runs on denext's Preact layer).
+  "@preact/preset-vite",
+  "preact-cli",
+  "wmr",
+  "@prefresh/vite",
   "@tanstack/router-plugin",
   "@tanstack/devtools-vite",
 ]);
@@ -344,9 +374,9 @@ export interface MigrateOptions {
   /** Proxy path prefixes; when omitted, parsed from a literal `vite.config` proxy, else `["/api"]`. */
   proxyPrefixes?: string[];
   /**
-   * Force the source framework instead of auto-detecting (`next` | `remix` | `vite` |
-   * `cra` | `generic` | `expo`). Reserved for ambiguous cases; auto-detection is used when
-   * omitted.
+   * Force the source framework instead of auto-detecting (`next` | `remix` | `react-router` |
+   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh` | `preact`). Reserved for ambiguous
+   * cases; auto-detection is used when omitted.
    */
   from?: string;
   /**
@@ -428,7 +458,16 @@ export interface AppIconReport {
 
 /** Result of a migration run (for the CLI to print). */
 export interface MigrateResult {
-  kind: "next" | "spa" | "cra" | "generic" | "remix" | "expo";
+  kind:
+    | "next"
+    | "spa"
+    | "cra"
+    | "generic"
+    | "remix"
+    | "expo"
+    | "tanstack-start"
+    | "fresh"
+    | "preact";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -461,6 +500,12 @@ export interface MigrateResult {
   nextAuth?: NextAuthMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
+  /** Present when {@link kind} is `"tanstack-start"` — the Start options carried and dropped. */
+  tanstackStart?: TanstackStartMigrateInfo;
+  /** Present when {@link kind} is `"fresh"` — the route tree generated and what did not migrate. */
+  fresh?: FreshMigrateInfo;
+  /** Present when {@link kind} is `"preact"` — the tooling, the routers and the findings. */
+  preact?: PreactMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
   nextConfig?: NextConfigReport;
   /** Present with `--enable-capacitor`: the Capacitor target written and the steps to run. */
@@ -602,6 +647,11 @@ interface DenextResolver {
   /** The `@denext/effect` bridge import-map entry (single `.` export — no subpaths). */
   effectEntry: () => Record<string, string>;
   /**
+   * The `@denext/tanstack-start` entry, and in local-path mode the plugin's own bare imports
+   * (`@denext/denext/*`, `@std/path`), which a `file://` package cannot resolve itself.
+   */
+  tanstackStartEntries: () => Record<string, string>;
+  /**
    * denext's OWN `jsr:`/`npm:` deps (`@std/*`, `ws`, esbuild, …), for **local-path mode
    * only**. A `file://` denext is not a self-contained package, so tools that follow its
    * modules — notably `deno desktop`, which compiles `denext/desktop`'s graph and can't
@@ -637,6 +687,7 @@ function jsrResolver(V: string): DenextResolver {
       "@denext/react-router/dom": REACT_ROUTER_SPEC + "/dom",
     }),
     effectEntry: () => ({ "@denext/effect": EFFECT_SPEC }),
+    tanstackStartEntries: () => ({ "@denext/tanstack-start": TANSTACK_START_SPEC }),
     frameworkDeps: () => ({}),
   };
 }
@@ -736,6 +787,12 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
   const efDir = join(abs, "packages", "effect");
   const efExp = await packageExports(efDir);
   const rrExp = await packageExports(join(abs, "packages", "react-router"));
+  const tssEntries = await localPluginEntries(
+    "@denext/tanstack-start",
+    join(abs, "packages", "tanstack-start"),
+    local,
+    fileFor,
+  );
   return {
     base: local(""),
     sub: local,
@@ -771,8 +828,39 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
     effectEntry: () => ({
       "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts"),
     }),
+    tanstackStartEntries: () => tssEntries,
     frameworkDeps: () => frameworkDeps,
   };
+}
+
+/**
+ * A workspace plugin's import-map entries in local-path mode: the package itself, and its own
+ * bare imports (a `file://` module resolves them through the APP's import map): every
+ * `@denext/denext[/<sub>]` its source imports to the checkout (a `jsr:` entry would cover the
+ * subpaths, a file does not), the rest (`jsr:`/`npm:`) as the package pins them.
+ */
+async function localPluginEntries(
+  name: string,
+  dir: string,
+  local: (sub: string) => string,
+  fileFor: (root: string, rel: string) => string,
+): Promise<Record<string, string>> {
+  const cfg = (await readJson(join(dir, "deno.json"))) ?? {};
+  const exp = (cfg.exports ?? {}) as Record<string, string>;
+  const out: Record<string, string> = { [name]: fileFor(dir, exp["."] ?? "./mod.ts") };
+  for (const [key, target] of Object.entries((cfg.imports ?? {}) as Record<string, string>)) {
+    if (!key.startsWith("@denext/denext")) out[key] = target;
+  }
+  const denextSpecs = new Set<string>();
+  const scan = (text: string) => {
+    for (const m of text.matchAll(/["'](@denext\/denext(?:\/[\w./-]+)?)["']/g)) {
+      denextSpecs.add(m[1]);
+    }
+  };
+  scan(await mfs.readTextFile(join(dir, "mod.ts")).catch(() => ""));
+  await walkCode(join(dir, "src"), scan);
+  for (const spec of denextSpecs) out[spec] = local(spec.slice("@denext/denext/".length));
+  return out;
 }
 
 /**
@@ -1123,6 +1211,10 @@ async function migrateNonNextProject(
   if (from === "expo" || (!from && await isExpoApp(dir, deps))) {
     return await migrateExpoProject(dir, deps, options);
   }
+  // Before the SPA family: a Start app has a vite.config too.
+  if (from === "tanstack-start" || (!from && await isTanstackStartApp(dir, deps))) {
+    return await migrateTanstackStartProject(dir, deps, options);
+  }
   return (await migrateRemixFamily(dir, deps, options)) ??
     (await migrateSpaFamily(dir, deps, options));
 }
@@ -1145,13 +1237,17 @@ async function migrateRemixFamily(
   return null;
 }
 
-/** CRA, Vite or a generic React SPA → SPA mode. */
+/** CRA, Vite or a generic React SPA → SPA mode (a Preact app first, with the Preact layer). */
 async function migrateSpaFamily(
   dir: string,
   deps: Record<string, string>,
   options: MigrateOptions,
 ): Promise<MigrateResult | null> {
   const from = options.from;
+  const preact = from === "preact" || !from ? await preactTooling(dir, deps) : null;
+  if (preact || from === "preact") {
+    return await migrateSpaProject(dir, deps, options, "vite", preact ?? "vite");
+  }
   for (const source of ["cra", "vite", "generic"] as const) {
     const detect = source === "cra" ? isCra : source === "vite" ? isViteSpa : isGenericSpa;
     if (from === source || (!from && await detect(dir, deps))) {
@@ -1352,6 +1448,10 @@ function capacitorOptionsOf(options: MigrateOptions): CapacitorOptions {
 function capacitorSkipReason(r: MigrateResult): string {
   const what = r.kind === "remix"
     ? "a Remix / React Router app (its loaders and actions need a server)"
+    : r.kind === "tanstack-start"
+    ? "a TanStack Start app (its server functions need a server)"
+    : r.kind === "fresh"
+    ? "a Fresh app (its handlers and middleware need a server)"
     : "a Pages Router app";
   return `--enable-capacitor covers SPA, Next App Router and Expo apps; this is ${what}, ` +
     "which it does not cover yet";
@@ -1359,6 +1459,10 @@ function capacitorSkipReason(r: MigrateResult): string {
 
 /** The migration for whichever framework `dir` holds. */
 async function migrateAnyProject(dir: string, options: MigrateOptions): Promise<MigrateResult> {
+  // Fresh apps are Deno projects (no package.json), so they are recognized first.
+  if (options.from === "fresh" || (!options.from && await detectFresh(dir))) {
+    return await migrateFreshProject(dir, options);
+  }
   const deps = await readAppDeps(dir);
   return await migrateNonNextProject(dir, deps, options) ??
     await migrateNextProject(dir, deps, options);
@@ -1728,6 +1832,138 @@ async function migrateRemixProject(
     remix,
     prisma,
   };
+}
+
+/**
+ * TanStack Start → the `@denext/tanstack-start` plugin. The app's sources stay as they are:
+ * migrate writes a `deno.json` whose import map points React at denext (the plugin compiles the
+ * app onto denext's React) and maps the plugin, and a `denext.config.ts` registering
+ * `tanstackStart()` with the Start options its vite.config passed. TanStack's packages load
+ * from the app's own `node_modules` (`nodeModulesDir: "manual"`), so they are not pinned.
+ */
+async function migrateTanstackStartProject(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const { pnp } = await detectPackageManager(dir);
+  if (pnp) throw pnpUnsupported(dir);
+  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const imports = await buildAppRouterImports(dir, R, deps);
+  const classified = classifyDeps(deps, imports, { pin: false });
+  Object.assign(imports, R.tanstackStartEntries());
+  const written: string[] = [];
+  const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, {
+    tasks: spaTasks(false, R.cli, false, "manual"),
+    nodeModulesDir: "manual",
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
+    // Start apps import extensionless (`./routeTree.gen`), as Vite resolves them.
+    unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
+    compilerOptions: {
+      jsx: "react-jsx",
+      jsxImportSource: "react",
+      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+      strict: true,
+      skipLibCheck: true,
+    },
+    // The plugin generates the route tree; the formatter and linter leave it alone.
+    fmt: { exclude: ["src/routeTree.gen.ts"] },
+    lint: { exclude: ["src/routeTree.gen.ts"] },
+    imports,
+  }, written);
+  await ensureGitignore(dir, [".denext/", "out/"], written);
+  await ensureVscodeDeno(dir, written);
+  const tanstackStart = await readTanstackStartOptions(dir);
+  const configExists = !(await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => tanstackStartConfigSource(GEN_MARKER, tanstackStart),
+    written,
+  ));
+  return {
+    kind: "tanstack-start",
+    wrote: written,
+    ...classified,
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: !configExists,
+    pagesConfigExists: configExists,
+    denoJsonExists,
+    tanstackStart,
+  };
+}
+
+// ── Fresh migration ─────────────────────────────────────────────────────────
+
+/**
+ * A Fresh app (1.x or 2) → denext's App Router: the `app/` tree and `middleware.ts` generated
+ * around the untouched Fresh route modules (`transformFreshApp`), islands marked `"use client"`,
+ * `static/` moved to `public/`, and the app's own `deno.json` merged — Fresh, Preact and Vite
+ * imports replaced by denext's aliases, denext's tasks, the JSX runtime pointed at denext.
+ */
+async function migrateFreshProject(dir: string, options: MigrateOptions): Promise<MigrateResult> {
+  const detection = await detectFresh(dir);
+  if (!detection) {
+    throw new Error(
+      `no Fresh app in ${dir}: expected a deno.json mapping "fresh" (Fresh 2) or "$fresh/" ` +
+        "(Fresh 1.x), or a fresh.gen.ts, beside a routes/ directory",
+    );
+  }
+  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const imports = await buildAppRouterImports(dir, R, {});
+  const aliases = freshAliasImports(R.sub);
+  Object.assign(imports, aliases);
+  const written: string[] = [];
+  const fresh = await transformFreshApp(dir, detection, written);
+  const before = (detection.config.imports ?? {}) as Record<string, string>;
+  const removed = droppedFreshImports(before);
+  const configPath = detection.configPath ?? join(dir, "deno.json");
+  const merged = freshDenoJson(detection.config, {
+    marker: GEN_MARKER_TEXT,
+    imports,
+    tasks: appRouterTasks(R, null),
+    unstable: withDenextUnstable(detection.config.unstable),
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
+  });
+  await mfs.writeTextFile(configPath, JSON.stringify(merged, null, 2) + "\n");
+  written.unshift(configPath);
+  await ensureGitignore(dir, [".denext/", "out/", "_fresh/"], written);
+  await ensureVscodeDeno(dir, written);
+  const configExists = !(await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => freshConfigSource(fresh),
+    written,
+  ));
+  return {
+    kind: "fresh",
+    wrote: written,
+    aliased: removed.filter((k) => k in aliases),
+    passthrough: [],
+    dropped: removed.filter((k) => !(k in aliases)),
+    flagged: [],
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: !configExists,
+    pagesConfigExists: configExists,
+    denoJsonExists: false,
+    fresh,
+  };
+}
+
+/** A migrated Fresh app's `denext.config.ts`: the Tailwind build it had, if any. */
+function freshConfigSource(fresh: FreshMigrateInfo): string {
+  const tailwind = fresh.tailwind
+    ? `  // Compiled by denext (Tailwind v4); the root layout imports the output.\n` +
+      `  tailwind: { input: ${JSON.stringify(fresh.tailwind.input)}, output: ${
+        JSON.stringify(fresh.tailwind.output)
+      } },\n`
+    : "";
+  return `${GEN_MARKER}
+import type { DenextConfig } from "denext/server";
+
+// A Fresh ${fresh.version}.x app on denext: its routes run through middleware.ts and app/.
+export default {
+${tailwind}} satisfies DenextConfig;
+`;
 }
 
 // ── Vite SPA migration ──────────────────────────────────────────────────────
@@ -2154,6 +2390,8 @@ type SpaConfigFacts = {
   viteEmitters?: MappedViteEmitter[];
   /** `spa.assetsDir` (a Vite app's `build.assetsDir`). */
   assetsDir?: string;
+  /** `resolveAlias` (a Preact app: npm packages importing Preact get denext's). */
+  resolveAlias?: Record<string, string>;
 };
 
 /** Source text for the generated `denext.config.ts`. */
@@ -2182,10 +2420,21 @@ function spaConfigSource(o: SpaConfigFacts): string {
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
     tailwindBlock +
+    resolveAliasLines(o.resolveAlias) +
     mobileIconLines(o.mobileIcon) +
     (o.desktop ? desktopConfigLines(desktopAppName(o.title)) : "") +
     spaBlockLines(o) +
     `} satisfies DenextConfig;\n`;
+}
+
+/** The generated config's `resolveAlias` (a Preact app's packages → denext), when there is one. */
+function resolveAliasLines(alias: Record<string, string> | undefined): string {
+  if (!alias || Object.keys(alias).length === 0) return "";
+  const lines = Object.entries(alias).map(([k, v]) =>
+    `    ${JSON.stringify(k)}: ${JSON.stringify(v)},\n`
+  );
+  return `  // Preact, its hooks / JSX runtime and Preact Signals are denext's, for npm packages too.\n` +
+    `  resolveAlias: {\n${lines.join("")}  },\n`;
 }
 
 /** The generated config's `spa: { … }` block. */
@@ -2656,13 +2905,19 @@ function desktopTask(hasIcon: boolean): string {
  * @param entries `.gitignore` lines to ensure (e.g. `.denext/`, `out/`).
  * @param written Accumulator the `.gitignore` path is pushed onto when modified.
  */
+/**
+ * The project-local cache Deno's native TypeScript 7 check and the tsgo language server write,
+ * ignored in every migrated project (once: {@link appendGitignore} skips a present line).
+ */
+const DENO_PROJECT_CACHE = ".deno/";
+
 /** Append `.gitignore` entries (shared, symlink-safe), tracking the path in `written`. */
 async function ensureGitignore(
   dir: string,
   entries: string[],
   written: string[],
 ): Promise<void> {
-  const path = await appendGitignore(dir, entries);
+  const path = await appendGitignore(dir, [...entries, DENO_PROJECT_CACHE]);
   if (path) written.push(path);
 }
 
@@ -2913,6 +3168,7 @@ async function migrateSpaProject(
   deps: Record<string, string>,
   options: MigrateOptions,
   source: SpaSource,
+  preact: PreactTooling | null = null,
 ): Promise<MigrateResult> {
   const V = await denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
@@ -2929,8 +3185,11 @@ async function migrateSpaProject(
   // resolve from the installed node_modules, so no `npm:` import entries are emitted;
   // with "auto" they are pinned as `npm:name@version` like the Next path.
   const classified = classifyDeps(deps, imports, { pin: !manual });
+  // A Preact app: Preact, its JSX runtime, Preact Signals and preact-iso point at denext (over
+  // the npm pins classifyDeps wrote for them).
+  if (preact) Object.assign(imports, preactImports(R, deps));
 
-  const facts = await spaSourceFacts(dir, deps, options, source);
+  const facts = await spaFacts(dir, deps, options, source, preact);
   // `viteEmitterPlugin` in the generated config.
   // The light entry: a desktop app's `desktop.ts` imports the config at runtime, and
   // `denext/plugin-kit` would bring the build toolchain (esbuild, sass, mdx) with it.
@@ -2965,7 +3224,61 @@ async function migrateSpaProject(
     appIcon: appIconInfo(icon, files.configWritten),
     nodeModulesDir,
   });
-  return files.capacitor ? { ...r, capacitor: files.capacitor } : r;
+  const result = files.capacitor ? { ...r, capacitor: files.capacitor } : r;
+  return preact ? await preactResult(result, dir, deps, preact, files.denoJsonExists) : result;
+}
+
+/** A Preact app's import-map entries: the shared Preact layer, preact-iso and the debug add-ons. */
+function preactImports(R: DenextResolver, deps: Record<string, string>): Record<string, string> {
+  return { ...preactAliasImports(R.sub), ...preactRouterImports(R.sub, deps) };
+}
+
+/** The SPA facts, plus a Preact app's `resolveAlias` (WMR / preact-cli / esbuild read as generic). */
+async function spaFacts(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+  source: SpaSource,
+  preact: PreactTooling | null,
+) {
+  if (!preact) return await spaSourceFacts(dir, deps, options, source);
+  const facts = await spaSourceFacts(dir, deps, options, preact === "vite" ? source : "generic");
+  return { ...facts, resolveAlias: preactResolveAlias(deps) };
+}
+
+/**
+ * The Preact migration's result: the `"preact"` kind, the packages the Preact layer replaces
+ * reported as aliased (not npm passthrough), the findings, and Preact's JSX runtime.
+ */
+async function preactResult(
+  result: MigrateResult,
+  dir: string,
+  deps: Record<string, string>,
+  preact: PreactTooling,
+  denoJsonExists: boolean,
+): Promise<MigrateResult> {
+  if (!denoJsonExists) await preactJsxSource(dir);
+  const replaced = (name: string) => name in PREACT_ALIASES || name.startsWith("preact-iso");
+  return {
+    ...result,
+    kind: "preact",
+    aliased: [...result.aliased, ...result.passthrough.filter(replaced)],
+    passthrough: result.passthrough.filter((name) => !replaced(name)),
+    preact: await preactMigrateInfo(dir, deps, preact),
+  };
+}
+
+/**
+ * A Preact app's JSX compiles with Preact's runtime (`denext/preact/jsx-runtime`, which binds a
+ * signal passed as a DOM prop): `jsxImportSource: "preact"` in the generated `deno.json`.
+ */
+async function preactJsxSource(dir: string): Promise<void> {
+  const path = join(dir, "deno.json");
+  const config = JSON.parse(await mfs.readTextFile(path)) as {
+    compilerOptions?: Record<string, unknown>;
+  };
+  config.compilerOptions = { ...config.compilerOptions, jsxImportSource: "preact" };
+  await mfs.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
 }
 
 /** The Capacitor target of a SPA: named from its title, reviewed against its env and proxy. */

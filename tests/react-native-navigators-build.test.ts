@@ -26,7 +26,13 @@ const FIXTURE: Record<string, string> = {
   "node_modules/react-native-web/dist/index.js": "export const View = 'RNW_View';\n",
   "node_modules/expo-router/package.json": JSON.stringify({
     name: "expo-router",
-    exports: { ".": "./index.js", "./stack": "./stack.js", "./tabs": "./tabs.js" },
+    // expo-router 58's map exposes build/* too (the Stack wrapper imports build/views/Screen).
+    exports: {
+      ".": "./index.js",
+      "./stack": "./stack.js",
+      "./tabs": "./tabs.js",
+      "./build/*": "./build/*.js",
+    },
   }),
   "node_modules/expo-router/index.js": `import { Stack as OwnStack } from "expo-router/stack";
 export const Stack = OwnStack;
@@ -42,6 +48,15 @@ export default Stack;
   "node_modules/expo-router/tabs.js": `export const Tabs = { Screen: "REAL_TABS_SCREEN" };
 export default Tabs;
 `,
+  // What the Stack wrapper imports: expo-router's base `Screen` and React's element helpers.
+  "node_modules/expo-router/build/views/Screen.js": "export const Screen = 'REAL_BASE_SCREEN';\n",
+  "node_modules/react/package.json": JSON.stringify({ name: "react", main: "index.js" }),
+  "node_modules/react/index.js": `export const Children = {
+  map: (children, fn) => children == null ? children : [].concat(children).map(fn),
+};
+export const createElement = (type, props) => ({ type, props });
+export const isValidElement = (x) => x != null && typeof x === "object" && "type" in x;
+`,
   "node_modules/@react-navigation/native/package.json": JSON.stringify({
     name: "@react-navigation/native",
     main: "index.js",
@@ -50,12 +65,13 @@ export default Tabs;
   "entry.js": `import { Stack, Tabs, Link, internalStack } from "expo-router";
 import StackOnly from "expo-router/stack";
 export const result = {
-  Stack: String(Stack),
+  // The Stack renders the layout-wrapped denext navigator (after mapping its screens).
+  Stack: String(Stack({ children: [] }).type),
   StackScreen: Stack.Screen,
   Tabs: String(Tabs),
   Link,
   internalStack: internalStack.Screen,
-  StackOnly: String(StackOnly),
+  StackOnly: String(StackOnly({ children: [] }).type),
 };
 `,
 };

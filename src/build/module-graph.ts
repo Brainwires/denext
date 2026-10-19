@@ -732,6 +732,42 @@ export function isUnderFrameworkSrc(filePath: string, fwSrc: string): boolean {
 }
 
 /**
+ * The local modules `entryFiles` reach, without the framework's own source: its modules are
+ * local `file://` too in a source checkout / monorepo, but are never app modules. The exclusion
+ * is scoped to the framework's `src/` subtree — NOT the whole repo root — so a sibling app under
+ * the repo (e.g. `examples/*`) is still read. (Framework internals all live under `src/`; the
+ * root `mod.ts`/`cli.ts` carry no directives. Real users import the framework via `jsr:`, whose
+ * modules are already excluded as non-`file://`.)
+ */
+async function appLocalModules(entryFiles: string[]): Promise<string[]> {
+  // frameworkRoot() is a filesystem path for a local checkout, but the remote framework URL
+  // when run from JSR — `join` would corrupt a URL's `//`, so build the src ref per scheme.
+  const fwRoot = frameworkRoot();
+  let fwSrc = fwRoot.includes("://") ? new URL("src", fwRoot).href : join(fwRoot, "src");
+  // Resolve symlinks so a symlinked checkout (the framework linked into a monorepo)
+  // still matches the realpath'd module paths `deno info` reports. If the src tree
+  // isn't on disk (a jsr install), keep the logical path — those modules are
+  // non-file:// and already excluded upstream.
+  try {
+    fwSrc = await Deno.realPath(fwSrc);
+  } catch { /* framework src not on disk */ }
+  return await crawlLocalModules(entryFiles, { exclude: (p) => isUnderFrameworkSrc(p, fwSrc) });
+}
+
+/**
+ * Whether a route's own modules define a live view (`defineLiveView` from `denext/live`): its
+ * page renders the framework's `denext#LiveView` island, so it is a Flight route even when it
+ * reaches no `"use client"` module of the app's — otherwise it would ship no client entry and
+ * the view would never mount.
+ */
+async function reachesLiveView(entryFiles: string[]): Promise<boolean> {
+  for (const file of await appLocalModules(entryFiles)) {
+    if (/\bdefineLiveView\b/.test(await Deno.readTextFile(file).catch(() => ""))) return true;
+  }
+  return false;
+}
+
+/**
  * Build the {@linkcode BoundaryManifest} for an app by crawling the import graph
  * of its route entry modules and classifying each local module by its directive.
  *
@@ -745,28 +781,8 @@ export async function buildBoundaryManifest(
   opts: BoundaryManifestOptions = {},
 ): Promise<BoundaryManifest> {
   const manifest: BoundaryManifest = { client: new Map(), server: new Map() };
-  // Exclude the framework's own source: its modules are local file:// too (in a
-  // source checkout / monorepo) but are never app boundary modules. Scope the
-  // exclusion to the framework's `src/` subtree — NOT the whole repo root — so a
-  // sibling app under the repo (e.g. `examples/*`) still has its own
-  // `"use client"`/`"use server"` modules discovered. (Framework internals all
-  // live under `src/`; the root `mod.ts`/`cli.ts` carry no directives. Real users
-  // import the framework via `jsr:`, whose modules are already excluded as
-  // non-`file://`, so this only affects source-checkout/monorepo apps.)
-  // frameworkRoot() is a filesystem path for a local checkout, but the remote framework URL
-  // when run from JSR — `join` would corrupt a URL's `//`, so build the src ref per scheme.
-  const fwRoot = frameworkRoot();
-  let fwSrc = fwRoot.includes("://") ? new URL("src", fwRoot).href : join(fwRoot, "src");
-  // Resolve symlinks so a symlinked checkout (the framework linked into a monorepo)
-  // still matches the realpath'd module paths `deno info` reports. If the src tree
-  // isn't on disk (a jsr install), keep the logical path — those modules are
-  // non-file:// and already excluded upstream.
-  try {
-    fwSrc = await Deno.realPath(fwSrc);
-  } catch { /* framework src not on disk */ }
-  const locals = await crawlLocalModules(entryFiles, {
-    exclude: (p) => isUnderFrameworkSrc(p, fwSrc),
-  });
+  // The app's own local modules (the framework's source excluded: see appLocalModules).
+  const locals = await appLocalModules(entryFiles);
 
   if (opts.npm) await addNpmBoundary(manifest, appDir, locals, opts.npm);
 
@@ -950,8 +966,9 @@ export async function computeBoundaryRoutes(
   }
   await Promise.all(
     routes.map(async (r) => {
-      const bm = await buildBoundaryManifest(appDir, routeEntryFiles(r), opts);
-      if (bm.client.size > 0) out.add(r.routePath);
+      const entries = routeEntryFiles(r);
+      const bm = await buildBoundaryManifest(appDir, entries, opts);
+      if (bm.client.size > 0 || await reachesLiveView(entries)) out.add(r.routePath);
     }),
   );
   return out;

@@ -222,7 +222,7 @@ on a device). Android is built only, and has run on an emulator only.
   reload.
 - **Build and submit without a hosted service (built):** `denext mobile assets` (every icon and
   splash), `denext mobile build ios|android` (signed archives, flavors) and
-  `denext mobile submit`. A nightly workflow builds `examples/mobile` for both platforms.
+  `denext mobile submit`. A workflow, dispatched before a release, builds `examples/mobile` for both platforms.
 - **A native look (built):** the platform theme for `denext/navigation` (iOS headers and large
   titles, Liquid Glass approximated in CSS, Material 3 on Android), `<SystemIcon>` (real SF
   Symbols in the iOS shell) and native context menus (`UIContextMenuInteraction` on iOS, a

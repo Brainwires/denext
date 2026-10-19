@@ -140,6 +140,69 @@ export default async function Blog() {
         entry is compiled to a component module at build, so nothing MDX-related runs per request.
         Pass <code>components</code> to map elements or MDX components to your own.
       </p>
+      <h3>Raw HTML in Markdown (opt-in)</h3>
+      <p>
+        Raw HTML in a <code>.md</code> entry is escaped by default. Set{" "}
+        <code>markdown: {'{ html: "sanitize" }'}</code>{" "}
+        on the plugin to keep the HTML that passes denext's first-party allowlist sanitizer instead.
+        The HTML is parsed into a tree and re-serialized from it, never passed through: GitHub's
+        element set survives (<code>kbd</code>, <code>details</code>/<code>summary</code>,{" "}
+        <code>sub</code>/<code>sup</code>, tables, <code>img</code>, <code>picture</code>/<code>
+          source
+        </code>, …) with a per-element attribute list, while <code>script</code>,{" "}
+        <code>style</code>, <code>iframe</code>, <code>object</code>, form controls,{" "}
+        <code>svg</code>, <code>math</code>, <code>template</code>, namespaced and custom elements,
+        {" "}
+        <code>on*</code> handlers, <code>style</code>, <code>srcdoc</code>, <code>formaction</code>
+        {" "}
+        and <code>xlink:*</code>{" "}
+        never do. URLs are entity-decoded and stripped of control characters before the scheme check
+        (<code>http</code>, <code>https</code>,{" "}
+        <code>mailto</code>, relative and fragment links only); <code>id</code> and{" "}
+        <code>name</code> get GitHub's <code>user-content-</code> prefix, and a{" "}
+        <code>#fragment</code>{" "}
+        link follows it when the document's raw HTML defines that id or name (links to Markdown
+        heading ids are left alone); <code>class</code> is stripped; <code>target="_blank"</code>
+        {" "}
+        always gets <code>rel="noopener noreferrer nofollow"</code>; comments are removed.
+      </p>
+      <p>
+        A block container (<code>details</code>, <code>div</code>, <code>blockquote</code>,{" "}
+        <code>figure</code>) that an HTML block leaves open wraps the Markdown blocks after it until
+        a later HTML block closes it, or the document ends. So GitHub's collapsible section works as
+        written:
+      </p>
+      <Code lang="md">
+        {`<details>
+<summary>Show the steps</summary>
+
+1. Install
+2. Run
+
+</details>`}
+      </Code>
+      <p>
+        Anything else is closed inside the paragraph, heading, cell or HTML block it was written in,
+        and raw HTML can never close the renderer's own markup.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+import { contentCollections } from "@denext/content-collections";
+
+export default {
+  plugins: [contentCollections({
+    markdown: {
+      html: "sanitize", // default "escape"
+      // Additions only; the denied set stays denied whatever is listed here.
+      sanitize: { allowAttributes: { "*": ["class"] }, allowDataImages: true },
+    },
+  })],
+};
+
+// Per call, or outside a collection:
+// await renderContent(post, { markdown: { html: "sanitize" } });
+// import { renderMarkdown, sanitizeHtml } from "@denext/content-collections/markdown";`}
+      </Code>
       <Code lang="tsx">
         {`// app/blog/[id]/page.tsx
 import { notFound } from "denext";

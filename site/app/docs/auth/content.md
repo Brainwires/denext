@@ -130,7 +130,7 @@ Every path is relative to `basePath` (default `/auth`).
 | -------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/session`                 | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                            |
 | `/providers`               | GET         | The configured providers' `id` + `type` (and an email or phone provider's `name`) — never client ids, secrets or endpoints.                                                   |
-| `/signin/:provider`        | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                                 |
+| `/signin/:provider`        | GET         | Starts the OAuth flow (`state`, plus PKCE and an OIDC `nonce` unless the provider's `checks` leave them out). Rate-limited per client IP.                                     |
 | `/callback/:provider`      | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email or phone send / redeem. A verb the type lacks is a `405`. |
 | `/anonymous`               | POST        | With `anonymous: true`: create an anonymous user and sign it in. See [Anonymous sign-in](#anonymous-sign-in).                                                                 |
 | `/signout`                 | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                                   |
@@ -230,6 +230,15 @@ oidc({
 Passing _some_ of `authorizationUrl` / `tokenUrl` / `jwksUrl` throws: it would silently
 mix a hand-written endpoint with a discovered one. `id` defaults to `"oidc"` — set it
 when you configure more than one.
+
+### PKCE, `state` and `nonce` (`checks`)
+
+Every flow sends a random `state` and checks it on the callback. A provider also gets a PKCE
+(`S256`) challenge, and an OIDC one a `nonce` its `id_token` must carry, unless its `checks` say
+otherwise, as Auth.js's provider `checks` do: with `checks` set, PKCE runs only when the list has
+`"pkce"` and the `nonce` only when it has `"nonce"`. A provider that refuses a `code_verifier` it
+didn't ask for takes `checks: ["state"]` (`{ ...oauthPreset(…), checks: ["state"] }`); `state`
+runs whatever the list says, `"none"` included, and an unknown value is a config error.
 
 ### `response_mode=form_post`
 
@@ -2203,7 +2212,8 @@ view instead of unmounting behind an error boundary.
 ## `next-auth` (Auth.js v5) apps
 
 A Next.js app written for Auth.js v5 runs on denext with its source unchanged. `denext migrate`
-aliases `next-auth`, `next-auth/react`, `next-auth/jwt` and `next-auth/providers/*` to denext's
+aliases `next-auth`, `next-auth/react`, `next-auth/webauthn`, `next-auth/jwt` and
+`next-auth/providers/*` to denext's
 compat modules, which map Auth.js onto `denextAuth` (a NextAuth.js v4 app too: see
 [NextAuth.js v4 apps](#nextauthjs-v4-apps)):
 
@@ -2232,24 +2242,27 @@ export { auth as middleware } from "@/auth";
 `auth()` reads the session in a Server Component, a route handler or a Server Action;
 `auth(handler)` wraps a route handler or middleware (`request.auth`); `export { auth as middleware }`
 runs `callbacks.authorized`. `next-auth/react` gives the client `SessionProvider`, `useSession`,
-`signIn`, `signOut`, `getSession`, `getCsrfToken` and `getProviders`, and `next-auth/jwt` gives
-`getToken`, `encode` and `decode`.
+`signIn`, `signOut`, `getSession`, `getCsrfToken` and `getProviders`, `next-auth/webauthn` gives
+the passkey `signIn`, and `next-auth/jwt` gives `getToken`, `encode` and `decode`.
 
 `NextAuth` also takes a lazy config, `NextAuth(async (req) => config)`: it runs on every request,
 with the `NextRequest` in the route handlers and middleware and `undefined` in `auth()`,
 `signIn()` and `signOut()`, as in Auth.js. Concurrent requests each read their own config.
 
-On a next-compat build the aliases need no import map: `next-auth/react` (in the app or in a
-library under `node_modules`) bundles from denext's runtime, and `next-auth`, `next-auth/jwt` and
-the providers resolve to the shim, so an installed `next-auth` package is never loaded.
+On a next-compat build the aliases need no import map: `next-auth/react` and `next-auth/webauthn`
+(in the app or in a library under `node_modules`) bundle from denext's runtime, and `next-auth`,
+`next-auth/jwt` and the providers resolve to the shim, so an installed `next-auth` package is
+never loaded.
 
 | Auth.js                                                                                                                | On denext                                                                                                                                                                                                     |
 | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GitHub`, `Google`, `Apple`, `Discord`, `MicrosoftEntraID`, `GitLab`, `Facebook`, `Slack`, `Okta`, `Auth0`, `Keycloak` | denext's presets; `clientId` / `clientSecret` (and an `issuer`) default to `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER`; `authorization.params`, `profile()` and `allowDangerousEmailAccountLinking` apply          |
 | `Twitter`, `LinkedIn`, `Twitch`, `Spotify`, `Cognito`, `Zoom`, `Notion`                                                | the same, from endpoint data the shim carries (X, Zoom and Notion send the client credentials as HTTP Basic)                                                                                                  |
+| The other OAuth / OIDC providers (`Kakao`, `Reddit`, `Zitadel`, `WorkOS`, … 71 of them)                                | generated from Auth.js's own definitions (see below); `AUTH_<ID>_*` defaults, options such as `issuer`, `apiBaseUrl` or `tenantId`, and the profile mapping as Auth.js has them                               |
+| `Passkey`, `WebAuthn`                                                                                                  | denext's [passkeys](#passkeys-webauthn): `relayingParty` → `rpId` / `rpName` / `origins`; `next-auth/webauthn`'s `signIn("passkey")` signs in, `{ action: "register" }` adds one                              |
 | A custom provider object (`{ id, type: "oauth" \| "oidc", authorization, … }`)                                         | `oauthPreset()` / `oidc()`                                                                                                                                                                                    |
 | `Credentials`                                                                                                          | `credentials()`, plus its rate limits                                                                                                                                                                         |
-| `Resend`, `Nodemailer`, `Email`                                                                                        | `magicLink()`; Resend's HTTP API (`AUTH_RESEND_KEY`) or `smtpMailer()` sends the link                                                                                                                         |
+| `Resend`, `SendGrid`, `Postmark`, `Mailgun`, `ForwardEmail`, `Loops`, `Nodemailer`, `Email`                            | `magicLink()`; the service's HTTP API (`AUTH_<ID>_KEY`) or `smtpMailer()` sends the link                                                                                                                      |
 | `session.strategy: "jwt"`                                                                                              | denext's signed cookie, the `jwt` callback's token sealed inside it (AES-256-GCM, a key derived from `AUTH_SECRET`)                                                                                           |
 | `session.strategy: "database"`                                                                                         | `session.strategy: "database"` on the adapter's `Session` rows                                                                                                                                                |
 | `adapter` (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …)                                                         | bridged onto denext's adapter port: users, accounts, sessions, verification tokens; roles, bans and `sessionsValidAfter` through its optional `getUserExtension` / `updateUserExtension` (an extension table) |
@@ -2257,6 +2270,68 @@ the providers resolve to the shim, so an installed `next-auth` package is never 
 | `events.signIn` / `signOut` / `createUser` / `linkAccount` / `updateUser` / `session`                                  | fired from denext's events (the first four with `ip`); `session` on every read, `updateUser` when the adapter updates a user                                                                                  |
 | `pages`                                                                                                                | `pages`: the built-in GET pages under `/api/auth` redirect to `signIn` / `signOut` / `error` / `verifyRequest` (same-origin only), and `newUser` receives a first sign-in; without them, plain built-in pages |
 | `AUTH_SECRET`, `AUTH_URL`                                                                                              | `secret`, `canonicalOrigin` (+ `basePath` from its path)                                                                                                                                                      |
+
+### Every Auth.js provider, generated
+
+The OAuth / OIDC providers denext has no preset for are generated from `@auth/core`'s own
+`providers/` at a pinned version (`deno task gen:auth-providers`): each module carries Auth.js's
+endpoints, scopes, token-endpoint authentication (HTTP Basic unless the provider names
+`client_secret_post`), its `checks` and its `profile()` mapping as data, checked against Auth.js's own
+`profile()` on sample profiles when it is generated. A drift test holds the checked-in modules to
+the pinned provider list. An OIDC provider discovers its endpoints from the issuer; one Auth.js
+reads userinfo for (`idToken: false`) does too. An OAuth provider's address is never treated as
+verified; an OIDC one only when its `email_verified` claim says so.
+
+The providers whose Auth.js definition reads the user in code are generated too, with that request
+as data the generator checks against Auth.js's own: Dropbox and Todoist (a `POST`), Trakt (API-key
+headers), Foursquare and HubSpot (the token in the URL), Nextcloud and Bungie (an id from the token
+response in the URL; Bungie's API key goes in Auth.js's documented `headers: { "X-API-Key": … }`
+option) and VK (the address from the token response). TikTok adds its `client_key` to the token
+request, LINE's `id_token` is verified HS256 under the channel secret as its specification has it,
+and NetSuite reads the RESTlet the app deploys, given as `userinfo` (an https URL):
+
+```ts
+NetSuite({
+  accountID: "1234567",
+  userinfo:
+    "https://1234567.restlets.api.netsuite.com/app/site/hosting/restlet.nl?script=1&deploy=1",
+});
+```
+
+Three are not provided: Azure DevOps (a deprecated JWT assertion flow), BankID Norge (userinfo as a
+signed JWT) and WeChat (its `platformType` option switches the authorization URL and scope). Write
+one as a custom provider object if its API allows; [Limitations](/docs/limitations) lists the
+reasons.
+
+### Passkeys from `next-auth/providers/passkey`
+
+`next-auth/providers/passkey` (and `…/webauthn`) turns on denext's [passkeys](#passkeys-webauthn) under the
+auth base path, and the app's client calls stay Auth.js's:
+
+```tsx
+// auth.ts
+import Passkey from "next-auth/providers/passkey";
+export const { handlers, auth } = NextAuth({
+  adapter, // its Authenticator rows hold the credentials
+  providers: [Credentials({ authorize }), Passkey],
+  experimental: { enableWebAuthn: true },
+});
+
+// a client component
+import { signIn } from "next-auth/webauthn";
+<button onClick={() => signIn("passkey")}>Sign in with a passkey</button>;
+<button onClick={() => signIn("passkey", { action: "register" })}>Add a passkey</button>;
+```
+
+The relying party is `AUTH_URL`'s origin (or `relayingParty: { id, origin }`), never the request's
+host. A passkey is registered for a signed-in user whose address is verified, after a recent
+sign-in; Auth.js's sign-up by passkey (an unverified email creating an account) is not offered.
+With an Auth.js adapter, a credential is its `Authenticator` row and a `webauthn` account, as
+Auth.js stores them. The ceremony's challenge (Auth.js keeps it in a cookie) goes to the app's
+[cache store](/docs/multi-instance): single-use, taken atomically, and expiring with the ceremony.
+Instances that share a store (`postgresCacheStore`, `redisCacheStore`, `denoKvCacheStore`, or one
+host's SQLite file) finish each other's ceremonies; with the in-memory store a ceremony must
+finish on the instance that began it, as with sticky sessions.
 
 An Auth.js adapter's schema has no column for denext's roles, bans or `sessionsValidAfter`. Give
 it two more methods over a table of your own, keyed by user id, and `requireAuth({ role })`, a
@@ -2278,8 +2353,10 @@ denext keeps its own defaults where they are stricter, and nothing is relaxed fo
 - **CSRF.** Every state-changing POST (`signin`, `signout`, the credentials callback, `session`
   updates) needs Auth.js's double-submit `csrfToken` **and** passes denext's same-origin check.
   The CSRF cookie is a signed `__Host-` cookie.
-- **OAuth.** Every flow uses `state` and PKCE, plus `nonce` for OIDC, whatever a provider's
-  `checks` say. The `redirect_uri` comes from `AUTH_URL`, never the `Host` header, so production
+- **OAuth.** A provider's `checks` decide PKCE and the OIDC `nonce` as in Auth.js (a provider
+  that names none gets PKCE, plus a `nonce` for OIDC; `Reddit` and the others whose definition
+  says `checks: ["state"]` get no `code_verifier` they would refuse), but every flow sends and
+  verifies `state`, even where `checks` leave it out or say `"none"`. The `redirect_uri` comes from `AUTH_URL`, never the `Host` header, so production
   needs `AUTH_URL`.
 - **Redirects.** A `callbackUrl` / `redirectTo` goes through the `redirect` callback, then is kept
   to a same-origin path. A callback that returns another origin lands on `/`.

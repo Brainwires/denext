@@ -206,7 +206,8 @@ async function runLines(cmd: string, args: string[], input: string): Promise<str
   await writer.close();
   const { code, stdout, stderr } = await child.output();
   assertEquals(code, 0, new TextDecoder().decode(stderr));
-  return new TextDecoder().decode(stdout).split("\n").slice(0, -1);
+  // Java prints `\r\n` on Windows.
+  return new TextDecoder().decode(stdout).split(/\r?\n/).slice(0, -1);
 }
 
 const has = (tool: string): boolean => {

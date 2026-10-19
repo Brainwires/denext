@@ -272,7 +272,7 @@ The key files are read into WebCrypto only: nothing prints, logs or copies their
 
 ## In CI
 
-`.github/workflows/mobile-build.yml` in the denext repository runs this pipeline nightly on
+`.github/workflows/mobile-build.yml` in the denext repository runs this pipeline, dispatched by hand before a release, on
 [`examples/mobile`](https://github.com/Brainwires/denext/tree/main/examples/mobile): a debug
 `.apk`, a signed release `.aab` of its `staging` flavor (a throwaway keystore made in the job),
 `submit android --dry-run --offline`, and an unsigned iOS `.ipa` on a macOS runner. For your
@@ -300,26 +300,59 @@ one line:
 rollouts, store metadata and screenshots, its plugins) keeps it: `denext mobile add fastlane`
 writes fastlane files whose lanes build with denext's pipeline and hand the artifact to
 fastlane's store actions. fastlane is Ruby dev and CI tooling; nothing of it reaches the app, and
-it is not part of the [native fingerprint](/docs/mobile#native-fingerprint).
+it is not part of the [native fingerprint](/docs/mobile#native-fingerprint). `denext create
+--fastlane` scaffolds the same files into a new app (with Capacitor).
 
 ```sh
 denext mobile add fastlane          # fastlane/ + Gemfile in the Capacitor project
 denext mobile add fastlane --ci     # also .github/workflows/mobile-release.yml
-bundle install                      # writes Gemfile.lock: commit it
-bundle exec fastlane android build flavor:staging
-bundle exec fastlane ios beta       # TestFlight
-bundle exec fastlane android beta track:internal
-bundle exec fastlane android release rollout:0.1 metadata:true
+denext fastlane android build flavor:staging
+denext fastlane ios beta            # TestFlight
+denext fastlane android beta track:internal
+denext fastlane android release rollout:0.1 metadata:true
 ```
 
-| File                                   | What it holds                                                                                                                               |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fastlane/Appfile`                     | `app_identifier` / `package_name` from `capacitor.config` `appId`; the Apple team and the Play key file from the environment                |
-| `fastlane/Fastfile`                    | `ios` and `android` lanes: `build`, `beta`, `release`                                                                                       |
-| `fastlane/Matchfile`                   | match's store (`MATCH_GIT_URL`, `MATCH_STORAGE_MODE`), type `appstore`, the app id                                                          |
-| `fastlane/.gitignore`                  | what a run generates (`report.xml`, `README.md`, `Preview.html`, screenshots) and key files                                                 |
-| `Gemfile`                              | `gem "fastlane", "~> 2.240"` and fastlane's `Pluginfile` (`bundle exec fastlane add_plugin <name>`)                                         |
-| `.github/workflows/mobile-release.yml` | `--ci` only, at the repository root: a manual dispatch running `bundle exec fastlane <platform> <lane>` on Ubuntu (Android) and macOS (iOS) |
+### Managed fastlane
+
+`denext fastlane <args…>` runs fastlane with its arguments verbatim, in the current directory (or
+`--cwd`), with no Ruby setup. denext pins one fastlane release (2.240.1) and the Ruby it runs on
+(Homebrew's portable Ruby 4.0.7, the relocatable build `brew` itself runs), and the first run
+installs both into the [toolchain cache](/docs/toolchain#fastlane),
+`<DENO_DIR>/denext-deno/fastlane/<version>/<platform>/`:
+
+- the Ruby tarball comes from denext's own mirror (the `toolchain-assets` release on GitHub),
+  falling back to Homebrew's `ghcr.io` registry, and either copy is checked against the one pinned
+  SHA-256 and size before anything is extracted;
+- the gems come from denext's pinned `Gemfile.lock`, whose `CHECKSUMS` section pins every gem's
+  SHA-256 (Bundler refuses a gem that doesn't match), installed frozen;
+- the install happens in a temporary directory, under the cache lock, and is renamed into place
+  when it is complete.
+
+Several of fastlane's gems build C extensions, so the first install needs a C compiler: the Command
+Line Tools on macOS (Xcode has them), `cc` and `make` on Linux (`build-essential` on
+Debian/Ubuntu, `gcc make` on Fedora). It takes a minute or two. `denext toolchain install --with
+fastlane` installs it ahead of time. macOS and Linux, on arm64 and x64, are supported. Windows is
+not: fastlane's iOS half needs macOS, so run the lanes on a Mac, or for Android on Linux or macOS
+(in CI, for example).
+
+Runs are isolated from your own Ruby: `GEM_*`, `BUNDLE_*` and `RUBY*` variables are not passed on,
+and fastlane's update check is off, because the version is pinned. `DENEXT_FASTLANE=<path>` runs
+another fastlane instead (yours, or a `bundle exec` wrapper), unverified and with your environment
+as it is.
+
+fastlane plugins (`fastlane/Pluginfile`) need the project's own Gemfile. The managed fastlane runs
+denext's pinned gems, so `denext fastlane` warns when the Pluginfile lists plugins. For those
+projects, use the generated `Gemfile`: `bundle install` (commit `Gemfile.lock`), then `bundle
+exec fastlane …` with your own Ruby (3.2 or newer).
+
+| File                                   | What it holds                                                                                                                                                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fastlane/Appfile`                     | `app_identifier` / `package_name` from `capacitor.config` `appId`; the Apple team and the Play key file from the environment                                                                                          |
+| `fastlane/Fastfile`                    | `ios` and `android` lanes: `build`, `beta`, `release`                                                                                                                                                                 |
+| `fastlane/Matchfile`                   | match's store (`MATCH_GIT_URL`, `MATCH_STORAGE_MODE`), type `appstore`, the app id                                                                                                                                    |
+| `fastlane/.gitignore`                  | what a run generates (`report.xml`, `README.md`, `Preview.html`, screenshots) and key files                                                                                                                           |
+| `Gemfile`                              | for `bundle exec` with your own Ruby (plugins): `gem "fastlane", "~> 2.240"` and fastlane's `Pluginfile` (`bundle exec fastlane add_plugin <name>`)                                                                   |
+| `.github/workflows/mobile-release.yml` | `--ci` only, at the repository root: a manual dispatch running `denext fastlane <platform> <lane>` on Ubuntu (Android) and macOS (iOS), the managed fastlane cached (`actions/cache`, keyed on denext's fastlane pin) |
 
 Every lane runs `denext mobile build <platform> --release --json` (export, the flavor's edits,
 `npx cap sync`, Xcode or Gradle) and reads the artifact record it prints, so the binary always
@@ -357,7 +390,7 @@ Signing and credentials come from the environment only, never from these files:
 The iOS lanes hand the API key to `denext mobile build` as `DENEXT_ASC_KEY_*` (writing the key
 contents to a private temporary file when only they are set), so xcodebuild's automatic signing
 uses the certificate match installed instead of minting one. Create that certificate once, from a
-Mac with access to the account: `MATCH_GIT_URL=… bundle exec fastlane match appstore`. On CI
+Mac with access to the account: `MATCH_GIT_URL=… denext fastlane match appstore`. On CI
 (`CI` set) the lanes run `setup_ci` first, which gives match a temporary keychain.
 
 The files carry a marker line, as denext's native templates do: running `denext mobile add
@@ -368,12 +401,15 @@ and writes none. A project's own `Gemfile` is kept, with the line to add. Put yo
 
 `denext mobile doctor --release` checks a `fastlane/` folder when there is one: an Appfile id
 that is not `capacitor.config`'s (an error: uploads and match would target another app), a
-missing Appfile, Fastfile or Gemfile, a Gemfile without `Gemfile.lock`, a Fastfile that runs gym
-or Gradle without `denext export` and `cap sync` first, a credential in a URL or a password
-literal in the fastlane files (errors), and key files or a `.env` with secrets in `fastlane/`.
+missing Appfile or Fastfile, plugins in `fastlane/Pluginfile` without a Gemfile that lists
+fastlane, a Gemfile with fastlane but without `Gemfile.lock`, a Fastfile that runs gym or Gradle
+without `denext export` and `cap sync` first, a credential in a URL or a password literal in the
+fastlane files (errors), key files or a `.env` with secrets in `fastlane/`, and whether `denext
+fastlane` can run on this machine: Windows, a `DENEXT_FASTLANE` that names no file (an error), an
+install that no longer matches its pin, or no C compiler for the first install.
 
-Store metadata and screenshots stay fastlane's own: `bundle exec fastlane deliver init` and
-`bundle exec fastlane supply init` download them into `fastlane/metadata`, and `release
+Store metadata and screenshots stay fastlane's own: `denext fastlane deliver init` and
+`denext fastlane supply init` download them into `fastlane/metadata`, and `release
 metadata:true` uploads them. Screenshot capture (`snapshot`, `screengrab`) needs a UI-test target
 in the native projects, which denext does not generate.
 

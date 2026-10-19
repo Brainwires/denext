@@ -19,6 +19,17 @@ import { isNativeShell } from "./bridge.ts";
 import { nativePlugin } from "./plugin.ts";
 import { capabilityError, type DesktopNative, onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { WEB_HANDLE_PREFIX, webHandle, webHandleWritable } from "./picked-web.ts";
+import {
+  type DownloadSink,
+  type FileTransferEvent,
+  type FileTransferOptions,
+  nativeTransfer,
+  type NativeTransferStart,
+  pageDownload,
+  pageUpload,
+  transferPlugin,
+  type UploadFileResult,
+} from "./file-transfer.ts";
 
 /**
  * An opaque handle to a file or folder the user picked in a dialog (`pickFolder`,
@@ -84,6 +95,29 @@ export interface FileLocationOptions {
   readonly directory?: FileDirectory;
 }
 
+/** Options for {@linkcode downloadToFile}: the folder, and the transfer's id, progress and signal. */
+export interface DownloadToFileOptions extends FileLocationOptions, FileTransferOptions {}
+
+/** Options for {@linkcode uploadFile}. */
+export interface UploadFileOptions extends FileLocationOptions, FileTransferOptions {
+  /** The method. Default `"POST"`. */
+  readonly method?: "POST" | "PUT" | "PATCH";
+  /**
+   * `"multipart"` (the default): a `multipart/form-data` body with the file as the part named
+   * `field`, after the text `fields`. `"binary"`: the file itself is the body (a presigned
+   * `PUT`), sent with `mimeType` as its `Content-Type`.
+   */
+  readonly as?: "multipart" | "binary";
+  /** The file part's name. Default `"file"`. */
+  readonly field?: string;
+  /** The file name the part carries. Default: the path's last segment. */
+  readonly fileName?: string;
+  /** The file's type. Default: from its extension, else `application/octet-stream`. */
+  readonly mimeType?: string;
+  /** Text fields sent before the file part (multipart only). */
+  readonly fields?: Readonly<Record<string, string>>;
+}
+
 /** One entry of a {@linkcode listDir} listing. */
 export interface FileEntry {
   /** The entry's name within its folder. */
@@ -117,6 +151,7 @@ interface FilesystemPlugin {
     path: string;
     directory: string;
     recursive: boolean;
+    headers?: Record<string, string>;
   }): Promise<{ path?: string }>;
 }
 
@@ -494,70 +529,275 @@ export async function listDir(
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** The OPFS (or picked) file a page download writes, opened anew or to append. */
+function webSink(directory: FileDirectory, rel: string): DownloadSink {
+  return {
+    async open(at) {
+      const { handle } = await webFile("downloadToFile", directory, rel, true, true, true);
+      const writable = at > 0
+        ? await handle.createWritable({ keepExistingData: true })
+        : await handle.createWritable();
+      if (at > 0) await writable.seek(at);
+      return {
+        write: (chunk) => writable.write(chunk),
+        close: () => writable.close(),
+      };
+    },
+  };
+}
+
+/** The headers option as a plain record. */
+function headersOf(headers: Readonly<Record<string, string>> | undefined): Record<string, string> {
+  return { ...(headers ?? {}) };
+}
+
 /**
- * Download a URL straight into a file (missing parent folders are created).
+ * A transfer through denext's `DenextTransfer` plugin, when the shell has it and the file is in
+ * an app folder (a picked one is the page's): its `done` event. Undefined otherwise.
+ */
+async function viaTransferPlugin(
+  url: string,
+  rel: string,
+  directory: FileDirectory,
+  options: FileTransferOptions,
+  shape: Pick<NativeTransferStart, "kind" | "method" | "multipart" | "mimeType">,
+): Promise<FileTransferEvent | undefined> {
+  if (isPicked(directory)) return undefined;
+  const plugin = transferPlugin();
+  if (!plugin) return undefined;
+  return await nativeTransfer(plugin, {
+    ...shape,
+    id: options.id ?? crypto.randomUUID(),
+    url,
+    directory: NATIVE_DIRECTORY[directory],
+    path: rel,
+    headers: headersOf(options.headers),
+    background: options.background !== false,
+  }, options);
+}
+
+/** The `http(s)` URL, checked. */
+function urlOf(fn: string, url: string): string {
+  if (!/^https?:\/\//i.test(String(url))) {
+    throw new TypeError(`${fn}: "${url}" is not an http(s) URL`);
+  }
+  return String(url);
+}
+
+/**
+ * Download a URL straight into a file (missing parent folders are created), with progress.
  *
- * - Inside the native shell with `@capacitor/filesystem` installed (`denext mobile add
- *   filesystem`), the plugin's native download (`downloadFile`), which does not pass the body
- *   through the WebView and is not subject to CORS. (A plugin without `downloadFile`, which
- *   it deprecates, gets `fetch(url)` and the plugin's `writeFile` instead.)
+ * - Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add
+ *   file-transfer`), the OS's background transfer service downloads it (a `URLSession`
+ *   background session on iOS, WorkManager on Android): it carries on while the app is in the
+ *   background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it
+ *   where it stopped when the server allows a range. The body never passes through the WebView,
+ *   and CORS does not apply.
+ * - Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the
+ *   plugin's native download (`downloadFile`), without progress. (A plugin without
+ *   `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)
  * - In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime
- *   fetches in the Deno process and writes under the app's folder.
- * - Otherwise `fetch(url)` (CORS applies), then a write to the Origin Private File System.
+ *   fetches in the Deno process and writes under the app's folder (no progress).
+ * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
+ *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
+ *   request (a server that answers 200 starts it over).
  *
  * @param url The `http(s)` URL to fetch.
  * @param path The file's path inside `directory`; no `..` segments.
- * @param options `directory` (default `"data"`).
+ * @param options `directory` (default `"data"`), and the transfer's `id`, `headers`,
+ * `onProgress`, `signal` and `background` ({@linkcode FileTransferOptions}).
  * @returns `{ path }`: the native file path in the shell, the absolute path on desktop, the OPFS
  * path (`data/…`) on the web.
- * It rejects on a non-2xx response or a network error.
+ * It rejects on a non-2xx response or a network error (a `FileTransferError` with the status and
+ * code), and with the signal's reason when `signal` aborts it.
  * @example
  * ```ts
  * import { downloadToFile } from "denext/mobile";
  *
  * await downloadToFile("https://example.com/manual.pdf", "manuals/manual.pdf", {
  *   directory: "documents",
+ *   onProgress: ({ bytes, total }) => setProgress(total ? bytes / total : null),
  * });
  * ```
  */
 export async function downloadToFile(
   url: string,
   path: string,
-  options: FileLocationOptions = {},
+  options: DownloadToFileOptions = {},
 ): Promise<{ path: string }> {
   const rel = pathOf("downloadToFile", path);
   const directory = directoryOf("downloadToFile", options.directory);
-  if (!/^https?:\/\//i.test(String(url))) {
-    throw new TypeError(`downloadToFile: "${url}" is not an http(s) URL`);
-  }
+  const href = urlOf("downloadToFile", url);
+  const done = await viaTransferPlugin(href, rel, directory, options, {
+    kind: "download",
+    method: "GET",
+  });
+  if (done) return { path: done.file ?? rel };
   const desktop = onDesktop() &&
-    await viaDesktopFs("downloadToFile", directory, (d) => d.fsDownload(url, rel, directory));
+    await viaDesktopFs("downloadToFile", directory, (d) => d.fsDownload(href, rel, directory));
   if (desktop) return desktop.value;
+  const native = await filesystemDownload(href, rel, directory, options);
+  if (native) return native;
+  const shown = isPicked(directory) ? "picked" : directory;
+  await pageDownload(
+    { id: options.id, url: href, directory: shown, path: rel, options },
+    webSink(directory, rel),
+  );
+  return { path: isPicked(directory) ? rel : `${directory}/${rel}` };
+}
+
+/**
+ * A download through `@capacitor/filesystem` in the shell (no progress): its `downloadFile`, or
+ * where the plugin lacks it, `fetch` then its `writeFile`. Undefined without the plugin.
+ */
+async function filesystemDownload(
+  href: string,
+  rel: string,
+  directory: FileDirectory,
+  options: DownloadToFileOptions,
+): Promise<{ path: string } | undefined> {
   const native = nativeFs("downloadFile", directory);
   if (native) {
     const done = await native.plugin.downloadFile({
-      url,
+      url: href,
       path: rel,
       directory: native.directory,
       recursive: true,
+      ...(options.headers ? { headers: headersOf(options.headers) } : {}),
     });
     return { path: typeof done?.path === "string" ? done.path : rel };
   }
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`downloadToFile: ${url} answered ${res.status}`);
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  // A plugin without its (deprecated) downloadFile still gets the file in native storage.
   const writer = nativeFs("writeFile", directory);
-  if (writer) {
-    const data = bytesToBase64(bytes);
-    const done = await writer.plugin.writeFile({
-      path: rel,
-      data,
-      directory: writer.directory,
-      recursive: true,
-    }) as { uri?: unknown } | undefined;
-    return { path: typeof done?.uri === "string" ? done.uri : rel };
+  if (!writer) return undefined;
+  const res = await fetch(href, { headers: headersOf(options.headers), signal: options.signal });
+  if (!res.ok) throw new Error(`downloadToFile: ${href} answered ${res.status}`);
+  const data = bytesToBase64(new Uint8Array(await res.arrayBuffer()));
+  const done = await writer.plugin.writeFile({
+    path: rel,
+    data,
+    directory: writer.directory,
+    recursive: true,
+  }) as { uri?: unknown } | undefined;
+  return { path: typeof done?.uri === "string" ? done.uri : rel };
+}
+
+/** Common file types by extension, for an upload's default `mimeType`. */
+const MIME_TYPES: Readonly<Record<string, string>> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  heic: "image/heic",
+  svg: "image/svg+xml",
+  pdf: "application/pdf",
+  json: "application/json",
+  txt: "text/plain",
+  csv: "text/csv",
+  md: "text/markdown",
+  html: "text/html",
+  zip: "application/zip",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  wav: "audio/wav",
+};
+
+/** The type for `name` by its extension, else `application/octet-stream`. */
+function mimeTypeOf(name: string): string {
+  const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? "";
+  return MIME_TYPES[ext] ?? "application/octet-stream";
+}
+
+/** The file to upload, as a Blob: read from OPFS / a picked file, or through the native plugin. */
+async function uploadSource(directory: FileDirectory, rel: string, type: string): Promise<Blob> {
+  const native = !isPicked(directory) && (onDesktop() || nativeFs("readFile", directory));
+  if (native) {
+    const data = await readFile(rel, { directory, encoding: "base64" });
+    return new Blob([base64ToBytes(data)], { type });
   }
-  await writeWeb("downloadToFile", directory, rel, bytes, true);
-  return { path: isPicked(directory) ? rel : `${directory}/${rel}` };
+  return await (await webFile("uploadFile", directory, rel, false)).handle.getFile();
+}
+
+/**
+ * Upload a file to a URL, with progress.
+ *
+ * - Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add
+ *   file-transfer`), the OS's background transfer service sends it (a `URLSession` background
+ *   session on iOS, WorkManager on Android), straight from the file: it carries on while the
+ *   app is in the background, and CORS does not apply.
+ * - Otherwise the page sends it (`XMLHttpRequest`, for upload progress; `fetch` where there is
+ *   none), read from the app's storage (the native filesystem plugin, the desktop runtime, or
+ *   OPFS). CORS applies.
+ *
+ * Uploads cannot pause; a cancelled or failed one starts over when resumed.
+ *
+ * @param url The `http(s)` URL to send it to.
+ * @param path The file's path inside `directory`; no `..` segments.
+ * @param options `directory` (default `"data"`), `method` (default `"POST"`), `as`
+ * (`"multipart"`, the default, or `"binary"`), `field`, `fileName`, `mimeType`, `fields`, and the
+ * transfer's `id`, `headers`, `onProgress`, `signal` and `background`.
+ * @returns The response's status, headers and body. It rejects on a non-2xx response (a
+ * `FileTransferError` with the status and body), on a network error, and with the signal's
+ * reason when `signal` aborts it.
+ * @example
+ * ```ts
+ * import { uploadFile } from "denext/mobile";
+ *
+ * const { body } = await uploadFile("https://api.example.com/photos", "camera/1.jpg", {
+ *   field: "photo",
+ *   fields: { album: "trip" },
+ *   headers: { authorization: `Bearer ${token}` },
+ *   onProgress: ({ bytes, total }) => setProgress(total ? bytes / total : null),
+ * });
+ * ```
+ */
+export async function uploadFile(
+  url: string,
+  path: string,
+  options: UploadFileOptions = {},
+): Promise<UploadFileResult> {
+  const rel = pathOf("uploadFile", path);
+  const directory = directoryOf("uploadFile", options.directory);
+  const href = urlOf("uploadFile", url);
+  const { method, mimeType, multipart } = uploadShape(rel, options);
+  const done = await viaTransferPlugin(href, rel, directory, options, {
+    kind: "upload",
+    method,
+    mimeType,
+    ...(multipart ? { multipart: { ...multipart, mimeType } } : {}),
+  });
+  if (done) {
+    return { status: done.status ?? 200, headers: done.headers ?? {}, body: done.body ?? "" };
+  }
+  const blob = await uploadSource(directory, rel, mimeType);
+  return await pageUpload({
+    id: options.id,
+    url: href,
+    directory: isPicked(directory) ? "picked" : directory,
+    path: rel,
+    options,
+    method,
+    blob,
+    ...(multipart ? { multipart } : {}),
+    mimeType,
+  });
+}
+
+/** An upload's method, type and multipart framing (none for `as: "binary"`), checked. */
+function uploadShape(rel: string, options: UploadFileOptions): {
+  method: string;
+  mimeType: string;
+  multipart?: { field: string; fileName: string; fields: Record<string, string> };
+} {
+  const method = options.method ?? "POST";
+  if (!["POST", "PUT", "PATCH"].includes(method)) {
+    throw new TypeError(`uploadFile: method must be POST, PUT or PATCH (got "${method}")`);
+  }
+  const fileName = options.fileName ?? (rel.split("/").pop() || "file");
+  const mimeType = options.mimeType ?? mimeTypeOf(fileName);
+  if (options.as === "binary") return { method, mimeType };
+  const multipart = { field: options.field ?? "file", fileName, fields: { ...options.fields } };
+  return { method, mimeType, multipart };
 }

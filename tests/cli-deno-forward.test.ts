@@ -4,7 +4,7 @@
 // too. Unit tests over the pure pieces, then the real CLI as a subprocess.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { dirname, fromFileUrl, join } from "@std/path";
+import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { buildRegistry } from "../src/cli/register.ts";
 import { denoForwardFor, denoVerbArgs, verbatimFrom } from "../src/cli/deno-forward.ts";
 import {
@@ -60,7 +60,7 @@ Deno.test("isScriptTarget: script extensions, URLs and existing path-shaped file
 });
 
 Deno.test("denoForwardFor: Deno verbs verbatim, scripts as run, --cwd applied, others null", () => {
-  const cwd = "/work";
+  const cwd = resolve("/work"); // absolute on every OS (a drive on Windows)
   assertEquals(
     denoForwardFor(["compile", "--output", "x", "--config", "c.json", "main.ts"], {
       name: "compile",
@@ -85,7 +85,7 @@ Deno.test("denoForwardFor: Deno verbs verbatim, scripts as run, --cwd applied, o
 });
 
 Deno.test("leading global flags land after the Deno subcommand, where Deno accepts them", () => {
-  const cwd = "/work";
+  const cwd = resolve("/work"); // absolute on every OS (a drive on Windows)
   const script = (argv: string[], index: number) =>
     denoForwardFor(argv, { name: argv[index], index }, cwd)?.args;
   // `deno --config x task p` is an error; `deno task --config x p` is not.
@@ -121,7 +121,7 @@ Deno.test("leading global flags land after the Deno subcommand, where Deno accep
 });
 
 Deno.test("denoVerbArgs: `denext [globals] deno …` is verbatim after `deno`", () => {
-  const cwd = "/work";
+  const cwd = resolve("/work"); // absolute on every OS (a drive on Windows)
   assertEquals(denoVerbArgs(["--cwd", "app", "deno", "fmt", "--quiet"], 2, cwd), {
     args: ["fmt", "--quiet"],
     cwd: join(cwd, "app"),

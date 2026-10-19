@@ -5,6 +5,7 @@
 // Postgres in tests/backend-platform-integration.test.ts and tests/db-migrations-integration.test.ts.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { join, resolve } from "@std/path";
 import {
   diffSnapshots,
   quoteIdent,
@@ -319,6 +320,9 @@ function fakeIo(
   return { io, files };
 }
 
+/** The fake project root: absolute on every OS (a drive on Windows). */
+const PROJECT = resolve("/project");
+
 const config = () => ({
   backendMigrations: () =>
     backendMigrationsOf([() => [{ name: "backend_x_0001", sql: "select 1" }]]),
@@ -341,7 +345,7 @@ function action(
 ) {
   const lines: string[] = [];
   const hooks = createDbHooks(config(), options.io ?? fakeIo().io);
-  const root = options.root ?? "/project";
+  const root = options.root ?? PROJECT;
   const input: DbActionInput = {
     ctx: {
       positionals: [name, ...(options.positionals ?? [])],
@@ -415,7 +419,7 @@ Deno.test("db diff: a shadow database, the DDL printed or written, cleaned up", 
     flags: { file: "add_extra", schema: "public,app" },
   });
   const [[path, text]] = [...fake.files];
-  assert(/\/migrations\/\d{14}_add_extra\.sql$/.test(path), path);
+  assert(/[\\/]migrations[\\/]\d{14}_add_extra\.sql$/.test(path), path);
   assertStringIncludes(text, "-- denext db diff (public, app)");
   assertStringIncludes(written[0], "Wrote migrations/");
   await assertRejects(
@@ -464,7 +468,7 @@ Deno.test("db dump: pg_dump with the password in the environment", async () => {
   assert(!seen[0].args.join(" ").includes("cret"), "no password on the command line");
   assert(seen[0].args.includes("--schema-only"));
   await action("dump", sql, { io: fake.io, url, flags: { file: "out.sql", schema: "app" } });
-  assertEquals(fake.files.get("/project/out.sql"), "CREATE TABLE t ();");
+  assertEquals(fake.files.get(join(PROJECT, "out.sql")), "CREATE TABLE t ();");
   assert(seen[1].args.includes("app"));
   await assertRejects(
     () => action("dump", sql, { io: fake.io, url, flags: { "data-only": true } }),
@@ -651,7 +655,7 @@ Deno.test("db types: the catalog as standalone Supabase-shaped types", async () 
   assert(!printed.includes('declare module "@denext/backend/client"'), "standalone");
   const wrote = await action("types", sql, { io: fake.io, flags: { file: "db.types.ts" } });
   assertEquals(wrote, ["Wrote db.types.ts"]);
-  assertStringIncludes(fake.files.get("/project/db.types.ts")!, "export type Json");
+  assertStringIncludes(fake.files.get(join(PROJECT, "db.types.ts"))!, "export type Json");
 });
 
 Deno.test("seedContentType: by extension", () => {

@@ -16,6 +16,13 @@ The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `packag
 `@tanstack/router-generator` in `devDependencies`. The plugin loads them from the app's own
 `node_modules` and depends on no npm package itself.
 
+`denext migrate` sets a Start app up: it recognizes `@tanstack/react-start` with Start's Vite
+plugin (`tanstackStart()` in `vite.config.ts`) and writes this config, the Start options
+`vite.config.ts` passes (`srcDirectory`, `router`, `importProtection`, `prerender`, `pages`,
+`sitemap`, `spa`)
+carried into `tanstackStart({ … })`, and a `deno.json` that maps React to denext and loads
+TanStack from `node_modules`. `denext migrate --check` lists the options it leaves behind.
+
 ## What it does
 
 - **Owns the route tree.** A prepare step runs TanStack's own generator
@@ -45,6 +52,9 @@ The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `packag
   else `Referer`; `canonicalOrigin`, `trustForwardedHeaders` and `desktop.app.origin` apply) —
   or it is a 403 before Start sees it. Request bodies to server functions and server routes are
   read under a cap (413 over it).
+- **Emits Vite's asset imports** from both bundles under `/_tss/assets/`, content-hashed and the
+  same URL on both sides: an `app.css?url` link (a Tailwind input is compiled with the project's
+  Tailwind), images and fonts.
 - **Hydrates in the browser** with Start's `StartClient`, from a client bundle served under
   `/_tss/` and named in the router manifest, so `<Scripts />` loads it. From there navigation is
   TanStack's.
@@ -66,7 +76,14 @@ The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `packag
   rendered through Start's handler and written as `<path>/index.html` beside the client bundle.
   Routes that need a server are left out and listed with the reason, as the `static` deploy
   preset lists them: server routes, pages that call a server function from the browser, and
-  dynamic routes no prerendered page links to.
+  dynamic routes no prerendered page links to. Start's `spa` option adds the SPA shell
+  (`_shell.html`) and its `sitemap` option writes `sitemap.xml` and `pages.json`.
+- **Lists its routes in the deploy manifest** (`.denext/deploy-manifest.json`), so a deploy
+  adapter sees them: server routes and server functions (at `/_serverFn/<id>`) as
+  `"route-handler"`s, pages as `"static"` or, when they need a server (a server function reached
+  in the browser, a dynamic segment), `"dynamic"`, with the reason. Its client files under
+  `/_tss/` are the manifest's asset groups, with the `Cache-Control` it serves them with:
+  `client.js` revalidated (`no-cache`), the content-hashed chunks and `assets/` immutable.
 - **Keeps denext's directives:** `"use cache"` caches in the server bundle (with
   `cacheComponents` on), Start-compiled modules included. A `"use server"` module's source never
   reaches the browser: its server functions are RPC stubs there, and its other exports throw when
@@ -114,13 +131,15 @@ export const addNote = createServerFn({ method: "POST" })
 | Option              | Default                                    | What it does                                                        |
 | ------------------- | ------------------------------------------ | ------------------------------------------------------------------- |
 | `srcDirectory`      | `src`                                      | Where the app's sources live, relative to the project.              |
-| `router`            | `router.tsx`                               | The router module, relative to `srcDirectory`.                      |
+| `router`            | `router.tsx`                               | The router module, or Start's `router` object (below).              |
 | `generateRouteTree` | `true`                                     | `false` keeps generating `routeTree.gen.ts` yourself.               |
 | `maxBodyBytes`      | the app's `actionMaxBodyBytes`, else 1 MiB | The request-body cap for server functions and server routes.        |
 | `allowedOrigins`    | none                                       | Other origins (or bare hosts) allowed to POST to a server function. |
 | `importProtection`  | Start's rules                              | Start's `importProtection` options (below).                         |
 | `prerender`         | on in `denext export`                      | Start's `prerender` options (below); `enabled: false` turns it off. |
 | `pages`             | `[{ path: "/" }]`                          | Start's `pages`: the paths `denext export` prerenders.              |
+| `sitemap`           | none                                       | Start's `sitemap`: `denext export` writes `sitemap.xml` (below).    |
+| `spa`               | none                                       | Start's `spa`: `denext export` writes the SPA shell (below).        |
 
 ### `importProtection`
 
@@ -144,9 +163,53 @@ tanstackStart({
 (`files`, `excludeFiles`, `server.specifiers`). Patterns are globs over paths relative to the
 project (or specifiers as written), or regular expressions. `include`, `exclude` and
 `ignoreImporters` choose the importers checked; `onViolation` returning `false` waives a
-violation; `enabled: false` turns Start's rules off (denext's server-only scan still runs). A
-violation always fails the build, Start's `behavior: "error"` (`behavior`, `mockAccess`, `log`
-and `maxTraceDepth` are not applied).
+violation; `enabled: false` turns Start's rules off (denext's server-only scan still runs);
+`maxTraceDepth` (default 20) caps how far up a violation's trace walks.
+
+`behavior` resolves as in Start: a string applies to every command, and the object form
+`{ dev, build }` (or `behavior` unset) defaults to `"mock"` in `denext dev` and `"error"` in a
+build (`denext build`, `start` and `export`). An `"error"` violation fails the build, and in
+`denext dev` the request that builds. A `"mock"` one passes: a denied file is replaced by Start's
+self-denial module (its named exports over a mock), a denied specifier resolves to Start's
+mock-edge module (the names its importer uses), and each violation is a warning in Start's words,
+once per process (`log: "once"`, the default) or on every build (`log: "always"`). The mocks are
+Start's own (loaded from the app's `@tanstack/start-plugin-core`): any property, call or `new`
+gives another mock. In `denext dev` the browser mock logs its first use of each access as Start's
+`[import-protection] Mocked import used in dev client`, with `console.error` (`mockAccess:
+"error"`, the default), `console.warn` (`"warn"`) or nothing (`"off"`); on the server it is
+silent. A build's mocks are Start's build mocks: silent, a denied file a self-contained mock
+module. So a dev server keeps running past a violation unless `behavior` asks for `"error"`, and
+a build fails on one unless it asks for `"mock"`.
+
+### `router`
+
+A filename under `srcDirectory`, or Start's own `router` option:
+
+```ts
+tanstackStart({
+  router: {
+    entry: "app-router", // under srcDirectory; the extension may be left out
+    basepath: "/docs", // must match basePath in denext.config.ts
+    routesDirectory: "pages", // the route generator's options, as in Start
+    quoteStyle: "double",
+  },
+});
+```
+
+`routesDirectory` and `generatedRouteTree` are relative to `srcDirectory`, as in Start; the
+generator's other options apply over `tsr.config.json`. denext serves the app under its own
+`basePath`, so a `basepath` that differs is refused. Refused too: `target` (the plugin builds a
+React app) and `addExtensions: false` (Deno resolves the route tree's imports by extension).
+
+### Checked options
+
+`tanstackStart()` checks its options when `denext.config.ts` loads, with the errors
+`denext.config` validation gives: a wrong type, or a key that is not an option (the closest one is
+suggested), fails with the field's path:
+
+```
+invalid tanstackStart() options: `importProtection.cleint` is not an option (did you mean `client`?)
+```
 
 ### `prerender` and `pages`
 
@@ -161,6 +224,42 @@ tanstackStart({
   pages: [{ path: "/posts/42" }],
 });
 ```
+
+Each page is written as its final HTML: the content of every Suspense boundary (TanStack Router
+renders a route's matches inside one) in its place, so an exported page reads the same with
+JavaScript off and hydrates when it is on.
+
+### `spa` and `sitemap`
+
+Start's SPA shell and sitemap, written by `denext export` as Start's build writes them:
+
+```ts
+tanstackStart({
+  // The root route alone (no route's loader runs), rendered at maskPath to _shell.html.
+  spa: { enabled: true, maskPath: "/", prerender: { outputPath: "/_shell" } },
+  // sitemap.xml and pages.json at the export's root; host is required.
+  sitemap: { host: "https://example.com", outputPath: "sitemap.xml" },
+  pages: [{ path: "/", sitemap: { priority: 1, changefreq: "daily" } }],
+});
+```
+
+- **`spa`** adds one page, as Start's post-build does: `maskPath` (default `/`) rendered with
+  Start's `X-TSS_SHELL` header, so Start renders the root route's shell and no route's loader, to
+  `<prerender.outputPath>.html` (default `_shell.html`), crawling no links. Point your static
+  host's fallback (the file it serves for a path with no file of its own) at it, and the app
+  renders on the client. The shell is never refused (only the root route renders), it turns the
+  prerender on even with `prerender.enabled: false`, and it stays out of the sitemap. As in Start,
+  the shell takes its mask path: with the default `/` no `index.html` is written. In
+  `denext dev`, as in Start's dev server (its `TSS_SHELL`), every page is the shell: the server
+  renders the root route alone and the browser renders the route, so dev behaves as the static
+  host will. `spa: { enabled: false }` turns both off; `denext build` / `denext start` render
+  every page on the server either way.
+- **`sitemap`** (`enabled` defaults to `true` once the option is given) runs Start's own
+  `buildSitemap`, loaded from the app's `@tanstack/start-plugin-core`, over every page the
+  prerender met (listed, discovered and crawled, a filtered one included, each with what its
+  `onSuccess` returned): `sitemap.xml` at `outputPath` and `pages.json`, at the export's root.
+  A page's `sitemap` sets its entry (`exclude`, `priority`, `changefreq`, `lastmod`,
+  `alternateRefs`, `images`, `news`). Without a `host` the export fails, as Start's build does.
 
 Prerendering is on whenever you run `denext export`; `denext build` / `denext start` serve every
 route as before. The prerender reads the route tree the plugin generates, so with

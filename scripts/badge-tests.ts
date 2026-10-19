@@ -10,6 +10,12 @@
 // actual test jobs are what prove those tests pass; this badge just reports how
 // many there are, and the freshness check keeps the number honest.
 //
+// The badge the README shows is `main`'s, so it is refreshed where `main` is made: the release
+// script (scripts/release.ts, step 3b) regenerates it before the tag, and CI checks it on `main`
+// and on the development → main PR. It is NOT part of the pre-commit hook: the count moves with
+// every test file a commit adds, so a per-commit badge put two parallel commits in conflict on
+// this one file at nearly every rebase.
+//
 // Inside a git hook (git sets GIT_INDEX_FILE) it counts the STAGED test files, not the working
 // tree: other uncommitted work in the tree must not leak into the committed badge, or CI's
 // `--check` (which sees only the commit) fails.
@@ -19,7 +25,8 @@ import { fromFileUrl } from "@std/path";
 
 const REPO_ROOT = fromFileUrl(new URL("../", import.meta.url));
 const TESTS_DIR = `${REPO_ROOT}tests`;
-const BADGE_PATH = `${REPO_ROOT}.github/badges/tests.json`;
+/** The badge file (a Shields.io endpoint document). */
+export const BADGE_PATH: string = `${REPO_ROOT}.github/badges/tests.json`;
 
 const TEST_RE = /\bDeno\.test\s*\(/g;
 /** A Vitest case, one per line: `it(` / `test(` at the start of a (possibly indented) line. */
@@ -91,37 +98,66 @@ async function countWorkingTreeTests(): Promise<number> {
 }
 
 /** The staged count inside a git hook, else the working-tree count. */
-function countTests(): Promise<number> {
+export function countTests(): Promise<number> {
   return Deno.env.get("GIT_INDEX_FILE") ? countStagedTests() : countWorkingTreeTests();
 }
 
-/** The Shields.io "endpoint" badge document for a given test count. */
-function badge(count: number): Record<string, unknown> {
-  return {
+/**
+ * The badge file's text for a test count: the Shields.io "endpoint" document, pretty-printed
+ * with a trailing newline — the same bytes for the same count, wherever it is generated.
+ *
+ * @param count The number of tests.
+ * @returns The JSON text to write.
+ */
+export function badgeJson(count: number): string {
+  const badge = {
     schemaVersion: 1,
     label: "tests",
     message: `${count} passing`,
     color: "brightgreen",
   };
+  return JSON.stringify(badge, null, 2) + "\n";
 }
 
-const count = await countTests();
-const json = JSON.stringify(badge(count), null, 2) + "\n";
-
-if (Deno.args.includes("--check")) {
+/**
+ * Write `text` to `path` only when the file's content differs (a missing file counts as
+ * different), so regenerating from unchanged inputs leaves the file — its mtime, and the
+ * working tree — untouched.
+ *
+ * @param path The file to write.
+ * @param text Its new content.
+ * @returns Whether the file was written.
+ */
+export async function writeIfChanged(path: string, text: string): Promise<boolean> {
   let current: string | null = null;
   try {
-    current = await Deno.readTextFile(BADGE_PATH);
-  } catch { /* missing → treated as stale below */ }
-  if (current !== json) {
-    console.error(
-      `Test-count badge is out of date (${count} tests found).\n` +
-        `Run \`deno task badge:tests\` and commit .github/badges/tests.json.`,
-    );
-    Deno.exit(1);
+    current = await Deno.readTextFile(path);
+  } catch { /* missing → written below */ }
+  if (current === text) return false;
+  await Deno.writeTextFile(path, text);
+  return true;
+}
+
+if (import.meta.main) {
+  const count = await countTests();
+  const json = badgeJson(count);
+
+  if (Deno.args.includes("--check")) {
+    let current: string | null = null;
+    try {
+      current = await Deno.readTextFile(BADGE_PATH);
+    } catch { /* missing → treated as stale below */ }
+    if (current !== json) {
+      console.error(
+        `Test-count badge is out of date (${count} tests found).\n` +
+          `Run \`deno task badge:tests\` and commit .github/badges/tests.json.`,
+      );
+      Deno.exit(1);
+    }
+    console.log(`Test-count badge is current (${count} tests).`);
+  } else if (await writeIfChanged(BADGE_PATH, json)) {
+    console.log(`Wrote ${BADGE_PATH} (${count} tests).`);
+  } else {
+    console.log(`Test-count badge is current (${count} tests); nothing written.`);
   }
-  console.log(`Test-count badge is current (${count} tests).`);
-} else {
-  await Deno.writeTextFile(BADGE_PATH, json);
-  console.log(`Wrote ${BADGE_PATH} (${count} tests).`);
 }

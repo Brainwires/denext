@@ -4,7 +4,7 @@
 // `denext` reached another copy bundled two runtimes.
 
 import { assertEquals } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { join, resolve, toFileUrl } from "@std/path";
 import {
   appDenextRoot,
   appDenextRootFor,
@@ -108,10 +108,11 @@ Deno.test("lockedVersion reads v5 and v3 lockfiles", () => {
 });
 
 Deno.test("lockfilePath follows the config's lock field", () => {
-  const cfg = join("/app", "deno.json");
-  assertEquals(lockfilePath(cfg, undefined), join("/app", "deno.lock"));
-  assertEquals(lockfilePath(cfg, "locks/app.lock"), join("/app", "locks", "app.lock"));
-  assertEquals(lockfilePath(cfg, { path: "x.lock" }), join("/app", "x.lock"));
+  const app = resolve("/app"); // absolute on every OS (a drive on Windows)
+  const cfg = join(app, "deno.json");
+  assertEquals(lockfilePath(cfg, undefined), join(app, "deno.lock"));
+  assertEquals(lockfilePath(cfg, "locks/app.lock"), join(app, "locks", "app.lock"));
+  assertEquals(lockfilePath(cfg, { path: "x.lock" }), join(app, "x.lock"));
   assertEquals(lockfilePath(cfg, false), undefined);
 });
 

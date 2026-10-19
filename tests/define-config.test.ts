@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { defineConfig } from "../src/server/define-config.ts";
+import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 Deno.test("defineConfig returns the config unchanged (identity)", () => {
   const cfg = { basePath: "/app", trailingSlash: true };
@@ -79,6 +80,7 @@ Deno.test("defineConfig type-checks the config (accepts valid, rejects unknown f
     await Deno.writeTextFile(`${dir}/t.ts`, body);
     const { code } = await new Deno.Command(Deno.execPath(), {
       args: ["check", `${dir}/t.ts`],
+      env: fileUrlCheckEnv(),
       stderr: "null",
       stdout: "null",
     }).output();

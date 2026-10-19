@@ -188,6 +188,7 @@ Deno.test("pages: a PPR shell round-trips its hole/flight extras", () => {
     headExtras: "<meta>",
     inTreeTitle: "Title",
     flightSignalState: { "0.1": 42 },
+    shellSignalState: { "_d0_0_": { v: 1, k: "k" } },
     flightShell: { $: "$", r: "h0" } as unknown as CachedPage["flightShell"],
   };
   store.setPage("ppr", shell);
@@ -196,6 +197,11 @@ Deno.test("pages: a PPR shell round-trips its hole/flight extras", () => {
   assertEquals(got.headExtras, "<meta>");
   assertEquals(got.inTreeTitle, "Title");
   assertEquals(got.flightSignalState, { "0.1": 42 });
+  assertEquals(
+    got.shellSignalState,
+    { "_d0_0_": { v: 1, k: "k" } },
+    "an HTML shell's useApi seeds",
+  );
   assertEquals(got.flightShell, { $: "$", r: "h0" } as unknown);
 
   // A plain (non-PPR) page carries no extras.
@@ -296,4 +302,31 @@ Deno.test("sqlite: a store that can't initialize surfaces the error (caller then
   // The store propagates the error; cache.ts's best-effort wrapper turns this into an
   // uncached read at the call site (covered in production-hardening.test.ts).
   assertThrows(() => store.getPage("k"), Error, "disk I/O");
+});
+
+Deno.test("sqlite: close() releases the handle, and the next access reopens it", () => {
+  let opened = 0;
+  let closed = 0;
+  const store = sqliteCacheStore({
+    path: ":memory:",
+    openDb: () => {
+      opened++;
+      return { exec: () => {}, query: () => [], close: () => void closed++ };
+    },
+  });
+  store.close(); // never opened: nothing to close
+  assertEquals(closed, 0);
+  store.getData("k");
+  store.close();
+  assertEquals([opened, closed], [1, 1], "the open handle is closed");
+  store.getData("k");
+  assertEquals(opened, 2, "used again after close(), the store reopens");
+});
+
+Deno.test("sqlite: a closed store's file can be removed (Windows refuses an open one)", () => {
+  const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-cache-close-" });
+  const store = sqliteCacheStore({ path: `${dir}/cache.db` });
+  store.setData("k", dataEntry({ v: 1 }, [], soon()));
+  store.close();
+  Deno.removeSync(dir, { recursive: true });
 });

@@ -95,7 +95,8 @@ internal design choice with no observable difference lives in
   (`location.assign`), not a soft navigation — the render is abandoned, the browser
   loads the target. On the server it is the usual 307.
 - **Inside a streamed `<Suspense>` hole (the shell has flushed), a control signal can't
-  touch the headers — the hole's streamed replacement carries it instead**, matching
+  touch the headers (a boundary whose content finished with the shell is written inline and is
+  part of the shell: its signal sets the status or redirects, as in Next) — the hole's streamed replacement carries it instead**, matching
   Next's semantics with one deliberate difference in mechanism. `redirect()` /
   `permanentRedirect()` stream a client-side redirect into the hole: a
   `<meta http-equiv="refresh" content="0;url=…">` (destination through the same
@@ -141,6 +142,15 @@ internal design choice with no observable difference lives in
   request, `createApiClient` / `useApi` run the call in-process through the full
   pipeline under the caller's identity (and through the tag-aware cache when `cache` /
   `next` options are passed); outside a request, or to a foreign `base`, it is a fetch.
+  Because the call carries the visitor's cookie and authorization (a Next `fetch` to your own
+  API carries none unless you pass them, which reads `cookies()`), a handler that reads any
+  header it inherited — `cookies()`, `headers()`, or `request.headers` / a `NextRequest`'s
+  `cookies` directly — makes the calling render per-visitor: an ISR page is not stored, and in
+  a Cache Components prerender the enclosing `<Suspense>` becomes a per-request hole. The app's
+  `middleware.ts` runs inside the call too, and its reads count the same way (its request's
+  headers, a `NextRequest`'s `cookies`, `cookies()` / `headers()`, and a matcher's `has` /
+  `missing` condition on an inherited header or a cookie), since it can hand what it read on
+  through a rewrite or a request header. A handler that reads none of them stays cacheable.
 - **`json()` from `denext/server` may add an `x-denext-wire: 1` header** when the body
   carried a Date / Map / Set / BigInt / URL / `undefined` / NaN / ±Infinity / -0 (the wire
   codec); a plain-JSON body
@@ -223,8 +233,9 @@ internal design choice with no observable difference lives in
 - **A nested cache passes on what is left of its life.** An outer `"use cache"` without its own
   `cacheLife()` lives no longer than the inner entries it read: Next.js takes the inner entry's
   `revalidate` / `expire` durations, denext the time each has left (the same for a fresh entry,
-  shorter for a cached one). Next.js's errors for a short-lived entry nested in an outer one
-  without `cacheLife()` are not raised.
+  shorter for a cached one). An `unstable_cache()` call inside it passes on its `revalidate`
+  option and `tags` as written, in both. Next.js's errors for a short-lived entry nested in an
+  outer one without `cacheLife()` are not raised.
 - **`revalidateTag(tag)` with one argument is not deprecated.** Next.js 16 warns and asks for a
   profile; in denext it stays the immediate purge that Live, `useApi({ tags })` and the
   backend's realtime build on, and it does not warn. `revalidateTag(tag, profile)` is the
@@ -234,7 +245,9 @@ internal design choice with no observable difference lives in
   (`updateTag` and `refresh` are Server Action only there, and none of them may run during a
   render). Inside a cached function all of them throw, as in Next.js.
 - **`cacheTag()` works outside a cached function**, where Next.js throws: it tags the page being
-  rendered, so `revalidateTag()` purges it. `cacheLife()` outside one throws, as in Next.js.
+  rendered, so `revalidateTag()` purges it; inside an `unstable_cache()` loader it tags that
+  entry (Next.js throws there too). `cacheLife()` outside a `"use cache"` function — an
+  `unstable_cache()` loader included — throws, as in Next.js.
 
 ## Remix and React Router
 
@@ -406,8 +419,17 @@ place it behaves differently from Auth.js:
 - **`AUTH_SECRET` must be at least 32 characters in production** (`npx auth secret` makes 44).
 - **Redirects stay on the origin.** The `redirect` callback runs, but whatever it returns is
   kept to a same-origin path: a callback that allows another origin lands on `/` instead.
-- **Every OAuth flow uses `state` and PKCE** (and `nonce` for OIDC); a provider's `checks` are
-  ignored.
+- **Every OAuth flow sends and verifies `state`**, whatever a provider's `checks` say (`["pkce"]`,
+  `["nonce"]` or `["none"]` leave it out in Auth.js). PKCE and the OIDC `nonce` follow `checks` as
+  in Auth.js; a provider that names none gets PKCE, plus a `nonce` for OIDC (Auth.js: PKCE only).
+- **A generated provider's OIDC `id_token` is verified against the issuer's JWKS**, and its
+  endpoints come from discovery even where Auth.js's definition names them; Auth.js trusts an
+  `id_token` it got straight from the token endpoint. An OAuth provider's address is never treated
+  as verified for linking by email.
+- **A passkey (`next-auth/providers/passkey`) is registered for a signed-in user** whose address
+  is verified, after a recent sign-in. Auth.js also registers one for a new email address with no
+  session, creating the account from an unverified address; denext doesn't. A WebAuthn sign-in
+  failure resolves `{ error: "WebAuthnVerificationError", code }` with denext's error code.
 - **Per-call `authorizationParams` can't set the flow's own parameters.** `signIn("google", {},
   { prompt: "login" })` adds `prompt` to the authorization URL, but `state`, `nonce`,
   `code_challenge` / `code_challenge_method`, `redirect_uri`, `client_id`, `response_type`,

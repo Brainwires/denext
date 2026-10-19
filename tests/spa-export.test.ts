@@ -11,7 +11,11 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { walk } from "@std/fs";
 import { basename, join, relative, SEPARATOR } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
-import { resolveExportOutDir, swapStagingDir } from "../src/build/export-pipeline/out-dir.ts";
+import {
+  resolveExportOutDir,
+  statIdentity,
+  swapStagingDir,
+} from "../src/build/export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../src/build/paths.ts";
 import { collectOtaManifest } from "../src/build/ota-manifest.ts";
 import {
@@ -493,4 +497,13 @@ Deno.test("swapStagingDir: a failed swap puts the previous output back", async (
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("statIdentity: dev:ino where it identifies an entry, never on Windows", () => {
+  assertEquals(statIdentity({ dev: 7, ino: 42 }, "linux"), "7:42");
+  assertEquals(statIdentity({ dev: 7, ino: 42 }, "darwin"), "7:42");
+  assertEquals(statIdentity({ dev: 7, ino: null }, "linux"), null);
+  // ReFS's 64-bit file index is not unique: sibling directories on a CI runner's volume read as
+  // one, so the guard refused `out` as overlapping `app` (and `.git` as overlapping `public`).
+  assertEquals(statIdentity({ dev: 7, ino: 42 }, "windows"), null);
 });

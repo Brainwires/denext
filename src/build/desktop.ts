@@ -39,7 +39,7 @@ import {
   resolveDesktopWsUrl,
 } from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
-import { devProxyTokenHeaders } from "./dev-server/dev-token.ts";
+import { devProxyTokenHeaders, hasDevSessionToken } from "./dev-server/dev-token.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-confirm.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
@@ -189,6 +189,14 @@ export {
   type MacosSigningEntitlementsOptions,
   V8_ENTITLEMENTS,
 } from "./desktop-macos-signing.ts";
+// The code-signing argv and credentials the package scripts and `denext build --compile --sign`
+// share.
+export {
+  macosCodesignArgs,
+  type MacosCodesignOptions,
+  type NotaryCredentials,
+  notarytoolSubmitArgs,
+} from "./code-signing.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
   buildDesktopBundle,
@@ -286,7 +294,17 @@ function isDesktopDevBuild(): boolean {
 /** The live-reload proxy decision from the env + the running binary — see {@linkcode desktopDevProxyDecision}. */
 export type DesktopDevProxyDecision =
   | { readonly proxy: false; readonly refused?: string }
-  | { readonly proxy: true; readonly target: string; readonly allowNonLoopback: boolean };
+  | {
+    readonly proxy: true;
+    readonly target: string;
+    readonly allowNonLoopback: boolean;
+    /**
+     * Whether the per-launch desktop token rides the proxied top-level page (so its bridge and
+     * `secureStore` work): always for a loopback target; for a `--lan` target only when its URL
+     * carries the dev server's per-run session token (`?__denext_dev=…`), i.e. a gated server.
+     */
+    readonly injectToken: boolean;
+  };
 
 /**
  * Decide whether `runDesktop` enters live-reload PROXY mode, enforcing the loopback rule at
@@ -298,7 +316,9 @@ export type DesktopDevProxyDecision =
  *   inherited/hostile env cannot turn a shipped window into a proxy;
  * - a parseable URL whose host is loopback — OR non-loopback WITH `lan` (the
  *   {@linkcode DESKTOP_DEV_LAN_ENV} opt-in that only `desktop dev --lan` sets). `allowNonLoopback`
- *   is true only in that LAN case.
+ *   is true only in that LAN case, and `injectToken` there requires the dev server's per-run
+ *   session token on the URL (`desktop dev --lan` puts it there), so the window's page gets its
+ *   bridge only from a dev server that gates its other peers.
  * A blocked case returns `{ proxy: false, refused }` so the caller can log why and serve static.
  */
 export function desktopDevProxyDecision(
@@ -327,8 +347,17 @@ export function desktopDevProxyDecision(
     };
   }
   const host = parsed.hostname;
-  if (isLoopbackHost(host)) return { proxy: true, target: devUrl, allowNonLoopback: false };
-  if (lan) return { proxy: true, target: devUrl, allowNonLoopback: true };
+  if (isLoopbackHost(host)) {
+    return { proxy: true, target: devUrl, allowNonLoopback: false, injectToken: true };
+  }
+  if (lan) {
+    return {
+      proxy: true,
+      target: devUrl,
+      allowNonLoopback: true,
+      injectToken: hasDevSessionToken(devUrl),
+    };
+  }
   return {
     proxy: false,
     refused:
@@ -371,7 +400,7 @@ export function stripDesktopCredentials(request: Request): Request {
 /**
  * Forward a request through the live-reload dev proxy, injecting `__denext` into an UNCOMPRESSED
  * HTML navigation response so `runtimePlatform()` reads "desktop" in dev too. The per-launch token
- * is injected only when `injectToken` (a loopback target), never in --lan mode. Compressed or
+ * is injected only when `injectToken` (a loopback target, or a token-gated --lan one). Compressed or
  * non-HTML responses (and HEAD) stream through untouched — injecting into a gzipped body corrupts it.
  */
 async function devProxyResponse(
@@ -391,17 +420,23 @@ async function devProxyResponse(
   ) {
     return res;
   }
-  const injected = await injectDesktopGlobal(
+  const injected = await injectDesktopScripts(
     await res.text(),
     injectToken ? token : null,
     injectToken,
     injectToken ? preload : undefined,
     preloadKey,
-    page,
+    page ?? {},
   );
   const headers = new Headers(res.headers);
   headers.delete("content-length");
-  return new Response(injected, { status: res.status, statusText: res.statusText, headers });
+  // The dev server's CSP travels as a header: allow the injected scripts there too, or a strict
+  // `script-src` blocks the desktop global (no `__denext`, no token, no bridge).
+  const csp = headers.get("content-security-policy");
+  if (csp) {
+    headers.set("content-security-policy", addScriptHashesToCspHeader(csp, injected.hashes));
+  }
+  return new Response(injected.html, { status: res.status, statusText: res.statusText, headers });
 }
 
 /**
@@ -689,15 +724,52 @@ export async function injectDesktopGlobal(
   preloadKey?: string,
   page: DesktopPageGlobals = {},
 ): Promise<string> {
-  // A null token marks the window desktop WITHOUT handing it the per-launch token (the --lan
-  // live-reload case): runtimePlatform() reads "desktop", but the token-gated endpoints stay
-  // unreachable, and the boot beacon (which needs the token) is not injected.
+  return (await injectDesktopScripts(html, token, beacon, preload, preloadKey, page)).html;
+}
+
+/**
+ * {@linkcode injectDesktopGlobal}, also returning the injected scripts' CSP hashes
+ * (`'sha256-…'`), for a caller that must allow them in a `Content-Security-Policy` header too.
+ */
+async function injectDesktopScripts(
+  html: string,
+  token: string | null,
+  beacon: boolean,
+  preload: string | undefined,
+  preloadKey: string | undefined,
+  page: DesktopPageGlobals,
+): Promise<{ html: string; hashes: string[] }> {
+  const scripts = desktopInlineScripts(token, beacon, preload, preloadKey, page);
+  const out = insertAfterHeadOrBody(
+    html,
+    scripts.map((code) => `<script>${code}</script>`).join(""),
+  );
+  const hashes = await Promise.all(
+    scripts.map(async (code) => `'sha256-${await sha256Base64(code)}'`),
+  );
+  return { html: addScriptHashToCspMeta(out, hashes), hashes };
+}
+
+/** The inline scripts {@linkcode injectDesktopScripts} injects, in order. */
+function desktopInlineScripts(
+  token: string | null,
+  beacon: boolean,
+  preload: string | undefined,
+  preloadKey: string | undefined,
+  page: DesktopPageGlobals,
+): string[] {
+  // A null token marks the window desktop WITHOUT handing it the per-launch token (a subframe, or
+  // a --lan live-reload target whose dev server is not token-gated): runtimePlatform() reads
+  // "desktop", but the token-gated endpoints stay unreachable, and the boot beacon (which needs
+  // the token) is not injected.
   const body = `globalThis.__denext=${JSON.stringify(desktopGlobals(token, page))}` +
     (token !== null ? QUIT_OVERRIDE_JS : "") +
     (token !== null && page.notifications === true ? NOTIFICATION_SHIM_INLINE : "") +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
   const withPreload = token !== null && preload !== undefined;
-  const scripts = !withPreload ? [body] : preloadKey === undefined ? [body, preload] : [
+  if (!withPreload) return [body];
+  if (preloadKey === undefined) return [body, preload];
+  return [
     body,
     // The element removes itself as it runs: its text would otherwise sit in `document.scripts`
     // for any page script to read the key back out of.
@@ -705,23 +777,34 @@ export async function injectDesktopGlobal(
     preload,
     `delete globalThis.${PRELOAD_KEY_GLOBAL}`,
   ];
-  const scriptTag = scripts.map((code) => `<script>${code}</script>`).join("");
-  const headMatch = html.match(/<head\b[^>]*>/i);
-  const bodyMatch = headMatch ? null : html.match(/<body\b[^>]*>/i);
-  let out: string;
-  if (headMatch) {
-    const at = headMatch.index! + headMatch[0].length;
-    out = html.slice(0, at) + scriptTag + html.slice(at);
-  } else if (bodyMatch) {
-    const at = bodyMatch.index! + bodyMatch[0].length;
-    out = html.slice(0, at) + scriptTag + html.slice(at);
-  } else {
-    out = scriptTag + html;
+}
+
+/** `tag` right after the opening `<head>`, else after `<body>`, else prepended. */
+function insertAfterHeadOrBody(html: string, tag: string): string {
+  const match = html.match(/<head\b[^>]*>/i) ?? html.match(/<body\b[^>]*>/i);
+  if (!match) return tag + html;
+  const at = match.index! + match[0].length;
+  return html.slice(0, at) + tag + html.slice(at);
+}
+
+/**
+ * A `Content-Security-Policy` HEADER value with `hashes` allowed for scripts: added to its
+ * `script-src`, or — with none — to a `script-src` copied from `default-src`, which governs scripts
+ * then. A policy with neither restricts no scripts and is returned as is. The proxied dev server
+ * sends its strict policy as a header (no `'unsafe-inline'`), which would otherwise block the
+ * injected desktop global.
+ */
+function addScriptHashesToCspHeader(policy: string, hashes: readonly string[]): string {
+  const missing = hashes.filter((hash) => !policy.includes(hash));
+  if (missing.length === 0) return policy;
+  const add = (values: string) => `${values.trimEnd()} ${missing.join(" ")}`;
+  const scriptSrc = /((?:^|;)\s*script-src)((?=[\s;]|$)[^;]*)/i;
+  if (scriptSrc.test(policy)) {
+    return policy.replace(scriptSrc, (_d, name: string, values: string) => name + add(values));
   }
-  const hashes = await Promise.all(
-    scripts.map(async (code) => `'sha256-${await sha256Base64(code)}'`),
-  );
-  return addScriptHashToCspMeta(out, hashes);
+  const fallback = /(?:^|;)\s*default-src((?=[\s;]|$)[^;]*)/i.exec(policy);
+  if (!fallback) return policy;
+  return `${policy.trimEnd().replace(/;$/, "")}; script-src${add(fallback[1])}`;
 }
 
 /** The web `Notification` shim as it sits inside the injected inline script. */
@@ -1019,8 +1102,9 @@ function localDesktopStage(ctx: {
 /**
  * Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`,
  * with the per-launch desktop token stripped so it never reaches the dev server. The token is
- * injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
- * that is also a top-level loopback-Host document, never in --lan mode.
+ * injected into a buffered HTML navigation only when the dev target allows it (`devInjectToken`:
+ * loopback, or a token-gated --lan server) and the request is a top-level document the window's
+ * trust world admits ({@linkcode shouldInjectDesktopToken}).
  */
 function devProxyServer(
   devProxy: DesktopProxyFn,
@@ -1101,6 +1185,20 @@ function desktopShellServer(ctx: {
   };
 }
 
+/** An exported page for a GET / HEAD of its path, with the desktop global injected; else `null`. */
+async function serveExportPage(
+  request: Request,
+  url: URL,
+  outDir: string,
+  serveShell: DesktopShellServer,
+  injectToken: boolean,
+): Promise<Response | null> {
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
+  const pageHtml = await readExportPage(outDir, url.pathname);
+  if (pageHtml === null) return null;
+  return await serveShell(request.method === "HEAD", injectToken, pageHtml);
+}
+
 /** The backend proxy (when configured + matched), then the static export, its `index.html` shell
  * for navigations, else 404. Split out so the top-level handler stays simple. */
 function backendOrExportServer(
@@ -1117,13 +1215,8 @@ function backendOrExportServer(
     // with the desktop global injected (read uncompressed, so the injection is not fighting
     // content-encoding on the static response). Without this every path got the ROOT shell, so
     // a multi-page export's `<a href="/protected">` reloaded the home page.
-    if (request.method === "GET" || request.method === "HEAD") {
-      const pageHtml = await readExportPage(outDir, url.pathname);
-      if (pageHtml !== null) {
-        const page = await serveShell(request.method === "HEAD", injectToken, pageHtml);
-        if (page) return page;
-      }
-    }
+    const page = await serveExportPage(request, url, outDir, serveShell, injectToken);
+    if (page) return page;
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
     const asset = await serveStatic(outDir, url.pathname, accEnc, request);
     if (asset) return noStore(asset);
@@ -1232,8 +1325,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   }
   const devUrl = devDecision.proxy ? devDecision.target : undefined;
   // The proxied dev-server HTML gets __denext injected for platform fidelity; the per-launch token
-  // is injected ONLY for a loopback (trusted-local) target, never in --lan mode.
-  const devInjectToken = devDecision.proxy && !devDecision.allowNonLoopback;
+  // goes with it for a loopback target, and for a --lan target whose dev server is token-gated.
+  const devInjectToken = devDecision.proxy && devDecision.injectToken;
   // Imported lazily so proxy-less apps never pull in the proxy module (and its `npm:ws`).
   const proxy = (options.proxy || devUrl) ? await import("./dev-proxy.ts") : undefined;
   // The window controller (the `window` capability) is created once the bridge exists; the close

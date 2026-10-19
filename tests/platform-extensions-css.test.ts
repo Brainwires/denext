@@ -13,6 +13,7 @@ import { startDevServer } from "../src/build/dev-server.ts";
 import { startSpaDevServer } from "../src/build/spa/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -103,7 +104,7 @@ for (const compat of [false, true]) {
         const out = (await staticExport(dir, { platform })).outDir;
         assertSheet(await allCss(out), want, `${platform} export`);
       } finally {
-        await Deno.remove(dir, { recursive: true });
+        await removeTempDir(dir);
       }
     });
   }
@@ -117,7 +118,7 @@ for (const compat of [false, true]) {
       const out = (await staticExport(dir, { platform: "ios" })).outDir;
       assertSheet(await allCss(out), "mobile", "ios export");
     } finally {
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }
@@ -152,7 +153,7 @@ Deno.test("SPA compat export --platform ios: a variant's font and `?url` assets 
     assertEqualsEmpty(await filesWith(out, "PLAIN_FONT_BYTES"), "the plain file's font");
     assertEqualsEmpty(await filesWith(out, "PLAIN_DOC_BYTES"), "the plain file's ?url asset");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -202,7 +203,7 @@ for (const compat of [false, true]) {
           : await cliExport(dir, platform);
         assertSheet(await allCss(join(out, "_denext")), want, `${platform} export`);
       } finally {
-        await Deno.remove(dir, { recursive: true });
+        await removeTempDir(dir);
       }
     });
   }
@@ -213,7 +214,7 @@ for (const compat of [false, true]) {
       await build(dir);
       assertSheet(await allCss(join(dir, ".denext", "client")), "web", "build");
     } finally {
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }
@@ -274,7 +275,7 @@ Deno.test("SPA dev (unbundled): each session's stylesheet follows its own platfo
     assertSheet(await linkedCss(server, "macos"), "desktop", "macos session");
   } finally {
     await server.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -356,7 +357,7 @@ for (const compat of [false, true]) {
       assertEquals(await spaDevTargets(dir), ["android", "ios", "macos", "web"]);
     } finally {
       await server.stop();
-      await Deno.remove(dir, { recursive: true });
+      await removeTempDir(dir);
     }
   });
 }
@@ -381,7 +382,7 @@ Deno.test("SPA dev (bundled): a target with no platform files of its own shares 
     assertEquals(await spaDevTargets(dir), ["ios", "web"]);
   } finally {
     await server.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 
@@ -394,6 +395,6 @@ Deno.test("next-compat App Router dev: a session's route CSS follows its own pla
     assertSheet(await css("ios"), "mobile", "ios session");
   } finally {
     await server.stop();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });

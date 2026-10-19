@@ -1,7 +1,7 @@
 // `denext migrate --check`: the dry run of `denext migrate`.
 //
 // For every source `migrate` supports (Next App Router, Pages Router, Vite, CRA, a generic
-// React SPA, Remix, React Router v7 framework mode, Expo) these tests prove three things:
+// React SPA, Remix, React Router v7 framework mode, Expo, Fresh) these tests prove three things:
 //   1. nothing is written: the project tree (paths, sizes, mtimes, contents) is identical
 //      before and after the check;
 //   2. the planned changes are exactly what the real migration does: the same fixture is
@@ -14,7 +14,11 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { dirname, fromFileUrl, join, relative } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration, type MigrateCheckReport } from "../src/build/migrate-check.ts";
+import {
+  checkMigration,
+  type MigrateCheckReport,
+  shellPathArg,
+} from "../src/build/migrate-check.ts";
 import { dryRunMigration, mfs, type PlannedChange } from "../src/build/migrate-io.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
@@ -279,6 +283,57 @@ Deno.test("migrate --check: a generic React SPA", async () => {
   assertEquals(r.source, "generic-react");
 });
 
+Deno.test("migrate --check: Fresh — the generated app/, the moves and deletes are planned", async () => {
+  const r = await checkAndCompare({
+    "deno.json": {
+      imports: { fresh: "jsr:@fresh/core@^2.3.3", preact: "npm:preact@^10.29.1" },
+      compilerOptions: { jsx: "precompile", jsxImportSource: "preact" },
+    },
+    "vite.config.ts":
+      `import { fresh } from "@fresh/plugin-vite";\nexport default { plugins: [fresh()] };\n`,
+    "client.ts": `import "./assets/styles.css";\n`,
+    "assets/styles.css": `body { margin: 0; }\n`,
+    "routes/_app.tsx": `export default function App({ Component }) { return <Component />; }\n`,
+    "routes/index.tsx": `export default function Home() { return <p>home</p>; }\n`,
+    "routes/api/[name].ts": `export const handler = { GET: () => new Response("x") };\n`,
+    "islands/Counter.tsx":
+      `export default function Counter() { return <button type="button" />; }\n`,
+    "static/logo.svg": "<svg/>\n",
+  });
+  assertEquals(r.source, "fresh");
+  const actions = new Set(r.changes.map((c) => `${c.action} ${c.path}`));
+  for (
+    const change of [
+      "create app/page.tsx",
+      "create app/layout.tsx",
+      "create app/api/[name]/route.ts",
+      "create middleware.ts",
+      "modify islands/Counter.tsx",
+      "move public/logo.svg",
+      "delete vite.config.ts",
+      "delete client.ts",
+      "modify deno.json",
+    ]
+  ) assert(actions.has(change), `${change}\n${JSON.stringify(r.changes, null, 2)}`);
+});
+
+Deno.test("migrate --check: Preact — the SPA config with the Preact aliases is planned", async () => {
+  const r = await checkAndCompare({
+    "package.json": {
+      dependencies: { preact: "^11.0.0", "preact-iso": "^2.12.2" },
+      devDependencies: { "@preact/preset-vite": "^2.10.6", vite: "^8.3.1" },
+    },
+    "vite.config.js":
+      `import preact from "@preact/preset-vite";\nexport default { plugins: [preact()] };\n`,
+    "index.html": `<div id="app"></div><script type="module" src="/src/index.jsx"></script>\n`,
+    "src/index.jsx":
+      `import { render } from "preact";\nrender(<p>hi</p>, document.getElementById("app"));\n`,
+  });
+  assertEquals(r.source, "preact");
+  const actions = new Set(r.changes.map((c) => `${c.action} ${c.path}`));
+  assert(actions.has("create denext.config.ts") && actions.has("create deno.json"));
+});
+
 Deno.test("migrate --check: Remix — the route-tree transform (creates, deletes) is planned", async () => {
   const r = await checkAndCompare(REMIX_FIXTURE);
   assertEquals(r.source, "remix");
@@ -390,6 +445,47 @@ Deno.test("migrate --check: Expo — native-only packages and prebuild output ar
   assert(r.changes.some((c) => c.path === "capacitor.config.ts" && c.action === "create"));
   assert(r.review.some((f) => f.item === "ios/"), JSON.stringify(r.review));
   assert(r.review.some((f) => f.item === "react-native-web"));
+});
+
+Deno.test("migrate --check: Expo — one native SDK recipe note per Firebase / IAP / Stripe package", async () => {
+  const r = await checkAndCompare({
+    "package.json": {
+      name: "expo-app",
+      dependencies: {
+        expo: "~53.0.0",
+        react: "19.0.0",
+        "react-native": "0.79.0",
+        "@react-native-firebase/app": "22.0.0",
+        "@react-native-firebase/messaging": "22.0.0",
+        "@stripe/stripe-react-native": "0.45.0",
+        "react-native-iap": "14.0.0",
+      },
+    },
+    // Installed and native-only (Nitro): listed once, with its recipe, not twice.
+    "node_modules/react-native-iap/package.json": { name: "react-native-iap", version: "14.0.0" },
+    "node_modules/react-native-iap/nitro.json": "{}",
+    "app.json": { expo: { name: "Expo App", slug: "expo-app" } },
+    "App.tsx": `export default function App() { return null; }\n`,
+  });
+  const url = "https://denext.dev/docs/native-sdk-recipes";
+  const firebase = "native-only, with no alias in React Native mode; Firebase: push through " +
+    "`denext mobile add push` and `sendPush`, the Firebase JS SDK for auth, Firestore and the " +
+    `rest; see ${url}`;
+  assertEquals(r.wontMigrate.filter((f) => !f.item.startsWith("app config")), [
+    { item: "@react-native-firebase/app", reason: firebase },
+    { item: "@react-native-firebase/messaging", reason: firebase },
+    {
+      item: "@stripe/stripe-react-native",
+      reason: "native-only, with no alias in React Native mode; Stripe: Stripe.js and the " +
+        `Payment Element in the WebView, or a Capacitor Stripe plugin; see ${url}`,
+    },
+    {
+      item: "react-native-iap",
+      reason: "native-only, with no alias in React Native mode; in-app purchases: " +
+        "`denext mobile add purchases` (RevenueCat), or a Capacitor billing plugin; " +
+        `see ${url}`,
+    },
+  ]);
 });
 
 Deno.test("migrate --check: a migration that would fail is reported as blocked", async () => {
@@ -600,4 +696,15 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+Deno.test("shellPathArg: a path as the user's shell reads it back", () => {
+  // Windows: backslashes stay single (cmd and PowerShell read them literally).
+  assertEquals(shellPathArg("C:\\Users\\me\\denext\\", "windows"), "C:\\Users\\me\\denext\\");
+  assertEquals(shellPathArg("C:\\My Code\\denext", "windows"), '"C:\\My Code\\denext"');
+  // POSIX: single quotes when anything is special, a quote closed and reopened.
+  assertEquals(shellPathArg("/home/me/denext/", "linux"), "/home/me/denext/");
+  assertEquals(shellPathArg("/home/me/my code", "darwin"), "'/home/me/my code'");
+  assertEquals(shellPathArg("/tmp/it's", "linux"), "'/tmp/it'\\''s'");
+  assertEquals(shellPathArg("/tmp/a\\b$c", "linux"), "'/tmp/a\\b$c'");
 });

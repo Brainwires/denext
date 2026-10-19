@@ -1,0 +1,103 @@
+{
+  "schema": "denext.migrate-check/1",
+  "command": "denext migrate --denext-local-path <repo>/",
+  "source": "fresh",
+  "verdict": "review",
+  "changes": [
+    {
+      "path": ".gitignore",
+      "action": "create"
+    },
+    {
+      "path": ".vscode/extensions.json",
+      "action": "create"
+    },
+    {
+      "path": ".vscode/settings.json",
+      "action": "create"
+    },
+    {
+      "path": "app/api/joke/route.ts",
+      "action": "create"
+    },
+    {
+      "path": "app/layout.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/not-found.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "assets/styles.css",
+      "action": "move",
+      "from": "static/styles.css"
+    },
+    {
+      "path": "denext.config.ts",
+      "action": "create"
+    },
+    {
+      "path": "deno.json",
+      "action": "modify"
+    },
+    {
+      "path": "dev.ts",
+      "action": "delete"
+    },
+    {
+      "path": "fresh.config.ts",
+      "action": "delete"
+    },
+    {
+      "path": "fresh.gen.ts",
+      "action": "delete"
+    },
+    {
+      "path": "islands/Counter.tsx",
+      "action": "modify"
+    },
+    {
+      "path": "main.ts",
+      "action": "delete"
+    },
+    {
+      "path": "middleware.ts",
+      "action": "create"
+    },
+    {
+      "path": "public/favicon.ico",
+      "action": "move",
+      "from": "static/favicon.ico"
+    }
+  ],
+  "wontMigrate": [
+    {
+      "item": "fresh.config.ts: kvOAuthPlugin()",
+      "reason": "a Fresh plugin; denext does not run Fresh plugins. Port what it adds (routes, middleware, islands, styles) to the app or to a denext plugin"
+    }
+  ],
+  "review": [
+    {
+      "item": "./assets/styles.css",
+      "reason": "denext compiles Tailwind v4; a Tailwind v3 stylesheet and tailwind.config.ts need `npx @tailwindcss/upgrade` first"
+    }
+  ],
+  "dependencies": {
+    "aliased": [
+      "preact",
+      "@preact/signals",
+      "@preact/signals-core"
+    ],
+    "passthrough": [],
+    "dropped": [
+      "$fresh/",
+      "preact/"
+    ],
+    "flagged": []
+  }
+}

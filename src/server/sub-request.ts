@@ -14,6 +14,7 @@ import {
 } from "./request-context.ts";
 import { copyRemoteAddr } from "./remote-addr.ts";
 import { BATCH_ITEM_HEADER } from "../runtime/api-batch-protocol.ts";
+import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 
 /** How deep self-calls may nest (a route that calls itself through the typed client terminates). */
 const MAX_SUB_REQUEST_DEPTH = 3;
@@ -24,7 +25,7 @@ const MAX_SUB_REQUEST_DEPTH = 3;
  * parent's `authorization`-unrelated framing headers. The app's `rateLimitHeader`, when it
  * names one, is inherited too ({@link synthesizeSubRequest}).
  */
-const SUB_REQUEST_HEADER_ALLOWLIST = [
+export const SUB_REQUEST_HEADER_ALLOWLIST = [
   "cookie",
   "authorization",
   "accept-language",
@@ -158,6 +159,13 @@ export async function runSubRequest(
   const res = await runWithContext(child, () => run(app, child, request));
   propagateToParent(child, parentCtx);
   await runDeferred(child);
+  // The child read the request it inherited while the caller prerenders: its answer is
+  // per-visitor, so the caller's boundary postpones (a per-request hole) rather than taking
+  // the answer into a shell shared by every visitor (the child's own 500 is discarded).
+  if (child.postponedBy && shouldPostpone()) {
+    await res.body?.cancel();
+    postponeDynamic(child.postponedBy);
+  }
   return res;
 }
 

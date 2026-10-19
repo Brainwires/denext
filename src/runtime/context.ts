@@ -34,6 +34,11 @@ export function createContext<T>(defaultValue: T): Context<T> {
   const context = provider as unknown as Context<T>;
   context._id = id;
   context._defaultValue = defaultValue;
+  // React's own fields: a `react-reconciler` renderer (React Native Skia's <Canvas>) reads the
+  // value of a context it has no provider for from these, and writes them for its host contexts.
+  // Across renderers a context reads its default, as in React.
+  const fields = context as unknown as { _currentValue: T; _currentValue2: T };
+  fields._currentValue = fields._currentValue2 = defaultValue;
   context.Provider = provider as unknown as Context<T>["Provider"];
   // Legacy render-prop consumer: `<MyContext.Consumer>{value => …}</MyContext.Consumer>`.
   // Some libraries (react-spring, older UI kits) also just reference `.Consumer` and

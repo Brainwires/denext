@@ -115,7 +115,20 @@ export function AuthBadge() {
  * @param dir An empty directory.
  */
 export async function writeNextAuthCompatFixture(dir: string): Promise<void> {
-  for (const [name, src] of Object.entries(FILES)) {
+  await writeFixtureFiles(dir, FILES);
+}
+
+/**
+ * Write `files` (path → source) into `dir`, creating directories.
+ *
+ * @param dir The target directory.
+ * @param files The files.
+ */
+export async function writeFixtureFiles(
+  dir: string,
+  files: Record<string, string>,
+): Promise<void> {
+  for (const [name, src] of Object.entries(files)) {
     await Deno.mkdir(join(dir, name, ".."), { recursive: true });
     await Deno.writeTextFile(join(dir, name), src);
   }

@@ -672,6 +672,7 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
       compiler: on("compiler"),
       desktop: on("desktop"),
       capacitor: on("capacitor"),
+      fastlane: on("fastlane"),
       compatibilityMode: on("compatibility"),
       fallow: on("fallow"),
       mcp: on("mcp"),

@@ -6,12 +6,19 @@ import { assert, assertEquals, assertNotEquals, assertThrows } from "@std/assert
 import {
   installJitter,
   JITTER_DEFAULTS,
+  JITTER_ENV,
   jitterFromEnv,
   mulberry32,
   seedFor,
 } from "./stress/jitter.ts";
 import { SERIAL_TESTS } from "./serial-tests.ts";
-import { parseStressArgs, runSeeds, stressFiles, summary } from "../scripts/test-stress.ts";
+import {
+  parseStressArgs,
+  runSeeds,
+  stressFiles,
+  stressRunArgs,
+  summary,
+} from "../scripts/test-stress.ts";
 
 Deno.test("jitter: one seed gives one sequence; another seed another", () => {
   const draw = (seed: number) => {
@@ -108,6 +115,9 @@ Deno.test("test:stress: the selection never includes a serial test file", () => 
   const files = stressFiles(names);
   assert(files.length > 50, `only ${files.length} files selected`);
   assert(files.includes("tests/react-native-apis.test.ts"));
+  // The Vitest files in those areas take the jitter too (the Vitest pass, with its env grant).
+  assert(files.includes("tests/live-client-reconnect.vitest.ts"));
+  assert(!files.includes("tests/jobs-timers.vitest.ts"));
   assertEquals(files.filter((f) => SERIAL_TESTS.includes(f)), []);
 });
 
@@ -145,4 +155,23 @@ Deno.test("test:stress: the summary lists every seed and how to replay a failure
   assert(failed.includes("1/2 runs passed"));
   assert(failed.includes("- seed 2: **FAILED**"));
   assert(failed.includes("deno task test:stress --seed <seed>"));
+});
+
+Deno.test("test:stress: the Vitest pass may read every variable the jitter preload reads", () => {
+  // The Vitest pass runs least-privilege; without the grant the preload threw
+  // `Requires env access to "DENEXT_STRESS_SEED"` and every `.vitest.ts` file failed.
+  const read = new Set<string>();
+  jitterFromEnv((name) => {
+    read.add(name);
+    return undefined;
+  });
+  assertEquals([...read].sort(), [...JITTER_ENV].sort());
+  const args = stressRunArgs(["tests/x.vitest.ts"]);
+  assertEquals(args, [
+    "scripts/test-run.ts",
+    `--vitest-allow-env=${JITTER_ENV.join(",")}`,
+    "--preload",
+    "tests/stress/timer-jitter.ts",
+    "tests/x.vitest.ts",
+  ]);
 });

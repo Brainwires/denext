@@ -19,6 +19,15 @@
  */
 
 import { h } from "../../jsx/jsx-runtime.ts";
+import {
+  clientState,
+  currentHref,
+  DEFAULT_BASE_PATH,
+  navigate,
+  refetchers,
+  refreshProviders,
+  sameOrigin,
+} from "./client-state.ts";
 import { getApiDispatcher } from "../../runtime/api-dispatch.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { createContext } from "../../runtime/context.ts";
@@ -31,9 +40,6 @@ import {
   useRef,
   useState,
 } from "../../runtime/hooks.ts";
-
-/** The endpoint prefix `NextAuth()`'s handlers are mounted on unless `basePath` says otherwise. */
-const DEFAULT_BASE_PATH = "/api/auth";
 
 /** The session the server answers with (`{ user, expires }` plus what `callbacks.session` adds). */
 export interface Session extends Record<string, unknown> {
@@ -117,13 +123,10 @@ export interface SessionProviderProps {
   refetchWhenOffline?: boolean;
 }
 
-/** The prefix the most recently mounted provider uses (what the standalone functions call). */
-let activeBasePath = DEFAULT_BASE_PATH;
-
 /** Fetch JSON from the handlers; `null` on any failure. */
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
-    const res = await fetch(`${activeBasePath}/${path}`, {
+    const res = await fetch(`${clientState.basePath}/${path}`, {
       credentials: "same-origin",
       ...init,
       headers: { accept: "application/json", ...(init?.headers ?? {}) },
@@ -296,40 +299,12 @@ export function getProviders(
     : fetchJson<Record<string, ClientSafeProvider>>("providers");
 }
 
-/** The current page (`/` outside a browser). */
-function currentHref(): string {
-  return typeof location === "undefined" ? "/" : location.href;
-}
-
-/**
- * `requested` as a URL on this page's origin, else this page — a `callbackUrl` read out of the
- * address bar is attacker-influenced, and this function navigates to it.
- */
-function sameOrigin(requested: unknown): string {
-  const here = new URL(currentHref(), "http://localhost");
-  if (typeof requested !== "string" || !requested) return here.href;
-  try {
-    const url = new URL(requested, here);
-    const web = url.protocol === "http:" || url.protocol === "https:";
-    return url.origin === here.origin && web ? url.href : here.href;
-  } catch {
-    return here.href;
-  }
-}
-
-/** Follow `url` (reloading when only the hash changes). */
-function navigate(url: string): void {
-  if (typeof location === "undefined") return;
-  location.href = url;
-  if (url.includes("#")) location.reload();
-}
-
 /** POST a form to the handlers, asking for `{ url }` back. */
 async function postForm(
   path: string,
   fields: Record<string, string>,
 ): Promise<{ status: number; url: string | null }> {
-  const res = await fetch(`${activeBasePath}/${path}`, {
+  const res = await fetch(`${clientState.basePath}/${path}`, {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -361,14 +336,14 @@ async function providerType(
   provider: string | undefined,
   callbackUrl: string,
 ): Promise<string | undefined> {
-  const signInPage = `${activeBasePath}/signin?${new URLSearchParams({ callbackUrl })}`;
+  const signInPage = `${clientState.basePath}/signin?${new URLSearchParams({ callbackUrl })}`;
   if (!provider) {
     navigate(signInPage);
     return undefined;
   }
   const providers = await getProviders();
   if (!providers) {
-    navigate(`${activeBasePath}/error`);
+    navigate(`${clientState.basePath}/error`);
     return undefined;
   }
   if (Object.hasOwn(providers, provider)) return providers[provider].type;
@@ -441,15 +416,6 @@ export async function signOut(options: SignOutParams = {}): Promise<{ url: strin
   return undefined;
 }
 
-/** Every mounted provider's refetch, so a sign-in / sign-out updates them all. */
-const refetchers = new Set<() => void>();
-
-/** Refetch in every mounted provider. */
-function refreshProviders(): Promise<void> {
-  for (const refetch of refetchers) refetch();
-  return Promise.resolve();
-}
-
 /**
  * Where the session state lives — what {@linkcode useSession} reads; `undefined` outside a
  * {@linkcode SessionProvider}.
@@ -497,7 +463,7 @@ function useRefetch(refetch: () => void, intervalSeconds: number, onFocus: boole
  * @returns The provider element.
  */
 export function SessionProvider(props: SessionProviderProps): VNode {
-  if (props.basePath) activeBasePath = props.basePath.replace(/\/+$/, "");
+  if (props.basePath) clientState.basePath = props.basePath.replace(/\/+$/, "");
   const [session, setSession] = useState<Session | null | undefined>(props.session);
   const mounted = useRef(true);
   useEffect(() => () => {
@@ -548,7 +514,7 @@ export function useSession(options: UseSessionOptions = {}): SessionContextValue
     if (!unauthenticated) return;
     if (onUnauthenticated) return onUnauthenticated();
     const callbackUrl = encodeURIComponent(currentHref());
-    navigate(`${activeBasePath}/signin?error=SessionRequired&callbackUrl=${callbackUrl}`);
+    navigate(`${clientState.basePath}/signin?error=SessionRequired&callbackUrl=${callbackUrl}`);
   }, [unauthenticated, onUnauthenticated]);
   return unauthenticated ? { data: null, status: "loading", update: value.update } : value;
 }

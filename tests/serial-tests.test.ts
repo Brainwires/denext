@@ -344,6 +344,31 @@ Deno.test("test-run: the Vitest files run in their own pass, never in the stock 
   assertEquals(one.vitest?.at(-1), "tests/v.vitest.ts");
 });
 
+Deno.test("test-run: --vitest-allow-env grants the Vitest pass those variables alone", () => {
+  const serial = ["tests/a.test.ts"];
+  const vitest = ["tests/v.vitest.ts"];
+  const passes = testPasses(
+    ["--vitest-allow-env=A_VAR,B_VAR", "--preload", "p.ts", "tests/"],
+    serial,
+    vitest,
+  );
+  assertEquals(passes.vitest, [
+    "test",
+    "--allow-read",
+    "--allow-write",
+    "--allow-env=A_VAR,B_VAR",
+    "--unstable-kv",
+    "--preload",
+    "p.ts",
+    "--parallel",
+    "tests/v.vitest.ts",
+  ]);
+  // The stock passes already run with -A; the flag is test-run's own, never Deno's.
+  for (const pass of [passes.parallel, passes.serial]) {
+    assert(pass && !pass.some((a) => a.includes("vitest-allow-env") || a === "A_VAR,B_VAR"));
+  }
+});
+
 Deno.test("test-run: with coverage every pass accumulates raw profiles, the stock files in one sequential pass", () => {
   const serial = ["tests/a.test.ts"];
   const vitest = ["tests/v.vitest.ts"];

@@ -3,6 +3,7 @@
 // driver and the SQLite metadata store).
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
 import { applyPlugins, resetPlugins, runPluginTeardown } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
@@ -111,7 +112,7 @@ Deno.test({
     };
     assertEquals(await run(["ls"]), ["files/  (public)", "other/"]);
     assertEquals(await run(["cp", "local/one.txt", "ss:///files/"]), [
-      `uploaded ${root}/local/one.txt → ss:///files/one.txt`,
+      `uploaded ${join(root, "local", "one.txt")} → ss:///files/one.txt`,
     ]);
     await run(["cp", "local/tree", "ss:///files/tree"], {
       recursive: true,

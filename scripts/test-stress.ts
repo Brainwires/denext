@@ -10,7 +10,7 @@
 // `deno task test:stress --seed <seed> [file]`. Exits non-zero when any run failed.
 
 import { SERIAL_TESTS } from "../tests/serial-tests.ts";
-import { JITTER_DEFAULTS } from "../tests/stress/jitter.ts";
+import { JITTER_DEFAULTS, JITTER_ENV } from "../tests/stress/jitter.ts";
 
 /** The areas whose tests lean on timers and microtasks: the client runtime and the shells. */
 const STRESS_AREAS =
@@ -25,8 +25,8 @@ const STRESS_SKIP =
   /(?:build|export|\bcli\b|migrate|-dev\b|-add-|doctor|submit|fastlane|package|installer|signing|-run\b|privacy|assets|fingerprint|kitchen-sink|memory-gate|pinned-runtime|-pull\b|-launch|-icon|import-map|cross-package|shims-docs|manifest|plugin-definitions|-config-types)/;
 
 /**
- * The test files `deno task test:stress` runs by default: `tests/*.test.ts` in the timer-heavy
- * areas, minus the serial files (they change process-wide state and run one at a time) and the
+ * The test files `deno task test:stress` runs by default: `tests/*.test.ts` and
+ * `tests/*.vitest.ts` (the toolchain's Vitest pass) in the timer-heavy areas, minus the serial files (they change process-wide state and run one at a time) and the
  * ones `STRESS_SKIP` names.
  *
  * @param names The file names under `tests/`.
@@ -37,7 +37,10 @@ export function stressFiles(
   serial: readonly string[] = SERIAL_TESTS,
 ): string[] {
   return names
-    .filter((n) => n.endsWith(".test.ts") && STRESS_AREAS.test(n) && !STRESS_SKIP.test(n))
+    .filter((n) =>
+      (n.endsWith(".test.ts") || n.endsWith(".vitest.ts")) && STRESS_AREAS.test(n) &&
+      !STRESS_SKIP.test(n)
+    )
     .map((n) => `tests/${n}`)
     .filter((f) => !serial.includes(f))
     .sort();
@@ -102,6 +105,22 @@ export function runSeeds(runs: number, seed: number | null, random = Math.random
   );
 }
 
+/**
+ * The `scripts/test-run.ts` arguments of one stress run over `files`: the jitter preload, and the
+ * Vitest pass's grant to read the variables the preload reads (that pass runs least-privilege).
+ *
+ * @param files The test files.
+ */
+export function stressRunArgs(files: readonly string[]): string[] {
+  return [
+    "scripts/test-run.ts",
+    `--vitest-allow-env=${JITTER_ENV.join(",")}`,
+    "--preload",
+    "tests/stress/timer-jitter.ts",
+    ...files,
+  ];
+}
+
 /** The run summary, as Markdown (also written to a GitHub Actions job summary). */
 export function summary(
   results: readonly { seed: number; ok: boolean }[],
@@ -138,14 +157,7 @@ if (import.meta.main) {
         `p=${opts.probability} (${files.length} files)\n`,
     );
     const { success } = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "run",
-        "-A",
-        "scripts/test-run.ts",
-        "--preload",
-        "tests/stress/timer-jitter.ts",
-        ...files,
-      ],
+      args: ["run", "-A", ...stressRunArgs(files)],
       env: {
         DENEXT_STRESS_SEED: String(seed),
         DENEXT_STRESS_MAX_MS: String(opts.maxMs),

@@ -111,8 +111,13 @@ async function openIos(run: InspectRunner, os: HostOs): Promise<string> {
     : "  iOS: could not open Safari; open it and use the Develop menu.";
 }
 
-/** The device serials `adb devices` lists as `device`, and the unauthorised ones. */
-function adbDevices(stdout: string): { ready: string[]; unauthorized: string[] } {
+/**
+ * The device serials `adb devices` lists as `device`, and the unauthorised ones.
+ *
+ * @param stdout `adb devices`'s output.
+ * @returns The ready and the unauthorised serials.
+ */
+export function adbDevices(stdout: string): { ready: string[]; unauthorized: string[] } {
   const rows = stdout.split("\n").slice(1).map((l) => l.trim().split(/\s+/)).filter((r) =>
     r.length >= 2
   );

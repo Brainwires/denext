@@ -7,6 +7,7 @@ import {
   compileBuildFlags,
   denortBinary,
   neverEmbedded,
+  relativeCssRedirects,
   toolchainCompileFlags,
 } from "../src/build/compile-app.ts";
 import type { DenoToolchainPin } from "../src/build/deno-toolchain.ts";
@@ -118,6 +119,16 @@ Deno.test("validateDenextConfig: compile", () => {
   bad({ permissions: "most" }, "`compile.permissions`");
   bad({ permissions: { net: ["x.com"] } }, "`compile.permissions.net`");
   bad({ permissions: { write: ["a,b"] } }, "`compile.permissions.write`");
+  ok({ sign: true });
+  ok({ sign: { entitlements: "ents.plist", notarize: false, timestampUrl: "http://ts.example" } });
+  bad({ sign: "yes" }, "`compile.sign` must be a boolean");
+  bad({ sign: { identity: "x" } }, "`compile.sign.identity` is not a key");
+  bad({ sign: { entitlements: "" } }, "`compile.sign.entitlements`");
+  bad({ sign: { notarize: "auto" } }, "`compile.sign.notarize` must be a boolean");
+  bad(
+    { sign: { timestampUrl: "ts.example" } },
+    "`compile.sign.timestampUrl` must be an http(s) URL",
+  );
 });
 
 Deno.test("standaloneArgv: a verb or help as given, else start with the flags", () => {
@@ -158,4 +169,27 @@ Deno.test("runStandalone: records the embedded project and the state dir, then d
     env.forEach((k, i) => saved[i] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[i]!));
     await removeTempDir(dir);
   }
+});
+
+Deno.test("relativeCssRedirects: stylesheet redirects name the embedded copies, relative to the config", () => {
+  // A Pages Router page has no server copy: the binary imports its stylesheet at the binary's own
+  // path, which only a key relative to the embedded config matches.
+  const config = "file:///work/app/.denext/compile/deno.json";
+  assertEquals(
+    relativeCssRedirects({
+      "file:///work/app/styles/globals.css": "file:///work/app/.denext/css-shims/css_0.js",
+      "file:///work/app/pages/about.module.css": "file:///work/app/.denext/css-shims/css_1.js",
+      "https://cdn.example/x.css": "file:///work/app/.denext/css-shims/css_2.js",
+    }, config),
+    {
+      "../../styles/globals.css": "../css-shims/css_0.js",
+      "../../pages/about.module.css": "../css-shims/css_1.js",
+      "https://cdn.example/x.css": "../css-shims/css_2.js",
+    },
+  );
+  // Each relative key resolves back to its stylesheet against the config.
+  assertEquals(
+    new URL("../../styles/globals.css", config).href,
+    "file:///work/app/styles/globals.css",
+  );
 });

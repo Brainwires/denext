@@ -13,10 +13,13 @@ import {
   type OAuthPresetSpec,
   oidcClaimProfile,
 } from "../../../server/auth/providers-presets.ts";
+import { OAUTH_CHECKS } from "../../../server/auth/oauth.ts";
 import { oidc } from "../../../server/auth/providers.ts";
 import type {
+  AuthPasskeyConfig,
   AuthProvider,
   AuthUser,
+  OAuthCheck,
   OAuthProvider,
   ProfileInput,
   SendVerificationRequest,
@@ -29,12 +32,17 @@ export type EnvReader = (name: string) => string | undefined;
 /** The key of the internal builder a descriptor carries (a symbol, so a spread keeps it). */
 const BUILD: unique symbol = Symbol.for("denext.next-auth.provider");
 
-/** What building a provider yields: the denext provider, and an email provider's sender. */
+/**
+ * What building a provider yields: the denext provider and an email provider's sender — or, for
+ * a WebAuthn provider (`passkey`), the passkey settings it turns on instead of a provider.
+ */
 export interface BuiltProvider {
-  /** The denext provider. */
-  provider: AuthProvider;
+  /** The denext provider (absent for a WebAuthn provider). */
+  provider?: AuthProvider;
   /** An email provider's mail sender. */
   send?: SendVerificationRequest;
+  /** A WebAuthn provider's `denextAuth({ passkeys })` settings. */
+  passkeys?: AuthPasskeyConfig;
 }
 
 /** A provider as `next-auth/providers/*` returns it. */
@@ -44,7 +52,7 @@ export interface ProviderDescriptor<Options = unknown> {
   /** Its display name. */
   name: string;
   /** Its kind. */
-  type: "oauth" | "oidc" | "credentials" | "email";
+  type: "oauth" | "oidc" | "credentials" | "email" | "webauthn";
   /** The options it was created with. */
   options: Options;
 }
@@ -114,7 +122,11 @@ export interface OAuthUserConfig<P = Record<string, unknown>> {
   profile?(profile: P, tokens: Record<string, unknown>): ProfileUser | Promise<ProfileUser>;
   /** Link to an existing user by email even when the address is unverified (dangerous). */
   allowDangerousEmailAccountLinking?: boolean;
-  /** Accepted and ignored: denext always runs `state` + PKCE (+ `nonce` for OIDC). */
+  /**
+   * The protections the flow runs, as in Auth.js: PKCE when it lists `"pkce"`, a `nonce` (OIDC)
+   * when it lists `"nonce"`; unset keeps the provider's own (PKCE, plus a `nonce` for OIDC, unless
+   * its definition names others). denext sends and checks `state` whatever the list says.
+   */
   checks?: string[];
   /**
    * denext-only: extra hosts the provider's endpoints may live on (exact, or `*.domain`) — a
@@ -223,6 +235,7 @@ function recordingProfile<P>(
   providerId: string,
   type: string,
   rawProfile: (input: ProfileInput) => Record<string, unknown> = mergedProfile,
+  authJsUser?: (input: ProfileInput) => Record<string, unknown>,
 ): OAuthProvider["profile"] {
   return async (input: ProfileInput) => {
     const base = await preset(input);
@@ -230,7 +243,7 @@ function recordingProfile<P>(
     const record = signInRecord();
     record.profile = raw;
     let user = base;
-    record.user = { ...base };
+    record.user = authJsUser ? { ...authJsUser(input), id: base.id } : { ...base };
     if (custom) {
       const mine = await custom(raw as P, input.tokens);
       user = overrideUser(mine, base);
@@ -239,6 +252,21 @@ function recordingProfile<P>(
     record.account = accountOf(providerId, type, input.tokens, user.id);
     return user;
   };
+}
+
+/**
+ * An app's `checks` option, refused at config time when it names a check Auth.js doesn't have
+ * (a typo must not turn PKCE off).
+ */
+function checksOf(id: string, checks: unknown): OAuthCheck[] {
+  const valid = (c: unknown): c is OAuthCheck => OAUTH_CHECKS.includes(c as OAuthCheck);
+  if (!Array.isArray(checks) || !checks.every(valid)) {
+    throw new TypeError(
+      `next-auth: provider "${id}" has \`checks: ${JSON.stringify(checks)}\` — each must be ` +
+        `one of ${OAUTH_CHECKS.map((c) => `"${c}"`).join(", ")}`,
+    );
+  }
+  return [...checks];
 }
 
 /**
@@ -253,16 +281,25 @@ function withAuthJsOptions<P>(
   built: OAuthProvider,
   options: OAuthUserConfig<P>,
   rawProfile?: (input: ProfileInput) => Record<string, unknown>,
+  authJsUser?: (input: ProfileInput) => Record<string, unknown>,
 ): OAuthProvider {
   const id = options.id ?? built.id;
   const { rest } = authorizationParams(options.authorization);
   const provider: OAuthProvider = { ...built, id };
   if (rest) provider.authorizationParams = { ...built.authorizationParams, ...rest };
   if (options.allowDangerousEmailAccountLinking) provider.allowDangerousEmailAccountLinking = true;
+  if (options.checks !== undefined) provider.checks = checksOf(id, options.checks);
   if (options.allowedHosts?.length) {
     provider.allowedHosts = [...(built.allowedHosts ?? []), ...options.allowedHosts];
   }
-  provider.profile = recordingProfile(built.profile, options.profile, id, built.type, rawProfile);
+  provider.profile = recordingProfile(
+    built.profile,
+    options.profile,
+    id,
+    built.type,
+    rawProfile,
+    authJsUser,
+  );
   return provider;
 }
 
@@ -281,6 +318,8 @@ export function oauthDescriptor<P, O extends OAuthUserConfig<P>>(
     type: "oauth" | "oidc";
     /** The raw profile `profile()` receives, when it is not the userinfo + claims. */
     rawProfile?: (input: ProfileInput) => Record<string, unknown>;
+    /** The user the Auth.js callbacks see, when it is not the denext user (a generated mapping). */
+    authJsUser?: (input: ProfileInput) => Record<string, unknown>;
   },
   options: O,
   preset: (
@@ -297,7 +336,9 @@ export function oauthDescriptor<P, O extends OAuthUserConfig<P>>(
       clientSecret: optionOrEnv(env, id, options.clientSecret, "SECRET"),
       ...(scopes ? { scopes } : {}),
     }, optionOrEnv(env, id, options.issuer, "ISSUER"));
-    return { provider: withAuthJsOptions(built, { ...options, id }, meta.rawProfile) };
+    return {
+      provider: withAuthJsOptions(built, { ...options, id }, meta.rawProfile, meta.authJsUser),
+    };
   });
 }
 

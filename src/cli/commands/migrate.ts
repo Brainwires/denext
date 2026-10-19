@@ -334,9 +334,17 @@ function reportExpoDeps(d: NonNullable<MigrateResult["expo"]>["deps"]): void {
         '.web.ts, or map the package to a web stub in deno.json "imports".',
     );
   }
+  reportNativeSdks(d.nativeSdks);
   if (d.notInstalled.length) {
     console.log(`    not installed, so not classified: ${d.notInstalled.join(", ")}`);
   }
+}
+
+/** The native-only SDKs the native SDK recipes cover, each with what replaces it. */
+function reportNativeSdks(sdks: NonNullable<MigrateResult["expo"]>["deps"]["nativeSdks"]): void {
+  if (!sdks.length) return;
+  console.log(`  ⚠️  native-only SDKs, no alias (${sdks.length}):`);
+  for (const p of sdks) console.log(`      ${p.name} — ${p.advice}`);
 }
 
 /** How many omitted exports a status line names before it counts the rest. */
@@ -457,16 +465,99 @@ function reportExpoDesktop(packages: readonly string[]): void {
   }
 }
 
+/** A TanStack Start app's section: the plugin wiring and the Start options carried over. */
+function reportTanstackStart(r: MigrateResult): void {
+  const t = r.tanstackStart;
+  if (!t) return;
+  console.log("  ▸ TanStack Start detected — wired the @denext/tanstack-start plugin.");
+  if (r.pagesConfigWritten) {
+    const carried = t.carried.map((o) => o.key);
+    console.log(
+      "    wrote denext.config.ts with `plugins: [tanstackStart()]`" +
+        (carried.length ? ` (from ${t.file}: ${carried.join(", ")}).` : "."),
+    );
+  } else {
+    console.log(
+      "    ⚠️  denext.config.ts already exists — add `tanstackStart()` from " +
+        '"@denext/tanstack-start" to its `plugins` array (and `compatibilityMode: true`).',
+    );
+  }
+  for (const d of t.dropped) console.log(`    ⚠️  ${t.file}: ${d.key} not carried — ${d.note}`);
+  for (const note of t.notes) console.log(`    ⚠️  ${note}`);
+}
+
+/** What the Fresh migration generated, and what it left to the user. */
+function reportFresh(m: NonNullable<MigrateResult["fresh"]>): void {
+  console.log(
+    `  ▸ Fresh ${m.version}.x detected — app/ and middleware.ts generated around routes/ ` +
+      "(run by denext/fresh/server).",
+  );
+  console.log(
+    `    pages: ${m.pages} · handler routes: ${m.handlers} · layouts: ${m.layouts} · ` +
+      `middleware: ${m.middlewares} · islands marked "use client": ${m.islands}`,
+  );
+  if (m.tailwind) {
+    console.log(`    tailwind: ${m.tailwind.input} → ${m.tailwind.output} (denext.config.ts)`);
+  }
+  if (m.wontMigrate.length) {
+    console.log(`    ✗ won't migrate (${m.wontMigrate.length}):`);
+    for (const f of m.wontMigrate) console.log(`      · ${f.item}: ${f.reason}`);
+  }
+  printReviewNotes(m.review.map((f) => `${f.item}: ${f.reason}`), 20);
+}
+
+/** What the Preact migration found: the tooling, the routers, and the findings. */
+function reportPreact(m: NonNullable<MigrateResult["preact"]>): void {
+  const routers = m.routers.length ? ` · routers: ${m.routers.join(", ")}` : "";
+  console.log(`  ▸ Preact (${m.tooling}) — SPA mode with Preact mapped to denext${routers}.`);
+  if (m.wontMigrate.length) {
+    console.log(`    ✗ won't migrate (${m.wontMigrate.length}):`);
+    for (const f of m.wontMigrate) console.log(`      · ${f.item}: ${f.reason}`);
+  }
+  printReviewNotes(m.review.map((f) => `${f.item}: ${f.reason}`), 20);
+}
+
 /** The framework-specific section of the report, if any. */
 function reportFramework(r: MigrateResult, desktop: boolean): void {
-  if (r.kind === "expo" && r.expo) {
+  if (r.preact) reportPreact(r.preact);
+  if (r.kind === "fresh" && r.fresh) {
+    reportFresh(r.fresh);
+  } else if (r.kind === "expo" && r.expo) {
     reportExpo(r);
-  } else if ((r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa) {
+  } else if (
+    (r.kind === "spa" || r.kind === "cra" || r.kind === "generic" || r.kind === "preact") && r.spa
+  ) {
     reportSpa(r, desktop);
   } else if (r.kind === "remix" && r.remix) {
     reportRemix(r.remix);
   } else if (r.pagesRouter) {
     reportPagesRouter(r);
+  }
+}
+
+/**
+ * How the app's source is left: a Fresh app's modules resolve through the alias map as they are;
+ * any other app's imports are rewritten to native denext with `--codemod`.
+ */
+async function reportSourceNote(
+  r: MigrateResult,
+  target: string,
+  codemod: boolean,
+  yes: boolean,
+): Promise<void> {
+  if (r.kind === "fresh" || r.kind === "preact") {
+    console.log(
+      `\n  ${r.kind === "fresh" ? "Fresh modules" : "Source"} unchanged: \`preact\` and ` +
+        "`@preact/signals` imports resolve to denext through deno.json.",
+    );
+  } else if (codemod) {
+    console.log("\n  Rewriting source imports to native denext:\n");
+    await applyCodemod(target, yes);
+  } else {
+    console.log(
+      "\n  Source unchanged (imports resolve via the alias map). " +
+        "Run `denext migrate --codemod` to rewrite to native denext.",
+    );
   }
 }
 
@@ -664,14 +755,16 @@ export function terminalRunner(toStderr: boolean): CommandRunner {
 export function createMigrateCommand(run?: CommandRunner): CommandSpec {
   return {
     name: "migrate",
-    summary: "Migrate a Next.js, Remix, Vite, CRA, Expo, or React app (config files)",
+    summary:
+      "Migrate a Next.js, Remix, Vite, CRA, Expo, Fresh, Preact, or React app (config files)",
     positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
     flags: [
       {
         name: "from",
         type: "string",
         valueName: "<framework>",
-        help: "Force source: next | remix | vite | cra | generic | expo",
+        help: "Force source: next | remix | react-router | vite | cra | generic | expo | " +
+          "tanstack-start | fresh | preact",
       },
       {
         name: "check",
@@ -755,6 +848,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       }
       reportDeps(r);
       reportFramework(r, desktop);
+      reportTanstackStart(r);
       if (r.effect) reportEffect(r);
       if (r.prisma) reportPrisma(r.prisma);
       if (r.nextAuth) reportNextAuth(r.nextAuth);
@@ -769,15 +863,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
 
       // Migrate creates config files only. Source rewriting is opt-in via `--codemod`
       // (imports otherwise resolve through the generated alias map).
-      if (ctx.flags.codemod === true) {
-        console.log("\n  Rewriting source imports to native denext:\n");
-        await applyCodemod(target, ctx.flags.yes === true);
-      } else {
-        console.log(
-          "\n  Source unchanged (imports resolve via the alias map). " +
-            "Run `denext migrate --codemod` to rewrite to native denext.",
-        );
-      }
+      await reportSourceNote(r, target, ctx.flags.codemod === true, ctx.flags.yes === true);
       console.log(
         "  Next: `denext install` (or ensure node_modules), then `denext task dev`.\n",
       );

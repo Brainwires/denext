@@ -530,21 +530,21 @@ Deno.test("Pages Router: maps next/router|link|head to the pages-router plugin +
     // The plugin is pinned at the range the current workspace package satisfies (see the
     // PAGES_ROUTER_SPEC test below) — never an older 0.x line that predates rc.7's barrel.
     assert(
-      imports["@denext/pages-router"]?.includes("pages-router@^0.12.0"),
-      "pages-router pinned ^0.12.0",
+      imports["@denext/pages-router"]?.includes("pages-router@^0.13.0"),
+      "pages-router pinned ^0.13.0",
     );
     // next/router|link|head resolve to the plugin (Pages Router APIs live there), so an
     // UNMODIFIED app resolves them with no codemod.
     assert(
-      imports["next/router"]?.includes("pages-router@^0.12.0/router"),
+      imports["next/router"]?.includes("pages-router@^0.13.0/router"),
       "next/router → plugin",
     );
     assert(
-      imports["next/link"]?.includes("pages-router@^0.12.0/link"),
+      imports["next/link"]?.includes("pages-router@^0.13.0/link"),
       "next/link → plugin",
     );
     assert(
-      imports["next/head"]?.includes("pages-router@^0.12.0/head"),
+      imports["next/head"]?.includes("pages-router@^0.13.0/head"),
       "next/head → plugin",
     );
 

@@ -20,8 +20,10 @@ import { adaptRequest } from "./middleware.ts";
 import type { ApiMatch } from "../router/match.ts";
 import type { ApiContext, ApiModule, HttpMethod, ModuleLoader } from "./types.ts";
 import { readApiBodyLimit, readSegmentConfig } from "./segment-config.ts";
-import { currentContext } from "./request-context.ts";
+import { currentContext, type RequestContext } from "./request-context.ts";
+import { selfCallInheritedHeaders, trackInheritedReads } from "./inherited-read-tracking.ts";
 import { asyncProps } from "../runtime/async-props.ts";
+import { isPostpone } from "../runtime/postpone.ts";
 import { cappedBody, isBodyTooLarge } from "./body.ts";
 import { ApiError, apiErrorResponse, isApiError } from "./api-error.ts";
 import { apiDefinitionOf } from "./define-api.ts";
@@ -127,13 +129,22 @@ async function dispatchToHandler(
   try {
     // Like middleware, a route handler receives the adapted request — a `NextRequest`
     // (`nextUrl`, `cookies`) once `next/server` is loaded, the plain Request otherwise.
-    const req = withWireJson(adaptRequest(boundRequest(request, cap)));
+    const req = trackSelfCall(withWireJson(adaptRequest(boundRequest(request, cap))), ctx);
     const context: ApiContext = { params: asyncProps({ ...match.params }) };
     if (handler) return await handler(req, context);
     return await headFromGet(mod, req, context);
   } catch (err) {
     return await apiErrorFor(err, request, ctx?.requestId, meta !== undefined, options);
   }
+}
+
+/**
+ * In a self-call (`subRequestDepth`), the handler's reads of the headers it inherited from its
+ * caller make the caller's render per-visitor (see `inherited-read-tracking.ts`).
+ */
+function trackSelfCall(req: Request, ctx: RequestContext | undefined): Request {
+  const inherited = selfCallInheritedHeaders(ctx);
+  return inherited ? trackInheritedReads(req, inherited) : req;
 }
 
 /** The request with its body bounded by `cap` (`false` = unbounded; no body = unchanged). */
@@ -181,13 +192,15 @@ function methodNotAllowed(mod: ApiModule): Response {
  * reading past the body cap is a 413. Anything else: a `defineApi` route answers a redacted
  * JSON 500 (reported through `onError`); a plain handler keeps the pipeline's text-500 path.
  */
-async function apiErrorFor(
+/**
+ * The response for a control flow thrown by a handler — a redirect, a `notFound()`-style signal,
+ * or a self-call's postpone — or `null` for a real error.
+ */
+function controlResponse(
   err: unknown,
   request: Request,
   requestId: string | undefined,
-  defined: boolean,
-  options: ApiDispatchOptions,
-): Promise<Response> {
+): Response | null {
   if (isRedirect(err)) {
     return new Response(null, {
       status: err.status,
@@ -196,6 +209,21 @@ async function apiErrorFor(
   }
   const signal = controlSignalError(err);
   if (signal) return signalResponse(signal, request, requestId);
+  // A self-call that read its caller's request during a prerender: not an error. The caller
+  // postpones on it (`runSubRequest`) and discards this answer.
+  if (isPostpone(err) && currentContext()?.postponedBy) return new Response(null, { status: 503 });
+  return null;
+}
+
+async function apiErrorFor(
+  err: unknown,
+  request: Request,
+  requestId: string | undefined,
+  defined: boolean,
+  options: ApiDispatchOptions,
+): Promise<Response> {
+  const control = controlResponse(err, request, requestId);
+  if (control) return control;
   if (isApiError(err)) return apiErrorResponse(err, requestId);
   if (err instanceof WireCodecError) {
     const bad = new ApiError(400, "bad_request", { message: "malformed encoded body" });

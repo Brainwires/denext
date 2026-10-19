@@ -27,7 +27,8 @@ interface ModuleInfo {
 /** `deno info --json <root>`. */
 async function info(root: string): Promise<ModuleInfo> {
   const { stdout, success } = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", join(ROOT, root)],
+    // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
+    args: ["info", "--json", toFileUrl(join(ROOT, root)).href],
     cwd: ROOT,
     stdout: "piped",
     stderr: "null",

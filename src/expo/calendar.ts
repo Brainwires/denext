@@ -1514,14 +1514,16 @@ export async function createEventAsync(
 
 /**
  * Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and
- * the following ones; iOS only). An occurrence and a time zone are changed through
- * `DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is
- * returned.
+ * the following ones). An occurrence and a time zone are changed through `DenextCalendar`; on
+ * Android the changed occurrence becomes an exception event, whose id is returned, and with
+ * `futureEvents` the series is split there (it ends before the occurrence, and a new event with
+ * the changes carries the rest: its id is returned, as EventKit's new identifier is on iOS).
  *
  * @param id The event.
  * @param details The fields to change.
  * @param recurringEventOptions `instanceStartDate` and `futureEvents`.
- * @returns The id (of the exception, for an Android occurrence).
+ * @returns The id (of the exception, or of the new series with `futureEvents`, for an Android
+ *   occurrence).
  * @throws `ERR_UNAVAILABLE` for `instanceStartDate` without `DenextCalendar`.
  */
 export async function updateEventAsync(

@@ -22,7 +22,7 @@
 import { dirname, join, toFileUrl } from "@std/path";
 import { h } from "@denext/denext/jsx-runtime";
 import type { CollectionConfig, ContentConfig, StandardSchemaV1 } from "./config.ts";
-import { renderMarkdown } from "./markdown.ts";
+import { type MarkdownOptions, renderMarkdown } from "./markdown.ts";
 
 /**
  * Registration seam: the generated `.denext/content.ts` augments this with `config: typeof
@@ -70,6 +70,11 @@ export interface CollectionEntry<K extends CollectionKey = CollectionKey> {
   readonly format?: "md" | "mdx";
   /** MDX only: a hash of the source, cache-busting the compiled module across dev rebuilds. */
   readonly v?: string;
+  /**
+   * `.md` only: the plugin's `markdown` option at build (how raw HTML renders), when it is not
+   * the default (escaped).
+   */
+  readonly markdown?: MarkdownOptions;
 }
 
 /** A stored entry as written to `content-data.json` (before `slug` is derived). */
@@ -79,6 +84,7 @@ interface StoredEntry {
   body?: string;
   format?: "md" | "mdx";
   v?: string;
+  markdown?: MarkdownOptions;
 }
 
 let storePath: string | null = null;
@@ -117,6 +123,7 @@ function loadStore(): Promise<Record<string, CollectionEntry[]>> {
           body: e.body,
           format: e.format,
           v: e.v,
+          ...(e.markdown ? { markdown: e.markdown } : {}),
         }));
       }
       return out;
@@ -175,6 +182,12 @@ export interface RenderContentOptions {
    * as `MDXContent`'s `components` prop. Ignored for `.md`.
    */
   readonly components?: Record<string, unknown>;
+  /**
+   * `.md` only: how raw HTML in the body renders — `{ html: "sanitize", sanitize? }` keeps what
+   * the allowlist sanitizer allows. Overrides the plugin's `markdown` option for this call;
+   * omitted, the plugin's setting applies (escaped by default). Ignored for `.mdx`.
+   */
+  readonly markdown?: MarkdownOptions;
 }
 
 /** What {@linkcode renderContent} resolves to: a denext element (the `h()` return type). */
@@ -206,8 +219,9 @@ async function mdxComponent(
 }
 
 /**
- * Render an entry's body: `.md` through the first-party Markdown renderer (HTML, escaped —
- * see `@denext/content-collections/markdown`), `.mdx` through the component module the plugin
+ * Render an entry's body: `.md` through the first-party Markdown renderer (raw HTML escaped, or
+ * sanitized with the `markdown: { html: "sanitize" }` option — see
+ * `@denext/content-collections/markdown`), `.mdx` through the component module the plugin
  * precompiled at build (`.denext/content/<collection>/<id>.js`, imported here — no MDX
  * tooling at request time). Server-only.
  *
@@ -217,7 +231,7 @@ async function mdxComponent(
  * ```
  *
  * @param entry An entry from {@linkcode getCollection} / {@linkcode getEntry}.
- * @param options MDX `components`.
+ * @param options MDX `components`; the `.md` renderer's `markdown` options.
  * @returns The rendered element (a `<div>` of HTML for `.md`; the MDX component for `.mdx`).
  * @throws When the entry has no Markdown body (a data collection) — render `data` yourself.
  */
@@ -230,7 +244,8 @@ export async function renderContent(
     return h(MDXContent as never, { components: options.components ?? {} });
   }
   if (entry.format === "md" && entry.body !== undefined) {
-    return h("div", { dangerouslySetInnerHTML: { __html: renderMarkdown(entry.body) } });
+    const html = renderMarkdown(entry.body, options.markdown ?? entry.markdown);
+    return h("div", { dangerouslySetInnerHTML: { __html: html } });
   }
   throw new Error(
     `content: entry "${entry.id}" has no Markdown/MDX body to render (a data collection?)`,
@@ -253,6 +268,6 @@ export interface ContentProps extends RenderContentOptions {
  * return <article><h1>{post.data.title}</h1><Content entry={post} /></article>;
  * ```
  */
-export function Content({ entry, components }: ContentProps): Promise<RenderedContent> {
-  return renderContent(entry, { components });
+export function Content({ entry, components, markdown }: ContentProps): Promise<RenderedContent> {
+  return renderContent(entry, { components, markdown });
 }

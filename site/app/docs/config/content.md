@@ -305,7 +305,9 @@ itself (it reads neither the config keys nor the env vars for them).
 - **`apiBatch`** — `ApiBatchConfig`. The typed client's batch endpoint
   (`POST /_denext/api-batch`, same-origin only): `enabled` (default `true`;
   `false` answers `404`), `mutations` (default `true`: POST/PUT/PATCH/DELETE items run
-  one at a time in call order; `false` refuses them), `maxItems` (default 20, at most 100), `maxBodyBytes`
+  one at a time in call order; `false` refuses them), `forwardHeaders` (default none: request
+  headers such as `["x-tenant"]` a batched call may carry, each item its own value; never a
+  credential, framing or proxy header), `maxItems` (default 20, at most 100), `maxBodyBytes`
   (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
   4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
   [Typed API](/docs/typed-api).
@@ -635,14 +637,17 @@ every `--platform` target included.
   app's own `react-native` imports as that desktop package. See
   [React Native / Expo apps](/docs/react-native#options).
 
-- **`compile`** — `{ include?, permissions? }`. For `denext build --compile` (the
+- **`compile`** — `{ include?, permissions?, sign? }`. For `denext build --compile` (the
   single-executable server build): `include` lists more project paths to embed
   beyond what denext embeds itself (`app/`, `.denext/`, `public/`, `jobs/`,
   `services/`, `functions/`, `migrations/`, `supabase/migrations/` and the root
   config, middleware and instrumentation modules; never `.env` files or SQLite
   databases), and `permissions` adds `--allow-*` beyond the least-privilege
-  baseline (`"all"` bakes `--allow-all`). See
-  [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile).
+  baseline (`"all"` bakes `--allow-all`). `sign` (`true`, or `{ entitlements?,
+  notarize?, timestampUrl? }`) code-signs the binary with the `DENEXT_*` credentials in the
+  environment, and only warns when they are missing. See
+  [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile)
+  and [Signing the binary](/docs/deployment-targets#signing-the-binary).
 
 - **`nextScriptWorkers`** — `boolean` (default `false`). Next.js's `experimental.nextScriptWorkers`
   (that spelling is honored with a dev warning): `<Script strategy="worker">` runs in a web worker

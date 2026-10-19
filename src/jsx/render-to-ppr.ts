@@ -45,7 +45,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
 
   constructor(
     mode: PprMode,
-    private readonly head: HeadCollector | null,
+    private head: HeadCollector | null,
     /** Resume only: which boundary ids are dynamic holes. */
     holeIds: Set<string> = new Set(),
     /** Root path prefix (a buffered hole/fallback render is rooted at its position). */
@@ -75,7 +75,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     idPrefix = "",
   ): Promise<string> {
     const sub = new PPRRenderer("buffered", null, new Set(), idPrefix);
-    return sub.resolveChildren(children, scopes);
+    return sub.resolveFromRoot(children, scopes);
   }
 
   protected empty(): string {
@@ -94,9 +94,21 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     const props = node.props ?? {};
     const tag = node.type as string;
     return renderHostHtml(tag, props, hostAttrs(props, tag), this.head, {
-      renderChildren: (c) => this.renderChildren(c, scopes),
+      renderChildren: (c, hoist) =>
+        hoist ? this.renderChildren(c, scopes) : this.renderUnhoisted(c, scopes),
       renderTitle: (c) => this.renderBuffered(c, scopes),
     }, node.key);
+  }
+
+  /** Render children with nothing hoisting into the head (an `<svg>`'s; children run in order). */
+  private async renderUnhoisted(children: VNodeChildren, scopes: ProviderScope[]): Promise<string> {
+    const head = this.head;
+    this.head = null;
+    try {
+      return await this.renderChildren(children, scopes);
+    } finally {
+      this.head = head;
+    }
   }
 
   /**
@@ -115,7 +127,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     // replacement instead (see `resolveHoleSignal`).
     const prefix = scopePrefix(boundaryScope);
     const sub = new PPRRenderer("buffered", null, new Set(), prefix);
-    const html = sub.resolveChildren(children, scopes)
+    const html = sub.resolveFromRoot(children, scopes)
       .catch((err) => sub.resolveHoleSignal(err, scopes, rootScope(prefix), (h) => h));
     // The hole's promise is consumed later by the streamer; a rejection between creation and
     // that consumer must not surface as an unhandled rejection (which crashes the process
@@ -123,6 +135,10 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     html.catch(() => {});
     this.holes.push({ id, html });
     return `<div data-dnx-b="${id}"></div>`;
+  }
+
+  protected inlineBoundary(html: string): string {
+    return `<!--$-->${html}<!--/$-->`;
   }
 
   protected async postponedFallback(
