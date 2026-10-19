@@ -16,8 +16,9 @@ and this project adheres to
   `passkeys` (`"security-keys"` when passkeys with USB security keys work natively, through the
   runtime's libwebauthn, else `null` with `passkeysReason`); an older runtime reads `"unknown"`.
   The `passkeys` capability now reports `available` on Linux when the runtime has security keys,
-  so `denext/desktop/clerk` offers native passkeys there instead of always signing in through
-  the browser.
+  so `denext/desktop/clerk` signs in with a security key natively there instead of always going
+  through the browser (a registration that asks for a platform authenticator, as Clerk's do, is
+  refused `not_supported`: Linux has none).
 
 - **iOS Local Network hint.** Until the user answers iOS's Local Network prompt, a request to a
   LAN host fails with "The Internet connection appears to be offline" (-1009), which reads like

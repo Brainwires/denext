@@ -1340,9 +1340,11 @@ export default {
           host): <code>capabilities()</code> reports <code>securityKeys</code> (and{" "}
           <code>appCapabilities().passkeys</code> <code>"security-keys"</code>, or <code>null</code>
           {" "}
-          with the reason), and Clerk offers them. Otherwise (an older runtime, or a host without
-          the library) it reports none, Clerk does not offer them, and the hosted browser sign-in is
-          the way to use one.
+          with the reason), and Clerk signs in with them (a registration that asks for a platform
+          authenticator, as Clerk's do, is refused{" "}
+          <code>not_supported</code>: Linux has none). Otherwise (an older runtime, or a host
+          without the library) it reports none, Clerk does not offer them, and the hosted browser
+          sign-in is the way to use one.
         </li>
       </ul>
 
