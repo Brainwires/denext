@@ -144,6 +144,16 @@ export interface BumpResult {
 }
 
 /**
+ * The old version as `bumpVersion` matches it: never inside a longer number (bumping
+ * "2.0.0-rc.3" leaves "2.0.0-rc.30" alone, and "0.1.0" is not matched inside "10.1.0"), and
+ * never as an npm dependency's own version (`npm:tus-js-client@4.3.1` is that package's, not
+ * denext's — the 4.4.0 bump rewrote it to a version npm does not have).
+ */
+export function currentVersionPattern(oldVersion: string): RegExp {
+  return new RegExp(`(?<!npm:[^"'\\s]*@[\\^~]?)(?<![\\d.])${escapeRe(oldVersion)}(?![\\d.])`, "g");
+}
+
+/**
  * Replace every current-version reference (`oldVersion` from root deno.json) with
  * `newVersion` across the fixed target-file list. Writes files unless `opts.dry`.
  * Throws if the current version already equals `newVersion`.
@@ -156,10 +166,7 @@ export async function bumpVersion(
   if (oldVersion === newVersion) {
     throw new Error(`current version is already ${newVersion} — nothing to do`);
   }
-  // Match the old version only when it is not part of a longer number (so bumping
-  // "2.0.0-rc.3" never mangles a hypothetical "2.0.0-rc.30", and a core like "0.1.0"
-  // is not matched inside "10.1.0").
-  const re = new RegExp(`(?<![\\d.])${escapeRe(oldVersion)}(?![\\d.])`, "g");
+  const re = currentVersionPattern(oldVersion);
   const results: Array<{ file: string; hits: number }> = [];
   for (const file of await targetFiles()) {
     const r = await bumpFile(file, re, newVersion, opts.dry === true);
