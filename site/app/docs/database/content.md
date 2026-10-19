@@ -12,14 +12,14 @@ isn't tested.
 
 ## TL;DR
 
-| Option            | Setup                                        | npm?        | Tested with denext                 | Best for                          |
-| ----------------- | -------------------------------------------- | ----------- | ---------------------------------- | --------------------------------- |
-| **`node:sqlite`** | built into Deno                              | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
-| **Deno KV**       | built into Deno                              | **none**    | ⚠️ not in denext CI                | edge/serverless, simple KV data   |
-| **Postgres**      | `postgresClient()` (`Deno.SQL`)              | **none**    | ✅ CI against Postgres 17          | multi-instance / large apps       |
-| **MySQL, others** | a Deno or `npm:` driver                      | driver only | ⚠️ not in denext CI                | an existing database              |
-| **Drizzle ORM**   | `better-sqlite3` shim → compat               | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
-| **Prisma**        | its driver adapter (SQLite, Postgres, MySQL) | ORM only    | ✅ verified recipe (Rust-free)     | typed models + migrations         |
+| Option            | Setup                                      | npm?        | Tested with denext                 | Best for                          |
+| ----------------- | ------------------------------------------ | ----------- | ---------------------------------- | --------------------------------- |
+| **`node:sqlite`** | built into Deno                            | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
+| **Deno KV**       | built into Deno                            | **none**    | ⚠️ not in denext CI                | edge/serverless, simple KV data   |
+| **Postgres**      | `postgresClient()` (`Deno.SQL`)            | **none**    | ✅ CI against Postgres 17          | multi-instance / large apps       |
+| **MySQL, others** | a Deno or `npm:` driver                    | driver only | ⚠️ not in denext CI                | an existing database              |
+| **Drizzle ORM**   | `better-sqlite3` shim → compat             | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
+| **Prisma**        | `denext/prisma-adapter` (SQLite, Postgres) | ORM only    | ✅ type matrix + e2e (Rust-free)   | typed models + migrations         |
 
 ## SQLite via `node:sqlite` (recommended default, zero-npm)
 
@@ -303,6 +303,71 @@ covered end to end by `tests/e2e/drizzle.e2e.test.ts`. Drizzle's
 `postgres`/`mysql2` drivers work as plain Deno usage (networked-driver caveat
 above).
 
+### Prisma over `Deno.SQL` (no npm driver)
+
+`denext/prisma-adapter` is a Prisma driver adapter for **SQLite and Postgres**
+over the runtime's built-in `Deno.SQL`: Prisma's Rust-free client with no npm
+database driver at all — no `pg`, no `better-sqlite3`, no `links` shim. Only
+Prisma's own client comes from npm.
+
+```ts
+import { PrismaDenoSql } from "denext/prisma-adapter";
+import { PrismaClient } from "./generated/client/client.ts";
+
+const prisma = new PrismaClient({
+  adapter: new PrismaDenoSql(Deno.env.get("DATABASE_URL")!),
+});
+```
+
+The URL picks the database: `postgres://` / `postgresql://`, or `file:` (relative
+to the working directory), `sqlite:` or `:memory:`. Prisma's own Postgres URL
+parameters are read rather than sent to the server: `schema` (the
+`search_path`), `connection_limit`, `connect_timeout` / `pool_timeout` and
+`pgbouncer=true`. Pass a client of your own instead of a URL with
+`new PrismaDenoSql(new Deno.SQL(url, { max: 20 }))`; `{ disposeClient: true }`
+closes it on `$disconnect()`. `connectToShadowDb()` creates and drops a
+throwaway Postgres database (SQLite: `:memory:`) for `prisma migrate`.
+
+**It needs denext's Deno runtime 2.9.7-denext.23 or later.** The adapter reads
+each result column's type from `Deno.SQL`'s `result.columns`, which earlier
+runtimes do not report; on one of them it throws a clear error. `denext dev`,
+`build`, `start` and `test` run on the toolchain runtime; `denoSqlHasColumns()`
+from the same module tells.
+
+What it reads, and how:
+
+- **Postgres** results are read in Postgres' binary format and decoded to what
+  Prisma expects: `int8` and `numeric` as exact decimal strings, `money`,
+  `json` / `jsonb` text, `bytea`, `uuid`, `date`, `time`, `timetz`, `inet`,
+  `cidr`, bit strings, enums, domains, and arrays of all of them (nested and
+  with nulls). `timestamp` and `timestamptz` come back in UTC exactly — a
+  wall-clock time the server process's own time zone skips (a daylight-saving
+  gap) included. A type Prisma has no reading of (`interval`, ranges,
+  composites, geometric types) is Prisma's `UnsupportedNativeDataType` error:
+  cast it in a raw query (`::text`).
+- **SQLite** columns take their type from the declared type
+  (`varchar(20)` reads as text, `DECIMAL`, `DATETIME`, `BOOLEAN`, `BLOB`, …),
+  and an expression column from its values. 64-bit integers stay exact.
+  `DateTime` arguments are stored as ISO 8601 text, as Prisma does
+  (`{ timestampFormat: "unixepoch-ms" }` stores milliseconds).
+- **Errors** become Prisma's: unique, not-null and foreign-key violations
+  (`P2002`, `P2011`, `P2003`), a value too long, a missing table or column, an
+  unreachable server, a failed sign-in, a serialization failure.
+- **Transactions** run on a reserved connection: Prisma's interactive
+  transactions, batch `$transaction([...])` and every isolation level Postgres
+  has (SQLite: `Serializable`). A failed `COMMIT` returns the connection too.
+
+`denext migrate` wires it automatically when the runtime it runs on supports it
+(`--prisma-adapter deno-sql` to choose it, `npm` for Prisma's own adapters
+below); the next sections describe the npm adapters, which remain for older
+runtimes, CockroachDB and MySQL.
+
+The adapter is covered by a type round-trip matrix against Postgres 17 and
+SQLite (`tests/prisma-adapter-postgres-integration.test.ts`,
+`tests/prisma-adapter-sqlite.test.ts`) and an end-to-end test that runs
+`prisma migrate dev` and CRUD with relations on both
+(`tests/e2e/prisma-deno-sql.e2e.test.ts`).
+
 ### Prisma (verified recipe — Rust-free, over `node:sqlite`)
 
 Prisma works too, via its **driver-adapter** path
@@ -418,9 +483,8 @@ writes a `prisma:setup` task that installs, generates the client and applies
 migrations). Set the URL variable (or put it in `.env`) before running it. A
 `directUrl` stays in the schema for the Prisma CLI.
 
-denext's own `Deno.SQL` client can't back a Prisma adapter: a driver adapter
-reports each result's column names in order and the Postgres type of each
-column, and `Deno.SQL` returns neither.
+On denext's Deno runtime 2.9.7-denext.23 and later, migrate wires a Postgres
+datasource to `denext/prisma-adapter` instead (above): no `pg` dependency.
 
 A `cockroachdb` datasource takes the Postgres path: CockroachDB speaks the
 Postgres wire protocol, so migrate injects `@prisma/adapter-pg` the same way.

@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Prisma over `Deno.SQL`: `denext/prisma-adapter`.** A Prisma driver adapter for SQLite and
+  Postgres on the runtime's built-in `Deno.SQL`, so a Prisma app installs no npm database driver
+  (no `pg`, no `better-sqlite3`, no `links` shim): `new PrismaClient({ adapter: new
+  PrismaDenoSql(url) })`. Postgres results are decoded from the binary format (`int8` /
+  `numeric` exact, `json`, `bytea`, `uuid`, dates and times, enums, domains and arrays of them;
+  `timestamp` read exactly in UTC whatever the process's time zone), SQLite columns take their
+  declared type, database errors become Prisma's (`P2002`, `P2003`, `P2011`, …), and
+  interactive transactions, scripts and `prisma migrate`'s shadow database work. `denext migrate`
+  wires it into a Prisma app's SQLite or Postgres datasource when the runtime supports it;
+  `--prisma-adapter deno-sql | npm | auto` chooses. Needs denext's Deno runtime
+  2.9.7-denext.23 or later (`Deno.SQL`'s result-set column metadata).
+
 ### Changed
 
 - **Docs for 4.4.0's features, audited and filled in.** New guides:

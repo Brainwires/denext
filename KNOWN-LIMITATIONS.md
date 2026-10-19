@@ -281,8 +281,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
 - **Prisma auto-migration wires SQLite, Postgres (CockroachDB too) and MySQL only:** a
   `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
-  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). Postgres runs over npm
-  `pg`, not denext's `Deno.SQL`, whose results carry no column types for a Prisma adapter.
+  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). SQLite and Postgres
+  run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
+  2.9.7-denext.23 or later; on an earlier runtime migrate wires Prisma's npm adapters
+  (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
+  and MySQL always take theirs.
+- **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
+  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query), and reads `money` with
+  two fractional digits (`lc_monetary` `C` / `en_US`).
 
 ### Fresh and Preact
 
