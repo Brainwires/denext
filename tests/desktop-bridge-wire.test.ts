@@ -20,7 +20,15 @@ import { echoCapability } from "../src/desktop/caps/echo.ts";
 import { fsCapability } from "../src/desktop/caps/fs.ts";
 import type { DesktopCapability } from "../src/desktop/extension.ts";
 import { readClipboard } from "../src/mobile/clipboard.ts";
-import { FileTransferError } from "../src/mobile/file-transfer.ts";
+import {
+  cancelFileTransfer,
+  FileTransferError,
+  type FileTransferEvent,
+  fileTransfers,
+  onFileTransfer,
+  pauseFileTransfer,
+  resetFileTransfersForTesting,
+} from "../src/mobile/file-transfer.ts";
 import { downloadToFile } from "../src/mobile/filesystem.ts";
 import {
   type BridgeServer,
@@ -546,4 +554,44 @@ Deno.test({
     ]);
     assertEquals(await filesUnder(root), []);
   });
+});
+
+Deno.test({
+  ...TEST,
+  name:
+    "wire: a desktop download is a tracked transfer: listed with progress, cancelFileTransfer stops it",
+}, async () => {
+  resetFileTransfersForTesting();
+  await withDownloads(async ({ root, files }) => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    const run = downloadToFile("https://files.test/slow.bin", "dl/slow.bin", {
+      id: "wire-slow",
+      headers: { authorization: "Bearer s3cret" },
+    });
+    run.catch(() => {});
+    await until(() => files.state.slowStarted, 5_000);
+    // The runtime's first progress event (0 of 256 KiB) reaches the record and the listeners.
+    await until(() => events.some((e) => e.type === "progress" && e.total !== null), 5_000);
+    const [listed] = await fileTransfers();
+    assertEquals([listed.id, listed.kind, listed.state, listed.total], [
+      "wire-slow",
+      "download",
+      "running",
+      files.body.byteLength,
+    ]);
+    const paused = await pauseFileTransfer("wire-slow").catch((e) => e);
+    assert(isDesktopBridgeError(paused));
+    assertEquals(paused.code, "unsupported");
+    assert(await cancelFileTransfer("wire-slow"));
+    const err = await assertRejects(() => run, FileTransferError);
+    assertEquals([err.code, err.id], ["CANCELLED", "wire-slow"]);
+    await until(() => files.state.slowCancelled, 3_000);
+    assertEquals((await fileTransfers())[0].state, "cancelled");
+    assertEquals(events.at(-1)?.type, "cancelled");
+    // Nothing is left behind: no file and no `.part`.
+    assertEquals(await filesUnder(root), []);
+    stop();
+  });
+  resetFileTransfersForTesting();
 });

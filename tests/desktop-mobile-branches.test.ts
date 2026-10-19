@@ -5,18 +5,24 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
+  cancelFileTransfer,
   cancelNotification,
   checkPermission,
   deleteFile,
   deviceInfo,
   downloadToFile,
   FileTransferError,
+  type FileTransferEvent,
+  fileTransfers,
+  forgetFileTransfer,
   listDir,
   moveToTrash,
+  onFileTransfer,
   onLocalNotificationTapped,
   openExternal,
   openPath,
   openSqlite,
+  pauseFileTransfer,
   pendingNotifications,
   pickDocument,
   pickFolder,
@@ -24,6 +30,7 @@ import {
   readFile,
   requestPermission,
   requestPushPermission,
+  resumeFileTransfer,
   revealInFileManager,
   saveFile,
   scheduleNotification,
@@ -39,6 +46,7 @@ import {
   secureStoreIsSecret,
 } from "../src/mobile/secure-store.ts";
 import { resetLocalNotificationsForTesting } from "../src/mobile/local-notifications.ts";
+import { resetFileTransfersForTesting } from "../src/mobile/file-transfer.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
 import { isDesktopBridgeError } from "../src/desktop/client.ts";
 import {
@@ -693,4 +701,187 @@ Deno.test("downloadToFile: desktop failures are the mobile path's FileTransferEr
     assert(isDesktopBridgeError(refused));
     assertEquals(refused.code, "forbidden");
   });
+});
+
+// --- desktop downloads tracked by id (fileTransfers / onFileTransfer / cancel / pause) ---------
+
+/** The fields a test compares of a transfer record or event. */
+const shape = (
+  t: { id: string; kind: string; state: string; directory: string; path: string },
+) => [t.id, t.kind, t.state, t.directory, t.path];
+
+Deno.test("desktop downloadToFile is a tracked transfer: listed, progress events, done", async () => {
+  resetFileTransfersForTesting();
+  const gate = Promise.withResolvers<void>();
+  await inDesktop({
+    fs: {
+      download: async () => {
+        await gate.promise;
+        return { path: "/abs/f.bin", bytes: 10 };
+      },
+    },
+  }, async (rt) => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    const progress: unknown[] = [];
+    const run = downloadToFile("https://example.com/f.bin", "dl/f.bin", {
+      id: "d1",
+      onProgress: (p) => progress.push(p),
+    });
+    await until(() => rt.calls.some((c) => c.method === "download"));
+    assertEquals((await fileTransfers()).map(shape), [[
+      "d1",
+      "download",
+      "running",
+      "data",
+      "dl/f.bin",
+    ]]);
+    rt.emit("fs", "progress", { id: "d1", bytes: 5, total: 10 });
+    rt.emit("fs", "progress", { id: "other", bytes: 1, total: 2 });
+    await until(() => events.some((e) => e.type === "progress" && e.bytes === 5));
+    assertEquals((await fileTransfers())[0].bytes, 5);
+    gate.resolve();
+    assertEquals(await run, { path: "/abs/f.bin" });
+    assertEquals(events.map((e) => e.type), ["started", "progress", "progress", "done"]);
+    const done = events.at(-1)!;
+    assertEquals([done.state, done.bytes, done.total, done.file], ["done", 10, 10, "/abs/f.bin"]);
+    assertEquals(progress, [
+      { id: "d1", kind: "download", bytes: 5, total: 10 },
+      { id: "d1", kind: "download", bytes: 10, total: 10 },
+    ]);
+    assertEquals((await fileTransfers()).map(shape), [[
+      "d1",
+      "download",
+      "done",
+      "data",
+      "dl/f.bin",
+    ]]);
+    assert(await forgetFileTransfer("d1"));
+    assertEquals(await fileTransfers(), []);
+    stop();
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test("desktop downloads: cancelFileTransfer → fs.cancelDownload; pause is unsupported", async () => {
+  resetFileTransfersForTesting();
+  let stopDownload = () => {};
+  await inDesktop({
+    fs: {
+      download: () =>
+        new Promise((_, reject) => {
+          stopDownload = () => reject({ code: "cancelled", message: "the download was cancelled" });
+        }),
+      cancelDownload: () => {
+        stopDownload();
+        return { cancelled: true };
+      },
+    },
+  }, async (rt) => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    const run = downloadToFile("https://example.com/big.iso", "big.iso", { id: "d2" });
+    run.catch(() => {});
+    await until(() => rt.calls.some((c) => c.method === "download"));
+    const paused = await pauseFileTransfer("d2").catch((e) => e);
+    assert(isDesktopBridgeError(paused), String(paused));
+    assertEquals(paused.code, "unsupported");
+    assertEquals(await resumeFileTransfer("d2"), false);
+    assertEquals((await fileTransfers())[0].state, "running");
+    assert(await cancelFileTransfer("d2"));
+    const err = await assertRejects(() => run, FileTransferError);
+    assertEquals([err.code, err.id], ["CANCELLED", "d2"]);
+    assert(
+      calls(rt).some((c) => c.at === "fs.cancelDownload" && (c.args as { id: string }).id === "d2"),
+    );
+    assertEquals(events.map((e) => e.type), ["started", "cancelled"]);
+    assertEquals((await fileTransfers()).map(shape), [[
+      "d2",
+      "download",
+      "cancelled",
+      "data",
+      "big.iso",
+    ]]);
+    assertEquals(await cancelFileTransfer("d2"), false, "a settled transfer does not cancel again");
+    stop();
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test("desktop downloads: a failure is a failed record and event (code, status)", async () => {
+  resetFileTransfersForTesting();
+  await inDesktop({
+    fs: {
+      download: () => {
+        throw { code: "download_failed", message: "status 403", data: { status: 403, body: "no" } };
+      },
+    },
+  }, async () => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    await assertRejects(
+      () => downloadToFile("https://example.com/x", "x.bin", { id: "d3" }),
+      FileTransferError,
+    );
+    const failed = events.at(-1)!;
+    assertEquals(
+      [failed.type, failed.state, failed.code, failed.status, failed.resumable],
+      ["failed", "failed", "HTTP", 403, false],
+    );
+    assertEquals((await fileTransfers())[0].state, "failed");
+    stop();
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test("desktop downloads: the caller's signal cancels the tracked transfer", async () => {
+  resetFileTransfersForTesting();
+  let stopDownload = () => {};
+  await inDesktop({
+    fs: {
+      download: () =>
+        new Promise((_, reject) => {
+          stopDownload = () => reject({ code: "cancelled", message: "the download was cancelled" });
+        }),
+      cancelDownload: () => {
+        stopDownload();
+        return { cancelled: true };
+      },
+    },
+  }, async (rt) => {
+    const abort = new AbortController();
+    const reason = new Error("closed");
+    const run = downloadToFile("https://example.com/y", "y.bin", {
+      id: "d4",
+      signal: abort.signal,
+    });
+    run.catch(() => {});
+    await until(() => rt.calls.some((c) => c.method === "download"));
+    abort.abort(reason);
+    assertEquals(await run.catch((e) => e), reason);
+    assertEquals((await fileTransfers())[0].state, "cancelled");
+    const early = new AbortController();
+    early.abort(reason);
+    assertEquals(
+      await downloadToFile("https://example.com/z", "z.bin", { id: "d5", signal: early.signal })
+        .catch((e) => e),
+      reason,
+    );
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test("desktop downloads: without fs.download the record is dropped for the web path's", async () => {
+  resetFileTransfersForTesting();
+  await inDesktop({ fs: { readFile: () => "x" } }, async () => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    // The web path runs next (no OPFS under Deno, so it fails): one record, the page's own.
+    await downloadToFile("https://example.com/w", "w.bin", { id: "d6" }).catch(() => {});
+    const listed = await fileTransfers();
+    assertEquals(listed.map((t) => t.id), ["d6"]);
+    assert(!events.some((e) => e.type === "failed" && e.code === "unavailable"));
+    stop();
+  });
+  resetFileTransfersForTesting();
 });

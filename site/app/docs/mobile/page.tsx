@@ -2275,9 +2275,12 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         <code>fetch</code> refuses (<code>Cookie</code>,{" "}
         <code>Host</code>, the hop-by-hop ones, …) and, like{" "}
         <code>fetch</code>, a redirect to another origin drops{" "}
-        <code>Authorization</code>. It keeps no record under the <code>id</code>{" "}
-        (<code>fileTransfers()</code>, <code>pauseFileTransfer</code> and{" "}
-        <code>cancelFileTransfer</code> do not see it). <code>uploadFile</code>{" "}
+        <code>Authorization</code>. It is a transfer like any other under its <code>id</code>:{" "}
+        <code>fileTransfers()</code> lists it, <code>onFileTransfer</code> gets its events, and{" "}
+        <code>cancelFileTransfer</code>{" "}
+        stops it in the runtime and drops the partial file. It cannot pause (the runtime keeps no
+        partial file to resume): <code>pauseFileTransfer</code> rejects with code{" "}
+        <code>"unsupported"</code>. <code>uploadFile</code>{" "}
         reads the file through the runtime and sends it from the page.
       </p>
       <Callout kind="note">

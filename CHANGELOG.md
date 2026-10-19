@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop downloads are tracked transfers.** A `downloadToFile` in a Deno Desktop window
+  is now listed by `fileTransfers()` and reported to `onFileTransfer` (`started`, `progress`,
+  `done`, `failed`, `cancelled`) under its `id`, as on the web and in the native shell, and
+  `cancelFileTransfer(id)` stops it in the runtime (`fs.cancelDownload`, the partial file
+  dropped). The runtime keeps no partial file to resume, so `pauseFileTransfer` on one rejects
+  with code `"unsupported"` instead of answering `false`.
+
 - **Download progress.** On a terminal, `install.sh` draws curl's progress bar for the release
   archive (and, on a machine without curl, now downloads with GNU wget, `--show-progress`;
   HTTPS-only, TLS 1.2+, checksum-verified as before); `install.ps1` streams the archive through
