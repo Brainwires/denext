@@ -3,8 +3,9 @@
 // Skia on the web is CanvasKit (Skia compiled to wasm) plus its own React renderer built on
 // `react-reconciler`, so this checks both halves on a production build under a strict CSP:
 //   - CanvasKit's wasm, imported with `?url`, is served by denext and compiles under
-//     `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-eval'`; react-native-web's runtime
-//     <style> needs `style-src 'unsafe-inline'`, as in any React Native mode app under a CSP);
+//     `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-eval'`), and react-native-web's styles
+//     apply with no `style-src 'unsafe-inline'` (it adopts the shell's empty, hashed
+//     `<style id="react-native-stylesheet">` and adds its rules through the CSSOM);
 //   - Skia's reconciler runs on denext's `react`: its shared internals, the hooks dispatcher
 //     (a component inside the Canvas has state and an effect) and React's fragment brand;
 //   - the pixels Skia drew are the ones asked for, and a press re-renders the Canvas.
@@ -119,6 +120,7 @@ Deno.test({
         ) as string;
         assert(/script-src 'self' 'wasm-unsafe-eval'(;|$)/.test(csp), csp);
         assert(!csp.includes("'unsafe-eval'"), csp);
+        assert(!/style-src [^;]*'unsafe-inline'/.test(csp), csp);
       });
 
       await t.step("CanvasKit loads and the Canvas draws what was asked", async () => {
@@ -148,6 +150,19 @@ Deno.test({
           10_000,
         );
         assertEquals((await pixels()).ring, RED, "inside the 60px circle");
+      });
+
+      await t.step("react-native-web's styles apply through its one sheet", async () => {
+        assertEquals(
+          await page.evaluate(
+            `getComputedStyle(document.querySelector('[data-testid="label"]')).color`,
+          ),
+          "rgb(255, 0, 0)",
+        );
+        assertEquals(
+          await page.evaluate(`document.querySelectorAll("#react-native-stylesheet").length`),
+          1,
+        );
       });
 
       await t.step("no console errors or CSP violations", () => {

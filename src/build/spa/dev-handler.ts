@@ -5,7 +5,7 @@ import { devPlatformOf, pinDevPlatform } from "../platform-extensions.ts";
 import { devLogResponse, devOriginAllowed, devStateResponse } from "../dev-server/dev-endpoints.ts";
 import { DEV_INSPECT_PATH, DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
 import { devInspectRead, devInspectSink } from "../dev-server/devtools-endpoints.ts";
-import { reactNativeRootStyle } from "../../server/config.ts";
+import { reactNativeOptions, reactNativeRootStyle } from "../../server/config.ts";
 import {
   fontFaceStyle,
   fontFor,
@@ -107,6 +107,7 @@ const FONT_TYPES: Readonly<Record<string, string>> = {
  */
 async function serveShell(st: SpaDevState, request: Request): Promise<Response> {
   const rnRootStyle = reactNativeRootStyle(st.paths.config);
+  const rnStyleSheet = reactNativeOptions(st.paths.config) !== null;
   const platform = devPlatformOf(request);
   try {
     const fontFaces = fontFaceStyle(await devFonts(st), spaClientPrefix(st.spa));
@@ -118,6 +119,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
         styleHref: css.length > 0 ? UNBUNDLED_STYLE_PATH : undefined,
         devScriptSrc: DEV_RELOAD_JS_PATH,
         reactNativeRootStyle: rnRootStyle,
+        reactNativeStyleSheet: rnStyleSheet,
         headPrefix: fontFaces,
         shell: await devShell(st, platform),
       });
@@ -132,6 +134,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
       styleHref: hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
       devScriptSrc: DEV_RELOAD_JS_PATH,
       reactNativeRootStyle: rnRootStyle,
+      reactNativeStyleSheet: rnStyleSheet,
       headPrefix: fontFaces,
       shell: await devShell(st, platform),
     });

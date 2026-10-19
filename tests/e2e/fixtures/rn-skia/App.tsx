@@ -1,10 +1,14 @@
 // The fragment inside the Canvas is the point: Skia's renderer must take denext's `<>`.
 // deno-lint-ignore-file jsx-no-useless-fragment
 import { useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Canvas, Circle, Group, Rect, useCanvasRef } from "@shopify/react-native-skia";
 
 const g = globalThis as Record<string, unknown>;
+
+// A react-native-web class rule (not an inline style): it reaches the page only through
+// react-native-web's style sheet, which the strict CSP must not block.
+const styles = StyleSheet.create({ label: { color: "rgb(255, 0, 0)" } });
 
 /** A component Skia's own reconciler renders, with state and an effect of its own. */
 function Dot({ x }: { x: number }) {
@@ -43,7 +47,7 @@ export function App() {
         </Group>
       </Canvas>
       <Pressable testID="grow" onPress={() => setRadius(radius + 20)}>
-        <Text>radius {radius}</Text>
+        <Text testID="label" style={styles.label}>radius {radius}</Text>
       </Pressable>
     </View>
   );

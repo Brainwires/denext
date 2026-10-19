@@ -8,6 +8,7 @@
  */
 
 import type { RNStyleSheet } from "./types.ts";
+import { addDocumentRules } from "../document-style.ts";
 
 /** A React Native style resolved for a DOM element. */
 export interface ResolvedStyle {
@@ -60,12 +61,7 @@ export const HIDE_SCROLLBAR_CLASS = "denext-rn-hide-scrollbar";
  * inline `scrollbar-width: none` covers the rest) to the document, once.
  */
 export function ensureHiddenScrollbarRule(): void {
-  const doc = (globalThis as { document?: Document }).document;
-  if (!doc?.head || typeof doc.createElement !== "function") return;
-  const id = "denext-rn-lists-style";
-  if (doc.getElementById?.(id)) return;
-  const el = doc.createElement("style");
-  el.id = id;
-  el.textContent = `.${HIDE_SCROLLBAR_CLASS}::-webkit-scrollbar{display:none}`;
-  doc.head.appendChild(el);
+  addDocumentRules("denext-rn-lists-style", [
+    `.${HIDE_SCROLLBAR_CLASS}::-webkit-scrollbar{display:none}`,
+  ]);
 }
