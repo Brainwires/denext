@@ -93,6 +93,38 @@ function moduleDoc(id: string, exportName: string, spec: GeneratedSpec, version:
   ].join("\n");
 }
 
+/** The options interface of a provider that reads options of its own. */
+function configInterface(
+  name: string,
+  configType: string,
+  profileType: string,
+  spec: GeneratedSpec,
+  extras: readonly string[],
+): string[] {
+  const lines = [
+    `/** {@linkcode ${name}}'s options: Auth.js's, plus the ones ${spec.name} reads. */`,
+    `export interface ${configType} extends GeneratedUserConfig<${profileType}> {`,
+  ];
+  for (const key of extras) {
+    const fallback = spec.options?.[key]?.default;
+    lines.push(
+      `  /** Auth.js's \`${key}\` option${
+        fallback ? ` (default \`${fallback.replace(/`/g, "")}\`)` : ""
+      }. */`,
+      `  ${key}?: string;`,
+    );
+  }
+  const headersOption = spec.userinfoRequest?.headersOption;
+  if (headersOption) {
+    lines.push(
+      `  /** Headers sent with the userinfo request (Auth.js's docs: \`{ "X-API-Key": … }\`). */`,
+      `  ${headersOption}?: Record<string, string>;`,
+    );
+  }
+  lines.push("}", "");
+  return lines;
+}
+
 /**
  * The source of one generated provider module.
  *
@@ -109,7 +141,10 @@ export function renderProvider(
   const name = identifier(entry.exportName);
   const profileType = `${name}Profile`;
   const extras = extraOptions(entry.spec);
-  const configType = extras.length ? `${name}UserConfig` : `GeneratedUserConfig<${profileType}>`;
+  const headersOption = entry.spec.userinfoRequest?.headersOption;
+  const configType = extras.length || headersOption
+    ? `${name}UserConfig`
+    : `GeneratedUserConfig<${profileType}>`;
   const lines = [
     `${BANNER}@${version}'s providers/${id}.js — do not edit.`,
     "// fallow-ignore-file code-duplication -- generated data modules share their shape by design",
@@ -136,21 +171,8 @@ export function renderProvider(
     `export type ${profileType} = Record<string, unknown>;`,
     "",
   ];
-  if (extras.length) {
-    lines.push(
-      `/** {@linkcode ${name}}'s options: Auth.js's, plus the ones ${entry.spec.name} reads. */`,
-      `export interface ${configType} extends GeneratedUserConfig<${profileType}> {`,
-    );
-    for (const key of extras) {
-      const fallback = entry.spec.options?.[key]?.default;
-      lines.push(
-        `  /** Auth.js's \`${key}\` option${
-          fallback ? ` (default \`${fallback.replace(/`/g, "")}\`)` : ""
-        }. */`,
-        `  ${key}?: string;`,
-      );
-    }
-    lines.push("}", "");
+  if (configType !== `GeneratedUserConfig<${profileType}>`) {
+    lines.push(...configInterface(name, configType, profileType, entry.spec, extras));
   }
   lines.push(
     "/**",

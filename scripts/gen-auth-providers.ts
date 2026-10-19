@@ -30,6 +30,8 @@ import {
 import {
   type GeneratedOption,
   type GeneratedSpec,
+  type GeneratedUserinfoRequest,
+  generatedUserinfoRequest,
   mapProfile,
   type ProfileExpr,
 } from "../src/compat/next-auth/providers/generated.ts";
@@ -118,7 +120,7 @@ function templateOf(value: string): ProfileExpr {
   const parts: (string | string[])[] = [];
   for (const piece of value.split(new RegExp(`(${OPEN}[^${CLOSE}]*${CLOSE})`))) {
     if (piece.startsWith(OPEN)) parts.push(JSON.parse(piece.slice(1, -1)));
-    else if (piece) parts.push(piece);
+    else if (piece) parts.push(templated(piece, [])); // `${options.issuer}/avatar/…` (Nextcloud)
   }
   return { t: parts };
 }
@@ -269,7 +271,10 @@ async function crossCheck(
     } catch {
       continue;
     }
-    const actual = mapProfile(mapping, roots);
+    const actual = mapProfile(mapping, roots, {
+      issuer: SENTINEL.issuer,
+      clientId: SENTINEL.clientId,
+    });
     const clean = (o: Record<string, unknown>) =>
       JSON.stringify(Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)));
     if (clean(expected) !== clean(actual)) {
@@ -280,6 +285,183 @@ async function crossCheck(
           }\nAdd a profile override in scripts/auth-providers/classify.ts.`,
       );
     }
+  }
+}
+
+// ---- request cross-checks -----------------------------------------------------------------
+
+/** A template filled with the sentinels the definition was read with. */
+function sentinelFilled(template: string): string {
+  return template.replace(
+    /\{([A-Za-z]+)\}/g,
+    (_, name: string) =>
+      name === "issuer"
+        ? SENTINEL.issuer
+        : name === "clientId"
+        ? SENTINEL.clientId
+        : optionSentinel(name),
+  );
+}
+
+/** One request as a stubbed `fetch` saw it. */
+interface SeenRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+/** Run `body` with `fetch` stubbed: every request is recorded and answered with `reply`. */
+async function withStubbedFetch<T>(
+  reply: unknown,
+  body: (seen: SeenRequest[]) => Promise<T>,
+): Promise<T> {
+  const original = globalThis.fetch;
+  const seen: SeenRequest[] = [];
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const headers = Object.fromEntries(
+      [...new Headers(init?.headers as HeadersInit | undefined)].map(([k, v]) => [k, v]),
+    );
+    const sent = init?.body === undefined || init.body === null ? undefined : String(init.body);
+    seen.push({ url, method: (init?.method ?? "GET").toUpperCase(), headers, body: sent });
+    return Promise.resolve(Response.json(structuredClone(reply)));
+  }) as typeof fetch;
+  try {
+    return await body(seen);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+/** JSON with sorted keys, for a deep comparison. */
+function canonical(value: unknown): string {
+  return JSON.stringify(
+    value,
+    (_, v) =>
+      v && typeof v === "object" && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
+        : v,
+  );
+}
+
+/** A userinfo response holding a profile at `pick` (a numeric key is an array index). */
+function sampleResponse(pick: readonly string[]): unknown {
+  let node: unknown = { id: "id-1", probe: "v" };
+  for (const key of [...pick].reverse()) {
+    node = /^\d+$/.test(key) ? Object.assign([], { [key]: node }) : { [key]: node };
+  }
+  return node;
+}
+
+/** Why Auth.js's request and denext's differ, or `undefined` when they agree. */
+function requestMismatch(theirs: SeenRequest, ours: SeenRequest): string | undefined {
+  if (new URL(theirs.url).href !== new URL(ours.url).href) return `url ${ours.url}`;
+  if (theirs.method !== ours.method) return `method ${ours.method}`;
+  for (const [key, value] of Object.entries(theirs.headers)) {
+    if (key !== "user-agent" && ours.headers[key] !== value) return `header ${key}`;
+  }
+  if (!theirs.headers.authorization && ours.headers.authorization) return "an authorization header";
+  const body = (b?: string) => b === undefined ? undefined : canonical(JSON.parse(b));
+  if (body(theirs.body) !== body(ours.body)) return `body ${ours.body}`;
+  return undefined;
+}
+
+/**
+ * Check a userinfo rule against Auth.js's own `userinfo.request`: run both against a stubbed
+ * `fetch` on the same token response; the request (URL, method, headers, body) and the profile
+ * returned must agree.
+ */
+async function crossCheckRequest(id: string, c: Loose, spec: GeneratedSpec): Promise<void> {
+  const request = c.userinfo?.request;
+  if (typeof request !== "function") return;
+  const tokens = tokenSample(spec);
+  const ours = sentinelUserinfoRequest(spec);
+  const provider = { ...c, clientId: SENTINEL.clientId, userinfo: { url: c.userinfo.url } };
+  const reply = sampleResponse(spec.userinfoRequest?.pick ?? []);
+  const [expected, actual, seen] = await withStubbedFetch(reply, async (seen) =>
+    [
+      await request({ tokens: structuredClone(tokens), provider }),
+      await ours({
+        tokens: structuredClone(tokens),
+        fetch: (url, init) => globalThis.fetch(url, init),
+      }),
+      seen,
+    ] as const);
+  const why = disagreement(seen, expected, actual);
+  if (why) {
+    throw new Error(
+      `gen:auth-providers: ${id}'s userinfo rule disagrees with Auth.js's request (${why}); ` +
+        "fix it in scripts/auth-providers/classify.ts.",
+    );
+  }
+}
+
+/** How the two runs differ — the requests, else the profiles — or `undefined`. */
+function disagreement(
+  seen: readonly SeenRequest[],
+  expected: unknown,
+  actual: unknown,
+): string | undefined {
+  if (seen.length !== 2) return `${seen.length} requests`;
+  const request = requestMismatch(seen[0], seen[1]);
+  if (request) return request;
+  if (canonical(expected) === canonical(actual)) return undefined;
+  return `profile ${canonical(actual)} vs ${canonical(expected)}`;
+}
+
+/** A token response carrying every `{token.<field>}` the spec names, plus an address. */
+function tokenSample(spec: GeneratedSpec): Record<string, unknown> {
+  const tokens: Record<string, unknown> = {
+    access_token: "SENTINELACCESSTOKEN",
+    token_type: "bearer",
+    email: "token@example.test",
+  };
+  for (const [, field] of JSON.stringify(spec).matchAll(/\{token\.([A-Za-z_]+)\}/g)) {
+    tokens[field] ??= `tok-${field}`;
+  }
+  return tokens;
+}
+
+/** denext's userinfo request for `spec`, its templates filled with the sentinels. */
+function sentinelUserinfoRequest(spec: GeneratedSpec) {
+  const headers = Object.fromEntries(
+    Object.entries(spec.userinfoRequest?.headers ?? {}).map(([k, v]) => [k, sentinelFilled(v)]),
+  );
+  return generatedUserinfoRequest(
+    spec.userinfoRequest ?? {},
+    sentinelFilled(spec.userinfo!),
+    headers,
+  );
+}
+
+/**
+ * Check a rule's token parameters against the definition's custom fetch: the token request it
+ * sends must be the one denext sends plus exactly those parameters.
+ */
+async function crossCheckTokenParams(id: string, c: Loose, spec: GeneratedSpec): Promise<void> {
+  const [symbol] = Object.getOwnPropertySymbols(c);
+  if (!symbol) return;
+  const sent = { grant_type: "authorization_code", code: "SENTINELCODE" };
+  const seen = await withStubbedFetch({ access_token: "x" }, async (seen) => {
+    await c[symbol](sentinelFilled(spec.token!), {
+      method: "POST",
+      headers: {},
+      body: new URLSearchParams(sent),
+    });
+    return seen;
+  });
+  const added = Object.fromEntries(
+    [...new URLSearchParams(seen[0]?.body ?? "")].filter(([k]) => !(k in sent)),
+  );
+  const expected = Object.fromEntries(
+    Object.entries(spec.tokenParams ?? {}).map(([k, v]) => [k, sentinelFilled(v)]),
+  );
+  if (canonical(added) !== canonical(expected)) {
+    throw new Error(
+      `gen:auth-providers: ${id}'s custom fetch adds ${canonical(added)} to the token request; ` +
+        "declare it as tokenParams in scripts/auth-providers/classify.ts.",
+    );
   }
 }
 
@@ -312,20 +494,32 @@ function checkReads(reads: Set<string>, optionNames: readonly string[]): void {
 /** Check a definition's shape: OAuth / OIDC, no custom fetch, no key the generator can't read. */
 function checkShape(c: Loose, ignore: ReadonlySet<string>): void {
   if (c.type !== "oauth" && c.type !== "oidc") throw new Unexpressible(`type "${c.type}"`);
-  if (Object.getOwnPropertySymbols(c).length) throw new Unexpressible("a custom fetch");
+  if (Object.getOwnPropertySymbols(c).length && !ignore.has("customFetch")) {
+    throw new Unexpressible("a custom fetch");
+  }
   for (const key of Object.keys(c)) {
     if (!KNOWN_KEYS.has(key) && !ignore.has(key)) throw new Unexpressible(`the \`${key}\` key`);
   }
 }
 
-/** The token-endpoint authentication: Auth.js's default is HTTP Basic. */
-function tokenAuthOf(client: Loose): GeneratedSpec["tokenAuth"] {
-  const { token_endpoint_auth_method: method = "client_secret_basic", ...rest } = client ?? {};
+/**
+ * The token-endpoint authentication (Auth.js's default is HTTP Basic), and an `id_token` signed
+ * HS256 under the client secret (LINE's `id_token_signed_response_alg`).
+ */
+function clientOf(client: Loose): Pick<GeneratedSpec, "tokenAuth" | "idTokenAlg"> {
+  const {
+    token_endpoint_auth_method: method = "client_secret_basic",
+    id_token_signed_response_alg: idTokenAlg,
+    ...rest
+  } = client ?? {};
   if (Object.keys(rest).length) throw new Unexpressible(`client.${Object.keys(rest)[0]}`);
   if (method !== "client_secret_basic" && method !== "client_secret_post") {
     throw new Unexpressible(`token_endpoint_auth_method "${method}"`);
   }
-  return method;
+  if (idTokenAlg !== undefined && idTokenAlg !== "HS256") {
+    throw new Unexpressible(`id_token_signed_response_alg "${idTokenAlg}"`);
+  }
+  return idTokenAlg ? { tokenAuth: method, idTokenAlg } : { tokenAuth: method };
 }
 
 /** The definition's own `checks`, when it names them (Auth.js's default otherwise). */
@@ -390,21 +584,36 @@ function authorizationOf(c: Loose, optionNames: readonly string[]) {
 function oauthEndpoints(
   c: Loose,
   base: string,
-  ignore: ReadonlySet<string>,
+  rule: ProviderRule,
   optionNames: readonly string[],
 ): Pick<GeneratedSpec, "authorization" | "token" | "userinfo"> {
+  const ignore = ignoreOf(rule);
   const token = endpointOf(stripIgnored(c.token, "token", ignore), "token");
-  const userinfo = endpointOf(c.userinfo, "userinfo");
+  const userinfo = endpointOf(stripIgnored(c.userinfo, "userinfo", ignore), "userinfo");
   if (Object.keys(token.params).length) throw new Unexpressible("token.params");
   if (Object.keys(userinfo.params).length) throw new Unexpressible("userinfo.params");
-  if (!base || !token.url || !userinfo.url) {
+  const userinfoUrl = rule.userinfo?.url ?? userinfo.url;
+  if (!base || !token.url || !userinfoUrl) {
     throw new Unexpressible("an OAuth provider without authorization, token and userinfo URLs");
   }
   return {
     authorization: templated(base, optionNames),
     token: templated(token.url, optionNames),
-    userinfo: templated(userinfo.url, optionNames),
+    userinfo: templated(userinfoUrl, optionNames),
   };
+}
+
+/** The hooks a rule lets denext do without: its own, and the request a userinfo rule replaces. */
+function ignoreOf(rule: ProviderRule): ReadonlySet<string> {
+  const ignore = new Set(rule.ignore ?? []);
+  if (rule.userinfo) ignore.add("userinfo.request");
+  return ignore;
+}
+
+/** The userinfo request a rule describes, without its URL (none for a plain Bearer GET). */
+function userinfoRequestOf(rule: ProviderRule): GeneratedUserinfoRequest | undefined {
+  const { url: _url, ...request } = rule.userinfo ?? {};
+  return Object.keys(request).length ? structuredClone(request) : undefined;
 }
 
 /**
@@ -462,7 +671,7 @@ export async function extract(
   factory: (options: unknown) => Loose,
 ): Promise<GeneratedSpec> {
   const rule = RULES[id] ?? {};
-  const ignore = new Set(rule.ignore ?? []);
+  const ignore = ignoreOf(rule);
   const optionNames = Object.keys(rule.options ?? {}).filter((k) => k !== "issuer");
   const options: Record<string, unknown> = { ...SENTINEL };
   for (const key of optionNames) options[key] = optionSentinel(key);
@@ -471,7 +680,7 @@ export async function extract(
   checkShape(c, ignore);
   // A request / conform hook on any endpoint is a flow the data can't express.
   endpointOf(stripIgnored(c.token, "token", ignore), "token");
-  endpointOf(c.userinfo, "userinfo");
+  endpointOf(stripIgnored(c.userinfo, "userinfo", ignore), "userinfo");
   const authorization = authorizationOf(c, optionNames);
   const checks = checksOf(c.checks);
   const spec: GeneratedSpec = {
@@ -479,18 +688,23 @@ export async function extract(
     name: c.name,
     type: c.type,
     scopes: authorization.scopes,
-    tokenAuth: tokenAuthOf(c.client),
+    ...clientOf(c.client),
     ...(checks ? { checks } : {}),
     ...(c.type === "oauth"
-      ? oauthEndpoints(c, authorization.url, ignore, optionNames)
+      ? oauthEndpoints(c, authorization.url, rule, optionNames)
       : oidcIssuer(c, optionNames)),
   };
+  const request = userinfoRequestOf(rule);
+  if (request) spec.userinfoRequest = request;
+  if (rule.tokenParams) spec.tokenParams = { ...rule.tokenParams };
   if (Object.keys(authorization.params).length) spec.params = authorization.params;
   if (authorization.scopeOption) spec.scopeOption = authorization.scopeOption;
   const ruleOptions = optionsOf(spec, rule);
   if (ruleOptions) spec.options = ruleOptions;
   const profile = await profileOf(id, c.profile, rule);
   if (profile) spec.profile = profile;
+  await crossCheckRequest(id, c, spec);
+  await crossCheckTokenParams(id, c, spec);
   return spec;
 }
 

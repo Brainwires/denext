@@ -300,5 +300,6 @@ export type {
   SendVerificationRequest,
   SignInFailedReason,
   TenantIssuer,
+  UserinfoRequestInput,
   VerificationRequestParams,
 } from "./types.ts";

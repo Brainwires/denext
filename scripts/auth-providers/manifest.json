@@ -141,18 +141,7 @@
   "unsupported": {
     "azure-devops": "Azure DevOps OAuth exchanges a JWT assertion (`response_type=Assertion`) instead of an authorization code, and Microsoft has deprecated it: use `microsoft-entra-id`.",
     "bankid-no": "BankID Norge returns userinfo as a signed JWT (`userinfo_signed_response_alg`); denext reads userinfo as JSON.",
-    "bungie": "Bungie's userinfo URL needs the account's `membershipId` from the token response, and every call needs an `X-API-Key` header.",
-    "dropbox": "Dropbox reads the account with a POST to `/2/users/get_current_account`; denext's userinfo request is a GET.",
-    "foursquare": "Foursquare takes the access token as an `oauth_token` query parameter (with a `v` version date), not as a Bearer header.",
-    "hubspot": "HubSpot puts the access token in the userinfo URL's path (`/oauth/v1/access-tokens/<token>`).",
-    "line": "LINE signs its `id_token` with HS256 under the channel secret; denext verifies `id_token`s against the provider's JWKS (RS, PS and ES algorithms) only.",
-    "netsuite": "NetSuite has no userinfo endpoint: the profile comes from a RESTlet the app deploys, which Auth.js leaves to the app's own `userinfo`.",
-    "nextcloud": "Nextcloud reads the user from `/ocs/v1.php/cloud/users/<user_id>` (the id comes from the token response) with OCS headers.",
-    "tiktok": "TikTok's token endpoint takes the client id as `client_key`, not `client_id`.",
-    "todoist": "Todoist reads the user through its Sync API (a POST with `sync_token` and `resource_types`), not a userinfo endpoint.",
-    "trakt": "Trakt needs `trakt-api-key` and `trakt-api-version` headers on every API call.",
-    "vk": "VK returns the address in the token response (`email`) and the user as `users.get`'s `response[0]`.",
-    "wechat": "WeChat sends `appid` / `secret` as query parameters instead of OAuth client authentication, and its userinfo request needs the token response's `openid`."
+    "wechat": "WeChat's `platformType` option switches the authorization URL and scope between two fixed pairs, which the generated data (one URL, options filled into it) can't express."
   },
   "generated": {
     "42-school": {
@@ -600,6 +589,67 @@
         }
       }
     },
+    "bungie": {
+      "exportName": "Bungie",
+      "spec": {
+        "id": "bungie",
+        "name": "Bungie",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://www.bungie.net/en/OAuth/Authorize",
+        "token": "https://www.bungie.net/platform/app/oauth/token/",
+        "userinfo": "https://www.bungie.net/platform/User/GetBungieAccount/{token.membership_id}/254/",
+        "userinfoRequest": {
+          "headersOption": "headers"
+        },
+        "params": {
+          "reauth": "true"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "Response",
+                "bungieNetUser",
+                "membershipId"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "Response",
+                "bungieNetUser",
+                "displayName"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "url": "https://www.bungie.net",
+              "path": [
+                "p",
+                "Response",
+                "bungieNetUser",
+                "profilePicturePath"
+              ]
+            }
+          ]
+        }
+      }
+    },
     "click-up": {
       "exportName": "ClickUp",
       "spec": {
@@ -839,6 +889,62 @@
               "p": [
                 "p",
                 "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "dropbox": {
+      "exportName": "Dropbox",
+      "spec": {
+        "id": "dropbox",
+        "name": "Dropbox",
+        "type": "oauth",
+        "scopes": [
+          "account_info.read"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://www.dropbox.com/oauth2/authorize",
+        "token": "https://api.dropboxapi.com/oauth2/token",
+        "userinfo": "https://api.dropboxapi.com/2/users/get_current_account",
+        "userinfoRequest": {
+          "method": "POST"
+        },
+        "params": {
+          "token_access_type": "offline"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "account_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name",
+                "display_name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "profile_photo_url"
               ]
             }
           ]
@@ -1085,6 +1191,107 @@
         }
       }
     },
+    "foursquare": {
+      "exportName": "Foursquare",
+      "spec": {
+        "id": "foursquare",
+        "name": "Foursquare",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://foursquare.com/oauth2/authenticate",
+        "token": "https://foursquare.com/oauth2/access_token",
+        "userinfo": "https://api.foursquare.com/v2/users/self?v={apiVersion}",
+        "userinfoRequest": {
+          "token": {
+            "query": "oauth_token"
+          }
+        },
+        "options": {
+          "apiVersion": {
+            "default": "20230131"
+          }
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "response",
+                "user",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "t": [
+                [
+                  "p",
+                  "response",
+                  "user",
+                  "firstName"
+                ],
+                " ",
+                [
+                  "p",
+                  "response",
+                  "user",
+                  "lastName"
+                ]
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "response",
+                "user",
+                "contact",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "when": [
+                "p",
+                "response",
+                "user",
+                "photo"
+              ],
+              "then": {
+                "t": [
+                  [
+                    "p",
+                    "response",
+                    "user",
+                    "photo",
+                    "prefix"
+                  ],
+                  "original",
+                  [
+                    "p",
+                    "response",
+                    "user",
+                    "photo",
+                    "suffix"
+                  ]
+                ]
+              },
+              "else": {
+                "c": null
+              }
+            }
+          ]
+        }
+      }
+    },
     "freshbooks": {
       "exportName": "Freshbooks",
       "spec": {
@@ -1242,6 +1449,61 @@
         }
       }
     },
+    "hubspot": {
+      "exportName": "HubSpot",
+      "spec": {
+        "id": "hubspot",
+        "name": "HubSpot",
+        "type": "oauth",
+        "scopes": [
+          "oauth"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://app.hubspot.com/oauth/authorize",
+        "token": "https://api.hubapi.com/oauth/v1/token",
+        "userinfo": "https://api.hubapi.com/oauth/v1/access-tokens/{token.access_token}",
+        "userinfoRequest": {
+          "token": "none",
+          "headers": {
+            "content-type": "application/json"
+          }
+        },
+        "params": {
+          "client_id": "{clientId}"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "user_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "user"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "user"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
     "huggingface": {
       "exportName": "Huggingface",
       "spec": {
@@ -1390,6 +1652,25 @@
           "pkce"
         ],
         "issuer": "{issuer}"
+      }
+    },
+    "line": {
+      "exportName": "LINE",
+      "spec": {
+        "id": "line",
+        "name": "LINE",
+        "type": "oidc",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "idTokenAlg": "HS256",
+        "checks": [
+          "state"
+        ],
+        "issuer": "https://access.line.me"
       }
     },
     "logto": {
@@ -1765,6 +2046,128 @@
               "p": [
                 "p",
                 "avatar_url"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "netsuite": {
+      "exportName": "NetSuite",
+      "spec": {
+        "id": "netsuite",
+        "name": "NetSuite",
+        "type": "oauth",
+        "scopes": [
+          "restlets",
+          "rest_webservices"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
+        "authorization": "https://{accountID}.app.netsuite.com/app/login/oauth2/authorize.nl",
+        "token": "https://{accountID}.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token",
+        "userinfo": "{userinfo}",
+        "options": {
+          "accountID": {},
+          "userinfo": {
+            "raw": true
+          }
+        },
+        "profile": {
+          "id": [
+            {
+              "t": [
+                [
+                  "p",
+                  "id"
+                ]
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "nextcloud": {
+      "exportName": "Nextcloud",
+      "spec": {
+        "id": "nextcloud",
+        "name": "Nextcloud",
+        "type": "oauth",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "{issuer}/apps/oauth2/authorize",
+        "token": "{issuer}/apps/oauth2/api/v1/token",
+        "userinfo": "{issuer}/ocs/v1.php/cloud/users/{token.user_id}",
+        "userinfoRequest": {
+          "headers": {
+            "OCS-APIRequest": "true"
+          },
+          "pick": [
+            "ocs",
+            "data"
+          ]
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "displayname"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "t": [
+                "{issuer}/avatar/",
+                [
+                  "p",
+                  "id"
+                ],
+                "/512"
               ]
             }
           ]
@@ -2276,6 +2679,176 @@
         }
       }
     },
+    "tiktok": {
+      "exportName": "TikTok",
+      "spec": {
+        "id": "tiktok",
+        "name": "TikTok",
+        "type": "oauth",
+        "scopes": [
+          "user.info.basic"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://www.tiktok.com/v2/auth/authorize",
+        "token": "https://open.tiktokapis.com/v2/oauth/token/",
+        "userinfo": "https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name",
+        "tokenParams": {
+          "client_key": "{clientId}"
+        },
+        "params": {
+          "client_key": "{clientId}"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "data",
+                "user",
+                "open_id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "data",
+                "user",
+                "display_name"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "data",
+                "user",
+                "avatar_url"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ]
+        }
+      }
+    },
+    "todoist": {
+      "exportName": "TodoistProvider",
+      "spec": {
+        "id": "todoist",
+        "name": "Todoist",
+        "type": "oauth",
+        "scopes": [
+          "data:read"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://todoist.com/oauth/authorize",
+        "token": "https://todoist.com/oauth/access_token",
+        "userinfo": "https://api.todoist.com/sync/v9/sync",
+        "userinfoRequest": {
+          "method": "POST",
+          "json": {
+            "sync_token": "*",
+            "resource_types": "[\"user\"]"
+          },
+          "pick": [
+            "user"
+          ]
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "full_name"
+              ]
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "avatar_big"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "trakt": {
+      "exportName": "Trakt",
+      "spec": {
+        "id": "trakt",
+        "name": "Trakt",
+        "type": "oauth",
+        "scopes": [],
+        "tokenAuth": "client_secret_basic",
+        "authorization": "https://trakt.tv/oauth/authorize",
+        "token": "https://api.trakt.tv/oauth/token",
+        "userinfo": "https://api.trakt.tv/users/me?extended=full",
+        "userinfoRequest": {
+          "headers": {
+            "trakt-api-version": "2",
+            "trakt-api-key": "{clientId}"
+          }
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "ids",
+                "slug"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "p": [
+                "p",
+                "name"
+              ]
+            }
+          ],
+          "email": [
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "images",
+                "avatar",
+                "full"
+              ]
+            }
+          ]
+        }
+      }
+    },
     "united-effects": {
       "exportName": "UnitedEffects",
       "spec": {
@@ -2313,6 +2886,77 @@
         ],
         "issuer": "https://api.vipps.no/access-management-1.0/access/",
         "profileFromUserinfo": true
+      }
+    },
+    "vk": {
+      "exportName": "VK",
+      "spec": {
+        "id": "vk",
+        "name": "VK",
+        "type": "oauth",
+        "scopes": [
+          "email"
+        ],
+        "tokenAuth": "client_secret_post",
+        "authorization": "https://oauth.vk.com/authorize",
+        "token": "https://oauth.vk.com/access_token?v=5.131",
+        "userinfo": "https://api.vk.com/method/users.get?fields=photo_100&v=5.131",
+        "userinfoRequest": {
+          "pick": [
+            "response",
+            "0"
+          ],
+          "fromToken": {
+            "email": "email"
+          }
+        },
+        "params": {
+          "v": "5.131"
+        },
+        "profile": {
+          "id": [
+            {
+              "p": [
+                "p",
+                "id"
+              ]
+            }
+          ],
+          "name": [
+            {
+              "join": [
+                [
+                  "p",
+                  "first_name"
+                ],
+                [
+                  "p",
+                  "last_name"
+                ]
+              ],
+              "sep": " "
+            }
+          ],
+          "email": [
+            {
+              "p": [
+                "p",
+                "email"
+              ]
+            },
+            {
+              "c": null
+            }
+          ],
+          "image": [
+            {
+              "p": [
+                "p",
+                "photo_100"
+              ]
+            }
+          ]
+        }
       }
     },
     "webex": {

@@ -335,7 +335,7 @@ window the same provider signs in via `installClerkDesktopBridge({ nativeClerk: 
 [`examples/clerk`](https://github.com/Brainwires/denext/tree/main/examples/clerk).
 
 **next-auth (Auth.js v5 / NextAuth.js v4):** `NextAuth()`, `next-auth/react`, `next-auth/jwt`
-and every `next-auth/providers/*` module but 14 run unchanged on `denextAuth` (the OAuth / OIDC
+and every `next-auth/providers/*` module but 3 run unchanged on `denextAuth` (the OAuth / OIDC
 ones generated from `@auth/core` by `deno task gen:auth-providers`); `next-auth/providers/passkey`
 turns on denext's passkeys and `signIn("passkey")` / `signIn("passkey", { action: "register" })`
 from `next-auth/webauthn` drive them. Set `AUTH_URL`. See https://denext.dev/docs/auth.

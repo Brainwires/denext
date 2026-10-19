@@ -171,14 +171,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 ### `next-auth` (Auth.js v5 and NextAuth.js v4) compat
 
 - **Providers:** every `next-auth/providers/*` module of `@auth/core` 0.41.3 (`next-auth@5.0.0-beta.32`)
-  except fourteen whose flow isn't standard OAuth: `azure-devops` (a JWT assertion exchange),
-  `bankid-no` (userinfo as a signed JWT), `bungie` (a `membershipId` URL and `X-API-Key`),
-  `dropbox` (a POST to read the account), `foursquare` (the token as a query parameter),
-  `hubspot` (the token in the URL path), `line` (an HS256 `id_token`), `netsuite` (no userinfo
-  endpoint), `nextcloud` (the user id from the token response, OCS headers), `tiktok`
-  (`client_key`), `todoist` (the Sync API), `trakt` (API-key headers), `vk` (the address from the
-  token response) and `wechat` (`appid` / `secret` query parameters). Write one as a custom
-  provider object where its API allows.
+  except three: `azure-devops` (a JWT assertion exchange instead of an authorization code, and
+  deprecated by Microsoft), `bankid-no` (userinfo as a signed JWT, which denext doesn't verify)
+  and `wechat` (its `platformType` option switches the authorization URL and scope, which the
+  generated data can't express). Write one as a custom provider object where its API allows.
 - **Passkeys (`next-auth/providers/passkey`, `…/webauthn`):** registration is for a signed-in
   user with a verified address after a recent sign-in (Auth.js's sign-up by passkey is not
   offered); the relying party needs `AUTH_URL` or `relayingParty: { id, origin }`. Through an

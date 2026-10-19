@@ -34,6 +34,17 @@ import Webex from "../src/compat/next-auth/providers/webex.ts";
 import WorkOS from "../src/compat/next-auth/providers/workos.ts";
 import Zitadel from "../src/compat/next-auth/providers/zitadel.ts";
 import AzureAD from "../src/compat/next-auth/providers/azure-ad.ts";
+import Bungie from "../src/compat/next-auth/providers/bungie.ts";
+import Dropbox from "../src/compat/next-auth/providers/dropbox.ts";
+import Foursquare from "../src/compat/next-auth/providers/foursquare.ts";
+import HubSpot from "../src/compat/next-auth/providers/hubspot.ts";
+import LINE from "../src/compat/next-auth/providers/line.ts";
+import NetSuite from "../src/compat/next-auth/providers/netsuite.ts";
+import Nextcloud from "../src/compat/next-auth/providers/nextcloud.ts";
+import TikTok from "../src/compat/next-auth/providers/tiktok.ts";
+import Todoist from "../src/compat/next-auth/providers/todoist.ts";
+import Trakt from "../src/compat/next-auth/providers/trakt.ts";
+import VK from "../src/compat/next-auth/providers/vk.ts";
 import type { Provider } from "../src/compat/next-auth/types.ts";
 import type { AuthUser, OAuthProvider, ProfileInput } from "../src/server/auth/types.ts";
 
@@ -364,4 +375,186 @@ Deno.test("gen:auth-providers: extract reads OIDC issuers and refuses what data 
   for (const [what, factory] of refusals) {
     await assertRejects(() => extract("x", factory), Unexpressible, undefined, what);
   }
+});
+
+/** A request a provider's userinfoRequest made. */
+interface Sent {
+  url: URL;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+/** Run a provider's userinfoRequest on `tokens` against a fetch answering `reply`. */
+async function userinfo(
+  provider: OAuthProvider,
+  tokens: Record<string, unknown>,
+  reply: unknown = { id: "u" },
+  status = 200,
+): Promise<{ profile: Record<string, unknown>; sent: Sent }> {
+  let sent: Sent | undefined;
+  const profile = await provider.userinfoRequest!({
+    tokens,
+    url: provider.userinfoUrl,
+    fetch: (url, init) => {
+      sent = { url: new URL(url), method: init.method, headers: init.headers, body: init.body };
+      return Promise.resolve(Response.json(reply, { status }));
+    },
+  });
+  return { profile, sent: sent! };
+}
+
+Deno.test("generated providers: userinfo requests of the provider's own shape", async () => {
+  const p = build([
+    Dropbox,
+    Trakt,
+    HubSpot,
+    Foursquare,
+    Todoist,
+    VK,
+    Nextcloud({ issuer: "https://cloud.example.com" }),
+    Bungie({ headers: { "X-API-Key": "bk", Authorization: "Bearer stolen", n: 1 as never } }),
+  ], { AUTH_TRAKT_ID: "trakt-id" });
+  const at = { access_token: "a/t", token_type: "bearer" };
+  const dropbox = await userinfo(p.dropbox, at, { account_id: "d" });
+  assertEquals(dropbox.sent.method, "POST");
+  assertEquals(dropbox.sent.headers.authorization, "Bearer a/t");
+  assertEquals(dropbox.sent.body, undefined);
+  const trakt = (await userinfo(p.trakt, at)).sent.headers;
+  assertEquals([trakt["trakt-api-version"], trakt["trakt-api-key"]], ["2", "trakt-id"]);
+  // HubSpot: the token in the path, URL-encoded, and no Authorization header.
+  const hubspot = (await userinfo(p.hubspot, at)).sent;
+  assertEquals(hubspot.url.href, "https://api.hubapi.com/oauth/v1/access-tokens/a%2Ft");
+  assertEquals(hubspot.headers.authorization, undefined);
+  // Foursquare: the token as `oauth_token`, the API version's default.
+  const foursquare = (await userinfo(p.foursquare, at)).sent;
+  assertEquals(foursquare.url.searchParams.get("oauth_token"), "a/t");
+  assertEquals(foursquare.url.searchParams.get("v"), "20230131");
+  assertEquals(foursquare.headers.authorization, undefined);
+  assertEquals(
+    build([Foursquare({ apiVersion: "20240101" })]).foursquare.userinfoUrl,
+    "https://api.foursquare.com/v2/users/self?v=20240101",
+  );
+  // Todoist: a POST with the Sync API's JSON body; the profile is its `user`.
+  const todoist = await userinfo(p.todoist, at, { user: { id: 7, full_name: "Tod" } });
+  assertEquals(JSON.parse(todoist.sent.body!), { sync_token: "*", resource_types: '["user"]' });
+  assertEquals(todoist.sent.headers["content-type"], "application/json");
+  assertEquals(todoist.profile, { id: 7, full_name: "Tod" });
+  // VK: `response[0]`, with the token response's address (null without one).
+  const vk = await userinfo(p.vk, { ...at, email: "v@x" }, { response: [{ id: 5 }] });
+  assertEquals(vk.profile, { id: 5, email: "v@x" });
+  assertEquals((await userinfo(p.vk, at, { response: [{ id: 5 }] })).profile.email, null);
+  // Nextcloud: the token response's user id in the path, OCS headers, `ocs.data`.
+  const cloud = await userinfo(p.nextcloud, { ...at, user_id: "ada lo" }, {
+    ocs: { data: { id: "ada", displayname: "Ada" } },
+  });
+  assertEquals(cloud.sent.url.href, "https://cloud.example.com/ocs/v1.php/cloud/users/ada%20lo");
+  assertEquals(cloud.sent.headers["OCS-APIRequest"], "true");
+  assertEquals(cloud.profile, { id: "ada", displayname: "Ada" });
+  // Bungie: the membership id from the token response; the app's headers, never Authorization.
+  const bungie = await userinfo(p.bungie, { ...at, membership_id: 42 });
+  assertEquals(bungie.sent.url.pathname, "/platform/User/GetBungieAccount/42/254/");
+  assertEquals(bungie.sent.headers["X-API-Key"], "bk");
+  assertEquals(bungie.sent.headers.authorization, "Bearer a/t");
+  assertEquals(bungie.sent.headers.n, undefined);
+});
+
+Deno.test("generated providers: a userinfo request that can't be made fails the sign-in", async () => {
+  const p = build([Bungie, VK, Dropbox]);
+  const at = { access_token: "at" };
+  await assertRejects(() => userinfo(p.bungie, at), Error, "membership_id");
+  await assertRejects(() => userinfo(p.dropbox, {}), Error, "access_token");
+  await assertRejects(() => userinfo(p.dropbox, at, {}, 401), Error, "401");
+  await assertRejects(() => userinfo(p.vk, at, { response: [] }), Error, "no profile");
+  await assertRejects(() => userinfo(p.vk, at, { response: ["x"] }), Error, "no profile");
+});
+
+Deno.test("generated providers: TikTok's client_key, LINE's HS256, NetSuite's own userinfo", () => {
+  const p = build([TikTok, LINE], { AUTH_TIKTOK_ID: "tt-key" });
+  assertEquals(p.tiktok.tokenRequestParams, { client_key: "tt-key" });
+  assertEquals(p.tiktok.authorizationParams?.client_key, "tt-key");
+  assertEquals(p.line.idTokenAlg, "HS256");
+  assertEquals(p.line.checks, ["state"]);
+  assertEquals(p.line.discovery?.issuer, "https://access.line.me");
+  // NetSuite: the account in the host, the RESTlet URL the app deploys as `userinfo`.
+  const netsuite = build([
+    NetSuite({
+      accountID: "1234567-SB1",
+      userinfo:
+        "https://1234567-sb1.restlets.api.netsuite.com/app/site/hosting/restlet.nl?script=1",
+    }),
+  ]).netsuite;
+  assertEquals(
+    netsuite.authorizationUrl,
+    "https://1234567-SB1.app.netsuite.com/app/login/oauth2/authorize.nl",
+  );
+  assertEquals(netsuite.userinfoUrl?.startsWith("https://1234567-sb1.restlets."), true);
+  assertEquals(netsuite.checks, ["state"]);
+  assertThrows(() => build([NetSuite({ accountID: "1" })]), TypeError, "userinfo");
+  assertThrows(
+    () => build([NetSuite({ accountID: "1", userinfo: "http://restlet.example.com/x" })]),
+    TypeError,
+    "https",
+  );
+});
+
+Deno.test("generated providers: profile templates fill the issuer; a URL joins one slash", async () => {
+  const p = build([Nextcloud({ issuer: "https://cloud.example.com" }), Bungie]);
+  assertEquals(
+    await profileOf(p.nextcloud, {
+      userinfo: { id: "ada", displayname: "Ada", email: "a@x" },
+    }),
+    { id: "ada", name: "Ada", email: "a@x", image: "https://cloud.example.com/avatar/ada/512" },
+  );
+  const user = (path: string) => ({
+    userinfo: { Response: { bungieNetUser: { membershipId: "9", profilePicturePath: path } } },
+  });
+  assertEquals(
+    (await profileOf(p.bungie, user("/img/a.png"))).image,
+    "https://www.bungie.net/img/a.png",
+  );
+  assertEquals(
+    (await profileOf(p.bungie, user("img/a.png"))).image,
+    "https://www.bungie.net/img/a.png",
+  );
+  assertEquals(
+    mapProfile({ x: [{ url: "https://b", path: ["p", "n"] }] }, { p: { n: 1 }, t: {} }),
+    {},
+  );
+  assertEquals(
+    mapProfile({ x: [{ t: ["{issuer}/", ["p", "n"], "/{other}"] }] }, { p: { n: 1 }, t: {} }, {
+      issuer: "https://i",
+    }),
+    { x: "https://i/1/{other}" },
+  );
+});
+
+Deno.test("gen:auth-providers: extract reads an HS256 id_token and refuses other client keys", async () => {
+  // deno-lint-ignore no-explicit-any
+  const line = await extract("x", (options: any) => ({
+    id: "x",
+    type: "oidc",
+    issuer: "https://x.test",
+    client: { id_token_signed_response_alg: "HS256" },
+    options,
+  }));
+  assertEquals(line.idTokenAlg, "HS256");
+  for (const client of [{ id_token_signed_response_alg: "ES256" }, { jwks: {} }]) {
+    await assertRejects(
+      () => extract("x", () => ({ id: "x", type: "oidc", issuer: "https://x.test", client })),
+      Unexpressible,
+    );
+  }
+  // A custom fetch the rules don't declare is refused.
+  await assertRejects(
+    () =>
+      extract("x", () => ({
+        [Symbol("customFetch")]: () => {},
+        id: "x",
+        type: "oidc",
+        issuer: "https://x.test",
+      })),
+    Unexpressible,
+    "custom fetch",
+  );
 });

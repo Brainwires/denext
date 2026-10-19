@@ -5,72 +5,22 @@
 // token request's body, and whether the id_token's nonce is required.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import {
-  createRequestContext,
-  type RequestContext,
-  runWithContext,
-} from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { denextAuth } from "../src/server/auth/mod.ts";
 import { oauthPreset } from "../src/server/auth/providers-presets.ts";
 import { oidc } from "../src/server/auth/providers.ts";
-import { base64UrlEncode, buildAuthorizationUrl, flowChecks } from "../src/server/auth/oauth.ts";
-import type { AuthConfig, OAuthCheck, OAuthProvider } from "../src/server/auth/types.ts";
+import { buildAuthorizationUrl, flowChecks } from "../src/server/auth/oauth.ts";
+import {
+  appConfig,
+  callback,
+  type Idp,
+  makeIdp,
+  ORIGIN,
+  signedIn,
+  start,
+  txData,
+} from "./helpers/oauth-flow-harness.ts";
+import type { OAuthCheck, OAuthProvider } from "../src/server/auth/types.ts";
 
-const ORIGIN = "https://app.test";
-const SECRET = "test-secret-value-at-least-32-chars-long";
-const TX = "__Host-denext_auth_tx";
-
-async function run(request: Request, config: AuthConfig) {
-  const ctx: RequestContext = createRequestContext(request);
-  const res = await runWithContext(ctx, () => handleAuthRequest(request, config));
-  assert(res);
-  return { res, ctx };
-}
-
-function txPair(ctx: RequestContext): string {
-  return ctx.outgoingHeaders.getSetCookie().find((c) =>
-    c.startsWith(`${TX}=`) && !c.startsWith(`${TX}=;`)
-  )!.split(";")[0];
-}
-
-/** The signed transaction cookie's payload. */
-function txData(pair: string): { nonce?: string; state: string; verifier: string } {
-  const b64 = pair.split("=")[1].split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
-  const json = new TextDecoder().decode(
-    Uint8Array.from(atob(b64 + "=".repeat((4 - b64.length % 4) % 4)), (c) => c.charCodeAt(0)),
-  );
-  return JSON.parse(json).d;
-}
-
-async function makeIdp() {
-  const pair = await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  );
-  const pub = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  const kid = crypto.randomUUID();
-  const jwks = { keys: [{ kty: "RSA", kid, n: pub.n, e: pub.e, alg: "RS256" }] };
-  const mint = async (claims: Record<string, unknown>): Promise<string> => {
-    const seg = (o: unknown) => base64UrlEncode(new TextEncoder().encode(JSON.stringify(o)));
-    const signing = `${seg({ alg: "RS256", typ: "JWT", kid })}.${seg(claims)}`;
-    const sig = await crypto.subtle.sign(
-      "RSASSA-PKCS1-v1_5",
-      pair.privateKey,
-      new TextEncoder().encode(signing),
-    );
-    return `${signing}.${base64UrlEncode(new Uint8Array(sig))}`;
-  };
-  return { jwks, mint };
-}
-
-type Idp = Awaited<ReturnType<typeof makeIdp>>;
 /** One key for the file: the JWKS cache throttles a refetch for an unknown `kid`. */
 const IDP: Idp = await makeIdp();
 
@@ -128,39 +78,6 @@ function oidcProvider(checks?: OAuthCheck[]): OAuthProvider {
     clientSecret: "shh",
   });
   return checks ? { ...provider, checks } : provider;
-}
-
-function appConfig(provider: OAuthProvider, failures: string[] = []): AuthConfig {
-  return {
-    secret: SECRET,
-    canonicalOrigin: ORIGIN,
-    dangerouslyAllowInsecureProviders: true,
-    providers: [provider],
-    pages: { signIn: "/login" },
-    events: { signInFailed: ({ reason }) => void failures.push(reason) },
-  };
-}
-
-/** Start a sign-in: the authorization URL and the transaction cookie. */
-async function start(config: AuthConfig, id: string) {
-  const { res, ctx } = await run(new Request(`${ORIGIN}/auth/signin/${id}`), config);
-  assertEquals(res.status, 303);
-  return { authorize: new URL(res.headers.get("location")!), pair: txPair(ctx) };
-}
-
-/** The callback for a started sign-in. */
-async function callback(config: AuthConfig, id: string, pair: string, state: string) {
-  const { res } = await run(
-    new Request(`${ORIGIN}/auth/callback/${id}?code=the-code&state=${state}`, {
-      headers: { cookie: pair },
-    }),
-    config,
-  );
-  return res;
-}
-
-function signedIn(res: Response): boolean {
-  return res.status === 303 && res.headers.get("location") === "/";
 }
 
 /** Which of state / PKCE / nonce an OAuth combination sends, and that the flow completes. */

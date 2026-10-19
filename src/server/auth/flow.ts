@@ -219,6 +219,10 @@ export async function exchangeCodeForTokens(
     form.set("client_secret", provider.clientSecret);
   }
 
+  for (const [key, value] of Object.entries(provider.tokenRequestParams ?? {})) {
+    if (!form.has(key)) form.set(key, value);
+  }
+
   const res = await doFetch(params.tokenUrl, {
     method: "POST",
     headers,

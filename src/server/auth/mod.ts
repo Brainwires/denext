@@ -189,6 +189,7 @@ function validateProviders(providers: AuthConfig["providers"]): void {
       if (!building) assertOAuthCredentials(p);
       assertResponseMode(p);
       assertChecks(p);
+      assertIdTokenAlg(p);
     }
   }
 }
@@ -213,6 +214,15 @@ function assertResponseMode(p: OAuthProvider): void {
         "transaction cookie follow it.",
     );
   }
+}
+
+/** `idTokenAlg` is `"HS256"` on an OIDC provider, or unset. */
+function assertIdTokenAlg(p: OAuthProvider): void {
+  if (p.idTokenAlg === undefined || (p.idTokenAlg === "HS256" && p.type === "oidc")) return;
+  throw new Error(
+    `denextAuth: provider "${p.id}" has idTokenAlg ${JSON.stringify(p.idTokenAlg)} — ` +
+      'only an "oidc" provider takes it, and only "HS256".',
+  );
 }
 
 /** `checks` names only the protections the flow knows (a typo must not drop PKCE silently). */

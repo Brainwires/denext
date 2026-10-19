@@ -2258,7 +2258,7 @@ never loaded.
 | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GitHub`, `Google`, `Apple`, `Discord`, `MicrosoftEntraID`, `GitLab`, `Facebook`, `Slack`, `Okta`, `Auth0`, `Keycloak` | denext's presets; `clientId` / `clientSecret` (and an `issuer`) default to `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER`; `authorization.params`, `profile()` and `allowDangerousEmailAccountLinking` apply          |
 | `Twitter`, `LinkedIn`, `Twitch`, `Spotify`, `Cognito`, `Zoom`, `Notion`                                                | the same, from endpoint data the shim carries (X, Zoom and Notion send the client credentials as HTTP Basic)                                                                                                  |
-| The other OAuth / OIDC providers (`Kakao`, `Reddit`, `Zitadel`, `WorkOS`, … 60 of them)                                | generated from Auth.js's own definitions (see below); `AUTH_<ID>_*` defaults, options such as `issuer`, `apiBaseUrl` or `tenantId`, and the profile mapping as Auth.js has them                               |
+| The other OAuth / OIDC providers (`Kakao`, `Reddit`, `Zitadel`, `WorkOS`, … 71 of them)                                | generated from Auth.js's own definitions (see below); `AUTH_<ID>_*` defaults, options such as `issuer`, `apiBaseUrl` or `tenantId`, and the profile mapping as Auth.js has them                               |
 | `Passkey`, `WebAuthn`                                                                                                  | denext's [passkeys](#passkeys-webauthn): `relayingParty` → `rpId` / `rpName` / `origins`; `next-auth/webauthn`'s `signIn("passkey")` signs in, `{ action: "register" }` adds one                              |
 | A custom provider object (`{ id, type: "oauth" \| "oidc", authorization, … }`)                                         | `oauthPreset()` / `oidc()`                                                                                                                                                                                    |
 | `Credentials`                                                                                                          | `credentials()`, plus its rate limits                                                                                                                                                                         |
@@ -2282,12 +2282,26 @@ the pinned provider list. An OIDC provider discovers its endpoints from the issu
 reads userinfo for (`idToken: false`) does too. An OAuth provider's address is never treated as
 verified; an OIDC one only when its `email_verified` claim says so.
 
-Fourteen are not provided, each because its flow isn't standard OAuth: Azure DevOps (a JWT
-assertion flow), BankID Norge (signed userinfo), Bungie and Trakt (API-key headers), Dropbox and
-Todoist (a POST to read the user), Foursquare and HubSpot (the token in the URL), LINE (an HS256
-`id_token`), NetSuite (no userinfo endpoint), Nextcloud and VK (the user id or address from the
-token response), TikTok (`client_key`) and WeChat (non-standard client authentication). Write one
-as a custom provider object if its API allows; [Limitations](/docs/limitations) lists the reasons.
+The providers whose Auth.js definition reads the user in code are generated too, with that request
+as data the generator checks against Auth.js's own: Dropbox and Todoist (a `POST`), Trakt (API-key
+headers), Foursquare and HubSpot (the token in the URL), Nextcloud and Bungie (an id from the token
+response in the URL; Bungie's API key goes in Auth.js's documented `headers: { "X-API-Key": … }`
+option) and VK (the address from the token response). TikTok adds its `client_key` to the token
+request, LINE's `id_token` is verified HS256 under the channel secret as its specification has it,
+and NetSuite reads the RESTlet the app deploys, given as `userinfo` (an https URL):
+
+```ts
+NetSuite({
+  accountID: "1234567",
+  userinfo:
+    "https://1234567.restlets.api.netsuite.com/app/site/hosting/restlet.nl?script=1&deploy=1",
+});
+```
+
+Three are not provided: Azure DevOps (a deprecated JWT assertion flow), BankID Norge (userinfo as a
+signed JWT) and WeChat (its `platformType` option switches the authorization URL and scope). Write
+one as a custom provider object if its API allows; [Limitations](/docs/limitations) lists the
+reasons.
 
 ### Passkeys from `next-auth/providers/passkey`
 

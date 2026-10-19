@@ -87,18 +87,31 @@ and this project adheres to
   response or blob export opens the platform's save dialog on every backend (it was inert or
   cancelled), only for the app's own origins, with a sanitized file name and at most three save
   dialogs per window in 10 s.
-- **Every Auth.js provider runs on the `next-auth` shim — 60 more, generated.** The OAuth / OIDC
+- **Every Auth.js provider runs on the `next-auth` shim — 71 more, generated.** The OAuth / OIDC
   providers denext had no preset for (`kakao`, `reddit`, `zitadel`, `workos`, `fusionauth`,
-  `salesforce`, … 60 in all) are generated from `@auth/core` 0.41.3's own `providers/` by
+  `salesforce`, … 71 in all) are generated from `@auth/core` 0.41.3's own `providers/` by
   `deno task gen:auth-providers`: Auth.js's endpoints, scopes, token-endpoint authentication
   (HTTP Basic unless the provider names `client_secret_post`), options (`issuer`, `apiBaseUrl`,
   `tenantId`, `connection`, …) and its `profile()` mapping as data, checked against Auth.js's own
   `profile()` on sample profiles. A drift test holds the checked-in modules, the provider list and
   `deno.json`'s exports to the pinned list. `azure-ad` (Microsoft Entra ID under its old id) and
   the HTTP-API email providers `sendgrid`, `postmark`, `mailgun`, `forwardemail` and `loops`
-  (`AUTH_<ID>_KEY`) are written by hand. Fourteen providers whose flow isn't standard OAuth
-  (`dropbox`, `hubspot`, `line`, `tiktok`, `wechat`, …) are not provided; Limitations lists why.
-  The shim now ships 88 provider modules, up from 22.
+  (`AUTH_<ID>_KEY`) are written by hand. Three providers are not provided (`azure-devops`,
+  `bankid-no`, `wechat`); Limitations lists why. The shim now ships 101 provider modules, up
+  from 22.
+- **The non-standard OAuth providers are generated too: Bungie, Dropbox, Foursquare, HubSpot,
+  LINE, NetSuite, Nextcloud, TikTok, Todoist, Trakt and VK.** Three hooks carry what their
+  Auth.js definitions do in code: `OAuthProvider.userinfoRequest` (a userinfo request of the
+  provider's own shape on the pinned provider fetch — a `POST`, API-key headers, the token as a
+  query parameter or in the path, an id from the token response such as Bungie's
+  `membership_id` or Nextcloud's `user_id`, the profile at a path of the response, VK's address
+  from the token response), `tokenRequestParams` (TikTok's `client_key`, never replacing the
+  flow's own parameters) and `idTokenAlg: "HS256"` (LINE's `id_token`, verified under the client
+  secret; no other algorithm is accepted from such a provider, and no other provider accepts an
+  HMAC token). The generator runs each Auth.js `userinfo.request` and custom fetch against a stub
+  and fails unless denext's data sends the same request and returns the same profile. NetSuite
+  takes the app's RESTlet as its `userinfo` option (https only), Bungie its API key as Auth.js's
+  documented `headers` option.
 - **A passkey ceremony through an Auth.js adapter finishes on any instance.** Its challenge now
   lives in the app's cache store instead of the instance's memory: single-use (taken atomically by
   the new optional `CacheStore.takeData`, which the SQLite, Postgres, Redis and Deno KV stores

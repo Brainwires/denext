@@ -1100,6 +1100,7 @@
     "TypedRequest:interface",
     "TypedResponse:interface",
     "UserAgent:interface",
+    "UserinfoRequestInput:interface",
     "VNode:interface",
     "VNodeChild:typeAlias",
     "VNodeChildren:typeAlias",
@@ -1544,6 +1545,7 @@
     "TotpQrSvgOptions:interface",
     "TotpVerifyOptions:interface",
     "TotpVerifyResult:typeAlias",
+    "UserinfoRequestInput:interface",
     "VerificationPurpose:typeAlias",
     "VerificationRequestParams:interface",
     "VerificationTokenRecord:interface",
@@ -5480,6 +5482,11 @@
     "SAMLJacksonProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/bungie": [
+    "BungieProfile:typeAlias",
+    "BungieUserConfig:interface",
+    "default:function"
+  ],
   "denext/next-auth/providers/click-up": [
     "ClickUpProfile:typeAlias",
     "default:function"
@@ -5515,6 +5522,10 @@
     "DribbbleUserConfig:interface",
     "default:function"
   ],
+  "denext/next-auth/providers/dropbox": [
+    "DropboxProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/duende-identity-server6": [
     "DuendeIdentityServer6Profile:typeAlias",
     "default:function"
@@ -5545,6 +5556,11 @@
   "denext/next-auth/providers/forwardemail": [
     "default:function"
   ],
+  "denext/next-auth/providers/foursquare": [
+    "FoursquareProfile:typeAlias",
+    "FoursquareUserConfig:interface",
+    "default:function"
+  ],
   "denext/next-auth/providers/freshbooks": [
     "FreshbooksProfile:typeAlias",
     "default:function"
@@ -5570,6 +5586,10 @@
     "GoogleProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/hubspot": [
+    "HubSpotProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/huggingface": [
     "HuggingfaceProfile:typeAlias",
     "default:function"
@@ -5592,6 +5612,10 @@
   ],
   "denext/next-auth/providers/kinde": [
     "KindeProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/line": [
+    "LINEProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/linkedin": [
@@ -5640,6 +5664,15 @@
   ],
   "denext/next-auth/providers/netlify": [
     "NetlifyProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/netsuite": [
+    "NetSuiteProfile:typeAlias",
+    "NetSuiteUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/nextcloud": [
+    "NextcloudProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/nodemailer": [
@@ -5740,6 +5773,18 @@
     "ThreadsProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/tiktok": [
+    "TikTokProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/todoist": [
+    "TodoistProviderProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/trakt": [
+    "TraktProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/twitch": [
     "TwitchProfile:typeAlias",
     "default:function"
@@ -5755,6 +5800,10 @@
   ],
   "denext/next-auth/providers/vipps": [
     "VippsProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/vk": [
+    "VKProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/webauthn": [

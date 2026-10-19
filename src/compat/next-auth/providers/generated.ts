@@ -29,11 +29,12 @@ import {
  * One alternative of a profile field: a path into the raw profile (`["p", …]`) or the token
  * response (`["t", …]`), a template of literal text and paths, a constant, a list of paths
  * joined without the empty ones, a field of the first list entry whose `where` field is truthy,
- * or a choice on whether a path is truthy.
+ * a choice on whether a path is truthy, or a path's value under a base URL (one `/` between).
  */
 export type ProfileExpr =
   | { p: string[] }
   | { t: (string | string[])[] }
+  | { url: string; path: string[] }
   | { c: string | number | boolean | null }
   | { join: string[][]; sep: string }
   | { find: string[]; where: string; pick: string }
@@ -45,6 +46,33 @@ export interface GeneratedOption {
   default?: string;
   /** Inserted verbatim (a URL prefix) instead of URL-encoded. */
   raw?: boolean;
+}
+
+/**
+ * A userinfo request of the provider's own shape (Auth.js's `userinfo.request`, as data). The
+ * URL is the spec's `userinfo`, which may name `{token.<field>}` of the token response (filled,
+ * URL-encoded, per sign-in).
+ */
+export interface GeneratedUserinfoRequest {
+  /** `"POST"` (Dropbox, Todoist); a `GET` otherwise. */
+  method?: "POST";
+  /**
+   * Where the access token goes: a Bearer header (the default), a query parameter
+   * (`{ query: "oauth_token" }`), or nowhere (`"none"`: the URL carries it).
+   */
+  token?: "bearer" | "none" | { query: string };
+  /** Extra headers (templates over `{clientId}` and options). */
+  headers?: Record<string, string>;
+  /** An option whose object value is sent as extra headers (Bungie's `headers`). */
+  headersOption?: string;
+  /** Extra query parameters (templates; may name `{token.<field>}`). */
+  query?: Record<string, string>;
+  /** A JSON body. */
+  json?: Record<string, unknown>;
+  /** The profile is this path of the response (`["response", "0"]`). */
+  pick?: string[];
+  /** Profile fields taken from the token response (`{ email: "email" }`), `null` when absent. */
+  fromToken?: Record<string, string>;
 }
 
 /** A generated provider's static data. Strings may name `{issuer}`, `{clientId}` and options. */
@@ -76,6 +104,12 @@ export interface GeneratedSpec {
    * denext runs PKCE and the `nonce` only where they are listed; `state` always.
    */
   checks?: OAuthCheck[];
+  /** A userinfo request that isn't a Bearer `GET` (see {@linkcode GeneratedUserinfoRequest}). */
+  userinfoRequest?: GeneratedUserinfoRequest;
+  /** Extra token-request parameters (templates over `{clientId}`): TikTok's `client_key`. */
+  tokenParams?: Record<string, string>;
+  /** `"HS256"`: the `id_token` is signed with the client secret, as LINE's specification has it. */
+  idTokenAlg?: "HS256";
   /** OIDC whose profile is the userinfo response (Auth.js's `idToken: false`). */
   profileFromUserinfo?: boolean;
   /** The options it reads besides the credentials and the issuer. */
@@ -130,23 +164,47 @@ function read(roots: ProfileRoots, path: readonly string[]): unknown {
   return at(root === "t" ? roots.t : roots.p, rest);
 }
 
+/** Values a template's literal text may name (`{issuer}`), filled where they appear. */
+type Vars = Readonly<Record<string, string>>;
+
+/** A literal with the `{name}`s `vars` has filled in. */
+function literalText(text: string, vars: Vars): string {
+  return text.replace(/\{([A-Za-z]+)\}/g, (whole, name: string) => vars[name] ?? whole);
+}
+
+/** A `find` alternative: a field of the first list entry whose `where` field is truthy. */
+function findIn(
+  expr: { find: string[]; where: string; pick: string },
+  roots: ProfileRoots,
+): unknown {
+  const list = read(roots, expr.find);
+  if (!Array.isArray(list)) return undefined;
+  const hit = list.find((entry) => entry && (entry as Record<string, unknown>)[expr.where]);
+  return hit ? (hit as Record<string, unknown>)[expr.pick] : undefined;
+}
+
+/** A `url` alternative: a path's string value under a base URL, one `/` between (Bungie's). */
+function underUrl(expr: { url: string; path: string[] }, roots: ProfileRoots): unknown {
+  const value = read(roots, expr.path);
+  if (typeof value !== "string") return undefined;
+  return `${expr.url}${value.startsWith("/") ? "" : "/"}${value}`;
+}
+
 /** One alternative's value. */
-function evaluate(expr: ProfileExpr, roots: ProfileRoots): unknown {
+function evaluate(expr: ProfileExpr, roots: ProfileRoots, vars: Vars = {}): unknown {
   if ("p" in expr) return read(roots, expr.p);
   if ("c" in expr) return expr.c;
   if ("join" in expr) {
     return expr.join.map((path) => read(roots, path)).filter(Boolean).join(expr.sep);
   }
-  if ("find" in expr) {
-    const list = read(roots, expr.find);
-    if (!Array.isArray(list)) return undefined;
-    const hit = list.find((entry) => entry && (entry as Record<string, unknown>)[expr.where]);
-    return hit ? (hit as Record<string, unknown>)[expr.pick] : undefined;
+  if ("find" in expr) return findIn(expr, roots);
+  if ("url" in expr) return underUrl(expr, roots);
+  if ("when" in expr) {
+    return evaluate(read(roots, expr.when) ? expr.then : expr.else, roots, vars);
   }
-  if ("when" in expr) return evaluate(read(roots, expr.when) ? expr.then : expr.else, roots);
-  return expr.t.map((part) => typeof part === "string" ? part : String(read(roots, part))).join(
-    "",
-  );
+  return expr.t.map((part) =>
+    typeof part === "string" ? literalText(part, vars) : String(read(roots, part))
+  ).join("");
 }
 
 /**
@@ -155,17 +213,19 @@ function evaluate(expr: ProfileExpr, roots: ProfileRoots): unknown {
  *
  * @param mapping The provider's profile mapping.
  * @param roots The raw profile and the token response.
+ * @param vars The values a template's literal text names (`{issuer}`: Nextcloud's avatar URL).
  * @returns The user as Auth.js's `profile()` would have returned it.
  */
 export function mapProfile(
   mapping: Record<string, ProfileExpr[]>,
   roots: ProfileRoots,
+  vars: Vars = {},
 ): Record<string, unknown> {
   const user: Record<string, unknown> = {};
   for (const [field, alternatives] of Object.entries(mapping)) {
     let value: unknown;
     for (const alternative of alternatives) {
-      value = evaluate(alternative, roots);
+      value = evaluate(alternative, roots, vars);
       if (value !== null && value !== undefined) break;
     }
     if (value !== undefined) user[field] = value;
@@ -223,11 +283,11 @@ function emailFields(
 }
 
 /** The denext user: the mapped id, name, image and (see {@link emailFields}) address. */
-function denextUser(spec: GeneratedSpec, input: ProfileInput): AuthUser {
+function denextUser(spec: GeneratedSpec, input: ProfileInput, vars: Vars): AuthUser {
   const raw = rawProfile(spec, input);
   const roots = { p: raw, t: input.tokens };
   const mapping = mappingOf(spec);
-  const mapped = mapProfile(mapping, roots);
+  const mapped = mapProfile(mapping, roots, vars);
   const user: AuthUser = { id: idOf(mapping, roots, mapped.id) };
   const name = text(mapped.name);
   const image = text(mapped.image);
@@ -238,6 +298,135 @@ function denextUser(spec: GeneratedSpec, input: ProfileInput): AuthUser {
 
 /** A template value: its text, and whether it is inserted verbatim. */
 type TemplateValue = { value: string; raw: boolean };
+
+/** `{token.<field>}` in a userinfo URL or query value. */
+const TOKEN_FIELD = /\{token\.([A-Za-z_]+)\}/g;
+
+/**
+ * Fill a template's `{token.<field>}`s from the token response, URL-encoded. A field the
+ * response lacks fails the sign-in (Auth.js would request `…/undefined`).
+ */
+function fillTokenFields(template: string, tokens: Record<string, unknown>): string {
+  return template.replace(TOKEN_FIELD, (_, field: string) => {
+    const value = tokens[field];
+    if (typeof value !== "string" && typeof value !== "number") {
+      throw new Error(`the token response has no \`${field}\` for the userinfo request`);
+    }
+    return encodeURIComponent(String(value));
+  });
+}
+
+/** The value at `path` of a userinfo response, when it is an object. */
+function pickProfile(response: unknown, path: readonly string[]): Record<string, unknown> {
+  const profile = at(response, path);
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+    throw new Error("userinfo returned no profile");
+  }
+  return { ...profile as Record<string, unknown> };
+}
+
+/**
+ * The userinfo request a spec describes, its URL and headers filled from the build-time values
+ * and its token fields from each sign-in's token response; the profile is the response (or the
+ * `pick` path of it) plus the `fromToken` fields, as Auth.js's own `userinfo.request` returns it.
+ *
+ * @param request The request's shape.
+ * @param url The userinfo URL, filled but for its `{token.<field>}`s.
+ * @param headers The extra headers, filled.
+ * @returns The provider's `userinfoRequest`.
+ */
+export function generatedUserinfoRequest(
+  request: GeneratedUserinfoRequest,
+  url: string,
+  headers: Record<string, string>,
+): NonNullable<OAuthProvider["userinfoRequest"]> {
+  return async ({ tokens, fetch }) => {
+    const accessToken = accessTokenOf(tokens);
+    const res = await fetch(userinfoTarget(request, url, tokens, accessToken), {
+      method: request.method ?? "GET",
+      headers: userinfoHeaders(request, headers, accessToken),
+      body: request.json && JSON.stringify(request.json),
+    });
+    if (!res.ok) throw new Error(`userinfo failed (${res.status})`);
+    return profileFrom(request, await res.json().catch(() => null), tokens);
+  };
+}
+
+/** The token response's access token (a sign-in without one fails). */
+function accessTokenOf(tokens: Record<string, unknown>): string {
+  const token = tokens.access_token;
+  if (typeof token !== "string" || !token) {
+    throw new Error("the token response has no access_token");
+  }
+  return token;
+}
+
+/** The profile in a userinfo response: its `pick` path, plus the `fromToken` fields. */
+function profileFrom(
+  request: GeneratedUserinfoRequest,
+  response: unknown,
+  tokens: Record<string, unknown>,
+): Record<string, unknown> {
+  const profile = pickProfile(response, request.pick ?? []);
+  for (const [field, from] of Object.entries(request.fromToken ?? {})) {
+    profile[field] = tokens[from] ? tokens[from] : null;
+  }
+  return profile;
+}
+
+/** The userinfo URL with its token fields, query and (`{ query }`) access token filled. */
+function userinfoTarget(
+  request: GeneratedUserinfoRequest,
+  url: string,
+  tokens: Record<string, unknown>,
+  accessToken: string,
+): string {
+  const target = new URL(fillTokenFields(url, tokens));
+  for (const [key, value] of Object.entries(request.query ?? {})) {
+    target.searchParams.set(key, fillTokenFields(value, tokens));
+  }
+  if (typeof request.token === "object") target.searchParams.set(request.token.query, accessToken);
+  return target.href;
+}
+
+/** The userinfo request's headers: JSON, the provider's own, and the Bearer token by default. */
+function userinfoHeaders(
+  request: GeneratedUserinfoRequest,
+  headers: Record<string, string>,
+  accessToken: string,
+): Record<string, string> {
+  const sent: Record<string, string> = {
+    accept: "application/json",
+    "user-agent": "denext-auth",
+    ...headers,
+  };
+  if ((request.token ?? "bearer") === "bearer") sent.authorization = `Bearer ${accessToken}`;
+  if (request.json) sent["content-type"] = "application/json";
+  return sent;
+}
+
+/** The headers an option's object value adds (string values only; never `authorization`). */
+function optionHeaders(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key, v]) =>
+      typeof v === "string" && key.toLowerCase() !== "authorization"
+    ) as [string, string][],
+  );
+}
+
+/** A spec's userinfo request, with its build-time values filled. */
+function userinfoRequestOf(
+  spec: GeneratedSpec,
+  options: GeneratedUserConfig,
+  values: Map<string, TemplateValue>,
+): OAuthProvider["userinfoRequest"] {
+  const request = spec.userinfoRequest;
+  if (!request || !spec.userinfo) return undefined;
+  const headers: Record<string, string> = { ...filled(request.headers, values) };
+  if (request.headersOption) Object.assign(headers, optionHeaders(options[request.headersOption]));
+  return generatedUserinfoRequest(request, endpoint(spec, spec.userinfo, values), headers);
+}
 
 /** One option's value: the app's (the issuer: the resolved one), else its default. */
 function optionValue(
@@ -298,6 +487,11 @@ function endpoint(
   }
   const filled = fill(template, values);
   if (namesIn(template).includes("issuer")) issuerUrl(spec.id, filled);
+  // A URL the app supplies (NetSuite's `userinfo`, Webex's `apiBaseUrl`) must be https too.
+  const raw = namesIn(template).find((name) => name !== "issuer" && values.get(name)?.raw);
+  if (raw && !/^https:\/\/[^/]/.test(filled)) {
+    throw new TypeError(`next-auth: provider "${spec.id}" needs an https \`${raw}\` URL`);
+  }
   return filled;
 }
 
@@ -380,10 +574,48 @@ function buildGenerated(
   provider.scopes = scopes;
   provider.tokenEndpointAuthMethod = spec.tokenAuth;
   if (spec.checks) provider.checks = [...spec.checks];
+  attachHooks(provider, spec, options, values);
+  const vars = varsOf(values);
+  provider.profile = (input) => denextUser(spec, input, vars);
+  return provider;
+}
+
+/** The spec's protocol hooks on the built provider: id_token alg, params, token params, userinfo. */
+function attachHooks(
+  provider: OAuthProvider,
+  spec: GeneratedSpec,
+  options: GeneratedUserConfig,
+  values: Map<string, TemplateValue>,
+): void {
+  if (spec.idTokenAlg) provider.idTokenAlg = spec.idTokenAlg;
   const extra = params(spec, values);
   if (extra) provider.authorizationParams = { ...provider.authorizationParams, ...extra };
-  provider.profile = (input) => denextUser(spec, input);
-  return provider;
+  const tokenParams = filled(spec.tokenParams, values);
+  if (tokenParams) provider.tokenRequestParams = tokenParams;
+  const userinfoRequest = userinfoRequestOf(spec, options, values);
+  if (userinfoRequest) provider.userinfoRequest = userinfoRequest;
+}
+
+/** The template values as plain text, for a profile template's literals. */
+function varsOf(values: Map<string, TemplateValue>): Vars {
+  return Object.fromEntries([...values].map(([name, entry]) => [name, entry.value]));
+}
+
+/** Templates filled from `values` (a name without one is left as it is). */
+function filled(
+  templates: Record<string, string> | undefined,
+  values: Map<string, TemplateValue>,
+): Record<string, string> | undefined {
+  if (!templates) return undefined;
+  return Object.fromEntries(
+    Object.entries(templates).map(([key, template]) => [
+      key,
+      template.replace(
+        /\{([A-Za-z]+)\}/g,
+        (whole, name: string) => values.get(name)?.value ?? whole,
+      ),
+    ]),
+  );
 }
 
 /**
@@ -398,6 +630,8 @@ export function generatedDescriptor<P>(
   spec: GeneratedSpec,
   options: GeneratedUserConfig<P>,
 ): ProviderDescriptor<GeneratedUserConfig<P>> {
+  // The build's template values, for the literals of the Auth.js user's mapping too.
+  let vars: Vars = {};
   return oauthDescriptor(
     {
       id: spec.id,
@@ -405,10 +639,16 @@ export function generatedDescriptor<P>(
       type: spec.type,
       rawProfile: (input) => rawProfile(spec, input),
       authJsUser: (input) =>
-        mapProfile(mappingOf(spec), { p: rawProfile(spec, input), t: input.tokens }),
+        mapProfile(mappingOf(spec), { p: rawProfile(spec, input), t: input.tokens }, vars),
     },
     options,
-    (credentials, issuer) =>
-      buildGenerated(spec, options as GeneratedUserConfig, credentials, issuer),
+    (credentials, issuer) => {
+      const values = templateValues(spec, options as GeneratedUserConfig, {
+        clientId: credentials.clientId,
+        issuer,
+      });
+      vars = varsOf(values);
+      return buildGenerated(spec, options as GeneratedUserConfig, credentials, issuer);
+    },
   );
 }

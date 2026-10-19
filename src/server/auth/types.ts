@@ -146,6 +146,19 @@ export interface ProfileInput {
  */
 export type OAuthCheck = "pkce" | "state" | "nonce" | "none";
 
+/** What {@link OAuthProvider.userinfoRequest} gets. */
+export interface UserinfoRequestInput {
+  /** The token endpoint's response. */
+  tokens: Record<string, unknown>;
+  /** The provider fetch: `safeFetch` pinned to the provider's hosts. */
+  fetch: (
+    url: string,
+    init: { method: string; headers: Record<string, string>; body?: string },
+  ) => Promise<Response>;
+  /** The resolved `userinfoUrl`, when there is one. */
+  url?: string;
+}
+
 /** An OAuth 2.0 / OIDC provider (Authorization Code + PKCE). */
 export interface OAuthProvider {
   /** URL-safe provider id (the `[provider]` route segment), e.g. `"google"`. */
@@ -205,6 +218,24 @@ export interface OAuthProvider {
    * change nothing about it.
    */
   checks?: readonly OAuthCheck[];
+  /**
+   * Extra form parameters on the token request (TikTok's `client_key`). They never replace one
+   * the flow sets itself (`grant_type`, `code`, `redirect_uri`, `code_verifier`, the client
+   * credentials).
+   */
+  tokenRequestParams?: Record<string, string>;
+  /**
+   * Read the profile with a request of the provider's own shape instead of a `GET` of
+   * `userinfoUrl` with the access token as a Bearer header (a `POST`, API-key headers, an id
+   * from the token response in the URL). `fetch` is the provider fetch, pinned to its hosts.
+   */
+  userinfoRequest?: (input: UserinfoRequestInput) => Promise<Record<string, unknown>>;
+  /**
+   * `"HS256"`: the provider signs its `id_token` with HMAC-SHA256 under the client secret, as
+   * its specification requires (LINE). It is verified with the secret, and no other algorithm is
+   * accepted. Unset: the issuer's JWKS (RS / PS / ES algorithms).
+   */
+  idTokenAlg?: "HS256";
   /**
    * Hosts `safeFetch` may reach for this provider (token/userinfo/jwks). Derived
    * from the configured endpoints when omitted. A `*.domain` entry admits that domain's

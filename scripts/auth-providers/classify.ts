@@ -8,6 +8,8 @@
  * @module
  */
 
+import type { GeneratedUserinfoRequest } from "../../src/compat/next-auth/providers/generated.ts";
+
 /** The `@auth/core` release the generated providers follow (`next-auth@5.0.0-beta.32`'s). */
 export const AUTHJS_CORE_VERSION = "0.41.3";
 
@@ -58,28 +60,8 @@ export const UNSUPPORTED: Readonly<Record<string, string>> = {
     "`microsoft-entra-id`.",
   "bankid-no": "BankID Norge returns userinfo as a signed JWT (`userinfo_signed_response_alg`); " +
     "denext reads userinfo as JSON.",
-  bungie: "Bungie's userinfo URL needs the account's `membershipId` from the token response, " +
-    "and every call needs an `X-API-Key` header.",
-  dropbox: "Dropbox reads the account with a POST to `/2/users/get_current_account`; denext's " +
-    "userinfo request is a GET.",
-  foursquare: "Foursquare takes the access token as an `oauth_token` query parameter (with a " +
-    "`v` version date), not as a Bearer header.",
-  hubspot: "HubSpot puts the access token in the userinfo URL's path " +
-    "(`/oauth/v1/access-tokens/<token>`).",
-  line: "LINE signs its `id_token` with HS256 under the channel secret; denext verifies " +
-    "`id_token`s against the provider's JWKS (RS, PS and ES algorithms) only.",
-  netsuite: "NetSuite has no userinfo endpoint: the profile comes from a RESTlet the app " +
-    "deploys, which Auth.js leaves to the app's own `userinfo`.",
-  nextcloud: "Nextcloud reads the user from `/ocs/v1.php/cloud/users/<user_id>` (the id comes " +
-    "from the token response) with OCS headers.",
-  tiktok: "TikTok's token endpoint takes the client id as `client_key`, not `client_id`.",
-  todoist: "Todoist reads the user through its Sync API (a POST with `sync_token` and " +
-    "`resource_types`), not a userinfo endpoint.",
-  trakt: "Trakt needs `trakt-api-key` and `trakt-api-version` headers on every API call.",
-  vk: "VK returns the address in the token response (`email`) and the user as " +
-    "`users.get`'s `response[0]`.",
-  wechat: "WeChat sends `appid` / `secret` as query parameters instead of OAuth client " +
-    "authentication, and its userinfo request needs the token response's `openid`.",
+  wechat: "WeChat's `platformType` option switches the authorization URL and scope between two " +
+    "fixed pairs, which the generated data (one URL, options filled into it) can't express.",
 };
 
 /** An option a provider reads besides the client credentials and the issuer. */
@@ -97,7 +79,18 @@ export type ProfileOverride =
   | { c: string | number | boolean | null }
   | { join: string[][]; sep: string }
   | { find: string[]; where: string; pick: string }
+  | { url: string; path: string[] }
   | { when: string[]; then: ProfileOverride; else: ProfileOverride };
+
+/**
+ * A userinfo request Auth.js writes as a `userinfo.request` function, as data (its `url`
+ * replaces the definition's). The generator runs Auth.js's own function against a stub and
+ * fails unless this one sends the same request and returns the same profile.
+ */
+export interface UserinfoRule extends GeneratedUserinfoRequest {
+  /** The userinfo URL (may name `{issuer}`, options and `{token.<field>}`). */
+  url?: string;
+}
 
 /** What a provider needs beyond what the generator reads off its definition. */
 export interface ProviderRule {
@@ -111,10 +104,99 @@ export interface ProviderRule {
   trace?: false;
   /** Extra raw profiles to check the mapping against Auth.js's `profile()` on. */
   samples?: readonly Record<string, unknown>[];
+  /** The userinfo request, when Auth.js's is a function (or its URL needs replacing). */
+  userinfo?: UserinfoRule;
+  /** Extra token-request parameters (checked against Auth.js's custom fetch). */
+  tokenParams?: Readonly<Record<string, string>>;
 }
 
 /** The per-provider rules. */
 export const RULES: Readonly<Record<string, ProviderRule>> = {
+  bungie: {
+    // Auth.js's URL keeps a `{membershipId}` it never fills, and its docs pass the API key as a
+    // `headers` option: the id is the token response's `membership_id`, the headers that option.
+    userinfo: {
+      url: "https://www.bungie.net/platform/User/GetBungieAccount/{token.membership_id}/254/",
+      headersOption: "headers",
+    },
+    // profile() calls `startsWith` on the picture path.
+    trace: false,
+    profile: {
+      id: [{ p: ["p", "Response", "bungieNetUser", "membershipId"] }],
+      name: [{ p: ["p", "Response", "bungieNetUser", "displayName"] }],
+      email: [{ c: null }],
+      image: [{
+        url: "https://www.bungie.net",
+        path: ["p", "Response", "bungieNetUser", "profilePicturePath"],
+      }],
+    },
+    samples: [
+      {
+        Response: {
+          bungieNetUser: { membershipId: "1", displayName: "G", profilePicturePath: "/a.png" },
+        },
+      },
+      {
+        Response: {
+          bungieNetUser: { membershipId: "1", displayName: "G", profilePicturePath: "a.png" },
+        },
+      },
+    ],
+  },
+  dropbox: { userinfo: { method: "POST" } },
+  foursquare: {
+    options: { apiVersion: { default: "20230131" } },
+    userinfo: { token: { query: "oauth_token" } },
+    profile: {
+      image: [{
+        when: ["p", "response", "user", "photo"],
+        then: {
+          t: [
+            ["p", "response", "user", "photo", "prefix"],
+            "original",
+            ["p", "response", "user", "photo", "suffix"],
+          ],
+        },
+        else: { c: null },
+      }],
+    },
+  },
+  hubspot: {
+    userinfo: {
+      url: "https://api.hubapi.com/oauth/v1/access-tokens/{token.access_token}",
+      token: "none",
+      headers: { "content-type": "application/json" },
+    },
+  },
+  netsuite: {
+    // The profile comes from a RESTlet the app deploys: Auth.js takes its URL as `userinfo`.
+    options: { accountID: {}, userinfo: { raw: true } },
+    userinfo: { url: "{userinfo}" },
+  },
+  nextcloud: {
+    userinfo: {
+      url: "{issuer}/ocs/v1.php/cloud/users/{token.user_id}",
+      headers: { "OCS-APIRequest": "true" },
+      pick: ["ocs", "data"],
+    },
+  },
+  // TikTok's custom fetch adds the client id as `client_key` to the token request.
+  tiktok: { ignore: ["customFetch"], tokenParams: { client_key: "{clientId}" } },
+  todoist: {
+    userinfo: {
+      url: "https://api.todoist.com/sync/v9/sync",
+      method: "POST",
+      json: { sync_token: "*", resource_types: '["user"]' },
+      pick: ["user"],
+    },
+  },
+  trakt: {
+    userinfo: { headers: { "trakt-api-version": "2", "trakt-api-key": "{clientId}" } },
+  },
+  vk: {
+    userinfo: { pick: ["response", "0"], fromToken: { email: "email" } },
+    profile: { name: [{ join: [["p", "first_name"], ["p", "last_name"]], sep: " " }] },
+  },
   "boxyhq-saml": {
     profile: { name: [{ join: [["p", "firstName"], ["p", "lastName"]], sep: " " }] },
   },

@@ -50,6 +50,7 @@ import {
   fetchUserEmails,
   fetchUserInfo,
   makeProviderFetch,
+  type ProviderFetch,
   type TokenResponse,
 } from "./flow.ts";
 import { getJwks } from "./jwks-cache.ts";
@@ -593,11 +594,7 @@ export async function fetchOAuthProfile(
     ctx.config.dangerouslyAllowInsecureProviders,
     endpointHosts(endpoints),
   );
-  const checks = flowChecks(provider);
-  // The transaction is the one this provider's sign-in wrote: a check it needs is there.
-  if ((checks.pkce && !params.tx.verifier) || (checks.nonce && !params.tx.nonce)) {
-    throw new Error("the transaction lacks the PKCE verifier or nonce this provider needs");
-  }
+  const checks = transactionChecks(provider, params.tx);
   const tokens = await exchangeCodeForTokens(
     provider,
     {
@@ -618,14 +615,7 @@ export async function fetchOAuthProfile(
       doFetch,
     )
     : undefined;
-  // Userinfo is fetched for a plain OAuth provider (which has no id_token to read) and
-  // for an OIDC provider that asked for it by configuring `userinfoUrl` — never just
-  // because a discovery document happens to advertise a `userinfo_endpoint`, which would
-  // add a round-trip to every OIDC login that an `id_token` already answers.
-  const wantsUserinfo = provider.type === "oauth" || !!provider.userinfoUrl;
-  const userinfo = wantsUserinfo && endpoints.userinfoUrl && tokens.access_token
-    ? await fetchUserInfo(endpoints.userinfoUrl, tokens.access_token, doFetch)
-    : undefined;
+  const userinfo = await readUserinfo(provider, endpoints.userinfoUrl, tokens, doFetch);
   // OAuth providers (no id_token `email_verified`) may expose a verified-email list —
   // fetch it so the mapper can avoid trusting an unverified `userinfo.email`.
   const emails = provider.userEmailsUrl && tokens.access_token
@@ -636,6 +626,40 @@ export async function fetchOAuthProfile(
     params.callbackParams ? { ...input, callbackParams: params.callbackParams } : input,
   );
   return { profile, tokens };
+}
+
+/**
+ * The checks this provider's flow runs, once the transaction is known to carry what they need
+ * (it is the one this provider's sign-in wrote, so it does).
+ */
+function transactionChecks(provider: OAuthProvider, tx: Transaction) {
+  const checks = flowChecks(provider);
+  if ((checks.pkce && !tx.verifier) || (checks.nonce && !tx.nonce)) {
+    throw new Error("the transaction lacks the PKCE verifier or nonce this provider needs");
+  }
+  return checks;
+}
+
+/**
+ * The userinfo, for a plain OAuth provider (which has no id_token to read) and for an OIDC
+ * provider that asked for it by configuring `userinfoUrl` — never just because a discovery
+ * document happens to advertise a `userinfo_endpoint`, which would add a round-trip to every
+ * OIDC login that an `id_token` already answers. A provider's own `userinfoRequest` replaces
+ * the Bearer `GET`.
+ */
+async function readUserinfo(
+  provider: OAuthProvider,
+  url: string | undefined,
+  tokens: TokenResponse,
+  doFetch: ProviderFetch,
+): Promise<Record<string, unknown> | undefined> {
+  if (provider.type !== "oauth" && !provider.userinfoUrl) return undefined;
+  if (provider.userinfoRequest) {
+    return await provider.userinfoRequest({ tokens, fetch: doFetch, url });
+  }
+  return url && tokens.access_token
+    ? await fetchUserInfo(url, tokens.access_token, doFetch)
+    : undefined;
 }
 
 /**
@@ -658,6 +682,17 @@ async function verifyProviderIdToken(
   doFetch: Parameters<typeof getJwks>[1],
 ): Promise<Record<string, unknown>> {
   if (!idToken) throw new Error("provider returned no id_token");
+  if (provider.idTokenAlg === "HS256" && endpoints.issuer) {
+    return await verifyIdToken({
+      idToken,
+      jwks: [],
+      hmacSecret: provider.clientSecret,
+      issuer: endpoints.issuer,
+      audience: provider.clientId,
+      nonce,
+      strictAudience: provider.strictAudience,
+    }) as Record<string, unknown>;
+  }
   if (!endpoints.issuer || !endpoints.jwksUrl) {
     throw new DiscoveryError(
       "missing_endpoint",
