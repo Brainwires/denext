@@ -4236,7 +4236,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.4.0",
+          "signature": "VERSION: 4.4.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -23995,8 +23995,8 @@
           "slug": "appCapabilities-fn",
           "kind": "function",
           "signature": "appCapabilities(): Promise<AppCapabilities>",
-          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12). A fact an older runtime cannot report reads \"unknown\".",
-          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the\ntray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);\nthe Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12). A fact an older runtime\ncannot report reads `\"unknown\"`.",
+          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads \"unknown\".",
+          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the\ntray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);\nthe Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and\nnative Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads `\"unknown\"`.",
           "params": [],
           "returns": "The capabilities.",
           "examples": [],
@@ -25635,7 +25635,7 @@
           "kind": "function",
           "signature": "downloadToFile(url: string, path: string, options?: DownloadToFileOptions): Promise<object>",
           "doc": "Download a URL straight into a file (missing parent folders are created), with progress.",
-          "docFull": "Download a URL straight into a file (missing parent folders are created), with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service downloads it (a `URLSession`\n  background session on iOS, WorkManager on Android): it carries on while the app is in the\n  background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it\n  where it stopped when the server allows a range. The body never passes through the WebView,\n  and CORS does not apply.\n- Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the\n  plugin's native download (`downloadFile`), without progress. (A plugin without\n  `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process (with the request `headers`; CORS does not apply) and writes\n  under the app's folder, with progress; aborting `signal` cancels it and drops the partial\n  file.\n- Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System\n  with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range\n  request (a server that answers 200 starts it over).",
+          "docFull": "Download a URL straight into a file (missing parent folders are created), with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service downloads it (a `URLSession`\n  background session on iOS, WorkManager on Android): it carries on while the app is in the\n  background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it\n  where it stopped when the server allows a range. The body never passes through the WebView,\n  and CORS does not apply.\n- Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the\n  plugin's native download (`downloadFile`), without progress. (A plugin without\n  `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process (with the request `headers`; CORS does not apply) and writes\n  under the app's folder, with progress. {@linkcode fileTransfers} lists it and\n  {@linkcode onFileTransfer} reports it; {@linkcode cancelFileTransfer} or aborting `signal`\n  cancels it and drops the partial file. It cannot pause ({@linkcode pauseFileTransfer}\n  rejects with code `\"unsupported\"`).\n- Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System\n  with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range\n  request (a server that answers 200 starts it over).",
           "params": [
             {
               "name": "url",
@@ -25864,8 +25864,8 @@
           "slug": "fileTransfers",
           "kind": "function",
           "signature": "fileTransfers(): Promise<FileTransferInfo[]>",
-          "doc": "Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); on the web, the ones this page started.",
-          "docFull": "Every transfer this page knows: in the shell, the plugin's records (running, paused, and\nfinished ones not yet forgotten — those that finished while the page was gone included);\non the web, the ones this page started.",
+          "doc": "Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); on the web and in a Deno Desktop window, the ones this page started.",
+          "docFull": "Every transfer this page knows: in the shell, the plugin's records (running, paused, and\nfinished ones not yet forgotten — those that finished while the page was gone included);\non the web and in a Deno Desktop window, the ones this page started.",
           "params": [],
           "returns": "The transfers.",
           "examples": [],
@@ -28121,7 +28121,7 @@
           "kind": "function",
           "signature": "pauseFileTransfer(id: string): Promise<boolean>",
           "doc": "Pause a running download: the bytes so far are kept, and resumeFileTransfer continues from them where the server allows a range (else it starts over). Its downloadToFile promise stays pending until then. Uploads cannot pause.",
-          "docFull": "Pause a running download: the bytes so far are kept, and {@linkcode resumeFileTransfer}\ncontinues from them where the server allows a range (else it starts over). Its\n`downloadToFile` promise stays pending until then. Uploads cannot pause.",
+          "docFull": "Pause a running download: the bytes so far are kept, and {@linkcode resumeFileTransfer}\ncontinues from them where the server allows a range (else it starts over). Its\n`downloadToFile` promise stays pending until then. Uploads cannot pause.\n\nA Deno Desktop download cannot pause (the runtime keeps no partial file to resume): this\nrejects with code `\"unsupported\"`; cancel it and download it again.",
           "params": [
             {
               "name": "id",

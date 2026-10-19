@@ -1555,7 +1555,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.4.0` — The denext framework version.
+- `VERSION: 4.4.1` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -3021,7 +3021,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop/app`
 
-- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12). A fact an older runtime cannot report reads "unknown".
+- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads "unknown".
 - `interface AppCapabilities` — What this OS and runtime can do (appCapabilities).
 - `interface AppMenuAction` — A clickable menu item.
 - `type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | separator` — One entry of an application, tray or Dock menu.
@@ -3162,7 +3162,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FileTransferKind = download | upload` — A transfer's direction.
 - `interface FileTransferOptions` — Options every transfer takes (with directory, the file's folder).
 - `interface FileTransferProgress` — Bytes moved so far, for an onProgress callback.
-- `fileTransfers(): Promise<FileTransferInfo[]>` — Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); on the web, the ones this page started.
+- `fileTransfers(): Promise<FileTransferInfo[]>` — Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); on the web and in a Deno Desktop window, the ones this page started.
 - `type FileTransferState = running | paused | done | failed | cancelled` — Where a transfer is: running, paused, or settled (done, failed, cancelled).
 - `interface FlexibleUpdateProgress` — A flexible update's progress, from onFlexibleUpdateProgress.
 - `forgetFileTransfer(id: string): Promise<boolean>` — Drop a settled transfer's record (done, failed or cancelled), once the app has dealt with it.

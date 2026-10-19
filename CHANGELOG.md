@@ -105,6 +105,23 @@ and this project adheres to
   `denoland/deno` image tag and `setup-deno` version use the Deno release it is built from, and
   `denext desktop doctor` compares runtime releases by semver. The pin itself stays
   `2.9.7-denext.22` until `3.0.0-rc.1` is published.
+
+### Fixed
+
+- Deno Desktop `downloadToFile` (`denext/mobile`) sends `options.headers`, so an authenticated
+  download works; it dropped them. Aborting `options.signal` now cancels the runtime's download
+  (new `fs.cancelDownload`), removes the partial file and rejects with the signal's reason; it
+  did nothing. It also reports `onProgress` (from the `fs` capability's new `progress` events)
+  and fails with the mobile path's `FileTransferError` codes (`HTTP` with `status` and `body`,
+  `NETWORK`, `IO`, `INVALID`, `EXISTS`, `CANCELLED`) instead of a `DesktopBridgeError`
+  (`download_failed`); a refused target is still `forbidden`. As a browser's `fetch` does, the
+  runtime drops the forbidden and hop-by-hop request headers, and `Authorization` on a redirect
+  to another origin.
+
+## [4.4.1] - 2026-10-19
+
+### Changed
+
 - **Docs for 4.4.0's features, audited and filled in.** New guides:
   [Migrating from Fresh](https://denext.dev/docs/migrating-fresh),
   [Migrating from Preact](https://denext.dev/docs/migrating-preact),
@@ -123,20 +140,20 @@ and this project adheres to
 
 ### Fixed
 
+- **A React Native mode app runs under the strict CSP with no `style-src 'unsafe-inline'`.**
+  react-native-web created its `<style id="react-native-stylesheet">` at run time, which the CSP
+  blocked, so no `StyleSheet.create` style applied (silently, besides the violation report). The
+  SPA shell now carries that element, empty and allowed by its hash; react-native-web adopts it
+  and adds its rules through the CSSOM, which `style-src` does not govern. React Native mode's
+  own rules (`TextInput`'s placeholder and selection colour, a list's hidden scrollbar) go into
+  an adopted constructed style sheet instead of a `<style>` element. The App Router's
+  server-rendered sheet was already allowed by its hash; an e2e now checks it. The React Native
+  Skia recipe drops its `styleSrc: ["'unsafe-inline'"]`.
 - `denext mobile add storage secure-store --encrypted` no longer tells you to run
   `denext mobile add secure-store` too: that run adds it.
 - iOS file transfers: a download resumed right after its pause, before iOS handed over the
   resume data, continues from the paused bytes; it started again from the first byte.
   `denext mobile add file-transfer` upgrades an unedited `DenextTransferManager.swift`.
-- Deno Desktop `downloadToFile` (`denext/mobile`) sends `options.headers`, so an authenticated
-  download works; it dropped them. Aborting `options.signal` now cancels the runtime's download
-  (new `fs.cancelDownload`), removes the partial file and rejects with the signal's reason; it
-  did nothing. It also reports `onProgress` (from the `fs` capability's new `progress` events)
-  and fails with the mobile path's `FileTransferError` codes (`HTTP` with `status` and `body`,
-  `NETWORK`, `IO`, `INVALID`, `EXISTS`, `CANCELLED`) instead of a `DesktopBridgeError`
-  (`download_failed`); a refused target is still `forbidden`. As a browser's `fetch` does, the
-  runtime drops the forbidden and hop-by-hop request headers, and `Authorization` on a redirect
-  to another origin.
 - A root layout's `style` on `<html>` / `<body>` (`<body style={{ margin: 0 }}>`) reaches the
   document again. Since 4.3.0 the page render writes only the tags' content and hands their
   attributes to the document, which kept plain string and number values and dropped the style
@@ -497,15 +514,6 @@ and this project adheres to
 
 ### Fixed
 
-- **A React Native mode app runs under the strict CSP with no `style-src 'unsafe-inline'`.**
-  react-native-web created its `<style id="react-native-stylesheet">` at run time, which the CSP
-  blocked, so no `StyleSheet.create` style applied (silently, besides the violation report). The
-  SPA shell now carries that element, empty and allowed by its hash; react-native-web adopts it
-  and adds its rules through the CSSOM, which `style-src` does not govern. React Native mode's
-  own rules (`TextInput`'s placeholder and selection colour, a list's hidden scrollbar) go into
-  an adopted constructed style sheet instead of a `<style>` element. The App Router's
-  server-rendered sheet was already allowed by its hash; an e2e now checks it. The React Native
-  Skia recipe drops its `styleSrc: ["'unsafe-inline'"]`.
 - **The SPA source transforms run in a project reached through a symlink.** The plugin behind
   Fast Refresh, the auto-memo compiler, the feature and platform folds and `require.context`
   compared esbuild's module paths, which are real paths, with the project directory as given, so
@@ -17151,7 +17159,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.4.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.4.1...development
+[4.4.1]: https://jsr.io/@denext/denext@4.4.1
 [4.4.0]: https://jsr.io/@denext/denext@4.4.0
 [4.3.1]: https://jsr.io/@denext/denext@4.3.1
 [4.3.0]: https://jsr.io/@denext/denext@4.3.0
