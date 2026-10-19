@@ -38,6 +38,9 @@ on:
       - "src/build/next-compat.ts"
       - "src/build/esbuild/**" # the vendored esbuild API every bundle above runs through
       - "src/build/reanimated*.ts"
+      - "src/build/require-context.ts" # Metro's require.context in React Native mode
+      - "src/build/spa-onload.ts"
+      - "src/build/swc-ast.ts"
       - "src/build/tailwind.ts"
       - "src/server/config.ts"
       - "src/compat/next-auth/providers/list.ts" # the provider ids scripts/parity/spec.ts lists
