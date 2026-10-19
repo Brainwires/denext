@@ -2135,8 +2135,9 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         </li>
         <li>
           in a Deno Desktop window with the <code>fs</code>{" "}
-          capability, the runtime downloads it in the Deno process (no progress; the request{" "}
-          <code>headers</code> and <code>signal</code> are not passed to it);
+          capability, the runtime downloads it in the Deno process with the request{" "}
+          <code>headers</code> (CORS does not apply), reports progress, and cancels it when{" "}
+          <code>signal</code> aborts, removing the partial file;
         </li>
         <li>
           in the shell with <code>@capacitor/filesystem</code> but no{" "}
@@ -2267,7 +2268,16 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         with{" "}
         <code>forgetFileTransfer(id)</code>), so a transfer that finished while the page was gone is
         still reported. In a Deno Desktop window <code>downloadToFile</code>{" "}
-        fetches in the Deno process (no progress) and <code>uploadFile</code>{" "}
+        fetches in the Deno process, with the same <code>onProgress</code>, <code>signal</code> and
+        {" "}
+        <code>FileTransferError</code> codes; the runtime drops the request headers a browser&apos;s
+        {" "}
+        <code>fetch</code> refuses (<code>Cookie</code>,{" "}
+        <code>Host</code>, the hop-by-hop ones, …) and, like{" "}
+        <code>fetch</code>, a redirect to another origin drops{" "}
+        <code>Authorization</code>. It keeps no record under the <code>id</code>{" "}
+        (<code>fileTransfers()</code>, <code>pauseFileTransfer</code> and{" "}
+        <code>cancelFileTransfer</code> do not see it). <code>uploadFile</code>{" "}
         reads the file through the runtime and sends it from the page.
       </p>
       <Callout kind="note">

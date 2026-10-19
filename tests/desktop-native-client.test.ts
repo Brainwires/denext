@@ -42,7 +42,7 @@ import {
   takeDesktopOpenedFiles,
   warnStorageFallback,
 } from "../src/desktop/native.ts";
-import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
+import { desktopRpc, resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
 import { isDesktopBridgeError } from "../src/desktop/client.ts";
 import {
   createFakeDesktopRuntime,
@@ -527,4 +527,113 @@ Deno.test("warnStorageFallback: warns once per capability, naming the `desktop a
   } finally {
     console.warn = prev;
   }
+});
+
+Deno.test("native fsDownload: sends the id and headers; forwards this download's progress, then the end", async () => {
+  const progress: Array<[number, number | null]> = [];
+  let rt!: FakeRuntime;
+  await inDesktop({
+    fs: {
+      download: async () => {
+        await until(() => rt.openStreams() === 1);
+        rt.emit("fs", "progress", { id: "other", bytes: 9, total: 9 });
+        rt.emit("fs", "progress", { id: "d1", bytes: 0, total: 20 });
+        rt.emit("fs", "progress", { id: "d1", bytes: "lots" });
+        rt.emit("fs", "progress", { id: "d1", bytes: 10, total: "?" });
+        await until(() => progress.length === 2);
+        return { path: "/abs/f.bin", bytes: 20 };
+      },
+    },
+  }, async (fake) => {
+    rt = fake;
+    const out = await fsDownload("https://x.example/f", "f.bin", "data", {
+      id: "d1",
+      headers: { authorization: "Bearer t" },
+      onProgress: (bytes, total) => progress.push([bytes, total]),
+    });
+    assertEquals(out, { path: "/abs/f.bin" });
+    assertEquals(argsOf(rt), [{
+      url: "https://x.example/f",
+      path: "f.bin",
+      directory: "data",
+      id: "d1",
+      headers: { authorization: "Bearer t" },
+    }]);
+    assertEquals(progress, [[0, 20], [10, null], [20, 20]]);
+    await until(() => rt.openStreams() === 0);
+  });
+});
+
+Deno.test("native fsDownload: an abort cancels the runtime's download and rejects with the signal's reason", async () => {
+  const cancelled = Promise.withResolvers<void>();
+  await inDesktop({
+    fs: {
+      download: async () => {
+        await cancelled.promise;
+        throw { code: "cancelled", message: "the download was cancelled" };
+      },
+      cancelDownload: (a) => {
+        cancelled.resolve();
+        return { cancelled: (a as { id: string }).id === "d2" };
+      },
+    },
+  }, async (rt) => {
+    const abort = new AbortController();
+    const reason = new Error("stop");
+    const run = fsDownload("https://x.example/f", "f.bin", "data", {
+      id: "d2",
+      signal: abort.signal,
+    });
+    await until(() => rt.calls.length === 1);
+    abort.abort(reason);
+    assertEquals(await run.catch((e) => e), reason);
+    assertEquals(rt.calls.map((c) => [c.method, c.method === "cancelDownload" ? c.args : null]), [
+      ["download", null],
+      ["cancelDownload", { id: "d2" }],
+    ]);
+    // An already-aborted signal rejects before anything is sent.
+    const n = rt.calls.length;
+    const gone = new AbortController();
+    gone.abort();
+    const err = await fsDownload("https://x.example/f", "f.bin", "data", {
+      id: "d3",
+      signal: gone.signal,
+    }).catch((e) => e);
+    assertEquals((err as DOMException).name, "AbortError");
+    assertEquals(rt.calls.length, n);
+    // A failure with the signal untouched is the runtime's own error.
+    const failed = await fsDownload("https://x.example/f", "f.bin", "data", {
+      id: "d4",
+      signal: new AbortController().signal,
+    }).catch((e) => e);
+    assert(isDesktopBridgeError(failed));
+    assertEquals(failed.code, "cancelled");
+  });
+});
+
+Deno.test("desktopRpc: a signal abandons the call with its reason (before the request, and mid-flight)", async () => {
+  await inDesktop({ fs: { download: () => new Promise(() => {}) } }, async (rt) => {
+    const gone = new AbortController();
+    gone.abort(new Error("before"));
+    await assertRejects(
+      () => desktopRpc("fs", "download", {}, { signal: gone.signal }),
+      Error,
+      "before",
+    );
+    assertEquals(rt.calls.length, 0);
+    // Mid-flight: the request is dropped (a browser's fetch rejects on abort).
+    const prev = globalThis.fetch;
+    globalThis.fetch = (_input, init) =>
+      new Promise((_, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("x", "AbortError")))
+      );
+    try {
+      const mid = new AbortController();
+      const run = desktopRpc("fs", "download", {}, { signal: mid.signal, timeoutMs: false });
+      mid.abort(new Error("mid"));
+      await assertRejects(() => run, Error, "mid");
+    } finally {
+      globalThis.fetch = prev;
+    }
+  });
 });

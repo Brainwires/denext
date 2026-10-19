@@ -357,7 +357,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   minutes: a download resumes from its `.part` file on the next run, an upload starts over; uploads
   cannot pause anywhere. iOS may defer a background transfer started while the app is already in
   the background. On the web a transfer lasts as long as the page, and a Deno Desktop
-  `downloadToFile` reports no progress.
+  `downloadToFile` keeps no record under its `id` (`fileTransfers()`, `pauseFileTransfer` and
+  `cancelFileTransfer` do not see it; its `signal` cancels it).
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame

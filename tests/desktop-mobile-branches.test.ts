@@ -10,6 +10,7 @@ import {
   deleteFile,
   deviceInfo,
   downloadToFile,
+  FileTransferError,
   listDir,
   moveToTrash,
   onLocalNotificationTapped,
@@ -635,4 +636,61 @@ Deno.test("off desktop: no bridge request from any capability function", async (
   } finally {
     globalThis.fetch = prev;
   }
+});
+
+Deno.test("downloadToFile: desktop failures are the mobile path's FileTransferErrors; others pass through", async () => {
+  const failures: Record<string, { code: string; message: string; data?: unknown }> = {
+    "/denied": {
+      code: "download_failed",
+      message: "status 403",
+      data: { status: 403, body: "no" },
+    },
+    "/offline": { code: "network", message: "the connection was lost" },
+    "/disk": { code: "io", message: "could not be written" },
+    "/big": { code: "too_large", message: "over 100 bytes" },
+    "/taken": { code: "exists", message: "already running" },
+    "/gone": { code: "cancelled", message: "cancelled" },
+    "/bad": { code: "validation", message: "headers" },
+    "/local": { code: "forbidden", message: "a loopback host" },
+  };
+  await inDesktop({
+    fs: {
+      download: (a) => {
+        const f = failures[new URL((a as { url: string }).url).pathname];
+        if (f) throw f;
+        return { path: "/abs/ok.bin", bytes: 3 };
+      },
+    },
+  }, async (rt) => {
+    const seen: unknown[] = [];
+    const ok = await downloadToFile("https://example.com/ok", "ok.bin", {
+      headers: { authorization: "Bearer t" },
+      onProgress: (p) => seen.push(p),
+    });
+    assertEquals(ok.path, "/abs/ok.bin");
+    const id = (rt.calls[0].args as { id: string }).id;
+    assert(typeof id === "string" && id.length > 0, "a random id when none is given");
+    assertEquals(seen, [{ id, kind: "download", bytes: 3, total: 3 }]);
+    const expected: Record<string, string> = {
+      "/denied": "HTTP",
+      "/offline": "NETWORK",
+      "/disk": "IO",
+      "/big": "IO",
+      "/taken": "EXISTS",
+      "/gone": "CANCELLED",
+      "/bad": "INVALID",
+    };
+    for (const [path, code] of Object.entries(expected)) {
+      const err = await assertRejects(
+        () => downloadToFile(`https://example.com${path}`, "f.bin", { id: "t1" }),
+        FileTransferError,
+      );
+      assertEquals([err.code, err.id], [code, "t1"], path);
+      assert(err.message.startsWith("downloadToFile: "), err.message);
+      if (path === "/denied") assertEquals([err.status, err.body], [403, "no"]);
+    }
+    const refused = await downloadToFile("https://example.com/local", "f.bin").catch((e) => e);
+    assert(isDesktopBridgeError(refused));
+    assertEquals(refused.code, "forbidden");
+  });
 });

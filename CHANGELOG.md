@@ -103,6 +103,15 @@ and this project adheres to
 - iOS file transfers: a download resumed right after its pause, before iOS handed over the
   resume data, continues from the paused bytes; it started again from the first byte.
   `denext mobile add file-transfer` upgrades an unedited `DenextTransferManager.swift`.
+- Deno Desktop `downloadToFile` (`denext/mobile`) sends `options.headers`, so an authenticated
+  download works; it dropped them. Aborting `options.signal` now cancels the runtime's download
+  (new `fs.cancelDownload`), removes the partial file and rejects with the signal's reason; it
+  did nothing. It also reports `onProgress` (from the `fs` capability's new `progress` events)
+  and fails with the mobile path's `FileTransferError` codes (`HTTP` with `status` and `body`,
+  `NETWORK`, `IO`, `INVALID`, `EXISTS`, `CANCELLED`) instead of a `DesktopBridgeError`
+  (`download_failed`); a refused target is still `forbidden`. As a browser's `fetch` does, the
+  runtime drops the forbidden and hop-by-hop request headers, and `Authorization` on a redirect
+  to another origin.
 
 ## [4.4.0] - 2026-10-19
 

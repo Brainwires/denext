@@ -21,6 +21,8 @@ import { capabilityError, type DesktopNative, onDesktop, viaDesktop } from "./de
 import { WEB_HANDLE_PREFIX, webHandle, webHandleWritable } from "./picked-web.ts";
 import {
   type DownloadSink,
+  FileTransferError,
+  type FileTransferErrorCode,
   type FileTransferEvent,
   type FileTransferOptions,
   nativeTransfer,
@@ -597,7 +599,9 @@ function urlOf(fn: string, url: string): string {
  *   plugin's native download (`downloadFile`), without progress. (A plugin without
  *   `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)
  * - In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime
- *   fetches in the Deno process and writes under the app's folder (no progress).
+ *   fetches in the Deno process (with the request `headers`; CORS does not apply) and writes
+ *   under the app's folder, with progress; aborting `signal` cancels it and drops the partial
+ *   file.
  * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
  *   request (a server that answers 200 starts it over).
@@ -634,7 +638,11 @@ export async function downloadToFile(
   });
   if (done) return { path: done.file ?? rel };
   const desktop = onDesktop() &&
-    await viaDesktopFs("downloadToFile", directory, (d) => d.fsDownload(href, rel, directory));
+    await viaDesktopFs(
+      "downloadToFile",
+      directory,
+      (d) => desktopDownload(d, href, rel, directory, options),
+    );
   if (desktop) return desktop.value;
   const native = await filesystemDownload(href, rel, directory, options);
   if (native) return native;
@@ -644,6 +652,73 @@ export async function downloadToFile(
     webSink(directory, rel),
   );
   return { path: isPicked(directory) ? rel : `${directory}/${rel}` };
+}
+
+/** The runtime's `fs.download` failure codes, as the {@linkcode FileTransferError} codes. */
+const DESKTOP_TRANSFER_CODES: Readonly<Record<string, FileTransferErrorCode>> = {
+  download_failed: "HTTP",
+  network: "NETWORK",
+  io: "IO",
+  too_large: "IO",
+  validation: "INVALID",
+  exists: "EXISTS",
+  cancelled: "CANCELLED",
+};
+
+/**
+ * A desktop download's failure as the mobile path's: a {@linkcode FileTransferError} for the
+ * transfer failures (`HTTP` with the status and body, `NETWORK`, `IO`, `INVALID`, `EXISTS`,
+ * `CANCELLED`); anything else (`unavailable`, `forbidden`, …) unchanged.
+ */
+function desktopTransferError(err: unknown, id: string): unknown {
+  const e = err as { code?: unknown; message?: unknown; data?: unknown } | null;
+  const code = transferCodeOf(e?.code);
+  if (!code) return err;
+  const message = String(e?.message ?? "failed").replace(/^desktop fs\.download: \w+: /, "");
+  return new FileTransferError(`downloadToFile: ${message}`, { code, id, ...httpDetail(e?.data) });
+}
+
+/** The {@linkcode FileTransferError} code for a runtime `fs.download` code, if it has one. */
+function transferCodeOf(code: unknown): FileTransferErrorCode | undefined {
+  return typeof code === "string" && Object.hasOwn(DESKTOP_TRANSFER_CODES, code)
+    ? DESKTOP_TRANSFER_CODES[code]
+    : undefined;
+}
+
+/** An HTTP failure's `status` and `body` from the runtime's error data. */
+function httpDetail(raw: unknown): { status?: number; body?: string } {
+  const data = (raw ?? {}) as { status?: unknown; body?: unknown };
+  const out: { status?: number; body?: string } = {};
+  if (typeof data.status === "number") out.status = data.status;
+  if (typeof data.body === "string") out.body = data.body;
+  return out;
+}
+
+/**
+ * A download in a Deno Desktop window: the runtime fetches it with the request `headers`,
+ * reports progress, and cancels it (dropping the partial file) when `signal` aborts. Its failures
+ * are the mobile path's {@linkcode FileTransferError}s.
+ */
+async function desktopDownload(
+  desktop: DesktopNative,
+  href: string,
+  rel: string,
+  directory: FileDirectory,
+  options: DownloadToFileOptions,
+): Promise<{ path: string }> {
+  const id = options.id ?? crypto.randomUUID();
+  const { onProgress } = options;
+  try {
+    return await desktop.fsDownload(href, rel, directory, {
+      id,
+      headers: headersOf(options.headers),
+      signal: options.signal,
+      onProgress: onProgress &&
+        ((bytes, total) => onProgress({ id, kind: "download", bytes, total })),
+    });
+  } catch (err) {
+    throw desktopTransferError(err, id);
+  }
 }
 
 /**
