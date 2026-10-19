@@ -421,6 +421,14 @@ place it behaves differently from Auth.js:
   kept to a same-origin path: a callback that allows another origin lands on `/` instead.
 - **Every OAuth flow uses `state` and PKCE** (and `nonce` for OIDC); a provider's `checks` are
   ignored.
+- **A generated provider's OIDC `id_token` is verified against the issuer's JWKS**, and its
+  endpoints come from discovery even where Auth.js's definition names them; Auth.js trusts an
+  `id_token` it got straight from the token endpoint. An OAuth provider's address is never treated
+  as verified for linking by email.
+- **A passkey (`next-auth/providers/passkey`) is registered for a signed-in user** whose address
+  is verified, after a recent sign-in. Auth.js also registers one for a new email address with no
+  session, creating the account from an unverified address; denext doesn't. A WebAuthn sign-in
+  failure resolves `{ error: "WebAuthnVerificationError", code }` with denext's error code.
 - **Per-call `authorizationParams` can't set the flow's own parameters.** `signIn("google", {},
   { prompt: "login" })` adds `prompt` to the authorization URL, but `state`, `nonce`,
   `code_challenge` / `code_challenge_method`, `redirect_uri`, `client_id`, `response_type`,

@@ -87,6 +87,26 @@ and this project adheres to
   response or blob export opens the platform's save dialog on every backend (it was inert or
   cancelled), only for the app's own origins, with a sanitized file name and at most three save
   dialogs per window in 10 s.
+- **Every Auth.js provider runs on the `next-auth` shim — 60 more, generated.** The OAuth / OIDC
+  providers denext had no preset for (`kakao`, `reddit`, `zitadel`, `workos`, `fusionauth`,
+  `salesforce`, … 60 in all) are generated from `@auth/core` 0.41.3's own `providers/` by
+  `deno task gen:auth-providers`: Auth.js's endpoints, scopes, token-endpoint authentication
+  (HTTP Basic unless the provider names `client_secret_post`), options (`issuer`, `apiBaseUrl`,
+  `tenantId`, `connection`, …) and its `profile()` mapping as data, checked against Auth.js's own
+  `profile()` on sample profiles. A drift test holds the checked-in modules, the provider list and
+  `deno.json`'s exports to the pinned list. `azure-ad` (Microsoft Entra ID under its old id) and
+  the HTTP-API email providers `sendgrid`, `postmark`, `mailgun`, `forwardemail` and `loops`
+  (`AUTH_<ID>_KEY`) are written by hand. Fourteen providers whose flow isn't standard OAuth
+  (`dropbox`, `hubspot`, `line`, `tiktok`, `wechat`, …) are not provided; Limitations lists why.
+  The shim now ships 88 provider modules, up from 22.
+- **`next-auth/providers/passkey` runs on denext's passkeys, with `next-auth/webauthn`.** Listing
+  `Passkey` (or `WebAuthn`) turns on `denextAuth({ passkeys })` under the auth base path, its
+  `relayingParty` and user verification mapped; `signIn("passkey")` from `next-auth/webauthn`
+  signs in with a passkey and `signIn("passkey", { action: "register" })` adds one for the
+  signed-in user. Through an Auth.js adapter, credentials are its `Authenticator` rows (and a
+  `webauthn` account each), as Auth.js stores them. Verified end to end in headless Chromium with
+  a CDP virtual authenticator: register, sign out, sign back in with the passkey.
+
 - **A plugin lists the routes it serves in the deploy manifest** with `ctx.addDeployRoutes?.(source)`
   (plugin-kit; `PluginDeployRoutes`): `source` returns `DeployRoute`s, called when
   `.denext/deploy-manifest.json` is collected and sorted in with the App Router's, so a deploy

@@ -170,11 +170,24 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### `next-auth` (Auth.js v5 and NextAuth.js v4) compat
 
-- **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, GitLab, X (Twitter),
-  LinkedIn, Facebook, Slack, Twitch, Spotify, Okta, Auth0, Keycloak, Cognito, Zoom, Notion,
-  Credentials, Resend, Nodemailer / Email, and custom OAuth / OIDC objects. Auth.js's other
-  `next-auth/providers/*` modules are not shipped; write one as a custom provider object.
-  WebAuthn (`next-auth/providers/passkey`) is not mapped — denext's own `passkeys` are.
+- **Providers:** every `next-auth/providers/*` module of `@auth/core` 0.41.3 (`next-auth@5.0.0-beta.32`)
+  except fourteen whose flow isn't standard OAuth: `azure-devops` (a JWT assertion exchange),
+  `bankid-no` (userinfo as a signed JWT), `bungie` (a `membershipId` URL and `X-API-Key`),
+  `dropbox` (a POST to read the account), `foursquare` (the token as a query parameter),
+  `hubspot` (the token in the URL path), `line` (an HS256 `id_token`), `netsuite` (no userinfo
+  endpoint), `nextcloud` (the user id from the token response, OCS headers), `tiktok`
+  (`client_key`), `todoist` (the Sync API), `trakt` (API-key headers), `vk` (the address from the
+  token response) and `wechat` (`appid` / `secret` query parameters). Write one as a custom
+  provider object where its API allows. Every provider runs `state` + PKCE (+ `nonce` for OIDC)
+  whatever its `checks` say, so a provider that rejects a PKCE `code_verifier` it didn't ask for
+  fails.
+- **Passkeys (`next-auth/providers/passkey`, `…/webauthn`):** registration is for a signed-in
+  user with a verified address after a recent sign-in (Auth.js's sign-up by passkey is not
+  offered); the relying party needs `AUTH_URL` or `relayingParty: { id, origin }`. Through an
+  Auth.js adapter the ceremony challenge lives in the instance's memory (a ceremony must finish on
+  the instance that began it), the counter update is a read-then-write (Auth.js's port has no
+  compare-and-swap), and removing a passkey needs a denext-only `deleteAuthenticator` method. The
+  built-in sign-in page lists no passkey button.
 - **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs
   users, accounts, verification tokens and database sessions. Roles, bans and
   `sessionsValidAfter` need its two optional extension methods (`getUserExtension` /
@@ -185,8 +198,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **NextAuth.js v4:** `next-auth/middleware` reads the JWT strategy's token only, as v4 does, so
   with `session: { strategy: "database" }` every gated request is sent to sign in. A Pages API
   route's `NextAuth(req, res, …)` takes the body the Pages Router already parsed (string fields
-  only). v4's `next-auth/client` (v3's API) and the `next-auth/providers/*` modules this list
-  doesn't name are not shipped.
+  only). v4's `next-auth/client` (v3's API) is not shipped; v4's providers are the v5 ones
+  above.
 
 ### Backend (`@denext/backend`)
 

@@ -334,6 +334,12 @@ window the same provider signs in via `installClerkDesktopBridge({ nativeClerk: 
 `capacitor://localhost` + `https://localhost` to `allowed_origins`). See
 [`examples/clerk`](https://github.com/Brainwires/denext/tree/main/examples/clerk).
 
+**next-auth (Auth.js v5 / NextAuth.js v4):** `NextAuth()`, `next-auth/react`, `next-auth/jwt`
+and every `next-auth/providers/*` module but 14 run unchanged on `denextAuth` (the OAuth / OIDC
+ones generated from `@auth/core` by `deno task gen:auth-providers`); `next-auth/providers/passkey`
+turns on denext's passkeys and `signIn("passkey")` / `signIn("passkey", { action: "register" })`
+from `next-auth/webauthn` drive them. Set `AUTH_URL`. See https://denext.dev/docs/auth.
+
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
 `requireBearer({ scope: "pets:write" })` (it reads the config `denextAuth()` was built with;
