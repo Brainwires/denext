@@ -65,8 +65,6 @@ export interface GeneratedUserinfoRequest {
   headers?: Record<string, string>;
   /** An option whose object value is sent as extra headers (Bungie's `headers`). */
   headersOption?: string;
-  /** Extra query parameters (templates; may name `{token.<field>}`). */
-  query?: Record<string, string>;
   /** A JSON body. */
   json?: Record<string, unknown>;
   /** The profile is this path of the response (`["response", "0"]`). */
@@ -299,7 +297,7 @@ function denextUser(spec: GeneratedSpec, input: ProfileInput, vars: Vars): AuthU
 /** A template value: its text, and whether it is inserted verbatim. */
 type TemplateValue = { value: string; raw: boolean };
 
-/** `{token.<field>}` in a userinfo URL or query value. */
+/** `{token.<field>}` in a userinfo URL. */
 const TOKEN_FIELD = /\{token\.([A-Za-z_]+)\}/g;
 
 /**
@@ -374,7 +372,7 @@ function profileFrom(
   return profile;
 }
 
-/** The userinfo URL with its token fields, query and (`{ query }`) access token filled. */
+/** The userinfo URL with its token fields and (`{ query }`) access token filled. */
 function userinfoTarget(
   request: GeneratedUserinfoRequest,
   url: string,
@@ -382,9 +380,6 @@ function userinfoTarget(
   accessToken: string,
 ): string {
   const target = new URL(fillTokenFields(url, tokens));
-  for (const [key, value] of Object.entries(request.query ?? {})) {
-    target.searchParams.set(key, fillTokenFields(value, tokens));
-  }
   if (typeof request.token === "object") target.searchParams.set(request.token.query, accessToken);
   return target.href;
 }

@@ -558,3 +558,142 @@ Deno.test("gen:auth-providers: extract reads an HS256 id_token and refuses other
     "custom fetch",
   );
 });
+
+/** A definition shaped like Auth.js's own, with its `userinfo.request` swappable. */
+// deno-lint-ignore no-explicit-any
+function definition(id: string, userinfo: Record<string, unknown>, extra: any = {}) {
+  // deno-lint-ignore no-explicit-any
+  return (options: any) => ({
+    id,
+    name: id,
+    type: "oauth",
+    authorization: "https://idp.test/authorize?scope=read",
+    token: "https://idp.test/token",
+    userinfo,
+    // deno-lint-ignore no-explicit-any
+    profile: (p: any) => ({ id: p.id, name: p.name ?? null, email: p.email ?? null }),
+    options,
+    ...extra,
+  });
+}
+
+/** Auth.js-style `userinfo.request`s: `fetch` the URL with `init`, return `pick(json)`. */
+function requestFn(
+  init: (tokens: Record<string, string>, clientId: string) => RequestInit,
+  // deno-lint-ignore no-explicit-any
+  pick: (json: any, tokens: Record<string, string>) => unknown = (json) => json,
+  url = (base: string, _tokens: Record<string, string>) => base,
+) {
+  // deno-lint-ignore no-explicit-any
+  return async ({ tokens, provider }: any) => {
+    const res = await fetch(url(provider.userinfo.url, tokens), init(tokens, provider.clientId));
+    return pick(await res.json(), tokens);
+  };
+}
+
+Deno.test("gen:auth-providers: a userinfo rule is checked against Auth.js's own request", async () => {
+  const trakt = (headers: (t: Record<string, string>, c: string) => Record<string, string>) =>
+    definition("trakt", {
+      url: "https://idp.test/users/me",
+      request: requestFn((t, c) => ({ headers: headers(t, c) })),
+    });
+  const spec = await extract(
+    "trakt",
+    trakt((t, c) => ({
+      Authorization: `Bearer ${t.access_token}`,
+      "trakt-api-version": "2",
+      "trakt-api-key": c,
+    })),
+  );
+  assertEquals(spec.userinfoRequest?.headers?.["trakt-api-key"], "{clientId}");
+  // A header Auth.js sends that the rule doesn't (or with another value) is a disagreement, and
+  // so is a Bearer token where Auth.js sends none.
+  await assertRejects(
+    () =>
+      extract(
+        "trakt",
+        trakt((t, c) => ({
+          Authorization: `Bearer ${t.access_token}`,
+          "trakt-api-version": "3",
+          "trakt-api-key": c,
+        })),
+      ),
+    Error,
+    "header trakt-api-version",
+  );
+  await assertRejects(
+    () => extract("trakt", trakt((_, c) => ({ "trakt-api-version": "2", "trakt-api-key": c }))),
+    Error,
+    "an authorization header",
+  );
+  // VK: the profile is `response[0]` with the token response's address.
+  const vk = (withEmail: boolean) =>
+    definition("vk", {
+      url: "https://idp.test/users.get",
+      request: requestFn(
+        (t) => ({ headers: { Authorization: `Bearer ${t.access_token}` } }),
+        (json, t) => ({ ...json.response[0], ...(withEmail ? { email: t.email ?? null } : {}) }),
+      ),
+    }, {
+      // deno-lint-ignore no-explicit-any
+      profile: (p: any) => ({
+        id: p.id,
+        name: [p.first_name, p.last_name].filter(Boolean).join(" "),
+        email: p.email ?? null,
+      }),
+    });
+  assertEquals((await extract("vk", vk(true))).userinfoRequest?.pick, ["response", "0"]);
+  await assertRejects(() => extract("vk", vk(false)), Error, "profile");
+  // Todoist: the body must match too; one request, not two.
+  const todoist = (body: unknown, twice = false) =>
+    definition("todoist", {
+      request: async (input: { tokens: Record<string, string> }) => {
+        const init = {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${input.tokens.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        };
+        if (twice) await fetch("https://api.todoist.com/sync/v9/sync", init);
+        const res = await fetch("https://api.todoist.com/sync/v9/sync", init);
+        return (await res.json()).user;
+      },
+    });
+  await extract("todoist", todoist({ sync_token: "*", resource_types: '["user"]' }));
+  await assertRejects(() => extract("todoist", todoist({ sync_token: "*" })), Error, "body");
+  await assertRejects(
+    () => extract("todoist", todoist({ sync_token: "*", resource_types: '["user"]' }, true)),
+    Error,
+    "3 requests",
+  );
+  // HubSpot: the token in the path, so a different URL disagrees.
+  const hubspot = (path: (t: Record<string, string>) => string) =>
+    definition("hubspot", {
+      url: "https://api.hubapi.com/oauth/v1/access-tokens",
+      request: requestFn(() => ({ headers: { "Content-Type": "application/json" } }), undefined, (
+        base,
+        t,
+      ) => `${base}/${path(t)}`),
+    });
+  await extract("hubspot", hubspot((t) => t.access_token));
+  await assertRejects(() => extract("hubspot", hubspot(() => "me")), Error, "url");
+});
+
+Deno.test("gen:auth-providers: token parameters are checked against Auth.js's custom fetch", async () => {
+  const tiktok = (param: string) =>
+    definition("tiktok", { url: "https://idp.test/me" }, {
+      token: "https://open.tiktokapis.com/v2/oauth/token/",
+      // deno-lint-ignore no-explicit-any
+      [Symbol("customFetch")]: (url: string, request: any) => {
+        const body = new URLSearchParams(request.body);
+        body.append(param, "SENTINELCLIENTID");
+        return fetch(url, { ...request, body: body.toString() });
+      },
+    });
+  assertEquals((await extract("tiktok", tiktok("client_key"))).tokenParams, {
+    client_key: "{clientId}",
+  });
+  await assertRejects(() => extract("tiktok", tiktok("app_key")), Error, "custom fetch adds");
+});
