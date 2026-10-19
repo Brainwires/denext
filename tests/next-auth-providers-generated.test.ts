@@ -4,7 +4,7 @@
 // defaults, option templates, issuers, and the profile mappings traced off Auth.js's own.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   AUTHJS_CORE_VERSION,
   HAND_WRITTEN,
@@ -37,7 +37,7 @@ import AzureAD from "../src/compat/next-auth/providers/azure-ad.ts";
 import type { Provider } from "../src/compat/next-auth/types.ts";
 import type { AuthUser, OAuthProvider, ProfileInput } from "../src/server/auth/types.ts";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const SECRET = "next-auth-generated-providers-secret-32+";
 
 const manifest = JSON.parse(await Deno.readTextFile(join(ROOT, MANIFEST))) as ProviderManifest;

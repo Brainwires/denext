@@ -11,7 +11,7 @@
  * @module
  */
 
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   AUTHJS_CORE_VERSION,
   HAND_WRITTEN,
@@ -36,7 +36,7 @@ import {
 import { OAUTH_CHECKS } from "../src/server/auth/oauth.ts";
 import type { OAuthCheck } from "../src/server/auth/types.ts";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("..", import.meta.url));
 /** The manifest's path, repo-relative. */
 export const MANIFEST = "scripts/auth-providers/manifest.json";
 
