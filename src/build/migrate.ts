@@ -103,6 +103,7 @@ import {
   type PrismaMigrateInfo,
   type PrismaWiring,
 } from "./prisma-migrate.ts";
+import { denoSqlHasColumns } from "../server/prisma-adapter/client.ts";
 import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's
@@ -398,6 +399,14 @@ export interface MigrateOptions {
   appId?: string;
   /** `--platform`: run `cap add` for these platforms after the install. */
   platforms?: string[];
+  /**
+   * `--prisma-adapter`: the driver adapter a Prisma app's SQLite or Postgres datasource is wired
+   * to. `"deno-sql"` is `denext/prisma-adapter` (Prisma over `Deno.SQL`, no npm driver; needs
+   * denext's Deno runtime 2.9.7-denext.23+), `"npm"` Prisma's own `@prisma/adapter-better-sqlite3`
+   * / `@prisma/adapter-pg`, and `"auto"` (the default) `"deno-sql"` when the runtime migrate runs
+   * on supports it.
+   */
+  prismaAdapter?: "auto" | "deno-sql" | "npm";
 }
 
 /** SPA-specific portion of a migration result. */
@@ -868,15 +877,24 @@ async function localPluginEntries(
  * import map and return the {@link PrismaWiring} (whose `links`/`tasks`/`nodeModulesDir` the
  * caller merges into the generated deno.json, and whose `finalize()` it runs after writing).
  * A no-op returning null when the app doesn't use Prisma. The compat is bundled from denext's
- * own `better-sqlite3` export — a JSR subpath on the published path, a `file://` locally.
+ * own `better-sqlite3` export — a JSR subpath on the published path, a `file://` locally. With
+ * `mode` `"deno-sql"` (or `"auto"` on a runtime whose `Deno.SQL` reports result columns) a
+ * SQLite / Postgres datasource gets denext's own `prisma-adapter` subpath instead.
  */
 async function applyPrismaImports(
   dir: string,
   deps: Record<string, string>,
   imports: Record<string, string>,
   R: DenextResolver,
+  mode: MigrateOptions["prismaAdapter"] = "auto",
 ): Promise<PrismaWiring | null> {
-  const wiring = await detectPrismaWiring(dir, deps, R.sub("better-sqlite3"));
+  const denoSql = mode === "deno-sql" || (mode === "auto" && await denoSqlHasColumns());
+  const wiring = await detectPrismaWiring(
+    dir,
+    deps,
+    R.sub("better-sqlite3"),
+    denoSql ? R.sub("prisma-adapter") : null,
+  );
   if (!wiring) return null;
   for (const key of wiring.importsToDelete) delete imports[key];
   Object.assign(imports, wiring.importsToAdd);
@@ -1493,7 +1511,7 @@ async function migrateNextProject(
 
   // Prisma: fold the Deno-client/adapter import pins into the map (and, below, `links` +
   // `manual` node_modules + the `prisma:setup` task). null for non-Prisma apps.
-  const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
+  const prismaWiring = await applyPrismaImports(dir, deps, imports, R, options.prismaAdapter);
 
   const denoJsonExists = await writeAppRouterDenoJson(
     dir,
@@ -1733,7 +1751,7 @@ async function migrateReactRouterProject(
   }
 
   const written: string[] = [];
-  const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
+  const prismaWiring = await applyPrismaImports(dir, deps, imports, R, options.prismaAdapter);
   const denoJsonExists = await writeAppRouterDenoJson(
     dir,
     R,
@@ -1804,7 +1822,7 @@ async function migrateRemixProject(
   ));
 
   // Prisma: fold the Deno-client/adapter pins into the map (+ links/manual/setup task below).
-  const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
+  const prismaWiring = await applyPrismaImports(dir, deps, imports, R, options.prismaAdapter);
 
   const denoJsonExists = await writeAppRouterDenoJson(
     dir,

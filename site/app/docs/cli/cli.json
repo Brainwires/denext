@@ -1414,6 +1414,12 @@
           "description": "Apply the codemod without prompting"
         },
         {
+          "name": "prisma-adapter",
+          "type": "string",
+          "valueName": "<auto|deno-sql|npm>",
+          "description": "A Prisma app's SQLite / Postgres driver adapter: deno-sql (denext/prisma-adapter over Deno.SQL, no npm driver), npm (@prisma/adapter-better-sqlite3 / -pg), or auto (deno-sql when the runtime supports it; the default)"
+        },
+        {
           "name": "denext-local-path",
           "type": "string",
           "valueName": "<path>",

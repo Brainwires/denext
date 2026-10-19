@@ -4,7 +4,7 @@
 // covered by the migrate.test.ts family; here we drive the CLI verbs' orchestration +
 // their console reporting.
 
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { codemodCommand, migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
@@ -170,17 +170,19 @@ async function prismaApp(provider: string): Promise<string> {
 }
 
 for (
-  const [provider, adapter, setup] of [
-    ["sqlite", "@prisma/adapter-better-sqlite3", "bundles the compat, installs"],
-    ["postgresql", "@prisma/adapter-pg", "(installs, `prisma generate`"],
-    ["sqlserver", null, "(installs, `prisma generate`"],
+  const [provider, mode, adapter, setup] of [
+    ["sqlite", "npm", "@prisma/adapter-better-sqlite3", "bundles the compat, installs"],
+    ["postgresql", "npm", "@prisma/adapter-pg", "(installs, `prisma generate`"],
+    ["sqlserver", "npm", null, "(installs, `prisma generate`"],
+    ["sqlite", "deno-sql", "denext/prisma-adapter", "(installs, `prisma generate`"],
+    ["postgresql", "deno-sql", "denext/prisma-adapter", "(installs, `prisma generate`"],
   ] as const
 ) {
-  Deno.test(`migrate reports the Prisma wiring for a ${provider} datasource`, async () => {
+  Deno.test(`migrate reports the Prisma wiring for a ${provider} datasource (${mode})`, async () => {
     const dir = await prismaApp(provider);
     const cap = capture();
     try {
-      await migrateCommand.run(makeCtx({ positionals: [dir] }));
+      await migrateCommand.run(makeCtx({ positionals: [dir], flags: { "prisma-adapter": mode } }));
     } finally {
       cap.restore();
       await Deno.remove(dir, { recursive: true });
@@ -194,6 +196,15 @@ for (
     assertStringIncludes(out, setup);
   });
 }
+
+Deno.test("migrate refuses an unknown --prisma-adapter", async () => {
+  await assertRejects(
+    async () =>
+      await migrateCommand.run(makeCtx({ positionals: ["."], flags: { "prisma-adapter": "pg" } })),
+    Error,
+    "--prisma-adapter must be auto, deno-sql or npm",
+  );
+});
 
 Deno.test("migrate on a Fresh app reports the generated tree, Tailwind and the findings", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_migrate_cli_fresh_" });
