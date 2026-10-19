@@ -4,7 +4,7 @@
 // scripts and the shadow database work.
 //
 // Ignored on a runtime whose Deno.SQL reports no result columns (before denext's Deno runtime
-// 2.9.7-denext.23).
+// 3.0.0-rc.1).
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
@@ -18,7 +18,7 @@ import {
 
 const reason = (await denoSqlHasColumns())
   ? undefined
-  : "needs Deno.SQL result columns (denext's Deno runtime 2.9.7-denext.23+)";
+  : "needs Deno.SQL result columns (denext's Deno runtime 3.0.0-rc.1+)";
 const label = reason ? ` (skipped: ${reason})` : "";
 
 const arg = (scalarType: ArgType["scalarType"]): ArgType => ({ scalarType, arity: "scalar" });

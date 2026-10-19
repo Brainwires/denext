@@ -846,7 +846,7 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 Open the connection once at module scope; do writes in Server Actions.
 Prisma (SQLite / Postgres) with no npm driver: `new PrismaClient({ adapter: new
 PrismaDenoSql(Deno.env.get("DATABASE_URL")!) })` with `PrismaDenoSql` from `denext/prisma-adapter`
-(Prisma's `prisma-client` generator, `runtime = "deno"`; needs runtime 2.9.7-denext.23+);
+(Prisma's `prisma-client` generator, `runtime = "deno"`; needs runtime 3.0.0-rc.1+);
 `denext migrate` wires it (`--prisma-adapter deno-sql | npm | auto`).
 Postgres (every replica sharing one database): `postgresClient(url)` from `denext/server` is a
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:

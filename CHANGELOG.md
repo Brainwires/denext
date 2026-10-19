@@ -75,8 +75,10 @@ and this project adheres to
   declared type, database errors become Prisma's (`P2002`, `P2003`, `P2011`, …), and
   interactive transactions, scripts and `prisma migrate`'s shadow database work. `denext migrate`
   wires it into a Prisma app's SQLite or Postgres datasource when the runtime supports it;
-  `--prisma-adapter deno-sql | npm | auto` chooses. Needs denext's Deno runtime
-  2.9.7-denext.23 or later (`Deno.SQL`'s result-set column metadata).
+  `--prisma-adapter deno-sql | npm | auto` chooses. **Requires denext's Deno runtime 3.0.0-rc.1 or
+  later** (`Deno.SQL`'s result-set column metadata). denext 4.5.0 still pins runtime
+  2.9.7-denext.22, where the adapter is inert: `migrate` on `auto` keeps Prisma's npm adapters,
+  and the adapter throws a clear error if used.
 
 ### Changed
 

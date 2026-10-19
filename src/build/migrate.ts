@@ -402,7 +402,7 @@ export interface MigrateOptions {
   /**
    * `--prisma-adapter`: the driver adapter a Prisma app's SQLite or Postgres datasource is wired
    * to. `"deno-sql"` is `denext/prisma-adapter` (Prisma over `Deno.SQL`, no npm driver; needs
-   * denext's Deno runtime 2.9.7-denext.23+), `"npm"` Prisma's own `@prisma/adapter-better-sqlite3`
+   * denext's Deno runtime 3.0.0-rc.1+), `"npm"` Prisma's own `@prisma/adapter-better-sqlite3`
    * / `@prisma/adapter-pg`, and `"auto"` (the default) `"deno-sql"` when the runtime migrate runs
    * on supports it.
    */

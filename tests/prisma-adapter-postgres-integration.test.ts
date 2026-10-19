@@ -7,7 +7,7 @@
 //     denext test -A tests/prisma-adapter-postgres-integration.test.ts
 //
 // Ignored without DENEXT_TEST_POSTGRES_URL, or on a runtime whose Deno.SQL reports no result
-// columns (before denext's Deno runtime 2.9.7-denext.23).
+// columns (before denext's Deno runtime 3.0.0-rc.1).
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
@@ -22,7 +22,7 @@ const URL_ = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const reason = !URL_
   ? "set DENEXT_TEST_POSTGRES_URL"
   : !(await denoSqlHasColumns())
-  ? "needs Deno.SQL result columns (denext's Deno runtime 2.9.7-denext.23+)"
+  ? "needs Deno.SQL result columns (denext's Deno runtime 3.0.0-rc.1+)"
   : undefined;
 const label = reason ? ` (skipped: ${reason})` : "";
 const SCHEMA = `prisma_adapter_${crypto.randomUUID().slice(0, 8)}`;

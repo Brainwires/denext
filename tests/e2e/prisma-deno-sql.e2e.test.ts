@@ -7,7 +7,7 @@
 //
 // Opt-in + NETWORK-REQUIRED (installs @prisma/client and runs the prisma CLI):
 // `deno task test:e2e`. Skipped on a runtime whose Deno.SQL reports no result columns (before
-// denext's Deno runtime 2.9.7-denext.23), and when setup can't complete (offline).
+// denext's Deno runtime 3.0.0-rc.1), and when setup can't complete (offline).
 
 import { assert, assertEquals } from "@std/assert";
 import { copy } from "@std/fs/copy";
@@ -20,7 +20,7 @@ const PG_URL = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const SETUP_TIMEOUT_MS = 300_000;
 const reason = (await denoSqlHasColumns())
   ? undefined
-  : "needs Deno.SQL result columns (denext's Deno runtime 2.9.7-denext.23+)";
+  : "needs Deno.SQL result columns (denext's Deno runtime 3.0.0-rc.1+)";
 
 async function run(
   args: string[],

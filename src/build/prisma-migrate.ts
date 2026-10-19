@@ -11,7 +11,7 @@
 // the npm `mariadb` driver, which speaks MySQL too). Those are pure-JS drivers on Deno's Node
 // compat, so they need no `links` substitution and no bundled compat.
 //
-// On denext's Deno runtime 2.9.7-denext.23 and later, whose `Deno.SQL` reports each result
+// On denext's Deno runtime 3.0.0-rc.1 and later, whose `Deno.SQL` reports each result
 // column's type, a SQLite or Postgres datasource is wired to `denext/prisma-adapter` instead:
 // Prisma's driver adapter over `Deno.SQL`, with no npm database driver, no `links` shim and no
 // bundled compat (`MigrateOptions.prismaAdapter` / `--prisma-adapter` chooses explicitly).

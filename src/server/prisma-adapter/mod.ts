@@ -19,7 +19,7 @@
  * Use it with Prisma 6's `prisma-client` generator (`runtime = "deno"`) and the
  * `driverAdapters` + `queryCompiler` preview features; `denext migrate` wires all of it.
  *
- * Needs denext's Deno runtime 2.9.7-denext.23 or later: the adapter reads each result column's
+ * Needs denext's Deno runtime 3.0.0-rc.1 or later: the adapter reads each result column's
  * type from `Deno.SQL`'s `result.columns`, which earlier runtimes do not report
  * ({@linkcode denoSqlHasColumns} tells).
  *
@@ -149,7 +149,7 @@ function openClient(url: string, options: DenoSqlOptions): DenoSqlClient {
   if (!SQL) {
     throw new Error(
       "denext/prisma-adapter: this Deno has no Deno.SQL — run the app on denext's Deno runtime " +
-        "(2.9.7-denext.23 or later; `denext dev` / `denext start` use it).",
+        "(3.0.0-rc.1 or later; `denext dev` / `denext start` use it).",
     );
   }
   return new SQL(url, options);

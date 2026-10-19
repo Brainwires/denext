@@ -283,7 +283,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
   `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). SQLite and Postgres
   run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
-  2.9.7-denext.23 or later; on an earlier runtime migrate wires Prisma's npm adapters
+  3.0.0-rc.1 or later; on an earlier runtime migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
   and MySQL always take theirs.
 - **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**

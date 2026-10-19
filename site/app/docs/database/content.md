@@ -328,7 +328,8 @@ parameters are read rather than sent to the server: `schema` (the
 closes it on `$disconnect()`. `connectToShadowDb()` creates and drops a
 throwaway Postgres database (SQLite: `:memory:`) for `prisma migrate`.
 
-**It needs denext's Deno runtime 2.9.7-denext.23 or later.** The adapter reads
+**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins
+2.9.7-denext.22 until that runtime is published; there `migrate` keeps Prisma's npm adapters). The adapter reads
 each result column's type from `Deno.SQL`'s `result.columns`, which earlier
 runtimes do not report; on one of them it throws a clear error. `denext dev`,
 `build`, `start` and `test` run on the toolchain runtime; `denoSqlHasColumns()`
@@ -483,7 +484,7 @@ writes a `prisma:setup` task that installs, generates the client and applies
 migrations). Set the URL variable (or put it in `.env`) before running it. A
 `directUrl` stays in the schema for the Prisma CLI.
 
-On denext's Deno runtime 2.9.7-denext.23 and later, migrate wires a Postgres
+On denext's Deno runtime 3.0.0-rc.1 and later, migrate wires a Postgres
 datasource to `denext/prisma-adapter` instead (above): no `pg` dependency.
 
 A `cockroachdb` datasource takes the Postgres path: CockroachDB speaks the
