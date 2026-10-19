@@ -38,7 +38,14 @@ import { join, resolve } from "@std/path";
 import { acquireCacheLock } from "./project-locks.ts";
 import { denoCacheDir, renameRetrying } from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
-import { readJsonFile, sha256File, streamHashed, sweepLeftovers } from "./verified-download.ts";
+import {
+  type DownloadProgress,
+  downloadProgress,
+  readJsonFile,
+  sha256File,
+  streamHashed,
+  sweepLeftovers,
+} from "./verified-download.ts";
 import { ESBUILD_VERSION } from "./esbuild/version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
 
@@ -435,7 +442,24 @@ async function download(
   const { artifact, what } = slot;
   const body = await openDownload(slot, fetchImpl);
   const cap = artifact.size ?? MAX_DOWNLOAD;
-  return await streamHashed(body, dest, cap, {
+  // A progress line on a terminal (bytes and percent); nothing in a log or CI.
+  const progress = downloadProgress(`${what} ${artifact.file}`, artifact.size);
+  try {
+    return await streamHashedTo(body, dest, cap, slot, progress);
+  } finally {
+    progress.done();
+  }
+}
+
+/** {@linkcode streamHashed} with the toolchain's refusals. */
+function streamHashedTo(
+  body: ReadableStream<Uint8Array>,
+  dest: string,
+  cap: number,
+  { artifact, what }: DownloadNames,
+  progress: DownloadProgress,
+): Promise<{ size: number; sha256: string }> {
+  return streamHashed(body, dest, cap, {
     tooLarge: () =>
       new DenoToolchainDownloadError(
         `denext: refusing denext's ${what} ${artifact.file}: larger than its pinned ` +
@@ -446,7 +470,7 @@ async function download(
         `denext: the ${what} download was interrupted (${artifact.file}, ${size} bytes): ` +
           `${err instanceof Error ? err.message : err}`,
       ),
-  });
+  }, (bytes) => progress.update(bytes));
 }
 
 /** Check a finished download against the pin; throws (the caller deletes the file). */

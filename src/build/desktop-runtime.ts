@@ -28,7 +28,13 @@ import { denoCacheDir } from "./deno-cache-dir.ts";
 import { acquireCacheLock } from "./project-locks.ts";
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
-import { readJsonFile, sha256File, streamHashed, sweepLeftovers } from "./verified-download.ts";
+import {
+  downloadProgress,
+  readJsonFile,
+  sha256File,
+  streamHashed,
+  sweepLeftovers,
+} from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
 import { denoReleaseVersion } from "./deno-version.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
@@ -259,6 +265,8 @@ function streamToFile(
   maxSize: number,
   what: string,
 ): Promise<{ size: number; sha256: string }> {
+  // A progress line on a terminal (bytes and percent); nothing in a log or CI.
+  const progress = downloadProgress(`Deno Desktop runtime ${what}`, maxSize);
   return streamHashed(body, dest, maxSize, {
     tooLarge: () =>
       new Error(
@@ -270,7 +278,7 @@ function streamToFile(
         `denext: the Deno Desktop runtime download was interrupted (${what}, ${size} of ` +
           `${maxSize} bytes): ${errText(err)}${DOWNLOAD_HINT}`,
       ),
-  });
+  }, (bytes) => progress.update(bytes)).finally(() => progress.done());
 }
 
 /** Download `artifact` to `dest`, refusing anything but exactly its pinned size and SHA-256. */

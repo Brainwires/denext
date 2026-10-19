@@ -685,6 +685,35 @@ Deno.test("install.ps1: the flags are parameters of the script and of Install-De
   assert(!script.includes("GetEnvironmentVariable('Path', 'User')"));
 });
 
+Deno.test("install.ps1: the archive streams through HttpClient with a throttled progress bar", async () => {
+  // Invoke-WebRequest's own progress UI makes Windows PowerShell 5.1 download many times slower.
+  const script = await Deno.readTextFile(SCRIPT);
+  assertStringIncludes(script, 'return Save-Download "$base/$version/$asset" $zip');
+  assertStringIncludes(script, "ResponseHeadersRead");
+  assertStringIncludes(script, "$timer.ElapsedMilliseconds -ge 250");
+  assertStringIncludes(script, "-PercentComplete $pct");
+  assert(!script.includes("-OutFile $zip"), "the archive never goes through Invoke-WebRequest");
+});
+
+Deno.test("install.ps1: Write-DownloadProgress formats MB and percent", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const out = await runPowerShell(`
+$text = [IO.File]::ReadAllText($env:INSTALLER)
+. ([scriptblock]::Create($text.Substring(0, $text.LastIndexOf('Install-Denext -Uninstall'))))
+function Write-Progress { param($Activity, $Status, $PercentComplete, [switch]$Completed)
+  if ($Completed) { 'done' } else { "$Status|$PercentComplete" } }
+Write-DownloadProgress 35000000 70000000
+Write-DownloadProgress 1500000 $null
+Write-DownloadProgress 0 0 -Completed
+"interactive=$(Test-InteractiveConsole)"`);
+  const lines = out.trim().split("\n");
+  assertEquals(lines[0].replace(/,/g, "."), "35.0 MB / 70.0 MB (50%)|50");
+  assertEquals(lines[1].replace(/,/g, "."), "1.5 MB|");
+  assertEquals(lines[2], "done");
+  assertEquals(lines[3], "interactive=False", "a redirected run draws nothing");
+});
+
 Deno.test("docs: the served install.ps1 matches the one in scripts/", async () => {
   // `irm https://denext.dev/install.ps1 | iex` serves site/public/install.ps1.
   assertEquals(

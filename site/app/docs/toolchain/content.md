@@ -115,6 +115,8 @@ The binary is cached beside Deno's own cache:
   fast path is the same trust Deno gives its own module cache: whoever can write to `DENO_DIR`
   can change what runs, so keep a shared or group-writable `DENO_DIR` to trusted users (or run
   `denext toolchain status --verify`).
+- On a terminal the download prints one self-redrawing line with the megabytes received and the
+  percent; in a log or CI it prints nothing.
 - Two commands starting at once download it once: the second prints
   `Blocking waiting for file lock on Deno toolchain cache` and adopts the first one's binary.
 

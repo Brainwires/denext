@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **Download progress.** On a terminal, `install.sh` draws curl's progress bar for the release
+  archive (and, on a machine without curl, now downloads with GNU wget, `--show-progress`;
+  HTTPS-only, TLS 1.2+, checksum-verified as before); `install.ps1` streams the archive through
+  `HttpClient` with a `Write-Progress` bar redrawn at most every 250 ms (Invoke-WebRequest's own
+  progress UI slows Windows PowerShell 5.1 down many times); and the CLI's pinned downloads —
+  the Deno toolchain, the Deno Desktop runtime, Gleam, fastlane's Ruby — print one
+  self-redrawing line with the megabytes and percent. In a log or CI nothing is drawn.
+
 - **`denext toolchain uninstall <version>`, `uninstall --all` and `prune`.** Every Deno toolchain
   denext ran on stayed in Deno's cache (about 70 MB each, more for a Deno Desktop runtime).
   `uninstall <version>` removes that version's toolchain and the Deno Desktop runtime of the same

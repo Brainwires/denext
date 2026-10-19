@@ -51,9 +51,61 @@ set -eu
 
 REPO="Brainwires/denext"
 
-# `curl` for a release URL: HTTPS only (no scheme downgrade through a redirect), TLS 1.2+.
+# Fetch a release URL: HTTPS only (no scheme downgrade through a redirect), TLS 1.2+, with curl,
+# or GNU wget on a machine without it. A leading `--progress` draws a progress bar on stderr when
+# it is a terminal (and nothing in a log or CI); every other fetch is quiet.
 fetch() {
-  curl --proto '=https' --tlsv1.2 -fsSL "$@"
+  quiet=-s
+  if [ "${1:-}" = "--progress" ]; then
+    shift
+    if [ -t 2 ]; then quiet=--progress-bar; fi
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -fSL "$quiet" "$@"
+  elif command -v wget >/dev/null 2>&1; then
+    fetch_wget "$quiet" "$@"
+  else
+    echo "denext: the installer needs curl or wget." >&2
+    return 1
+  fi
+}
+
+# fetch() through wget: the same arguments as the curl call (`-o <file>`, `-H @-`,
+# `-o /dev/null -w '%{url_effective}'`). A token header fed on stdin is dropped (wget takes headers
+# only on its command line, where any user could read it): the latest-version lookup then falls
+# back to the releases/latest redirect.
+fetch_wget() {
+  bar="$1"
+  shift
+  out=-
+  header=""
+  wfmt=""
+  url=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -o) out="$2"; shift ;;
+      -H) header="$2"; shift ;;
+      -w) wfmt="$2"; shift ;;
+      -*) ;;
+      *) url="$1" ;;
+    esac
+    shift
+  done
+  if [ "$header" = "@-" ]; then
+    cat >/dev/null
+    case "$url" in https://api.github.com/*) return 1 ;; esac
+  fi
+  if [ -n "$wfmt" ]; then
+    # Where the redirects end (curl's `%{url_effective}`): the last Location wget was sent.
+    wget --https-only --secure-protocol=TLSv1_2 -S --spider "$url" 2>&1 |
+      sed -n 's/^ *[Ll]ocation: *//p' | tr -d '\r' | tail -n 1
+    return 0
+  fi
+  if [ "$bar" = "--progress-bar" ] && wget --help 2>/dev/null | grep -q -- --show-progress; then
+    wget --https-only --secure-protocol=TLSv1_2 -q --show-progress -O "$out" "$url"
+  else
+    wget --https-only --secure-protocol=TLSv1_2 -q -O "$out" "$url"
+  fi
 }
 
 target() {
@@ -74,12 +126,13 @@ target() {
 }
 
 # One release file ($1, by name) into $2: from DENEXT_ARTIFACTS when it is set, else downloaded
-# from the release. Fails when the file is not there.
+# from the release (with a progress bar on a terminal when $3 is `--progress`). Fails when the
+# file is not there.
 release_file() {
   if [ -n "${DENEXT_ARTIFACTS:-}" ]; then
     [ -f "$DENEXT_ARTIFACTS/$1" ] && cp "$DENEXT_ARTIFACTS/$1" "$2"
   else
-    fetch "https://github.com/$REPO/releases/download/$VERSION/$1" -o "$2"
+    fetch ${3:-} "https://github.com/$REPO/releases/download/$VERSION/$1" -o "$2"
   fi
 }
 
@@ -165,7 +218,7 @@ main() {
   else
     echo "denext: downloading $VERSION for $TARGET"
   fi
-  release_file "$ASSET" "$TMP/$ASSET" || {
+  release_file "$ASSET" "$TMP/$ASSET" --progress || {
     echo "denext: could not get $ASSET (${DENEXT_ARTIFACTS:-release $VERSION})." >&2
     exit 1
   }

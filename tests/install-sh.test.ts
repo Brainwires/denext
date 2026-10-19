@@ -30,7 +30,7 @@ const assetFor = (os: string, arch: string) =>
  * call is answered by `latest.json`). A file that is not there is a 404 — curl's exit 22.
  */
 const CURL_STUB = `#!/bin/sh
-out=""; url=""; proto=""; tls=""; header=""; wfmt=""
+out=""; url=""; proto=""; tls=""; header=""; wfmt=""; bar=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift ;;
@@ -38,11 +38,13 @@ while [ $# -gt 0 ]; do
     -w) wfmt="$2"; shift ;;
     --proto) proto="$2"; shift ;;
     --tlsv1.2) tls=1 ;;
+    --progress-bar) bar=1 ;;
     http*) url="$1" ;;
   esac
   shift
 done
 [ "$proto" = "=https" ] && [ -n "$tls" ] || { echo "stub curl: unhardened call" >&2; exit 99; }
+[ -n "$bar" ] && echo "$url" >> "$STUB_LOG.progress"
 [ "$header" = "@-" ] && header="$(cat)"
 echo "$url" >> "$STUB_LOG"
 [ -n "$header" ] && echo "$url $header" >> "$STUB_LOG.headers"
@@ -90,6 +92,8 @@ interface Run {
   binary: string;
   /** Every invocation of the installed `denext` other than `--version`, in order. */
   calls: string[];
+  /** The URLs fetched with a progress bar. */
+  progress: string[];
 }
 
 /** A local "release" the stub curl serves, and a run of the script against it. */
@@ -163,15 +167,24 @@ class Release {
     env: Record<string, string> = {},
     extraPath: string[] = [],
     args: string[] = [],
+    opts: { tty?: boolean; basePath?: string[] } = {},
   ): Promise<Run> {
     await Deno.writeTextFile(this.log, "");
     await Deno.writeTextFile(`${this.log}.headers`, "");
     await Deno.writeTextFile(`${this.log}.denext`, "");
-    const out = await new Deno.Command("sh", {
-      args: [SCRIPT, ...args],
+    await Deno.writeTextFile(`${this.log}.progress`, "");
+    // `script` runs the installer on a pseudo-terminal (stdout and stderr both a TTY).
+    const [cmd, cmdArgs] = !opts.tty
+      ? ["sh", [SCRIPT, ...args]]
+      : Deno.build.os === "darwin"
+      ? ["/usr/bin/script", ["-q", "/dev/null", "sh", SCRIPT, ...args]]
+      : ["script", ["-qec", ["sh", SCRIPT, ...args].map((a) => `'${a}'`).join(" "), "/dev/null"]];
+    const out = await new Deno.Command(cmd as string, {
+      args: cmdArgs as string[],
+      stdin: "null",
       clearEnv: true,
       env: {
-        PATH: [this.stubs, ...extraPath, "/usr/bin", "/bin"].join(":"),
+        PATH: [this.stubs, ...extraPath, ...(opts.basePath ?? ["/usr/bin", "/bin"])].join(":"),
         HOME: this.dir,
         DENEXT_TTY: join(this.dir, "no-terminal"),
         TMPDIR: this.dir,
@@ -191,6 +204,7 @@ class Release {
       headers: (await Deno.readTextFile(`${this.log}.headers`)).split("\n").filter(Boolean),
       binary: join(this.install, "bin", "denext"),
       calls: (await Deno.readTextFile(`${this.log}.denext`)).split("\n").filter(Boolean),
+      progress: (await Deno.readTextFile(`${this.log}.progress`)).split("\n").filter(Boolean),
     };
   }
 
@@ -876,6 +890,127 @@ Deno.test("install.sh: --uninstall removes the binary, the deno link and every P
     // Twice is harmless.
     const twice = await r.run({ SHELL: "/bin/zsh" }, [shells], ["--uninstall"]);
     assertEquals(twice.code, 0, twice.stderr);
+  } finally {
+    await r.remove();
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Download progress, and wget where there is no curl.
+
+/** Where `script` is (it gives the installer a terminal); null when this host has none. */
+function scriptCommand(): string | null {
+  for (const p of ["/usr/bin/script", "/bin/script"]) {
+    try {
+      if (Deno.statSync(p).isFile) return p;
+    } catch { /* not here */ }
+  }
+  return null;
+}
+
+Deno.test("install.sh: the archive download shows a progress bar on a terminal, never in a log", {
+  ignore: NO_SH || scriptCommand() === null,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const piped = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"]);
+    assertEquals(piped.code, 0, piped.stderr);
+    assertEquals(piped.progress, [], "stderr is not a terminal: quiet");
+    const tty = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"], {
+      tty: true,
+    });
+    assertEquals(tty.code, 0, tty.stdout + tty.stderr);
+    assertEquals(tty.progress, [
+      `https://github.com/Brainwires/denext/releases/download/v9.9.9/${ASSET}`,
+    ], "only the archive, never the API lookup or the checksums");
+  } finally {
+    await r.remove();
+  }
+});
+
+/**
+ * A stub GNU `wget`: fails unless every call is HTTPS-only with TLS 1.2+, logs the URL (and
+ * whether a progress bar was asked for), answers `--spider -S` with the releases/latest redirect,
+ * and serves `-O <file>` from `$STUB_DIR` like the curl stub.
+ */
+const WGET_STUB = `#!/bin/sh
+out=""; url=""; https=""; tls=""; spider=""; bar=""
+for a in "$@"; do
+  case "$a" in
+    --https-only) https=1 ;;
+    --secure-protocol=TLSv1_2) tls=1 ;;
+    --spider) spider=1 ;;
+    --show-progress) bar=1 ;;
+    --help) echo "  --show-progress  display the progress bar in any verbosity mode"; exit 0 ;;
+    http*) url="$a" ;;
+  esac
+done
+while [ $# -gt 0 ]; do [ "$1" = "-O" ] && out="$2"; shift; done
+[ -n "$https" ] && [ -n "$tls" ] || { echo "stub wget: unhardened call" >&2; exit 99; }
+echo "$url" >> "$STUB_LOG"
+[ -n "$bar" ] && echo "$url" >> "$STUB_LOG.progress"
+if [ -n "$spider" ]; then
+  echo "  HTTP/1.1 302 Found" >&2
+  echo "  Location: https://github.com/Brainwires/denext/releases/tag/v9.9.9" >&2
+  exit 0
+fi
+name="\${url##*/}"
+case "$url" in https://api.github.com/*/releases/latest) name="latest.json" ;; esac
+[ -f "$STUB_DIR/$name" ] || exit 8
+if [ "$out" = "-" ]; then cat "$STUB_DIR/$name"; else cp "$STUB_DIR/$name" "$out"; fi
+`;
+
+/** A PATH directory with every tool of /usr/bin and /bin but curl (links), and the wget stub. */
+async function noCurlPath(dir: string): Promise<string> {
+  const bin = join(dir, "no-curl-bin");
+  await Deno.mkdir(bin, { recursive: true });
+  for (const src of ["/usr/bin", "/bin"]) {
+    for await (const e of Deno.readDir(src)) {
+      if (e.name === "curl" || e.name === "wget") continue;
+      await Deno.symlink(join(src, e.name), join(bin, e.name)).catch(() => {});
+    }
+  }
+  await Deno.writeTextFile(join(bin, "wget"), WGET_STUB, { mode: 0o755 });
+  return bin;
+}
+
+Deno.test("install.sh: with no curl it downloads with GNU wget, hardened, checksum-verified", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    await Deno.remove(join(r.stubs, "curl"));
+    const bin = await noCurlPath(r.dir);
+    const run = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"], {
+      basePath: [bin],
+    });
+    assertEquals(run.code, 0, run.stderr);
+    assertStringIncludes(run.stdout, "checksum verified");
+    assert(await r.installed());
+    assertEquals(run.urls, [
+      "https://api.github.com/repos/Brainwires/denext/releases/latest",
+      `https://github.com/Brainwires/denext/releases/download/v9.9.9/${ASSET}`,
+      "https://github.com/Brainwires/denext/releases/download/v9.9.9/SHA256SUMS",
+    ]);
+    // A token is never put on wget's command line: the lookup takes the redirect instead.
+    const token = await r.run(
+      { DENEXT_NO_TOOLCHAIN: "1", GITHUB_TOKEN: "ghs_secret123" },
+      [],
+      ["--no-modify-path"],
+      { basePath: [bin] },
+    );
+    assertEquals(token.code, 0, token.stderr);
+    assert(!token.urls.some((u) => u.startsWith("https://api.github.com")), token.urls.join());
+    assert(token.urls.includes("https://github.com/Brainwires/denext/releases/latest"));
+    assert(token.urls.some((u) => u.endsWith(`/v9.9.9/${ASSET}`)));
+    // A wrong checksum is still refused.
+    await Deno.writeTextFile(join(r.served, "SHA256SUMS"), `${"f".repeat(64)}  ${ASSET}\n`);
+    await Deno.writeTextFile(join(r.served, `${ASSET}.sha256`), `${"f".repeat(64)}  ${ASSET}\n`);
+    const bad = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"], {
+      basePath: [bin],
+    });
+    assertEquals(bad.code, 1);
+    assertStringIncludes(bad.stderr, "checksum verification FAILED");
   } finally {
     await r.remove();
   }

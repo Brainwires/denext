@@ -224,13 +224,71 @@ function Get-ReleaseAsset([string]$base, [string]$version, [string]$asset, [stri
     return $true
   }
   Write-Host "denext: downloading $version for $target"
+  return Save-Download "$base/$version/$asset" $zip
+}
+
+# Download $uri to $outFile, streamed through HttpClient rather than Invoke-WebRequest, whose own
+# progress UI makes Windows PowerShell 5.1 download many times slower. In an interactive console
+# a Write-Progress bar (MB and percent) is redrawn at most every 250 ms; elsewhere (CI, a log)
+# nothing is drawn. Returns $false for an HTTP 404; any other failure throws.
+function Save-Download([string]$uri, [string]$outFile) {
+  Add-Type -AssemblyName System.Net.Http
+  $client = New-Object System.Net.Http.HttpClient
   try {
-    Invoke-WebRequest -UseBasicParsing "$base/$version/$asset" -OutFile $zip
+    $response = $client.GetAsync($uri, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+    if ([int]$response.StatusCode -eq 404) { return $false }
+    $null = $response.EnsureSuccessStatusCode()
+    $total = $response.Content.Headers.ContentLength
+    $show = Test-InteractiveConsole
+    $in = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+    $out = [IO.File]::Create($outFile)
+    try {
+      $buffer = New-Object byte[] 1048576
+      $done = [long]0
+      $timer = [Diagnostics.Stopwatch]::StartNew()
+      while (($n = $in.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $out.Write($buffer, 0, $n)
+        $done += $n
+        if ($show -and $timer.ElapsedMilliseconds -ge 250) {
+          $timer.Reset()
+          $timer.Start()
+          Write-DownloadProgress $done $total
+        }
+      }
+    } finally {
+      $out.Dispose()
+      $in.Dispose()
+    }
+    if ($show) { Write-DownloadProgress $done $total -Completed }
     return $true
+  } finally {
+    $client.Dispose()
+  }
+}
+
+# Whether a person is watching this console (a progress bar is worth drawing).
+function Test-InteractiveConsole {
+  try {
+    return [Environment]::UserInteractive -and $Host.Name -eq 'ConsoleHost' -and
+      -not [Console]::IsOutputRedirected
   } catch {
-    $response = $_.Exception.PSObject.Properties['Response']
-    if ($response -and $response.Value -and [int]$response.Value.StatusCode -eq 404) { return $false }
-    throw
+    return $false
+  }
+}
+
+# The download's progress bar: MB received (of the total, with its percent, when known).
+function Write-DownloadProgress([long]$done, $total, [switch]$Completed) {
+  $ProgressPreference = 'Continue'
+  if ($Completed) {
+    Write-Progress -Activity 'denext: downloading' -Completed
+    return
+  }
+  $mb = '{0:N1} MB' -f ($done / 1e6)
+  if ($total) {
+    $pct = [int][Math]::Floor(100 * $done / $total)
+    Write-Progress -Activity 'denext: downloading' -Status ("$mb / {0:N1} MB ($pct%)" -f ($total / 1e6)) -PercentComplete $pct
+  } else {
+    Write-Progress -Activity 'denext: downloading' -Status $mb
   }
 }
 
