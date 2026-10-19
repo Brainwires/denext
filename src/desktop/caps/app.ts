@@ -322,6 +322,10 @@ async function appCapabilities(s: AppState) {
     sandboxReason: facts.sandboxReason,
     fileChooser: facts.fileChooser,
     fileChooserReason: facts.fileChooserReason,
+    windowBlur: facts.windowBlur,
+    windowBlurReason: facts.windowBlurReason,
+    passkeys: facts.passkeys,
+    passkeysReason: facts.passkeysReason,
     bounce: typeof dock?.bounce === "function",
     dockMenu: dockMenuWorks(s),
   };

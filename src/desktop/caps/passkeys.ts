@@ -1,7 +1,7 @@
 /**
  * The `passkeys` capability: native WebAuthn ceremonies through the OS platform authenticator
  * (`Deno.desktop.passkeys` in denext's pinned runtime — macOS ASAuthorizationController, Windows
- * webauthn.dll; Linux has none) for a page whose origin (a custom scheme) the webview's own WebAuthn
+ * webauthn.dll; on Linux USB security keys through libwebauthn, from runtime 3.0.0-rc.1) for a page whose origin (a custom scheme) the webview's own WebAuthn
  * cannot use for the relying party. The page side is `denext/desktop/clerk`'s
  * `__clerk_internal_electron_passkeys`, so `@clerk/electron/passkeys` runs unchanged.
  *
@@ -123,9 +123,12 @@ export function passkeysCapability(options: PasskeysCapabilityOptions = {}): Des
           }
           const caps = await native.capabilities();
           // `available` mirrors @clerk/electron's `native.isAvailable()`: the OS has a native path
-          // at all (macOS, Windows); what it can use right now is the two flags.
+          // at all (macOS, Windows); what it can use right now is the two flags. Linux has no OS
+          // passkey API: its native path is the runtime's libwebauthn (runtime 3.0.0-rc.1), which
+          // exists exactly when the runtime reports security keys.
+          const linux = (options.os ?? Deno.build.os) === "linux";
           return {
-            available: (options.os ?? Deno.build.os) !== "linux",
+            available: linux ? caps?.securityKeys === true : true,
             platformAuthenticator: caps?.platformAuthenticator === true,
             securityKeys: caps?.securityKeys === true,
           };

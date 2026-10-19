@@ -616,7 +616,7 @@ searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.user
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
-`"<app id> Safe Storage"` keychain item, `"os"`) / `sandbox` / `fileChooser` from the
+`"<app id> Safe Storage"` keychain item, `"os"`) / `sandbox` / `fileChooser` / `windowBlur` / `passkeys` from the
 runtime's probe (`"unknown"` before the runtime that added each), and `denext desktop doctor [--linux]`
 lists what the session lacks, with fixes. `desktop.linux.requireSandbox: true` makes a Linux CEF app
 exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+).
@@ -697,8 +697,9 @@ your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/
 makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
 Native passkeys are macOS (needs the associated-domains entitlement: `desktop.macos: {
-provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
-passkey API, so `denext/desktop/clerk` signs in through the browser. On Linux a `.deb` / `.rpm` install
+provisioningProfile, entitlements }` signs it in with the profile) and Windows; Linux has no OS
+passkey API, so there USB security keys work natively under runtime 3.0.0-rc.1+ (libwebauthn beside
+the host) and `denext/desktop/clerk` signs in through the browser otherwise. On Linux a `.deb` / `.rpm` install
 (xdg-desktop-portal 1.19+, systemd user manager) posts scheduled notifications while the app is closed
 and a click starts it; an AppImage or tarball delivers only while the app runs. OS limits:
 https://denext.dev/docs/limitations

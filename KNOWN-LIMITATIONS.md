@@ -461,7 +461,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   sends the app a forged callback is refused: each sign-in's redirect carries a per-session
   `denext_nonce` the callback must bring back, so the forgery protection does not depend on Clerk
   binding its `rotating_token_nonce` to the client.
-- **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement
+- **Native passkeys:** on Linux (no OS API) only USB security keys, under runtime 3.0.0-rc.1+
+  (libwebauthn; no platform authenticator, the browser otherwise); macOS needs the
+  associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted

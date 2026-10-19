@@ -732,9 +732,14 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         passes the facts on: <code>appCapabilities()</code> reports <code>trayHost</code>,{" "}
         <code>trayReason</code>, <code>secretService</code>, <code>sessionType</code>,{" "}
         <code>cookieEncryption</code>, the CEF sandbox (<code>sandbox</code>,{" "}
-        <code>sandboxReason</code>) and the file chooser (<code>fileChooser</code>,{" "}
-        <code>fileChooserReason</code>), and <code>windowCapabilities()</code> reports{" "}
-        <code>sessionType</code> and{" "}
+        <code>sandboxReason</code>), the file chooser (<code>fileChooser</code>,{" "}
+        <code>fileChooserReason</code>), and, from runtime 3.0.0-rc.1, KWin&apos;s blur behind
+        windows (<code>windowBlur</code>: <code>"kwin-wayland"</code> / <code>"kwin-x11"</code>,
+        {" "}
+        <code>windowBlurReason</code>) and native passkeys with USB security keys (<code>
+          passkeys
+        </code>: <code>"security-keys"</code>, <code>passkeysReason</code>), and{" "}
+        <code>windowCapabilities()</code> reports <code>sessionType</code> and{" "}
         <code>cookieEncryption</code>. Under an older runtime each fact reads{" "}
         <code>"unknown"</code>. A missing feature rejects <code>unsupported</code>{" "}
         with the reason in <code>error.data.reason</code>, never silently.
@@ -1330,9 +1335,14 @@ export default {
           <code>passkeyFallback: "none"</code> turns that off.
         </li>
         <li>
-          Linux has no native passkeys: <code>capabilities()</code>{" "}
-          reports none, Clerk does not offer them, and the hosted browser sign-in is the way to use
-          one.
+          Linux has no OS passkey API. Under runtime 3.0.0-rc.1 and later the runtime signs in
+          natively with USB security keys (FIDO2 / U2F through libwebauthn, which ships beside the
+          host): <code>capabilities()</code> reports <code>securityKeys</code> (and{" "}
+          <code>appCapabilities().passkeys</code> <code>"security-keys"</code>, or <code>null</code>
+          {" "}
+          with the reason), and Clerk offers them. Otherwise (an older runtime, or a host without
+          the library) it reports none, Clerk does not offer them, and the hosted browser sign-in is
+          the way to use one.
         </li>
       </ul>
 

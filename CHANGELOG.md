@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **Linux window blur and native passkeys in `appCapabilities()`.** Under runtime 3.0.0-rc.1 and
+  later it reports two more facts the runtime probes on Linux: `windowBlur` (`"kwin-wayland"` /
+  `"kwin-x11"` when KWin blurs behind translucent windows, else `null` with `windowBlurReason`) and
+  `passkeys` (`"security-keys"` when passkeys with USB security keys work natively, through the
+  runtime's libwebauthn, else `null` with `passkeysReason`); an older runtime reads `"unknown"`.
+  The `passkeys` capability now reports `available` on Linux when the runtime has security keys,
+  so `denext/desktop/clerk` offers native passkeys there instead of always signing in through
+  the browser.
+
 - **iOS Local Network hint.** Until the user answers iOS's Local Network prompt, a request to a
   LAN host fails with "The Internet connection appears to be offline" (-1009), which reads like
   the phone being offline. When the OTA client (`checkForUiUpdate` / `prepareUiUpdate`) or a file
