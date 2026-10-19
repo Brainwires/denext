@@ -458,7 +458,8 @@ Both are top-level fields — shipped, complete capabilities, not experiments.
 
 - **`streaming`** — `boolean` (**on by default**; set `false` to opt out).
   Incremental Suspense streaming: a page with a pending boundary flushes its
-  shell first and streams each boundary as it resolves. Fully-synchronous pages
+  shell first and streams each boundary that suspended as it resolves (a boundary
+  whose content finished with the shell is written inline in it, as in React). Fully-synchronous pages
   stay buffered (and shared-cacheable); streamed responses keep the same strict
   CSP and survive a failing boundary.
 - **`live`** — `LiveConfig`. Security policy for Live Server Components
@@ -572,7 +573,9 @@ every `--platform` target included.
   ```
 - **`resolveAlias`** — `Record<string, string | { to: string; except?: string[] }>`. Module
   aliases for the esbuild bundles: an import of a key (matched exactly) resolves as its value, a
-  package, a package subpath or a `./` file of the project. The object form is
+  package, a package subpath, a `./` file of the project, or a `deno.json` import-map key
+  (`"preact": "denext/preact"`), which resolves as the app's own import of it would, including
+  for an import from inside an npm package. The object form is
   importer-sensitive: the packages in `except` keep the original module when THEIR files import
   the key, which a library that wraps the module it replaces needs (Metro's `resolveRequest`,
   Vite's `resolve.alias` with a custom resolver). Applied ahead of every other resolver in SPA
@@ -622,7 +625,7 @@ every `--platform` target included.
   plain file. `{ native: true }` also probes `.native` after the OS on iOS and Android; `false`
   turns platform files off. See [platform-specific files](/docs/platform-files).
 - **`reactNative`** — `boolean | { rootStyle?, expoShims?, lists?, aliases?,
-  desktopPackage? }` (off). Builds a React Native / Expo app's source for the
+  desktopPackage?, fonts?, uniwind?, unistyles? }` (off). Builds a React Native / Expo app's source for the
   web through `react-native-web`, in SPA mode or on the App Router (Server and
   client components; see [On the App Router](/docs/react-native#on-the-app-router)):
   `react-native` resolves to react-native-web (with denext's shell-backed
@@ -634,7 +637,13 @@ every `--platform` target included.
   LegendList's own list engines instead of `VirtualList` (default `"denext"`);
   `aliases: { "<package>": false }` restores one community package;
   `desktopPackage: "react-native-macos" | "react-native-windows"` builds the
-  app's own `react-native` imports as that desktop package. See
+  app's own `react-native` imports as that desktop package. `fonts: { family: file }` lists the
+  fonts the app embeds in its native binary (expo-font's config plugin `fonts`; a package subpath
+  or a `./` path): the SPA shell gets an `@font-face` for each and the files ship with the
+  client. `uniwind` (on when `uniwind` is installed; `false` turns it off, `{ extraThemes }` adds
+  themes beyond `light` and `dark`) builds uniwind's Tailwind classes as its Vite plugin does.
+  `unistyles` (on when `react-native-unistyles` is installed; `false` turns it off) builds a
+  Unistyles 3 app as its Babel plugin does. See
   [React Native / Expo apps](/docs/react-native#options).
 
 - **`compile`** — `{ include?, permissions?, sign? }`. For `denext build --compile` (the

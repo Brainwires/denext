@@ -599,9 +599,9 @@ Deployment targets, images and platform notes are in the [deployment guide](/doc
 
 ## Desktop
 
-`/desktop` sets up code signing for a packaged desktop build: macOS, Windows and Linux as three
-views of one panel (`?tab=`). It reads what your machine has and composes the command — it runs
-no build and writes no file.
+`/desktop` sets up code signing for a packaged desktop build and for a compiled server binary:
+macOS, Windows, Linux and Compiled binary as four tabs of one panel (`?tab=`). It reads what your
+machine has and composes the command — it runs no build and writes no file.
 
 The packaging scripts `denext create --desktop` writes (`scripts/package-*.ts`) have always been
 driven by `DENEXT_*` environment variables, and nothing told you what to put in them. A project
@@ -628,7 +628,16 @@ optional `.pkg` (`--format pkg`); an unsigned `.pkg` is rejected by MDM tools an
 **Linux.** Nothing to configure — packaging produces a `.tar.gz` and a `.deb` (an `.rpm` or an
 AppImage with `--format`) and there is no signing step.
 
-**One value this panel will never take.** Of the seven variables the scripts read, exactly one is a
+**Compiled binary.** The signing readiness of
+[`denext build --compile --sign`](/docs/deployment-targets#a-single-binary-with-denext-build---compile)
+(or a configured `compile.sign`): the macOS identity (`DENEXT_CODESIGN_IDENTITY`, checked against
+the keychain) and whether `codesign` is found, the notary credentials — a keychain profile
+(`DENEXT_NOTARY_PROFILE`) or an App Store Connect API key (`DENEXT_NOTARY_KEY`,
+`DENEXT_NOTARY_KEY_ID`, `DENEXT_NOTARY_ISSUER`) — and on Windows a `.pfx` (`DENEXT_WINDOWS_CERT`)
+or a store certificate's thumbprint (`DENEXT_WINDOWS_CERT_THUMBPRINT`), with whether `signtool` or
+`osslsigncode` is on `PATH`. No packaging script is needed: the build reads the variables itself.
+
+**One value this panel will never take.** Of the twelve variables the four tabs show, exactly one is a
 true secret: `DENEXT_WINDOWS_CERT_PASSWORD`. It has **no field** here, its value is never read —
 only whether it is set, via `Deno.env.has` — and it is absent from the JSON twin as well. The
 macOS identity and notary profile are _names_: the private key and the notary credentials stay in

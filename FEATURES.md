@@ -627,9 +627,18 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **fastlane, when a team ships with it** — `denext mobile add fastlane
   [--ci]` writes `fastlane/` (Appfile from `capacitor.config`, Matchfile and
   `ios` / `android` `build` · `beta` · `release` lanes over `denext mobile build
-  --release`), a pinned Gemfile and, with `--ci`, a GitHub Actions workflow;
-  `denext mobile doctor --release` checks it. Never required: `denext mobile
-  build` / `submit` stay the zero-setup path. — `src/build/mobile-fastlane.ts`.
+  --release`) and, with `--ci`, a GitHub Actions workflow; `denext mobile
+  doctor --release` checks it. The lanes run `denext fastlane`, a managed
+  fastlane (a pinned fastlane on a pinned portable Ruby, installed on first use
+  into the toolchain cache and checked against its pins; macOS and Linux;
+  `DENEXT_FASTLANE=<path>` runs another), so no Ruby setup is needed; a Gemfile
+  is only for fastlane plugins. Never required: `denext mobile build` /
+  `submit` stay the zero-setup path. — `src/build/mobile-fastlane.ts`,
+  `src/build/fastlane-toolchain.ts`.
+- **On-device profiling on Android** — `denext profile --android` reaches an
+  installed app's debuggable WebView over adb and the Chrome DevTools Protocol
+  and reports what the local profile does (CPU self-time, heap growth, the leak
+  check, budgets). — `src/profile/android.ts`.
 - **Dev-server attach (the Metro model)** — `denext mobile dev [--lan]` points
   the Capacitor app at `denext dev` for the session (config, iOS local-network
   Info.plist keys and the native config copies all restored on exit or with
@@ -751,8 +760,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   every importer, `.web.*` files win, `.js` parses as JSX, `__DEV__` / `global`
   / `EXPO_OS` are defined, the codegen / TurboModule entry points load as
   stand-ins, `Appearance.setColorScheme` is added, expo-router's route context is
-  generated from `app/`, and the shell gets Expo web's root style. —
-  `src/build/react-native.ts`.
+  generated from `app/`, and the shell gets Expo web's root style. Unistyles 3
+  works with no setup, Metro's `require.context` (literal arguments) is
+  generated at build, and `react-reconciler` renderers (React Native Skia,
+  react-three-fiber, react-konva) load on denext's `react`. —
+  `src/build/react-native.ts`, `src/build/react-native-unistyles.ts`,
+  `src/build/require-context.ts`.
 - **`denext/expo/*`** — 59 drop-in shims for `expo`, `expo-*` and `@expo/ui`
   modules (Expo SDK 58) over `denext/mobile` and web APIs (haptics,
   secure-store, file-system, sqlite, notifications, auth-session, web-browser,
@@ -847,6 +860,22 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
   (installed with `--ignore-scripts`) and, with `--platform ios,android`, the
   native projects; what it cannot know is listed for review.
   `denext codemod` runs just the import rewrite standalone.
+- **More sources** — a **Fresh** app (2.x or 1.x; `app/` + `middleware.ts`
+  generated around its `routes/`, islands kept, `denext/fresh` runtime), a
+  **Preact** app (SPA path; `preact` / `preact-iso` / `@preact/signals` mapped to
+  `denext/preact`, `denext/preact-iso`, `denext/signals`) and a **TanStack
+  Start** app (wired to `@denext/tanstack-start`, its options carried over);
+  `--from fresh|preact|tanstack-start` forces each. —
+  `src/build/migrate-fresh.ts`, `src/build/migrate-preact.ts`,
+  `src/build/migrate-tanstack-start.ts`.
+- **`denext/signals`** — Preact Signals' API (`signal`, `computed`, `effect`,
+  `useSignal`, `Show`, `For`, …) on denext's renderer, in any app; a signal a
+  Server Component passes to a client component arrives live. —
+  `src/compat/preact/signals.ts`.
+- **`next-auth` (Auth.js v5 / NextAuth.js v4)** — `NextAuth()`, `next-auth/react`,
+  `next-auth/jwt`, the adapters and 101 `next-auth/providers/*` modules (every
+  Auth.js provider but three, the OAuth / OIDC ones generated from `@auth/core`)
+  run on `denextAuth`, passkeys included. — `src/compat/next-auth/`.
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole
   app runs on **one** React; the RSC/Flight island boundary is preserved.
 - **Tolerant `node_modules` resolver** (`nodeResolve`, default on
@@ -1176,8 +1205,10 @@ cache uses Deno's built-in `node:sqlite`.)
   build, `.denext/`, `public/`, `jobs/`, `services/`, `functions/`, migrations and
   `compile.include` paths embedded behind `deno compile`, serving like `denext start`
   (`./app job <name>`, `./app db migrate`), with the Docker image's least-privilege flags baked
-  in; cross-compiles to every `deno compile` target. — `src/build/compile-app.ts`,
-  `src/standalone/`.
+  in; cross-compiles to every `deno compile` target. `--sign` (or `compile.sign`) code-signs it:
+  `codesign` + notarization on macOS, Authenticode (`signtool`, or `osslsigncode` from macOS and
+  Linux) for Windows, credentials from the environment only. — `src/build/compile-app.ts`,
+  `src/build/compile-sign.ts`, `src/standalone/`.
 - **Shutdown**: SIGTERM drains in-flight requests, stops `services/`, runs the plugin
   teardowns and `instrumentation.ts`'s `onShutdown()`, and exits by `DENEXT_SHUTDOWN_DRAIN_MS`
   even when an app-owned handle (a pool, a timer) stays open.
@@ -1534,9 +1565,11 @@ default").
 
 ### 2.3 Server render / caching
 
-- **Streaming SSR (Suspense)** **[default]** — flushes the shell + per-boundary
-  fallbacks first, then streams each resolved boundary as a `<template>`
-  revealed by a single hashed swap-runtime script. **On by default** (a route
+- **Streaming SSR (Suspense)** **[default]** — decides each boundary when the
+  shell is written, as React does: one whose content finished by then is written
+  inline between `<!--$-->` / `<!--/$-->`; one that suspended flushes its
+  fallback with the shell, then streams as a `<template>` revealed by a single
+  hashed swap-runtime script. **On by default** (a route
   with pending Suspense holes streams; a hole-less route buffers for
   cache-friendliness), carrying the same strict hash-based CSP as buffered
   responses, and works on `"use client"` (Flight) routes via the dual

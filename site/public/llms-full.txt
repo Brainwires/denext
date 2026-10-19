@@ -37,7 +37,10 @@ emit correct denext instead of Next.js.
    `@preact/preset-vite`, preact-cli, WMR or esbuild) takes the SPA path with the same Preact
    layer (`preact` → `denext/preact`, `@preact/signals` → `denext/signals`, through `resolveAlias`
    for npm packages too); preact-iso maps to `denext/preact-iso`, and preact-router /
-   wouter-preact keep running on the aliases.
+   wouter-preact keep running on the aliases. Guides: https://denext.dev/docs/migrating-fresh,
+   https://denext.dev/docs/migrating-preact, https://denext.dev/docs/tanstack-start;
+   `denext/signals` (Preact Signals' API, usable in any app, not the resumability `useSignal`
+   from `denext`): https://denext.dev/docs/signals.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
@@ -182,6 +185,13 @@ export function User({ id }: { id: string }) {
 A call with a custom header goes alone unless both sides forward it (`apiBatch: { forwardHeaders:
 ["x-tenant"] }` + `createApiClient({ batch: { forwardHeaders: ["x-tenant"] } })`, each item its own
 value; never `cookie` / `authorization` / proxy headers).
+
+A `createApiClient()` / `useApi` call made during a render runs the route in-process under the
+visitor's cookie and authorization. If the handler (or `middleware.ts` on that call) reads them —
+`request.headers`, a `NextRequest`'s `cookies`, `cookies()` / `headers()` — the calling page is
+per-visitor: an ISR render is not stored, and a Cache Components shell makes the enclosing
+`<Suspense>` a per-request hole. Keep handlers a cached page calls free of visitor reads, or put
+per-user calls under their own `<Suspense>`: https://denext.dev/docs/data#per-visitor-api-reads.
 
 Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
 definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
@@ -342,7 +352,10 @@ window the same provider signs in via `installClerkDesktopBridge({ nativeClerk: 
 and every `next-auth/providers/*` module but 3 run unchanged on `denextAuth` (the OAuth / OIDC
 ones generated from `@auth/core` by `deno task gen:auth-providers`); `next-auth/providers/passkey`
 turns on denext's passkeys and `signIn("passkey")` / `signIn("passkey", { action: "register" })`
-from `next-auth/webauthn` drive them. Set `AUTH_URL`. See https://denext.dev/docs/auth.
+from `next-auth/webauthn` drive them (through an Auth.js adapter the ceremony's challenge lives in
+`cache.store`, so a shared store needs no sticky sessions). A provider's `checks` decide PKCE and
+the OIDC `nonce`, as in Auth.js (`Reddit({ checks: ["state"] })`). Set `AUTH_URL`. See
+https://denext.dev/docs/auth.
 
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
@@ -452,7 +465,8 @@ WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fall
 videos)/`pickDocument`/`scanBarcode` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
 app's own `@sqlite.org/sqlite-wasm` on OPFS on the web; `encryptionKey` / `PRAGMA key` is SQLCipher
-in the shell and refused on the web) and `showContextMenu` /
+in the shell and refused on the web; syncing it with a server or PowerSync:
+https://denext.dev/docs/powersync) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
 Deno Desktop included); `denext mobile add <capability...> [--dry-run] [--list]`
@@ -523,13 +537,16 @@ placeholder icon), `denext mobile build ios|android [--release] [--flavor <name>
 ios|android [--dry-run]` (App Store Connect / Google Play). Teams already on fastlane keep it:
 `denext mobile add fastlane [--ci]` writes `fastlane/` (Appfile from capacitor.config, Matchfile,
 `ios|android build|beta|release` lanes that run `denext mobile build --release` and hand the
-artifact to match / TestFlight / Play tracks; `flavor:` / `build_number:` pass through), a pinned
-Gemfile and, with `--ci`, a GitHub Actions workflow; `denext mobile doctor --release` checks it.
+artifact to match / TestFlight / Play tracks; `flavor:` / `build_number:` pass through) and, with
+`--ci`, a GitHub Actions workflow; `denext mobile doctor --release` checks it.
 Run the lanes with `denext fastlane ios beta` (`denext create --fastlane` scaffolds them): denext's
 managed fastlane, a pinned fastlane on a pinned portable Ruby installed on first use into the
 toolchain cache (SHA-256-verified Ruby, checksum-locked gems; needs a C compiler once; macOS and
 Linux, not Windows; `toolchain install --with fastlane`, `DENEXT_FASTLANE=<path>` overrides it;
-plugins need the Gemfile and `bundle exec`).
+plugins need a Gemfile and `bundle exec`).
+Profile the installed app on an Android device: `denext profile --android [--package <appId>]
+[--device <serial>]` reaches its debuggable WebView over adb and reports CPU, heap and leaks like
+the local `denext profile` (https://denext.dev/docs/profile).
 Credentials are env-only. App backend:
 `cors` in config, `denextAuth({ native })` sessions, `createApiClient({ base, auth:
 nativeSession(…) })`, `sendPush` from `denext/server`. Docs: https://denext.dev/docs/mobile,
@@ -759,7 +776,13 @@ suggests them).
 `denext dev` hot-swaps an edited component with its state kept (Fast Refresh); a top-level
 `requireNativeModule` loads off-device and throws only when called. Native-only SDKs
 (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`) have no alias:
-https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-native
+https://denext.dev/docs/native-sdk-recipes. Unistyles 3 needs no setup (its wrapped components and
+`useVariants`; `reactNative: { unistyles: false }` turns it off), Tamagui runs on its runtime
+styles, and Metro's `require.context` with literal arguments is generated at build. Renderers built
+on `react-reconciler` load (React Native Skia's `<Canvas>`, react-three-fiber, react-konva; no
+context crosses into them): Skia imports CanvasKit's wasm with `?url`, and under a CSP needs
+`'wasm-unsafe-eval'` in `scriptSrc` (React Native mode also needs `'unsafe-inline'` in `styleSrc`).
+Docs: https://denext.dev/docs/react-native
 
 **File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
 s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
@@ -1109,7 +1132,13 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
   runs it on the toolchain (with no toolchain and no `deno` it refuses, naming
   `denext toolchain install`), and the installer runs `toolchain install` (+ `toolchain link`
-  when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it).
+  when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
+  native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6; an absolute `file:` import
+  doesn't resolve under it yet), and in a `package.json` project without a `deno.json` it runs npm
+  packages as Node.js does (hoisted `node_modules`, Node's export conditions, extensionless and
+  `tsconfig` `paths` imports, git / tarball dependencies, the project's own lifecycle scripts);
+  everywhere it runs a CommonJS `.js` file as CommonJS and serves `better-sqlite3` over the built-in
+  SQLite: https://denext.dev/docs/toolchain.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's

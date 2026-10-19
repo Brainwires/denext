@@ -8,6 +8,24 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs for 4.4.0's features, audited and filled in.** New guides:
+  [Migrating from Fresh](https://denext.dev/docs/migrating-fresh),
+  [Migrating from Preact](https://denext.dev/docs/migrating-preact),
+  [TanStack Start](https://denext.dev/docs/tanstack-start) and
+  [Preact Signals](https://denext.dev/docs/signals). Data & caching documents `cachedFetch`,
+  `unstable_cache`'s refusals and nesting rules, and when an in-process API call makes a page
+  per-visitor (also on Typed API, Middleware, Security and in AGENTS.md); its invalidation example
+  now tags its entry. The toolchain page covers native TypeScript 7 checking, npm packages run as
+  on Node.js and Windows as a dev host; the mobile page gives `downloadToFile`'s real fallback
+  order and the transfer options, results and errors; Auth documents the native `OAuthProvider`
+  fields (`checks`, `tokenRequestParams`, `userinfoRequest`, `idTokenAlg`) with exported names
+  only. Stale statements fixed: the streaming model in FEATURES and the architecture page, the
+  provider count, the `windows-tests` CI coverage, the project UI's Desktop tabs and the fastlane
+  Gemfile.
+- **`denext migrate --help` names TanStack Start and React Router** among the sources it moves.
+
 ## [4.4.0] - 2026-10-19
 
 ### Added

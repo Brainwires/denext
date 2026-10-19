@@ -47,6 +47,17 @@ export default defineJob({
         <code>defineJob</code>{" "}
         throws early, so a bad schedule is caught at import, never silently ignored.
       </p>
+      <p>
+        Every module under <code>jobs/</code>{" "}
+        is found, at any depth, and named by its path without the extension:{" "}
+        <code>jobs/reports/daily.ts</code> is the job{" "}
+        <code>reports/daily</code>. An entry whose path <em>below</em> <code>jobs/</code>{" "}
+        has a segment starting with <code>_</code> or <code>.</code>{" "}
+        is skipped (<code>_shared/</code>, <code>_helper.ts</code>,{" "}
+        <code>.cache/</code>), so helpers can live beside the jobs. Directories above{" "}
+        <code>jobs/</code> never count: a project checked out under a <code>.apps/</code> or{" "}
+        <code>_work/</code> directory keeps its jobs.
+      </p>
 
       <h2>Schedule jobs</h2>
       <p>

@@ -212,8 +212,10 @@ ctx.servesRoutes?.(); // optional chaining: still runs on a denext from before i
 
 `ctx.addDeployRoutes?.(source)` contributes the routes a plugin serves to the deploy manifest
 (`.denext/deploy-manifest.json`), so a [deploy adapter](/docs/deploy#deploy-adapters) sees them:
-`source` returns `DeployRoute`s (`{ path, kind, source, reason?, methods? }`, the type from
-`denext/plugin-kit`), called when the manifest is collected (after `denext build`, and by
+`source` (a `PluginDeployRoutes`) returns `DeployRoute`s (`{ path, kind, source, reason?,
+revalidate?, methods?, matcher?, metadata? }`, the types from `denext/plugin-kit`: `revalidate` an
+`"isr"` route's period in seconds, `matcher` the middleware's literal `config.matcher` patterns,
+`metadata` a metadata route such as `sitemap.ts`), called when the manifest is collected (after `denext build`, and by
 `denext deploy`) and sorted in with the App Router's. A page `denext export` writes is `"static"`,
 one rendered per request `"dynamic"`, an endpoint `"route-handler"`; the `static` preset refuses
 everything but `"static"`. `@denext/tanstack-start` lists its pages, server routes and server
@@ -232,7 +234,7 @@ ctx.addDeployRoutes?.(async () => [
 ```
 
 `ctx.addDeployAssets?.(source)` does the same for the files a plugin serves as they are: `source`
-returns `DeployAssetGroup`s (`{ urlPrefix, dir, cacheControl, immutable, files }`, `dir` and
+(a `PluginDeployAssets`) returns `DeployAssetGroup`s (`{ urlPrefix, dir, cacheControl, immutable, files }`, `dir` and
 `files` project-relative), appended to the manifest's `assets` after denext's own; a group with
 no files is left out. `immutable` says the names are content-hashed, so a CDN may cache them
 forever. `@denext/tanstack-start` lists its `/_tss/` client files: `client.js` with `no-cache`, the

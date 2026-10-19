@@ -99,6 +99,20 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   and the route assertions are real failures. Bump a bed's SHA
   deliberately and say why in the commit (the pin comment names what the newer
   upstream needs).
+- **Running the suites on Windows: keep the temp directory on the checkout's drive.** The tests
+  write temp projects that import this checkout, and Deno 2.9 resolves a config's `file:` targets
+  on another drive as `file:///C:/D:/…`, so with the checkout on `D:` and `%TEMP%` on `C:` they
+  fail in Deno, not in denext. Point `TEMP` and `TMP` at a directory on the checkout's drive first,
+  as ci.yml's `windows-tests` job does:
+
+  ```powershell
+  New-Item -ItemType Directory -Force D:\tmp | Out-Null
+  $env:TEMP = 'D:\tmp'; $env:TMP = 'D:\tmp'
+  deno task test:unit
+  deno task test:integration
+  ```
+
+  Use a path without 8.3 short names (`C:\Users\RUNNER~1\…` is one).
 
 **What CI runs on a push.** GitHub runs at most 20 of the account's jobs at once (5 of them
 macOS), so a push runs only what it needs. A push to `development` runs ci.yml's fast jobs

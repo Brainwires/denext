@@ -756,7 +756,8 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
   return {
     name: "migrate",
     summary:
-      "Migrate a Next.js, Remix, Vite, CRA, Expo, Fresh, Preact, or React app (config files)",
+      "Migrate a Next.js, Remix, React Router, TanStack Start, Vite, CRA, Expo, Fresh, Preact, " +
+      "or React app (config files)",
     positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
     flags: [
       {

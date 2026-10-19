@@ -157,7 +157,7 @@ const PILLARS: Pillar[] = [
       {
         title: "Bring your app in one pass",
         body:
-          "denext migrate converts a Next.js (App or Pages Router), Remix / React Router, Expo or Vite app and keeps your source intact: a deno.json alias map resolves react and next/* to denext.",
+          "denext migrate converts a Next.js (App or Pages Router), Remix / React Router, TanStack Start, Fresh, Preact, Expo or Vite app and keeps your source intact: a deno.json alias map resolves react, next/* and preact to denext.",
       },
       {
         title: "React Native and Expo code",

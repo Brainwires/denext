@@ -60,6 +60,7 @@ generated — every other row above appears only when you add the feature.
 > [!NOTE]
 > `.denext/` and `out/` are generated, so keep them out of version control.
 > `denext create` writes a `.gitignore` that already covers them (along with
-> `.env*.local`, `*.local` and `patches/.work/`), and
+> `.deno/`, the project cache of Deno's native TypeScript 7 check and the tsgo
+> language server, `.env*.local`, `*.local` and `patches/.work/`), and
 > [`denext migrate`](/docs/migrating) appends the missing lines to an existing
 > one rather than reordering your entries.

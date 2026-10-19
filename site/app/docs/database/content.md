@@ -240,8 +240,37 @@ two ORMs need slightly different mechanisms because of how they depend on it.
 On denext's Deno toolchain (2.9.7-denext.22 and later) there is a shorter path:
 the runtime serves the real `better-sqlite3` package's API over the same
 built-in SQLite engine, so a `better-sqlite3` dependency (no `--allow-scripts`,
-no addon build) is enough for Drizzle, Knex and Kysely. The shim below is for
-stock Deno, or with `DENO_NO_BETTER_SQLITE3_COMPAT=1`.
+no addon build) is enough for Drizzle, Knex and Kysely. This runs as is under
+`denext dev` / `denext start`:
+
+```jsonc
+// deno.json
+{
+  "imports": {
+    "better-sqlite3": "npm:better-sqlite3@^12",
+    "kysely": "npm:kysely@^0.28"
+  }
+}
+```
+
+```ts
+// lib/db.ts
+import Database from "better-sqlite3";
+import { Kysely, SqliteDialect } from "kysely";
+
+interface DB {
+  notes: { id: number; body: string };
+}
+export const db = new Kysely<DB>({
+  dialect: new SqliteDialect({ database: new Database(Deno.env.get("DB_PATH") ?? "app.db") }),
+});
+// Knex: knex({ client: "better-sqlite3", connection: { filename: "app.db" }, useNullAsDefault: true })
+```
+
+Deno may note that it ignored `better-sqlite3`'s build script; that is expected, since
+the addon it would build is never loaded. `DENO_NO_BETTER_SQLITE3_COMPAT=1` turns
+this off and loads the package's own code (which then needs its native addon). The
+shim recipes below are for stock Deno only.
 
 ### Drizzle (verified — full app + e2e)
 
@@ -362,7 +391,7 @@ compat surface Prisma drives — `bind()`, `reader`, `columns()`, `safeIntegers(
 `prisma` CLI) + a manual `node_modules`, the e2e is opt-in rather than in denext
 CI.
 
-### Prisma on Postgres or MySQL
+### Prisma on Postgres, MySQL or CockroachDB
 
 A `postgresql` (or `postgres`) or `mysql` datasource takes the same Rust-free
 client with that database's own driver adapter: `@prisma/adapter-pg` over the

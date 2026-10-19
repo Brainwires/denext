@@ -6,17 +6,18 @@ lead: One denext process is self-contained by default — its cache, sessions, r
 
 ## The short version
 
-| Component                              | Default                                                               | Across two instances                                                               | Make it shared with                                                                  |
-| -------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Data + ISR page cache                  | `node:sqlite` file, `.denext/cache.db` (memory if unwritable)         | `revalidateTag` on A does **not** purge B; each node renders and caches on its own | `cache.store` → `redisCacheStore()` / `denoKvCacheStore()` / `postgresCacheStore()`  |
-| Auth sessions (`strategy: "database"`) | none until you choose (`inMemorySessionStore` / `sqliteSessionStore`) | a session created on A is unknown to B; a revoke on A does not reach B             | `sessionStore` → `redisSessionStore()` / `denoKvSessionStore()` / `postgres…`        |
-| Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → `redisRateLimitStore()` / `denoKvRateLimitStore()` / `postgres…`           |
-| Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → `postgresAuthAdapter()` / `backendAuthAdapter()` or your `AuthAdapter`   |
-| Live channels + tag pushes             | in-memory loopback transport                                          | a `publish` on A reaches A's sockets only                                          | `setChannelTransport(t)` → `redisChannelTransport()` / `broadcastChannelTransport()` |
-| Parked live views                      | `memoryLiveViewStore()` per process                                   | a reconnect that lands on B runs the view's `init` again                           | `setLiveViewStore(s)` → `redisLiveViewStore()` / `postgresLiveViewStore()`           |
-| Scheduled jobs (userland)              | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                              |
-| Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | `jobs: { history: { store: postgresJobHistoryStore() } }` or your `JobHistoryStore`  |
-| Connection and concurrency caps        | per process (`maxConcurrency`, `live.limits`, `@denext/graphql`)      | each cap is multiplied by the replica count                                        | (per process by design; size each to one instance, and cap the total at the edge)    |
+| Component                              | Default                                                               | Across two instances                                                               | Make it shared with                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Data + ISR page cache                  | `node:sqlite` file, `.denext/cache.db` (memory if unwritable)         | `revalidateTag` on A does **not** purge B; each node renders and caches on its own | `cache.store` → `redisCacheStore()` / `denoKvCacheStore()` / `postgresCacheStore()`         |
+| Auth sessions (`strategy: "database"`) | none until you choose (`inMemorySessionStore` / `sqliteSessionStore`) | a session created on A is unknown to B; a revoke on A does not reach B             | `sessionStore` → `redisSessionStore()` / `denoKvSessionStore()` / `postgres…`               |
+| Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → `redisRateLimitStore()` / `denoKvRateLimitStore()` / `postgres…`                  |
+| next-auth passkey challenge            | the cache store's `takeData`, else the instance's memory              | a ceremony begun on A finishes on A only, unless the store is shared               | `cache.store` → a store with `takeData` (SQLite file on one host, Postgres, Redis, Deno KV) |
+| Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → `postgresAuthAdapter()` / `backendAuthAdapter()` or your `AuthAdapter`          |
+| Live channels + tag pushes             | in-memory loopback transport                                          | a `publish` on A reaches A's sockets only                                          | `setChannelTransport(t)` → `redisChannelTransport()` / `broadcastChannelTransport()`        |
+| Parked live views                      | `memoryLiveViewStore()` per process                                   | a reconnect that lands on B runs the view's `init` again                           | `setLiveViewStore(s)` → `redisLiveViewStore()` / `postgresLiveViewStore()`                  |
+| Scheduled jobs (userland)              | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                                     |
+| Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | `jobs: { history: { store: postgresJobHistoryStore() } }` or your `JobHistoryStore`         |
+| Connection and concurrency caps        | per process (`maxConcurrency`, `live.limits`, `@denext/graphql`)      | each cap is multiplied by the replica count                                        | (per process by design; size each to one instance, and cap the total at the edge)           |
 
 Signed-cookie sessions (`getSession()` and auth's default `strategy: "cookie"`)
 are the one thing on the list that is already replica-safe: the whole payload is
@@ -145,7 +146,9 @@ instead of stale-while-revalidate. `takeData` reads and deletes one data entry a
 of racing callers on any instance, exactly one gets it — for single-use records: the `next-auth`
 shim keeps a passkey ceremony's challenge there when the app uses an Auth.js adapter, so a
 ceremony begun on one instance finishes on another. The SQLite, Postgres, Redis and Deno KV
-stores implement it; the in-memory one doesn't (those challenges stay in the instance's memory).
+stores implement it; the in-memory one doesn't (those challenges stay in the instance's memory),
+and neither does a custom store that leaves out the optional `takeData`: the shim falls back to
+the instance's memory there too, so a ceremony must finish on the instance that began it.
 
 ```ts
 // denext.config.ts
@@ -153,6 +156,27 @@ import { postgresCacheStore } from "denext/server";
 export default { cache: { store: postgresCacheStore({ url: Deno.env.get("DATABASE_URL") }) } };
 // or redisCacheStore({ url: Deno.env.get("REDIS_URL") }), denoKvCacheStore(), or your own
 ```
+
+### `sqliteCacheStore`
+
+The default durable store is also exported from `denext/server`, for a single node that wants it
+at another path or with other bounds:
+
+```ts
+// denext.config.ts
+import { sqliteCacheStore } from "denext/server";
+export default {
+  cache: { store: sqliteCacheStore({ path: "/var/lib/app/cache.db", maxPageEntries: 5000 }) },
+};
+```
+
+Its options: `path` (default `.denext/cache.db`), `maxDataEntries` and `maxPageEntries` (rows
+kept in each table before the oldest are evicted, default 1000 each) and `sweepIntervalMs` (the
+least time between sweeps of hard-expired rows, default 30000; `0` sweeps on every write).
+`close()` closes the database handle, and the next call opens it again, so the file can be moved
+or removed. `denext dev` and `denext start` close the default durable store themselves once the
+server has drained; a store the app passes as `cache.store` is left to the app. The Postgres and
+Redis stores' `close()` closes only a client they opened from a `url`, never one passed in.
 
 ### Page keys and builds
 
