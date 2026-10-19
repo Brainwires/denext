@@ -33,7 +33,11 @@ emit correct denext instead of Next.js.
    `islands/`: migrate generates `app/` + `middleware.ts` around them (`denext/fresh/server` runs
    the handlers, middleware and layouts as Fresh does), marks islands `"use client"`, moves
    `static/` to `public/` and maps `fresh`, `preact` and `@preact/signals` to denext
-   (`denext/fresh`, `denext/signals`) in its `deno.json`.
+   (`denext/fresh`, `denext/signals`) in its `deno.json`. A **Preact** app (Vite's
+   `@preact/preset-vite`, preact-cli, WMR or esbuild) takes the SPA path with the same Preact
+   layer (`preact` → `denext/preact`, `@preact/signals` → `denext/signals`, through `resolveAlias`
+   for npm packages too); preact-iso maps to `denext/preact-iso`, and preact-router /
+   wouter-preact keep running on the aliases.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform

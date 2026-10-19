@@ -18,6 +18,7 @@
 import { basename, dirname, extname, join } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { exists } from "./migrate-fs.ts";
+import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
 import { mfs } from "./migrate-io.ts";
 import {
   appFolder,
@@ -663,6 +664,7 @@ interface SourceRule {
 }
 
 const SOURCE_RULES: SourceRule[] = [
+  ...PREACT_SOURCE_RULES,
   {
     re: /<Partial\b|\bf-client-nav\b|\bf-partial\b/,
     item: "Fresh Partials",
@@ -688,13 +690,6 @@ const SOURCE_RULES: SourceRule[] = [
       "every deploy target; denext's Live channels (denext/live) are the portable alternative",
   },
   {
-    re: /\buseErrorBoundary\b/,
-    item: "useErrorBoundary",
-    wont: true,
-    reason: "Preact's useErrorBoundary never sees an error on denext; catch with " +
-      "<ErrorBoundary> from denext (or an error.tsx) instead",
-  },
-  {
     re: /\bimport\.meta\b[^;\n]{0,24}\.env\b/,
     item: "import.meta.env",
     reason: "Vite's import.meta.env is not defined on denext's server; read Deno.env (server) " +
@@ -712,24 +707,6 @@ const SOURCE_RULES: SourceRule[] = [
     item: "Deno.env in an island",
     reason: "an island runs in the browser, where Deno.env is undefined; pass the value as a " +
       "prop, or use publicEnv() from denext",
-  },
-  {
-    re: /["']preact-render-to-string["']/,
-    item: "preact-render-to-string",
-    wont: true,
-    reason: "not mapped; render with renderToString from denext/react-dom/server",
-  },
-  {
-    re: /\buseSignalRef\b|\bcreateModel\b/,
-    item: "@preact/signals extras",
-    wont: true,
-    reason: "useSignalRef / createModel are not in denext/signals",
-  },
-  {
-    re: /import\s*\{[^}]*\boptions\b[^}]*\}\s*from\s*["']preact["']/,
-    item: "preact options hooks",
-    wont: true,
-    reason: "denext's renderer does not call Preact's `options` hooks",
   },
   {
     re: /\bcsp\s*\(/,
@@ -787,15 +764,11 @@ async function scanFindings(plan: Plan, islands: Set<string>, files: string[]): 
 
 // ── deno.json ────────────────────────────────────────────────────────────────
 
-/** Fresh's and Vite's own packages: dropped from the import map (denext replaces them). */
+/** Fresh's and Vite's own packages (Preact's: `isPreactPackage`): dropped from the import map. */
 const DROPPED_IMPORTS = [
   /^fresh(?:\/|$)/,
   /^@fresh\//,
   /^\$fresh\//,
-  /^preact(?:\/|$)/,
-  /^preact-render-to-string(?:\/|$)/,
-  /^@preact\/signals(?:-core)?(?:\/|$)/,
-  /^@prefresh\//,
   /^vite(?:\/|$)/,
   /^@tailwindcss\/vite$/,
   /^@types\/babel__core$/,
@@ -803,7 +776,9 @@ const DROPPED_IMPORTS = [
 
 /** The import-map keys of a Fresh app that point at Fresh / Preact / Vite (removed by the merge). */
 export function droppedFreshImports(imports: Record<string, string>): string[] {
-  return Object.keys(imports).filter((k) => DROPPED_IMPORTS.some((re) => re.test(k)));
+  return Object.keys(imports).filter((k) =>
+    isPreactPackage(k) || DROPPED_IMPORTS.some((re) => re.test(k))
+  );
 }
 
 /**
@@ -818,21 +793,13 @@ export function freshAliasImports(sub: (s: string) => string): Record<string, st
     "denext/fresh": sub("fresh"),
     "denext/fresh/runtime": sub("fresh/runtime"),
     "denext/fresh/server": sub("fresh/server"),
-    "denext/signals": sub("signals"),
     "fresh": sub("fresh"),
     "fresh/runtime": sub("fresh/runtime"),
     "@fresh/core": sub("fresh"),
     "@fresh/core/runtime": sub("fresh/runtime"),
     "$fresh/server.ts": sub("fresh"),
     "$fresh/runtime.ts": sub("fresh/runtime"),
-    "preact": sub("preact"),
-    "preact/hooks": sub("preact/hooks"),
-    "preact/compat": sub("preact/compat"),
-    "preact/jsx-runtime": sub("preact/jsx-runtime"),
-    "preact/jsx-dev-runtime": sub("preact/jsx-runtime"),
-    "@preact/signals": sub("signals"),
-    "@preact/signals/utils": sub("signals"),
-    "@preact/signals-core": sub("signals"),
+    ...preactAliasImports(sub),
   };
 }
 

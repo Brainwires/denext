@@ -25,7 +25,8 @@ export type MigrateSource =
   | "generic-react"
   | "expo"
   | "tanstack-start"
-  | "fresh";
+  | "fresh"
+  | "preact";
 
 /** Something the migration leaves to the user, with the reason. */
 export interface MigrateFinding {
@@ -300,9 +301,12 @@ function tanstackStartFindings(r: MigrateResult): MigrateFinding[] {
   ];
 }
 
-/** What a Fresh app leaves to the user (the transform's findings). */
+/** What a Fresh or Preact app leaves to the user (the migration's findings). */
 function freshFindings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
-  return { wont: r.fresh?.wontMigrate ?? [], review: r.fresh?.review ?? [] };
+  return {
+    wont: [...r.fresh?.wontMigrate ?? [], ...r.preact?.wontMigrate ?? []],
+    review: [...r.fresh?.review ?? [], ...r.preact?.review ?? []],
+  };
 }
 
 /** A desktop proxy whose prefixes migrate could not read (built in code in vite.config). */

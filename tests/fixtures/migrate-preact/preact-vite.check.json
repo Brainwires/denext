@@ -1,0 +1,66 @@
+{
+  "schema": "denext.migrate-check/1",
+  "command": "denext migrate --denext-local-path <repo>/",
+  "source": "preact",
+  "verdict": "review",
+  "changes": [
+    {
+      "path": ".gitignore",
+      "action": "create"
+    },
+    {
+      "path": ".vscode/extensions.json",
+      "action": "create"
+    },
+    {
+      "path": ".vscode/settings.json",
+      "action": "create"
+    },
+    {
+      "path": "denext.config.ts",
+      "action": "create"
+    },
+    {
+      "path": "deno.json",
+      "action": "create"
+    }
+  ],
+  "wontMigrate": [
+    {
+      "item": "useErrorBoundary",
+      "reason": "Preact's useErrorBoundary never sees an error on denext; catch with <ErrorBoundary> from denext (or an error.tsx) instead (src/index.jsx)"
+    }
+  ],
+  "review": [
+    {
+      "item": "wouter-preact",
+      "reason": "keeps running as it is, on the denext/preact aliases (resolveAlias): its links and route() navigate on the client as before; check the navigation and redirects"
+    },
+    {
+      "item": "vite.config.js: preact({ prerender })",
+      "reason": "denext's SPA mode does not prerender pages; the app renders in the browser. For HTML at build time, move the pages to denext's App Router and `denext export`"
+    }
+  ],
+  "appIcon": {
+    "icon": null,
+    "kind": null,
+    "lines": [
+      "icon source: none found (no mobile.icon, Expo icon, manifest icon, apple-touch-icon or PNG favicon)"
+    ]
+  },
+  "dependencies": {
+    "aliased": [
+      "preact",
+      "preact-iso",
+      "@preact/signals"
+    ],
+    "passthrough": [
+      "wouter-preact"
+    ],
+    "dropped": [
+      "@preact/preset-vite",
+      "vite"
+    ],
+    "flagged": []
+  }
+}

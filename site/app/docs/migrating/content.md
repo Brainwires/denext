@@ -322,6 +322,33 @@ What does not migrate is listed by `denext migrate --check`:
 | Preact's `useErrorBoundary`, `options` hooks, `preact-render-to-string`                  | Catch with `<ErrorBoundary>` from denext; render with `denext/react-dom/server`.                                                 |
 | `ctx.upgrade()` (WebSockets)                                                             | Works under `denext start` / `dev`; denext's Live channels are the portable alternative.                                         |
 
+### Preact
+
+A **Preact** app — Vite with `@preact/preset-vite` (what `npm create preact` makes), preact-cli,
+WMR, or esbuild compiling JSX for Preact, with `preact` in `package.json` — takes the SPA path
+(`mode: "spa"`); pass `--from preact` to force it. Preact's packages point at denext, in
+`deno.json` and, for npm packages that import them, through `resolveAlias` in
+`denext.config.ts`: `preact` → `denext/preact` (`h`, `render`, `Component`,
+`createContext`, `toChildArray`, …), `preact/hooks`, `preact/compat`, the JSX runtime, and
+`@preact/signals` / `@preact/signals-core` → `denext/signals` (the same Preact Signals API the
+Fresh path uses). Your source is not rewritten: `class`, `onInput` and `render(<App />, root)`
+work as written, and JSX compiles with Preact's runtime (`jsxImportSource: "preact"` →
+`denext/preact/jsx-runtime`), so a signal passed as a DOM prop stays bound.
+
+Routers:
+
+- **preact-iso** maps to `denext/preact-iso`, which implements its contract on denext:
+  `LocationProvider` (same-origin link clicks and back / forward navigate on the client),
+  `Router`, `Route`, `useLocation`, `useRoute`, `lazy`, `ErrorBoundary`, `hydrate`, `prerender`
+  and `locationStub`. While a `lazy()` route loads, the router shows nothing in its place
+  (preact-iso keeps the previous route).
+- **preact-router** and **wouter-preact** keep running as they are, on the Preact aliases; they
+  are listed for review.
+
+`denext migrate --check` reports `source: "preact"` with what does not migrate: preset-vite's
+`prerender` (denext's SPA mode renders in the browser), preact-cli's `preact.config.js`, WMR
+plugins, `useErrorBoundary`, Preact's `options` hooks and `preact-render-to-string`.
+
 ---
 
 ## 3c. Adding an iOS / Android target (`--enable-capacitor`)

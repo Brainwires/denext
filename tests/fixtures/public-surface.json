@@ -6135,6 +6135,27 @@
     "jsxDEV:function",
     "jsxs:function"
   ],
+  "denext/preact-iso": [
+    "ErrorBoundary:function",
+    "ErrorBoundaryProps:interface",
+    "LazyComponent:typeAlias",
+    "LocationHook:interface",
+    "LocationProvider:variable",
+    "LocationProviderProps:interface",
+    "MatchProps:interface",
+    "Route:function",
+    "RouteHook:interface",
+    "RouteProps:interface",
+    "Router:function",
+    "RouterProps:interface",
+    "exec:function",
+    "hydrate:function",
+    "lazy:function",
+    "locationStub:function",
+    "prerender:function",
+    "useLocation:function",
+    "useRoute:function"
+  ],
   "denext/signals": [
     "Computation:interface",
     "EffectDispose:typeAlias",

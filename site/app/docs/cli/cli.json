@@ -1354,14 +1354,14 @@
     },
     {
       "name": "migrate",
-      "summary": "Migrate a Next.js, Remix, Vite, CRA, Expo, Fresh, or React app (config files)",
+      "summary": "Migrate a Next.js, Remix, Vite, CRA, Expo, Fresh, Preact, or React app (config files)",
       "usage": "denext migrate [dir] [options]",
       "flags": [
         {
           "name": "from",
           "type": "string",
           "valueName": "<framework>",
-          "description": "Force source: next | remix | react-router | vite | cra | generic | expo | tanstack-start | fresh"
+          "description": "Force source: next | remix | react-router | vite | cra | generic | expo | tanstack-start | fresh | preact"
         },
         {
           "name": "check",

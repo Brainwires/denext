@@ -57,6 +57,15 @@ import {
   transformFreshApp,
 } from "./migrate-fresh.ts";
 import {
+  type PreactMigrateInfo,
+  preactMigrateInfo,
+  preactResolveAlias,
+  preactRouterImports,
+  type PreactTooling,
+  preactTooling,
+} from "./migrate-preact.ts";
+import { PREACT_ALIASES, preactAliasImports } from "./preact-layer.ts";
+import {
   capacitorConfigSource,
   capacitorIdentity,
   expoApiUsage,
@@ -187,6 +196,11 @@ const SOFT_DROP = new Set([
   // `tsr generate`), its devtools Vite plugin has no dev server to hook. (`@tanstack/router-cli`
   // stays: the app still runs it.)
   "@tailwindcss/vite",
+  // Preact's build tooling (a Preact app runs on denext's Preact layer).
+  "@preact/preset-vite",
+  "preact-cli",
+  "wmr",
+  "@prefresh/vite",
   "@tanstack/router-plugin",
   "@tanstack/devtools-vite",
 ]);
@@ -361,7 +375,7 @@ export interface MigrateOptions {
   proxyPrefixes?: string[];
   /**
    * Force the source framework instead of auto-detecting (`next` | `remix` | `react-router` |
-   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh`). Reserved for ambiguous
+   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh` | `preact`). Reserved for ambiguous
    * cases; auto-detection is used when omitted.
    */
   from?: string;
@@ -444,7 +458,16 @@ export interface AppIconReport {
 
 /** Result of a migration run (for the CLI to print). */
 export interface MigrateResult {
-  kind: "next" | "spa" | "cra" | "generic" | "remix" | "expo" | "tanstack-start" | "fresh";
+  kind:
+    | "next"
+    | "spa"
+    | "cra"
+    | "generic"
+    | "remix"
+    | "expo"
+    | "tanstack-start"
+    | "fresh"
+    | "preact";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -481,6 +504,8 @@ export interface MigrateResult {
   tanstackStart?: TanstackStartMigrateInfo;
   /** Present when {@link kind} is `"fresh"` — the route tree generated and what did not migrate. */
   fresh?: FreshMigrateInfo;
+  /** Present when {@link kind} is `"preact"` — the tooling, the routers and the findings. */
+  preact?: PreactMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
   nextConfig?: NextConfigReport;
   /** Present with `--enable-capacitor`: the Capacitor target written and the steps to run. */
@@ -1212,13 +1237,17 @@ async function migrateRemixFamily(
   return null;
 }
 
-/** CRA, Vite or a generic React SPA → SPA mode. */
+/** CRA, Vite or a generic React SPA → SPA mode (a Preact app first, with the Preact layer). */
 async function migrateSpaFamily(
   dir: string,
   deps: Record<string, string>,
   options: MigrateOptions,
 ): Promise<MigrateResult | null> {
   const from = options.from;
+  const preact = from === "preact" || !from ? await preactTooling(dir, deps) : null;
+  if (preact || from === "preact") {
+    return await migrateSpaProject(dir, deps, options, "vite", preact ?? "vite");
+  }
   for (const source of ["cra", "vite", "generic"] as const) {
     const detect = source === "cra" ? isCra : source === "vite" ? isViteSpa : isGenericSpa;
     if (from === source || (!from && await detect(dir, deps))) {
@@ -2361,6 +2390,8 @@ type SpaConfigFacts = {
   viteEmitters?: MappedViteEmitter[];
   /** `spa.assetsDir` (a Vite app's `build.assetsDir`). */
   assetsDir?: string;
+  /** `resolveAlias` (a Preact app: npm packages importing Preact get denext's). */
+  resolveAlias?: Record<string, string>;
 };
 
 /** Source text for the generated `denext.config.ts`. */
@@ -2389,10 +2420,21 @@ function spaConfigSource(o: SpaConfigFacts): string {
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
     tailwindBlock +
+    resolveAliasLines(o.resolveAlias) +
     mobileIconLines(o.mobileIcon) +
     (o.desktop ? desktopConfigLines(desktopAppName(o.title)) : "") +
     spaBlockLines(o) +
     `} satisfies DenextConfig;\n`;
+}
+
+/** The generated config's `resolveAlias` (a Preact app's packages → denext), when there is one. */
+function resolveAliasLines(alias: Record<string, string> | undefined): string {
+  if (!alias || Object.keys(alias).length === 0) return "";
+  const lines = Object.entries(alias).map(([k, v]) =>
+    `    ${JSON.stringify(k)}: ${JSON.stringify(v)},\n`
+  );
+  return `  // Preact, its hooks / JSX runtime and Preact Signals are denext's, for npm packages too.\n` +
+    `  resolveAlias: {\n${lines.join("")}  },\n`;
 }
 
 /** The generated config's `spa: { … }` block. */
@@ -3126,6 +3168,7 @@ async function migrateSpaProject(
   deps: Record<string, string>,
   options: MigrateOptions,
   source: SpaSource,
+  preact: PreactTooling | null = null,
 ): Promise<MigrateResult> {
   const V = await denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
@@ -3142,8 +3185,11 @@ async function migrateSpaProject(
   // resolve from the installed node_modules, so no `npm:` import entries are emitted;
   // with "auto" they are pinned as `npm:name@version` like the Next path.
   const classified = classifyDeps(deps, imports, { pin: !manual });
+  // A Preact app: Preact, its JSX runtime, Preact Signals and preact-iso point at denext (over
+  // the npm pins classifyDeps wrote for them).
+  if (preact) Object.assign(imports, preactImports(R, deps));
 
-  const facts = await spaSourceFacts(dir, deps, options, source);
+  const facts = await spaFacts(dir, deps, options, source, preact);
   // `viteEmitterPlugin` in the generated config.
   // The light entry: a desktop app's `desktop.ts` imports the config at runtime, and
   // `denext/plugin-kit` would bring the build toolchain (esbuild, sass, mdx) with it.
@@ -3178,7 +3224,61 @@ async function migrateSpaProject(
     appIcon: appIconInfo(icon, files.configWritten),
     nodeModulesDir,
   });
-  return files.capacitor ? { ...r, capacitor: files.capacitor } : r;
+  const result = files.capacitor ? { ...r, capacitor: files.capacitor } : r;
+  return preact ? await preactResult(result, dir, deps, preact, files.denoJsonExists) : result;
+}
+
+/** A Preact app's import-map entries: the shared Preact layer, preact-iso and the debug add-ons. */
+function preactImports(R: DenextResolver, deps: Record<string, string>): Record<string, string> {
+  return { ...preactAliasImports(R.sub), ...preactRouterImports(R.sub, deps) };
+}
+
+/** The SPA facts, plus a Preact app's `resolveAlias` (WMR / preact-cli / esbuild read as generic). */
+async function spaFacts(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+  source: SpaSource,
+  preact: PreactTooling | null,
+) {
+  if (!preact) return await spaSourceFacts(dir, deps, options, source);
+  const facts = await spaSourceFacts(dir, deps, options, preact === "vite" ? source : "generic");
+  return { ...facts, resolveAlias: preactResolveAlias(deps) };
+}
+
+/**
+ * The Preact migration's result: the `"preact"` kind, the packages the Preact layer replaces
+ * reported as aliased (not npm passthrough), the findings, and Preact's JSX runtime.
+ */
+async function preactResult(
+  result: MigrateResult,
+  dir: string,
+  deps: Record<string, string>,
+  preact: PreactTooling,
+  denoJsonExists: boolean,
+): Promise<MigrateResult> {
+  if (!denoJsonExists) await preactJsxSource(dir);
+  const replaced = (name: string) => name in PREACT_ALIASES || name.startsWith("preact-iso");
+  return {
+    ...result,
+    kind: "preact",
+    aliased: [...result.aliased, ...result.passthrough.filter(replaced)],
+    passthrough: result.passthrough.filter((name) => !replaced(name)),
+    preact: await preactMigrateInfo(dir, deps, preact),
+  };
+}
+
+/**
+ * A Preact app's JSX compiles with Preact's runtime (`denext/preact/jsx-runtime`, which binds a
+ * signal passed as a DOM prop): `jsxImportSource: "preact"` in the generated `deno.json`.
+ */
+async function preactJsxSource(dir: string): Promise<void> {
+  const path = join(dir, "deno.json");
+  const config = JSON.parse(await mfs.readTextFile(path)) as {
+    compilerOptions?: Record<string, unknown>;
+  };
+  config.compilerOptions = { ...config.compilerOptions, jsxImportSource: "preact" };
+  await mfs.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
 }
 
 /** The Capacitor target of a SPA: named from its title, reviewed against its env and proxy. */

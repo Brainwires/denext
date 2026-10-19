@@ -317,6 +317,23 @@ Deno.test("migrate --check: Fresh — the generated app/, the moves and deletes 
   ) assert(actions.has(change), `${change}\n${JSON.stringify(r.changes, null, 2)}`);
 });
 
+Deno.test("migrate --check: Preact — the SPA config with the Preact aliases is planned", async () => {
+  const r = await checkAndCompare({
+    "package.json": {
+      dependencies: { preact: "^11.0.0", "preact-iso": "^2.12.2" },
+      devDependencies: { "@preact/preset-vite": "^2.10.6", vite: "^8.3.1" },
+    },
+    "vite.config.js":
+      `import preact from "@preact/preset-vite";\nexport default { plugins: [preact()] };\n`,
+    "index.html": `<div id="app"></div><script type="module" src="/src/index.jsx"></script>\n`,
+    "src/index.jsx":
+      `import { render } from "preact";\nrender(<p>hi</p>, document.getElementById("app"));\n`,
+  });
+  assertEquals(r.source, "preact");
+  const actions = new Set(r.changes.map((c) => `${c.action} ${c.path}`));
+  assert(actions.has("create denext.config.ts") && actions.has("create deno.json"));
+});
+
 Deno.test("migrate --check: Remix — the route-tree transform (creates, deletes) is planned", async () => {
   const r = await checkAndCompare(REMIX_FIXTURE);
   assertEquals(r.source, "remix");

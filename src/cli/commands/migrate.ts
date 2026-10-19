@@ -506,13 +506,27 @@ function reportFresh(m: NonNullable<MigrateResult["fresh"]>): void {
   printReviewNotes(m.review.map((f) => `${f.item}: ${f.reason}`), 20);
 }
 
+/** What the Preact migration found: the tooling, the routers, and the findings. */
+function reportPreact(m: NonNullable<MigrateResult["preact"]>): void {
+  const routers = m.routers.length ? ` · routers: ${m.routers.join(", ")}` : "";
+  console.log(`  ▸ Preact (${m.tooling}) — SPA mode with Preact mapped to denext${routers}.`);
+  if (m.wontMigrate.length) {
+    console.log(`    ✗ won't migrate (${m.wontMigrate.length}):`);
+    for (const f of m.wontMigrate) console.log(`      · ${f.item}: ${f.reason}`);
+  }
+  printReviewNotes(m.review.map((f) => `${f.item}: ${f.reason}`), 20);
+}
+
 /** The framework-specific section of the report, if any. */
 function reportFramework(r: MigrateResult, desktop: boolean): void {
+  if (r.preact) reportPreact(r.preact);
   if (r.kind === "fresh" && r.fresh) {
     reportFresh(r.fresh);
   } else if (r.kind === "expo" && r.expo) {
     reportExpo(r);
-  } else if ((r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa) {
+  } else if (
+    (r.kind === "spa" || r.kind === "cra" || r.kind === "generic" || r.kind === "preact") && r.spa
+  ) {
     reportSpa(r, desktop);
   } else if (r.kind === "remix" && r.remix) {
     reportRemix(r.remix);
@@ -531,10 +545,10 @@ async function reportSourceNote(
   codemod: boolean,
   yes: boolean,
 ): Promise<void> {
-  if (r.kind === "fresh") {
+  if (r.kind === "fresh" || r.kind === "preact") {
     console.log(
-      "\n  Fresh modules unchanged: `fresh`, `preact` and `@preact/signals` imports resolve " +
-        "to denext through deno.json.",
+      `\n  ${r.kind === "fresh" ? "Fresh modules" : "Source"} unchanged: \`preact\` and ` +
+        "`@preact/signals` imports resolve to denext through deno.json.",
     );
   } else if (codemod) {
     console.log("\n  Rewriting source imports to native denext:\n");
@@ -741,7 +755,8 @@ export function terminalRunner(toStderr: boolean): CommandRunner {
 export function createMigrateCommand(run?: CommandRunner): CommandSpec {
   return {
     name: "migrate",
-    summary: "Migrate a Next.js, Remix, Vite, CRA, Expo, Fresh, or React app (config files)",
+    summary:
+      "Migrate a Next.js, Remix, Vite, CRA, Expo, Fresh, Preact, or React app (config files)",
     positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
     flags: [
       {
@@ -749,7 +764,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         type: "string",
         valueName: "<framework>",
         help: "Force source: next | remix | react-router | vite | cra | generic | expo | " +
-          "tanstack-start | fresh",
+          "tanstack-start | fresh | preact",
       },
       {
         name: "check",

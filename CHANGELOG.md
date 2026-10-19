@@ -129,6 +129,18 @@ and this project adheres to
   `denext/preact` and `denext/signals`. `migrate --check` (source `fresh`) lists what does not
   migrate: Partials, Vite's `import.meta.env`, inline scripts under the default CSP,
   `FRESH_PUBLIC_*`, Vite and Fresh plugins, `useErrorBoundary`.
+- **`denext migrate` moves a Preact app** — Vite with `@preact/preset-vite` (what `npm create
+  preact` makes), preact-cli, WMR, or esbuild compiling JSX for Preact; `--from preact` forces
+  it. It takes the SPA path (`mode: "spa"`) with the Preact layer the Fresh path uses: `preact`,
+  `preact/hooks`, `preact/compat`, the JSX runtime and `@preact/signals` / `@preact/signals-core`
+  point at denext in `deno.json` and, for npm packages that import them, through `resolveAlias`.
+  preact-iso maps to the new `denext/preact-iso` (`LocationProvider`, `Router`, `Route`,
+  `useLocation`, `useRoute`, `lazy`, `ErrorBoundary`, `hydrate`, `prerender`), which implements
+  its router on denext; preact-router and wouter-preact keep running on the aliases and are listed
+  for review. `migrate --check` reports `source: "preact"` and what does not migrate
+  (preset-vite's `prerender`, `preact.config.js`, WMR plugins, `useErrorBoundary`, Preact's
+  `options` hooks). create-preact's Vite + preact-iso template is a migration bed: built, served,
+  and routed on the client in headless Chromium.
 - **`denext/signals`: Preact Signals' API** — `signal`, `computed`, `effect`, `batch`,
   `untracked`, `action`, `Signal`, `useSignal`, `useComputed`, `useSignalEffect`,
   `useLiveSignal`, `Show`, `For`. A component re-renders when a signal its render read changes,
@@ -306,6 +318,11 @@ and this project adheres to
   Server drivers over TLS). `Deno.serve` keeps reading a request body while it streams a response,
   applies backpressure to a client that keeps sending, lets a graceful `shutdown()` finish a
   request body, and answers a malformed `Host` with a 400.
+- **A `resolveAlias` target that is an import-map entry resolves.** An alias pointing at a
+  `deno.json` import (`"preact": "denext/preact"`) failed the SPA build with "[assert]
+  namespace is empty" when the entry maps to a file URL, and with "Could not resolve" for an
+  import inside an npm package, whose own scope has no import map. A bare target now resolves as
+  the app's own import would, wherever the import comes from.
 - **An inline SVG's `<title>` no longer becomes the page title.** The server hoisted every
   `<title>` in the tree into the document head, so a page with an icon carrying an accessible
   `<title>` (`<svg><title>Arrow</title>…</svg>`) showed the icon's name in the browser tab.

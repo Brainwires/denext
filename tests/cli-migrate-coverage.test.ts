@@ -232,3 +232,39 @@ Deno.test("migrate on a Fresh app reports the generated tree, Tailwind and the f
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("migrate on a Preact app reports the tooling, the routers and the findings", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_migrate_cli_preact_" });
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      dependencies: { preact: "^10.0.0", "preact-router": "^4.1.2" },
+      devDependencies: { "@preact/preset-vite": "^2.10.6" },
+    }),
+    "vite.config.js":
+      `import preact from "@preact/preset-vite";\nexport default { plugins: [preact()] };\n`,
+    "index.html": `<div id="app"></div><script type="module" src="/src/index.jsx"></script>\n`,
+    "src/index.jsx": `import { options, render } from "preact";\nrender(<p />, document.body);\n`,
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, rel), text);
+  }
+  const cap = capture();
+  try {
+    await migrateCommand.run(makeCtx({ positionals: [dir] }));
+  } finally {
+    cap.restore();
+  }
+  try {
+    const out = cap.logs.join("\n");
+    assertStringIncludes(
+      out,
+      "Preact (vite) — SPA mode with Preact mapped to denext · routers: preact-router",
+    );
+    assertStringIncludes(out, "won't migrate (1)");
+    assertStringIncludes(out, "preact options hooks");
+    assertStringIncludes(out, "Source unchanged: `preact`");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
