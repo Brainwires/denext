@@ -30,6 +30,7 @@ import {
   toJsonSchema,
 } from "../packages/openapi/mod.ts";
 import type { CommandContext } from "../src/cli/command.ts";
+import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -1040,6 +1041,7 @@ Deno.test("emitTypes: the ApiSchema types createApiClient from another module (d
     );
     const { code, stderr } = await new Deno.Command(Deno.execPath(), {
       args: ["check", `${dir}/consumer.ts`],
+      env: fileUrlCheckEnv(),
       stderr: "piped",
       stdout: "null",
     }).output();

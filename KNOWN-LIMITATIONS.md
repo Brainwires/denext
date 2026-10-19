@@ -56,6 +56,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline
   before either has happened fails to load. The compiled binary embeds every verb.
+- **The native type check on runtime 2.9.7-denext.22 can't resolve an absolute `file:` import.**
+  `import { x } from "file:///abs/path/mod.ts"` (in source, or an import-map target that is a
+  `file:` URL) reports TS2307 under TypeScript 7, inside the project or outside it, where Deno and
+  the in-process TypeScript resolve it. Until a runtime with the fix is pinned, type-check such a
+  project with `DENEXT_NATIVE_CHECK=0` (`DENO_CHECK_ENGINE=tsc` for a plain `deno check`), or
+  import by a relative path or an import-map alias to a relative path.
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 

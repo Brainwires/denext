@@ -48,7 +48,10 @@ and this project adheres to
   TypeScript 7.0.2 compiler in `typescript-check/`, so `denext check`, the dev type-check overlay,
   `denext test` and every other command that type-checks now run it (installed only when it
   hashes to the pin; `DENEXT_NATIVE_CHECK=0` keeps the in-process TypeScript 6.0.3).
-  [The differences page](https://denext.dev/docs/differences) lists how its output differs.
+  [The differences page](https://denext.dev/docs/differences) lists how its output differs. An
+  absolute `file:` import does not resolve under it yet (TS2307); such a project type-checks with
+  `DENEXT_NATIVE_CHECK=0` until a runtime with the fix is pinned
+  ([known limitations](https://denext.dev/docs/limitations)).
 - **npm packages run more as they do on Node.js** (on the toolchain: `denext dev`, `build`,
   `start`, `test`, jobs). In a project with a `package.json` and no `deno.json`:
   - `deno install` writes npm's hoisted `node_modules` (a dependency's dependency, such as `ms`

@@ -16,6 +16,7 @@ import {
   PLUGIN_BASELINE_DIR,
   readVendoredIndex,
 } from "../scripts/parity/native/expo-plugins.ts";
+import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 const ROOT = new URL("../", import.meta.url);
 const CONFIG = fromFileUrl(new URL("deno.json", ROOT));
@@ -41,7 +42,7 @@ async function typeCheck(files: Record<string, string>): Promise<{ ok: boolean; 
     }
     const res = await new Deno.Command(Deno.execPath(), {
       args: ["check", "--quiet", "--config", CONFIG, ...paths],
-      env: { NO_COLOR: "1" },
+      env: { NO_COLOR: "1", ...fileUrlCheckEnv() },
       stdout: "piped",
       stderr: "piped",
     }).output();

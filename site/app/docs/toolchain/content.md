@@ -305,7 +305,9 @@ the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` include
 `2.9.7-denext.21` adds Windows on Arm (`aarch64-pc-windows-msvc`) builds of the CLI and `denort`,
 and a compiled program keeps `--unstable-no-legacy-abort`. `2.9.7-denext.22` (the build denext
 pins today) type-checks with the native TypeScript 7 compiler, shipped in the CLI zip and pinned
-like the binary, and runs npm packages more as Node.js does. Each new Deno
+like the binary, and runs npm packages more as Node.js does; that check doesn't resolve an absolute
+`file:` import yet, so such a project sets `DENEXT_NATIVE_CHECK=0`
+([known limitations](/docs/limitations)). Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
