@@ -146,8 +146,12 @@ Deno.test("migrate --check: a Preact app — golden report", async () => {
     const report = await checkMigration(dir, { denextLocalPath: REPO });
     assertEquals(report.source, "preact");
     const { target: _t, denext: _d, ...rest } = report as unknown as Record<string, unknown>;
-    const actual =
-      JSON.stringify(JSON.parse(JSON.stringify(rest).replaceAll(REPO, "<repo>/")), null, 2) + "\n";
+    const actual = JSON.stringify(
+      // The repo path as it is spelled inside JSON (a Windows path's backslashes escaped).
+      JSON.parse(JSON.stringify(rest).replaceAll(JSON.stringify(REPO).slice(1, -1), "<repo>/")),
+      null,
+      2,
+    ) + "\n";
     if (Deno.env.get("DENEXT_UPDATE_GOLDEN") === "1") {
       await Deno.mkdir(dirname(GOLDEN), { recursive: true });
       await Deno.writeTextFile(GOLDEN, actual);
