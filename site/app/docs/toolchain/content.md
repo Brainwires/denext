@@ -279,6 +279,9 @@ denext toolchain status        # pinned versions (Deno, TypeScript, Gleam, fastl
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
+denext toolchain uninstall <version>   # remove a cached version: its Deno toolchain and Deno Desktop runtime
+denext toolchain uninstall --all       # every cached version but the pinned one (--force: that one too)
+denext toolchain prune         # every version but the pinned ones (this denext's, and the project's here)
 denext deno <args…>            # run the toolchain's deno with <args…> verbatim; its exit code
 denext <deno verb> <args…>     # the same for any verb denext doesn't define (stock fallback)
 ```
@@ -287,6 +290,16 @@ denext <deno verb> <args…>     # the same for any verb denext doesn't define (
 it prints. Windows gets a `deno.cmd` shim. `unlink` refuses to touch a `deno` it didn't create. After a denext
 upgrade pins a newer toolchain, `denext toolchain status` warns that the link points at the old one
 and `link` replaces it (commands switch to the pinned build either way).
+
+Every version denext ever ran on stays cached until you remove it — each Deno toolchain is about
+70 MB, a Deno Desktop runtime more. `uninstall <version>` removes that version's toolchain (its
+esbuild, TypeScript compiler and `denort` live inside it) and the Deno Desktop runtime of the same
+version. `prune` keeps only what is in use: the Deno toolchain, Deno Desktop runtime, Gleam and
+fastlane this denext pins, and — inside a project that pins another denext — the ones that version
+pins (read from its published pin files; offline, `prune` removes nothing unless `--force`). The
+version this denext pins is refused unless you pass `--force`. Each prints what it removed and the
+space freed; `--dry-run` only lists it, and `--json` reports it for scripts. They hold the cache
+lock, so they never delete a download in progress.
 
 `denext doctor` reports the toolchain as one check: the pinned version, whether it is cached and
 verified, and whether the run is on it or on stock Deno, and why.

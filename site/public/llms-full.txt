@@ -1132,7 +1132,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   opts out, `DENEXT_DENO=<path>` uses a given binary, and any failure falls back to stock Deno with
   one warning. `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
-  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`.
+  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`;
+  `denext toolchain uninstall <version>|--all` and `prune` remove cached versions (the pinned one
+  only with `--force`; `--dry-run`, `--json`).
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
   runs it on the toolchain (with no toolchain and no `deno` it refuses, naming
   `denext toolchain install`), and the installer runs `toolchain install` (+ `toolchain link`

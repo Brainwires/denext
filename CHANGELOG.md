@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **`denext toolchain uninstall <version>`, `uninstall --all` and `prune`.** Every Deno toolchain
+  denext ran on stayed in Deno's cache (about 70 MB each, more for a Deno Desktop runtime).
+  `uninstall <version>` removes that version's toolchain and the Deno Desktop runtime of the same
+  version; `prune` removes every version not in use — the Deno toolchain, Deno Desktop runtime,
+  Gleam and fastlane this denext pins are kept, and so are the ones the project in the working
+  directory pins when it pins another denext (offline, `prune` removes nothing without
+  `--force`). The pinned version is refused without `--force`. Each prints what it removed and the
+  space freed, takes `--dry-run` and `--json`, and holds the cache lock while it deletes.
+
 - **The installers put denext on PATH.** `install.sh` adds one marked block
   (`# >>> denext >>>` … `# <<< denext <<<`) to the startup file of your login shell — zsh's
   `~/.zshrc`, bash's `~/.bashrc` (plus, on macOS, the login file bash actually reads), fish's
