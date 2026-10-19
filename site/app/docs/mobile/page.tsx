@@ -604,8 +604,9 @@ denext mobile add haptics share network secure-store`}
           <code>"cache"</code>, as text or base64; the Origin Private File System on the web (a
           top-level folder per directory). <code>downloadToFile</code> and <code>uploadFile</code>
           {" "}
-          report progress and, with{" "}
-          <code>file-transfer</code>, run in the OS&apos;s background transfer service: see{" "}
+          report progress with the <code>file-transfer</code>{" "}
+          plugin (which also runs them in the OS&apos;s background transfer service) or in the
+          browser; the <code>filesystem</code> plugin alone downloads without progress. See{" "}
           <a href="#file-transfers">file transfers</a>.
         </li>
         <li>
@@ -2122,10 +2123,48 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         while the app is suspended or terminated relaunches it in the background to save the file),
         and a WorkManager job on Android (it runs with the app in the background and after the
         process is gone, whenever there is a network). The body never passes through the WebView,
-        and CORS does not apply. Without the plugin the page runs it: <code>fetch</code>{" "}
-        with the body streamed into the Origin Private File System for a download, and{" "}
-        <code>XMLHttpRequest</code>{" "}
-        (upload progress) for an upload, so it lasts as long as the page.
+        and CORS does not apply. Install it whenever you want progress, pause and resume, or a
+        transfer that outlives the page on a phone.
+      </p>
+      <p>
+        <code>downloadToFile</code> takes the first of these that is there:
+      </p>
+      <ol>
+        <li>
+          the <code>DenextTransfer</code> plugin (<code>file-transfer</code>), as above;
+        </li>
+        <li>
+          in a Deno Desktop window with the <code>fs</code>{" "}
+          capability, the runtime downloads it in the Deno process (no progress; the request{" "}
+          <code>headers</code> and <code>signal</code> are not passed to it);
+        </li>
+        <li>
+          in the shell with <code>@capacitor/filesystem</code> but no{" "}
+          <code>DenextTransfer</code>, that plugin&apos;s <code>downloadFile</code> (or{" "}
+          <code>fetch</code> and its <code>writeFile</code> where the plugin has no{" "}
+          <code>downloadFile</code>). This path has no <code>onProgress</code>{" "}
+          and keeps no record under the <code>id</code> (<code>pauseFileTransfer</code> /{" "}
+          <code>resumeFileTransfer</code> return <code>false</code>), <code>signal</code>{" "}
+          is ignored on the <code>downloadFile</code>{" "}
+          branch, and a non-2xx answer rejects with a plain <code>Error</code>, not a{" "}
+          <code>FileTransferError</code>;
+        </li>
+        <li>
+          otherwise (the browser) the page: <code>fetch</code>{" "}
+          with the body streamed into the Origin Private File System, with progress, pause and
+          resume, for as long as the page lasts.
+        </li>
+      </ol>
+      <p>
+        <code>uploadFile</code>{" "}
+        uses the plugin when it is there; otherwise the page sends the file (<code>
+          XMLHttpRequest
+        </code>, for upload progress; <code>fetch</code>{" "}
+        where there is none, and CORS applies), read through the filesystem plugin, the desktop
+        runtime or OPFS. <code>uploadFile</code> from <code>denext/mobile</code>{" "}
+        sends a file from the app&apos;s folders to any URL; it is not{" "}
+        <code>@denext/backend/client</code>&apos;s <code>uploadFile</code>, which uploads to a{" "}
+        <a href="/docs/backend">storage bucket</a>.
       </p>
       <Code lang="tsx">
         {`import {
@@ -2151,6 +2190,64 @@ await resumeFileTransfer("region-map"); // a range request continues it where th
 for (const t of await fileTransfers()) if (t.state === "done") useFile(t.file);
 onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.total));`}
       </Code>
+      <p>Both take these options:</p>
+      <ul>
+        <li>
+          <code>id</code>: the transfer&apos;s id, to find it again after a relaunch with{" "}
+          <code>fileTransfers()</code>. Default: a random UUID.
+        </li>
+        <li>
+          <code>headers</code>: request headers (an{" "}
+          <code>Authorization</code>, a signed upload&apos;s headers).
+        </li>
+        <li>
+          <code>onProgress({"{ id, kind, bytes, total }"})</code>: called as bytes move, at most
+          every 200 ms natively (100 ms in the page), and at the end.
+        </li>
+        <li>
+          <code>signal</code>: an <code>AbortSignal</code>{" "}
+          that cancels the transfer; the promise rejects with the signal&apos;s reason.
+        </li>
+        <li>
+          <code>background</code>: in the shell, run in the OS&apos;s background transfer service
+          (default <code>true</code>). <code>false</code> uses a foreground <code>URLSession</code>
+          {" "}
+          on iOS; Android always uses WorkManager.
+        </li>
+        <li>
+          <code>directory</code>: <code>"data"</code> (the default), <code>"documents"</code>,{" "}
+          <code>"cache"</code> or a picked folder (<code>{"{ picked }"}</code>).
+        </li>
+      </ul>
+      <p>
+        <code>uploadFile</code> also takes <code>method</code> (<code>"POST"</code>, the default,
+        {" "}
+        <code>"PUT"</code> or <code>"PATCH"</code>), <code>as</code>{" "}
+        (<code>"multipart"</code>, the default: a <code>multipart/form-data</code>{" "}
+        body with the file as the part named <code>field</code> after the text{" "}
+        <code>fields</code>; or <code>"binary"</code>: the file is the body, sent with{" "}
+        <code>mimeType</code> as its <code>Content-Type</code>), <code>field</code> (default{" "}
+        <code>"file"</code>), <code>fileName</code> (default: the path&apos;s last segment),{" "}
+        <code>mimeType</code> (default: from the extension, else{" "}
+        <code>application/octet-stream</code>) and <code>fields</code> (multipart only). It resolves
+        {" "}
+        <code>{"{ status, headers, body }"}</code>: the 2xx status, the response headers with
+        lower-cased names, and the body as text (up to 1 MiB in the shell).{" "}
+        <code>downloadToFile</code> resolves{" "}
+        <code>{"{ path }"}</code>: the native path in the shell, the absolute path on desktop, the
+        OPFS path on the web.
+      </p>
+      <p>
+        <code>onFileTransfer(fn)</code> receives events whose <code>type</code> is{" "}
+        <code>"started"</code>, <code>"progress"</code>, <code>"paused"</code>, <code>"done"</code>,
+        {" "}
+        <code>"failed"</code> or <code>"cancelled"</code>. <code>pauseFileTransfer(id)</code> and
+        {" "}
+        <code>resumeFileTransfer(id)</code> resolve a <code>boolean</code>: <code>false</code>{" "}
+        for an upload (uploads cannot pause), a download that is not running (or, to resume, not
+        paused), or an id with no record. With the plugin, <code>resumeFileTransfer</code>{" "}
+        also retries a failed transfer.
+      </p>
       <p>
         A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
         file on Android, the OPFS file on the web) and resumes with a range request guarded by the
@@ -2345,6 +2442,15 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
         <code>secure_delete</code>{" "}
         and truncates its write-ahead log, so no plaintext copy stays behind.
       </p>
+      <Callout kind="note">
+        <strong>Upgrading.</strong> <code>--encrypted</code> needs the <code>DenextStorage</code>
+        {" "}
+        plugin from storage template generation 2 (denext 4.4.0). A project that added{" "}
+        <code>storage</code> with an earlier denext re-runs <code>denext mobile add storage</code>
+        {" "}
+        (with{" "}
+        <code>--encrypted</code>) and ships a new binary; unedited files are upgraded in place.
+      </Callout>
       <Code lang="ts">
         {`import { KeyValueStoreError, openKeyValueStore } from "denext/mobile";
 
@@ -2594,7 +2700,10 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         <code>requestPermissionsAsync</code>{" "}
         asks for in the system settings screen; iOS's brightness change events). A project that
         added the capability before these plugins existed gets them by running the same{" "}
-        <code>denext mobile add</code> again.
+        <code>denext mobile add</code> again. Android&apos;s <code>futureEvents</code>{" "}
+        split arrived in calendar template generation 2 (denext 4.4.0): a project that added{" "}
+        <code>calendar</code> earlier re-runs <code>denext mobile add calendar</code>{" "}
+        and ships a new binary, or that call still rejects on Android.
       </p>
       <p>
         <code>app-config</code>{" "}
@@ -4054,7 +4163,12 @@ npx @sentry/cli sourcemaps upload \\
           <code>denext profile</code>
         </a>{" "}
         profiles a route in headless Chromium (CPU self-time, heap growth, a leak check), so a slow
-        render or a leak shows up before it reaches a phone.
+        render or a leak shows up before it reaches a phone.{" "}
+        <a href="/docs/profile#android">
+          <code>denext profile --android</code>
+        </a>{" "}
+        takes the same report from the installed app&apos;s WebView on an Android device or emulator
+        over adb (a debug build); iOS&apos;s WKWebView cannot be profiled this way.
       </p>
 
       <h2 id="testing-mobile-code">Testing mobile code</h2>

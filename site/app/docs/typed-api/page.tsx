@@ -210,7 +210,12 @@ try {
           <strong>In-process on the server.</strong>{" "}
           A call made inside a request never goes over loopback HTTP: it runs through the pipeline
           under the caller's cookies, and with <code>next: {"{ tags }"}</code>{" "}
-          it rides the tag-aware cache — <code>revalidateTag</code> purges it.
+          it rides the tag-aware cache — <code>revalidateTag</code>{" "}
+          purges it. A handler (or the middleware on that call) that reads the visitor's cookie,
+          authorization or another inherited header makes the calling render per-visitor: an ISR
+          page is not stored and a Cache Components shell turns the enclosing{" "}
+          <code>&lt;Suspense&gt;</code> into a per-request hole (see{" "}
+          <a href="/docs/data#per-visitor-api-reads">Data &amp; caching</a>).
         </li>
         <li>
           <strong>The wire codec.</strong> A Date, Map, Set, BigInt, URL,{" "}

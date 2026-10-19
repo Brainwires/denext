@@ -27,8 +27,11 @@ smaller bundles and first-class streaming.
 - _Surface intact:_ the async render APIs (`renderToReadableStream`) and every hook
   behave as documented.
 - _One surface consequence:_ `renderToString`/`renderToStaticMarkup` render the
-  **synchronously-renderable** subset over the same walker (Suspense → fallback, as React
-  does); a component that genuinely awaits throws a guided error. The **Node-stream** APIs
+  **synchronously-renderable** subset over the same walker, as React does: a boundary that
+  does not suspend is written inline (between `<!--$-->` / `<!--/$-->` in `renderToString`, no
+  markers in `renderToStaticMarkup`), and one that suspends shows its fallback after
+  `<!--$!--><template></template>`, which the client renders itself during hydration; a
+  component that genuinely awaits throws a guided error. The **Node-stream** APIs
   (`renderToPipeableStream`/`renderToStaticNodeStream`) are an adapter over the Web
   renderer and honour the destination's backpressure (`write()` returning `false`, `'drain'`)
   as React does: the renderer flushes on demand while Suspense boundaries keep rendering.

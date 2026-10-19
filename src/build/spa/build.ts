@@ -12,7 +12,12 @@ import { prepareDesktopIcon } from "../desktop-icon.ts";
 import { resolveExportOutDir, writeViaStaging } from "../export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../paths.ts";
 import type { Platform } from "../platform-extensions.ts";
-import { type DenextConfig, reactNativeRootStyle, type SpaConfig } from "../../server/config.ts";
+import {
+  type DenextConfig,
+  reactNativeOptions,
+  reactNativeRootStyle,
+  type SpaConfig,
+} from "../../server/config.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
@@ -101,6 +106,7 @@ async function bundleAndShell(
     styleHref: hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
     preload,
     reactNativeRootStyle: reactNativeRootStyle(paths.config),
+    reactNativeStyleSheet: reactNativeOptions(paths.config) !== null,
     headPrefix: fontFaceStyle(fonts, prefix),
     shell,
   });

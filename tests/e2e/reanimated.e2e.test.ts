@@ -303,13 +303,19 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
     await t.step(`${label}: LayoutAnimation.configureNext animates the moved views`, async () => {
       // The preset's move runs for 300 ms and pollFor samples every 100 ms plus a CDP round
       // trip, so polling getAnimations() for it can miss the whole animation on a loaded runner.
-      // Record every animation started on the moved row instead, then wait for it to finish.
+      // Record every animation the commit starts instead, then seek them all to their first
+      // frame and read where the moved row is drawn: FLIP draws it at its old place. (The row's
+      // own keyframe is relative to its ancestors' — the list's container grew too, so it plays
+      // a scale its rows counter-scale — so the drawn box, not one keyframe, is the contract.)
+      const before = await page.evaluate(`${el("la-b")}.getBoundingClientRect().top`) as number;
       await page.evaluate(`(() => {
         const started = globalThis.__laStarted = [];
+        const all = globalThis.__laAll = [];
         const animate = Element.prototype.animate;
         globalThis.__laRestore = () => { Element.prototype.animate = animate; };
         Element.prototype.animate = function (...args) {
           const a = animate.apply(this, args);
+          all.push(a);
           if (this.getAttribute("data-testid") === "la-b") started.push(a);
           return a;
         };
@@ -317,12 +323,20 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
       try {
         await page.evaluate(`${el("la-add")}.click()`);
         await pollFor(page, `${el("la-a")} && globalThis.__laStarted.length > 0`, 10_000);
-        // FLIP: "a" is inserted above, so "b" moves down one 30 px row and starts drawn back
-        // at its old place (none at all: react-native-web's no-op configureNext).
-        const first = await page.evaluate(
-          "String(globalThis.__laStarted[0].effect.getKeyframes()[0].transform)",
-        ) as string;
-        assertStringIncludes(first, "translate(0px, -30px)");
+        // "a" is inserted above, so "b" moves down one 30 px row; on the first frame it is
+        // still drawn at its old place (none at all: react-native-web's no-op configureNext).
+        const drawn = await page.evaluate(`(() => {
+          const b = ${el("la-b")};
+          const all = globalThis.__laAll;
+          for (const a of all) { a.pause(); a.currentTime = 0; }
+          const first = b.getBoundingClientRect();
+          for (const a of all) a.finish();
+          const last = b.getBoundingClientRect();
+          return { first: first.top, height: first.height, last: last.top };
+        })()`) as { first: number; height: number; last: number };
+        assert(Math.abs(drawn.last - before - 30) < 1, `b moved by ${drawn.last - before}`);
+        assert(Math.abs(drawn.first - before) < 0.5, `b starts at ${drawn.first}, was ${before}`);
+        assert(Math.abs(drawn.height - 30) < 0.5, `b starts ${drawn.height} px tall`);
         await pollFor(page, `${el("la-b")}.getAnimations().length === 0`, 10_000);
       } finally {
         await page.evaluate("globalThis.__laRestore?.()");

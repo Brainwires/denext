@@ -3,7 +3,9 @@
 //   1. `denext build` + `denext start`: the server render carries react-native-web's markup and
 //      its style sheet (`<style id="react-native-stylesheet">`) in the head, so the first paint
 //      is styled; in headless Chromium the island hydrates (a press updates it), the sheet stays
-//      one element and there are no console errors;
+//      one element and there are no console errors. The App Router's default strict CSP allows
+//      that `<style>` by its hash (no `style-src 'unsafe-inline'`) and react-native-web adds the
+//      client's rules through the CSSOM, so there is no CSP violation either;
 //   2. `denext dev` serves the same server render;
 //   3. `denext export` writes it into the static page.
 //
@@ -18,6 +20,7 @@ import type { Page } from "@astral/astral";
 import { buildAndServe, launchBrowser, pollFor, startDevOnDir } from "./harness.ts";
 import { staticExport } from "../../src/build/export.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
+import { sha256Base64 } from "../../src/server/csp.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url)); // repo root
 const FIXTURE = fromFileUrl(new URL("./fixtures/rn-app-router", import.meta.url));
@@ -117,9 +120,20 @@ Deno.test({
         throw err;
       });
       try {
-        assertServerRender(await (await fetch(server.origin + "/")).text());
+        const res = await fetch(server.origin + "/");
+        const html = await res.text();
+        assertServerRender(html);
+        // The strict default CSP: the server's sheet is allowed by its hash, nothing inline.
+        const csp = res.headers.get("content-security-policy") ?? "";
+        const sheet = /<style id="react-native-stylesheet">([\s\S]*?)<\/style>/.exec(html)![1];
+        assertStringIncludes(csp, `'sha256-${await sha256Base64(sheet)}'`);
+        assert(!/style-src [^;]*'unsafe-inline'/.test(csp), csp);
         const page = await browser.newPage();
         const errors = collectErrors(page);
+        await page.unsafelyGetCelestialBindings().Page.addScriptToEvaluateOnNewDocument({
+          source: `addEventListener("securitypolicyviolation", (e) =>
+            console.error("CSP: " + e.violatedDirective + " " + e.blockedURI));`,
+        });
         await page.goto(server.origin + "/");
         // Styled at first paint: the server text is red before any client code ran.
         assertEquals(

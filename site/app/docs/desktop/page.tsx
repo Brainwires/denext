@@ -2100,6 +2100,16 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         for anything that must survive a relaunch; without them the functions fall back to browser
         storage and warn once.
       </p>
+      <p>
+        A page&apos;s own downloads work in the window too, with no capability: an{" "}
+        <code>{"<a download>"}</code>, a <code>Content-Disposition: attachment</code>{" "}
+        response or a blob export opens the OS save dialog on every backend under denext&apos;s
+        pinned runtime (from{" "}
+        <code>2.9.7-denext.22</code>), only for the app&apos;s own origins, with a sanitized file
+        name and at most three save dialogs per window in 10 s. Under the stock runtime they stay
+        inert; use <code>saveFile</code> for a save that must work everywhere (see{" "}
+        <a href="/docs/desktop-runtime#page-downloads">the runtime</a>).
+      </p>
 
       <h3 id="picked-files-and-folders">Picked files and folders</h3>
       <p>

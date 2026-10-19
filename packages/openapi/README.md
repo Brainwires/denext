@@ -98,6 +98,8 @@ JavaScript** and its stylesheet is served from your origin, so it works under a 
 For an interactive "try it" console:
 
 ```ts
+import { DOCS_CDN, openapi } from "@denext/openapi";
+
 openapi({ ui: "swagger" }); // Swagger UI, vendored, served from your origin
 openapi({ ui: "scalar" }); // Scalar API Reference, vendored, served from your origin
 openapi({ ui: "scalar", cdn: DOCS_CDN.scalar }); // opt back into a CDN

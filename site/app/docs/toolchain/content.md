@@ -274,7 +274,7 @@ Finding a project's verbs means importing its `denext.config.ts` (and running ev
 denext toolchain install       # download + verify now (fails when it can't)
 denext toolchain install --with gleam   # …and the pinned Gleam compiler
 denext toolchain install --with fastlane   # …and the managed fastlane (portable Ruby + gems)
-denext toolchain status        # pinned versions (Deno, Gleam, fastlane), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
+denext toolchain status        # pinned versions (Deno, TypeScript, Gleam, fastlane), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
@@ -289,6 +289,85 @@ and `link` replaces it (commands switch to the pinned build either way).
 
 `denext doctor` reports the toolchain as one check: the pinned version, whether it is cached and
 verified, and whether the run is on it or on stock Deno, and why.
+
+## Native TypeScript 7 type checking
+
+From `2.9.7-denext.22` the toolchain's CLI archive ships the native TypeScript 7 compiler in
+`typescript-check/` beside `deno`, so `denext check`, the dev type-check overlay, `denext test` and
+every other command that type-checks run it. It is installed only when its binary and the whole
+`typescript-check/` directory hash to the pin; a compiler that doesn't is refused, never installed,
+and the toolchain type-checks with its in-process TypeScript 6.0.3 instead, with one warning.
+`denext toolchain status` prints a `typescript` line: the version and `native, verified`, why it
+was refused, or that it arrives with the toolchain.
+
+`DENEXT_NATIVE_CHECK=0` (or `false` / `off`) keeps the in-process TypeScript 6.0.3, and a
+`DENO_CHECK_ENGINE` you set yourself always wins. The native check doesn't resolve an absolute
+`file:` import yet (TS2307), so such a project sets `DENEXT_NATIVE_CHECK=0`
+([known limitations](/docs/limitations)); [the differences page](/docs/differences) lists how its
+output differs.
+
+## npm packages as on Node.js
+
+From `2.9.7-denext.22`, on the toolchain (`denext dev`, `build`, `start`, `test`, jobs), a project
+with a `package.json` and **no `deno.json`** — an app brought over from Node.js — resolves npm
+packages and TypeScript as Node.js and its tools do. A native denext app has a `deno.json` and
+keeps Deno's resolution:
+
+- `deno install` writes npm's hoisted `node_modules`, so a dependency's dependency (such as `ms`
+  under `debug`) resolves from app code and from tools that walk `node_modules`. `node-linker=isolated`
+  in `.npmrc`, `--node-modules-linker=isolated` or a `deno.json` keeps the isolated layout.
+- Packages resolve with Node.js's export conditions, not Deno's `"deno"` condition (a package's
+  Deno build can lack its Node.js API). `"denoCondition"` in `deno.json` / `package.json` chooses
+  per package.
+- TypeScript resolves as tsx and ts-node resolve it: extensionless, directory and `.js`-for-`.ts`
+  relative imports, and `tsconfig.json` `compilerOptions.paths` at run time.
+  `DENO_NO_SLOPPY_IMPORTS=1` / `DENO_NO_TSCONFIG_PATHS=1` opt out.
+
+In every project, an untyped `.js` file that uses CommonJS (`require`, `module.exports`) and no ES
+module syntax runs as CommonJS, as Node.js detects it (`DENO_NO_DETECT_CJS=1` opts out).
+`better-sqlite3` is served over the built-in SQLite engine, so Drizzle, Knex and Kysely on it run
+unchanged (`DENO_NO_BETTER_SQLITE3_COMPAT=1` loads the package's own code).
+
+More dependencies install, too:
+
+- git (`github:user/repo`, `git+https://…#tag`, `#semver:<range>`) and tarball URL dependencies
+  install and are recorded in `deno.lock` (a tarball by its integrity, a git dependency by its
+  commit).
+- The project's own lifecycle scripts (`postinstall`, `prepare`) run on install with their output,
+  as npm runs them; a dependency's still need approval. `.npmrc` `ignore-scripts=true` is honoured.
+- `node` and `node-gyp` work inside lifecycle scripts, and `denext x --install-node-shims` writes
+  `node`, `npx` and `npm` executables that map onto the toolchain.
+
+## Windows as a dev host
+
+Windows (x64 and Arm64) is a supported development machine. Install the CLI per user, with no
+administrator rights, into `%USERPROFILE%\.denext\bin`:
+
+```powershell
+irm https://denext.dev/install.ps1 | iex
+```
+
+It installs the native Arm64 binary on Windows on Arm. Scoop (`scoop bucket add denext
+https://github.com/Brainwires/scoop-denext`, then `scoop install denext/denext`) and winget
+(`winget install Brainwires.denext`) work too; see [getting started](/docs/getting-started). The
+toolchain is pinned for `windows-x86_64` and `windows-aarch64`.
+
+CI runs denext's unit and integration suites on Windows x64 (`windows-tests`), module resolution on
+every push (`windows-resolve`), and the desktop suites, installers and `install.ps1` on Windows x64
+and Arm64 (`desktop-ci`). What works:
+
+- `dev`, `build`, `export` (a ReFS Dev Drive included), `start`, `test` and `doctor`.
+- `denext build --compile`, with `--sign` through `signtool` (a Windows binary can also be signed
+  from macOS or Linux with `osslsigncode`).
+- Tailwind; Windows on Arm runs Tailwind's x64 build under emulation (Tailwind publishes no Arm64
+  one).
+- `denext desktop run`, `dev` and `package` (the `.msi` needs WiX 5).
+
+Not on Windows: `denext fastlane` and iOS builds (both need macOS).
+
+One limitation: Deno 2.9 resolves a `deno.json` `file:` target on another drive as
+`file:///C:/D:/…`, so a project whose `deno.json` points at files on a different drive fails to
+resolve them. Keep the project and its `file:` targets on one drive.
 
 ## Notes: how denext's Deno build is kept current
 

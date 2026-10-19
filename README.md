@@ -293,6 +293,14 @@ pass and keeps your source intact:
 - **Remix and React Router v7**: loaders, actions, `meta` and error boundaries run on the
   `denext/remix` runtime. → [Migrating from Remix](https://denext.dev/docs/migrating-remix) ·
   [React Router](https://denext.dev/docs/react-router)
+- **TanStack Start**: the `@denext/tanstack-start` plugin runs server functions, server routes,
+  streamed pages and Start's prerender with your source untouched.
+  → [TanStack Start](https://denext.dev/docs/tanstack-start)
+- **Fresh** (2 and 1.x): `app/` and `middleware.ts` are generated around your route modules, and
+  islands become client components. → [Migrating from Fresh](https://denext.dev/docs/migrating-fresh)
+- **Preact** (Vite, preact-cli, WMR): a SPA with Preact, preact-iso and Preact Signals resolved
+  to denext. → [Migrating from Preact](https://denext.dev/docs/migrating-preact) ·
+  [Preact Signals](https://denext.dev/docs/signals)
 - **Expo and React Native**: `migrate --from expo` writes the config and a `capacitor.config.ts`
   and reports which native-only packages need a recipe.
   → [Coming from React Native](https://denext.dev/docs/coming-from-react-native) ·

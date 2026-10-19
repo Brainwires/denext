@@ -614,7 +614,8 @@ export const csp = { scriptSrc: ["https://plausible.io"] }; // strict + this rou
 
 **Incremental streaming (`streaming`).** **On by default.** A route with a
 pending `<Suspense>` boundary flushes its shell first and streams each boundary
-as it resolves; streamed responses carry the **same strict hash-based CSP** as
+that suspended as it resolves (one whose content finished with the shell is
+written inline in it); streamed responses carry the **same strict hash-based CSP** as
 buffered ones (the swap runtime is a hashed constant). A fully synchronous route
 (no holes) is still delivered buffered, so it stays shared-cacheable, and
 ISR/PPR-cacheable routes take their own path first — so streaming never bypasses

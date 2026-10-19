@@ -83,6 +83,13 @@ browser with `MvuView`; only where it runs differs.
 A burst of events re-renders once; the client's events name the render they came from, and a
 handler stays valid for the 16 renders after it.
 
+A route whose own modules define a live view is built as a Flight route (`denext build`, `dev`,
+`start` and `export`), so a page whose only interactive part is a `defineLiveView` ships the Live
+client and mounts with no `"use client"` module of its own; a route without one ships no Live
+client. Live views, server actions, channels and taint also work under
+`compatibilityMode: true` (from 4.4.0): their registries are one per process, so the compat
+build's separate copy of the runtime modules shares them.
+
 ## Events and payloads
 
 `send(msg)` binds a constant message. `send((payload) => msg)` builds it from the event's

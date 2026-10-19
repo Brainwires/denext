@@ -64,10 +64,53 @@ export default async function Page() {
       <Code lang="ts">
         {`import { revalidatePath, revalidateTag, unstable_cache } from "denext/server";
 
-const getProducts = unstable_cache(fetchProducts, ["products"], { revalidate: 3600 });
+// ["products"] is the key; the tags are their own option
+const getProducts = unstable_cache(fetchProducts, ["products"], {
+  revalidate: 3600,
+  tags: ["products"],
+});
 revalidateTag("products"); // purge everything tagged "products"
 revalidatePath("/blog");   // purge a route`}
       </Code>
+
+      <h2 id="unstable-cache-and-cachedfetch">
+        <code>unstable_cache</code> and <code>cachedFetch</code>
+      </h2>
+      <p>
+        <code>unstable_cache(fn, keyParts, {"{ revalidate, tags }"})</code>{" "}
+        wraps a loader: the entry is keyed on <code>keyParts</code>{" "}
+        plus the call's arguments, expires after <code>revalidate</code> seconds (<code>false</code>
+        {" "}
+        or unset: never), and is purged by <code>revalidateTag</code> on any of its{" "}
+        <code>tags</code>. The key parts are not tags. As in Next.js,{" "}
+        <code>revalidate: 0</code>, a negative or a non-numeric value is refused when the wrapper is
+        made (<code>Invariant revalidate: 0 can not be passed to unstable_cache()</code>), not when
+        it is called; use <code>noStore()</code>{" "}
+        or call the loader directly for data that must never be cached.
+      </p>
+      <p>
+        <code>cachedFetch(url, init)</code> from <code>denext/server</code>{" "}
+        is the same cache around a GET or POST: it resolves to the response body as text, keyed on
+        the URL, the method, the headers and the body (a non-string body is buffered so two bodies
+        never share an entry) and on the cache options. Its options are the entry's:
+      </p>
+      <Code lang="ts">
+        {`import { cachedFetch } from "denext/server";
+
+// cached for 10 minutes, purged by revalidateTag("rates")
+const rates = JSON.parse(
+  await cachedFetch("https://api.example.com/rates", { revalidate: 600, tags: ["rates"] }),
+);
+
+// revalidate: 0 is fetch's no-store: fetched every time, nothing stored
+const live = await cachedFetch("https://api.example.com/now", { revalidate: 0 });`}
+      </Code>
+      <p>
+        The tags reach the page being rendered (so <code>revalidateTag</code>{" "}
+        purges that page too) and an outer <code>"use cache"</code> function, as an{" "}
+        <code>unstable_cache</code>{" "}
+        call does. Two call sites that tag one URL differently keep separate entries.
+      </p>
 
       <h2>ISR</h2>
       <Code lang="tsx">
@@ -122,6 +165,24 @@ export default function Feed() {
           {" "}
           is set — so a page with no code that reads the request can still be dynamic. Pin{" "}
           <code>canonicalOrigin</code> and it caches.
+        </li>
+        <li id="per-visitor-api-reads">
+          An in-process API call that read the visitor. A <code>createApiClient()</code> /{" "}
+          <code>useApi</code>{" "}
+          call made during a render runs the route in the same process, under the visitor's{" "}
+          <code>cookie</code>, <code>authorization</code>, <code>accept-language</code>,{" "}
+          <code>user-agent</code> and forwarding headers. When the handler (or{" "}
+          <code>middleware.ts</code> on that call) reads one of them —{" "}
+          <code>request.headers.get</code> / <code>has</code> / iteration, a{" "}
+          <code>NextRequest</code>'s <code>cookies</code>, a matcher's <code>has</code> /{" "}
+          <code>missing</code> on one, or <code>cookies()</code> / <code>headers()</code>{" "}
+          — the calling render is per-visitor: an ISR render is not stored, and a Cache Components
+          prerender turns the enclosing <code>&lt;Suspense&gt;</code>{" "}
+          into a per-request hole. Before 4.4 such a read went untracked and the first visitor's
+          answer was cached for everyone. To keep a page cacheable, call only handlers that read no
+          visitor header during the render; put per-user calls under their own{" "}
+          <code>&lt;Suspense&gt;</code> (with{" "}
+          <code>cacheComponents</code>) or fetch them in the browser.
         </li>
       </ul>
       <p>
@@ -249,10 +310,13 @@ export default {
         caps the outer entry's (the minimum wins), hit or miss, and a stale hit is refreshed before
         the outer entry stores it; inside an <code>unstable_cache</code>{" "}
         loader a nested cached function keeps its tags and lifetime to itself, and a nested{" "}
-        <code>unstable_cache</code> bypasses its own cache, as in Next.js.{" "}
-        <code>revalidateTag(tag, "max")</code> serves the tagged entries stale while they refresh;
-        {" "}
-        <code>updateTag(tag)</code>{" "}
+        <code>unstable_cache</code> bypasses its own cache, as in Next.js. A{" "}
+        <code>revalidate: false</code> never shortens the outer entry, and the outer body's own{" "}
+        <code>cacheLife()</code> wins over a nested call's{" "}
+        <code>revalidate</code>. A stale hit inside a cached function is refreshed in the foreground
+        so the outer entry never stores a stale value; outside one, the stale value is served while
+        it refreshes. <code>revalidateTag(tag, "max")</code>{" "}
+        serves the tagged entries stale while they refresh; <code>updateTag(tag)</code>{" "}
         expires them for the rest of the request (read-your-writes in a Server Action), and{" "}
         <code>refresh()</code> re-fetches the route's uncached data.
       </p>
@@ -265,6 +329,14 @@ export default {
         <code>"use cache"</code>. From <code>next/cache</code>, <code>navigation()</code> and{" "}
         <code>prefetch()</code>{" "}
         resolve at once (denext has no runtime prefetch); see KNOWN-DIFFERENCES.
+      </p>
+      <p>
+        A <code>useApi</code> / <code>createApiClient</code> call in the shell whose API route reads
+        {" "}
+        <code>cookies()</code> / <code>headers()</code> (or any visitor header,{" "}
+        <a href="#per-visitor-api-reads">above</a>) postpones the <code>&lt;Suspense&gt;</code>{" "}
+        around it: that boundary becomes a per-request hole that renders, and seeds, each visitor's
+        own answer, while the rest of the shell stays cached.
       </p>
       <Callout kind="note">
         Cache Components and PPR are a stable <strong>opt-in</strong>{" "}

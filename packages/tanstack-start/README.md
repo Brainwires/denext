@@ -15,6 +15,7 @@ export default { compatibilityMode: true, plugins: [tanstackStart()] };
 The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `package.json`, and
 `@tanstack/router-generator` in `devDependencies`. The plugin loads them from the app's own
 `node_modules` and depends on no npm package itself.
+It requires `@denext/denext` ^4.4.0.
 
 `denext migrate` sets a Start app up: it recognizes `@tanstack/react-start` with Start's Vite
 plugin (`tanstackStart()` in `vite.config.ts`) and writes this config, the Start options
@@ -199,7 +200,8 @@ tanstackStart({
 `routesDirectory` and `generatedRouteTree` are relative to `srcDirectory`, as in Start; the
 generator's other options apply over `tsr.config.json`. denext serves the app under its own
 `basePath`, so a `basepath` that differs is refused. Refused too: `target` (the plugin builds a
-React app) and `addExtensions: false` (Deno resolves the route tree's imports by extension).
+React app), `autoCodeSplitting` (Start's own plugin omits it, and denext splits the browser
+bundle itself) and `addExtensions: false` (Deno resolves the route tree's imports by extension).
 
 ### Checked options
 

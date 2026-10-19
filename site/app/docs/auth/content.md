@@ -237,8 +237,57 @@ Every flow sends a random `state` and checks it on the callback. A provider also
 (`S256`) challenge, and an OIDC one a `nonce` its `id_token` must carry, unless its `checks` say
 otherwise, as Auth.js's provider `checks` do: with `checks` set, PKCE runs only when the list has
 `"pkce"` and the `nonce` only when it has `"nonce"`. A provider that refuses a `code_verifier` it
-didn't ask for takes `checks: ["state"]` (`{ ...oauthPreset(…), checks: ["state"] }`); `state`
-runs whatever the list says, `"none"` included, and an unknown value is a config error.
+didn't ask for takes `checks: ["state"]` (`{ ...github({ clientId, clientSecret }), checks:
+["state"] }`); `state` runs whatever the list says, `"none"` included, and an unknown value is a
+config error.
+
+### Native `OAuthProvider` fields
+
+A provider the presets don't cover is an `OAuthProvider` object literal (or `oidc({ … })` for an
+OpenID Connect issuer). Besides the endpoints, `scopes`, the client credentials and `profile`, it
+takes:
+
+- `checks?: readonly OAuthCheck[]` — `"pkce"`, `"state"`, `"nonce"` or `"none"`, as above.
+  Unset is PKCE (`S256`) plus a `nonce` for an `"oidc"` provider; an unknown value is a config
+  error.
+- `tokenRequestParams?: Record<string, string>` — extra form fields on the token request (a
+  `client_key`, say). They never replace one the flow sets itself: `grant_type`, `code`,
+  `redirect_uri`, `code_verifier` and the client credentials win.
+- `userinfoRequest?: (input) => Promise<Record<string, unknown>>` — reads the profile with a
+  request of the provider's own shape (a `POST`, API-key headers, an id from the token response
+  in the URL) instead of a `GET` of `userinfoUrl` with a Bearer token. `input` is
+  `{ tokens, fetch(url, { method, headers, body? }), url? }`: the token response, the provider
+  fetch (pinned to the provider's hosts) and the resolved `userinfoUrl`.
+- `idTokenAlg?: "HS256"` — for an `"oidc"` provider whose specification signs the `id_token`
+  with HMAC-SHA256 under the client secret. It is verified with the secret and no other algorithm
+  is accepted from it; on any other provider type it is a config error. Unset, the `id_token` is
+  verified against the issuer's JWKS.
+
+```ts
+import type { OAuthProvider } from "denext/server";
+
+const example: OAuthProvider = {
+  id: "example",
+  type: "oauth",
+  authorizationUrl: "https://auth.example.com/authorize",
+  tokenUrl: "https://auth.example.com/token",
+  userinfoUrl: "https://api.example.com/me",
+  scopes: ["profile"],
+  clientId,
+  clientSecret,
+  checks: ["state"],
+  tokenRequestParams: { client_key: clientId },
+  userinfoRequest: async ({ tokens, fetch, url }) => {
+    const res = await fetch(url!, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ access_token: tokens.access_token }),
+    });
+    return await res.json();
+  },
+  profile: ({ userinfo }) => ({ id: String(userinfo?.id), name: String(userinfo?.name ?? "") }),
+};
+```
 
 ### `response_mode=form_post`
 
@@ -2258,9 +2307,10 @@ never loaded.
 | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GitHub`, `Google`, `Apple`, `Discord`, `MicrosoftEntraID`, `GitLab`, `Facebook`, `Slack`, `Okta`, `Auth0`, `Keycloak` | denext's presets; `clientId` / `clientSecret` (and an `issuer`) default to `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER`; `authorization.params`, `profile()` and `allowDangerousEmailAccountLinking` apply          |
 | `Twitter`, `LinkedIn`, `Twitch`, `Spotify`, `Cognito`, `Zoom`, `Notion`                                                | the same, from endpoint data the shim carries (X, Zoom and Notion send the client credentials as HTTP Basic)                                                                                                  |
+| `AzureAD` (`next-auth/providers/azure-ad`)                                                                             | Microsoft Entra ID under the id `azure-ad`: `AUTH_AZURE_AD_ID` / `_SECRET`, the tenant from `AUTH_AZURE_AD_ISSUER`                                                                                            |
 | The other OAuth / OIDC providers (`Kakao`, `Reddit`, `Zitadel`, `WorkOS`, … 71 of them)                                | generated from Auth.js's own definitions (see below); `AUTH_<ID>_*` defaults, options such as `issuer`, `apiBaseUrl` or `tenantId`, and the profile mapping as Auth.js has them                               |
 | `Passkey`, `WebAuthn`                                                                                                  | denext's [passkeys](#passkeys-webauthn): `relayingParty` → `rpId` / `rpName` / `origins`; `next-auth/webauthn`'s `signIn("passkey")` signs in, `{ action: "register" }` adds one                              |
-| A custom provider object (`{ id, type: "oauth" \| "oidc", authorization, … }`)                                         | `oauthPreset()` / `oidc()`                                                                                                                                                                                    |
+| A custom provider object (`{ id, type: "oauth" \| "oidc", authorization, … }`)                                         | An `OAuthProvider` object (or `oidc()`)                                                                                                                                                                       |
 | `Credentials`                                                                                                          | `credentials()`, plus its rate limits                                                                                                                                                                         |
 | `Resend`, `SendGrid`, `Postmark`, `Mailgun`, `ForwardEmail`, `Loops`, `Nodemailer`, `Email`                            | `magicLink()`; the service's HTTP API (`AUTH_<ID>_KEY`) or `smtpMailer()` sends the link                                                                                                                      |
 | `session.strategy: "jwt"`                                                                                              | denext's signed cookie, the `jwt` callback's token sealed inside it (AES-256-GCM, a key derived from `AUTH_SECRET`)                                                                                           |
@@ -2303,6 +2353,26 @@ signed JWT) and WeChat (its `platformType` option switches the authorization URL
 one as a custom provider object if its API allows; [Limitations](/docs/limitations) lists the
 reasons.
 
+A generated provider is imported and configured like any Auth.js one. Its credentials default to
+`AUTH_<ID>_ID` / `AUTH_<ID>_SECRET`, the id upper-cased with `-` turned into `_`
+(`next-auth/providers/42-school` reads `AUTH_42_SCHOOL_ID`), and a provider with an issuer reads
+`AUTH_<ID>_ISSUER`. The options its definition reads (`issuer`, `apiBaseUrl`, `tenantId`,
+`connection`, `scope`, …) are passed the same way; an issuer or another URL the app supplies must
+be `https:`, or the provider is a config error:
+
+```ts
+// auth.ts
+import Kakao from "next-auth/providers/kakao"; // AUTH_KAKAO_ID / AUTH_KAKAO_SECRET
+import Reddit from "next-auth/providers/reddit";
+export const { handlers, auth } = NextAuth({
+  providers: [Kakao, Reddit({ checks: ["state"] })],
+});
+```
+
+`checks` overrides the provider's own list as in Auth.js. Each value must be `"pkce"`, `"state"`,
+`"nonce"` or `"none"`; anything else (`Reddit({ checks: ["pcke"] })`) throws a `TypeError` when
+the provider is built, naming the provider and the accepted values, so a typo can't turn PKCE off. `state` is sent and checked whatever the list says.
+
 ### Passkeys from `next-auth/providers/passkey`
 
 `next-auth/providers/passkey` (and `…/webauthn`) turns on denext's [passkeys](#passkeys-webauthn) under the
@@ -2323,15 +2393,31 @@ import { signIn } from "next-auth/webauthn";
 <button onClick={() => signIn("passkey", { action: "register" })}>Add a passkey</button>;
 ```
 
-The relying party is `AUTH_URL`'s origin (or `relayingParty: { id, origin }`), never the request's
-host. A passkey is registered for a signed-in user whose address is verified, after a recent
+The relying party is `AUTH_URL`'s origin, never the request's host. `relayingParty: { id?, name?,
+origin? }` sets it: `id` is the RP ID, `name` what the authenticator shows, and `origin` (a string
+or a list, every entry accepted) the origins a ceremony may come from — with only an `id` it is
+`https://<id>`, never taken from the request. `authenticationOptions` / `registrationOptions`
+carry the ceremony `timeout` (milliseconds) and `userVerification` (registration's also under
+`authenticatorSelection`); `Passkey` requires user verification unless they ask for less, and
+`WebAuthn` prefers it:
+
+```ts
+Passkey({
+  relayingParty: { id: "example.com", name: "Example", origin: ["https://example.com"] },
+  authenticationOptions: { timeout: 120_000, userVerification: "preferred" },
+});
+```
+
+A passkey is registered for a signed-in user whose address is verified, after a recent
 sign-in; Auth.js's sign-up by passkey (an unverified email creating an account) is not offered.
 With an Auth.js adapter, a credential is its `Authenticator` row and a `webauthn` account, as
 Auth.js stores them. The ceremony's challenge (Auth.js keeps it in a cookie) goes to the app's
 [cache store](/docs/multi-instance): single-use, taken atomically, and expiring with the ceremony.
 Instances that share a store (`postgresCacheStore`, `redisCacheStore`, `denoKvCacheStore`, or one
 host's SQLite file) finish each other's ceremonies; with the in-memory store a ceremony must
-finish on the instance that began it, as with sticky sessions.
+finish on the instance that began it, as with sticky sessions. A custom `CacheStore` without the
+optional `takeData` (the atomic take) behaves like the in-memory store here: the challenge stays
+on the instance that began the ceremony.
 
 An Auth.js adapter's schema has no column for denext's roles, bans or `sessionsValidAfter`. Give
 it two more methods over a table of your own, keyed by user id, and `requireAuth({ role })`, a
@@ -3071,9 +3157,12 @@ restricts the `Chain ID`, `domains` allows message domains besides the app's own
   warns loudly when set; even then the host allowlist still applies, and redirects are
   followed **by hand with every hop re-checked** — otherwise a token endpoint answering
   `307` could carry the `client_secret` in the POST body to any host it named.
-- **OAuth/OIDC.** Authorization Code with PKCE (S256), a CSRF `state` and a `nonce`;
-  `id_token`s verified against the provider's JWKS across the RS/PS/ES families
-  (`RS/PS/ES 256/384/512`; `none` and unknown algorithms rejected) plus `iss`, `aud`
+- **OAuth/OIDC.** Authorization Code with a CSRF `state` on every flow, plus PKCE (S256) and,
+  for OIDC, a `nonce` unless the provider's [`checks`](#pkce-state-and-nonce-checks) leave them
+  out; `id_token`s verified against the provider's JWKS across the RS/PS/ES families
+  (`RS/PS/ES 256/384/512`; `none` and unknown algorithms rejected) — HS256 only for an `oidc`
+  provider configured with `idTokenAlg: "HS256"`, verified under its client secret, with no
+  other algorithm accepted from it — plus `iss`, `aud`
   (with `strictAudience`), `exp` — required, so a token that omits it is rejected rather
   than treated as non-expiring — `nbf`, `iat` and `nonce`. The `redirect_uri` is pinned to
   `canonicalOrigin`, so a spoofed `Host` header can't steal the code.

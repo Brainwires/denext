@@ -940,8 +940,8 @@ export function isDocumentTag(tag: string): boolean {
  * server's request-scoped recorder), which puts them on the real document tags. In the page
  * render (a head collector is active) the layout's own `<html>`/`<head>`/`<body>` tags are not
  * emitted — only their content, inside the page container — so these attributes reach the
- * document only through here. Plain string/number values only: a React-only prop
- * (`suppressHydrationWarning`) or a handler is not an attribute.
+ * document only through here. Plain string/number values and a `style` object only: a
+ * React-only prop (`suppressHydrationWarning`) or a handler is not an attribute.
  */
 export function recordDocumentAttrs(tag: string, props: Record<string, unknown>): void {
   if (tag !== "html" && tag !== "body") return;
@@ -952,6 +952,8 @@ export function recordDocumentAttrs(tag: string, props: Record<string, unknown>)
   const attrs: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(props)) {
     if (typeof value === "string" || typeof value === "number") attrs[name] = value;
+    // A style object too: the assembler serializes it as the host renderer does.
+    else if (name === "style" && value !== null && typeof value === "object") attrs[name] = value;
   }
   sink(tag, attrs);
 }

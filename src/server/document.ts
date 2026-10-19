@@ -2,7 +2,7 @@
 // metadata and the hydration bootstrap script.
 
 import { abortedPromise } from "../runtime/abort-promise.ts";
-import { escapeHtml, isValidAttrName } from "../jsx/render-to-string.ts";
+import { escapeHtml, isValidAttrName, serializeStyle } from "../jsx/render-to-string.ts";
 import type {
   IconDescriptor,
   Metadata,
@@ -364,19 +364,38 @@ ${bodyOpenTag(opts.bodyAttrs)}<div id="${ROOT_ID}"${
 </html>`;
 }
 
-/** Serialize a root component's document attributes (`className` → `class`; values escaped). */
+/** A document tag's ` style="…"` (an object serialized as the host renderer does; "" if empty). */
+function documentStyleAttr(value: unknown): string {
+  const css = typeof value === "object"
+    ? serializeStyle(value as Record<string, unknown>)
+    : String(value).trim();
+  return css === "" ? "" : ` style="${escapeHtml(css)}"`;
+}
+
+/**
+ * Serialize a root component's document attributes (`className` → `class`, a `style` object →
+ * CSS text; values escaped).
+ */
 function documentAttrString(attrs: Record<string, unknown> | undefined, skip: string[]): string {
   if (!attrs) return "";
   let out = "";
   for (const [name, value] of Object.entries(attrs)) {
-    if (skip.includes(name) || value === null || value === undefined || value === false) continue;
-    const attr = name === "className" ? "class" : name;
-    if (attr === "children" || attr === "style" || attr === "dangerouslySetInnerHTML") continue;
-    // The same name chokepoint every other element gets (no `on*`, no `<>"'=/` in a name).
-    if (!isValidAttrName(attr)) continue;
-    out += value === true ? ` ${attr}` : ` ${attr}="${escapeHtml(String(value))}"`;
+    if (!skip.includes(name)) out += documentAttr(name, value);
   }
   return out;
+}
+
+/** Root-tag props that are never document attributes. */
+const NOT_DOCUMENT_ATTRS = new Set(["children", "dangerouslySetInnerHTML"]);
+
+/** One document attribute as ` name="value"` ("" when it is not one). */
+function documentAttr(name: string, value: unknown): string {
+  if (value == null || value === false || NOT_DOCUMENT_ATTRS.has(name)) return "";
+  if (name === "style") return documentStyleAttr(value);
+  const attr = name === "className" ? "class" : name;
+  // The same name chokepoint every other element gets (no `on*`, no `<>"'=/` in a name).
+  if (!isValidAttrName(attr)) return "";
+  return value === true ? ` ${attr}` : ` ${attr}="${escapeHtml(String(value))}"`;
 }
 
 /** The document's `<html>` open tag: denext's `lang` unless the root set its own. */

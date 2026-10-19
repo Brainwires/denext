@@ -423,3 +423,24 @@ Deno.test("a non-Flight page's root layout attributes land on the real tags too"
   assertEquals(documentTags(body).html, '<html lang="de">');
   assertEquals(documentTags(body).body, '<body class="plain">');
 });
+
+Deno.test("a root layout's <html>/<body> style objects land on the real tags", async () => {
+  // Nested in the page container, the parser merged a `<body style>` onto the real body; with
+  // the tags peeled, the style has to reach the document through the recorder like the rest.
+  const layout = (children: VNodeChildren) =>
+    h(
+      "html",
+      { lang: "en", style: " color-scheme: dark " }, // a string passes through, trimmed
+      h("body", { style: { margin: 0, paddingTop: 4 }, className: "b" }, children),
+    );
+  for (const flight of [true, false]) {
+    const app = makeApp(
+      flight ? {} : { flight: false, flightRoutes: undefined },
+      plainPage,
+      layout,
+    );
+    const tags = documentTags(await (await app(new Request("http://x/"))).text());
+    assertEquals(tags.html, '<html lang="en" style="color-scheme: dark">');
+    assertEquals(tags.body, '<body style="margin:0;padding-top:4px" class="b">');
+  }
+});
