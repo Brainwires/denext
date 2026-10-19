@@ -26,6 +26,11 @@ and this project adheres to
   Gemfile.
 - **`denext migrate --help` names TanStack Start and React Router** among the sources it moves.
 
+### Fixed
+
+- `denext mobile add storage secure-store --encrypted` no longer tells you to run
+  `denext mobile add secure-store` too: that run adds it.
+
 ## [4.4.0] - 2026-10-19
 
 ### Added

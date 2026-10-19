@@ -177,6 +177,19 @@ Deno.test("mobile add storage --encrypted: SQLCipher on iOS (Swift package) and 
   });
 });
 
+Deno.test("mobile add storage secure-store --encrypted: no note to add secure-store, which this run adds", async () => {
+  await inProject(async (dir) => {
+    const report = await addMobileCapabilities({
+      capabilities: ["storage", "secure-store"],
+      cwd: dir,
+      run,
+      encrypted: true,
+    });
+    assert(report.written.includes(PBXPROJ));
+    assert(!report.plan.manual.join("\n").includes("denext mobile add secure-store"));
+  });
+});
+
 Deno.test("mobile add storage --encrypted: a project without build.gradle gets the dependency as a manual step", async () => {
   await inProject(async (dir) => {
     const report = await addEncryptedStorageToProject({ dir });

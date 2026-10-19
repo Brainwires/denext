@@ -77,6 +77,8 @@ export interface CapabilityOptions {
   readonly ci?: boolean;
   /** `--encrypted`: link SQLCipher for encrypted stores (storage). */
   readonly encrypted?: boolean;
+  /** Every capability this run adds, so one can skip a note another of them settles. */
+  readonly capabilities?: readonly string[];
 }
 
 /** One text edit to a native file, with the line the plan prints for it. */
@@ -1330,6 +1332,7 @@ function capabilityOptions(
     configurable: [...new Set(opts.configurable ?? [])],
     ci: opts.ci === true,
     encrypted: opts.encrypted === true,
+    capabilities: names,
   };
   const flags = [
     ["schemes", "--scheme"],

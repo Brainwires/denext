@@ -366,6 +366,8 @@ function configureBackgroundAudio(): CapabilityConfig {
  */
 function configureStorage(options: CapabilityOptions): CapabilityConfig {
   if (!options.encrypted) return { install: STORAGE_INSTALL };
+  // `mobile add storage secure-store --encrypted` adds secure-store in the same run.
+  if (options.capabilities?.includes("secure-store")) return { install: ENCRYPTED_STORAGE_INSTALL };
   return {
     install: ENCRYPTED_STORAGE_INSTALL,
     manual: [
