@@ -747,6 +747,13 @@ function sheetScreen(rt: StackRt, item: ScreenItem): VNode {
 /** The header of a card screen (when `headerShown`). */
 function screenHeader(rt: StackRt, item: ScreenItem): VNode | null {
   if (!item.options.headerShown) return null;
+  if (item.options.header !== undefined) {
+    return h(
+      "div",
+      { "data-dnx-custom-header": "", style: { flexShrink: 0 } },
+      item.options.header,
+    );
+  }
   const below = rt.props.entries[item.index - 1];
   return h(StackHeader, {
     options: item.options,

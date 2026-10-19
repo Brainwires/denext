@@ -40,6 +40,18 @@ and this project adheres to
 
 ### Added
 
+- **Unistyles 3 in React Native mode, with nothing to configure.** With `react-native-unistyles`
+  installed, the app's own `react-native` imports give Unistyles' wrapped components and
+  `styles.useVariants(…)` applies to the rest of its block, as its Babel plugin does; react-native-web's
+  own components ignored a Unistyles style, so such an app rendered unstyled.
+  `reactNative: { unistyles: false }` turns it off.
+- **Metro's `require.context` in React Native mode.** A call with literal arguments in the app's
+  own modules (an Expo app rendering `<ExpoRoot context={require.context("./app")} />`) is a module
+  generated at build time with Metro's defaults; it threw in the browser.
+- **A native-stack screen's `header` option** draws the app's own header in place of the stack's,
+  called as native-stack calls it.
+- **Migration beds for Tamagui's starter and Unistyles' Expo example**, each built in React Native
+  mode from a pinned public commit, rendered, navigated and interacted with in headless Chromium.
 - **React Native Skia runs in React Native mode on the web, and so do other `react-reconciler`
   renderers.** denext's `react` exports React's shared internals
   (`__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE`): a renderer built on
@@ -371,6 +383,17 @@ and this project adheres to
   directory.** The output-directory guard compared directories by their 64-bit file index as well
   as their real paths, and ReFS does not keep that index unique, so `out/` could read as
   overlapping `app/`. On Windows it compares real paths only.
+- **JSX in an app's `.js` module builds in React Native mode.** The deno loader answered the app's
+  own `.js` modules as plain `js`, ignoring the `.js` → `jsx` loader React Native mode sets
+  (Metro parses JSX in every `.js` file), so the build failed with "The JSX syntax extension is
+  not currently enabled".
+- **expo-router 56+'s `<Stack.Screen>` children reach the stack.** Its `Stack.Screen` is
+  `StackScreen`, which expo-router's own Stack maps to the base `Screen` before reading the
+  children; the replacement Stack did not, so every screen's `options` (its title) were dropped
+  with "Layout children must be of type Screen".
+- **`unstable_NativeView` / `unstable_NativeText` import from `react-native`** in React Native
+  mode (React Native 0.83's root host components): react-native-web's `View` / `Text`. The import
+  failed the build.
 - **A `<>…</>` inside a `react-reconciler` renderer's tree is a fragment.** denext's fragment
   marker is React's brand, `Symbol.for("react.fragment")` (it was `Symbol.for("denext.fragment")`,
   which such a renderer refused with React error #130).

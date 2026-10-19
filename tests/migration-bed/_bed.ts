@@ -15,6 +15,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
+import type { Page } from "@astral/astral";
 import { killTree, launchBrowser, pollFor, startCliServer } from "../e2e/harness.ts";
 
 /** One route to render-assert after the migrated app is built and served. */
@@ -41,13 +42,25 @@ interface BedBrowserCheck {
   /** A JS expression, polled in the page until truthy: the app hydrated. */
   hydrated: string;
   /** A link to click (a CSS selector) and an expression that is truthy once it navigated. */
-  navigate?: { click: string; until: string };
+  navigate?: BedAction;
   /**
    * An interaction on the hydrated page: a control to click (a CSS selector) and an expression
    * that is truthy once the page reacted (an island's state changed), on the same document.
    */
-  interact?: { click: string; until: string };
+  interact?: BedAction;
 }
+
+/**
+ * A click and the expression that is truthy once the page reacted: `click` is a CSS selector
+ * (a real mouse click on it); `press` is a JS expression that clicks a control a selector cannot
+ * name (a button known only by its text), run in the page instead.
+ */
+type BedAction =
+  & { until: string }
+  & ({ click: string; press?: never } | {
+    press: string;
+    click?: never;
+  });
 
 /**
  * A setup command with its own deadline. `expect` marks success by output: a script that does
@@ -329,25 +342,26 @@ async function browserCheck(server: { origin: string }, check: BedBrowserCheck):
     const page = await browser.newPage(server.origin + check.path);
     await pollFor(page, check.hydrated, READY_TIMEOUT_MS);
     if (check.interact) {
-      await page.evaluate("globalThis.__bedSameDocument = true");
-      await (await page.$(check.interact.click))!.click();
-      await pollFor(page, check.interact.until, READY_TIMEOUT_MS);
-      assert(
-        await page.evaluate("globalThis.__bedSameDocument === true"),
-        `${check.interact.click} reloaded the page instead of updating it`,
-      );
+      await act(page, check.interact, "reloaded the page instead of updating it");
     }
-    if (!check.navigate) return;
-    await page.evaluate("globalThis.__bedSameDocument = true");
-    await (await page.$(check.navigate.click))!.click();
-    await pollFor(page, check.navigate.until, READY_TIMEOUT_MS);
-    assert(
-      await page.evaluate("globalThis.__bedSameDocument === true"),
-      `${check.navigate.click} reloaded the page instead of navigating on the client`,
-    );
+    if (check.navigate) {
+      await act(page, check.navigate, "reloaded the page instead of navigating on the client");
+    }
   } finally {
     await browser.close();
   }
+}
+
+/** Perform `action` on the page and wait for it to take, on the same document. */
+async function act(page: Page, action: BedAction, reloaded: string): Promise<void> {
+  await page.evaluate("globalThis.__bedSameDocument = true");
+  if (action.press) await page.evaluate(action.press);
+  else await (await page.$(action.click!))!.click();
+  await pollFor(page, action.until, READY_TIMEOUT_MS);
+  assert(
+    await page.evaluate("globalThis.__bedSameDocument === true"),
+    `${action.click ?? action.press} ${reloaded}`,
+  );
 }
 
 /**

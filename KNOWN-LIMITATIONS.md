@@ -400,6 +400,11 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   not reach it either (in React it would); pass the values as props. A class component inside such
   a tree is not supported. React Native Skia with Reanimated, and in the Capacitor shell's
   WebViews, is not yet verified.
+- **Unistyles' Babel plugin is ported in part:** the component swap and `useVariants` run, the
+  per-style dependency pass does not (the theme is CSS variables; a style that depends on the
+  breakpoint or another runtime value updates when its component renders again). Tamagui's
+  optimizing compiler (`@tamagui/babel-plugin`) is not run; its runtime styles the components.
+  `require.context` takes literal arguments only.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web

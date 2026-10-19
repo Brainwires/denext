@@ -27,7 +27,7 @@ import {
   type DenoPluginsOptions,
   denoResolverPlugin,
 } from "@luca/esbuild-deno-loader";
-import { dirname, fromFileUrl, join, toFileUrl } from "@std/path";
+import { dirname, extname, fromFileUrl, join, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import type * as esbuild from "./esbuild/mod.ts";
 
@@ -161,6 +161,34 @@ export function withWindowsWasmPaths(plugin: esbuild.Plugin): esbuild.Plugin {
   };
 }
 
+/**
+ * `plugin` with the build's own loader map applied to what it loads: a module it returns as
+ * `js` whose extension the build maps to another loader gets that one. React Native mode maps
+ * `.js` to `jsx` (Metro parses JSX in every `.js` file); the loader answered every app `.js`
+ * module as plain `js`, so JSX in one failed the build.
+ *
+ * @param plugin The loader plugin.
+ * @returns The same plugin, honouring `build.initialOptions.loader`.
+ */
+export function withLoaderMap(plugin: esbuild.Plugin): esbuild.Plugin {
+  return {
+    name: plugin.name,
+    setup(build) {
+      const map = build.initialOptions.loader ?? {};
+      return plugin.setup({
+        ...build,
+        onLoad: (opts, cb) =>
+          build.onLoad(opts, async (args) => {
+            const result = await cb(args);
+            if (result?.loader !== "js") return result;
+            const mapped = map[extname(args.path.replace(/[?#].*$/, ""))];
+            return mapped && mapped !== "js" ? { ...result, loader: mapped } : result;
+          }),
+      });
+    },
+  };
+}
+
 /** The loader plugin's options on Windows (see the header for why they differ). */
 function windowsLoaderOptions(options: DenoPluginsOptions): DenoPluginsOptions {
   if (options.configPath === undefined) return options;
@@ -180,7 +208,10 @@ function windowsLoaderOptions(options: DenoPluginsOptions): DenoPluginsOptions {
  */
 export function denoLoaderPlugins(options: DenoPluginsOptions = {}): esbuild.Plugin[] {
   if (!WINDOWS) {
-    return [denoResolverPlugin(options), denoLoaderPlugin(options)] as esbuild.Plugin[];
+    return [
+      denoResolverPlugin(options) as esbuild.Plugin,
+      withLoaderMap(denoLoaderPlugin(options) as esbuild.Plugin),
+    ];
   }
   const resolverOptions = options.configPath === undefined
     ? options
@@ -188,6 +219,8 @@ export function denoLoaderPlugins(options: DenoPluginsOptions = {}): esbuild.Plu
   return [
     windowsPathSpecifiers(),
     withWindowsWasmPaths(denoResolverPlugin(resolverOptions) as esbuild.Plugin),
-    withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
+    withLoaderMap(
+      withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
+    ),
   ];
 }

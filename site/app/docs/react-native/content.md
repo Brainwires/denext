@@ -196,6 +196,25 @@ import { renderRootComponent } from "expo-router/build/renderRootComponent";
 renderRootComponent(App);
 ```
 
+An app that renders its own root keeps it: Metro's `require.context(directory, recursive?,
+regExp?, mode?)` with literal arguments works in the app's own modules, so an entry such as
+
+```tsx
+// index.js (Tamagui's Expo starter)
+import { registerRootComponent } from "expo";
+import { ExpoRoot } from "expo-router";
+
+export function App() {
+  const ctx = require.context("./app");
+  return <ExpoRoot context={ctx} />;
+}
+registerRootComponent(App);
+```
+
+builds as written. Each call becomes a module generated at build time with Metro's defaults
+(recursive, every file with a source extension, `sync`; `lazy` gives promises). As on Metro,
+`.js` files may hold JSX.
+
 Measured on a fresh expo-router 57 app: `/`, `/about`, the unmatched-route page and `<Link>`
 navigation all render with no console errors, and a real-browser test builds an expo-router
 57 app and checks its `Stack` and `Tabs`.
@@ -210,7 +229,8 @@ expo-router's `Stack` and `Tabs` (from `expo-router`, `expo-router/stack` and
 [`denext/navigation`](/docs/navigation-native): kept screens, platform push and pop animations,
 the iOS swipe back, Android predictive back, a native-style header, and `modal` / `formSheet`
 / `transparentModal` presentations. Routes, `router.push`, `<Link>` and `Stack.Screen` options
-behave as before; the details are in
+(expo-router 56+'s `Stack.Screen` included) behave as before, and a screen's `header` option
+draws the app's own header in place of the stack's; the details are in
 [Native-feel navigation](/docs/navigation-native#react-native-mode).
 
 ## What `reactNative` does
@@ -1074,6 +1094,35 @@ Tailwind 3's CLI (NativeWind v4 targets Tailwind 3), the step NativeWind's Metro
 
 `metro.config.js`'s `withNativeWind` and `babel.config.js`'s `nativewind/babel` are not used.
 `reactNative: { aliases: { nativewind: false } }` turns the JSX runtime off.
+
+## Recipe: Unistyles 3
+
+[Unistyles](https://www.unistyl.es) runs with nothing to configure. With `react-native-unistyles`
+installed, React Native mode does what its Babel plugin (`react-native-unistyles/plugin`) does
+to the app's own modules:
+
+- `react-native` imported from the app's modules gives Unistyles' wrapped components (`View`,
+  `Text`, `Pressable`, `ScrollView`, `FlatList`, `Image`, `TextInput`, … and React Native 0.83's
+  `unstable_NativeView` / `unstable_NativeText`), which turn a Unistyles style into its CSS
+  classes. react-native-web's own components ignore one, so without this the app rendered
+  unstyled. Packages under `node_modules` keep react-native's.
+- `styles.useVariants({ … })` as a statement applies the variants to the rest of its block.
+
+Keep the `StyleSheet.configure({ themes, breakpoints, settings })` call in a module the entry
+imports first (the Expo example's `index.js` imports `./unistyles` before `expo-router/entry`),
+as on Metro. `babel.config.js` and `withUnistylesConfig` in `metro.config.js` are not used.
+`reactNative: { unistyles: false }` turns the integration off. The plugin's third pass, which
+records each style's runtime dependencies, is not ported: the theme reaches the page as CSS
+variables, and a style that depends on another runtime value is recomputed when its component
+renders again.
+
+[Tamagui](https://tamagui.dev) needs no setup either: its Expo app builds through
+react-native-web like any other (`@tamagui/babel-plugin`'s optimizing compiler is not run; the
+runtime styles the same components).
+
+Both are covered by migration beds that build a pinned public app and drive it in headless
+Chromium: Unistyles' Expo example (themes, a custom stack header, variants) and Tamagui's
+free starter (its Expo app, a Sheet, Solito navigation).
 
 ## Recipe: React Native Skia
 

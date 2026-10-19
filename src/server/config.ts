@@ -691,6 +691,16 @@ export interface ReactNativeConfig {
     /** The themes beyond `light` and `dark` (`withUniwindConfig`'s `extraThemes`). */
     extraThemes?: readonly string[];
   };
+  /**
+   * Build a [Unistyles 3](https://www.unistyl.es) app as its Babel plugin
+   * (`react-native-unistyles/plugin`) does, when the app has `react-native-unistyles`
+   * installed: `react-native` imported from the app's own modules gives Unistyles' wrapped
+   * components (`View`, `Text`, `Pressable`, …), and `styles.useVariants(…)` applies the variants
+   * to the rest of its block. `false` turns it off.
+   *
+   * @default true
+   */
+  unistyles?: boolean;
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */

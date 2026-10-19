@@ -4,12 +4,19 @@
 // while macOS and Linux bundled it. The bundle cases run on every OS; CI runs this file on
 // windows-latest (ci.yml → `windows-resolve`).
 
-import { assert, assertEquals, assertNotStrictEquals, assertStrictEquals } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import { join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import {
   denoLoaderPlugins,
   windowsWasmPath,
+  withLoaderMap,
   withWindowsWasmPaths,
 } from "../src/build/deno-loader-plugins.ts";
 
@@ -95,3 +102,50 @@ for (const loader of ["portable", "native"] as const) {
     }
   });
 }
+
+Deno.test("withLoaderMap: a module the loader answers as js takes the build's loader map (.js → jsx)", async () => {
+  // Metro parses JSX in every .js file (an Expo app's `index.js` entry renders <ExpoRoot />), so
+  // React Native mode maps .js to jsx; the deno loader answered the app's own .js modules as
+  // plain `js` anyway, and the build failed with "The JSX syntax extension is not currently
+  // enabled". A stand-in for the loader answers the way it does.
+  const files: Record<string, string> = {
+    "/app/index.js": 'import { App } from "./App.js";\nApp();\n',
+    "/app/App.js": "export const App = () => <p>JSX_IN_JS</p>;\n",
+  };
+  const loaderLike: esbuild.Plugin = {
+    name: "deno-loader",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (args) => ({
+        path: args.path.startsWith("./") ? `/app/${args.path.slice(2)}` : args.path,
+        namespace: "fake",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "fake" }, (args) => ({
+        contents: files[args.path],
+        loader: "js",
+      }));
+    },
+  };
+  const build = (plugin: esbuild.Plugin) =>
+    esbuild.build({
+      entryPoints: ["/app/index.js"],
+      bundle: true,
+      write: false,
+      format: "esm",
+      logLevel: "silent",
+      jsx: "transform",
+      jsxFactory: "h",
+      loader: { ".js": "jsx" },
+      plugins: [plugin],
+    });
+  try {
+    await assertRejects(
+      () => build(loaderLike),
+      Error,
+      "JSX syntax extension is not currently enabled",
+    );
+    const result = await build(withLoaderMap(loaderLike));
+    assert(result.outputFiles[0].text.includes('h("p", null, "JSX_IN_JS")'));
+  } finally {
+    await esbuild.stop();
+  }
+});
