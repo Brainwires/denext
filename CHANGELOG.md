@@ -112,6 +112,14 @@ and this project adheres to
   (`download_failed`); a refused target is still `forbidden`. As a browser's `fetch` does, the
   runtime drops the forbidden and hop-by-hop request headers, and `Authorization` on a redirect
   to another origin.
+- A root layout's `style` on `<html>` / `<body>` (`<body style={{ margin: 0 }}>`) reaches the
+  document again. Since 4.3.0 the page render writes only the tags' content and hands their
+  attributes to the document, which kept plain string and number values and dropped the style
+  object, so the page drew with the browser's default body margin.
+- `LayoutAnimation.configureNext` (React Native mode): when a container grew or shrank along with
+  the views it moved, every view inside it started from a slightly wrong place and size. Each
+  view's new rectangle was read after its ancestors' animations had started, so it measured where
+  they drew it rather than its layout; all views are now measured before the first one animates.
 
 ## [4.4.0] - 2026-10-19
 

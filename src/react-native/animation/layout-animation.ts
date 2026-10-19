@@ -268,40 +268,56 @@ function originOf(style: CSSStyleDeclaration, after: Box): { x: number; y: numbe
   };
 }
 
+/** A measured view's old and new geometry, read before any FLIP transform starts. */
+interface Measured {
+  el: Element;
+  before: DOMRect;
+  after: DOMRect;
+  transform: string;
+  origin: { x: number; y: number };
+}
+
 /**
  * One view's FLIP start keyframe against its ancestor's start map `parent` (`null` when it
  * neither moved nor resized), and the start map its descendants inherit.
  */
-function flipFrame(
-  el: Element,
-  before: DOMRect,
-  parent: FrameMap,
-): { frame: Keyframe | null; map: FrameMap } {
-  const after = el.getBoundingClientRect();
-  const style = getComputedStyle(el);
-  const f = flipTransform(before, after, parent, originOf(style, after));
+function flipFrame(m: Measured, parent: FrameMap): { frame: Keyframe | null; map: FrameMap } {
+  const f = flipTransform(m.before, m.after, parent, m.origin);
   const moves = Math.abs(f.x) >= 0.5 || Math.abs(f.y) >= 0.5;
   const scales = Math.abs(f.scaleX - 1) >= 0.001 || Math.abs(f.scaleY - 1) >= 0.001;
   if (!moves && !scales) return { frame: null, map: parent };
-  const own = style.transform === "none" ? "" : ` ${style.transform}`;
+  const own = m.transform === "none" ? "" : ` ${m.transform}`;
   const scale = scales ? ` scale(${f.scaleX}, ${f.scaleY})` : "";
   return { frame: { transform: `translate(${f.x}px, ${f.y}px)${scale}${own}` }, map: f.map };
 }
 
-/** The moved and resized views' FLIP transforms (each against its nearest measured ancestor). */
+/** A connected view's new rectangle, transform and origin. */
+function measure(el: Element, before: DOMRect): Measured {
+  const after = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  return { el, before, after, transform: style.transform, origin: originOf(style, after) };
+}
+
+/**
+ * The moved and resized views' FLIP transforms (each against its nearest measured ancestor).
+ * Every view is measured before the first one starts: a started animation draws its view's
+ * descendants transformed, so a rectangle read after an ancestor's `animate()` would be that
+ * drawing, not the new layout.
+ */
 function moveAnimations(p: Pending): Animation[] {
   const update = p.config.update;
   if (!update) return [];
   const timing = timingOf(p.config, update);
+  const measured: Measured[] = [];
+  for (const [el, before] of p.rects) if (el.isConnected) measured.push(measure(el, before));
   const maps = new Map<Element, FrameMap>();
-  const out: Animation[] = [];
-  for (const [el, before] of p.rects) {
-    if (!el.isConnected) continue;
-    const { frame, map } = flipFrame(el, before, inheritedMap(el, maps));
-    maps.set(el, map);
-    if (frame) out.push(el.animate([frame, {}], timing));
+  const starts: [Element, Keyframe][] = [];
+  for (const m of measured) {
+    const { frame, map } = flipFrame(m, inheritedMap(m.el, maps));
+    maps.set(m.el, map);
+    if (frame) starts.push([m.el, frame]);
   }
-  return out;
+  return starts.map(([el, frame]) => el.animate([frame, {}], timing));
 }
 
 /** The start map an element's nearest measured ancestor already applies to it. */
