@@ -35,7 +35,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
   arm64). Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
   Vitest/Jest compatibility in `deno test`.
-- **Windows on Arm has run on a VM, not yet on Arm64 hardware** (toolchain 2.9.7-denext.21). On
+- **Windows on Arm has run on a VM, not yet on Arm64 hardware** (last verified on toolchain
+  2.9.7-denext.21). On
   a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
   no GPU) these pass: `denext toolchain install` (`deno --version` reports `2.9.7-denext.21`,
   `aarch64-pc-windows-msvc`); `desktop run` and `desktop dev` windows on WebView2 and CEF (the page
@@ -46,7 +47,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   user and per machine, upgraded, launched and uninstalled; and a server binary from
   `denext build --compile --target aarch64-pc-windows-msvc` (an Arm64 executable that serves
   pages). denext's unit and integration suites run there too; what fails on that VM fails the
-  same way on Windows x64, which no CI job runs those suites on. CI's `windows-11-arm` job (desktop
+  same way on Windows x64, where CI's `windows-tests` job runs those suites for every release. CI's `windows-11-arm` job (desktop
   suites, `install.ps1`, the Arm64 `.msi`) is required for a release. Not yet run on Arm64: a
   physical PC (GPU rendering), Authenticode-signed builds and the trusted-update checks. A
   `desktop run` / `dev` window loads the VC++ runtime
@@ -62,6 +63,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   the in-process TypeScript resolve it. Until a runtime with the fix is pinned, type-check such a
   project with `DENEXT_NATIVE_CHECK=0` (`DENO_CHECK_ENGINE=tsc` for a plain `deno check`), or
   import by a relative path or an import-map alias to a relative path.
+- **On Windows, keep a project and its `file:` imports on one drive.** Deno 2.9 resolves a
+  `deno.json` whose `file:` targets sit on another drive as `file:///C:/D:/…`, so an app on `C:`
+  that imports a checkout on `D:` (as `migrate --denext-local-path` writes) fails to load, in
+  Deno rather than in denext. Put both on the same drive (CI's `windows-tests` job points
+  `TEMP` / `TMP` at the checkout's drive for this reason).
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 
@@ -278,6 +284,23 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). Postgres runs over npm
   `pg`, not denext's `Deno.SQL`, whose results carry no column types for a Prisma adapter.
 
+### Fresh and Preact
+
+- **Fresh:** Partials (`<Partial>`, `f-client-nav`) render their children and navigate as full
+  pages; `ctx.isPartial` is always `false`. `main.ts`'s `appWrapper` / `layout` / `onError` /
+  `notFound` / `route` / `mountApp` / `islands` calls, Fresh and Vite plugins and `fresh({…})`
+  options are not run, `csp()` is a no-op (denext's own CSP applies) and Vite's
+  `import.meta.env` is not defined. `denext migrate --check` lists each one it finds
+  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
+- **Preact:** `useErrorBoundary`, `preact-render-to-string`, Preact's `options` hooks and
+  `@preact/signals`' `useSignalRef` / `createModel` are not provided. `denext/preact-iso`'s
+  `Router` renders nothing while a `lazy()` route loads (preact-iso keeps the previous route) and
+  never calls `onLoadStart`; its `hydrate` renders on the client. A migrated Preact app runs as a
+  SPA, so preset-vite's `prerender` does not carry over.
+- **`denext/signals` re-renders the component that read a signal**, where Preact patches the text
+  node in place; a signal bound to a DOM prop needs Preact's JSX runtime
+  (`jsxImportSource: "preact"`).
+
 ### TanStack Start
 
 - **`@denext/tanstack-start`:** a mocked import's runtime message (`denext dev`) lists no
@@ -405,6 +428,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   breakpoint or another runtime value updates when its component renders again). Tamagui's
   optimizing compiler (`@tamagui/babel-plugin`) is not run; its runtime styles the components.
   `require.context` takes literal arguments only.
+- **A React Native mode app under a Content-Security-Policy needs `style-src 'unsafe-inline'`:**
+  react-native-web inserts its stylesheet as a `<style>` element at run time. Scripts stay locked
+  down.
+- **`denext profile --android` is Android only:** an iOS app's WKWebView is not profiled.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web

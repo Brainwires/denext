@@ -79,10 +79,12 @@ pre-bundles every route's client entry and prerenders static pages (served from
   unlisted path (`router.isFallback` is `true`), then the client fetches its
   data and re-renders. `fallback: "blocking"` isn't specially handled — the path
   renders on demand. Only `fallback: false` returns a 404.
-- **A `deno compile`d standalone binary must be preceded by `denext build`.**
-  Prod serves the pre-built `.denext/pages-client/` + `pages-static/`; the
-  in-process bundle fallback shells out to `deno`, which a compiled binary
-  lacks.
+- **For a standalone binary, use `denext build --compile`.** It builds the app
+  and embeds `pages/`, the pre-built `.denext/pages-client/` + `pages-static/`
+  and the stylesheets, so the binary serves the pages, API routes and static
+  assets with the project deleted. A hand-run `deno compile` skips the build,
+  and the in-process bundle fallback shells out to `deno`, which a compiled
+  binary lacks.
 
 ## Requirements
 

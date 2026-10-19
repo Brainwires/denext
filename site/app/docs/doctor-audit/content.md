@@ -19,8 +19,11 @@ is classified **static** (0 KB JS) or **interactive**.
 The other checks run only where they apply: the denext Deno toolchain, css-shim import
 entries a killed build left in `deno.json`, platform-specific files, the iOS privacy manifest
 (with an `ios/` folder), the files derived from `desktop.app.origin` (when it is set), the
-pinned Deno Desktop runtime (with a `desktop.ts` entry), and, for an app on
-`@denext/backend`, its keys, database, migrations and storage driver. An SPA-mode app skips
+pinned Deno Desktop runtime (with a `desktop.ts` entry), the **compile signing** readiness (when
+`compile.sign` is set: the macOS identity and whether the keychain holds it, the notary
+credentials, the Windows certificate and `signtool` / `osslsigncode`; advisory, since a configured
+`compile.sign` without credentials only warns at build time, and it reads no secret), and, for an
+app on `@denext/backend`, its keys, database, migrations and storage driver. An SPA-mode app skips
 the app directory and route conformance. An app with no `app/` whose pages come from a plugin
 (`@denext/pages-router`, `@denext/tanstack-start`, `@denext/react-router`: one that declares
 `ctx.servesRoutes()`) passes the app directory check with that plugin named, and skips route
@@ -56,14 +59,17 @@ streams no content, so its fallback stays in a 200 page. The `no-stuck-hole` che
 streamed document with a placeholder that no content filled and names the hole and the error
 the server reported to `onRequestError` (`streamed Suspense hole dnx0 kept the fallback: "upstream
 exploded" [digest …]`). A hole cut off by the request deadline fails it too, with no error.
+A boundary that failed before the shell was written keeps its fallback in a placeholder marked
+`data-dnx-failed`, which the check reports as a stuck hole as well.
 
 ## What doctor cannot see
 
 > [!WARNING]
-> **A streamed Suspense hole whose error no boundary inside it catches** keeps showing its
-> fallback in the HTML (the server logs `streamed Suspense boundary failed to resolve`); the
-> probe sees a rendered page. Put an `error.tsx` (or an error boundary) inside the hole, or
-> assert on the route's content yourself.
+> **A Suspense hole that fails only in production** (a database that is reachable from the
+> probe but not from the deployed server) keeps its fallback in a 200 page there, and the
+> probe, which renders in process, never saw it fail. `no-stuck-hole` catches a hole that fails
+> during the probe; put an `error.tsx` (or an error boundary) inside a hole whose data can fail,
+> or assert on the route's content yourself.
 
 More of these in [Known limitations](/docs/limitations).
 

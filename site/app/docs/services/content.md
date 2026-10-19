@@ -229,7 +229,12 @@ await tree.start();
 await tree.stop(); // reverse order, each within its shutdownMs
 ```
 
-Files under `services/` starting with `_` are skipped (helpers). Like `jobs/`, the directory is
+Every module under `services/` is found, at any depth, and named by its path without the
+extension (`services/reports/daily.ts` is `reports/daily`). An entry whose path _below_
+`services/` has a segment starting with `_` or `.` is skipped (`_shared/`, `_helper.ts`,
+`.cache/`), so helpers can live beside the services; directories above `services/` never count,
+so a project checked out under a `.apps/` or `_work/` directory keeps its services. Like `jobs/`,
+the directory is
 discovered once at boot: an edited service takes a dev-server restart. SPA mode has no server
 boot, so it runs no `services/`. A
 [single binary from `denext build --compile`](/docs/deployment-targets#a-single-binary-with-denext-build---compile)

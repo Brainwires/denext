@@ -109,6 +109,16 @@ export const config = { matcher: ["/dashboard/:path*"] };`}
         <code>cookies</code>. Set cookies on the response via <code>res.cookies.set(...)</code>{" "}
         — multiple <code>Set-Cookie</code> headers are preserved.
       </Callout>
+      <Callout kind="note">
+        Middleware also runs on an in-process API call a page makes during its render (
+        <code>useApi</code> /{" "}
+        <code>createApiClient</code>), under the visitor's cookie and authorization. What it reads
+        there counts as reading the visitor — <code>request.headers</code>,{" "}
+        <code>request.cookies</code>, or a matcher's <code>has</code> / <code>missing</code>{" "}
+        on an inherited header or cookie — so the calling page renders per visitor instead of
+        caching one visitor's answer for everyone. A middleware that reads none of them leaves the
+        page cacheable. See <a href="/docs/data#per-visitor-api-reads">Data &amp; caching</a>.
+      </Callout>
 
       <h2>Attaching headers &amp; chains</h2>
       <p>

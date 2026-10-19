@@ -120,9 +120,16 @@ denext profile --android --interact toggle.js --iterations 5 --budget perf.json`
         <li>
           Startup mode reloads the page at{" "}
           <code>--route</code>; interaction mode loads it, then runs the script.{" "}
-          <code>--minify</code> does not apply: build the app unminified instead, as above.
+          <code>--minify</code> with <code>--android</code>{" "}
+          is an error (the app is profiled as installed): build the app unminified instead, as
+          above.
         </li>
       </ul>
+      <p>
+        iOS is not supported: there is no{" "}
+        <code>--ios</code>, and a WKWebView (the iOS shell, Safari) cannot be profiled this way.
+        Profile the same route in headless Chromium, or on Android.
+      </p>
 
       <h2>Flags</h2>
       <ul>
@@ -151,7 +158,8 @@ denext profile --android --interact toggle.js --iterations 5 --budget perf.json`
         </li>
         <li>
           <code>--minify</code>{" "}
-          — profile a minified build (default is unminified for readable names).
+          — profile a minified build (default is unminified for readable names); an error with{" "}
+          <code>--android</code>.
         </li>
         <li>
           <code>--filter &lt;text&gt;</code>{" "}

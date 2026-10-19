@@ -60,6 +60,12 @@ denext downloads and runs the Tailwind standalone binary for you; override the
 binary with `TAILWIND_BIN`, or pin a version with `DENEXT_TAILWIND_VERSION`.
 `denext create --tailwind` sets all of this up.
 
+In a compat build (`compatibilityMode`, as in a migrated Vite, Remix or TanStack Start app), a
+stylesheet imported with `?url` is compiled and emitted as a file: a Tailwind input is compiled
+with the project's Tailwind, any other stylesheet is emitted as it is. One named through a
+`deno.json` path alias (`~/styles/app.css?url`, with `~/` mapped to `./src/`) is compiled and
+emitted like a relative one.
+
 ```tsx
 export default function Card() {
   return <div class="rounded-xl border p-6 shadow">Hello</div>;

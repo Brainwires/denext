@@ -117,7 +117,8 @@ Config, written the same way as the Next path:
   `remix-auth`, `@sentry/remix`).
 - **`denext.config.ts`** with `compatibilityMode: true` (never clobbering an
   existing one).
-- **`.gitignore`** entries for `.denext/` and `out/`, and a `.vscode` Deno LSP
+- **`.gitignore`** entries for `.denext/`, `out/` and `.deno/` (the native
+  TypeScript 7 check's project cache), and a `.vscode` Deno LSP
   setting, appended only when missing.
 
 Then the part that is unique to Remix: the route-tree transform (§4). When it

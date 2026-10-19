@@ -175,7 +175,9 @@ backend({ postgres: {}, rest: { openapi: false } }); // keep auto-REST out`}
         <code>script-src 'self'; style-src 'self'</code> CSP.
       </p>
       <Code lang="ts">
-        {`openapi({ ui: "swagger" });                             // Swagger UI, vendored, from your origin
+        {`import { DOCS_CDN, openapi } from "@denext/openapi";
+
+openapi({ ui: "swagger" });                             // Swagger UI, vendored, from your origin
 openapi({ ui: "scalar" });                              // Scalar API Reference, vendored, from your origin
 openapi({ ui: "scalar", cdn: DOCS_CDN.scalar });        // opt back into a CDN`}
       </Code>
@@ -203,7 +205,11 @@ openapi({ ui: "scalar", cdn: DOCS_CDN.scalar });        // opt back into a CDN`}
         straight to your API. The document's absolute <code>servers</code>{" "}
         are the only other origins its <code>connect-src</code>{" "}
         lists. Scalar styles its components inline, so that page's <code>style-src</code>{" "}
-        allows inline styles.
+        allows inline styles. With <code>cdn</code>{" "}
+        set the policy names the CDN's origin instead, and because Scalar loaded from a CDN fetches
+        its fonts and images from elsewhere, it also allows any <code>https:</code> image, font and
+        {" "}
+        <code>connect-src</code> origin; keep the vendored default under a strict policy.
       </p>
 
       <h2>CI</h2>
