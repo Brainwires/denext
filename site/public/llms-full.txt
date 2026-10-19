@@ -2003,6 +2003,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface OAuthAuthorizationExpect` — What OAuthServerAdapter.updateOAuthAuthorization requires of the stored row.
 - `type OAuthAuthorizationPatch = Partial<Pick<OAuthAuthorizationRecord, userId | status | codeHash | sessionId | expiresAt | ssoConsent>>` — The fields OAuthServerAdapter.updateOAuthAuthorization may change.
 - `interface OAuthAuthorizationRecord` — A pending (then settled) authorization request — /oauth/authorize creates one.
+- `type OAuthCheck = pkce | state | nonce | none` — A protection an OAuth flow runs, as Auth.js names them (its provider checks); see OAuthProvider.checks.
 - `interface OAuthClientOptions` — The client credentials every OAuth preset needs.
 - `interface OAuthClientRecord` — One registered OAuth client (Supabase's OAuthClient, secret hashed).
 - `interface OAuthConsentRecord` — A user's consent to a client (Supabase's OAuthGrant).
@@ -2370,6 +2371,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `userAgent(request: object): UserAgent` — Parse the request's user-agent header into structured details.
 - `interface UserAgent` — Parsed User-Agent details.
 - `userAgentFromString(ua?: string): UserAgent` — Parse a raw user-agent string into structured details (Next's userAgentFromString).
+- `interface UserinfoRequestInput` — What OAuthProvider.userinfoRequest gets.
 - `vectorSearchSql(o?: VectorSearchSqlOptions): string` — The SQL for Supabase's semantic-search recipe, for a migration: the vector extension, a documents table (id, content, metadata, embedding vector(N)) with an HNSW index, and a match_documents(query_embedding, match_threshold, match_count) function returning the closest rows with their similarity — callable with matchDocuments() from @denext/backend/server, db(), or REST /rpc.
 - `interface VectorSearchSqlOptions` — Options for vectorSearchSql.
 - `type VerificationPurpose = email | reset | magic | otp | sms` — What a verification token is for (one token space per purpose). "sms" is a phoneOtp() sign-in code, whose identifier is an E.164 phone number rather than an email address.
@@ -2640,7 +2642,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/testing`
 
 - `act<T>(callback: () => T | Promise<T>): Promise<T>` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
-- `cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>` — The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (every tag of an entry purges it, and a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.
+- `cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>` — The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (every tag of an entry purges it, and a rewrite drops a tag), and expireByTag / sweepPages / takeData (single-use, atomic) when the store implements them.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface ConformanceReport` — The full report from probeApp.
 - `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.

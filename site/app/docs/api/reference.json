@@ -10652,6 +10652,18 @@
           "denextOnly": true
         },
         {
+          "name": "OAuthCheck",
+          "slug": "OAuthCheck",
+          "kind": "typeAlias",
+          "signature": "type OAuthCheck = pkce | state | nonce | none",
+          "doc": "A protection an OAuth flow runs, as Auth.js names them (its provider checks); see OAuthProvider.checks.",
+          "docFull": "A protection an OAuth flow runs, as Auth.js names them (its provider `checks`); see\n{@link OAuthProvider.checks}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "OAuthClientOptions",
           "slug": "OAuthClientOptions",
           "kind": "interface",
@@ -15747,6 +15759,18 @@
           "denextOnly": false
         },
         {
+          "name": "UserinfoRequestInput",
+          "slug": "UserinfoRequestInput",
+          "kind": "interface",
+          "signature": "interface UserinfoRequestInput",
+          "doc": "What OAuthProvider.userinfoRequest gets.",
+          "docFull": "What {@link OAuthProvider.userinfoRequest} gets.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "vectorSearchSql",
           "slug": "vectorSearchSql",
           "kind": "function",
@@ -19235,8 +19259,8 @@
           "slug": "cacheStoreContract",
           "kind": "function",
           "signature": "cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>",
-          "doc": "The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (every tag of an entry purges it, and a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.",
-          "docFull": "The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,\n`deleteByPath`, `deleteByTag` (every tag of an entry purges it, and a rewrite drops a tag), and\n`expireByTag` / `sweepPages` when the store implements them.",
+          "doc": "The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (every tag of an entry purges it, and a rewrite drops a tag), and expireByTag / sweepPages / takeData (single-use, atomic) when the store implements them.",
+          "docFull": "The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,\n`deleteByPath`, `deleteByTag` (every tag of an entry purges it, and a rewrite drops a tag), and\n`expireByTag` / `sweepPages` / `takeData` (single-use, atomic) when the store implements them.",
           "params": [
             {
               "name": "t",
