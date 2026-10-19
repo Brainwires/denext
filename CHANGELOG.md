@@ -40,6 +40,14 @@ and this project adheres to
 
 ### Added
 
+- **React Native Skia runs in React Native mode on the web, and so do other `react-reconciler`
+  renderers.** denext's `react` exports React's shared internals
+  (`__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE`): a renderer built on
+  `react-reconciler` (`@shopify/react-native-skia`'s `<Canvas>`, react-three-fiber, react-konva)
+  loads, and while it renders a component the hooks that component imported from `react` go to
+  the renderer's dispatcher. A context's default is in React's `_currentValue` fields. The React
+  Native page has a Skia recipe: CanvasKit's wasm imported with `?url`, and `'wasm-unsafe-eval'`
+  (not `'unsafe-eval'`) under a CSP.
 - **`denext profile --android` profiles the app on an Android device.** The installed app's
   WebView (a Capacitor shell, or any debuggable WebView) is reached the way chrome://inspect
   reaches it: adb picks the device, finds the app's `webview_devtools_remote_<pid>` socket and
@@ -363,6 +371,11 @@ and this project adheres to
   directory.** The output-directory guard compared directories by their 64-bit file index as well
   as their real paths, and ReFS does not keep that index unique, so `out/` could read as
   overlapping `app/`. On Windows it compares real paths only.
+- **A `<>…</>` inside a `react-reconciler` renderer's tree is a fragment.** denext's fragment
+  marker is React's brand, `Symbol.for("react.fragment")` (it was `Symbol.for("denext.fragment")`,
+  which such a renderer refused with React error #130).
+- **`.wasm` client assets are precompressed at build.** A wasm module (CanvasKit is 8 MB) got no
+  `.gz` sibling, so the server gzipped it again on every request.
 - **A CEF desktop window keeps what the page just stored.** A quit that cut a `localStorage` or
   IndexedDB write short no longer costs every later launch its writes (the runtime repairs the torn
   log end before the window opens, and on macOS and Windows waits for the page's renderer to end

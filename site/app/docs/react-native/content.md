@@ -1074,3 +1074,47 @@ Tailwind 3's CLI (NativeWind v4 targets Tailwind 3), the step NativeWind's Metro
 
 `metro.config.js`'s `withNativeWind` and `babel.config.js`'s `nativewind/babel` are not used.
 `reactNative: { aliases: { nativewind: false } }` turns the JSX runtime off.
+
+## Recipe: React Native Skia
+
+`@shopify/react-native-skia` runs on the web as CanvasKit, Skia compiled to WebAssembly, plus
+Skia's own React renderer for the `<Canvas>` tree, built on `react-reconciler`. Both run on
+denext unchanged: denext's `react` carries the shared internals a `react-reconciler` renderer
+reads, hands the hooks of a component inside the Canvas to Skia's renderer while it renders, and
+writes `<>…</>` with React's fragment brand. What the app adds is Skia's web setup:
+
+1. Install it: `npm install @shopify/react-native-skia` (it brings `canvaskit-wasm` and
+   `react-reconciler`).
+2. Load CanvasKit before any module that draws, as Skia's web guide does, and point it at the
+   wasm file. Import the file with `?url`: the build emits it fingerprinted, serves it as
+   `application/wasm` with an immutable cache header, and precompresses it (8 MB, about 3 MB
+   over the wire). No copy into `public/` is needed.
+
+   ```tsx
+   // index.web.tsx
+   import { AppRegistry } from "react-native";
+   import { LoadSkiaWeb } from "@shopify/react-native-skia/lib/module/web";
+   import canvasKitWasm from "canvaskit-wasm/bin/full/canvaskit.wasm?url";
+
+   await LoadSkiaWeb({ locateFile: () => canvasKitWasm });
+   const { App } = await import("./App.tsx"); // imports @shopify/react-native-skia
+   AppRegistry.registerComponent("main", () => App);
+   AppRegistry.runApplication("main", { rootTag: document.getElementById("root") });
+   ```
+
+   Skia's `<WithSkiaWeb getComponent={() => import("./Drawing")} opts={{ locateFile }} />` does
+   the same for one screen, so the rest of the app paints before CanvasKit arrives.
+3. Under a Content-Security-Policy, allow WebAssembly compilation: CanvasKit needs
+   `'wasm-unsafe-eval'`, not `'unsafe-eval'` (it builds no code from strings). react-native-web
+   inserts its stylesheet as a `<style>` element at run time, so a React Native mode app under a
+   CSP also needs `style-src 'unsafe-inline'` (scripts stay locked down). In a SPA:
+   `spa: { csp: { scriptSrc: ["'wasm-unsafe-eval'"], styleSrc: ["'unsafe-inline'"] } }`; on the
+   App Router, the same entries in the `csp` config or the route's `csp` export.
+
+A context does not cross into the Canvas, as in React: a component inside `<Canvas>` reads a
+context's default value. Unlike React, a provider placed inside the Canvas does not reach it
+either, so pass the values the drawing needs as props. Animating with Reanimated
+(`useDerivedValue`, `useFrameCallback`) and the Capacitor shell's WebViews are not yet covered
+by a test; [`tests/e2e/react-native-skia.e2e.test.ts`](https://github.com/Brainwires/denext/blob/development/tests/e2e/react-native-skia.e2e.test.ts)
+draws shapes, a stateful component and a fragment inside the Canvas, re-renders it on a press,
+and reads the pixels back, in headless Chromium under that CSP.

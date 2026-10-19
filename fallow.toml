@@ -4,7 +4,11 @@
 # `coverage/coverage-final.json` (`deno task coverage:fallow`). It is passed on the
 # command line, not configured here on purpose: a `[health] coverage` path that is
 # missing is a hard error, which the agent gate treats as non-blocking (a silent skip).
-#
+
+# A Vite-style `?url` asset import (the build emits the file and imports its URL), which fallow
+# resolves as a module path: the React Native Skia e2e fixture's CanvasKit wasm.
+ignoreUnresolvedImports = ["canvaskit-wasm/bin/full/canvaskit.wasm?url"]
+
 # denext is a Deno project: its dependencies live in `deno.json`'s import map as
 # `npm:`/`jsr:` specifiers, NOT in a `package.json`. fallow's dependency analysis is
 # package.json-oriented, so it reports these real, declared build dependencies as
@@ -74,6 +78,8 @@ ignoreDependencies = [
   "react-native-windows",
   # tests/e2e/fixtures/rn-expo-router installs it itself (the Expo Router navigators e2e).
   "expo-router",
+  # tests/e2e/fixtures/rn-skia installs it itself (the React Native Skia e2e).
+  "@shopify/react-native-skia",
   # per-directory package.json / test-written import maps — see the note below the list
   "@radix-ui/react-dialog",
   "@radix-ui/react-collapsible",
@@ -200,6 +206,9 @@ entry = [
   "tests/e2e/fixtures/rn-expo-router/app/**",
   "tests/e2e/fixtures/rn-expo-router-ui/index.web.ts",
   "tests/e2e/fixtures/rn-expo-router-ui/app/**",
+  # The React Native Skia e2e fixture's `spa.entry`, which imports ./App.tsx once CanvasKit loads.
+  "tests/e2e/fixtures/rn-skia/index.web.tsx",
+  "tests/e2e/fixtures/rn-skia/App.tsx",
   # The App Router React Native e2e fixture: React Native mode resolves `./label` to its
   # `.web.tsx` variant (the `.web.*` extensions are probed first), which fallow cannot see.
   "tests/e2e/fixtures/rn-app-router/components/*.web.tsx",

@@ -1,0 +1,10 @@
+{
+  "name": "denext-e2e-rn-skia",
+  "private": true,
+  "dependencies": {
+    "@shopify/react-native-skia": "2.14.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native-web": "0.21.2"
+  }
+}

@@ -25,6 +25,8 @@
 
 import { Activity, cache, ViewTransition } from "../runtime/react-extras.ts";
 import { REACT_COMPAT_VERSION } from "./react-version.ts";
+import { dispatched, type ReactSharedInternals, sharedInternals } from "./react-internals.ts";
+export type { ReactDispatcher, ReactSharedInternals } from "./react-internals.ts";
 import {
   createContext,
   Fragment,
@@ -34,26 +36,26 @@ import {
   startTransition,
   Suspense,
   SuspenseList,
-  use,
-  useActionState,
-  useCallback,
-  useContext,
-  useDebugValue,
-  useDeferredValue,
-  useEffect,
-  useEffectEvent,
-  useFormState,
-  useId,
-  useImperativeHandle,
-  useInsertionEffect,
-  useLayoutEffect,
-  useMemo,
-  useOptimistic,
-  useReducer,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  useTransition,
+  use as ownUse,
+  useActionState as ownUseActionState,
+  useCallback as ownUseCallback,
+  useContext as ownUseContext,
+  useDebugValue as ownUseDebugValue,
+  useDeferredValue as ownUseDeferredValue,
+  useEffect as ownUseEffect,
+  useEffectEvent as ownUseEffectEvent,
+  useFormState as ownUseFormState,
+  useId as ownUseId,
+  useImperativeHandle as ownUseImperativeHandle,
+  useInsertionEffect as ownUseInsertionEffect,
+  useLayoutEffect as ownUseLayoutEffect,
+  useMemo as ownUseMemo,
+  useOptimistic as ownUseOptimistic,
+  useReducer as ownUseReducer,
+  useRef as ownUseRef,
+  useState as ownUseState,
+  useSyncExternalStore as ownUseSyncExternalStore,
+  useTransition as ownUseTransition,
 } from "../../mod.ts";
 import { act } from "../client/mod.ts";
 import { currentOwnerStack } from "../runtime/hooks.ts";
@@ -88,36 +90,76 @@ export type {
   PureComponent as PureClassComponent,
 } from "./class-base.ts";
 
-export {
-  act,
-  createContext,
-  Fragment,
-  memo,
-  Profiler,
-  startTransition,
-  Suspense,
-  SuspenseList,
-  use,
-  useActionState,
-  useCallback,
-  useContext,
-  useDebugValue,
-  useDeferredValue,
-  useEffect,
-  useEffectEvent,
-  useFormState,
-  useId,
-  useImperativeHandle,
-  useInsertionEffect,
-  useLayoutEffect,
-  useMemo,
-  useOptimistic,
-  useReducer,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  useTransition,
-};
+export { act, createContext, Fragment, memo, Profiler, startTransition, Suspense, SuspenseList };
+
+/**
+ * React's shared internals: a `react-reconciler` renderer (React Native Skia, react-three-fiber,
+ * react-konva) reads it when it loads and installs its hooks dispatcher in it while it renders.
+ */
+export const __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: ReactSharedInternals =
+  sharedInternals;
+
+/** React's `use`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const use: typeof ownUse = dispatched("use", ownUse);
+/** React's `useActionState`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useActionState: typeof ownUseActionState = dispatched(
+  "useActionState",
+  ownUseActionState,
+);
+/** React's `useCallback`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useCallback: typeof ownUseCallback = dispatched("useCallback", ownUseCallback);
+/** React's `useContext`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useContext: typeof ownUseContext = dispatched("useContext", ownUseContext);
+/** React's `useDebugValue`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useDebugValue: typeof ownUseDebugValue = dispatched("useDebugValue", ownUseDebugValue);
+/** React's `useDeferredValue`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useDeferredValue: typeof ownUseDeferredValue = dispatched(
+  "useDeferredValue",
+  ownUseDeferredValue,
+);
+/** React's `useEffect`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useEffect: typeof ownUseEffect = dispatched("useEffect", ownUseEffect);
+/** React's `useEffectEvent`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useEffectEvent: typeof ownUseEffectEvent = dispatched(
+  "useEffectEvent",
+  ownUseEffectEvent,
+);
+/** React's `useFormState`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useFormState: typeof ownUseFormState = dispatched("useFormState", ownUseFormState);
+/** React's `useId`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useId: typeof ownUseId = dispatched("useId", ownUseId);
+/** React's `useImperativeHandle`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useImperativeHandle: typeof ownUseImperativeHandle = dispatched(
+  "useImperativeHandle",
+  ownUseImperativeHandle,
+);
+/** React's `useInsertionEffect`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useInsertionEffect: typeof ownUseInsertionEffect = dispatched(
+  "useInsertionEffect",
+  ownUseInsertionEffect,
+);
+/** React's `useLayoutEffect`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useLayoutEffect: typeof ownUseLayoutEffect = dispatched(
+  "useLayoutEffect",
+  ownUseLayoutEffect,
+);
+/** React's `useMemo`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useMemo: typeof ownUseMemo = dispatched("useMemo", ownUseMemo);
+/** React's `useOptimistic`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useOptimistic: typeof ownUseOptimistic = dispatched("useOptimistic", ownUseOptimistic);
+/** React's `useReducer`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useReducer: typeof ownUseReducer = dispatched("useReducer", ownUseReducer);
+/** React's `useRef`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useRef: typeof ownUseRef = dispatched("useRef", ownUseRef);
+/** React's `useState`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useState: typeof ownUseState = dispatched("useState", ownUseState);
+/** React's `useSyncExternalStore`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useSyncExternalStore: typeof ownUseSyncExternalStore = dispatched(
+  "useSyncExternalStore",
+  ownUseSyncExternalStore,
+);
+/** React's `useTransition`: denext's, or a foreign renderer's while one renders (see react-internals.ts). */
+export const useTransition: typeof ownUseTransition = dispatched("useTransition", ownUseTransition);
 
 /** `React.createElement` — denext's hyperscript. */
 export const createElement: typeof h = h;
@@ -242,6 +284,7 @@ export const PureComponent: typeof RealPureComponent = __DENEXT_CLASS_COMPONENTS
 
 /** The default `React` namespace object (`import React from "react"`). */
 export default {
+  __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,
   createElement,
   Fragment,
   lazy,

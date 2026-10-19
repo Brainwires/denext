@@ -6,8 +6,12 @@
 
 import { extname, join } from "@std/path";
 
-/** Extensions worth compressing (already-compressed formats gain nothing). */
-const COMPRESSIBLE = new Set([".js", ".css", ".svg", ".json", ".map", ".txt", ".ico"]);
+/**
+ * Extensions worth compressing (already-compressed formats gain nothing). `.wasm` too: a wasm
+ * module (CanvasKit is 8 MB) shrinks by more than half, and without a sibling the server gzips it
+ * again on every request.
+ */
+const COMPRESSIBLE = new Set([".js", ".css", ".svg", ".json", ".map", ".txt", ".ico", ".wasm"]);
 // Below this, gzip's framing overhead can exceed the savings; not worth a sibling.
 const MIN_SIZE = 512;
 

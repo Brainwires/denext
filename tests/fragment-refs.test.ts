@@ -96,7 +96,7 @@ Deno.test("Fragment ref: `Fragment` is typed as a component taking React's Fragm
   // @ts-expect-error a ref for another instance type is rejected
   const wrong: FragmentProps = { ref: createRef<HTMLDivElement>() };
   assert(props.ref && viaCallback.ref && wrong);
-  assertStrictEquals(Fragment as unknown, Symbol.for("denext.fragment"), "the runtime marker");
+  assertStrictEquals(Fragment as unknown, Symbol.for("react.fragment"), "React's fragment brand");
 });
 
 Deno.test("Fragment ref: attaches a FragmentInstance, with no wrapper element in the DOM", () => {

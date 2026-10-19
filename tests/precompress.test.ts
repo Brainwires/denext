@@ -45,6 +45,19 @@ Deno.test("precompressDir writes .gz siblings for compressible files above the f
   }
 });
 
+Deno.test("precompressDir compresses a wasm module (CanvasKit, sqlite-wasm)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_precompress_wasm_" });
+  try {
+    // A wasm header followed by a compressible body, like a real module's code section.
+    const wasm = new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...new Array(4000).fill(0x0b)]);
+    await Deno.writeFile(join(dir, "canvaskit-ABC.wasm"), wasm);
+    assertEquals(await precompressDir(dir), 1);
+    assertEquals(await gunzip(await Deno.readFile(join(dir, "canvaskit-ABC.wasm.gz"))), wasm);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("precompressDir recurses into subdirectories", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_precompress_rec_" });
   try {

@@ -53,7 +53,7 @@ export default function Page() {
       "client bundle must not contain npm React",
     );
     assert(
-      client.includes("denext.fragment") || client.includes("react.forward_ref"),
+      client.includes("denext.provider") || client.includes("denext.suspense"),
       "client bundle must contain denext's runtime",
     );
   } finally {

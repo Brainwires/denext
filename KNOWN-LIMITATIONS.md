@@ -394,6 +394,12 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
   yet run on a phone (Android's split of a repeating event from one occurrence on included), and
   `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
+- **Renderers built on `react-reconciler` see no denext context** (React Native Skia's
+  `<Canvas>`, react-three-fiber, react-konva): a component inside their tree reads a context's default
+  value (as in React, contexts don't cross renderers), and a provider placed inside the tree does
+  not reach it either (in React it would); pass the values as props. A class component inside such
+  a tree is not supported. React Native Skia with Reanimated, and in the Capacitor shell's
+  WebViews, is not yet verified.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web
