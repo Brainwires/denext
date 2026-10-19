@@ -52,6 +52,10 @@ Deno.test("addFallow writes the gate files, splices the tasks and extends .gitig
       await Deno.readTextFile(join(dir, ".gitignore")),
       ".denext/\ncoverage/\n.fallow/\n",
     );
+    // The hook runs the task on denext's toolchain (`denext task`) when denext is installed.
+    const hook = await Deno.readTextFile(join(dir, ".githooks/pre-commit"));
+    assert(hook.indexOf("DENO=denext") < hook.indexOf("DENO=deno\n"), hook);
+    assertStringIncludes(hook, 'DENO="$HOME/.denext/bin/denext"');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

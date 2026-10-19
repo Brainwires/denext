@@ -395,6 +395,28 @@ export function toolchainApplies(
 }
 
 /**
+ * Whether a verb, under `deno run` (not a compiled binary), hands denext's Deno toolchain to the
+ * processes it starts without re-running itself on it: every verb that may spawn `deno` but runs
+ * no project code — `fmt`, `lint`, `add`, `create`, `generate`, `migrate`, `upgrade`, `ui`, `mcp`,
+ * `task`, … — so their children (`deno fmt`, the UI's and MCP's `deno` children, a task's steps)
+ * run on the toolchain, as they do under the binary. The project-code verbs re-exec instead
+ * ({@linkcode toolchainApplies}); `toolchain` and `completions` run no Deno at all.
+ *
+ * @param command The verb's name and where it came from.
+ * @param action Its first positional (the `desktop` / `mobile` action).
+ * @param standalone Whether this process is a compiled binary.
+ * @returns Whether the verb's children get the toolchain.
+ */
+export function handsToolchainToChildren(
+  command: { readonly name: string; readonly source?: "core" | "plugin" | "project" },
+  action: string | undefined,
+  standalone: boolean,
+): boolean {
+  if (standalone || runsProjectCode(command, action)) return false;
+  return !DENO_FREE_VERBS.has(command.name);
+}
+
+/**
  * The resolution flags a child must repeat to resolve modules the way its parent did: the lock
  * file, the import map, the npm mode, the vendor directory, the dependency-age hold.
  */
@@ -776,6 +798,11 @@ export interface ReexecToolchainDeps {
   readonly execPath?: string;
   /** This process's pid and its parent's (production: `Deno.pid` / `Deno.ppid`). */
   readonly pids?: { readonly pid: number; readonly ppid: number };
+  /**
+   * For a verb that runs no project code under `deno run`: hand the toolchain to its children
+   * instead ({@linkcode handsToolchainToChildren}).
+   */
+  readonly handOff?: boolean;
 }
 
 /**
@@ -788,6 +815,8 @@ export interface ReexecToolchainDeps {
  */
 async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false> {
   if (deps.env("DENO_BIN")) return false;
+  // Under `deno run` on the toolchain already, `denoExecutable()` is this very binary.
+  if (!deps.standalone() && onToolchainNow(deps)) return false;
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
   if (choice.kind === "stock") return false;
@@ -821,6 +850,16 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
 }
 
 /**
+ * Whether this `deno run` process already runs on the toolchain: the marker names its own Deno
+ * version, or its Deno is the pinned build. A `DENEXT_DENO=<path>` child (marker `path`) counts.
+ */
+function onToolchainNow(deps: ReexecToolchainDeps): boolean {
+  const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
+  return marker === "path" || marker === deps.denoVersion ||
+    (deps.pinnedVersion !== null && deps.denoVersion === deps.pinnedVersion);
+}
+
+/**
  * Run a project-code verb on denext's Deno toolchain: under stock Deno, re-exec the same
  * invocation (argv, cwd, stdio, exit code, shutdown signals) under the pinned toolchain binary.
  * A compiled binary cannot swap its own runtime, so it hands the toolchain to its children
@@ -830,10 +869,12 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
  * version, and a process whose Deno is that marker's version (or the pinned version, or a
  * `DENEXT_DENO=<path>` child: marker `path`) never re-execs. Neither a leaked marker (an
  * absolute-path stock `deno` inside `denext task`) nor an older `-denext.N` build (a stale
- * `toolchain link`) counts as the toolchain: they re-exec onto the pinned one. Every reason to stay on
- * stock Deno (an opt-out, no pin yet, an unsupported host, a failed download) continues the
- * command in-process, after the choice's one warning. A serving verb already on the toolchain
- * without its runtime flags re-runs once on the same binary ({@linkcode reexecForRuntimeFlags}).
+ * `toolchain link`) counts as the toolchain: they re-exec onto the pinned one. An explicit opt-out
+ * (`DENEXT_DENO=stock`), no pin, or a process without the grants to start it continues the command
+ * in-process; a toolchain that can't be had (offline, no build for this host, a failed download)
+ * throws the resolver's `denext:` error with the fix — never another Deno. A serving verb already
+ * on the toolchain without its runtime flags re-runs once on the same binary
+ * ({@linkcode reexecForRuntimeFlags}).
  *
  * @param applies Whether the verb runs project code ({@linkcode runsProjectCode}).
  * @param deps The process seams.
@@ -843,16 +884,11 @@ export async function maybeReexecToolchain(
   applies: boolean,
   deps: ReexecToolchainDeps,
 ): Promise<boolean> {
-  if (!applies) return false;
+  if (!applies) return deps.handOff ? await handToolchainToChildren(deps) : false;
   if (deps.standalone()) return await handToolchainToChildren(deps);
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
   if (marker === "path") return false;
-  if (
-    marker === deps.denoVersion ||
-    (deps.pinnedVersion !== null && deps.denoVersion === deps.pinnedVersion)
-  ) {
-    return await reexecForRuntimeFlags(deps);
-  }
+  if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
   if (choice.kind === "stock") return false;

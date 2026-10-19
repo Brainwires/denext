@@ -261,13 +261,26 @@ function Install-DenoToolchain([string]$exe, [string]$target) {
   }
   $existing = Get-Command deno -ErrorAction SilentlyContinue
   if ($existing) {
-    Write-Host "denext: keeping your deno ($($existing.Source)); denext runs its own toolchain anyway"
+    Write-Host ("denext: denext uses its own Deno ($(Get-ToolchainVersion $exe)); your deno at " +
+      "$($existing.Source) is not changed or used by denext")
     return
   }
   if ($env:DENEXT_NO_DENO_LINK -eq '1') { return }
   if ((Invoke-Denext $exe @('toolchain', 'link')) -ne 0) {
     Write-Warning 'denext: could not link `deno` to the toolchain (`denext deno ...` still runs it).'
   }
+}
+
+# The Deno toolchain version the binary at $exe pins (`2.9.7-denext.22`), or 'the pinned build'.
+function Get-ToolchainVersion([string]$exe) {
+  $ErrorActionPreference = 'Continue'
+  try {
+    $status = (& $exe toolchain status --json 2>$null) -join "`n" | ConvertFrom-Json
+    if ($status.version) { return "$($status.version)" }
+  } catch {
+    # An older binary, or no answer: say it generally.
+  }
+  return 'the pinned build'
 }
 
 # Whether the binary at $exe has the `toolchain` verb, which denext 4.0 added: an older release

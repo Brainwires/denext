@@ -41,25 +41,29 @@ first online run does the same in the background (a failed attempt retries after
 verb used offline afterwards (`--cached-only`, `denext ui --offline`) still loads. The binary
 embeds every verb already.
 
-When the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a host with no build)
-the binary falls back to a stock `deno` — `DENO_BIN`, `~/.deno/bin/deno`, then `deno` on PATH —
-and with none of those it stops with one error that names the fix: run `denext toolchain install`
-once you are online, or install Deno.
+When the toolchain can't be had (offline on first use, a host with no build, a failed or
+mismatching download) the command stops with one error that names the fix — run
+`denext toolchain install` once you are online — and the explicit opt-outs. denext never runs
+another Deno on its own. With `DENEXT_DENO=stock` the binary runs a stock `deno` — `DENO_BIN`,
+`~/.deno/bin/deno`, then `deno` on PATH — and with none of those it stops with the same kind of
+error.
 
 ## Which commands use it
 
-The commands that execute your project's code switch to the toolchain on their own:
+Every command that runs Deno runs it on the toolchain. The commands that execute your project's
+code switch to it on their own, and the others hand it to the `deno` they start:
 
-| Command                                                                                                       | On the toolchain                 |
-| ------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `dev`, `build`, `export`, `start`                                                                             | yes                              |
-| `test`, `check`, `job`                                                                                        | yes                              |
-| `analyze`, `profile`, `doctor`                                                                                | yes                              |
-| `desktop run \| dev \| build \| package`                                                                      | yes                              |
-| `mobile dev \| build`                                                                                         | yes                              |
-| a project's own verbs (`denext.config.ts` `commands`, plugins)                                                | yes                              |
-| `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)                                        | yes (stock when it can't be had) |
-| help, `--version`, `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp`, `toolchain` | no (yes under the binary)        |
+| Command                                                                       | On the toolchain      |
+| ----------------------------------------------------------------------------- | --------------------- |
+| `dev`, `build`, `export`, `start`                                             | yes                   |
+| `test`, `check`, `job`                                                        | yes                   |
+| `analyze`, `profile`, `doctor`                                                | yes                   |
+| `desktop run \| dev \| build \| package`                                      | yes                   |
+| `mobile dev \| build`                                                         | yes                   |
+| a project's own verbs (`denext.config.ts` `commands`, plugins)                | yes                   |
+| `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)        | yes                   |
+| `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp` | the `deno` they start |
+| help, `--version`, `toolchain`, `completions`                                 | no (they run no Deno) |
 
 When one of them starts under stock Deno, denext re-runs the same invocation under the toolchain:
 the same arguments, working directory, standard streams and exit code, with Ctrl-C and `SIGTERM`
@@ -104,7 +108,7 @@ The binary is cached beside Deno's own cache:
 
 - The download goes to a temporary file in that same directory. Its SHA-256 is checked against
   the pin before it is extracted, made executable or renamed. A mismatch deletes the file
-  unexecuted and the command continues on stock Deno with a loud warning.
+  unexecuted and the command stops with the refusal and the fix.
 - The verified binary is renamed into place atomically, and a stamp file records its size,
   modification time and hash. Later runs trust it only while it still has that size and
   modification time; otherwise it is re-hashed, and a missing stamp means a fresh download. That
@@ -121,8 +125,10 @@ The binary is cached beside Deno's own cache:
 | `DENEXT_DENO=stock`  | Everything runs on the Deno that started the CLI, silently.             |
 | `DENEXT_DENO=<path>` | That binary is used as the toolchain, unverified (one warning per run). |
 
-The toolchain never makes a command fail. On a platform with no pinned build, offline, or behind a
-failed download, the command prints one warning saying why and continues on stock Deno. A process
+denext never falls back to another Deno on its own. On a platform with no pinned build, offline on
+first use, or behind a failed or mismatching download, a command that needs the toolchain stops
+with one error that says why, names the fix (`denext toolchain install`) and the two explicit
+opt-outs above. A process
 that lacks the grants to install and run it (`--allow-run`, and read/write on the cache
 directory) stays on the Deno that launched it without a warning: that is the least-privilege
 `start` task `denext create` scaffolds (`deno run --allow-net --allow-read --allow-env
@@ -250,8 +256,7 @@ call `deno test` directly so you can change them, or run them with `denext task`
 A verb denext does not define itself is Deno's, run on the toolchain exactly as
 `denext deno <verb>` would — `denext compile`, `denext run`, `denext x`, `denext bench`,
 `denext serve`, … — with the arguments verbatim and the exit code and signals passed back. Like
-`denext deno`, a forwarded verb falls back to stock Deno (with the usual one warning) when the
-toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
+`denext deno`, a forwarded verb stops with the fix when the toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
 `denext https://example.com/x.ts`) is `deno run`. denext's built-in verbs come first, then the
 project's own verbs, then Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
 
@@ -427,5 +432,5 @@ the bundled esbuild) falls back or says why it can't.
 downloads the pinned build for the platform into `<DENO_DIR>/denext-deno/`, verifies its SHA-256
 against the pin, records a stamp and re-runs itself on it. Every child process it starts (tasks,
 the UI, the MCP server, builds) finds that `deno` first on `PATH`. The `deno` on your `PATH` is never
-replaced (`denext toolchain link` opts in), and a failed download falls back to stock Deno with one
-warning. From `2.9.7-denext.17` the same download also carries esbuild 0.25.5.
+replaced (`denext toolchain link` opts in), and a failed download stops the command with the fix
+(earlier versions fell back to stock Deno with one warning). From `2.9.7-denext.17` the same download also carries esbuild 0.25.5.

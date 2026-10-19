@@ -14,7 +14,6 @@ import {
   linkDenoToolchain,
   resolveDenoToolchain,
   staleToolchainLink,
-  TOOLCHAIN_ACTIVE_ENV,
   TOOLCHAIN_ENV,
   toolchainEnvValue,
   unlinkDenoToolchain,
@@ -53,7 +52,7 @@ async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
   if (raw !== "" && raw.toLowerCase() !== "pinned") {
     const choice = await resolveDenoToolchain();
     if (choice.warning) console.error(choice.warning);
-    if (choice.kind === "stock") Deno.exit(1);
+    if (choice.kind === "stock") Deno.exit(1); // a process without the grants to run it
     return { deno: choice.deno, marker: choice.version };
   }
   const rt = await requireToolchain();
@@ -64,10 +63,9 @@ async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
  * Run the toolchain's `deno` with `args` verbatim in `cwd` and exit with its code — `denext deno
  * …`, and (with `forwarded`) every Deno verb denext forwards (`denext compile …`, `denext
  * main.ts`) and `denext task`. Both take {@linkcode forwardedDeno}'s choice (its PATH rule and the
- * toolchain marker included), falling back to stock Deno with the choice's one warning when the
- * toolchain can't be had: `denext compile` works wherever `deno compile` does. `denext deno` also
- * says `DENEXT_DENO=stock` once, and treats a `DENEXT_DENO=<path>` that isn't a file as an error
- * (exit 1): that binary was asked for by name. Never returns.
+ * toolchain marker included); when the toolchain can't be had that throws a `denext:` error naming
+ * the fix and the explicit opt-outs, never running another Deno on its own. `denext deno` also
+ * says `DENEXT_DENO=stock` once. Never returns.
  *
  * @param args The arguments for `deno`.
  * @param cwd The directory to run in.
@@ -84,8 +82,6 @@ export async function runDenoPassthrough(
   }
   const chosen = await forwardedDeno();
   if (chosen.warning) console.error(chosen.warning);
-  const onToolchain = TOOLCHAIN_ACTIVE_ENV in chosen.env;
-  if (!forwarded && !onToolchain && raw !== "" && raw !== "stock" && raw !== "pinned") Deno.exit(1);
   return await spawnDenoAndExit(args, cwd, chosen.env, chosen.deno);
 }
 

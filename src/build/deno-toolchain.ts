@@ -146,7 +146,10 @@ const CACHE_DESCR = "Deno toolchain cache";
 /** The size cap for a download whose pin records no size. */
 const MAX_DOWNLOAD = 1024 ** 3;
 /** The way out of every toolchain failure. */
-const OPT_OUT = `Set ${TOOLCHAIN_ENV}=stock to stay on stock Deno.`;
+/** What every refusal to run without the toolchain names: the fix, and the explicit opt-outs. */
+const TOOLCHAIN_FIX = "  Fix: run `denext toolchain install` (online), then retry.\n" +
+  `  Or opt out explicitly: ${TOOLCHAIN_ENV}=stock runs the deno that started denext (or the ` +
+  `\`deno\` on PATH), ${TOOLCHAIN_ENV}=<path> runs that deno binary.`;
 /** The one line {@linkcode linkDenoToolchain}'s Windows shim carries (what unlink checks). */
 const SHIM_MARK = "REM denext toolchain shim";
 
@@ -173,6 +176,15 @@ export class DenoToolchainDownloadError extends Error {
 /** Raised when a download (or a cached binary) does not match its pinned SHA-256. */
 export class DenoToolchainHashError extends Error {
   override name = "DenoToolchainHashError";
+}
+
+/**
+ * Raised when a command needs denext's Deno toolchain and it can't be had (offline on first use,
+ * no build for this host, a failed or tampered download, a bad `DENEXT_DENO`): denext no longer
+ * falls back to another Deno on its own. The message names the fix and the explicit opt-outs.
+ */
+export class DenoToolchainRequiredError extends Error {
+  override name = "DenoToolchainRequiredError";
 }
 
 /**
@@ -1043,11 +1055,11 @@ function toolchainMode(env: EnvGet): { mode: "pinned" | "stock" } | { mode: "pat
 async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
   const path = resolve(raw);
   if (!(await Deno.stat(path).catch(() => null))?.isFile) {
-    return {
-      kind: "stock",
-      reason: `${TOOLCHAIN_ENV}=${path} does not exist`,
-      warning: `denext: ${TOOLCHAIN_ENV}=${path} is not a file; running on stock Deno.`,
-    };
+    throw new DenoToolchainRequiredError(
+      `denext: ${TOOLCHAIN_ENV}=${path} is not a file.\n  Point it at a deno binary, set ` +
+        `${TOOLCHAIN_ENV}=stock to run the deno that started denext, or unset it to run ` +
+        "denext's own Deno toolchain.",
+    );
   }
   return {
     kind: "toolchain",
@@ -1060,14 +1072,18 @@ async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
 
 /**
  * Pick the Deno the current command should run on — denext's toolchain (downloaded and verified
- * on first use), a `DENEXT_DENO=<path>` binary, or stock Deno — and never fail: every reason to
- * stay on stock Deno comes back as a `stock` choice, with a warning to print unless it is an
- * opt-out, the toolchain simply isn't pinned for this denext version yet, or the process was run
- * without the grants to install and start it (a least-privilege `start`: it runs on the Deno that
- * launched it).
+ * on first use), or what the user chose explicitly: `DENEXT_DENO=<path>` (that binary) or
+ * `DENEXT_DENO=stock` (the Deno that started the CLI). Stock Deno is also chosen, silently, when
+ * this denext version pins no toolchain, and for a process run without the grants to install and
+ * start it (a least-privilege `start`: it runs on the Deno that launched it and spawns none).
+ * Anything else that keeps the toolchain from running — offline on first use, no build for this
+ * host, a failed or mismatching download, an unreadable pin file, a `DENEXT_DENO=<path>` that is
+ * not a file — throws {@linkcode DenoToolchainRequiredError} naming the fix: denext never falls
+ * back to another Deno on its own.
  *
  * @param options Seams; all default to the process.
  * @returns The choice.
+ * @throws {DenoToolchainRequiredError} When the toolchain can't be had.
  */
 export async function resolveDenoToolchain(
   options: ResolveDenoToolchainOptions = {},
@@ -1080,8 +1096,7 @@ export async function resolveDenoToolchain(
   try {
     pin = options.pin ?? loadDenoToolchainPin(env);
   } catch (err) {
-    const text = errText(err);
-    return stockChoice(text, `${text}\n  Running on stock Deno.`);
+    throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
   }
   return await pinnedChoice(pin, env, options);
 }
@@ -1102,10 +1117,11 @@ async function pinnedObstacle(
 ): Promise<DenoToolchainChoice | null> {
   if (pin.version === null) return stockChoice("not available for this denext version");
   if (!pin.targets[target]) {
-    return stockChoice(
-      `no build for ${target}`,
-      `denext: denext's Deno toolchain ${pin.version} has no build for ${target}; running on ` +
-        `stock Deno ${Deno.version.deno}. ${OPT_OUT}`,
+    throw new DenoToolchainRequiredError(
+      `denext: denext's Deno toolchain ${pin.version} has no build for ${target} (it has: ` +
+        `${Object.keys(pin.targets).join(", ") || "none"}).\n  Opt out explicitly: ` +
+        `${TOOLCHAIN_ENV}=stock runs the deno that started denext (or the \`deno\` on PATH), ` +
+        `${TOOLCHAIN_ENV}=<path> runs that deno binary.`,
     );
   }
   const missing = await missingGrants(cacheRoot);
@@ -1116,7 +1132,7 @@ async function pinnedObstacle(
   return stockChoice(`this process lacks ${missing.join(" ")} (for ${cacheRoot})`);
 }
 
-/** The pinned toolchain (installed and verified), or why stock Deno runs instead. */
+/** The pinned toolchain (installed and verified), or the silent stock choice of {@linkcode pinnedObstacle}. */
 async function pinnedChoice(
   pin: DenoToolchainPin,
   env: EnvGet,
@@ -1135,12 +1151,7 @@ async function pinnedChoice(
     const rt = await ensureDenoToolchain({ ...options, pin, target, cacheRoot });
     return { kind: "toolchain", deno: rt.deno, version: rt.version };
   } catch (err) {
-    const text = errText(err);
-    const loud = err instanceof DenoToolchainHashError ? "\n  ⚠ " : "\n  ";
-    return stockChoice(
-      text,
-      `${text}${loud}Running on stock Deno ${Deno.version.deno}. ${OPT_OUT}`,
-    );
+    throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
   }
 }
 
@@ -1197,7 +1208,7 @@ const STATE_TEXT: Record<DenoToolchainStatus["state"], string> = {
   missing: "not cached yet (downloaded on the first command that runs project code)",
   invalid: "cache FAILED verification (re-downloaded on next use)",
   unpinned: "not available for this denext version (stock Deno runs)",
-  unsupported: "no build for this host (stock Deno runs)",
+  unsupported: "no build for this host (commands refuse; DENEXT_DENO=stock opts out)",
   "n/a": "",
 };
 

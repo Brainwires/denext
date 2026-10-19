@@ -9,9 +9,10 @@
 # `denext toolchain install`, which downloads denext's own Deno build (SHA-256-verified) into
 # Deno's cache, and every verb runs on it (`denext task dev`, `denext test`, `denext fmt` …).
 # When no `deno` is on your PATH it also runs `denext toolchain link`, so `deno` is that toolchain
-# (a link at ~/.denext/bin/deno); an existing `deno` is never replaced or shadowed. Either
-# step failing (offline, say) is one warning, not a failed install: the binary downloads the
-# toolchain on first need instead.
+# (a link at ~/.denext/bin/deno); an existing `deno` is never replaced, shadowed or used by
+# denext. Either step failing (offline, say) is one warning, not a failed install: the binary
+# downloads the toolchain on the first command that needs it instead (and a command that can't
+# get it stops with the fix, never running another Deno).
 #
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
@@ -508,7 +509,8 @@ install_toolchain() {
     return 0
   fi
   if command -v deno >/dev/null 2>&1; then
-    echo "denext: keeping your deno ($(command -v deno)); denext runs its own toolchain anyway"
+    echo "denext: denext uses its own Deno ($(toolchain_version "$1")); your deno at" \
+      "$(command -v deno | sed "s|^$HOME/|~/|") is not changed or used by denext"
     return 0
   fi
   [ "${DENEXT_NO_DENO_LINK:-}" = "1" ] && return 0
@@ -516,6 +518,12 @@ install_toolchain() {
     echo "denext: warning — could not link \`deno\` to the toolchain (\`denext deno …\` still" >&2
     echo "  runs it)." >&2
   fi
+}
+
+# The Deno toolchain version the binary at $1 pins (`2.9.7-denext.22`), or `the pinned build`.
+toolchain_version() {
+  v="$("$1" toolchain status --json 2>/dev/null | sed -n 's/^  "version": "\([^"]*\)".*/\1/p' | head -n 1)"
+  echo "${v:-the pinned build}"
 }
 
 # Whether the binary at $1 has the `toolchain` verb, which denext 4.0 added: an older release

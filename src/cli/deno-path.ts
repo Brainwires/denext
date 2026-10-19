@@ -148,11 +148,12 @@ export interface ForwardedDeno {
 
 /**
  * The Deno a forwarded Deno verb or `deno task` runs on — the automatic switch's choice (denext's
- * toolchain, a `DENEXT_DENO=<path>` binary, or stock Deno whenever the toolchain can't be had) —
- * with the child environment that makes every nested `deno` that same binary. Shared by the CLI
- * (`denext task`, `denext compile`, …) and `denext ui`'s Tasks page. Never fails.
+ * toolchain, or what `DENEXT_DENO=stock` / `<path>` asks for) — with the child environment that
+ * makes every nested `deno` that same binary. Shared by the CLI (`denext task`, `denext compile`,
+ * …) and `denext ui`'s Tasks page.
  *
  * @returns The binary, its child environment and any warning.
+ * @throws {DenoToolchainRequiredError} When the toolchain can't be had (the message names the fix).
  */
 export async function forwardedDeno(): Promise<ForwardedDeno> {
   const choice = await resolveDenoToolchain();

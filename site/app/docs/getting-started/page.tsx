@@ -59,11 +59,13 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
         — denext's own Deno build, downloaded into Deno's cache and SHA-256-verified — and, only
         when no <code>deno</code> is on your PATH, <code>denext toolchain link</code>, so{" "}
         <code>deno</code> runs that toolchain too (a link at{" "}
-        <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). It never replaces a{" "}
-        <code>deno</code> you have. <code>DENEXT_NO_DENO_LINK=1</code> skips the link and{" "}
-        <code>DENEXT_NO_TOOLCHAIN=1</code>{" "}
+        <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). A <code>deno</code>{" "}
+        you have is never replaced, and never used by denext either.{" "}
+        <code>DENEXT_NO_DENO_LINK=1</code> skips the link and <code>DENEXT_NO_TOOLCHAIN=1</code>
+        {" "}
         both steps; a failed download (offline) is one warning, and the binary fetches the toolchain
-        on the first command that needs it instead. Every verb that runs Deno —{" "}
+        on the first command that needs it instead — a command that can&apos;t get it stops with the
+        fix rather than run another Deno. Every verb that runs Deno —{" "}
         <code>
           denext task …
         </code>, <code>denext test</code>, <code>denext fmt</code>,{" "}

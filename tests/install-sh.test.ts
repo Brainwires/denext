@@ -69,6 +69,7 @@ echo "$*" >> "$DENEXT_STUB_LOG"
 case "\${STUB_VERSION:-}" in 3.*) [ "$1" = "toolchain" ] && {
   echo "denext: unknown command \"toolchain\"" >&2; exit 1; } ;; esac
 [ "$1 $2" = "toolchain install" ] && [ -n "$STUB_TOOLCHAIN_FAIL" ] && exit 1
+[ "$1 $2" = "toolchain status" ] && printf '{\n  "version": "2.9.7-denext.99",\n  "esbuild": {\n    "version": "0.25.5"\n  }\n}\n'
 exit 0
 `;
 
@@ -334,8 +335,17 @@ Deno.test("install.sh: an existing deno is kept — the toolchain installs, noth
     await Deno.writeTextFile(join(withDeno, "deno"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     const run = await r.run({}, [withDeno]);
     assertEquals(run.code, 0, run.stderr);
-    assertEquals(run.calls, ["toolchain install"], "never link over a deno the user has");
-    assertStringIncludes(run.stdout, `keeping your deno (${join(withDeno, "deno")})`);
+    assertEquals(
+      run.calls,
+      ["toolchain install", "toolchain status --json"],
+      "never link over a deno the user has",
+    );
+    assertStringIncludes(
+      run.stdout,
+      "denext uses its own Deno (2.9.7-denext.99); your deno at ~/with-deno/deno is not " +
+        "changed or used by denext",
+    );
+    assert(!run.stdout.includes("keeping your deno"), run.stdout);
     assertEquals(run.stderr, "");
   } finally {
     await r.remove();

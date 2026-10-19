@@ -47,6 +47,21 @@ and this project adheres to
 
 ### Changed
 
+- **Every Deno denext runs is its own toolchain, and it no longer falls back to stock Deno on its
+  own.** When denext's Deno toolchain can't be had — offline on first use, no build for the host,
+  a failed or tampered download, an unreadable pin file, a `DENEXT_DENO=<path>` that is not a
+  file — a command now stops with one error naming the fix (`denext toolchain install`) and the
+  explicit opt-outs (`DENEXT_DENO=stock`, `DENEXT_DENO=<path>`), instead of warning once and
+  running whatever `deno` it found. Under `deno run` (the CLI from JSR), the verbs that run no
+  project code but start `deno` — `fmt`, `lint`, `add`, `create`, `generate`, `migrate`,
+  `upgrade`, `ui`, `mcp` — now hand the toolchain to those children, as the compiled binary
+  already did. `desktop run` / `dev` no longer drop to the stock Deno Desktop runtime for a
+  mismatching `deno` unless the Deno was chosen explicitly (`DENEXT_DENO`, `DENO_BIN`); the
+  `deno-deploy` adapter pushes with the toolchain rather than the CLI's own executable; and the
+  fallow pre-commit hook `denext fallow init` writes runs `denext task` when denext is installed.
+  The installers' "keeping your deno" line now says it plainly: denext uses its own Deno, and the
+  `deno` on your PATH is neither changed nor used.
+
 - **Ready for denext's Deno under its own version.** The runtime and toolchain release after
   `2.9.7-denext.22` is `3.0.0-rc.1` (then `3.0.0-rc.2`, …; tagged `denext-runtime-v3.0.0-rc.1`),
   and denext now accepts both schemes, ordered by semver (`2.9.7-denext.22` < `3.0.0-rc.1` <
