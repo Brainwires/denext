@@ -95,7 +95,10 @@ export function signInPage(
   query: URLSearchParams,
 ): Response {
   const fields = { csrfToken, callbackUrl: query.get("callbackUrl") ?? "/" };
-  const forms = providers.map((p) => providerForm(basePath, p, fields)).join("");
+  // A WebAuthn provider signs in from script (`next-auth/webauthn`), never from a plain form.
+  const forms = providers.filter((p) => p.type !== "webauthn").map((p) =>
+    providerForm(basePath, p, fields)
+  ).join("");
   return page("Sign in", `<h1>Sign in</h1>${message(query.get("error"))}${forms}`);
 }
 

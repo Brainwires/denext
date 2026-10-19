@@ -75,6 +75,7 @@ export type {
 export type {
   AuthJsAdapter as Adapter,
   AuthJsAdapterAccount as AdapterAccount,
+  AuthJsAdapterAuthenticator as AdapterAuthenticator,
   AuthJsAdapterSession as AdapterSession,
   AuthJsAdapterUser as AdapterUser,
   AuthJsUserExtension as AdapterUserExtension,

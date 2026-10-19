@@ -17,6 +17,8 @@
  *   `events.updateUser` from the adapter bridge, `events.session` on every session read;
  * - several email providers → one `sendVerificationRequest` dispatching on the issuing
  *   provider;
+ * - a WebAuthn provider (`passkey`, `webauthn`) → `passkeys` (its relying party and user
+ *   verification);
  * - `pages` → `pages` (the built-in pages under the base path otherwise);
  * - `logger` / `debug` → `logger`.
  *
@@ -133,10 +135,10 @@ function events(active: () => ActiveNextAuth): AuthEvents {
  * denext doesn't name) through the first.
  */
 function emailSender(
-  built: { provider: AuthProvider; send?: SendVerificationRequest }[],
+  built: { provider?: AuthProvider; send?: SendVerificationRequest }[],
 ): SendVerificationRequest | undefined {
   const senders = new Map<string, SendVerificationRequest>();
-  for (const { provider, send } of built) if (send) senders.set(provider.id, send);
+  for (const { provider, send } of built) if (provider && send) senders.set(provider.id, send);
   const first = senders.values().next().value;
   if (!first) return undefined;
   return (params) => ((params.provider && senders.get(params.provider)) || first)(params);
@@ -205,7 +207,13 @@ function bridgedAdapter(
       log.error?.("next-auth: events.updateUser threw", error);
     }
   };
-  return fromAuthJsAdapter(config.adapter, { credentialsProviders, warn, onUpdateUser });
+  const webAuthnProvider = descriptors.find((d) => d.type === "webauthn")?.id;
+  return fromAuthJsAdapter(config.adapter, {
+    credentialsProviders,
+    warn,
+    onUpdateUser,
+    ...(webAuthnProvider ? { webAuthnProvider } : {}),
+  });
 }
 
 /** An Auth.js adapter row as the events see a user. */
@@ -243,7 +251,7 @@ export function translateConfig(
   const active = () => ref.current!;
   const denext: AuthConfig = {
     secret,
-    providers: built.map((b) => b.provider),
+    providers: built.flatMap((b) => b.provider ? [b.provider] : []),
     basePath,
     session,
     callbacks: {
@@ -260,6 +268,17 @@ export function translateConfig(
   if (adapter) denext.adapter = adapter;
   const send = emailSender(built);
   if (send) denext.sendVerificationRequest = send;
+  // A WebAuthn provider (`next-auth/providers/passkey`) turns on denext's passkeys.
+  const passkeys = built.find((b) => b.passkeys)?.passkeys;
+  if (passkeys) {
+    if (!passkeys.rpId && !denext.canonicalOrigin) {
+      throw new TypeError(
+        "next-auth: the passkey provider needs AUTH_URL (or `relayingParty: { id, origin }`) — " +
+          "denext never takes the relying party from the request's Host header",
+      );
+    }
+    denext.passkeys = passkeys;
+  }
   const maxAge = session.maxAge!;
   ref.current = {
     config,

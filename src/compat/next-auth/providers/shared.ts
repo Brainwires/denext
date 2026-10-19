@@ -15,6 +15,7 @@ import {
 } from "../../../server/auth/providers-presets.ts";
 import { oidc } from "../../../server/auth/providers.ts";
 import type {
+  AuthPasskeyConfig,
   AuthProvider,
   AuthUser,
   OAuthProvider,
@@ -29,12 +30,17 @@ export type EnvReader = (name: string) => string | undefined;
 /** The key of the internal builder a descriptor carries (a symbol, so a spread keeps it). */
 const BUILD: unique symbol = Symbol.for("denext.next-auth.provider");
 
-/** What building a provider yields: the denext provider, and an email provider's sender. */
+/**
+ * What building a provider yields: the denext provider and an email provider's sender — or, for
+ * a WebAuthn provider (`passkey`), the passkey settings it turns on instead of a provider.
+ */
 export interface BuiltProvider {
-  /** The denext provider. */
-  provider: AuthProvider;
+  /** The denext provider (absent for a WebAuthn provider). */
+  provider?: AuthProvider;
   /** An email provider's mail sender. */
   send?: SendVerificationRequest;
+  /** A WebAuthn provider's `denextAuth({ passkeys })` settings. */
+  passkeys?: AuthPasskeyConfig;
 }
 
 /** A provider as `next-auth/providers/*` returns it. */
@@ -44,7 +50,7 @@ export interface ProviderDescriptor<Options = unknown> {
   /** Its display name. */
   name: string;
   /** Its kind. */
-  type: "oauth" | "oidc" | "credentials" | "email";
+  type: "oauth" | "oidc" | "credentials" | "email" | "webauthn";
   /** The options it was created with. */
   options: Options;
 }
@@ -223,6 +229,7 @@ function recordingProfile<P>(
   providerId: string,
   type: string,
   rawProfile: (input: ProfileInput) => Record<string, unknown> = mergedProfile,
+  authJsUser?: (input: ProfileInput) => Record<string, unknown>,
 ): OAuthProvider["profile"] {
   return async (input: ProfileInput) => {
     const base = await preset(input);
@@ -230,7 +237,7 @@ function recordingProfile<P>(
     const record = signInRecord();
     record.profile = raw;
     let user = base;
-    record.user = { ...base };
+    record.user = authJsUser ? { ...authJsUser(input), id: base.id } : { ...base };
     if (custom) {
       const mine = await custom(raw as P, input.tokens);
       user = overrideUser(mine, base);
@@ -253,6 +260,7 @@ function withAuthJsOptions<P>(
   built: OAuthProvider,
   options: OAuthUserConfig<P>,
   rawProfile?: (input: ProfileInput) => Record<string, unknown>,
+  authJsUser?: (input: ProfileInput) => Record<string, unknown>,
 ): OAuthProvider {
   const id = options.id ?? built.id;
   const { rest } = authorizationParams(options.authorization);
@@ -262,7 +270,14 @@ function withAuthJsOptions<P>(
   if (options.allowedHosts?.length) {
     provider.allowedHosts = [...(built.allowedHosts ?? []), ...options.allowedHosts];
   }
-  provider.profile = recordingProfile(built.profile, options.profile, id, built.type, rawProfile);
+  provider.profile = recordingProfile(
+    built.profile,
+    options.profile,
+    id,
+    built.type,
+    rawProfile,
+    authJsUser,
+  );
   return provider;
 }
 
@@ -281,6 +296,8 @@ export function oauthDescriptor<P, O extends OAuthUserConfig<P>>(
     type: "oauth" | "oidc";
     /** The raw profile `profile()` receives, when it is not the userinfo + claims. */
     rawProfile?: (input: ProfileInput) => Record<string, unknown>;
+    /** The user the Auth.js callbacks see, when it is not the denext user (a generated mapping). */
+    authJsUser?: (input: ProfileInput) => Record<string, unknown>;
   },
   options: O,
   preset: (
@@ -297,7 +314,9 @@ export function oauthDescriptor<P, O extends OAuthUserConfig<P>>(
       clientSecret: optionOrEnv(env, id, options.clientSecret, "SECRET"),
       ...(scopes ? { scopes } : {}),
     }, optionOrEnv(env, id, options.issuer, "ISSUER"));
-    return { provider: withAuthJsOptions(built, { ...options, id }, meta.rawProfile) };
+    return {
+      provider: withAuthJsOptions(built, { ...options, id }, meta.rawProfile, meta.authJsUser),
+    };
   });
 }
 

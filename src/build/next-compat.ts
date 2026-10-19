@@ -64,6 +64,7 @@ import {
   transformInlineServerActions,
 } from "./inline-server-action.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
+import { NEXT_AUTH_PROVIDER_MODULES } from "../compat/next-auth/providers/list.ts";
 import * as esbuild from "./esbuild/mod.ts";
 import {
   basename,
@@ -184,6 +185,8 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/image": "next-image.js",
   // Auth.js v5's client (`useSession`, `signIn`), for the app and for libraries that import it.
   "next-auth/react": "next-auth-react.js",
+  // Auth.js v5's WebAuthn client (`signIn("passkey")`), on denext's passkey client.
+  "next-auth/webauthn": "next-auth-webauthn.js",
   "next/og": "next-og.js",
   "next/cache": "next-cache.js",
   "next/server": "next-server.js",
@@ -209,30 +212,7 @@ export const NEXT_AUTH_SERVER_SPECIFIERS: ReadonlySet<string> = new Set([
   "next-auth/middleware",
   "next-auth/adapters",
   "next-auth/providers",
-  ...[
-    "apple",
-    "auth0",
-    "cognito",
-    "credentials",
-    "discord",
-    "email",
-    "facebook",
-    "github",
-    "gitlab",
-    "google",
-    "keycloak",
-    "linkedin",
-    "microsoft-entra-id",
-    "nodemailer",
-    "notion",
-    "okta",
-    "resend",
-    "slack",
-    "spotify",
-    "twitch",
-    "twitter",
-    "zoom",
-  ].map((p) => `next-auth/providers/${p}`),
+  ...NEXT_AUTH_PROVIDER_MODULES.map((p) => `next-auth/providers/${p}`),
 ]);
 
 /** The `next/*` / `next-auth/*` specifiers the compat bundles alias (an esbuild filter). */
@@ -362,6 +342,7 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     "next-intl-routing": u("src/compat/next-intl/routing.ts"),
     // `next-auth/react` (the Auth.js client) — its SessionProvider shares the one hooks instance.
     "next-auth-react": u("src/compat/next-auth/react.ts"),
+    "next-auth-webauthn": u("src/compat/next-auth/webauthn.ts"),
     // `next/head` for libraries (the app's own stays the Pages Router plugin's).
     "next-head": u("src/compat/next/head.ts"),
     // The empty module behind the runtime-free subpaths (`denext/client-only`,
@@ -972,28 +953,7 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/next-auth/middleware",
   "denext/next-auth/adapters",
   "denext/next-auth/providers",
-  "denext/next-auth/providers/apple",
-  "denext/next-auth/providers/auth0",
-  "denext/next-auth/providers/cognito",
-  "denext/next-auth/providers/credentials",
-  "denext/next-auth/providers/discord",
-  "denext/next-auth/providers/email",
-  "denext/next-auth/providers/facebook",
-  "denext/next-auth/providers/github",
-  "denext/next-auth/providers/gitlab",
-  "denext/next-auth/providers/google",
-  "denext/next-auth/providers/keycloak",
-  "denext/next-auth/providers/linkedin",
-  "denext/next-auth/providers/microsoft-entra-id",
-  "denext/next-auth/providers/nodemailer",
-  "denext/next-auth/providers/notion",
-  "denext/next-auth/providers/okta",
-  "denext/next-auth/providers/resend",
-  "denext/next-auth/providers/slack",
-  "denext/next-auth/providers/spotify",
-  "denext/next-auth/providers/twitch",
-  "denext/next-auth/providers/twitter",
-  "denext/next-auth/providers/zoom",
+  ...NEXT_AUTH_PROVIDER_MODULES.map((p) => `denext/next-auth/providers/${p}`),
   "denext/better-sqlite3",
   "denext/testing",
   // The `denext ui` form components, rendered to HTML on the server (plugin pages, project verbs).
