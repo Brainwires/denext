@@ -765,10 +765,11 @@ export function denoVersionMismatchMessage(
   pin: DesktopRuntimePin,
   deno = "deno",
 ): string {
-  return `denext: the Deno Desktop runtime ${pin.version} is built for Deno ${pin.deno} exactly, ` +
-    `but \`${deno}\` is Deno ${found}.\n` +
+  return `denext: the Deno Desktop runtime ${pin.version} is built for Deno ${pin.deno} exactly ` +
+    `(stock, or denext's Deno toolchain built from it), but \`${deno}\` is Deno ${found}.\n` +
     `  Install it with:  deno upgrade --version ${pin.deno}\n` +
-    `  Or point DENO_BIN at a Deno ${pin.deno} binary (desktop run / dev build with it).\n` +
+    `  Or point DENO_BIN at a Deno ${pin.deno} binary, or at denext's Deno toolchain ` +
+    `(\`denext toolchain path\`; desktop run / dev build with it).\n` +
     `  Or set ${RUNTIME_ENV}=stock to use the stock runtime (${STOCK_LACKS}).`;
 }
 

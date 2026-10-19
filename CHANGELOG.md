@@ -24,6 +24,16 @@ and this project adheres to
 
 ### Changed
 
+- **Ready for denext's Deno under its own version.** The runtime and toolchain release after
+  `2.9.7-denext.22` is `3.0.0-rc.1` (then `3.0.0-rc.2`, …; tagged `denext-runtime-v3.0.0-rc.1`),
+  and denext now accepts both schemes, ordered by semver (`2.9.7-denext.22` < `3.0.0-rc.1` <
+  `3.0.0-rc.10` < `3.0.0`): `denext task desktop:pin-runtime` pins such a release (its
+  manifest's `deno` is the Deno release it is built from), the toolchain and `denext test` know
+  it as the toolchain, a `3.0.0-rc.N` `deno` passes the Deno Desktop runtime's "Deno 2.9.7
+  exactly" check for `desktop run` / `dev` / `package` (stock 2.9.7 still does), the
+  `denoland/deno` image tag and `setup-deno` version use the Deno release it is built from, and
+  `denext desktop doctor` compares runtime releases by semver. The pin itself stays
+  `2.9.7-denext.22` until `3.0.0-rc.1` is published.
 - **Docs for 4.4.0's features, audited and filled in.** New guides:
   [Migrating from Fresh](https://denext.dev/docs/migrating-fresh),
   [Migrating from Preact](https://denext.dev/docs/migrating-preact),

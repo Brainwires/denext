@@ -718,3 +718,70 @@ Deno.test("the desktop runtime accepts the toolchain's deno as its Deno release"
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("a pin under the fork's own version (3.0.0-rc.1): parsed, downloaded, cached and run", async () => {
+  const OWN = "3.0.0-rc.1";
+  const f = await fixture(await zipped());
+  const dir = await Deno.makeTempDir();
+  try {
+    // An override pin file (a fake release manifest's toolchain pin) with the new version parses.
+    const file = join(dir, "pin.json");
+    await Deno.writeTextFile(file, JSON.stringify({ ...f.pin, version: OWN, deno: "2.9.7" }));
+    const pin = loadDenoToolchainPin((k) => k === "DENEXT_TOOLCHAIN_PIN_FILE" ? file : undefined);
+    assertEquals([pin.version, pin.deno], [OWN, "2.9.7"]);
+    // It downloads into <root>/3.0.0-rc.1/<target>/, verified and stamped with that version.
+    const rt = await ensureDenoToolchain({
+      pin,
+      target: TARGET,
+      os: "linux",
+      cacheRoot: f.root,
+      log: quiet,
+    });
+    assertEquals(rt, {
+      deno: join(f.root, OWN, TARGET, "deno"),
+      version: OWN,
+      target: TARGET,
+      cached: false,
+    });
+    const stamp = JSON.parse(await Deno.readTextFile(join(f.root, OWN, TARGET, TOOLCHAIN_STAMP)));
+    assertEquals(stamp.version, OWN);
+    const opts = { pin, target: TARGET, os: "linux", cacheRoot: f.root, env: envOf({}) };
+    const on = await denoToolchainStatus({ ...opts, running: OWN });
+    assertEquals([on.state, on.active], ["cached", true]);
+    // A run on the last old-scheme toolchain (a stale link) is not this pin.
+    assertFalse((await denoToolchainStatus({ ...opts, running: "2.9.7-denext.22" })).active);
+    const choice = await resolveDenoToolchain({
+      pin,
+      target: TARGET,
+      os: "linux",
+      cacheRoot: f.root,
+      env: envOf({}),
+      fetch: offline,
+      missingGrants: allGranted,
+      log: quiet,
+    });
+    assertEquals(choice, { kind: "toolchain", deno: rt.deno, version: OWN });
+  } finally {
+    await f.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.0-rc.N)", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    for (const found of ["3.0.0-rc.1", "3.0.0-rc.1+ci.42"]) {
+      const status = await desktopRuntimeStatus({
+        projectDir: root,
+        target: "x86_64-unknown-linux-gnu",
+        backend: "webview",
+        cacheRoot: root,
+        env: () => undefined,
+        denoVersion: () => Promise.resolve(found),
+      });
+      assert(status.ok, `${found}: ${status.detail}`);
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

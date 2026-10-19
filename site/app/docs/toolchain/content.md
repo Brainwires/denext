@@ -5,7 +5,8 @@ lead: You install denext, nothing else — stock Deno is optional. The denext co
 ---
 
 denext's Deno toolchain is the Deno CLI built from the public
-[Brainwires/deno](https://github.com/Brainwires/deno) fork (`2.9.7-denext.N`): stock Deno plus
+[Brainwires/deno](https://github.com/Brainwires/deno) fork (`2.9.7-denext.N`, then its own
+version from `3.0.0-rc.1`; see [Versions](#versions)): stock Deno plus
 `Deno.SQL` (the Postgres client behind [`postgresClient()`](/docs/database#postgres)) and
 Vitest/Jest compatibility in `deno test`. denext manages it the same way it manages the
 [Deno Desktop runtime](/docs/desktop-runtime): each denext release pins one build per platform by
@@ -371,6 +372,18 @@ resolve them. Keep the project and its `file:` targets on one drive.
 
 ## Notes: how denext's Deno build is kept current
 
+<a id="versions"></a>**Versions.** Up to `2.9.7-denext.22` each build was named after the Deno release it
+was built from plus `-denext.N`. From `3.0.0-rc.1` (then `3.0.0-rc.2`, …) the fork has its own
+version, which names no Deno release; `3.0.0` final carries Deno's planned 3.0 milestone. The two
+schemes sort in release order by semver (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.10` <
+`3.0.0`), and denext accepts both: a pin, a `Deno.version.deno` and a `DENO_BIN` are compared that
+way. The Deno release a build is made from is the pin's `deno` field (2.9.7 for every build so
+far): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
+[Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.7 exactly" check use. Releases are tagged
+`denext-runtime-v<version>` on [Brainwires/deno](https://github.com/Brainwires/deno/releases). The
+toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
+stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
+
 **Tracking Deno.** The toolchain is Deno's latest release (2.9.7) plus denext's patches — `Deno.SQL`,
 Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
 published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we
@@ -387,7 +400,8 @@ pins today) type-checks with the native TypeScript 7 compiler, shipped in the CL
 like the binary, and runs npm packages more as Node.js does; that check doesn't resolve an absolute
 `file:` import yet, so such a project sets `DENEXT_NATIVE_CHECK=0`
 ([known limitations](/docs/limitations)). Each new Deno
-release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
+release is adopted by rebasing the patches onto it and cutting a new release (`-denext.N` up to
+`2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
 **Support across denext releases.** The patches are carried forward from release to release. Each

@@ -6,7 +6,10 @@
 // 2.9.7-denext.15 on), `src/build/deno-toolchain-pin.json`: denext's Deno toolchain (see
 // `src/build/deno-toolchain.ts`). Both pins always come from the same release.
 //
-//   deno task desktop:pin-runtime <tag>        # e.g. denext-runtime-v2.9.7-denext.1
+//   deno task desktop:pin-runtime <tag>        # e.g. denext-runtime-v3.0.0-rc.1
+//
+// The tag is `denext-runtime-v<version>`: the fork's own version from 3.0.0-rc.1 on (the manifest's
+// `deno.version` is then the stock Deno it is built from), `<deno>-denext.N` up to 2.9.7-denext.22.
 //   deno task desktop:pin-runtime <tag> --manifest <manifest.json> --sums <SHA256SUMS> \
 //     [--archives <dir>]                         # local files (the archives too, by file name)
 //
@@ -46,6 +49,7 @@ import { runtimeAttestationArgs } from "../src/build/desktop-runtime.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 import { extractArchive } from "../src/build/safe-extract.ts";
 import { tsgoTreeSha256 } from "../src/build/deno-toolchain.ts";
+import { denoReleaseVersion, isDenextDenoVersion } from "../src/build/deno-version.ts";
 
 const REPO = "Brainwires/deno";
 const OUT = fromFileUrl(new URL("../src/build/desktop-runtime-pin.json", import.meta.url));
@@ -141,6 +145,16 @@ function fail(message: string): never {
   throw new Error(`desktop:pin-runtime: ${message}`);
 }
 
+/**
+ * Whether `version` is a release of denext's Deno built from stock Deno `deno`: `<deno>-denext.N`
+ * (up to 2.9.7-denext.22), or the fork's own version (3.0.0-rc.1 on), which names no stock
+ * release, so any `deno` goes with it. Never a CI build (`+ci.N`).
+ */
+function runtimeVersionOk(version: string, deno: string): boolean {
+  return !version.includes("+") && isDenextDenoVersion(version) &&
+    denoReleaseVersion(version, deno) === deno;
+}
+
 /** The manifest's version + Deno version, after checking it is this tag's runtime manifest. */
 function checkManifest(tag: string, m: Loose): { version: string; deno: string } {
   if (m?.schema !== 1 || m?.name !== "deno-desktop-runtime") {
@@ -150,7 +164,7 @@ function checkManifest(tag: string, m: Loose): { version: string; deno: string }
   const version = String(m.version ?? "");
   if (`denext-runtime-v${version}` !== tag) fail(`tag ${tag} does not match version ${version}`);
   const deno = String(m.deno?.version ?? "");
-  if (!/^\d+\.\d+\.\d+$/.test(deno) || !version.startsWith(`${deno}-denext.`)) {
+  if (!/^\d+\.\d+\.\d+$/.test(deno) || !runtimeVersionOk(version, deno)) {
     fail(`bad deno version ${JSON.stringify(deno)} for runtime ${version}`);
   }
   return { version, deno };

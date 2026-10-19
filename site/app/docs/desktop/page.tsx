@@ -3102,8 +3102,10 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
       <ul>
         <li>
           <strong>Deno 2.9.7 exactly.</strong> The runtime is built from Deno 2.9.7, and{" "}
-          <code>deno desktop</code>{" "}
-          embeds it. The toolchain is that release, so this holds by itself; on stock Deno (<code>
+          <code>deno desktop</code> embeds it. The toolchain is built from that release (as{" "}
+          <code>2.9.7-denext.N</code> or, from{" "}
+          <code>3.0.0-rc.1</code>, under the fork&apos;s own version), so this holds by itself; on
+          stock Deno (<code>
             DENEXT_DENO=stock
           </code>, or no toolchain for the host) of any other version{" "}
           <code>denext desktop package</code> fails before the build with the fix:{" "}

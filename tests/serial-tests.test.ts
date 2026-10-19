@@ -412,6 +412,8 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
     );
   }
   assert(isToolchainBuild("2.9.7-denext.17"));
+  assert(isToolchainBuild("3.0.0-rc.1"));
+  assert(isToolchainBuild("3.0.0-rc.1+ci.42"));
   assert(!isToolchainBuild("2.9.6"));
   assert(!isToolchainBuild("2.9.7"));
 });

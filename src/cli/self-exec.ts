@@ -4,6 +4,7 @@
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
+import { isDenextDenoVersion } from "../build/deno-version.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
@@ -629,7 +630,8 @@ export function toolchainRuntimeFlags(marker: string | undefined): string[] {
 /**
  * The toolchain a CLI child spawned with `denoExecutable()` runs, for
  * {@linkcode toolchainRuntimeFlags}: the `DENEXT_TOOLCHAIN_ACTIVE` marker, else this process's own
- * Deno when it is a toolchain build (`2.9.7-denext.N`) and no `DENO_BIN` points elsewhere.
+ * Deno when it is a toolchain build (`3.0.0-rc.N`, or `2.9.7-denext.N` before the fork took its
+ * own version) and no `DENO_BIN` points elsewhere.
  *
  * @param env Reads an environment variable.
  * @param denoVersion This process's `Deno.version.deno`.
@@ -641,7 +643,7 @@ export function childToolchainMarker(
 ): string | undefined {
   const marker = env(TOOLCHAIN_ACTIVE_ENV);
   if (marker) return marker;
-  return !env("DENO_BIN") && /-denext\.\d+$/.test(denoVersion) ? denoVersion : undefined;
+  return !env("DENO_BIN") && isDenextDenoVersion(denoVersion) ? denoVersion : undefined;
 }
 
 /**

@@ -64,7 +64,9 @@ denext uses the stock runtime and the forks are archived.
 
 The runtime is the part of Deno Desktop an app is embedded into: the `libdenort` library and
 laufey's backend hosts (`webview` and `cef`). It is published as GitHub releases tagged
-`denext-runtime-v2.9.7-denext.<n>` on the Deno fork, one archive per target and backend:
+`denext-runtime-v<version>` on the Deno fork (`denext-runtime-v2.9.7-denext.<n>` up to `denext.22`,
+then the fork's own version: `denext-runtime-v3.0.0-rc.1`, see [Runtime releases](#runtime-releases)),
+one archive per target and backend:
 
 | Target               | Backends         |
 | -------------------- | ---------------- |
@@ -724,12 +726,13 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 ### The fork's own `deno` CLI
 
 - **What:** from `2.9.7-denext.15` each runtime release also ships the fork's own `deno` CLI, one
-  zip per platform (`deno-cli-2.9.7-denext.15-<target>.zip`, the binary at the top), listed in the
+  zip per platform (`deno-cli-<version>-<target>.zip`, the binary at the top), listed in the
   release's `manifest.json` (`cli`) and `SHA256SUMS` and attested like the runtime archives. Its
-  `deno --version` and `Deno.version.deno` are the release (`2.9.7-denext.15`), a semver
-  prerelease of Deno 2.9.7; denext compares the Deno release it is built from (`2.9.7`)
-  everywhere it checks a version. It is the binary [denext's Deno toolchain](/docs/toolchain)
-  pins.
+  `deno --version` and `Deno.version.deno` are the release (`2.9.7-denext.15`, or from
+  `3.0.0-rc.1` the fork's own version); where a check needs a Deno release, denext uses the one
+  the build is made from (`2.9.7`, the pin's `deno`). It is the binary
+  [denext's Deno toolchain](/docs/toolchain) pins, and its `deno upgrade` is off from
+  `3.0.0-rc.1` (it would replace the build with stock Deno).
 - **Why:** the CLI-side features (Vitest / Jest compatibility in `deno test`, `Deno.SQL` in
   `deno run`) exist only in this build; the stock CLI does not have them.
 - **Layer:** the Deno CLI, a separate download from the runtime archives. `deno desktop` with it
@@ -779,6 +782,14 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 
 Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`;
 currently `2.9.7-denext.22`).
+
+**Naming.** Up to `2.9.7-denext.22` a release was named after the Deno release it was built from
+plus `-denext.<n>`. The next release is `3.0.0-rc.1`, then `3.0.0-rc.2` and so on: the fork's own
+version, tagged `denext-runtime-v3.0.0-rc.1`, with its archives named after it
+(`deno-desktop-runtime-3.0.0-rc.1-<target>-<backend>.tar.gz`). `3.0.0` final carries Deno's planned
+3.0 milestone. The Deno release a runtime is built from stays in the pin's `deno` field (2.9.7), and
+that is still the stock `deno desktop` it packages with. Semver orders the two schemes in release
+order (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0`), which is how denext compares runtime versions.
 
 | Release           | What it adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

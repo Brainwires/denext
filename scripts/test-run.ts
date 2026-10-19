@@ -33,6 +33,7 @@ import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative } from "@std/path";
 import { SERIAL_TESTS } from "../tests/serial-tests.ts";
 import { resolveDenoToolchain, TOOLCHAIN_ENV } from "../src/build/deno-toolchain.ts";
+import { isDenextDenoVersion } from "../src/build/deno-version.ts";
 import { TEST_VALUE_FLAGS } from "../src/cli/commands/test-passes.ts";
 
 /** The file-name suffix of a test file that runs on denext's Deno toolchain (Vitest's API). */
@@ -194,9 +195,12 @@ export async function findVitestFiles(root: string = ROOT): Promise<string[]> {
   return out.sort();
 }
 
-/** Whether `version` (`Deno.version.deno`) is a denext toolchain build (`2.9.7-denext.17`). */
+/**
+ * Whether `version` (`Deno.version.deno`) is a denext toolchain build (`3.0.0-rc.1`, or
+ * `2.9.7-denext.17` before the fork took its own version).
+ */
 export function isToolchainBuild(version: string): boolean {
-  return /-denext\.\d+$/.test(version);
+  return isDenextDenoVersion(version);
 }
 
 /**

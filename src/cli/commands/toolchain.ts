@@ -15,6 +15,7 @@ import {
 import { RAW_FLAG } from "../explain-output.ts";
 import { join } from "@std/path";
 import { denoExecutable } from "../../build/deno-executable.ts";
+import { isDenextDenoVersion } from "../../build/deno-version.ts";
 import { clearCoverageProfiles, coverageDir, findVitestFiles, planTestRun } from "./test-passes.ts";
 import { rawDiagnostics } from "../../build/explain/mod.ts";
 
@@ -51,9 +52,12 @@ function runDenoExplained(sub: string, ctx: CommandContext, json = false): Promi
 
 export { coverageDir };
 
-/** Whether this Deno is denext's toolchain build (`2.9.7-denext.N`: Vitest's API in `deno test`). */
+/**
+ * Whether this Deno is denext's toolchain build (`3.0.0-rc.N`, or `2.9.7-denext.N` before: Vitest's
+ * API in `deno test`).
+ */
 function onToolchain(): boolean {
-  return /-denext\.\d+$/.test(Deno.version.deno);
+  return isDenextDenoVersion(Deno.version.deno);
 }
 
 /** Run one `deno` argument list in `cwd`, inheriting the terminal; its exit code. */
