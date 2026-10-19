@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oauth",
   scopes: ["files:read"],
   tokenAuth: "client_secret_basic",
+  checks: ["state"],
   authorization: "https://www.figma.com/oauth",
   token: "https://api.figma.com/v1/oauth/token",
   userinfo: "https://api.figma.com/v1/me",

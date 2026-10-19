@@ -13,11 +13,13 @@ import {
   type OAuthPresetSpec,
   oidcClaimProfile,
 } from "../../../server/auth/providers-presets.ts";
+import { OAUTH_CHECKS } from "../../../server/auth/oauth.ts";
 import { oidc } from "../../../server/auth/providers.ts";
 import type {
   AuthPasskeyConfig,
   AuthProvider,
   AuthUser,
+  OAuthCheck,
   OAuthProvider,
   ProfileInput,
   SendVerificationRequest,
@@ -120,7 +122,11 @@ export interface OAuthUserConfig<P = Record<string, unknown>> {
   profile?(profile: P, tokens: Record<string, unknown>): ProfileUser | Promise<ProfileUser>;
   /** Link to an existing user by email even when the address is unverified (dangerous). */
   allowDangerousEmailAccountLinking?: boolean;
-  /** Accepted and ignored: denext always runs `state` + PKCE (+ `nonce` for OIDC). */
+  /**
+   * The protections the flow runs, as in Auth.js: PKCE when it lists `"pkce"`, a `nonce` (OIDC)
+   * when it lists `"nonce"`; unset keeps the provider's own (PKCE, plus a `nonce` for OIDC, unless
+   * its definition names others). denext sends and checks `state` whatever the list says.
+   */
   checks?: string[];
   /**
    * denext-only: extra hosts the provider's endpoints may live on (exact, or `*.domain`) — a
@@ -249,6 +255,21 @@ function recordingProfile<P>(
 }
 
 /**
+ * An app's `checks` option, refused at config time when it names a check Auth.js doesn't have
+ * (a typo must not turn PKCE off).
+ */
+function checksOf(id: string, checks: unknown): OAuthCheck[] {
+  const valid = (c: unknown): c is OAuthCheck => OAUTH_CHECKS.includes(c as OAuthCheck);
+  if (!Array.isArray(checks) || !checks.every(valid)) {
+    throw new TypeError(
+      `next-auth: provider "${id}" has \`checks: ${JSON.stringify(checks)}\` — each must be ` +
+        `one of ${OAUTH_CHECKS.map((c) => `"${c}"`).join(", ")}`,
+    );
+  }
+  return [...checks];
+}
+
+/**
  * Finish a built OAuth provider with the Auth.js options every preset shares: the id, the
  * extra authorization params, dangerous linking, and the recording profile mapper.
  *
@@ -267,6 +288,7 @@ function withAuthJsOptions<P>(
   const provider: OAuthProvider = { ...built, id };
   if (rest) provider.authorizationParams = { ...built.authorizationParams, ...rest };
   if (options.allowDangerousEmailAccountLinking) provider.allowDangerousEmailAccountLinking = true;
+  if (options.checks !== undefined) provider.checks = checksOf(id, options.checks);
   if (options.allowedHosts?.length) {
     provider.allowedHosts = [...(built.allowedHosts ?? []), ...options.allowedHosts];
   }

@@ -232,6 +232,9 @@
           "read:me"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
         "authorization": "https://auth.atlassian.com/authorize",
         "token": "https://auth.atlassian.com/oauth/token",
         "userinfo": "https://api.atlassian.com/me",
@@ -609,6 +612,9 @@
           "email"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
         "authorization": "https://app.clickup.com/api",
         "token": "https://api.clickup.com/api/v2/oauth/token",
         "userinfo": "https://api.clickup.com/api/v2/user",
@@ -773,6 +779,10 @@
           "email"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state"
+        ],
         "issuer": "{issuer}",
         "options": {
           "issuer": {
@@ -924,6 +934,9 @@
           "publicData"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
         "authorization": "https://login.eveonline.com/v2/oauth/authorize",
         "token": "https://login.eveonline.com/v2/oauth/token",
         "userinfo": "https://login.eveonline.com/oauth/verify",
@@ -1030,6 +1043,9 @@
           "files:read"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
         "authorization": "https://www.figma.com/oauth",
         "token": "https://api.figma.com/v1/oauth/token",
         "userinfo": "https://api.figma.com/v1/me",
@@ -1156,6 +1172,10 @@
           "profile"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state"
+        ],
         "issuer": "{issuer}",
         "params": {
           "tenantId": "{tenantId}"
@@ -1234,6 +1254,10 @@
           "email"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state",
+          "pkce"
+        ],
         "issuer": "https://huggingface.co"
       }
     },
@@ -1361,6 +1385,10 @@
           "email"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state",
+          "pkce"
+        ],
         "issuer": "{issuer}"
       }
     },
@@ -2038,6 +2066,9 @@
           "identity"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "state"
+        ],
         "authorization": "https://www.reddit.com/api/v1/authorize",
         "token": "https://www.reddit.com/api/v1/access_token",
         "userinfo": "https://oauth.reddit.com/api/v1/me"
@@ -2054,6 +2085,10 @@
           "profile"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state"
+        ],
         "issuer": "https://apis.roblox.com/oauth/"
       }
     },
@@ -2069,6 +2104,11 @@
           "email"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state",
+          "nonce"
+        ],
         "issuer": "https://login.salesforce.com",
         "profileFromUserinfo": true
       }
@@ -2188,6 +2228,9 @@
           "threads_basic"
         ],
         "tokenAuth": "client_secret_post",
+        "checks": [
+          "state"
+        ],
         "authorization": "https://threads.net/oauth/authorize",
         "token": "https://graph.threads.net/oauth/access_token",
         "userinfo": "https://graph.threads.net/v1.0/me?fields=id,username,threads_profile_picture_url",
@@ -2263,6 +2306,11 @@
           "email"
         ],
         "tokenAuth": "client_secret_basic",
+        "checks": [
+          "pkce",
+          "state",
+          "nonce"
+        ],
         "issuer": "https://api.vipps.no/access-management-1.0/access/",
         "profileFromUserinfo": true
       }

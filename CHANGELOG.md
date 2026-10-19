@@ -99,6 +99,13 @@ and this project adheres to
   (`AUTH_<ID>_KEY`) are written by hand. Fourteen providers whose flow isn't standard OAuth
   (`dropbox`, `hubspot`, `line`, `tiktok`, `wechat`, …) are not provided; Limitations lists why.
   The shim now ships 88 provider modules, up from 22.
+- **A provider's `checks` decide PKCE and the OIDC `nonce`, as in Auth.js.** `OAuthProvider.checks`
+  (`"pkce"`, `"state"`, `"nonce"`, `"none"`) leaves PKCE out unless it lists `"pkce"` and the
+  `nonce` unless it lists `"nonce"`, so Reddit, ClickUp, EVE Online, Figma, Atlassian and the other
+  providers whose Auth.js definition says `checks: ["state"]` no longer get a `code_verifier` they
+  may refuse. The generated providers carry their definition's `checks`, and a `next-auth`
+  provider's own `checks` option is applied (an unknown value is a config error). Unset keeps
+  PKCE, plus a `nonce` for OIDC; `state` is sent and verified on every flow, whatever the list.
 - **`next-auth/providers/passkey` runs on denext's passkeys, with `next-auth/webauthn`.** Listing
   `Passkey` (or `WebAuthn`) turns on `denextAuth({ passkeys })` under the auth base path, its
   `relayingParty` and user verification mapped; `signIn("passkey")` from `next-auth/webauthn`

@@ -19,7 +19,7 @@ import { absoluteUrl } from "../../absolute-url.ts";
 import type { AdapterUser } from "../adapter.ts";
 import { sha256Hex } from "../hash.ts";
 import { nativeAdapterOf } from "../native.ts";
-import { buildAuthorizationUrl, generatePkce, randomToken } from "../oauth.ts";
+import { buildAuthorizationUrl, flowChecks, generatePkce, randomToken } from "../oauth.ts";
 import { resolveAuthOptions } from "../options.ts";
 import { signinStartLimiter } from "../rate-limit.ts";
 import { isSsoUser } from "../sso-user.ts";
@@ -120,16 +120,17 @@ async function start(
   );
   const route = routeContext(ctx, provider.id);
   const endpoints = await endpointsFor(route, provider);
-  const pkce = await generatePkce();
+  const checks = flowChecks(provider);
+  const pkce = checks.pkce ? await generatePkce() : undefined;
   // A stored provider's callback is the shared `/auth/v1/callback`: its state names it.
   const state = isStoredProvider(provider)
     ? `${provider.id.slice("custom:".length)}.${randomToken()}`
     : randomToken();
-  const nonce = provider.type === "oidc" ? randomToken() : undefined;
+  const nonce = checks.nonce ? randomToken() : undefined;
   const tx: Transaction = {
     provider: provider.id,
     state,
-    verifier: pkce.verifier,
+    verifier: pkce?.verifier ?? "",
     ...(nonce ? { nonce } : {}),
     gotrue: {
       redirectTo,
@@ -156,7 +157,7 @@ async function start(
       redirectUri: redirectUriFor(route, provider),
       scope: scopes.join(" "),
       state,
-      codeChallenge: pkce.challenge,
+      codeChallenge: pkce?.challenge,
       nonce,
       extra: provider.authorizationParams,
       responseMode: formPost ? "form_post" : undefined,

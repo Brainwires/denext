@@ -291,6 +291,7 @@ export type {
   EmailProvider,
   NativeAppleConfig,
   NativeIdTokenProviderConfig,
+  OAuthCheck,
   OAuthProvider,
   PhoneProvider,
   ProfileInput,

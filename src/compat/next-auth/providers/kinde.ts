@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oidc",
   scopes: ["openid", "profile", "email"],
   tokenAuth: "client_secret_basic",
+  checks: ["state", "pkce"],
   issuer: "{issuer}",
 };
 

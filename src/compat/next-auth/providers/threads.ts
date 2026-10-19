@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oauth",
   scopes: ["threads_basic"],
   tokenAuth: "client_secret_post",
+  checks: ["state"],
   authorization: "https://threads.net/oauth/authorize",
   token: "https://graph.threads.net/oauth/access_token",
   userinfo: "https://graph.threads.net/v1.0/me?fields=id,username,threads_profile_picture_url",

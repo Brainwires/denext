@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oauth",
   scopes: ["read:me"],
   tokenAuth: "client_secret_basic",
+  checks: ["state"],
   authorization: "https://auth.atlassian.com/authorize",
   token: "https://auth.atlassian.com/oauth/token",
   userinfo: "https://api.atlassian.com/me",

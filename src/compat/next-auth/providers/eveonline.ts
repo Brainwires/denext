@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oauth",
   scopes: ["publicData"],
   tokenAuth: "client_secret_basic",
+  checks: ["state"],
   authorization: "https://login.eveonline.com/v2/oauth/authorize",
   token: "https://login.eveonline.com/v2/oauth/token",
   userinfo: "https://login.eveonline.com/oauth/verify",

@@ -186,27 +186,28 @@ function basicClientAuth(clientId: string, clientSecret: string): string {
 }
 
 /**
- * Exchange an authorization `code` (+ PKCE verifier) for tokens at the provider's
- * token endpoint.
+ * Exchange an authorization `code` (+ the PKCE verifier, when the flow sent a challenge) for
+ * tokens at the provider's token endpoint.
  *
  * @param provider The provider (supplies the client credentials).
- * @param params The code, the PKCE verifier, the byte-stable redirect URI, and the
- * resolved token endpoint (configured, or from OIDC discovery).
+ * @param params The code, the PKCE verifier (none without PKCE), the byte-stable redirect
+ * URI, and the resolved token endpoint (configured, or from OIDC discovery).
  * @param doFetch The pinned provider fetch.
  * @returns The parsed token response.
  * @throws if the endpoint returns a non-2xx or a body with an `error`.
  */
 export async function exchangeCodeForTokens(
   provider: OAuthProvider,
-  params: { code: string; codeVerifier: string; redirectUri: string; tokenUrl: string },
+  params: { code: string; codeVerifier?: string; redirectUri: string; tokenUrl: string },
   doFetch: ProviderFetch,
 ): Promise<TokenResponse> {
   const form = new URLSearchParams({
     grant_type: "authorization_code",
     code: params.code,
     redirect_uri: params.redirectUri,
-    code_verifier: params.codeVerifier,
   });
+  // A provider whose `checks` leave PKCE out gets no verifier: some refuse one they didn't ask for.
+  if (params.codeVerifier) form.set("code_verifier", params.codeVerifier);
   const headers: Record<string, string> = {
     "content-type": "application/x-www-form-urlencoded",
     "accept": "application/json",

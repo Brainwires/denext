@@ -140,6 +140,12 @@ export interface ProfileInput {
   emails?: unknown[];
 }
 
+/**
+ * A protection an OAuth flow runs, as Auth.js names them (its provider `checks`); see
+ * {@link OAuthProvider.checks}.
+ */
+export type OAuthCheck = "pkce" | "state" | "nonce" | "none";
+
 /** An OAuth 2.0 / OIDC provider (Authorization Code + PKCE). */
 export interface OAuthProvider {
   /** URL-safe provider id (the `[provider]` route segment), e.g. `"google"`. */
@@ -190,6 +196,15 @@ export interface OAuthProvider {
    * accepts only the POST: a GET carrying a code is refused.
    */
   responseMode?: "query" | "form_post";
+  /**
+   * The protections the flow runs besides `state`, as Auth.js's provider `checks` name them.
+   * Unset (the default): PKCE (S256), plus a `nonce` for an `"oidc"` provider. Set: PKCE only
+   * when the list has `"pkce"`, and a `nonce` only for an `"oidc"` provider whose list has
+   * `"nonce"` — for a provider that refuses a `code_verifier` it didn't ask for (`["state"]`).
+   * `state` is sent and verified on every flow whatever the list says: `"state"` and `"none"`
+   * change nothing about it.
+   */
+  checks?: readonly OAuthCheck[];
   /**
    * Hosts `safeFetch` may reach for this provider (token/userinfo/jwks). Derived
    * from the configured endpoints when omitted. A `*.domain` entry admits that domain's

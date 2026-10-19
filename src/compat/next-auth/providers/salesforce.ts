@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oidc",
   scopes: ["openid", "profile", "email"],
   tokenAuth: "client_secret_basic",
+  checks: ["pkce", "state", "nonce"],
   issuer: "https://login.salesforce.com",
   profileFromUserinfo: true,
 };

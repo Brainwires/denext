@@ -130,7 +130,7 @@ Every path is relative to `basePath` (default `/auth`).
 | -------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/session`                 | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                            |
 | `/providers`               | GET         | The configured providers' `id` + `type` (and an email or phone provider's `name`) — never client ids, secrets or endpoints.                                                   |
-| `/signin/:provider`        | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                                 |
+| `/signin/:provider`        | GET         | Starts the OAuth flow (`state`, plus PKCE and an OIDC `nonce` unless the provider's `checks` leave them out). Rate-limited per client IP.                                     |
 | `/callback/:provider`      | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email or phone send / redeem. A verb the type lacks is a `405`. |
 | `/anonymous`               | POST        | With `anonymous: true`: create an anonymous user and sign it in. See [Anonymous sign-in](#anonymous-sign-in).                                                                 |
 | `/signout`                 | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                                   |
@@ -230,6 +230,15 @@ oidc({
 Passing _some_ of `authorizationUrl` / `tokenUrl` / `jwksUrl` throws: it would silently
 mix a hand-written endpoint with a discovered one. `id` defaults to `"oidc"` — set it
 when you configure more than one.
+
+### PKCE, `state` and `nonce` (`checks`)
+
+Every flow sends a random `state` and checks it on the callback. A provider also gets a PKCE
+(`S256`) challenge, and an OIDC one a `nonce` its `id_token` must carry, unless its `checks` say
+otherwise, as Auth.js's provider `checks` do: with `checks` set, PKCE runs only when the list has
+`"pkce"` and the `nonce` only when it has `"nonce"`. A provider that refuses a `code_verifier` it
+didn't ask for takes `checks: ["state"]` (`{ ...oauthPreset(…), checks: ["state"] }`); `state`
+runs whatever the list says, `"none"` included, and an unknown value is a config error.
 
 ### `response_mode=form_post`
 
@@ -2267,7 +2276,7 @@ never loaded.
 The OAuth / OIDC providers denext has no preset for are generated from `@auth/core`'s own
 `providers/` at a pinned version (`deno task gen:auth-providers`): each module carries Auth.js's
 endpoints, scopes, token-endpoint authentication (HTTP Basic unless the provider names
-`client_secret_post`) and its `profile()` mapping as data, checked against Auth.js's own
+`client_secret_post`), its `checks` and its `profile()` mapping as data, checked against Auth.js's own
 `profile()` on sample profiles when it is generated. A drift test holds the checked-in modules to
 the pinned provider list. An OIDC provider discovers its endpoints from the issuer; one Auth.js
 reads userinfo for (`idToken: false`) does too. An OAuth provider's address is never treated as
@@ -2328,8 +2337,10 @@ denext keeps its own defaults where they are stricter, and nothing is relaxed fo
 - **CSRF.** Every state-changing POST (`signin`, `signout`, the credentials callback, `session`
   updates) needs Auth.js's double-submit `csrfToken` **and** passes denext's same-origin check.
   The CSRF cookie is a signed `__Host-` cookie.
-- **OAuth.** Every flow uses `state` and PKCE, plus `nonce` for OIDC, whatever a provider's
-  `checks` say. The `redirect_uri` comes from `AUTH_URL`, never the `Host` header, so production
+- **OAuth.** A provider's `checks` decide PKCE and the OIDC `nonce` as in Auth.js (a provider
+  that names none gets PKCE, plus a `nonce` for OIDC; `Reddit` and the others whose definition
+  says `checks: ["state"]` get no `code_verifier` they would refuse), but every flow sends and
+  verifies `state`, even where `checks` leave it out or say `"none"`. The `redirect_uri` comes from `AUTH_URL`, never the `Host` header, so production
   needs `AUTH_URL`.
 - **Redirects.** A `callbackUrl` / `redirectTo` goes through the `redirect` callback, then is kept
   to a same-origin path. A callback that returns another origin lands on `/`.

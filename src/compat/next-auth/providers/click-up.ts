@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oauth",
   scopes: ["openid", "profile", "email"],
   tokenAuth: "client_secret_basic",
+  checks: ["state"],
   authorization: "https://app.clickup.com/api",
   token: "https://api.clickup.com/api/v2/oauth/token",
   userinfo: "https://api.clickup.com/api/v2/user",

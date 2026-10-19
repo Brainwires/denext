@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertExists, assertMatch, assertStringIncludes } from "@std/assert";
 import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { github } from "../src/server/auth/providers.ts";
+import { github, gitlab } from "../src/server/auth/providers.ts";
 import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
 import { parseBanDuration } from "../src/server/auth/gotrue/routes-admin.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
@@ -573,6 +573,25 @@ Deno.test("OAuth authorize: the provider URL, skip_http_redirect, PKCE s256 only
     });
     assertEquals(stray.status, 303);
   }, { providers: [github({ clientId: "id", clientSecret: "secret" })] as never });
+});
+
+Deno.test("OAuth authorize: a provider's checks decide PKCE; state is always sent", async () => {
+  await withApp({}, async (app) => {
+    const url = async (provider: string) => {
+      const res = await api(app, "/authorize", { key: null, query: { provider } });
+      return new URL(res.headers.get("location")!);
+    };
+    const statesOnly = await url("github");
+    assertEquals(statesOnly.searchParams.get("code_challenge"), null);
+    assertExists(statesOnly.searchParams.get("state"));
+    const pkce = await url("gitlab");
+    assertEquals(pkce.searchParams.get("code_challenge_method"), "S256");
+  }, {
+    providers: [
+      { ...github({ clientId: "id", clientSecret: "secret" }), checks: ["state"] },
+      gitlab({ clientId: "id", clientSecret: "secret" }),
+    ] as never,
+  });
 });
 
 Deno.test("PKCE exchange refusals and the anonymous switch", async () => {

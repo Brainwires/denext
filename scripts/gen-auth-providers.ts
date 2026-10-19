@@ -33,6 +33,8 @@ import {
   mapProfile,
   type ProfileExpr,
 } from "../src/compat/next-auth/providers/generated.ts";
+import { OAUTH_CHECKS } from "../src/server/auth/oauth.ts";
+import type { OAuthCheck } from "../src/server/auth/types.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 /** The manifest's path, repo-relative. */
@@ -326,6 +328,16 @@ function tokenAuthOf(client: Loose): GeneratedSpec["tokenAuth"] {
   return method;
 }
 
+/** The definition's own `checks`, when it names them (Auth.js's default otherwise). */
+function checksOf(checks: unknown): OAuthCheck[] | undefined {
+  if (checks === undefined) return undefined;
+  const known = (c: unknown): c is OAuthCheck => OAUTH_CHECKS.includes(c as OAuthCheck);
+  if (!Array.isArray(checks) || !checks.every(known)) {
+    throw new Unexpressible(`checks ${JSON.stringify(checks)}`);
+  }
+  return [...checks];
+}
+
 /** `value` without the hooks the rules let denext do without (`token.conform`). */
 function stripIgnored(value: Loose, what: string, ignore: ReadonlySet<string>): Loose {
   if (!value || typeof value !== "object") return value;
@@ -461,12 +473,14 @@ export async function extract(
   endpointOf(stripIgnored(c.token, "token", ignore), "token");
   endpointOf(c.userinfo, "userinfo");
   const authorization = authorizationOf(c, optionNames);
+  const checks = checksOf(c.checks);
   const spec: GeneratedSpec = {
     id: c.id,
     name: c.name,
     type: c.type,
     scopes: authorization.scopes,
     tokenAuth: tokenAuthOf(c.client),
+    ...(checks ? { checks } : {}),
     ...(c.type === "oauth"
       ? oauthEndpoints(c, authorization.url, ignore, optionNames)
       : oidcIssuer(c, optionNames)),

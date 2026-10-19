@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oauth",
   scopes: ["identity"],
   tokenAuth: "client_secret_basic",
+  checks: ["state"],
   authorization: "https://www.reddit.com/api/v1/authorize",
   token: "https://www.reddit.com/api/v1/access_token",
   userinfo: "https://oauth.reddit.com/api/v1/me",

@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oidc",
   scopes: ["openid", "name", "email"],
   tokenAuth: "client_secret_basic",
+  checks: ["pkce", "state", "nonce"],
   issuer: "https://api.vipps.no/access-management-1.0/access/",
   profileFromUserinfo: true,
 };

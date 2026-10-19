@@ -11,7 +11,12 @@
 
 import { emailVerifiedClaim } from "../../../server/auth/providers-presets.ts";
 import { oidc } from "../../../server/auth/providers.ts";
-import type { AuthUser, OAuthProvider, ProfileInput } from "../../../server/auth/types.ts";
+import type {
+  AuthUser,
+  OAuthCheck,
+  OAuthProvider,
+  ProfileInput,
+} from "../../../server/auth/types.ts";
 import {
   issuerUrl,
   oauthDescriptor,
@@ -66,6 +71,11 @@ export interface GeneratedSpec {
   params?: Record<string, string>;
   /** How the client authenticates at the token endpoint. */
   tokenAuth: "client_secret_basic" | "client_secret_post";
+  /**
+   * The definition's own `checks` (absent when it names none: PKCE, plus a `nonce` for OIDC).
+   * denext runs PKCE and the `nonce` only where they are listed; `state` always.
+   */
+  checks?: OAuthCheck[];
   /** OIDC whose profile is the userinfo response (Auth.js's `idToken: false`). */
   profileFromUserinfo?: boolean;
   /** The options it reads besides the credentials and the issuer. */
@@ -369,6 +379,7 @@ function buildGenerated(
   }
   provider.scopes = scopes;
   provider.tokenEndpointAuthMethod = spec.tokenAuth;
+  if (spec.checks) provider.checks = [...spec.checks];
   const extra = params(spec, values);
   if (extra) provider.authorizationParams = { ...provider.authorizationParams, ...extra };
   provider.profile = (input) => denextUser(spec, input);

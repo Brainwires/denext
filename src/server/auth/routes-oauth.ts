@@ -54,7 +54,7 @@ import {
 } from "./flow.ts";
 import { getJwks } from "./jwks-cache.ts";
 import { idTokenKid, isStrictAudienceError, verifyIdToken } from "./jwt.ts";
-import { buildAuthorizationUrl, generatePkce, randomToken } from "./oauth.ts";
+import { buildAuthorizationUrl, flowChecks, generatePkce, randomToken } from "./oauth.ts";
 import {
   applySignInCallback,
   type AuthRouteContext,
@@ -195,9 +195,11 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
   }
   try {
     const endpoints = await endpointsFor(ctx, provider);
-    const pkce = await generatePkce();
+    // `state` always; PKCE and the OIDC `nonce` unless the provider's `checks` leave them out.
+    const checks = flowChecks(provider);
+    const pkce = checks.pkce ? await generatePkce() : undefined;
     const state = randomToken();
-    const nonce = provider.type === "oidc" ? randomToken() : undefined;
+    const nonce = checks.nonce ? randomToken() : undefined;
     // Coerce the caller-supplied return target to a same-origin path before it rides
     // the transaction cookie (defense in depth; the callback coerces again).
     const rawReturn = ctx.url.searchParams.get("callbackUrl");
@@ -205,7 +207,8 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
       ? sameOriginRedirect(ctx.config, rawReturn, ctx.config.pages?.afterSignIn || "/")
       : undefined;
     const formPost = provider.responseMode === "form_post";
-    await setTx(ctx, { provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo }, {
+    const verifier = pkce?.verifier ?? "";
+    await setTx(ctx, { provider: provider.id, state, verifier, nonce, returnTo }, {
       crossSite: formPost,
     });
 
@@ -215,7 +218,7 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
       redirectUri: callbackUri(ctx, provider.id),
       scope: provider.scopes.join(" "),
       state,
-      codeChallenge: pkce.challenge,
+      codeChallenge: pkce?.challenge,
       nonce,
       extra: provider.authorizationParams,
       responseMode: formPost ? "form_post" : undefined,
@@ -590,11 +593,16 @@ export async function fetchOAuthProfile(
     ctx.config.dangerouslyAllowInsecureProviders,
     endpointHosts(endpoints),
   );
+  const checks = flowChecks(provider);
+  // The transaction is the one this provider's sign-in wrote: a check it needs is there.
+  if ((checks.pkce && !params.tx.verifier) || (checks.nonce && !params.tx.nonce)) {
+    throw new Error("the transaction lacks the PKCE verifier or nonce this provider needs");
+  }
   const tokens = await exchangeCodeForTokens(
     provider,
     {
       code: params.code,
-      codeVerifier: params.tx.verifier,
+      codeVerifier: checks.pkce ? params.tx.verifier : undefined,
       redirectUri: params.redirectUri,
       tokenUrl: endpoints.tokenUrl,
     },
@@ -602,7 +610,13 @@ export async function fetchOAuthProfile(
   );
 
   const claims = provider.type === "oidc"
-    ? await verifyProviderIdToken(provider, endpoints, tokens.id_token, params.tx.nonce, doFetch)
+    ? await verifyProviderIdToken(
+      provider,
+      endpoints,
+      tokens.id_token,
+      checks.nonce ? params.tx.nonce : undefined,
+      doFetch,
+    )
     : undefined;
   // Userinfo is fetched for a plain OAuth provider (which has no id_token to read) and
   // for an OIDC provider that asked for it by configuring `userinfoUrl` — never just

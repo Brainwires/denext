@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oidc",
   scopes: ["openid", "profile", "email"],
   tokenAuth: "client_secret_basic",
+  checks: ["pkce", "state"],
   issuer: "{issuer}",
   options: {
     issuer: { default: "https://api.descope.com/{clientId}", raw: true },

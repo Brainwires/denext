@@ -119,6 +119,33 @@ Deno.test("generated providers: Auth.js's defaults — client auth, scopes, env"
   );
 });
 
+Deno.test("generated providers: a definition's checks ride the provider; the app's win", () => {
+  const p = build([
+    Reddit,
+    Salesforce,
+    Kakao,
+    FusionAuth({ issuer: "https://auth.example.com" }),
+  ]);
+  // Reddit refuses a code_verifier it didn't ask for: Auth.js's `checks: ["state"]`.
+  assertEquals(p.reddit.checks, ["state"]);
+  assertEquals(p.salesforce.checks, ["pkce", "state", "nonce"]);
+  assertEquals(p.fusionauth.checks, ["pkce", "state"]);
+  // A definition that names none: denext's default (PKCE, plus a nonce for OIDC).
+  assertEquals(p.kakao.checks, undefined);
+  const own = build([Reddit({ checks: ["pkce", "state"] }), Kakao({ checks: ["none"] })]);
+  assertEquals(own.reddit.checks, ["pkce", "state"]);
+  assertEquals(own.kakao.checks, ["none"]);
+  assertThrows(() => build([Reddit({ checks: ["pkce", "sate"] })]), TypeError, "checks");
+  assertThrows(
+    () => build([Reddit({ checks: "pkce" as unknown as string[] })]),
+    TypeError,
+    "checks",
+  );
+  // The list is the provider's own copy, not the spec's.
+  p.reddit.checks = [];
+  assertEquals(build([Reddit]).reddit.checks, ["state"]);
+});
+
 Deno.test("generated providers: issuers and options fill the endpoint templates", () => {
   const p = build([
     WorkOS({ connection: "conn_1" }),
@@ -281,6 +308,7 @@ Deno.test("gen:auth-providers: extract reads an OAuth definition and traces its 
   assertEquals(spec.scopes, ["read", "write"]);
   assertEquals(spec.params, { prompt: "consent" });
   assertEquals(spec.tokenAuth, "client_secret_post");
+  assertEquals(spec.checks, ["state"]);
   assertEquals(spec.authorization, "https://acme.test/authorize");
   assertEquals(spec.profile, {
     id: [{ t: [["p", "data", "id"]] }],
@@ -306,6 +334,7 @@ Deno.test("gen:auth-providers: extract reads OIDC issuers and refuses what data 
   assertEquals(oidc.profileFromUserinfo, true);
   assertEquals(oidc.tokenAuth, "client_secret_basic");
   assertEquals(oidc.profile, undefined);
+  assertEquals(oidc.checks, undefined, "no checks named: denext's default");
   const refusals: [string, (o: unknown) => unknown][] = [
     ["a userinfo request hook", () => ({
       id: "x",
@@ -317,6 +346,10 @@ Deno.test("gen:auth-providers: extract reads OIDC issuers and refuses what data 
     // deno-lint-ignore no-explicit-any
     ["an option it doesn't declare", (o: any) => ({ id: "x", type: "oidc", issuer: o.tenant })],
     ["a non-OAuth type", () => ({ id: "x", type: "email" })],
+    [
+      "an unknown check",
+      () => ({ id: "x", type: "oidc", issuer: "https://x.test", checks: ["dpop"] }),
+    ],
     [
       "a signed userinfo",
       () => ({ id: "x", type: "oidc", client: { userinfo_signed_response_alg: "RS256" } }),

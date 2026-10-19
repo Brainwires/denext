@@ -419,8 +419,9 @@ place it behaves differently from Auth.js:
 - **`AUTH_SECRET` must be at least 32 characters in production** (`npx auth secret` makes 44).
 - **Redirects stay on the origin.** The `redirect` callback runs, but whatever it returns is
   kept to a same-origin path: a callback that allows another origin lands on `/` instead.
-- **Every OAuth flow uses `state` and PKCE** (and `nonce` for OIDC); a provider's `checks` are
-  ignored.
+- **Every OAuth flow sends and verifies `state`**, whatever a provider's `checks` say (`["pkce"]`,
+  `["nonce"]` or `["none"]` leave it out in Auth.js). PKCE and the OIDC `nonce` follow `checks` as
+  in Auth.js; a provider that names none gets PKCE, plus a `nonce` for OIDC (Auth.js: PKCE only).
 - **A generated provider's OIDC `id_token` is verified against the issuer's JWKS**, and its
   endpoints come from discovery even where Auth.js's definition names them; Auth.js trusts an
   `id_token` it got straight from the token endpoint. An OAuth provider's address is never treated

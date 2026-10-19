@@ -27,6 +27,7 @@
 
 import { registerFrameworkMigrations } from "../postgres-boot.ts";
 import { authMigrationSet } from "./postgres-schema.ts";
+import { OAUTH_CHECKS } from "./oauth.ts";
 import { backendPostgresClient } from "./backend-postgres.ts";
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
@@ -187,6 +188,7 @@ function validateProviders(providers: AuthConfig["providers"]): void {
       // Client credentials come from the runtime environment: checked when serving.
       if (!building) assertOAuthCredentials(p);
       assertResponseMode(p);
+      assertChecks(p);
     }
   }
 }
@@ -209,6 +211,20 @@ function assertResponseMode(p: OAuthProvider): void {
       `denextAuth: provider "${p.id}" sets response_mode in authorizationParams — set ` +
         '`responseMode: "form_post"` on the provider instead, so the callback and the ' +
         "transaction cookie follow it.",
+    );
+  }
+}
+
+/** `checks` names only the protections the flow knows (a typo must not drop PKCE silently). */
+function assertChecks(p: OAuthProvider): void {
+  if (p.checks === undefined) return;
+  const unknown = Array.isArray(p.checks)
+    ? p.checks.find((c) => !OAUTH_CHECKS.includes(c))
+    : p.checks;
+  if (unknown !== undefined) {
+    throw new Error(
+      `denextAuth: provider "${p.id}" has an unknown check ${JSON.stringify(unknown)} — ` +
+        `\`checks\` lists ${OAUTH_CHECKS.map((c) => `"${c}"`).join(", ")}.`,
     );
   }
 }

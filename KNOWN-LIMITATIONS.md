@@ -178,9 +178,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   endpoint), `nextcloud` (the user id from the token response, OCS headers), `tiktok`
   (`client_key`), `todoist` (the Sync API), `trakt` (API-key headers), `vk` (the address from the
   token response) and `wechat` (`appid` / `secret` query parameters). Write one as a custom
-  provider object where its API allows. Every provider runs `state` + PKCE (+ `nonce` for OIDC)
-  whatever its `checks` say, so a provider that rejects a PKCE `code_verifier` it didn't ask for
-  fails.
+  provider object where its API allows.
 - **Passkeys (`next-auth/providers/passkey`, `…/webauthn`):** registration is for a signed-in
   user with a verified address after a recent sign-in (Auth.js's sign-up by passkey is not
   offered); the relying party needs `AUTH_URL` or `relayingParty: { id, origin }`. Through an

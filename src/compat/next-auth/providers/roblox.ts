@@ -23,6 +23,7 @@ const SPEC: GeneratedSpec = {
   type: "oidc",
   scopes: ["openid", "profile"],
   tokenAuth: "client_secret_basic",
+  checks: ["pkce", "state"],
   issuer: "https://apis.roblox.com/oauth/",
 };
 
