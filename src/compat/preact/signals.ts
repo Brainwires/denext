@@ -7,7 +7,9 @@
  * A component re-renders when a signal its render read changes, as with Preact: reading
  * `count.value` while rendering subscribes that component (on the client; a server render reads
  * the value once). A signal placed in JSX as a child (`<p>{count}</p>`) renders its value as text
- * and updates in place. A signal a Server Component passes to a `"use client"` component as a prop
+ * and updates in place. A signal passed as a DOM prop (`<input value={text} />`) is bound in code
+ * compiled with Preact's JSX runtime (`jsxImportSource: "preact"`, which `denext migrate` maps to
+ * `denext/preact/jsx-runtime`). A signal a Server Component passes to a `"use client"` component as a prop
  * arrives as a live signal, and two components handed the same signal share it, as islands do in
  * Fresh.
  *
@@ -20,9 +22,13 @@
 
 import { REACT_ELEMENT_TYPE } from "../../runtime/react-brands.ts";
 import { setSignalReviver, SIGNAL_BRAND } from "../../runtime/signal-brand.ts";
-import { type Dispatcher, useEffect, useMemo, useRef } from "../../runtime/hooks.ts";
+import { useEffect, useMemo, useRef } from "../../runtime/hooks.ts";
 import type { VNode, VNodeChildren, VNodeType, VProps } from "../../jsx/types.ts";
-import { setHostPropsTransform } from "../../jsx/jsx-runtime.ts";
+// The client reconciler's rendering fiber and its update scheduler: a component whose render read a
+// signal re-renders when it changes. (`denext`'s own entry already loads these modules.)
+import { currentFiber } from "../../client/fiber/hooks-dispatcher.ts";
+import { scheduleUpdate } from "../../client/fiber/scheduler.ts";
+import { type Fiber, hasBit, UnmountedBit } from "../../client/fiber/fiber.ts";
 
 // ── Tracking state ───────────────────────────────────────────────────────────
 
@@ -42,16 +48,12 @@ let untrackedDepth = 0;
 let batchDepth = 0;
 /** Effects queued to re-run at the end of the batch. */
 const pendingEffects = new Set<EffectImpl>();
-/** Components queued to re-render at the end of the batch (token → its dispatcher). */
-const pendingRenders = new Map<object, Dispatcher>();
-/** Components found unmounted: their subscriptions are dropped on the next notify. */
-const unmounted = new WeakSet<object>();
+/** Components queued to re-render at the end of the batch. */
+const pendingRenders = new Set<Fiber>();
 
-const DISPATCHER_KEY = Symbol.for("denext.currentDispatcher");
-
-/** The hook dispatcher of the component rendering right now (null outside a render). */
-function activeDispatcher(): Dispatcher | null {
-  return (globalThis as { [DISPATCHER_KEY]?: Dispatcher | null })[DISPATCHER_KEY] ?? null;
+/** Re-render a component whose render read a changed signal (a forced render: no hook changed). */
+function rerender(fiber: Fiber): void {
+  if (!hasBit(fiber, UnmountedBit)) scheduleUpdate(fiber, false);
 }
 
 /** Bound on effect re-run rounds in one flush (a cycle of effects writing each other). */
@@ -68,9 +70,7 @@ function flush(): void {
     }
     const renders = [...pendingRenders];
     pendingRenders.clear();
-    for (const [token, dispatcher] of renders) {
-      if (!dispatcher.rerenderComponent!(token)) unmounted.add(token);
-    }
+    for (const fiber of renders) rerender(fiber);
     const effects = [...pendingEffects];
     pendingEffects.clear();
     batchDepth++;
@@ -95,8 +95,8 @@ export class Signal<T = unknown> {
   _version: number = 0;
   /** @internal The computations that read this signal. */
   _targets: Set<Computation> = new Set();
-  /** @internal The components whose render read this signal (token → dispatcher). */
-  _renders: Map<object, Dispatcher> | undefined = undefined;
+  /** @internal The components whose render read this signal. */
+  _renders: Set<Fiber> | undefined = undefined;
   /** The Preact Signals brand (`Symbol.for("preact-signals")`). */
   declare readonly brand: symbol;
   // A signal is element-shaped (see below), so it type-checks as a JSX child.
@@ -174,10 +174,8 @@ export class Signal<T = unknown> {
       this._targets.add(evaluating);
       return;
     }
-    const dispatcher = activeDispatcher();
-    const token = dispatcher?.renderingComponent?.();
-    if (!token) return;
-    (this._renders ??= new Map()).set(token, dispatcher!);
+    const fiber = currentFiber;
+    if (fiber !== null) (this._renders ??= new Set()).add(fiber);
   }
 
   /** @internal Tell every reader the value changed. */
@@ -185,9 +183,9 @@ export class Signal<T = unknown> {
     for (const target of [...this._targets]) target._stale();
     const renders = this._renders;
     if (!renders) return;
-    for (const [token, dispatcher] of renders) {
-      if (unmounted.has(token)) renders.delete(token);
-      else pendingRenders.set(token, dispatcher);
+    for (const fiber of renders) {
+      if (hasBit(fiber, UnmountedBit)) renders.delete(fiber);
+      else pendingRenders.add(fiber);
     }
   }
 }
@@ -536,19 +534,6 @@ export function For<T>(props: ForProps<T>): VNode {
     : items.map((item, i) => props.children(item, i));
   return (out ?? null) as unknown as VNode;
 }
-
-// ── Signals as DOM props ──────────────────────────────────────────────────────
-
-// `<input value={text} />`: an intrinsic element's signal-valued prop becomes the signal's value,
-// read while the owning component renders, so that component follows the signal. A signal child
-// stays a signal (it renders through `SignalValue`).
-setHostPropsTransform((props: VProps) => {
-  for (const name in props) {
-    if (name === "children") continue;
-    const value = (props as Record<string, unknown>)[name];
-    if (value instanceof Signal) (props as Record<string, unknown>)[name] = value.value;
-  }
-});
 
 // ── Server → client hand-off ─────────────────────────────────────────────────
 

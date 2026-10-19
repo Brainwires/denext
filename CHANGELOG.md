@@ -132,9 +132,11 @@ and this project adheres to
 - **`denext/signals`: Preact Signals' API** — `signal`, `computed`, `effect`, `batch`,
   `untracked`, `action`, `Signal`, `useSignal`, `useComputed`, `useSignalEffect`,
   `useLiveSignal`, `Show`, `For`. A component re-renders when a signal its render read changes,
-  a signal placed in JSX renders its value, a signal passed as a DOM prop is bound, and a signal a
-  Server Component passes to a `"use client"` component arrives as a live signal (one shared
-  signal when two components get the same one).
+  a signal placed in JSX renders its value, a signal passed as a DOM prop is bound under Preact's
+  JSX runtime (`denext/preact/jsx-runtime`, which a migrated Fresh app compiles with), and a
+  signal a Server Component passes to a `"use client"` component arrives as a live signal (one
+  shared signal when two components get the same one). An app that does not import them ships
+  none of it.
 - **A compat middleware can hand a non-GET request to the page.** `RequestContext.renderPageForMethod`
   lets a runtime that ran a page route's handler in `middleware.ts` (the Fresh compat) have the
   page render for a POST; without it such a request to a page is still a 405.

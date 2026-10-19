@@ -92,18 +92,6 @@ export interface Dispatcher {
    * it the public `captureOwnerStack()` returns `null`.
    */
   captureOwnerStack?(): string | null;
-  /**
-   * Not a hook: the component rendering right now, as an opaque token, for a reactive library
-   * (`denext/signals`) that re-renders a component whose render read a value that later
-   * changed. Optional: only the client fiber dispatcher implements it (a server render never
-   * re-renders); `null` when no component is rendering.
-   */
-  renderingComponent?(): object | null;
-  /**
-   * Re-render the component behind a {@link Dispatcher.renderingComponent} token. Returns
-   * `false` once that component has unmounted (the caller drops its subscription).
-   */
-  rerenderComponent?(token: object): boolean;
 }
 
 /**

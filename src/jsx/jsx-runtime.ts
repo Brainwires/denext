@@ -48,26 +48,8 @@ function createElement(
   return element(type, normalized);
 }
 
-/**
- * A transform applied to an intrinsic element's own props when it is created, installed by
- * `denext/signals` (a signal-valued prop becomes its value, read during the render so the
- * rendering component follows it). Null until that module loads: one null check per element.
- */
-let hostPropsTransform: ((props: VProps) => void) | null = null;
-
-/**
- * Install (or clear) the intrinsic-element props transform. Internal: `denext/signals` installs
- * it to bind a signal passed as a DOM prop (`<input value={text} />`).
- *
- * @param transform Rewrites an intrinsic element's props in place.
- */
-export function setHostPropsTransform(transform: ((props: VProps) => void) | null): void {
-  hostPropsTransform = transform;
-}
-
 /** The element over `props`, which is already final (its key is read from it). */
 function element(type: VNodeType, props: VProps): VNode {
-  if (hostPropsTransform !== null && typeof type === "string") hostPropsTransform(props);
   // `$$typeof` is a literal own field (not `Object.defineProperty`) so V8 keeps a
   // monomorphic hidden class on this hot path — this is the shape React itself ships.
   // Its value is a symbol, so `JSON.stringify` drops it (no Flight wire-size cost).

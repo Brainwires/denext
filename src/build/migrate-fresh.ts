@@ -828,8 +828,8 @@ export function freshAliasImports(sub: (s: string) => string): Record<string, st
     "preact": sub("preact"),
     "preact/hooks": sub("preact/hooks"),
     "preact/compat": sub("preact/compat"),
-    "preact/jsx-runtime": sub("jsx-runtime"),
-    "preact/jsx-dev-runtime": sub("jsx-dev-runtime"),
+    "preact/jsx-runtime": sub("preact/jsx-runtime"),
+    "preact/jsx-dev-runtime": sub("preact/jsx-runtime"),
     "@preact/signals": sub("signals"),
     "@preact/signals/utils": sub("signals"),
     "@preact/signals-core": sub("signals"),
@@ -870,7 +870,8 @@ function compilerOptionsFor(existing: unknown): Record<string, unknown> {
   return {
     ...opts,
     jsx: "react-jsx",
-    jsxImportSource: "react",
+    // Preact's JSX runtime on denext: signal-valued DOM props are bound.
+    jsxImportSource: "preact",
     lib: [...new Set([...lib, "dom", "dom.iterable", "dom.asynciterable"])],
   };
 }

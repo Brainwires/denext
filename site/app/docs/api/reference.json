@@ -14693,7 +14693,7 @@
           "name": "sqliteCacheStore",
           "slug": "sqliteCacheStore",
           "kind": "function",
-          "signature": "sqliteCacheStore(options?: SqliteCacheStoreOptions): CacheStore",
+          "signature": "sqliteCacheStore(options?: SqliteCacheStoreOptions): CacheStore & object",
           "doc": "A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.",
           "docFull": "A {@link CacheStore} backed by Deno's built-in `node:sqlite`. Durable across restarts,\nzero-npm, no unstable flag — denext's default durable store for single-node deployments\n(for multi-replica, point every instance at one shared store via {@linkcode\nsetCacheStore}). Size-bounded: FIFO eviction past\n{@link SqliteCacheStoreOptions.maxDataEntries}/`maxPageEntries`, plus a throttled sweep\nof hard-expired rows.",
           "params": [
@@ -14702,7 +14702,7 @@
               "doc": "File path, row caps, and an optional open hook."
             }
           ],
-          "returns": "A store to pass to setCacheStore.",
+          "returns": "A store to pass to setCacheStore; its close() closes the database handle (the next call reopens it), so the file can be moved or removed — Windows refuses to delete a file that is still open.",
           "examples": [],
           "denextOnly": true
         },

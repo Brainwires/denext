@@ -303,8 +303,10 @@ them:
 `denext/signals` is Preact Signals' API: `signal`, `computed`, `effect`, `batch`, `untracked`,
 `useSignal`, `useComputed`, `useSignalEffect`, `Show` and `For`. A component re-renders when a
 signal its render read changes, a signal in JSX (`{count}`) renders its value, a signal passed
-as a DOM prop (`value={text}`) is bound, and a signal a page passes to an island arrives live —
-one shared signal when two islands get the same one.
+as a DOM prop (`value={text}`) is bound (the migrated app compiles JSX with Preact's runtime,
+`jsxImportSource: "preact"` → `denext/preact/jsx-runtime`), and a signal a page passes to an
+island arrives live — one shared signal when two islands get the same one. An app that does not
+use them pays nothing for signals: none of this is in denext's shared client code.
 
 What does not migrate is listed by `denext migrate --check`:
 

@@ -4,6 +4,7 @@
 
 import { assertEquals, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import { jsx as preactJsx, jsxDEV as preactJsxDEV } from "../src/compat/preact/jsx-runtime.ts";
 import { render } from "../src/testing/mod.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
@@ -180,8 +181,9 @@ Deno.test("a signal prop crosses the Flight boundary as one live signal per serv
 Deno.test("a signal-valued DOM prop is bound: the owning component follows it", async () => {
   const text = signal("a");
   const off = signal(false);
+  // Preact's JSX runtime (`jsxImportSource: "preact"`) binds a signal-valued DOM prop.
   function Field() {
-    return h("input", { value: text, disabled: off } as never);
+    return preactJsx("input", { value: text, disabled: off } as never);
   }
   const screen = await render(h(Field, null));
   const input = (screen.container as unknown as {
@@ -197,5 +199,12 @@ Deno.test("a signal-valued DOM prop is bound: the owning component follows it", 
   });
   assertEquals(input.value, "b");
   assertEquals(input.hasAttribute("disabled"), true);
-  assertEquals(await renderToString(h("i", { class: signal("c") } as never)), '<i class="c"></i>');
+  assertEquals(
+    await renderToString(preactJsxDEV("i", { class: signal("c") } as never)),
+    '<i class="c"></i>',
+  );
+  // A component receives the signal itself; a signal child stays a signal.
+  const child = signal(1);
+  const el = preactJsx("p", { children: child } as never) as { props: { children: unknown } };
+  assertEquals(el.props.children, child);
 });

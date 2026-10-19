@@ -330,7 +330,7 @@ Deno.test("freshDenoJson: Fresh / Preact / Vite imports out, denext in, the auth
   });
   assertEquals(merged.compilerOptions, {
     jsx: "react-jsx",
-    jsxImportSource: "react",
+    jsxImportSource: "preact",
     lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
   });
   assertEquals(merged.lint, { rules: { tags: ["fresh"] } });
@@ -449,7 +449,7 @@ export { handler as GET, handler as POST };
     assert(await exists(dir, "main.ts"), "Fresh 2's main.ts stays: middleware.ts runs it");
 
     const deno = JSON.parse(await read(dir, "deno.json"));
-    assertEquals(deno.compilerOptions.jsxImportSource, "react");
+    assertEquals(deno.compilerOptions.jsxImportSource, "preact");
     assertEquals(deno.compilerOptions.types, undefined);
     assertEquals(deno.imports["@/"], "./");
     assertEquals(deno.imports.vite, undefined);

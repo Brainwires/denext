@@ -516,8 +516,7 @@
     "h:function",
     "jsx:function",
     "jsxDEV:function",
-    "jsxs:function",
-    "setHostPropsTransform:function"
+    "jsxs:function"
   ],
   "denext/jsx-dev-runtime": [
     "FRAGMENT:variable",
@@ -528,8 +527,7 @@
     "h:function",
     "jsx:function",
     "jsxDEV:function",
-    "jsxs:function",
-    "setHostPropsTransform:function"
+    "jsxs:function"
   ],
   "denext/server": [
     "AccountDeletedPayload:interface",
@@ -5164,8 +5162,7 @@
     "h:function",
     "jsx:function",
     "jsxDEV:function",
-    "jsxs:function",
-    "setHostPropsTransform:function"
+    "jsxs:function"
   ],
   "denext/react/jsx-dev-runtime": [
     "FRAGMENT:variable",
@@ -5176,8 +5173,7 @@
     "h:function",
     "jsx:function",
     "jsxDEV:function",
-    "jsxs:function",
-    "setHostPropsTransform:function"
+    "jsxs:function"
   ],
   "denext/react/compiler-runtime": [
     "c:variable"
@@ -6131,6 +6127,13 @@
     "useSyncExternalStore:function",
     "useTransition:function",
     "version:variable"
+  ],
+  "denext/preact/jsx-runtime": [
+    "Fragment:variable",
+    "JSX:namespace",
+    "jsx:function",
+    "jsxDEV:function",
+    "jsxs:function"
   ],
   "denext/signals": [
     "Computation:interface",

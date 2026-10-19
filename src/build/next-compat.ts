@@ -387,6 +387,22 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     // The Remix compat runtime (`denext/remix`) — prebuilt into the same graph so a
     // migrated Remix app's client components share the one denext instance.
     "remix": u("src/compat/remix/mod.ts"),
+    // The Preact / Preact Signals / Fresh compat client runtimes (a migrated Fresh or Preact
+    // app's islands and components), sharing the one denext instance.
+    ...preactRuntimeEntries(u),
+  };
+}
+
+/** The Preact, Preact Signals and Fresh client runtimes (see `DENEXT_RUNTIME_FILES`). */
+function preactRuntimeEntries(u: EntryUrl): Record<string, string> {
+  return {
+    "preact": u("src/compat/preact/mod.ts"),
+    "preact-hooks": u("src/compat/preact/hooks.ts"),
+    "preact-compat": u("src/compat/preact/compat.ts"),
+    "preact-jsx-runtime": u("src/compat/preact/jsx-runtime.ts"),
+    "signals": u("src/compat/preact/signals.ts"),
+    "fresh": u("src/compat/fresh/mod.ts"),
+    "fresh-runtime": u("src/compat/fresh/runtime.ts"),
   };
 }
 
@@ -905,6 +921,14 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/compiler-runtime": "compiler-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
   "denext/remix": "remix.js",
+  // The Preact / Preact Signals / Fresh compat runtimes (a migrated Fresh or Preact app).
+  "denext/preact": "preact.js",
+  "denext/preact/hooks": "preact-hooks.js",
+  "denext/preact/compat": "preact-compat.js",
+  "denext/preact/jsx-runtime": "preact-jsx-runtime.js",
+  "denext/signals": "signals.js",
+  "denext/fresh": "fresh.js",
+  "denext/fresh/runtime": "fresh-runtime.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
   ...expoRuntimeFiles(),
   // React Native mode's shell overlay (see react-native.ts).
@@ -936,6 +960,7 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/auth",
   "denext/server-only",
   "denext/remix/server",
+  "denext/fresh/server",
   "denext/next-intl/server",
   "denext/next-intl/middleware",
   // The `next-auth` shim's server modules (`NextAuth()`, `next-auth/jwt`, the providers).
