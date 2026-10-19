@@ -10,6 +10,20 @@ and this project adheres to
 
 ### Added
 
+- **The installers put denext on PATH.** `install.sh` adds one marked block
+  (`# >>> denext >>>` … `# <<< denext <<<`) to the startup file of your login shell — zsh's
+  `~/.zshrc`, bash's `~/.bashrc` (plus, on macOS, the login file bash actually reads), fish's
+  `conf.d/denext.fish`, nushell's `env.nu`, or `~/.profile` — and prints the exact line that puts
+  denext on PATH in the shell you ran it from (a piped script can't change its parent's
+  environment), plus `exec $SHELL -l`. On a terminal it asks, and offers your other installed
+  shells; without one it writes the login shell's file. A re-run updates the block and never adds
+  a second. `sh -s -- --modify-path`, `--modify-path=all`, `--no-modify-path` (or
+  `DENEXT_MODIFY_PATH=1 | all | 0`) choose; `sh -s -- --uninstall` removes the binary, the `deno`
+  link and every block. `install.ps1` takes `-ModifyPath` / `-NoModifyPath` and the same
+  variable, updates this session's `$env:Path` as well as the user `Path` (so `denext` works in
+  the window at once), and keeps the user `Path` a `REG_EXPAND_SZ` value: its `%VARIABLES%` are
+  no longer expanded for good on write.
+
 - **Prisma over `Deno.SQL`: `denext/prisma-adapter`.** A Prisma driver adapter for SQLite and
   Postgres on the runtime's built-in `Deno.SQL`, so a Prisma app installs no npm database driver
   (no `pg`, no `better-sqlite3`, no `links` shim): `new PrismaClient({ adapter: new

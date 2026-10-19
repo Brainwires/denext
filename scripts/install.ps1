@@ -16,7 +16,8 @@
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
 #   DENEXT_INSTALL   where to install (the binary lands in its `bin\`); default: ~\.denext
 #   DENEXT_INSECURE  `1` installs even when no checksum can be fetched (never on a mismatch)
-#   DENEXT_NO_PATH   `1` leaves your user PATH alone (the script prints the line to add)
+#   DENEXT_MODIFY_PATH  `0` leaves your user Path alone (the script prints the line to add);
+#                    `1` (the default) or `all` adds denext's bin to it. DENEXT_NO_PATH=1 is `0`.
 #   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
 #                    downloads on the first command that needs it
 #   DENEXT_NO_DENO_LINK  `1` skips `denext toolchain link` (no `deno` is put on your Path)
@@ -29,7 +30,14 @@
 #                    github.com/.../releases/latest redirect instead.
 #
 # Per-user, no administrator rights: the binary goes to %USERPROFILE%\.denext\bin and that
-# directory is added to your USER Path. To uninstall, run the script with -Uninstall:
+# directory is added to your USER Path (persistently, for new terminals) and to this session's
+# $env:Path, so `denext` works in this window right away when the script runs through `iex`.
+# -NoModifyPath (or DENEXT_MODIFY_PATH=0) changes neither and prints the line to run instead;
+# -ModifyPath says the default explicitly. Flags go through a scriptblock:
+#
+#   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -NoModifyPath
+#
+# To uninstall, run the script with -Uninstall (it removes the Path entry too):
 #
 #   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall
 #
@@ -39,10 +47,10 @@
 # Everything runs from Install-Denext, called on the last line, so a download that is cut short
 # runs nothing: `iex` parses the whole script first, and a truncated one never reaches the call.
 
-param([switch]$Uninstall)
+param([switch]$Uninstall, [switch]$ModifyPath, [switch]$NoModifyPath)
 
 function Install-Denext {
-  param([switch]$Uninstall)
+  param([switch]$Uninstall, [switch]$ModifyPath, [switch]$NoModifyPath)
   Set-StrictMode -Version Latest
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest's progress bar is very slow on 5.1
@@ -150,13 +158,39 @@ function Install-Denext {
 
   $exe = Join-Path $bin 'denext.exe'
   Write-Host "denext: installed $(& $exe --version) to $exe"
-  if ($env:DENEXT_NO_PATH -eq '1') {
-    Write-Host "Add it to your Path:  `$env:Path = `"$bin;`$env:Path`""
-  } elseif (Add-DenextPath $bin) {
-    Write-Host "denext: added $bin to your user Path (open a new terminal to pick it up)"
-  }
 
   Install-DenoToolchain $exe $target
+
+  if (-not (Test-ModifyPath -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath)) {
+    if (-not (Test-PathEntry $env:Path $bin)) {
+      Write-Host 'denext: left your Path alone. To use denext in this session, run:'
+      Write-Host "  `$env:Path = `"$bin;`$env:Path`""
+      Write-Host 'and add that folder to your user Path to keep it (or re-run with -ModifyPath).'
+    }
+  } else {
+    if (Add-DenextPath $bin) { Write-Host "denext: added $bin to your user Path (new terminals have it)" }
+    # Through `irm ... | iex` the script runs in your session, so its $env:Path is yours; started
+    # as a file (-File, `& .\install.ps1` from another shell) it is a child's, which ends with it.
+    if (-not $PSCommandPath) {
+      Write-Host 'denext: and to this session''s Path - `denext` works here now'
+    } else {
+      Write-Host ('denext: this script ran in its own process, so it could not change the Path of ' +
+        'the shell you started it from. To use denext there now, run:')
+      Write-Host "  `$env:Path = `"$bin;`$env:Path`""
+    }
+  }
+}
+
+# Whether to add denext's bin to the Path: -NoModifyPath / -ModifyPath, else DENEXT_MODIFY_PATH
+# (`0` / `1` / `all`), else DENEXT_NO_PATH=1, else yes. An unknown DENEXT_MODIFY_PATH is an error.
+function Test-ModifyPath([switch]$ModifyPath, [switch]$NoModifyPath) {
+  if ($NoModifyPath) { return $false }
+  if ($ModifyPath) { return $true }
+  $mode = "$env:DENEXT_MODIFY_PATH".Trim().ToLowerInvariant()
+  if ($mode -in @('0', 'no', 'false', 'none')) { return $false }
+  if ($mode -in @('1', 'yes', 'true', 'current', 'all')) { return $true }
+  if ($mode) { throw "denext: DENEXT_MODIFY_PATH=$($env:DENEXT_MODIFY_PATH) is not one of 1, all, 0" }
+  return $env:DENEXT_NO_PATH -ne '1'
 }
 
 # The machine's own CPU architecture (AMD64, ARM64, x86 ...). A 32-bit PowerShell on 64-bit Windows
@@ -384,22 +418,54 @@ function Test-PathEntry([string]$path, [string]$dir) {
   return @(($path -split ';') | Where-Object { $_.TrimEnd('\') -ieq $dir.TrimEnd('\') }).Count -gt 0
 }
 
-# Add $dir to the USER Path (and this session's); returns whether the user Path changed.
+# The USER Path as stored (HKCU\Environment), its %VARIABLES% unexpanded, or ''.
+# Reading it through [Environment]::GetEnvironmentVariable would expand them, and writing that
+# back would replace every %USERPROFILE%-style entry with this machine's expansion for good.
+function Get-UserPath {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+  if (-not $key) { return '' }
+  try {
+    return "$($key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames))"
+  } finally {
+    $key.Close()
+  }
+}
+
+# Store $value as the USER Path (REG_EXPAND_SZ, so its %VARIABLES% keep expanding), then tell
+# running programs (Explorer, new terminals) that the environment changed: setting a variable
+# through [Environment]::SetEnvironmentVariable(..., 'User') broadcasts WM_SETTINGCHANGE.
+function Set-UserPath([string]$value) {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+  try {
+    $key.SetValue('Path', $value, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+  } finally {
+    $key.Close()
+  }
+  $marker = 'DENEXT_PATH_UPDATED'
+  [Environment]::SetEnvironmentVariable($marker, '1', 'User')
+  [Environment]::SetEnvironmentVariable($marker, $null, 'User')
+}
+
+# Add $dir to the USER Path (first, once) and to this session's; returns whether the user Path
+# changed.
 function Add-DenextPath([string]$dir) {
   if (-not (Test-PathEntry $env:Path $dir)) { $env:Path = "$dir;$env:Path" }
-  $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $user = Get-UserPath
   if ($user -and (Test-PathEntry $user $dir)) { return $false }
   $next = if ($user) { "$dir;$user" } else { $dir }
-  [Environment]::SetEnvironmentVariable('Path', $next, 'User')
+  Set-UserPath $next
   return $true
 }
 
-# Remove $dir from the USER Path.
+# Remove $dir from the USER Path and from this session's.
 function Remove-DenextPath([string]$dir) {
-  $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+  if (Test-PathEntry $env:Path $dir) {
+    $env:Path = (($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -ine $dir.TrimEnd('\') }) -join ';'
+  }
+  $user = Get-UserPath
   if (-not $user -or -not (Test-PathEntry $user $dir)) { return }
   $kept = ($user -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ine $dir.TrimEnd('\') }
-  [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'User')
+  Set-UserPath ($kept -join ';')
 }
 
-Install-Denext -Uninstall:$Uninstall
+Install-Denext -Uninstall:$Uninstall -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath

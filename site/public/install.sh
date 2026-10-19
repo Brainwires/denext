@@ -20,6 +20,8 @@
 #   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
 #                    downloads on the first command that needs it
 #   DENEXT_NO_DENO_LINK  `1` skips `denext toolchain link` (no `deno` is put on your PATH)
+#   DENEXT_MODIFY_PATH  where to add denext's bin to PATH: `1` (your login shell's rc file),
+#                    `all` (every installed shell's), `0` (nowhere) — the same as the flags below
 #   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.tar.gz` and
 #                    `SHA256SUMS` or `<archive>.sha256`) to install from instead of GitHub — for
 #                    testing a build; the checksum is still required and checked
@@ -27,6 +29,19 @@
 #                    version lookup, whose unauthenticated limit is 60 requests an hour per IP.
 #                    Without one, or when the API refuses, the version comes from the
 #                    github.com/…/releases/latest redirect instead.
+#
+# Flags (after `sh -s --`, e.g. `curl -fsSL https://denext.dev/install.sh | sh -s -- --no-modify-path`):
+#   --modify-path       add denext's bin to PATH in your login shell's rc file (the default when
+#                       there is no terminal to ask on)
+#   --modify-path=all   …and in every other installed shell's (bash, zsh, fish, nushell, ~/.profile)
+#   --no-modify-path    change no rc file (the script prints the line to add)
+#   --uninstall         remove the binary, the `deno` link `toolchain link` made, and every PATH
+#                       block this script wrote
+#
+# A script run through a pipe can't change the PATH of the shell that started it; what it can do is
+# add one marked block (`# >>> denext >>>` … `# <<< denext <<<`) to your shell's startup file, so
+# every new shell has it, and print the command that puts it on PATH in the current one. On a
+# terminal it asks first. A re-run replaces the block, never adds a second one.
 #
 # Everything lives in main(), called on the last line, so a download that is cut short runs
 # nothing: `sh` executes a truncated script only up to where it stopped, and that is never
@@ -118,8 +133,13 @@ latest_tag() {
 }
 
 main() {
+  parse_args "$@"
   INSTALL_DIR="${DENEXT_INSTALL:-$HOME/.denext}"
   BIN_DIR="$INSTALL_DIR/bin"
+  if [ "$UNINSTALL" = "1" ]; then
+    uninstall
+    return 0
+  fi
   TARGET="$(target)"
 
   VERSION="${DENEXT_VERSION:-}"
@@ -185,16 +205,288 @@ main() {
   fi
 
   echo "denext: installed $("$BIN_DIR/denext" --version) to $BIN_DIR/denext"
-  case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *)
-      echo
-      echo "Add it to your PATH:"
-      echo "  export PATH=\"$BIN_DIR:\$PATH\""
-      ;;
-  esac
 
   install_toolchain "$BIN_DIR/denext"
+  setup_path
+}
+
+# The command line: the PATH mode (MODIFY_PATH: `current`, `all`, `no`, or `` to ask) and
+# UNINSTALL. DENEXT_MODIFY_PATH is the same choice as an environment variable; a flag wins.
+parse_args() {
+  UNINSTALL=0
+  MODIFY_PATH="$(path_mode "${DENEXT_MODIFY_PATH:-}")"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --modify-path | --modify-path=current | --modify-path=1 | --modify-path=yes) MODIFY_PATH=current ;;
+      --modify-path=all) MODIFY_PATH=all ;;
+      --no-modify-path | --modify-path=0 | --modify-path=no) MODIFY_PATH=no ;;
+      --uninstall) UNINSTALL=1 ;;
+      -h | --help)
+        echo "usage: curl -fsSL https://denext.dev/install.sh | sh -s -- [options]"
+        echo "  --modify-path       add denext to PATH in your login shell's startup file"
+        echo "  --modify-path=all   ...and in every other installed shell's"
+        echo "  --no-modify-path    change no startup file"
+        echo "  --uninstall         remove denext and the PATH blocks this script added"
+        exit 0
+        ;;
+      *)
+        echo "denext: unknown option $1 (--modify-path[=all], --no-modify-path, --uninstall)" >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+}
+
+# DENEXT_MODIFY_PATH's value as a mode (see parse_args); an unknown value is fatal.
+path_mode() {
+  case "$1" in
+    "") echo "" ;;
+    1 | yes | true | current) echo current ;;
+    all) echo all ;;
+    0 | no | false | none) echo no ;;
+    *)
+      echo "denext: DENEXT_MODIFY_PATH=$1 is not one of 1, all, 0" >&2
+      exit 2
+      ;;
+  esac
+}
+
+# The marked block's first and last lines (what --uninstall and a re-run look for).
+BLOCK_START="# >>> denext >>>"
+BLOCK_END="# <<< denext <<<"
+
+# $1 with $HOME spelled `$HOME` (for an rc file that may be shared between machines).
+home_relative() {
+  case "$1" in
+    "$HOME"/*) printf '%s\n' "\$HOME/${1#"$HOME"/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# $1 with $HOME shown as `~` (for messages).
+pretty() {
+  case "$1" in
+    "$HOME"/*) printf '%s\n' "~/${1#"$HOME"/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# The shell name of a path (`/bin/zsh` → zsh, `-zsh` → zsh).
+shell_name() {
+  name="${1##*/}"
+  name="${name#-}"
+  case "$name" in
+    zsh | bash | fish | nu) echo "$name" ;;
+    *) echo sh ;;
+  esac
+}
+
+# The file bash reads for a login shell on macOS (Terminal opens login shells): the first of
+# ~/.bash_profile, ~/.bash_login and ~/.profile that exists — creating ~/.bash_profile when
+# ~/.profile exists would stop bash reading ~/.profile — else ~/.bash_profile.
+bash_login_file() {
+  for f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    [ -e "$f" ] && { echo "$f"; return 0; }
+  done
+  echo "$HOME/.bash_profile"
+}
+
+# nushell's env.nu (`$nu.env-path`), when `nu` is installed.
+nu_env_file() {
+  command -v nu >/dev/null 2>&1 || return 0
+  nu -n -c '$nu.env-path' 2>/dev/null | head -n 1
+}
+
+# The startup files of shell $1, one per line.
+rc_files() {
+  case "$1" in
+    zsh) echo "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash)
+      echo "$HOME/.bashrc"
+      [ "$(uname -s)" = "Darwin" ] && bash_login_file
+      ;;
+    fish) echo "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/denext.fish" ;;
+    nu) nu_env_file ;;
+    *) echo "$HOME/.profile" ;;
+  esac
+  return 0
+}
+
+# The block that puts $BIN_DIR on PATH, in the syntax of the shell that reads file $1.
+path_block() {
+  dir="$(home_relative "$BIN_DIR")"
+  echo "$BLOCK_START"
+  echo "# Added by the denext installer: puts denext on PATH. Remove it with"
+  echo "#   curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall"
+  case "$1" in
+    *.fish)
+      echo "if not contains -- \"$dir\" \$PATH"
+      echo "  set -gx PATH \"$dir\" \$PATH"
+      echo "end"
+      ;;
+    *.nu)
+      dir="$BIN_DIR"
+      echo "\$env.PATH = (\$env.PATH | split row (char esep) | where {|p| \$p != '$dir' } | prepend '$dir')"
+      ;;
+    *)
+      echo "case \":\${PATH}:\" in"
+      echo "  *\":$dir:\"*) ;;"
+      echo "  *) export PATH=\"$dir:\$PATH\" ;;"
+      echo "esac"
+      ;;
+  esac
+  echo "$BLOCK_END"
+}
+
+# File $1 without the marked block, on stdout.
+without_block() {
+  awk -v s="$BLOCK_START" -v e="$BLOCK_END" '
+    $0 == s { skip = 1; next }
+    skip && $0 == e { skip = 0; next }
+    !skip { print }
+  ' "$1"
+}
+
+# Write stdin over file $1 in place (`cat >` keeps a symlinked dotfile a symlink, and its mode).
+overwrite() {
+  tmp_rc="$1.denext-tmp.$$"
+  cat >"$tmp_rc" && cat "$tmp_rc" >"$1"
+  rm -f "$tmp_rc"
+}
+
+# Add the block to file $1 (replacing an earlier one); prints what it did.
+add_block() {
+  rc="$1"
+  mkdir -p "$(dirname "$rc")"
+  if has_block "$rc"; then
+    { without_block "$rc"; path_block "$rc"; } | overwrite "$rc"
+    echo "denext: updated the PATH block in $(pretty "$rc")"
+    return 0
+  fi
+  if [ -s "$rc" ] && [ -n "$(tail -c 1 "$rc")" ]; then echo >>"$rc"; fi
+  path_block "$rc" >>"$rc"
+  echo "denext: added denext to PATH in $(pretty "$rc")"
+}
+
+# Remove the block from file $1 (and the file, when it is fish's conf.d file and now empty).
+remove_block() {
+  rc="$1"
+  has_block "$rc" || return 0
+  without_block "$rc" | overwrite "$rc"
+  case "$rc" in */conf.d/denext.fish) [ -s "$rc" ] || rm -f "$rc" ;; esac
+  echo "denext: removed denext's PATH block from $(pretty "$rc")"
+}
+
+# The installed shells other than $1, space-separated (each found by `command -v`).
+other_shells() {
+  others=""
+  for sh_name in zsh bash fish nu; do
+    [ "$sh_name" = "$1" ] && continue
+    command -v "$sh_name" >/dev/null 2>&1 && others="$others $sh_name"
+  done
+  echo "${others# }"
+}
+
+# Ask $1 on the terminal (fd 3, opened by setup_path); default $2 (y or n). Prints y or n. The
+# end of input answers the default.
+ask() {
+  printf '%s ' "$1" >&2
+  if ! IFS= read -r answer <&3; then
+    echo >&2
+    answer=""
+  fi
+  case "$answer" in
+    [Yy]*) echo y ;;
+    [Nn]*) echo n ;;
+    *) echo "$2" ;;
+  esac
+}
+
+# The terminal to ask on: /dev/tty when this process has one (`curl … | sh` reads the script from
+# stdin, so stdin is never it), else nothing. DENEXT_TTY names another file (the tests' answers).
+prompt_input() {
+  tty="${DENEXT_TTY:-/dev/tty}"
+  if (: <"$tty") 2>/dev/null; then echo "$tty"; fi
+}
+
+# Whether file $1 holds the marked block.
+has_block() {
+  [ -f "$1" ] && grep -qxF "$BLOCK_START" "$1"
+}
+
+# Put $BIN_DIR on PATH for new shells (per MODIFY_PATH, asking when unset and there is a
+# terminal) and say how to use it in this one.
+setup_path() {
+  current="$(shell_name "${SHELL:-sh}")"
+  mode="$MODIFY_PATH"
+  first="$(rc_files "$current" | head -n 1)"
+  # A re-run (an upgrade) keeps the block it wrote up to date without asking again.
+  if [ -z "$mode" ] && [ -n "$first" ] && has_block "$first"; then mode=current; fi
+  if [ -z "$mode" ]; then
+    input="$(prompt_input)"
+    if [ -n "$input" ]; then
+      exec 3<"$input"
+      if [ "$(ask "denext: add denext to PATH in $(pretty "${first:-$HOME/.profile}")? [Y/n]" y)" = y ]; then
+        mode=current
+        others="$(other_shells "$current")"
+        if [ -n "$others" ] &&
+          [ "$(ask "denext: also add it to your other installed shells ($(echo "$others" | sed 's/ /, /g'))? [y/N]" n)" = y ]; then
+          mode=all
+        fi
+      else
+        mode=no
+      fi
+      exec 3<&-
+    else
+      mode=current
+    fi
+  fi
+
+  if [ "$mode" != "no" ]; then
+    shells="$current"
+    [ "$mode" = "all" ] && shells="$current $(other_shells "$current") sh"
+    # One per line (a path may hold spaces: nushell's on macOS does), each once.
+    for sh_name in $shells; do rc_files "$sh_name"; done | awk 'NF && !seen[$0]++' |
+      while IFS= read -r rc; do add_block "$rc"; done
+  fi
+
+  case ":$PATH:" in *":$BIN_DIR:"*) return 0 ;; esac
+  echo
+  echo "This script ran in its own process, so it could not change the PATH of the shell you"
+  echo "started it from. To use denext in this shell now, run:"
+  case "$current" in
+    fish) echo "  set -gx PATH \"$BIN_DIR\" \$PATH" ;;
+    nu) echo "  \$env.PATH = (\$env.PATH | prepend '$BIN_DIR')" ;;
+    *) echo "  export PATH=\"$BIN_DIR:\$PATH\"" ;;
+  esac
+  if [ "$mode" = "no" ]; then
+    echo "and add that line to your shell's startup file to keep it (or re-run with --modify-path)."
+  else
+    case "$current" in
+      zsh | bash) echo "or reload your startup file:  source $(pretty "$first")" ;;
+    esac
+    echo "or start a new login shell:   exec \$SHELL -l"
+  fi
+}
+
+# --uninstall: the `deno` link `toolchain link` made (only its own), the binary, the PATH blocks
+# in every shell's startup files, then bin/ and the install directory when nothing else is left.
+uninstall() {
+  if [ -x "$BIN_DIR/denext" ] && has_toolchain_verb "$BIN_DIR/denext"; then
+    "$BIN_DIR/denext" toolchain unlink >/dev/null 2>&1 || true
+  fi
+  rm -f "$BIN_DIR/denext"
+  {
+    for sh_name in zsh bash fish nu sh; do rc_files "$sh_name"; done
+    echo "$HOME/.bash_profile"
+    echo "$HOME/.bash_login"
+  } | awk 'NF && !seen[$0]++' | while IFS= read -r rc; do remove_block "$rc"; done
+  rmdir "$BIN_DIR" 2>/dev/null || true
+  rmdir "$INSTALL_DIR" 2>/dev/null || true
+  echo "denext: removed denext from $INSTALL_DIR"
+  echo "  (denext's Deno toolchain cache stays; \`denext toolchain uninstall --all\` before"
+  echo "  this removes it)"
 }
 
 # Install denext's Deno toolchain through the new binary, and — when this machine has no `deno`
