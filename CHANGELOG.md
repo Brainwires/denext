@@ -379,6 +379,11 @@ and this project adheres to
 
 ### Fixed
 
+- **The SPA source transforms run in a project reached through a symlink.** The plugin behind
+  Fast Refresh, the auto-memo compiler, the feature and platform folds and `require.context`
+  compared esbuild's module paths, which are real paths, with the project directory as given, so
+  a project under a symlinked directory (macOS's `/var` temp dirs, a linked checkout) had every
+  module skipped untransformed. Both sides are compared as real paths now.
 - **`denext export` on a ReFS volume (a Windows Dev Drive) no longer refuses a valid output
   directory.** The output-directory guard compared directories by their 64-bit file index as well
   as their real paths, and ReFS does not keep that index unique, so `out/` could read as

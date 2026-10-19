@@ -10,7 +10,7 @@ import * as esbuild from "../src/build/esbuild/mod.ts";
 import { requireContextPlugins, rewriteRequireContext } from "../src/build/require-context.ts";
 
 async function bundle(files: Record<string, string>): Promise<Record<string, unknown>> {
-  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_require_context_" }));
+  const dir = await Deno.makeTempDir({ prefix: "denext_require_context_" });
   try {
     for (const [rel, text] of Object.entries(files)) {
       await Deno.mkdir(dirname(join(dir, rel)), { recursive: true });

@@ -47,10 +47,21 @@ function isInsideProject(path: string, projectDir: string): boolean {
   return path === projectDir || path.startsWith(root);
 }
 
+/** `path` with its symlinks resolved, or `path` itself when it can't be resolved (missing, no permission). */
+async function realPathOr(path: string): Promise<string> {
+  try {
+    return await Deno.realPath(path);
+  } catch {
+    return path;
+  }
+}
+
 /**
  * An esbuild plugin whose `onLoad` runs `transform(source, absPath)` on each first-party app
  * module matching `options.filter` (default `.tsx`/`.jsx`). `transform` returns the new source, or `null` to leave it unchanged.
  * npm deps, the generated SPA entry wrapper, and anything outside `projectDir` are skipped;
+ * the comparison is on real paths, so a project reached through a symlink (macOS's `/var` →
+ * `/private/var`, a linked checkout) still has its modules transformed;
  * an unreadable file or a throwing transform yields the module verbatim (never miscompiled).
  *
  * @param name The esbuild plugin name (for diagnostics).
@@ -69,17 +80,21 @@ export function firstPartyTsxPlugin(
   return {
     name,
     setup(build) {
+      // esbuild hands `onLoad` the module's real path (it resolves symlinks), so compare it
+      // against the project root's real path too, resolved once per build.
+      let realProjectDir: Promise<string> | undefined;
+      // Only the app's own first-party source: skip npm deps and the generated SPA entry
+      // wrapper (`.entries/index.tsx`), which has no components and whose `import` already
+      // pulls the real modules in.
+      const isFirstParty = async (path: string): Promise<boolean> => {
+        if (inNodeModules(path) || hasPathSegment(path, ".entries")) return false;
+        if (isInsideProject(path, projectDir)) return true;
+        realProjectDir ??= realPathOr(projectDir);
+        const root = await realProjectDir;
+        return isInsideProject(path, root) || isInsideProject(await realPathOr(path), root);
+      };
       build.onLoad({ filter }, async (args) => {
-        // Only the app's own first-party source: skip npm deps and the generated SPA entry
-        // wrapper (`.entries/index.tsx`), which has no components and whose `import` already
-        // pulls the real modules in.
-        if (
-          inNodeModules(args.path) ||
-          hasPathSegment(args.path, ".entries") ||
-          !isInsideProject(args.path, projectDir)
-        ) {
-          return null; // let the deno-loader load it unchanged
-        }
+        if (!(await isFirstParty(args.path))) return null; // the deno-loader loads it unchanged
         let source: string;
         try {
           source = await Deno.readTextFile(args.path);
