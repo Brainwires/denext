@@ -3,7 +3,10 @@
 All notable changes to this package are documented here. It follows its own semver, independent
 of `@denext/denext`.
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-10-19
+
+- Requires `@denext/denext` ^4.4.0 (the plugin-kit's `servesRoutes`, `addDeployRoutes` and
+  `addDeployAssets`).
 
 - **The deploy manifest lists the `/_tss/` client files** as asset groups (through the
   plugin-kit's `addDeployAssets`), with the `Cache-Control` the plugin serves them with: the entry

@@ -1,6 +1,8 @@
 # @denext/content-collections
 
-## [Unreleased]
+## [0.7.0] - 2026-10-19
+
+- Requires `@denext/denext` ^4.4.0.
 
 ### Added
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.0 - 2026-10-19
+
+- Requires `@denext/denext` ^4.4.0.
+
+### Changed
+
+- **`ui: "scalar"` is vendored: the docs page loads nothing from a CDN.** Scalar's API reference
+  (`@scalar/api-reference` 1.72.4, MIT; its licence and a notice in `vendor/scalar/`) ships in
+  the package, is checked against the SHA-256 recorded in `scalar-ui.ts` before it is served, and
+  is served from `<docs>/scalar/standalone.<hash>.js` with `cache-control: public,
+  max-age=31536000, immutable`. The page's CSP names no other origin: `script-src 'self'` plus
+  the hash of its inline start-up script (`SCALAR_BOOT_HASH`), `connect-src` the page's own
+  origin and the document's absolute `servers`. The start-up turns off Scalar's web fonts,
+  telemetry, agent chat and hosted request proxy. `cdn: DOCS_CDN.scalar` (now 1.72.4) opts back
+  into jsDelivr. The package grows by about 4.4 MB (1.3 MB gzipped). `docsCsp()` takes a third
+  argument (`{ connect }`).
+
 ## 0.6.0
 
 ### Added
@@ -16,19 +33,6 @@
   refused by Deno). Component schemas and inline objects become named types (an `allOf` of
   objects is one type), string enums enums, nullable schemas optional; the `ApiError` envelope
   is each client's own error type.
-
-### Changed
-
-- **`ui: "scalar"` is vendored: the docs page loads nothing from a CDN.** Scalar's API reference
-  (`@scalar/api-reference` 1.72.4, MIT; its licence and a notice in `vendor/scalar/`) ships in
-  the package, is checked against the SHA-256 recorded in `scalar-ui.ts` before it is served, and
-  is served from `<docs>/scalar/standalone.<hash>.js` with `cache-control: public,
-  max-age=31536000, immutable`. The page's CSP names no other origin: `script-src 'self'` plus
-  the hash of its inline start-up script (`SCALAR_BOOT_HASH`), `connect-src` the page's own
-  origin and the document's absolute `servers`. The start-up turns off Scalar's web fonts,
-  telemetry, agent chat and hosted request proxy. `cdn: DOCS_CDN.scalar` (now 1.72.4) opts back
-  into jsDelivr. The package grows by about 4.4 MB (1.3 MB gzipped). `docsCsp()` takes a third
-  argument (`{ connect }`).
 
 ## 0.5.0 - 2026-10-16
 
