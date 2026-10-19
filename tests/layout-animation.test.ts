@@ -184,3 +184,63 @@ Deno.test("LayoutAnimation: a resized view scales from its old size; its child c
   );
   assertEquals([moved.x, moved.y, moved.scaleX, moved.scaleY], [0, -50, 2, 2]);
 });
+
+/** A stand-in element drawn through its ancestors' started animations, as a browser draws it. */
+class DrawnEl extends FakeEl {
+  override getBoundingClientRect() {
+    const r = super.getBoundingClientRect();
+    for (let a = this.parentElement; a; a = a.parentElement) {
+      if (a.anims.length > 0) return { ...r, top: r.top - 7, height: r.height / 2 } as DOMRect;
+    }
+    return r;
+  }
+}
+
+Deno.test("LayoutAnimation: the new layout is measured before any FLIP transform starts", () => {
+  const g = globalThis as Record<string, unknown>;
+  const saved = {
+    document: g.document,
+    Element: g.Element,
+    MutationObserver: g.MutationObserver,
+    raf: g.requestAnimationFrame,
+    gcs: g.getComputedStyle,
+  };
+  const list = new DrawnEl(0);
+  const b = new DrawnEl(0);
+  b.parentElement = list;
+  let observer: ((records: unknown[]) => void) | null = null;
+  const frames: (() => void)[] = [];
+  g.document = { body: { getElementsByTagName: () => [list, b] } };
+  g.Element = FakeEl;
+  g.getComputedStyle = () => ({ transform: "none" });
+  g.requestAnimationFrame = (cb: () => void) => frames.push(cb);
+  g.MutationObserver = class {
+    constructor(cb: (records: unknown[]) => void) {
+      observer = cb;
+    }
+    observe() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  };
+  try {
+    configureNext({ duration: 250, update: { type: "linear" } });
+    // A row is inserted above `b`: the list grows and `b` moves down one row.
+    b.top = 30;
+    list.height = 60;
+    observer!([{ addedNodes: [], removedNodes: [] }]);
+    frames[0]();
+    assertEquals(list.anims[0].keyframes[0].transform, "translate(0px, -15px) scale(1, 0.5)");
+    // `b`'s new rectangle is its layout, not where the list's started animation draws it.
+    assertEquals(b.anims[0].keyframes[0].transform, "translate(0px, -15px) scale(1, 2)");
+  } finally {
+    Object.assign(g, {
+      document: saved.document,
+      Element: saved.Element,
+      MutationObserver: saved.MutationObserver,
+      requestAnimationFrame: saved.raf,
+      getComputedStyle: saved.gcs,
+    });
+  }
+});
