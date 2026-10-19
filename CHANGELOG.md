@@ -340,6 +340,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext export` on a ReFS volume (a Windows Dev Drive) no longer refuses a valid output
+  directory.** The output-directory guard compared directories by their 64-bit file index as well
+  as their real paths, and ReFS does not keep that index unique, so `out/` could read as
+  overlapping `app/`. On Windows it compares real paths only.
 - **A CEF desktop window keeps what the page just stored.** A quit that cut a `localStorage` or
   IndexedDB write short no longer costs every later launch its writes (the runtime repairs the torn
   log end before the window opens, and on macOS and Windows waits for the page's renderer to end
