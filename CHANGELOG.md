@@ -30,6 +30,9 @@ and this project adheres to
 
 - `denext mobile add storage secure-store --encrypted` no longer tells you to run
   `denext mobile add secure-store` too: that run adds it.
+- iOS file transfers: a download resumed right after its pause, before iOS handed over the
+  resume data, continues from the paused bytes; it started again from the first byte.
+  `denext mobile add file-transfer` upgrades an unedited `DenextTransferManager.swift`.
 
 ## [4.4.0] - 2026-10-19
 

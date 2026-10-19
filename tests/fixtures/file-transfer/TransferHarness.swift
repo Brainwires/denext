@@ -85,6 +85,24 @@ do {
           data.enumerated().allSatisfy { $0.element == UInt8($0.offset % 251) }, "\(data.count) bytes")
 }
 
+// 2b. A resume right after the pause, before its resume data arrived, still continues from it.
+do {
+    try manager.start(record("d5", "download", "quick.bin", url: "\(base)/slow"))
+    _ = wait(20) { (eventsFor("d5").last { $0["type"] as? String == "progress" }?["bytes"] as? Int64 ?? 0) > 0 }
+    check("pause answers true (quick)", manager.pause("d5"))
+    check("an immediate resume answers true", (try? manager.resume("d5")) == true)
+    _ = wait(60) { settled("d5") }
+    let restarts = eventsFor("d5").filter { $0["type"] as? String == "started" }.dropFirst()
+    check("an immediate resume continues from the paused bytes",
+          restarts.count == 1 && (restarts.first?["bytes"] as? Int64 ?? 0) > 0, "\(Array(restarts))")
+    check("the quickly resumed download finishes", last("d5", "done") != nil && last("d5", "failed") == nil,
+          "\(eventsFor("d5").suffix(3))")
+    let file = DenextTransferManager.rootOverride!.appendingPathComponent("DATA/quick.bin")
+    let data = (try? Data(contentsOf: file)) ?? Data()
+    check("the quickly resumed file is complete and in order", data.count == 524_288 &&
+          data.enumerated().allSatisfy { $0.element == UInt8($0.offset % 251) }, "\(data.count) bytes")
+} catch { check("pause answers true (quick)", false, "\(error)") }
+
 // 3. A multipart upload, its fields and its response.
 do {
     let source = DenextTransferManager.rootOverride!.appendingPathComponent("DATA/up/photo.jpg")
