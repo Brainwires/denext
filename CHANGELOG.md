@@ -377,6 +377,15 @@ and this project adheres to
 
 ### Fixed
 
+- **A React Native mode app runs under the strict CSP with no `style-src 'unsafe-inline'`.**
+  react-native-web created its `<style id="react-native-stylesheet">` at run time, which the CSP
+  blocked, so no `StyleSheet.create` style applied (silently, besides the violation report). The
+  SPA shell now carries that element, empty and allowed by its hash; react-native-web adopts it
+  and adds its rules through the CSSOM, which `style-src` does not govern. React Native mode's
+  own rules (`TextInput`'s placeholder and selection colour, a list's hidden scrollbar) go into
+  an adopted constructed style sheet instead of a `<style>` element. The App Router's
+  server-rendered sheet was already allowed by its hash; an e2e now checks it. The React Native
+  Skia recipe drops its `styleSrc: ["'unsafe-inline'"]`.
 - **The SPA source transforms run in a project reached through a symlink.** The plugin behind
   Fast Refresh, the auto-memo compiler, the feature and platform folds and `require.context`
   compared esbuild's module paths, which are real paths, with the project directory as given, so

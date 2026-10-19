@@ -26,6 +26,7 @@ import {
 import { spaShellHtml } from "../src/build/spa.ts";
 import { resolveProject, validateDenextConfig } from "../src/build/paths.ts";
 import { createSpaDevState } from "../src/build/spa/dev-state.ts";
+import { createSpaDevHandler } from "../src/build/spa/dev-handler.ts";
 import { expoRouterRoot } from "../src/build/expo-router.ts";
 import {
   type DenextConfig,
@@ -543,6 +544,59 @@ Deno.test("spaShellHtml: Expo's root style and viewport-fit=cover only in reactN
     reactNativeRootStyle: true,
   });
   assertStringIncludes(custom, "#app{display:flex}");
+});
+
+/** CSP hash of the empty string: react-native-web's (empty) style sheet element in the shell. */
+const EMPTY_STYLE_HASH = "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='";
+const RNW_SHEET = '<style id="react-native-stylesheet"></style>';
+
+Deno.test("spaShellHtml: react-native-web's style sheet is markup, so a strict CSP needs no 'unsafe-inline'", async () => {
+  const plain = await spaShellHtml({ spa: { ...SPA, csp: "strict" }, scriptSrc: "/x.js" });
+  assert(!plain.includes("react-native-stylesheet"), "only in reactNative mode");
+  const rn = await spaShellHtml({
+    spa: { ...SPA, csp: "strict", head: "<style>#root{background:red}</style>" },
+    scriptSrc: "/x.js",
+    styleHref: "/app.css",
+    reactNativeRootStyle: true,
+    reactNativeStyleSheet: true,
+  });
+  assertEquals(rn.split(RNW_SHEET).length, 2, "one element");
+  const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(rn)?.[1] ?? "";
+  const styleSrc = /(?:^|; )style-src ([^;]*)/.exec(csp)?.[1] ?? "";
+  assertStringIncludes(styleSrc, EMPTY_STYLE_HASH, "the empty element is allowed by its hash");
+  assert(!styleSrc.includes("'unsafe-inline'"), styleSrc);
+  // After the CSP meta (which only governs what follows it), ahead of the root style, spa.head
+  // and the app's stylesheet, as react-native-web's own head.firstChild insertion would be.
+  const at = rn.indexOf(RNW_SHEET);
+  assert(rn.indexOf("Content-Security-Policy") < at);
+  assert(at < rn.indexOf(ROOT_STYLE) && at < rn.indexOf("background:red"));
+  assert(at < rn.indexOf('href="/app.css"'));
+  // rootStyle: false keeps the sheet (it is what react-native-web's styles need).
+  const noRoot = await spaShellHtml({ spa: SPA, scriptSrc: "/x.js", reactNativeStyleSheet: true });
+  assertStringIncludes(noRoot, RNW_SHEET);
+  assert(!noRoot.includes("display:flex"));
+});
+
+Deno.test("reactNative dev: the dev shell carries react-native-web's sheet under spa.csp", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_rn_dev_shell_" }));
+  try {
+    await writeTree(dir, {
+      "denext.config.ts": 'export default { mode: "spa", reactNative: { rootStyle: false }, ' +
+        'spa: { entry: "index.ts", csp: "strict" } };\n',
+      "index.ts": "export {};\n",
+      "deno.json": "{}\n",
+    });
+    const st = createSpaDevState({ paths: await resolveProject(dir), unbundled: true });
+    const res = await createSpaDevHandler(st)(
+      new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    );
+    const html = await res.text();
+    assertEquals(res.status, 200);
+    assertStringIncludes(html, RNW_SHEET);
+    assertStringIncludes(html, EMPTY_STYLE_HASH);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("reactNative config: options, root-style switch, validation", () => {

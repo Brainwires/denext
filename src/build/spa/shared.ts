@@ -377,6 +377,18 @@ function reactNativeRootStyleTag(rootId: string): string {
   return `\n    <style>html,body,${root}{height:100%;margin:0}${root}{display:flex}</style>`;
 }
 
+/**
+ * react-native-web's style sheet element, empty (`reactNative` mode). react-native-web adopts an
+ * element with this id when the document has one (its `createCSSStyleSheet`) and only adds rules
+ * to it through the CSSOM (`insertRule`), which `style-src` does not govern. Left to itself it
+ * creates the element at run time, which a CSP without `style-src 'unsafe-inline'` blocks: the
+ * sheet is then null and no `StyleSheet.create` style applies. Here it is markup, so `spa.csp`
+ * allows it by the hash of its (empty) text like any inline `<style>` in the shell. It goes
+ * first in the head after the CSP, where react-native-web would put it, so the app's own
+ * stylesheet still follows it.
+ */
+const REACT_NATIVE_STYLE_SHEET = `\n    <style id="react-native-stylesheet"></style>`;
+
 /** What {@linkcode spaShellHtml} renders the SPA's `index.html` from. */
 interface SpaShellHtmlOptions {
   spa: SpaConfig;
@@ -393,6 +405,8 @@ interface SpaShellHtmlOptions {
    * `viewport-fit=cover` (`reactNative` mode).
    */
   reactNativeRootStyle?: boolean;
+  /** Emit react-native-web's (empty) style sheet element (`reactNative` mode; see above). */
+  reactNativeStyleSheet?: boolean;
   /** Head markup that goes ahead of `spa.head` (React Native mode's `@font-face` rules). */
   headPrefix?: string;
   /** The rendered `spa.shell` for this target (`renderSpaShell`); replaces `spa.loading`. */
@@ -405,8 +419,9 @@ export async function spaShellHtml(opts: SpaShellHtmlOptions): Promise<string> {
   const title = spa.title ?? "denext app";
   const rootId = spa.rootId ?? "root";
   if (spa.head) warnRawSpaHeadOnce();
+  const rnSheet = opts.reactNativeStyleSheet ? REACT_NATIVE_STYLE_SHEET : "";
   const rnStyle = opts.reactNativeRootStyle ? reactNativeRootStyleTag(rootId) : "";
-  const head = rnStyle + (opts.headPrefix ?? "") + (spa.head ? `\n    ${spa.head}` : "");
+  const head = rnSheet + rnStyle + (opts.headPrefix ?? "") + (spa.head ? `\n    ${spa.head}` : "");
   const viewport = viewportMeta(spa.head, opts.reactNativeRootStyle === true);
   const devScript = opts.devScriptSrc
     ? `\n    <script src="${escapeHtml(opts.devScriptSrc)}"></script>`

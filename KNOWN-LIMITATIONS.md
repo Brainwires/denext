@@ -417,6 +417,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
   yet run on a phone (Android's split of a repeating event from one occurrence on included), and
   `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
+- **A strict CSP still blocks a `<style>` element a library fills with text at run time**,
+  and react-native-web's second sheet when it renders into a shadow root; those need
+  `style-src 'unsafe-inline'`. react-native-web's own sheet and React Native mode's rules need
+  nothing (the CSP is hash-based, so there is no nonce to give such an element).
 - **Renderers built on `react-reconciler` see no denext context** (React Native Skia's
   `<Canvas>`, react-three-fiber, react-konva): a component inside their tree reads a context's default
   value (as in React, contexts don't cross renderers), and a provider placed inside the tree does
@@ -428,9 +432,6 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   breakpoint or another runtime value updates when its component renders again). Tamagui's
   optimizing compiler (`@tamagui/babel-plugin`) is not run; its runtime styles the components.
   `require.context` takes literal arguments only.
-- **A React Native mode app under a Content-Security-Policy needs `style-src 'unsafe-inline'`:**
-  react-native-web inserts its stylesheet as a `<style>` element at run time. Scripts stay locked
-  down.
 - **`denext profile --android` is Android only:** an iOS app's WKWebView is not profiled.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim

@@ -28,6 +28,7 @@
  */
 
 import { h } from "../jsx/jsx-runtime.ts";
+import { addDocumentRules } from "./document-style.ts";
 import type { VNode, VNodeType } from "../jsx/types.ts";
 
 /** The class the placeholder rule targets. */
@@ -52,25 +53,15 @@ const SELECTION_CLASS_STYLE = { $$css: true, denextSelection: SELECTION_CLASS };
  * The stylesheet the classes need (the placeholder and the selection are pseudo-elements: no
  * inline style). The highlight is the colour at 40%, as the platforms tint theirs.
  */
-const RULE = `.${TEXT_INPUT_CLASS}::placeholder{white-space:nowrap;overflow:hidden;` +
-  `text-overflow:ellipsis}` +
+const RULES = [
+  `.${TEXT_INPUT_CLASS}::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}`,
   `.${SELECTION_CLASS}::selection{background-color:` +
-  `color-mix(in srgb,var(${SELECTION_VAR}) 40%,transparent)}`;
+  `color-mix(in srgb,var(${SELECTION_VAR}) 40%,transparent)}`,
+];
 
-/** The documents that have the rule. */
-const styled = new WeakSet<object>();
-
-/** Add the placeholder rule to the document once. */
+/** Add the placeholder and selection rules to the document once (CSP-safe, see the helper). */
 function ensureRule(): void {
-  const doc = (globalThis as { document?: Document }).document;
-  if (!doc?.head || typeof doc.createElement !== "function" || styled.has(doc)) return;
-  styled.add(doc);
-  const id = "denext-rn-textinput-style";
-  if (doc.getElementById?.(id)) return;
-  const el = doc.createElement("style");
-  el.id = id;
-  el.textContent = RULE;
-  doc.head.appendChild(el);
+  addDocumentRules("denext-rn-textinput-style", RULES);
 }
 
 /**

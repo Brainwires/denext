@@ -371,6 +371,29 @@ What differs from SPA mode:
   pass is the SPA build's.
 - **`compatibilityMode: false`** beside `reactNative` fails validation.
 
+## Under a Content-Security-Policy
+
+A React Native mode app runs under denext's strict CSP (`spa.csp: "strict"`, or the App
+Router's default) with no `style-src 'unsafe-inline'`:
+
+- **react-native-web's style sheet is markup.** react-native-web adopts an existing
+  `<style id="react-native-stylesheet">` and adds every `StyleSheet.create` rule to it through
+  the CSSOM (`insertRule`), which `style-src` does not govern. Left to itself it would create
+  that element at run time, which the CSP blocks, and no class style would apply. So the SPA
+  shell carries the element, empty, allowed by the hash of its empty text like any inline
+  `<style>` in the shell; on the App Router it is the server-rendered sheet, allowed by the hash
+  of its text.
+- **React Native mode's own rules** (`TextInput`'s one-line placeholder and selection colour,
+  a list's hidden scrollbar) go into a constructed style sheet the document adopts, not a
+  `<style>` element.
+- **Inline `style` attributes** (a style object that is not from `StyleSheet.create`, an
+  animation) are `style-src-attr`, which denext's policy allows (`'unsafe-inline'` there only).
+
+What still needs `style-src 'unsafe-inline'`: a library that inserts its own `<style>` element
+with text at run time, and react-native-web rendering into a shadow root (it creates a second
+sheet there, filled with the first one's text). The CSP is hash-based, so such an element can't
+be allowed by a nonce.
+
 ## React Native APIs
 
 react-native-web ships several React Native APIs as mocks ("no equivalent web APIs"), leaves
@@ -1165,11 +1188,10 @@ writes `<>…</>` with React's fragment brand. What the app adds is Skia's web s
    Skia's `<WithSkiaWeb getComponent={() => import("./Drawing")} opts={{ locateFile }} />` does
    the same for one screen, so the rest of the app paints before CanvasKit arrives.
 3. Under a Content-Security-Policy, allow WebAssembly compilation: CanvasKit needs
-   `'wasm-unsafe-eval'`, not `'unsafe-eval'` (it builds no code from strings). react-native-web
-   inserts its stylesheet as a `<style>` element at run time, so a React Native mode app under a
-   CSP also needs `style-src 'unsafe-inline'` (scripts stay locked down). In a SPA:
-   `spa: { csp: { scriptSrc: ["'wasm-unsafe-eval'"], styleSrc: ["'unsafe-inline'"] } }`; on the
-   App Router, the same entries in the `csp` config or the route's `csp` export.
+   `'wasm-unsafe-eval'`, not `'unsafe-eval'` (it builds no code from strings). In a SPA:
+   `spa: { csp: { scriptSrc: ["'wasm-unsafe-eval'"] } }`; on the App Router, the same entry in
+   the `csp` config or the route's `csp` export. Styles need no opt-in
+   ([Under a Content-Security-Policy](#under-a-content-security-policy)).
 
 A context does not cross into the Canvas, as in React: a component inside `<Canvas>` reads a
 context's default value. Unlike React, a provider placed inside the Canvas does not reach it
