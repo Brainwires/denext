@@ -4,7 +4,7 @@
 // exercised through real esbuild bundles over temp `node_modules` fixtures, and a SPA export.
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
-import { dirname, join } from "@std/path";
+import { dirname, join, toFileUrl } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { BROWSER_CONDITIONS, catalogResolverPlugin } from "../src/build/next-compat.ts";
 import { reactNativeWebPlugin } from "../src/build/react-native.ts";
@@ -155,6 +155,56 @@ Deno.test({
     }
     assertStringIncludes(js, "WEB_KIT+");
     assertStringIncludes(js, "REAL_KIT");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "resolveAlias: a target that is an import-map entry resolves (a npm package gets it too)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_resolve_alias_map_" });
+  const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
+  try {
+    await writeTree(dir, {
+      "deno.json": JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "react" },
+        imports: {
+          "denext": abs("mod.ts"),
+          "denext/jsx-runtime": abs("src/jsx/jsx-runtime.ts"),
+          "denext/jsx-dev-runtime": abs("src/jsx/jsx-runtime.ts"),
+          "denext/server": abs("src/server/mod.ts"),
+          "denext/client": abs("src/client/mod.ts"),
+          "react": abs("src/compat/react.ts"),
+          // A file URL, as `--denext-local-path` maps `denext/*` entries.
+          "app/kit-shim": toFileUrl(join(dir, "src", "kit-shim.ts")).href,
+        },
+      }),
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "kit": "1.0.0", "lib": "1.0.0" },
+      }),
+      "node_modules/kit/package.json": JSON.stringify({ name: "kit", module: "index.js" }),
+      "node_modules/kit/index.js": 'export const kit = "REAL_KIT";\n',
+      "node_modules/lib/package.json": JSON.stringify({ name: "lib", module: "index.js" }),
+      "node_modules/lib/index.js":
+        'import { kit } from "kit";\nexport const viaLib = "LIB+" + kit;\n',
+      "src/kit-shim.ts": 'export const kit = "SHIM_KIT";\n',
+      "denext.config.ts": `export default { mode: "spa", compatibilityMode: true, ` +
+        `spa: { entry: "./src/main.ts" }, resolveAlias: { kit: "app/kit-shim" } };\n`,
+      "src/main.ts": `import { kit } from "kit";\nimport { viaLib } from "lib";\n` +
+        `(globalThis as Record<string, unknown>).k = [kit, viaLib];\n`,
+    });
+    const { outDir } = await staticExport(dir);
+    const client = join(outDir, "_denext", "client");
+    let js = "";
+    for await (const e of Deno.readDir(client)) {
+      if (e.isFile && e.name.endsWith(".js")) js += await Deno.readTextFile(join(client, e.name));
+    }
+    assertStringIncludes(js, "SHIM_KIT");
+    assertEquals(js.includes("REAL_KIT"), false, "the npm package's import is aliased too");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
