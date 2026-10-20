@@ -531,7 +531,8 @@
       "catalog/",
       "security/",
       "src/build/native-templates/",
-      "src/cli/register.ts"
+      "src/cli/register.ts",
+      "src/ts/program-api.ts"
     ]
   }
 }

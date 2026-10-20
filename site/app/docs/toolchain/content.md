@@ -354,7 +354,24 @@ was refused, or that it arrives with the toolchain.
 `DENO_CHECK_ENGINE` you set yourself always wins. The native check doesn't resolve an absolute
 `file:` import yet (TS2307), so such a project sets `DENEXT_NATIVE_CHECK=0`
 ([known limitations](/docs/limitations)); [the differences page](/docs/differences) lists how its
-output differs.
+output differs, and the [explained type errors](/docs/error-handling#explained-type-errors) read
+both checkers' wording.
+
+The dev type-check overlay checks only the files an edit changed (and what they import). From
+runtime `3.0.0-rc.2` the native check also:
+
+- keeps the project it generates (`.deno/`) across edits that change only the app's own source,
+  instead of generating it for every check (a change to `deno.json`, the lockfile, an installed
+  `node_modules` or the external modules generates it again);
+- checks an app whose `jsxImportSource` runtime comes through the import map (`"jsxImportSource":
+  "denext"`, as every denext app has) natively under `denext test` and `run --check` too;
+- reads a `tsconfig.json` as TypeScript 7 does: the options TypeScript 7 removed (`baseUrl`,
+  `"moduleResolution": "node"`, `"target": "es5"`, …) are adapted rather than stopping the check,
+  and the file's `paths` sit beside the import map's mappings rather than replacing them.
+
+denext's own tooling reaches TypeScript in one place, `src/ts/`: the engine choice
+(`engine.ts`), the type check the dev overlay runs (`check.ts`) and TypeScript's program API for
+the parity extractors (`program-api.ts`, TypeScript 7.0's IPC client until 7.1's stable API).
 
 ## npm packages as on Node.js
 

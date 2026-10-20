@@ -63,7 +63,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `file:` URL) reports TS2307 under TypeScript 7, inside the project or outside it, where Deno and
   the in-process TypeScript resolve it. Until a runtime with the fix is pinned, type-check such a
   project with `DENEXT_NATIVE_CHECK=0` (`DENO_CHECK_ENGINE=tsc` for a plain `deno check`), or
-  import by a relative path or an import-map alias to a relative path.
+  import by a relative path or an import-map alias to a relative path. Runtime `3.0.0-rc.1` has
+  the fix.
+- **Before runtime `3.0.0-rc.2`, a `tsconfig.json` that sets `paths` loses the import map under
+  the native check.** Its `paths` replace the generated ones, so `jsr:` / `npm:` / import-map
+  imports report TS2307 and JSX TS2875 (a Next.js app keeps its `tsconfig.json` after `denext
+  migrate`); one with `baseUrl` or `"moduleResolution": "node"` stops at TS5102 / TS5108. Delete
+  `paths` / `baseUrl` from `tsconfig.json` (the import map carries them after `migrate`), or set
+  `DENEXT_NATIVE_CHECK=0`.
 - **On Windows, keep a project and its `file:` imports on one drive.** Deno 2.9 resolves a
   `deno.json` whose `file:` targets sit on another drive as `file:///C:/D:/…`, so an app on `C:`
   that imports a checkout on `D:` (as `migrate --denext-local-path` writes) fails to load, in

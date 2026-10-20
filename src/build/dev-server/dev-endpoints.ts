@@ -4,7 +4,7 @@
 
 import { basename, fromFileUrl, resolve, SEPARATOR } from "@std/path";
 import { browserLogEvent, type DevEventKind } from "../dev-events.ts";
-import { denoExecutable } from "../bundle.ts";
+import { checkTypes } from "../../ts/check.ts";
 import { isCompat } from "./compat.ts";
 import { customSchemeOrigin, liveCorsAllowed } from "../../server/origin-check.ts";
 import type { CorsPolicy } from "../../server/cors.ts";
@@ -197,9 +197,8 @@ export function devStateResponse(st: DevLogHost, url: URL): Response {
 }
 
 /**
- * Run `deno check` on `files`; the stderr text when it fails, else null (or on spawn failure, or
- * once the dev server stops: its signal kills the check, which would otherwise outlive the server
- * in the project directory — on Windows that directory then cannot be removed).
+ * Type-check `files` (src/ts/check.ts); the checker's report when it fails, else null (or when
+ * the check could not run, or once the dev server stops: its signal ends the check).
  *
  * @param st The dev session (its project paths and stop signal).
  * @param files The files to check.
@@ -209,31 +208,13 @@ export async function runTypeCheck(
   st: Pick<DevState, "paths" | "options">,
   files: string[],
 ): Promise<string | null> {
-  try {
-    const { code, stderr } = await new Deno.Command(denoExecutable(), {
-      args: typeCheckArgs(st, files),
-      cwd: st.paths.projectDir,
-      stdout: "null",
-      stderr: "piped",
-      signal: st.options.signal,
-    }).output();
-    if (st.options.signal?.aborted) return null;
-    if (code === 0) return null;
-    return new TextDecoder().decode(stderr).trim() || null;
-  } catch {
-    return null; // couldn't spawn `deno check` — skip silently, never block the loop
-  }
-}
-
-/** `deno check --quiet [--config <project config>] -- <files>`. */
-function typeCheckArgs(st: Pick<DevState, "paths">, files: string[]): string[] {
-  const args = ["check", "--quiet"];
-  if (st.paths.configPath.startsWith(st.paths.projectDir)) {
-    args.push("--config", st.paths.configPath);
-  }
-  // `--` before the file list so a source path beginning with `-` can't be misparsed as a
-  // flag (paths are watcher-sourced, not attacker-controlled, but this keeps the spawn robust).
-  return [...args, "--", ...files];
+  const result = await checkTypes({
+    projectDir: st.paths.projectDir,
+    configPath: st.paths.configPath,
+    files,
+    signal: st.options.signal,
+  });
+  return result && !result.ok ? result.text || null : null;
 }
 
 /**

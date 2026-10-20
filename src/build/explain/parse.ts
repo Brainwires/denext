@@ -68,7 +68,8 @@ const DENO_ERROR = /^error: (.*)$/;
 const AT_LINE = /^\s+at (\S+?):(\d+):(\d+)\s*$/;
 const LINT_AT = /^\s*-->\s*(\S+?):(\d+):(\d+)\s*$/;
 const ESBUILD_LINE = /^(?:✘ \[ERROR\] |)(\S+?):(\d+):(\d+): ERROR: (.*)$/;
-const SQUIGGLE = /^\s*~+\s*$/;
+// `~~~` under a span, `^` under a one-character one (both checkers render it so).
+const SQUIGGLE = /^\s*(?:~+|\^)\s*$/;
 
 /** A path as printed (`file:///x`, `/x`, or relative to `cwd`) → an absolute path. */
 export function toPath(printed: string, cwd?: string): string {

@@ -8,15 +8,11 @@
 // full 40+-member surface with call signatures. Proven before implementing.
 
 // This module runs ONLY inside refresh.ts's child process (an arbitrary temp cwd with
-// its own node_modules, no deno.json in scope), so it must self-resolve typescript via
-// an explicit `npm:` specifier rather than a bare import from the repo's import map —
-// hence the lint exception. TypeScript 7 is the native compiler: its API is an IPC client that
-// spawns it (`typescript/unstable/async`; the sync client needs raw pipe descriptors Deno's
-// `node:child_process` doesn't expose), pinned to 7.0.x until that API settles.
-// deno-lint-ignore no-import-prefix
-import * as ts from "npm:typescript@~7.0.2/unstable/async";
-// deno-lint-ignore no-import-prefix
-import { SyntaxKind } from "npm:typescript@~7.0.2/unstable/ast";
+// its own node_modules, no deno.json in scope), so typescript is self-resolved through an
+// explicit `npm:` specifier rather than a bare import from the repo's import map: the one in
+// src/ts/program-api.ts, denext's single seam to TypeScript's program API (TypeScript 7's IPC
+// client, pinned to 7.0.x until its API settles).
+import { SyntaxKind, ts } from "../../src/ts/program-api.ts";
 import { CATALOG, REAL_PACKAGES } from "./spec.ts";
 import { type CallSig, isInternalName, type Surface, type SurfaceSymbol } from "./types.ts";
 

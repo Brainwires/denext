@@ -521,12 +521,22 @@ from TypeScript 7.0's compiler rather than `tsc` 6:
   printed `"light" | "dark"`, so a "use one of" suggestion lists them in that order.
 - TypeScript 7.0.2 rejects a regular expression character-class range bounded by a literal
   (unescaped) character above U+07FF with TS1516; write the escape (`\uD7FF`) instead.
+- An unresolved bare import reads `Cannot find module 'zod' or its corresponding type
+  declarations` (TS2307) without Deno's `deno add` hint; the explanation names the package to add
+  either way.
+- `import x = require("m")` in an ES module is an error (TS1202), which the in-process checker let
+  through.
+- In a `tsconfig.json`, an option TypeScript 7 removed (`baseUrl`, `"moduleResolution": "node"`,
+  `"target": "es5"`, …) stops the whole check (TS5102 / TS5108) on runtimes before `3.0.0-rc.2`,
+  which adapts them; the in-process checker reports `baseUrl` as deprecated (TS5101).
 - The check writes a generated `tsconfig.json` and the dependency types it needs into the project's
   `.deno/` (with its own `.gitignore`).
 - A graph the stock project model can't express yet (sloppy imports, `--ext`, `text` / `bytes`
   imports, `@deno-types` / `X-TypeScript-Types` redirects, CommonJS modules, code blocks checked
-  with `--doc`, a Vitest or Jest config's aliases, a custom JSR registry) is checked by the
-  in-process TypeScript 6.0.3, as before. `DENEXT_NATIVE_CHECK=0` selects it for everything.
+  with `--doc`, a Vitest or Jest config's aliases, a custom JSR registry, a worker's graph,
+  declaration emit) is checked by the in-process TypeScript 6.0.3, as before; before runtime
+  `3.0.0-rc.2` so is a graph whose `jsxImportSource` runtime comes through the import map under
+  `denext test` / `run --check`. `DENEXT_NATIVE_CHECK=0` selects it for everything.
 
 ## Security posture — safe defaults
 

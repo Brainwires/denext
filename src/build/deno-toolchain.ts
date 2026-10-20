@@ -701,7 +701,7 @@ export async function tsgoTreeSha256(dir: string): Promise<string> {
  * Install the archive's `typescript-check/` beside `deno` when the pin names one: only a compiler whose
  * binary and whole directory hash to the pinned SHA-256s; anything else is refused and recorded,
  * never installed (the toolchain then type-checks with its in-process TypeScript, see
- * src/build/native-check.ts). Returns the stamp's record (`undefined` when the pin names none).
+ * src/ts/engine.ts). Returns the stamp's record (`undefined` when the pin names none).
  */
 async function installTsgo(
   artifact: DenoToolchainArtifact,
@@ -1515,7 +1515,7 @@ export interface ToolchainTsgoStatus {
   /**
    * `ok` = installed and verified (the toolchain type-checks with it); `missing` = the toolchain
    * is not cached; `refused` = it failed verification (type checking falls back to the in-process
-   * TypeScript, see src/build/native-check.ts); `none` = this pin's toolchain ships none (it
+   * TypeScript, see src/ts/engine.ts); `none` = this pin's toolchain ships none (it
    * type-checks in-process); `n/a` = `DENEXT_DENO=stock` or a path.
    */
   readonly state: "ok" | "missing" | "refused" | "none" | "n/a";

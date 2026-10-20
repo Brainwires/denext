@@ -18,7 +18,7 @@ import {
   loadDenoToolchainPin,
   toolchainTsgo,
   type ToolchainTsgoStatus,
-} from "./deno-toolchain.ts";
+} from "../build/deno-toolchain.ts";
 
 /** The runtime's engine switch: `native` (its default) or `tsc` (the in-process TypeScript). */
 export const CHECK_ENGINE_ENV = "DENO_CHECK_ENGINE";

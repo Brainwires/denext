@@ -10,7 +10,19 @@ import { parseDiagnostics, type SourceDiagnostic, stripAnsi } from "./parse.ts";
 import { lineText } from "./source.ts";
 import { assignabilityRule, excessPropertyRule, literalArgumentRule } from "./rules-assign.ts";
 import { lintRule } from "./rules-lint.ts";
-import { importSourceRule, missingNameRule, moduleNotFoundRule } from "./rules-modules.ts";
+import {
+  bareSpecifierRule,
+  esmSyntaxRule,
+  importSourceRule,
+  missingNameRule,
+  moduleNotFoundRule,
+} from "./rules-modules.ts";
+import {
+  jsxRuntimeRule,
+  jsxTypesRule,
+  pathsTargetRule,
+  removedOptionRule,
+} from "./rules-config.ts";
 import { nullishRule } from "./rules-nullish.ts";
 import { missingReturnRule, neverCheckRule } from "./rules-switch.ts";
 import type { ExplainContext, Explanation, Rule, RuleInput } from "./types.ts";
@@ -24,8 +36,14 @@ export { formatExplanation } from "./format.ts";
 const RULES: readonly Rule[] = [
   lintRule,
   importSourceRule,
+  bareSpecifierRule,
   moduleNotFoundRule,
   missingNameRule,
+  esmSyntaxRule,
+  removedOptionRule,
+  pathsTargetRule,
+  jsxRuntimeRule,
+  jsxTypesRule,
   neverCheckRule,
   missingReturnRule,
   nullishRule,

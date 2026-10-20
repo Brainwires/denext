@@ -15,6 +15,7 @@
 // the only part that touches npm/network; it installs into a throwaway temp dir (via
 // Deno's `--node-modules-dir=auto`) so the repo root stays clean.
 
+import { TYPESCRIPT_API_RANGE } from "../../src/ts/program-api.ts";
 import { BASELINE_HOLDS, REAL_PACKAGE_TAGS, REAL_PACKAGES, realDependencySpec } from "./spec.ts";
 import type { Baseline, Surface } from "./types.ts";
 import { fromFileUrl } from "@std/path";
@@ -35,9 +36,8 @@ async function captureReal(
       realDependencySpec(p, pinned[p] ?? holds[p] ?? REAL_PACKAGE_TAGS[p] ?? "latest"),
     ]),
   );
-  // typescript is the extractor's own dependency: 7.0.x, whose IPC API (typescript/unstable/sync)
-  // the extractor speaks; pinned to the minor until that API settles.
-  deps["typescript"] = "~7.0.2";
+  // typescript is the extractor's own dependency, at the range src/ts/program-api.ts speaks.
+  deps["typescript"] = TYPESCRIPT_API_RANGE;
   await Deno.writeTextFile(
     `${dir}/package.json`,
     JSON.stringify({ name: "denext-parity-real", private: true, dependencies: deps }, null, 2),

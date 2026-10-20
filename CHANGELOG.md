@@ -25,6 +25,29 @@ and this project adheres to
   65,447 → 64,849 B. A build test now asserts that each gated feature's runtime is absent from a
   minimal app and present in one that uses it; that guard, not the byte budget, is the regression
   check, and the build-smoke budget moves from 65,500 B to 67,000 B as its backstop.
+### Added
+
+- **Explanations for what TypeScript 7 says.** The explained type errors (`denext check`, the dev
+  overlay, `denext_explain_error`) now cover a bare import nothing maps, worded either way
+  (TypeScript 6's `Import "zod" not a dependency`, TypeScript 7's `Cannot find module 'zod'`):
+  the package to `denext add`, or a Node built-in's `node:` prefix; `import x = require()` and
+  `export =` in an ES module (TS1202, TS1203); a `tsconfig.json` option TypeScript 7 removed
+  (TS5101 / TS5102 / TS5108: `baseUrl`, `moduleResolution: node`, `target: es5`, …, and TS5090
+  for a `paths` target without `./`); a JSX runtime that doesn't resolve (TS2875, TS7026).
+- **`src/ts/`, denext's one seam to TypeScript.** The engine choice (`engine.ts`, formerly
+  `src/build/native-check.ts`), the type check the dev overlay runs (`check.ts`, which hands back
+  parsed diagnostics) and TypeScript's program API for the parity tooling (`program-api.ts`, 7.0's
+  IPC client, not published) live there, so moving to TypeScript 7.1's stable API is a change in
+  that directory.
+
+### Fixed
+
+- **The dev type-check overlay checks only what an edit changed.** It ran `deno check -- <files>`,
+  and `deno check` ignores the files after `--` and checks the whole project, so every edit
+  re-checked every module and could report errors in files the edit never touched.
+- **A one-character error span (`^`) no longer leaks into the explanation** as part of the
+  message: both checkers underline a one-character span with `^`, which the parser took for a
+  message line.
 
 ### Fixed
 

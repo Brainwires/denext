@@ -1,0 +1,41 @@
+TS5102: `baseUrl` was removed in TypeScript 7
+
+  The native TypeScript 7 type checker refuses this option, and stops the whole check until it is gone (no type error is reported meanwhile).
+
+  Fix: Delete `baseUrl` from tsconfig.json and start each `paths` target with `./` (relative to tsconfig.json). A bare import that only `baseUrl` resolved needs an entry in deno.json `imports`.
+
+  Original (deno check):
+  │ TS5102 [ERROR]: Option 'baseUrl' has been removed. Please remove it from your configuration.
+  │   Use '"paths": {"*": ["./*"]}' instead.
+
+TS5108: `moduleResolution: node10` was removed in TypeScript 7
+
+  The native TypeScript 7 type checker refuses this option, and stops the whole check until it is gone (no type error is reported meanwhile).
+
+  Fix: Set `"moduleResolution": "bundler"`, or delete it.
+
+  Original (deno check):
+  │ TS5108 [ERROR]: Option 'moduleResolution=node10' has been removed. Please remove it from your configuration.
+
+TS5108: `target: ES5` was removed in TypeScript 7
+
+  The native TypeScript 7 type checker refuses this option, and stops the whole check until it is gone (no type error is reported meanwhile).
+
+  Fix: Delete `target`, or set `"ES2017"` or later.
+
+  Original (deno check):
+  │ TS5108 [ERROR]: Option 'target=ES5' has been removed. Please remove it from your configuration.
+
+TS5090: A `paths` target must start with `./`
+
+  Without `baseUrl` (which TypeScript 7 removed) a `paths` target is relative to tsconfig.json and must say so.
+
+  Fix: Write each target as `"./src/*"` rather than `"src/*"` in tsconfig.json `paths`.
+
+  Original (deno check):
+  │ TS5090 [ERROR]: Non-relative paths are not allowed. Did you forget a leading './'?
+
+Found 4 errors.
+
+error: Type checking failed.
+

@@ -23,7 +23,7 @@ import {
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "../build/deno-toolchain.ts";
-import { applyNativeCheckEngine } from "../build/native-check.ts";
+import { applyNativeCheckEngine } from "../ts/engine.ts";
 import { denoPathEnv } from "./deno-path.ts";
 import { resolveProject } from "../build/paths.ts";
 import {
@@ -583,7 +583,7 @@ export async function runVerb(
   const command = await materializeCommand(parsed);
   if (await toolchainGate(command, ctx)) return;
   // On the toolchain now: its type checking runs natively unless the compiler is unverified or the
-  // project opts out (src/build/native-check.ts) — decided before the verb starts any Deno.
+  // project opts out (src/ts/engine.ts) — decided before the verb starts any Deno.
   const standalone = isStandaloneBinary();
   if (toolchainApplies(command, ctx.positionals[0], standalone)) {
     // A compiled executable's children run the toolchain it handed them (its marker).
