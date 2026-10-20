@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-10-20
+
 ### Added
 
 - **Linux window blur and native passkeys in `appCapabilities()`.** Under runtime 3.0.0-rc.1 and
@@ -19,7 +21,6 @@ and this project adheres to
   so `denext/desktop/clerk` signs in with a security key natively there instead of always going
   through the browser (a registration that asks for a platform authenticator, as Clerk's do, is
   refused `not_supported`: Linux has none).
-
 - **iOS Local Network hint.** Until the user answers iOS's Local Network prompt, a request to a
   LAN host fails with "The Internet connection appears to be offline" (-1009), which reads like
   the phone being offline. When the OTA client (`checkForUiUpdate` / `prepareUiUpdate`) or a file
@@ -28,14 +29,12 @@ and this project adheres to
   Privacy & Security → Local Network). `denext mobile add-ota --ota-origin` declares
   `NSLocalNetworkUsageDescription` in Info.plist when a pinned origin is such a host (an app's
   own description is kept), and `denext mobile dev --lan` prints how to answer the prompt.
-
 - **Deno Desktop downloads are tracked transfers.** A `downloadToFile` in a Deno Desktop window
   is now listed by `fileTransfers()` and reported to `onFileTransfer` (`started`, `progress`,
   `done`, `failed`, `cancelled`) under its `id`, as on the web and in the native shell, and
   `cancelFileTransfer(id)` stops it in the runtime (`fs.cancelDownload`, the partial file
   dropped). The runtime keeps no partial file to resume, so `pauseFileTransfer` on one rejects
   with code `"unsupported"` instead of answering `false`.
-
 - **Download progress.** On a terminal, `install.sh` draws curl's progress bar for the release
   archive (and, on a machine without curl, now downloads with GNU wget, `--show-progress`;
   HTTPS-only, TLS 1.2+, checksum-verified as before); `install.ps1` streams the archive through
@@ -43,7 +42,6 @@ and this project adheres to
   progress UI slows Windows PowerShell 5.1 down many times); and the CLI's pinned downloads —
   the Deno toolchain, the Deno Desktop runtime, Gleam, fastlane's Ruby — print one
   self-redrawing line with the megabytes and percent. In a log or CI nothing is drawn.
-
 - **`denext toolchain uninstall <version>`, `uninstall --all` and `prune`.** Every Deno toolchain
   denext ran on stayed in Deno's cache (about 70 MB each, more for a Deno Desktop runtime).
   `uninstall <version>` removes that version's toolchain and the Deno Desktop runtime of the same
@@ -52,7 +50,6 @@ and this project adheres to
   directory pins when it pins another denext (offline, `prune` removes nothing without
   `--force`). The pinned version is refused without `--force`. Each prints what it removed and the
   space freed, takes `--dry-run` and `--json`, and holds the cache lock while it deletes.
-
 - **The installers put denext on PATH.** `install.sh` adds one marked block
   (`# >>> denext >>>` … `# <<< denext <<<`) to the startup file of your login shell — zsh's
   `~/.zshrc`, bash's `~/.bashrc` (plus, on macOS, the login file bash actually reads), fish's
@@ -66,7 +63,6 @@ and this project adheres to
   variable, updates this session's `$env:Path` as well as the user `Path` (so `denext` works in
   the window at once), and keeps the user `Path` a `REG_EXPAND_SZ` value: its `%VARIABLES%` are
   no longer expanded for good on write.
-
 - **Prisma over `Deno.SQL`: `denext/prisma-adapter`.** A Prisma driver adapter for SQLite and
   Postgres on the runtime's built-in `Deno.SQL`, so a Prisma app installs no npm database driver
   (no `pg`, no `better-sqlite3`, no `links` shim): `new PrismaClient({ adapter: new
@@ -97,7 +93,6 @@ and this project adheres to
   fallow pre-commit hook `denext fallow init` writes runs `denext task` when denext is installed.
   The installers' "keeping your deno" line now says it plainly: denext uses its own Deno, and the
   `deno` on your PATH is neither changed nor used.
-
 - **Ready for denext's Deno under its own version.** The runtime and toolchain release after
   `2.9.7-denext.22` is `3.0.0-rc.1` (then `3.0.0-rc.2`, …; tagged `denext-runtime-v3.0.0-rc.1`),
   and denext now accepts both schemes, ordered by semver (`2.9.7-denext.22` < `3.0.0-rc.1` <
@@ -17162,7 +17157,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.4.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.0...development
+[4.5.0]: https://jsr.io/@denext/denext@4.5.0
 [4.4.1]: https://jsr.io/@denext/denext@4.4.1
 [4.4.0]: https://jsr.io/@denext/denext@4.4.0
 [4.3.1]: https://jsr.io/@denext/denext@4.3.1
