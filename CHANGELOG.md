@@ -67,6 +67,14 @@ and this project adheres to
   file are refused even from `compile.include`, and the build names any other `.denext/` entry
   it left out.
 
+- **`denext ui` and `denext dashboard` no longer send the backend's secret key to another host.**
+  Their calls to the running app's admin endpoint and health probe followed redirects, and fetch
+  keeps a custom `apikey` header across a cross-origin redirect. An app whose middleware or
+  redirect rules sent those paths elsewhere (a canonical-host redirect, an auth redirect) handed
+  the service-role secret key, which bypasses row-level security and opens the auth admin API, to
+  that host and its logs. These calls no longer follow redirects; a redirect is reported as the
+  app's answer.
+
 ### Docs
 
 - **The managed toolchain, up front.** The home page, the README, Getting started, the toolchain
