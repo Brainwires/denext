@@ -355,6 +355,10 @@ and this project adheres to
   existing lock is refreshed with `deno install --lockfile-only` (nothing is installed); if that
   fails, `upgrade` says to run `deno install`. `--json` reports `lockRefreshed`.
 
+- **`denext audit` suggests the start task's own permissions.** Its baseline listed an unscoped
+  `--allow-write`, while `denext create`'s `start` grants write to `.denext` only; it now suggests
+  that same set (`--allow-net --allow-read --allow-env --allow-write=.denext`).
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed
