@@ -18,6 +18,7 @@ on:
     branches: [development]
     paths:
       - "scripts/parity/*.ts"
+      - "src/ts/program-api.ts" # the TypeScript program API the extractor reads through
       - "src/compat/next-auth/providers/list.ts" # the provider ids spec.ts lists
       - "tests/fixtures/react-surface.baseline.json"
       - ".github/workflows/parity-drift.yml"
