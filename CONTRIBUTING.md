@@ -366,6 +366,12 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    `DESKTOP_CI_JOBS` lists the ones that must exist). A push runs desktop-ci only
    when its `paths` filter matches, so dispatch it as well:
    `gh workflow run desktop-ci.yml --ref development`, and wait for it.
+   And it needs the newest e2e.yml run on HEAD to have run every job green
+   (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`, `no-deno`; a one-job
+   `-f job=…` dispatch skips the rest and doesn't count) and the newest
+   desktop-window.yml run on HEAD green (`DESKTOP_WINDOW_JOBS`: a real window on
+   every desktop OS). Dispatch both: `gh workflow run e2e.yml --ref development`
+   and `gh workflow run desktop-window.yml --ref development`.
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every

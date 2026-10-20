@@ -15,8 +15,9 @@
 # OS in one table.
 #
 # There is no scheduled run: the push filter below covers the desktop code, and the job is dispatched
-# by hand before a release (`gh workflow run desktop-window.yml --ref development`). A push or a
-# manual dispatch tests its own ref.
+# by hand before a release (`gh workflow run desktop-window.yml --ref development`); `deno task
+# release` refuses unless the newest run on HEAD is green (scripts/release-ci.ts
+# DESKTOP_WINDOW_JOBS). A push or a manual dispatch tests its own ref.
 
 name: Desktop window test
 

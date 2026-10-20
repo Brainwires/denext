@@ -5,7 +5,9 @@ name: E2E
 # intentionally kept OFF the pull_request / push critical path. There is no scheduled run:
 # dispatch it by hand before a release (`gh workflow run e2e.yml --ref development`), so a
 # failure here never blocks a PR merge. The fast `check` + `integration` jobs in ci.yml gate
-# PRs. `workflow_dispatch` tests whatever ref you dispatch it against.
+# PRs. A release is gated on it: `deno task release` refuses unless the newest run on HEAD ran
+# every job green (scripts/release-ci.ts E2E_JOBS; a one-job dispatch doesn't count).
+# `workflow_dispatch` tests whatever ref you dispatch it against.
 on:
   workflow_dispatch:
     inputs:
