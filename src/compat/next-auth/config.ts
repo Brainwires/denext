@@ -211,6 +211,7 @@ function bridgedAdapter(
   return fromAuthJsAdapter(config.adapter, {
     credentialsProviders,
     warn,
+    maxAge: config.session?.maxAge ?? DEFAULT_MAX_AGE,
     onUpdateUser,
     ...(webAuthnProvider ? { webAuthnProvider } : {}),
   });

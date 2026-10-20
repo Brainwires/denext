@@ -109,6 +109,13 @@ and this project adheres to
   URL normalization turns into `/api/cancel`: a value taken from user input could send a call,
   with whatever credentials the caller adds, to another route. `createApiClient`, `useApi` and
   `buildPath` now throw for such a value, as they already did for a catch-all segment.
+- **"Sign out everywhere" ends a session started in the same second.** `revokeAllSessions`, a
+  password reset, a ban and the other events that end a user's sessions stamped the time in
+  whole seconds and kept every session that signed in during that second, so someone holding the
+  password could sign in at the moment it was reset and keep their session. The stamp and each
+  session's sign-in time are now kept to the millisecond (`AuthSession.authTimeMs`, also for
+  next-auth database sessions); a session from an earlier version counts as signed in at the start
+  of its second, and stamps written in seconds by an earlier version still apply.
 
 ### Docs
 

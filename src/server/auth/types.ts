@@ -87,6 +87,13 @@ export interface AuthSession {
    */
   authTime?: number;
   /**
+   * {@link authTime} in epoch milliseconds: what "sign out everywhere" (`sessionsValidAfter`)
+   * compares, so a sign-in in the same second as a revocation is told apart from one before it.
+   * Absent on a session issued before 4.6.0, which counts as signed in at the start of its
+   * `authTime` second.
+   */
+  authTimeMs?: number;
+  /**
    * Set while the user has passed the first factor but not yet the second. A pending
    * session **fails closed**: `auth()` reports `null` for it, so every guard built on
    * `auth()` (requireAuth, requireSession, Live `authorize`, Server Actions) refuses too.

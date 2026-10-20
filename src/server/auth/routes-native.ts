@@ -262,6 +262,7 @@ async function handleComplete(ctx: AuthRouteContext): Promise<Response | null> {
       provider: session.provider,
       amr: session.amr,
       authTime: session.authTime,
+      authTimeMs: session.authTimeMs,
     },
   });
   return back({ code });

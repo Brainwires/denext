@@ -281,6 +281,8 @@ export interface NativeSnapshot {
   amr?: string[];
   /** When the user authenticated, epoch seconds. */
   authTime?: number;
+  /** When the user authenticated, epoch milliseconds (absent on an older snapshot). */
+  authTimeMs?: number;
 }
 
 /** Parse a stored snapshot; anything malformed is `null` (fail closed). */
@@ -320,6 +322,7 @@ export async function snapshotFor(
     provider: payload.provider,
     amr: payload.amr,
     authTime: payload.authTime,
+    authTimeMs: payload.authTimeMs,
   };
 }
 
@@ -820,6 +823,7 @@ export async function verifyNativeAccessToken(
     v: 2,
     issuedAt: payload.i,
     authTime: snapshot.authTime,
+    ...(typeof snapshot.authTimeMs === "number" ? { authTimeMs: snapshot.authTimeMs } : {}),
     amr: snapshot.amr ?? [],
     nativeSessionId: family.id,
   };

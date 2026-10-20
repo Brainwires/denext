@@ -502,11 +502,17 @@ function passkeyGroup(
   };
 }
 
-/** A user's session row as a denext session payload (no `authTime`: it never slides). */
+/**
+ * A user's session row as a denext session payload (no `authTime`: it never slides). With the
+ * session `maxAge`, its sign-in time to the millisecond (`authTimeMs`): the row's expiry less
+ * `maxAge`, the expiry having been written with the sign-in's milliseconds ({@link rowExpires}),
+ * so "sign out everywhere" tells a sign-in in the same second, but after it, from one before.
+ */
 function sessionPayload(
   row: AuthJsAdapterSession,
   user: AuthJsAdapterUser,
   extension: AuthJsUserExtension | null,
+  maxAge: number | undefined,
 ): AuthSession {
   const stored = withExtension(fromRow(user), extension);
   const session: AuthSession = {
@@ -515,6 +521,7 @@ function sessionPayload(
     expiresAt: seconds(row.expires),
     v: 2,
   };
+  if (maxAge !== undefined) session.authTimeMs = new Date(row.expires).getTime() - maxAge * 1000;
   for (const key of ["email", "name", "image"] as const) {
     if (stored[key]) session.user[key] = stored[key];
   }
@@ -522,11 +529,21 @@ function sessionPayload(
   return session;
 }
 
+/**
+ * A session row's expiry: the payload's (whole seconds) plus the sub-second part of its sign-in,
+ * so the row keeps the sign-in's milliseconds ({@link sessionPayload} reads them back).
+ */
+function rowExpires(session: AuthSession): Date {
+  const fraction = typeof session.authTimeMs === "number" ? session.authTimeMs % 1000 : 0;
+  return new Date(session.expiresAt * 1000 + fraction);
+}
+
 /** The adapter's sessions as a denext {@link SessionStore}, when it has the session methods. */
 function sessionStore(
   adapter: AuthJsAdapter,
   warn: (message: string) => void,
   extension: Extension | null,
+  maxAge: number | undefined,
 ): SessionStore | undefined {
   const { createSession, getSessionAndUser, deleteSession, updateSession } = adapter;
   if (!createSession || !getSessionAndUser || !deleteSession) return undefined;
@@ -535,20 +552,20 @@ function sessionStore(
       await createSession.call(adapter, {
         sessionToken: id,
         userId: session.user.id,
-        expires: new Date(session.expiresAt * 1000),
+        expires: rowExpires(session),
       });
     },
     async get(id) {
       const found = await getSessionAndUser.call(adapter, id);
       if (!found || seconds(found.session.expires) * 1000 <= Date.now()) return undefined;
       const stored = extension ? await extension.read(String(found.user.id)) : null;
-      return sessionPayload(found.session, found.user, stored);
+      return sessionPayload(found.session, found.user, stored, maxAge);
     },
     async update(id, session) {
       if (!updateSession) return false;
       const row = await updateSession.call(adapter, {
         sessionToken: id,
-        expires: new Date(session.expiresAt * 1000),
+        expires: rowExpires(session),
       });
       return !!row;
     },
@@ -577,6 +594,8 @@ export interface FromAuthJsAdapterOptions {
   credentialsProviders: ReadonlySet<string>;
   /** Where a limitation is reported. */
   warn: (message: string) => void;
+  /** The session `maxAge` (seconds): a session row's sign-in is its expiry less this. */
+  maxAge?: number;
   /** Told about every user row the bridge updated (Auth.js's `updateUser` event). */
   onUpdateUser?: (user: AuthJsAdapterUser) => void | Promise<void>;
   /** The WebAuthn provider's id (`"passkey"`), when the app has one: its accounts' provider. */
@@ -695,7 +714,7 @@ export function fromAuthJsAdapter(
       await unlink({ provider: ref.provider, providerAccountId: ref.providerAccountId });
     };
   }
-  const sessions = sessionStore(adapter, options.warn, extension);
+  const sessions = sessionStore(adapter, options.warn, extension, options.maxAge);
   if (sessions) bridged.sessions = sessions;
   return bridged;
 }

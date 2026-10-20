@@ -77,7 +77,8 @@ export interface AdapterUser {
   /** Banned until this time, epoch seconds: no sign-in or refresh before it. */
   bannedUntil?: number;
   /**
-   * Sessions signed in before this time (epoch seconds) are ended: a cookie session — stateless
+   * Sessions signed in before this time are ended (epoch milliseconds, as denext stamps it; a
+   * value below 10^11 is read as epoch seconds, as earlier versions wrote it): a cookie session — stateless
    * or stored — whose sign-in (`authTime`, else its issue time) is earlier reads as signed out.
    * Set by a ban, a password reset or change, an account deletion, `revokeAllSessions(userId)`
    * and the pre-account-hijacking eviction.
