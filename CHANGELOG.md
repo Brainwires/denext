@@ -150,6 +150,11 @@ and this project adheres to
   arriving together could both pass the signature-counter check. The read, check and write are
   now serialized per credential within an instance; across several instances the check remains
   best-effort, as the adapter interface allows (denext's own adapters update atomically).
+- **Documented: `signtool` sees a `.pfx` password on its command line.** Signing a Windows
+  binary on Windows with `DENEXT_WINDOWS_CERT` + `DENEXT_WINDOWS_CERT_PASSWORD` passes the
+  password to `signtool` as an argument, the only way it takes one, so command-line auditing on
+  the signing machine records it. The deployment guide now says so and recommends a certificate
+  in the user's store (`DENEXT_WINDOWS_CERT_THUMBPRINT`) on a shared or monitored host.
 
 ### Docs
 
