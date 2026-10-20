@@ -118,7 +118,24 @@ const PRISMA_ONLY_PARAMS = [
   "max_idle_connection_lifetime",
 ];
 
-/** A Postgres URL with Prisma's own parameters read into `Deno.SQL` options and removed. */
+/**
+ * A Postgres URL with Prisma's own parameters read into `Deno.SQL` options and removed, as
+ * {@linkcode PrismaDenoSql} does before it connects. `schema` becomes the `search_path`,
+ * `connection_limit` the pool's `max`, `connect_timeout` (or `pool_timeout`) the
+ * `connectionTimeout`, and `pgbouncer=true` turns prepared statements off; Prisma-only
+ * parameters a server would refuse (`socket_timeout`, `statement_cache_size`, `sslaccept`, …)
+ * are dropped. Use it to open a `Deno.SQL` client of your own from a Prisma `DATABASE_URL`.
+ *
+ * ```ts
+ * const { url, options } = postgresConnection(Deno.env.get("DATABASE_URL")!, undefined);
+ * const adapter = new PrismaDenoSql(new Deno.SQL(url, { ...options, max: 20 }));
+ * ```
+ *
+ * @param url A `postgres://` / `postgresql://` URL, Prisma's parameters included.
+ * @param schemaOption The schema to use when the URL names none (the adapter's `schema` option).
+ * @returns The URL without Prisma's parameters, the `Deno.SQL` options read from them, and the
+ *   schema in effect.
+ */
 export function postgresConnection(
   url: string,
   schemaOption: string | undefined,
