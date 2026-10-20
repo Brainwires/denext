@@ -90,9 +90,9 @@ async function resolveTailwindBin(): Promise<string> {
     );
   }
   // Integrity: this binary is fetched outside Deno's module graph, so `deno.lock` gives
-  // it no coverage. Digest it and fail closed on a hash mismatch when a pin is known —
-  // otherwise a compromised GitHub release asset (or a `DENEXT_TAILWIND_VERSION` pointed
-  // at an attacker tag) is silent build-time code execution.
+  // it no coverage. Digest it and fail closed on a mismatch or a missing pin — otherwise a
+  // compromised GitHub release asset (or a `DENEXT_TAILWIND_VERSION` pointed at an attacker
+  // tag) is silent build-time code execution.
   const bytes = new Uint8Array(await res.arrayBuffer());
   await assertTailwindIntegrity(bytes, tailwindVersion(), asset);
   // Write to a temp file then rename, so a concurrent build never sees a partial binary.
@@ -106,10 +106,10 @@ async function resolveTailwindBin(): Promise<string> {
 }
 
 /**
- * Verify a downloaded Tailwind binary's SHA-256 against a pin. Throws (fail closed) on a
- * mismatch when a pin is known (`DENEXT_TAILWIND_SHA256` or the built-in table); warns
- * and prints the digest when nothing is pinned, so an operator can capture and pin it
- * rather than run an unverified native binary silently. Exported for testing.
+ * Verify a downloaded Tailwind binary's SHA-256 against its pin, failing closed: a mismatch is
+ * refused, and so is a version with no pin (a `DENEXT_TAILWIND_VERSION` other than the default
+ * needs `DENEXT_TAILWIND_SHA256` for this machine's asset), as the esbuild and Deno toolchain
+ * downloads are. `TAILWIND_BIN` (a vetted local binary) skips the download. Exported for testing.
  */
 export async function assertTailwindIntegrity(
   bytes: Uint8Array,
@@ -118,20 +118,20 @@ export async function assertTailwindIntegrity(
 ): Promise<void> {
   const digest = await sha256Hex(bytes);
   const expected = expectedTailwindSha256(version, asset);
-  if (expected && digest !== expected) {
+  if (!expected) {
+    throw new Error(
+      `denext: no pinned sha256 for Tailwind ${asset} @ ${version}; refusing to run an ` +
+        `unverified binary. Set DENEXT_TAILWIND_SHA256 to the asset's published sha256 ` +
+        `(this download is ${digest}; check it against the release's sha256sums.txt), or ` +
+        `TAILWIND_BIN to a vetted local binary.`,
+    );
+  }
+  if (digest !== expected) {
     throw new Error(
       `denext: Tailwind binary integrity check FAILED for ${asset} @ ${version}.\n` +
         `  expected sha256 ${expected}\n  got      sha256 ${digest}\n` +
         `Refusing to run a binary that does not match the pinned hash. Verify the ` +
         `release, or set TAILWIND_BIN to a vetted local binary.`,
-    );
-  }
-  if (!expected) {
-    console.warn(
-      `  denext: Tailwind binary is UNVERIFIED (no pinned sha256). Downloaded ${asset} ` +
-        `@ ${version} sha256=${digest}. Pin it to fail closed on a tampered release: ` +
-        `set DENEXT_TAILWIND_SHA256=${digest} (this machine's asset) or TAILWIND_BIN ` +
-        `to a vendored binary.`,
     );
   }
 }
@@ -143,13 +143,23 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 /**
- * Known-good SHA-256 for a `${version}/${asset}` Tailwind binary. An env pin
- * (`DENEXT_TAILWIND_SHA256`, this machine's asset) wins; otherwise this built-in table
- * is consulted so a default-version download can fail closed out of the box. Empty
- * today — per-platform hashes must be captured from a trusted download, never guessed;
- * a first download prints its digest so an operator can pin it here or via the env.
+ * Known-good SHA-256 for each `${version}/${asset}` Tailwind binary of the pinned release, from
+ * the downloaded assets and cross-checked against the release's own `sha256sums.txt`. An env pin
+ * (`DENEXT_TAILWIND_SHA256`, this machine's asset) wins, for a custom version; bump these with
+ * {@linkcode DEFAULT_TAILWIND_VERSION}.
  */
-const TAILWIND_SHA256: Record<string, string> = {};
+const TAILWIND_SHA256: Record<string, string> = {
+  "v4.3.0/tailwindcss-linux-arm64":
+    "8f48dcb72be3b351c10563c5329b4638ba8516820dc3b3a1609625a166e87cbd",
+  "v4.3.0/tailwindcss-linux-x64":
+    "73f0e5459054e5cfaa8ab6f3b940f3fbe0f13cc7fd83bc24e7c655033c203400",
+  "v4.3.0/tailwindcss-macos-arm64":
+    "56b4bbc62dbdc4614a78930d9c6986423a2ec63e4e640144a59a5d95c914322e",
+  "v4.3.0/tailwindcss-macos-x64":
+    "2ba252f770817091e6d0d12a84e0dd531bcc29aad1bfd9d976a3aff1a071b67a",
+  "v4.3.0/tailwindcss-windows-x64.exe":
+    "e4303d06a337899d426583508f55c143ce89a585f90ed080f482d02fd83093c1",
+};
 
 /** The expected hash for a (version, asset), or undefined when none is pinned. */
 function expectedTailwindSha256(version: string, asset: string): string | undefined {

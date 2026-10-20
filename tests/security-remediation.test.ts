@@ -226,6 +226,35 @@ Deno.test("tailwind: a matching pin passes", async () => {
   }
 });
 
+Deno.test("tailwind: the pinned release is verified with no env pin; a tampered asset is refused", async () => {
+  Deno.env.delete("DENEXT_TAILWIND_SHA256");
+  for (
+    const asset of [
+      "tailwindcss-macos-arm64",
+      "tailwindcss-macos-x64",
+      "tailwindcss-linux-arm64",
+      "tailwindcss-linux-x64",
+      "tailwindcss-windows-x64.exe",
+    ]
+  ) {
+    await assertRejects(
+      () => assertTailwindIntegrity(new Uint8Array([1, 2, 3]), "v4.3.0", asset),
+      Error,
+      "integrity check FAILED",
+      asset,
+    );
+  }
+});
+
+Deno.test("tailwind: a version with no pinned hash is refused, never run unverified", async () => {
+  Deno.env.delete("DENEXT_TAILWIND_SHA256");
+  await assertRejects(
+    () => assertTailwindIntegrity(new Uint8Array([1]), "v9.9.9", "tailwindcss-linux-x64"),
+    Error,
+    "DENEXT_TAILWIND_SHA256",
+  );
+});
+
 // ---- #8: Live numeric-limit validation (a bad type can't disable a cap) ---------------
 
 Deno.test("live: sanitizeLimits rejects a non-number/negative cap and falls back to default", () => {

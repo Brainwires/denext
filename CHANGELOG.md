@@ -116,6 +116,13 @@ and this project adheres to
   session's sign-in time are now kept to the millisecond (`AuthSession.authTimeMs`, also for
   next-auth database sessions); a session from an earlier version counts as signed in at the start
   of its second, and stamps written in seconds by an earlier version still apply.
+- **The Tailwind standalone binary is verified before it runs.** The binary `denext build` /
+  `dev` download for Tailwind v4 was pinned by version only and checked only when
+  `DENEXT_TAILWIND_SHA256` was set, so a tampered release asset would have run on every machine
+  that built a Tailwind project. The default release's binaries are now checked against built-in
+  SHA-256s (cross-checked with the release's published sums) and a mismatch is refused; another
+  `DENEXT_TAILWIND_VERSION` needs `DENEXT_TAILWIND_SHA256`, and `TAILWIND_BIN` still runs a local
+  binary you provide.
 
 ### Docs
 
