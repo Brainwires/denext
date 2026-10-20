@@ -325,7 +325,7 @@ https://denext.dev/docs/errors-as-values
 ```ts
 import { redirect } from "denext";
 import { auth, cookies, createApi, getSession, requireAuth, requireSession } from "denext/server";
-// cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
+// cookies are Secure (over HTTPS) + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
 const session = await getSession<{ userId: string }>({
   secret: Deno.env.get("SESSION_SECRET")!,
 });
@@ -1143,8 +1143,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `denext toolchain uninstall <version>|--all` and `prune` remove cached versions (the pinned one
   only with `--force`; `--dry-run`, `--json`).
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
-  runs it on the toolchain (with no toolchain and no `deno` it refuses, naming
-  `denext toolchain install`), and the installer runs `toolchain install` (+ `toolchain link`
+  runs it on the toolchain (with no toolchain it refuses, naming `denext toolchain install`;
+  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6; an absolute `file:` import
   doesn't resolve under it yet), and in a `package.json` project without a `deno.json` it runs npm
@@ -3615,7 +3615,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DispatchEffect<Msg>` — Dispatch msg right after the current update (a follow-up message).
 - `type Effect<Msg> = FetchEffect<Msg> | DelayEffect<Msg> | TaskEffect<Msg> | DispatchEffect<Msg>` — Work an update asks the runtime to do. Plain data: compare it in tests.
 - `interface EffectConstructors` — The effect constructors (fx). Each returns plain data the runtime runs after the update.
-- `type EventBinding = (event: Event) => void` — What send(…) returns: an event handler for any on* prop.
+- `type EventBinding = (event: Event | SyntheticEvent<any, any>) => void` — What send(…) returns: an event handler for any on* prop. It takes the synthetic event a JSX handler receives (onClick, onSubmit, onInput, …) or a DOM Event (addEventListener), and reads only its target, key and type.
 - `eventPayload(event: unknown): EventPayload` — The EventPayload of a DOM event: a form control target's value / checked (an input, a select, a textarea), a keyboard event's key, and a submit's text fields. A submit is preventDefaulted (the program handles it).
 - `interface EventPayload` — The parts of a DOM event a message can be built from (and the server validates).
 - `interface FetchEffect<Msg>` — Fetch url and turn the response into a message.
@@ -3716,6 +3716,36 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLiveSignal<T>(value: T): ReadonlySignal<T>` — A signal that follows value (a prop): updated whenever the component renders with a new one.
 - `useSignal<T>(value: T): Signal<T>` — A signal owned by the component (created once, kept across renders).
 - `useSignalEffect(fn: () => unknown): void` — An effect owned by the component: started after mount, disposed on unmount; fn is always the latest render's.
+
+### `denext/prisma-adapter`
+
+- `type AdapterError = MappedError & object` — A MappedError plus the driver's own code and message.
+- `type ArgScalarType = string | int | bigint | float | decimal | boolean | enum | uuid | json | datetime | bytes | unknown` — The scalar type Prisma declares for a query argument.
+- `interface ArgType` — What Prisma knows about a query argument: its scalar type, native type and arity.
+- `type ColumnType = indexedAccess` — One of ColumnTypeEnum's values.
+- `ColumnTypeEnum: object` — Prisma's ColumnTypeEnum: the type tag a result column reports for each value.
+- `interface ConnectionInfo` — What Prisma learns about the connection.
+- `interface DenoSqlClient` — A Deno.SQL client (or one of its reserved connections).
+- `denoSqlHasColumns(): Promise<boolean>` — Whether this runtime's Deno.SQL reports result-set column metadata (result.columns), which the Prisma adapter needs: denext's Deno runtime 3.0.0-rc.1 and later. Probes an in-memory SQLite database, so it needs no permission and touches no file.
+- `interface DenoSqlOptions` — The options new Deno.SQL(url, options) takes that the adapter sets.
+- `class DriverAdapterError` — The error an adapter throws so Prisma reports a typed database error instead of a generic one. Prisma recognizes it by name and cause (no instanceof), so this class needs no import from Prisma.
+- `type ErrorConstraint = object | object | object` — A constraint a database error names (fields, an index, or a foreign key).
+- `type IsolationLevel = READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SNAPSHOT | SERIALIZABLE` — The transaction isolation levels Prisma may ask for.
+- `type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
+- `postgresConnection(url: string, schemaOption: string | undefined): object` — A Postgres URL with Prisma's own parameters read into Deno.SQL options and removed, as PrismaDenoSql does before it connects. schema becomes the search_path, connection_limit the pool's max, connect_timeout (or pool_timeout) the connectionTimeout, and pgbouncer=true turns prepared statements off; Prisma-only parameters a server would refuse (socket_timeout, statement_cache_size, sslaccept, …) are dropped. Use it to open a Deno.SQL client of your own from a Prisma DATABASE_URL.
+- `class PrismaDenoSql` — The Prisma driver adapter factory over Deno.SQL, for Postgres and SQLite. Pass it to new PrismaClient({ adapter }).
+- `interface PrismaDenoSqlOptions` — Options of PrismaDenoSql.
+- `type Provider = mysql | postgres | sqlite | sqlserver` — The databases a Prisma driver adapter may speak to.
+- `interface SqlColumn` — A result column as Deno.SQL describes it (both drivers' fields; see Deno.SQLColumn).
+- `interface SqlDriverAdapter` — A connected driver adapter.
+- `interface SqlMigrationAwareDriverAdapterFactory` — The factory new PrismaClient({ adapter }) takes.
+- `interface SqlQuery` — A query Prisma sends: SQL text with positional parameters and their types.
+- `interface SqlQueryable` — Something that runs queries: an adapter or one of its transactions.
+- `interface SqlRequest<T>` — A Deno.SQL query: awaited for its rows, or switched to another row form first.
+- `interface SqlResultSet` — A query's result, in the shape Prisma's query engine reads.
+- `interface SqlRows<T>` — Rows plus what the database reported about them.
+- `type TimestampFormat = iso8601 | unixepoch-ms` — How a DateTime argument is stored.
+- `interface Transaction` — An open transaction. Prisma sends COMMIT / ROLLBACK itself, then calls commit() / rollback().
 
 ### `denext/jsx-directives`
 
