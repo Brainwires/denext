@@ -145,6 +145,11 @@ and this project adheres to
   `.local`) now refuses any header beyond the CORS-safelisted ones (`Accept`, `Accept-Language`,
   `Content-Language`, `Range`), on every redirect hop, and a failed download reports its body only
   when the page may read the folder it was writing to.
+- **Passkey clone detection through an Auth.js adapter no longer loses a race.** Auth.js's
+  adapter interface has no atomic counter update, so two sign-ins with a cloned authenticator
+  arriving together could both pass the signature-counter check. The read, check and write are
+  now serialized per credential within an instance; across several instances the check remains
+  best-effort, as the adapter interface allows (denext's own adapters update atomically).
 
 ### Docs
 

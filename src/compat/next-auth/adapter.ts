@@ -482,13 +482,18 @@ function passkeyGroup(
     async listPasskeys(userId) {
       return (await list(userId)).map(passkeyOf);
     },
-    async updatePasskey(id, fromSignCount, next) {
-      // Auth.js's port has no compare-and-swap: read, check, write.
+    updatePasskey(id, fromSignCount, next) {
+      // Auth.js's port has no compare-and-swap: read, check, write — one at a time per
+      // credential in this process, so two assertions racing here can't both move the counter.
+      // Across instances the race remains: the adapter can't say whether the row still held
+      // `fromSignCount` when it wrote.
       const credentialID = urlToBase64(id);
-      const row = await get(credentialID);
-      if (!row || (Number(row.counter) || 0) !== fromSignCount) return false;
-      await update(credentialID, next.signCount);
-      return true;
+      return serially(counterLocks, credentialID, async () => {
+        const row = await get(credentialID);
+        if (!row || (Number(row.counter) || 0) !== fromSignCount) return false;
+        await update(credentialID, next.signCount);
+        return true;
+      });
     },
     async deletePasskey(id) {
       if (!remove) {
@@ -500,6 +505,24 @@ function passkeyGroup(
     },
     ...storeChallenges(challengeStore, memoryChallenges()),
   };
+}
+
+/** The counter update running for each credential (see `updatePasskey`). */
+const counterLocks = new Map<string, Promise<unknown>>();
+
+/** Run `work` after the one queued under `key` settles; the queue entry goes when it is the last. */
+function serially<T>(
+  locks: Map<string, Promise<unknown>>,
+  key: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const run = (locks.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
+  locks.set(key, run);
+  const forget = () => {
+    if (locks.get(key) === run) locks.delete(key);
+  };
+  run.then(forget, forget);
+  return run;
 }
 
 /**

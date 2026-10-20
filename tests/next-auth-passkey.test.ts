@@ -243,6 +243,14 @@ Deno.test("next-auth adapter bridge: the passkey group on Auth.js's authenticato
     true,
   );
   assertEquals([...authenticators.values()][0].counter, 4);
+  // Two assertions racing on one counter (a cloned authenticator): only one moves it, though
+  // Auth.js's port has no compare-and-swap (the read, check and write are serialized here).
+  const raced = await Promise.all([
+    bridged.updatePasskey!(auth.id, 4, { signCount: 5, backedUp: true, lastUsedAt: 2 }),
+    bridged.updatePasskey!(auth.id, 4, { signCount: 5, backedUp: true, lastUsedAt: 2 }),
+  ]);
+  assertEquals(raced.filter(Boolean).length, 1, JSON.stringify(raced));
+  assertEquals([...authenticators.values()][0].counter, 5);
   // Auth.js's adapters can't delete an authenticator.
   await assertRejects(
     () => Promise.resolve(bridged.deletePasskey!(auth.id)),
