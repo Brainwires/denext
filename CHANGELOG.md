@@ -39,6 +39,14 @@ and this project adheres to
   every later visitor. A clone of the handler's request is now tracked like the request itself,
   and building a request from it counts as reading the visitor's headers it copies.
 
+- **`denext build --compile` no longer embeds development state and secrets from `.denext/`.**
+  The compiled executable embedded the whole build directory, including database dumps written
+  by `denext stack backup`, `@denext/backend`'s dev key file (its secret key and token-signing
+  key), the MCP codebase index and dev-server state. Anyone holding the binary could read them
+  out of it. Only an allow-list of build outputs is embedded now; database dumps and the key
+  file are refused even from `compile.include`, and the build names any other `.denext/` entry
+  it left out.
+
 ## [4.5.0] - 2026-10-20
 
 ### Added

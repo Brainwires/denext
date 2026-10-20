@@ -214,10 +214,7 @@ export const buildCommand: CommandSpec = {
         "compile",
       )
       : undefined;
-    if (result) {
-      console.log(`\n  Compiled ${result.output}\n  Permissions: ${result.permissions.join(" ")}`);
-      if (result.signing) console.log(`  Signing: ${result.signing.detail}`);
-    }
+    if (result) printCompiled(result);
     // The deploy manifest (.denext/deploy-manifest.json) and the configured adapter's prepare.
     await runBuildStep(
       () => deployAfterBuild(dir, result && { ...result, ...(target ? { target } : {}) }),
@@ -226,6 +223,18 @@ export const buildCommand: CommandSpec = {
     exitOneShot();
   },
 };
+
+/** What `build --compile` made: the executable, its permissions, signing, what it left out. */
+function printCompiled(result: Awaited<ReturnType<typeof compileApp>>): void {
+  console.log(`\n  Compiled ${result.output}\n  Permissions: ${result.permissions.join(" ")}`);
+  if (result.signing) console.log(`  Signing: ${result.signing.detail}`);
+  if (result.skipped.length > 0) {
+    console.log(
+      `  Not embedded (not build outputs; add to compile.include if the server reads one): ` +
+        result.skipped.map((name) => `.denext/${name}`).join(", "),
+    );
+  }
+}
 
 /**
  * End a one-shot verb that imported the app's server modules (`build`, `export`). A client such

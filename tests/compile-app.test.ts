@@ -4,6 +4,7 @@
 import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
+  compileApp,
   compileBuildFlags,
   denortBinary,
   neverEmbedded,
@@ -101,6 +102,9 @@ Deno.test("neverEmbedded: env files, SQLite databases and locks stay out of the 
     assertEquals(neverEmbedded(name), true, name);
   }
   assertEquals(neverEmbedded(".denext-lock-build"), true);
+  for (
+    const name of ["backend-keys.json", "stack-20261020.dump", "database.dump", "stack-1.tar.gz"]
+  ) assertEquals(neverEmbedded(name), true, name);
   for (const name of ["env.ts", "page.tsx", "manifest.json", "db.ts"]) {
     assertEquals(neverEmbedded(name), false, name);
   }
@@ -192,4 +196,88 @@ Deno.test("relativeCssRedirects: stylesheet redirects name the embedded copies, 
     new URL("../../styles/globals.css", config).href,
     "file:///work/app/styles/globals.css",
   );
+});
+
+/** A built project whose `.denext/` holds build outputs beside development state and secrets. */
+async function builtProjectWithState(): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_compile_embed_" });
+  const files: Record<string, string> = {
+    "deno.json": JSON.stringify({ name: "@acme/embed" }),
+    "denext.config.ts": `export default { compile: { include: [".denext/backups"] } };\n`,
+    "app/page.tsx": "export default function Page() { return null; }\n",
+    ".denext/manifest.json": "{}",
+    ".denext/client/app.js": "",
+    ".denext/server-copies/app/page.tsx": "",
+    ".denext/css-config.json": "{}",
+    // Not build outputs: development state, stack backups, the backend's dev keys.
+    ".denext/backend-keys.json": `{"secretKey":"sb_secret_TOPSECRET"}`,
+    ".denext/backups/stack-20261020.dump": "PGDMP",
+    ".denext/backups/stack-20261020.tar.gz": "",
+    ".denext/rag/index.json": "{}",
+    ".denext/dev.json": "{}",
+    ".denext/commands.json": "{}",
+    ".denext/mobile-dev-backup.json": "{}",
+    ".denext/mystery": "",
+  };
+  for (const [path, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, path, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, path), text);
+  }
+  return dir;
+}
+
+Deno.test({
+  name: "compileApp: only build outputs are embedded, never stack dumps or the backend's keys",
+  ignore: Deno.build.os === "windows", // the recording `deno` is a shell script
+  async fn() {
+    const dir = await builtProjectWithState();
+    try {
+      // A `deno` that records its argv instead of compiling.
+      const record = join(dir, "argv.json");
+      const fake = join(dir, "fake-deno.sh");
+      await Deno.writeTextFile(
+        fake,
+        `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\n`,
+      );
+      await Deno.chmod(fake, 0o755);
+      const result = await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+      const argv = (await Deno.readTextFile(record)).trim().split("\n");
+      const flag = (name: string) =>
+        argv.flatMap((a, i) => (a === name && argv[i + 1] !== undefined ? [argv[i + 1]] : []));
+      const included = flag("--include");
+      const excluded = new Set(flag("--exclude"));
+      // What the binary embeds: every included file not excluded.
+      const embedded: string[] = [];
+      for (const path of included) {
+        const abs = join(dir, path);
+        if ((await Deno.stat(abs)).isFile) {
+          if (!excluded.has(path)) embedded.push(path);
+          continue;
+        }
+        for await (const e of Deno.readDir(abs)) {
+          const child = `${path}/${e.name}`;
+          if (!excluded.has(child)) embedded.push(child);
+        }
+      }
+      assertEquals(included.includes(".denext"), false, "the build dir is not embedded whole");
+      for (const path of [".denext/manifest.json", ".denext/client", ".denext/server-copies"]) {
+        assertEquals(included.includes(path), true, path);
+      }
+      for (const path of embedded) {
+        assertEquals(
+          /backend-keys|\.dump$|stack-.*\.tar\.gz$|\/rag|dev\.json|commands\.json|mobile-dev-backup/
+            .test(path),
+          false,
+          `${path} must not be embedded`,
+        );
+      }
+      // `compile.include` named the backups directory: its dumps are still excluded.
+      assertEquals(excluded.has(".denext/backups/stack-20261020.dump"), true);
+      assertEquals(excluded.has(".denext/backups/stack-20261020.tar.gz"), true);
+      // An entry the allow-list doesn't know is reported, not embedded; known state is quiet.
+      assertEquals(result.skipped, ["mystery"]);
+    } finally {
+      await removeTempDir(dir);
+    }
+  },
 });
