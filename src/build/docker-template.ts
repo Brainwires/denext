@@ -200,6 +200,10 @@ RUN deno install
 COPY --chown=deno:deno . .
 RUN deno task build
 ${toolchainLayer(options)}
+# One access-log line per request (JSON, with its request id; every response carries the id in
+# x-request-id). Set DENEXT_LOG=1 for a compact human line, or remove it to log none.
+ENV DENEXT_LOG=json
+
 # The production server listens on ${port} and binds 0.0.0.0 by default (see
 # \`deno task start\`). Change the port with \`ENV PORT=<n>\`
 # (and EXPOSE) — \`start\` reads $PORT.

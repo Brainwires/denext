@@ -329,6 +329,12 @@ and this project adheres to
   gets a minimal HTML page (the status, the message and the request id), as Next.js serves its
   default error page. Other requests keep the plain text, and neither reveals the error.
 
+- **The Docker image logs requests, and a logged request's response carries its id.** The
+  generated Dockerfile now sets `DENEXT_LOG=json`, as the `fly` and `generic-host` presets did, so
+  a container has an access log. While requests are logged (`DENEXT_LOG` or `onRequest`), every
+  response carries the id its log line has in `x-request-id`, not only error responses. With
+  logging off nothing changes: the headers stay Next.js's.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

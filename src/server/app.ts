@@ -139,7 +139,8 @@ function dispatch(
   if (requestTimeout > 0) {
     pipeline = withRequestTimeout(pipeline, requestTimeout, controller, requestCtx);
   }
-  pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId));
+  const logged = requestLogger(config) !== undefined;
+  pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId, logged));
   const secure = isSecureRequest(config, originalRequest);
   pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
   // Response compression (config `compress`, default on). A background regen serves no
@@ -199,12 +200,13 @@ function shedRequest(config: AppConfig, request: Request): Response {
 
 /**
  * Echo the correlation id on every error response (M5) — the global-error 500, the
- * timeout 503, and the abort 503, matching the fallback 500 and the documented contract.
- * Applied after the timeout wrap so the 503 it produces is covered too. (The
- * pre-context shed 503 has no id yet and is left as-is.)
+ * timeout 503, and the abort 503, matching the fallback 500 and the documented contract —
+ * and, while requests are logged (`DENEXT_LOG` or the app's `onRequest`), on every response, so
+ * a client's report matches its access-log line. Applied after the timeout wrap so the 503 it
+ * produces is covered too. (The pre-context shed 503 has no id yet and is left as-is.)
  */
-function echoRequestId(res: Response, requestId: string): Response {
-  if (res.status >= 500 && !res.headers.has("x-request-id")) {
+function echoRequestId(res: Response, requestId: string, logged: boolean): Response {
+  if ((logged || res.status >= 500) && !res.headers.has("x-request-id")) {
     try {
       res.headers.set("x-request-id", requestId);
     } catch { /* immutable headers (rare) — leave as-is */ }

@@ -145,6 +145,10 @@ RUN mkdir -p /deno-dir/toolchain-bin && \
   ln -sf "$(deno run -A --config deno.json jsr:@denext/denext@^4.0.0/cli toolchain path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH
 
+# One access-log line per request (JSON, with its request id; every response carries the id in
+# x-request-id). Set DENEXT_LOG=1 for a compact human line, or remove it to log none.
+ENV DENEXT_LOG=json
+
 # The production server listens on 3000 and binds 0.0.0.0 by default (see
 # `deno task start`). Change the port with `ENV PORT=<n>`
 # (and EXPOSE) — `start` reads $PORT.
@@ -789,6 +793,11 @@ compact human-readable one-line-per-request log. Logged fields (method, path,
 status, duration, request id) are safe against log forging (the request id is
 sanitized; JSON output escapes control characters). For a programmatic hook
 instead of (or alongside) the env var, see the `onRequest` callback in §14.
+
+While requests are logged (`DENEXT_LOG`, or an `onRequest` callback), every response carries
+the id its log line has in `x-request-id`, so a report from a client finds its line. Without
+logging, only error responses carry it. The generated Dockerfile sets `DENEXT_LOG=json`, as the
+`fly` and `generic-host` presets already do.
 
 ## 10. Graceful shutdown
 
