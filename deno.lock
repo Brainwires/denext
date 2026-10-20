@@ -64,6 +64,7 @@
     "npm:@sqlite.org/sqlite-wasm@3.53.4-build1": "3.53.4-build1",
     "npm:@supabase/supabase-js@2.117.2": "2.117.2",
     "npm:@tanstack/router-plugin@1.168.42": "1.168.42_esbuild@0.24.2",
+    "npm:@tanstack/router-utils@1.162.3": "1.162.3",
     "npm:drizzle-orm@0.45.3": "0.45.3_postgres@3.4.7",
     "npm:effect@*": "3.22.1",
     "npm:effect@^3.22.0": "3.22.1",

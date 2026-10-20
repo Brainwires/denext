@@ -3,9 +3,11 @@
 // every source file under the floored prefixes on its own — lines, branches and functions — and
 // fails when one is below the floor or was never loaded by any test at all.
 //
-//   deno run --allow-read scripts/coverage-floor.ts coverage/lcov.info [--floor 85] [--report]
+//   deno run --allow-read scripts/coverage-floor.ts coverage/lcov.info [--floor 85] [--full] [--report]
 //
-// `--report` prints every floored file's numbers (not only the failures) and always exits 0.
+// `--full` (the whole-suite run, `deno task coverage:floor`) also floors FLOORED_FULL, files the
+// desktop-only run never loads. `--report` prints every floored file's numbers (not only the
+// failures) and always exits 0.
 
 import { join, relative, resolve } from "@std/path";
 
@@ -22,6 +24,17 @@ export const FLOORED: readonly { dir: string; match: RegExp }[] = [
   // the desktop paths of the shared mobile/desktop client modules
   { dir: "src/mobile", match: /^(desktop-queue|open-file|notification-trigger)\.ts$/ },
   { dir: "src/react-native", match: /^desktop\.ts$/ }, // React Native's desktop runtime
+];
+
+/**
+ * Floored only on the whole-suite run (`--full`): files outside the desktop surface, added as
+ * their tests reach the floor. A ratchet for the 4.x files that sat under 50% lines: the rest of
+ * them (src/deploy/adapter.ts, tanstack-start's toolchain.ts, src/build/deploy-flow.ts,
+ * src/cli/commands/profile.ts and dashboard.ts) join this list as their tests land.
+ */
+export const FLOORED_FULL: readonly { dir: string; match: RegExp }[] = [
+  { dir: "src/cli", match: /^cli-cache\.ts$/ }, // the remote CLI's offline module cache
+  { dir: "packages/tanstack-start/src", match: /^use-server\.ts$/ }, // a "use server" module's browser half
 ];
 
 /** One file's totals from an lcov record. */
@@ -86,10 +99,15 @@ async function walk(dir: string): Promise<string[]> {
   return out;
 }
 
-/** The floored source files on disk, relative to `root` (POSIX separators), sorted. */
-export async function flooredFiles(root: string): Promise<string[]> {
+/**
+ * The floored source files on disk, relative to `root` (POSIX separators), sorted.
+ *
+ * @param root The project root.
+ * @param full Include {@linkcode FLOORED_FULL} (the whole-suite run).
+ */
+export async function flooredFiles(root: string, full = false): Promise<string[]> {
   const files: string[] = [];
-  for (const { dir, match } of FLOORED) {
+  for (const { dir, match } of full ? [...FLOORED, ...FLOORED_FULL] : FLOORED) {
     for (const p of await walk(join(root, dir))) {
       const rel = relative(join(root, dir), p).replaceAll("\\", "/");
       if (match.test(rel)) files.push(`${dir}/${rel}`);
@@ -141,19 +159,19 @@ function row(r: FloorResult): string {
 /**
  * The CLI: check (or, with `--report`, print) the floor; returns the exit code.
  *
- * @param args `<lcov.info> [--floor <percent>] [--report]`.
+ * @param args `<lcov.info> [--floor <percent>] [--full] [--report]`.
  * @param root The project root (default: the working directory).
  */
 export async function main(args: string[], root: string = resolve(".")): Promise<number> {
   const input = args.find((a) => !a.startsWith("--"));
   if (!input) {
-    console.error("usage: coverage-floor.ts <lcov.info> [--floor 85] [--report]");
+    console.error("usage: coverage-floor.ts <lcov.info> [--floor 85] [--full] [--report]");
     return 2;
   }
   const at = args.indexOf("--floor");
   const floor = at === -1 ? 85 : Number(args[at + 1]);
   const results = checkFloor(
-    await flooredFiles(root),
+    await flooredFiles(root, args.includes("--full")),
     parseLcov(await Deno.readTextFile(input)),
     root,
     floor,
