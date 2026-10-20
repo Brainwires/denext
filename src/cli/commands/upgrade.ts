@@ -79,16 +79,87 @@ function describeSteps(steps: readonly UpgradeStep[]): string {
   ).join("\n");
 }
 
+/** What one `denext upgrade` run did, for its output. */
+interface UpgradeOutcome {
+  readonly dir: string;
+  readonly path: string;
+  readonly plan: UpgradePlan;
+  readonly check: boolean;
+  readonly written: boolean;
+  /** Whether `deno.lock` was refreshed (`undefined`: there was none to, or nothing was written). */
+  readonly lock: boolean | undefined;
+}
+
+/** Print the outcome: one JSON document, or the human report. */
+function printOutcome(
+  json: boolean,
+  o: UpgradeOutcome,
+  files: { changedFiles: string[]; unresolved: string[] },
+): void {
+  const { changedFiles, unresolved } = files;
+  if (json) {
+    console.log(JSON.stringify({
+      config: o.path,
+      ...o.plan,
+      written: o.written,
+      files: changedFiles,
+      ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
+      ...(unresolved.length ? { unresolvedMembers: unresolved } : {}),
+    }));
+    return;
+  }
+  report(o.plan, o.path, o.check, o.written);
+  reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved);
+  if (o.lock === true) console.log("deno.lock refreshed.");
+  if (o.lock === false) {
+    console.error(
+      "denext upgrade: deno.lock was not refreshed; run `deno install` before a " +
+        "`deno install --frozen` (CI) or commit.",
+    );
+  }
+}
+
 /**
- * Run `denext upgrade` against `dir`: plan, then print / check / write.
+ * Refresh `dir`'s `deno.lock` for the config just written: `deno install --lockfile-only` on
+ * denext's Deno toolchain (it writes the lock, installs nothing). Resolves whether it succeeded.
+ */
+async function refreshLockfile(dir: string): Promise<boolean> {
+  try {
+    const { forwardedDeno } = await import("../deno-path.ts");
+    const { deno, env } = await forwardedDeno();
+    const out = await new Deno.Command(deno, {
+      args: ["install", "--lockfile-only"],
+      cwd: dir,
+      env,
+      stdin: "null",
+      stdout: "null",
+      stderr: "inherit",
+    }).output();
+    return out.success;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `dir` has a `deno.lock` (only an existing lock is refreshed). */
+async function hasLockfile(dir: string): Promise<boolean> {
+  return await Deno.stat(join(dir, "deno.lock")).then((s) => s.isFile, () => false);
+}
+
+/**
+ * Run `denext upgrade` against `dir`: plan, then print / check / write — and, once written,
+ * refresh an existing `deno.lock` so a `deno install --frozen` in CI passes.
  *
  * @param ctx The invocation (`--dry-run`, `--check`, `--to`, global `--json`).
  * @param lookups The registry lookups (JSR; injected by tests).
+ * @param refreshLock Refreshes `deno.lock` in a directory, resolving whether it did (injected by
+ *   tests; default `deno install --lockfile-only` on the toolchain).
  * @returns The process exit code.
  */
 export async function runUpgrade(
   ctx: CommandContext,
   lookups: UpgradeLookups = jsrLookups(),
+  refreshLock: (dir: string) => Promise<boolean> = refreshLockfile,
 ): Promise<number> {
   const dir = projectDir(ctx);
   const path = await configPath(dir);
@@ -107,18 +178,11 @@ export async function runUpgrade(
   const check = ctx.flags.check === true;
   const written = plan.ok && plan.changed && !check && ctx.flags["dry-run"] !== true;
   const changedFiles = plan.ok ? await applyToFiles(files, plan.steps, written) : [];
-  if (ctx.global.json) {
-    console.log(JSON.stringify({
-      config: path,
-      ...plan,
-      written,
-      files: changedFiles,
-      ...(unresolved.length ? { unresolvedMembers: unresolved } : {}),
-    }));
-  } else {
-    report(plan, path, check, written);
-    reportWorkspace(dir, plan.ok ? changedFiles : [], unresolved);
-  }
+  const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
+  printOutcome(ctx.global.json === true, { dir, path, plan, check, written, lock }, {
+    changedFiles,
+    unresolved,
+  });
   if (!plan.ok) return 1;
   return check && plan.changed ? 1 : 0;
 }
@@ -173,7 +237,7 @@ function report(plan: UpgradePlan, path: string, check: boolean, written: boolea
   if (!plan.changed) console.log("\nEverything is up to date.");
   else if (written) {
     console.log(
-      `\nUpdated ${path}. The next \`deno task\` (or \`deno install\`) refreshes deno.lock.`,
+      `\nUpdated ${path}.`,
     );
   } else console.log(`\n${check ? "Out of date" : "Dry run"} — ${path} was not changed.`);
 }

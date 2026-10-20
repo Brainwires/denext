@@ -350,6 +350,11 @@ and this project adheres to
   scaffolded `deno.json` now denies that script (`"allowScripts": { "deny": [...] }`), so it never
   runs and nothing is printed.
 
+- **`denext upgrade` refreshes `deno.lock`.** It rewrote `deno.json` and left `deno.lock` on the
+  old pins, so a CI `deno install --frozen` failed until someone ran a task. After writing, an
+  existing lock is refreshed with `deno install --lockfile-only` (nothing is installed); if that
+  fails, `upgrade` says to run `deno install`. `--json` reports `lockRefreshed`.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

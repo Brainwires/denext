@@ -373,3 +373,49 @@ Deno.test("jsrLookups: versions from meta.json (yanked dropped), the range from 
   assertEquals(await lookups.versions("@denext/missing"), null);
   assert(asked.every((u) => u.startsWith("https://jsr.io/@denext/")), asked.join("\n"));
 });
+
+Deno.test("denext upgrade refreshes an existing deno.lock after writing (a --frozen install then passes)", async () => {
+  // Up to 4.5.0 it rewrote deno.json and left deno.lock on the old pins, so a CI
+  // `deno install --frozen` failed until someone ran a task.
+  const reg = () =>
+    registry({
+      "@denext/denext": { "3.0.0": null, "3.2.0": null },
+      "@denext/myplug": { "0.2.0": "^3.0.0" },
+    });
+  const run = async (flags: Record<string, boolean>, lock: boolean, refreshes: boolean) => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_upgrade_lock_" });
+    await Deno.writeTextFile(join(dir, "deno.json"), CONFIG);
+    if (lock) await Deno.writeTextFile(join(dir, "deno.lock"), '{ "version": "5" }\n');
+    const refreshed: string[] = [];
+    const printed: string[] = [];
+    const [log, err] = [console.log, console.error];
+    console.log = console.error = (...a: unknown[]) => void printed.push(a.map(String).join(" "));
+    try {
+      const code = await runUpgrade(
+        {
+          positionals: [dir],
+          flags,
+          global: { json: false },
+          rest: [],
+        } as unknown as CommandContext,
+        reg(),
+        (d) => {
+          refreshed.push(d);
+          return Promise.resolve(refreshes);
+        },
+      );
+      return { code, refreshed: refreshed.map((d) => d === dir), out: printed.join("\n") };
+    } finally {
+      [console.log, console.error] = [log, err];
+      await Deno.remove(dir, { recursive: true });
+    }
+  };
+  const written = await run({}, true, true);
+  assertEquals([written.code, written.refreshed], [0, [true]]);
+  assert(written.out.includes("deno.lock refreshed"), written.out);
+  assertEquals((await run({ "dry-run": true }, true, true)).refreshed, []);
+  assertEquals((await run({}, false, true)).refreshed, [], "no lock: nothing to refresh");
+  const failed = await run({}, true, false);
+  assertEquals(failed.code, 0, "deno.json was still upgraded");
+  assert(failed.out.includes("deno install"), failed.out);
+});
