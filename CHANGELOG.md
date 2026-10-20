@@ -91,6 +91,13 @@ and this project adheres to
   text could run a task or write files without the explicit apply step meant to gate it.
   `op: "preview"` now passes only on the pages that really preview (generate and the database
   section's writes), and never for setting a user's password.
+- **A `.denext/commands.json` committed to a repository is no longer trusted.** The listing
+  `denext commands` writes decides whether a Deno verb such as `denext info` or `denext doc` runs
+  a project verb instead, which imports the project's config. Its fingerprint could be computed
+  from the repository's own files and a predictable checkout path (a devcontainer, CI), so a
+  repository could ship a listing that made those verbs run its code. The fingerprint is now keyed
+  with a per-machine secret kept in the user's cache directory; listings written by an earlier
+  denext are ignored until `denext commands` runs again.
 
 ### Docs
 
