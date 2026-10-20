@@ -20,6 +20,16 @@ and this project adheres to
   characters (which it uses as internal markers) from the source in both modes, and refuses a
   destination that contains one.
 
+- **The values an inline Server Action closes over can no longer be chosen by the caller.** Since
+  4.3.1, an inline `"use server"` function that reads its component's values (a user id, a record
+  id) was also reachable through its plain action id, and a request to that id passed the caller's
+  arguments in place of the values the server had sealed into the form. Any signed-in visitor who
+  could submit the form could make such an action run against another user's or record's id. An
+  inline action that captures values is now registered bound-only: only the encrypted reference
+  the server rendered reaches it, and it must carry every captured value, as with Next.js's
+  encrypted closures. Actions exported from a `"use server"` module are unchanged (they take the
+  caller's arguments by design and must validate them).
+
 ## [4.5.0] - 2026-10-20
 
 ### Added
