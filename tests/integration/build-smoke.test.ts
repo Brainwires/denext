@@ -347,8 +347,9 @@ const FEATURE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
   { marker: "globalThis.FormData", what: "form-action submit runtime (form-action.ts)" },
   // Isomorphic `client:*` islands: `denext/iso-island`, imported only for a directive.
   { marker: "display:contents", what: "isomorphic island runtime (iso-island.ts)" },
-  // Flight `client:*` islands' scheduler: `denext/lazy`, loaded by a page with lazy islands.
-  { marker: "data-dnx-hydrated", what: "lazy island hydration (lazy-hydrate.ts)" },
+  // Flight `client:*` islands: `denext/lazy`, loaded by a page with lazy islands.
+  { marker: "data-dnx-hydrated", what: "lazy island boot (lazy-boot.ts)" },
+  { marker: "qrl handler failed", what: "resumable event dispatcher (qrl-dispatch.ts)" },
   // A Server Action call from the browser.
   { marker: "x-denext-action", what: "Server Action dispatch (server-action.ts)" },
   // Model–View–Update: `denext/mvu`.
@@ -460,7 +461,11 @@ async function assertFlightStartupLean(clientDir: string): Promise<void> {
   const startup = await startupGraph(clientDir, ["__denext_flight__.js"]);
   const absent: Array<[string, string]> = [
     // Hoisted out of `denext/lazy` by the client-runtime barrel's iso-island re-export once.
-    ["data-dnx-hydrated", "lazy island hydration (it belongs to the lazy-* chunk)"],
+    [
+      "requestIdleCallback",
+      "lazy island scheduler (lazy-hydrate.ts; it belongs to the lazy-* chunk)",
+    ],
+    ["qrl handler failed", "resumable event dispatcher (qrl-dispatch.ts; the lazy-* chunk's)"],
     // Installed eagerly once because the page's comment said "Server Component".
     ["componentDidMount", "class-component runtime (it belongs to the class-runtime-* chunk)"],
     ["display:contents", "isomorphic island runtime"],
