@@ -33,7 +33,9 @@ import {
   registerServerReference,
   type ServerActionRef,
   setServerReferenceDecorator,
+  unregisterServerReference,
 } from "../runtime/server-action.ts";
+import { processShared } from "../runtime/process-shared.ts";
 
 /** The environment variable that sets the key (Next.js's name is read too). */
 export const ACTIONS_KEY_ENV = "DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY";
@@ -47,6 +49,17 @@ const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
 type Handler = (...args: unknown[]) => unknown;
+
+/**
+ * Inline actions that close over their component's values, by id: registered bound-only, so only
+ * a token the server sealed (carrying at least `captures` values) reaches `handler`, whose leading
+ * parameters are those values. Never in the plain registry: a request naming the bare id is an
+ * unknown action, as Next.js's encrypted closures fail to decrypt without their sealed argument.
+ */
+const capturingActions = /* @__PURE__ */ processShared(
+  "capturingServerActions",
+  () => new Map<string, { handler: Handler; captures: number }>(),
+);
 
 let buildKey: Uint8Array | null = null;
 let processKey: Uint8Array | null = null;
@@ -176,10 +189,12 @@ export function resolveBoundAction(
 ): Handler | null {
   const split = splitBoundId(id);
   if (!split) return null;
-  const handler = lookup(split.actionId);
+  const capturing = capturingActions.get(split.actionId);
+  const handler = capturing?.handler ?? lookup(split.actionId);
   if (!handler) return null;
   const values = openBoundValues(split.actionId, split.token);
-  if (!values) return null;
+  // A capturing action's token must carry every value it captures: none may come from the caller.
+  if (!values || values.length < (capturing?.captures ?? 0)) return null;
   return (...args: unknown[]) => handler(...values, ...args);
 }
 
@@ -254,17 +269,30 @@ setServerReferenceDecorator((fn, id) => decorate(fn, id, fn, () => []));
 
 /**
  * Register an inline `"use server"` function under `id` (the transform's runtime): a server
- * reference whose `bind` binds values as above.
+ * reference whose `bind` binds values as above. One that closes over its component's values
+ * (`captures` > 0, its leading parameters) is registered bound-only: only a sealed reference id
+ * carrying those values resolves it, never the plain `id`.
  *
  * @param id The build-stable action id.
  * @param handler The hoisted function.
+ * @param captures How many leading parameters are captured values (0: a plain action).
  */
 // fallow-ignore-next-line unused-export -- imported by the code the inline transform generates
 export function inlineServerReference(
   id: string,
   handler: Handler,
+  captures = 0,
 ): ServerActionRef<unknown[], unknown> {
-  return registerServerReference(id, handler);
+  if (captures <= 0) {
+    capturingActions.delete(id);
+    return registerServerReference(id, handler);
+  }
+  capturingActions.set(id, { handler, captures });
+  unregisterServerReference(id); // a dev re-import that now captures: the plain id goes away
+  const ref = (...args: unknown[]) => Promise.resolve(handler(...args));
+  Object.defineProperty(ref, "denextActionId", { value: id, configurable: true });
+  decorate(ref, id, handler, () => []);
+  return ref as ServerActionRef<unknown[], unknown>;
 }
 
 /**

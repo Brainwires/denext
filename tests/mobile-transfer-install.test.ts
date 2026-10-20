@@ -170,3 +170,21 @@ Deno.test("mobile add file-transfer: an edited template is kept, an unedited one
     assertEquals(await read(dir, worker), edited);
   });
 });
+
+Deno.test("transfer templates keep request headers out of backups and drop them when finished", async () => {
+  const { TRANSFER_ANDROID_FILES, TRANSFER_IOS_FILES } = await import(
+    "../src/build/transfer-native-templates.ts"
+  );
+  const ios = Object.values(TRANSFER_IOS_FILES).join("\n");
+  // iOS: the records' folder is excluded from backup, written with file protection, and a
+  // finished record (done, cancelled, failed for good) keeps no headers.
+  assertStringIncludes(ios, "excluded.isExcludedFromBackup = true");
+  assertStringIncludes(ios, ".completeFileProtectionUntilFirstUserAuthentication");
+  assertStringIncludes(ios, "records[id]?.headers = [:]");
+  assertStringIncludes(ios, `r.state == "done" || r.state == "cancelled"`);
+  const android = Object.values(TRANSFER_ANDROID_FILES).join("\n");
+  // Android: a live record's headers live in the no-backup folder, never the preferences.
+  assertStringIncludes(android, "context.getNoBackupFilesDir()");
+  assertStringIncludes(android, `saved.remove("headers");`);
+  assertStringIncludes(android, "} else if (finished(record)) {\n            file.delete();");
+});

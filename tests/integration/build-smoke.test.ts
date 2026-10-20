@@ -220,11 +220,26 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 65_500, `shared chunks total ${sharedTotal} bytes (budget 65,500 B raw)`);
+  assert(sharedTotal < SHARED_BUDGET, budgetMessage(sharedTotal));
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
   }
+}
+
+/** The shared-chunk budget for examples/hello, in raw bytes (its history is in the comment above). */
+const SHARED_BUDGET = 65_500;
+
+/** The over-budget message: how far over, how to reproduce it, and the two ways out. */
+function budgetMessage(total: number): string {
+  return `shared chunks total ${total} bytes (budget ${SHARED_BUDGET} B raw: ${
+    total - SHARED_BUDGET + 1
+  } B over).\n` +
+    "Reproduce locally: deno task budget. See what grew: deno run -A cli.ts analyze examples/hello --md " +
+    "(it builds first).\n" +
+    "Fix: load the new code on first use (assertGatedRuntimeAbsent lists the gates) or cut that " +
+    "many bytes elsewhere; raise SHARED_BUDGET only with a dated note above assertBundleBudgets " +
+    "saying what the bytes buy.";
 }
 
 /**

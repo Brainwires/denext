@@ -131,19 +131,32 @@ function helpDirFromArgs(argv: string[], isVerb: (name: string) => boolean): str
 }
 
 /**
- * Whether this outcome has to list EVERY verb NAME, which means the project's own verbs
- * (config `commands:` + plugin `addCommand`) must be merged in before it is printed. Only the
- * shell-completion scripts do: a shell can only complete a name it was handed.
- *
- * `--help` deliberately does NOT. Discovering project verbs means importing the project's
- * `denext.config.ts` and running every plugin `setup()` — arbitrary user code, under whatever
- * permissions the CLI holds — which is far too much to ask of `denext --help`, and a `setup`
- * that leaks a handle would keep help from ever exiting. Help lists what the last
- * `denext commands` run recorded instead ({@linkcode projectHelp}), and points there when
- * there is no listing it can trust.
+ * Whether this outcome has to list EVERY verb NAME: the shell-completion scripts (a shell can only
+ * complete a name it was handed). They take the project's own verbs from the listing the last
+ * `denext commands` recorded ({@linkcode registerListedVerbs}), never by importing the project:
+ * a completion script is sourced from a shell rc file, so it runs whenever a terminal opens, in
+ * whatever directory that is — an untrusted clone included. `--help` reads the same listing.
  */
 function needsEveryCommand(outcome: ParseOutcome): boolean {
   return outcome.kind === "run" && outcome.command.name === "completions";
+}
+
+/**
+ * Add the project verbs `denext commands` last recorded in `dir` (a listing whose fingerprint
+ * still matches; names held to the verb grammar) to `registry`, for listing only: a file read,
+ * never an import of the project. A name already registered keeps its built-in verb.
+ */
+async function registerListedVerbs(registry: CommandRegistry, dir: string): Promise<void> {
+  for (const verb of await readCommandCache(dir) ?? []) {
+    if (registry.get(verb.name) !== undefined) continue;
+    registry.register({
+      name: verb.name,
+      summary: verb.summary,
+      run: () => {
+        throw new Error(`denext: ${verb.name} is listed for completion only`);
+      },
+    });
+  }
 }
 
 /** The footer `--help` prints when it has no listing it can trust. */
@@ -298,10 +311,8 @@ async function main(): Promise<void> {
   }
   const registry = buildLazyRegistry();
   const outcome = await resolveOutcome(registry);
-  // Completions enumerate the whole verb set, so they load project verbs up front — under a
-  // time budget, since a plugin's `setup` is arbitrary user code (the verb then exits, so a
-  // handle that `setup` leaked cannot keep the shell waiting).
-  if (needsEveryCommand(outcome)) await loadProjectVerbs(registry, cwdFromArgs(Deno.args));
+  // Completions enumerate the whole verb set: the project's own come from the recorded listing.
+  if (needsEveryCommand(outcome)) await registerListedVerbs(registry, cwdFromArgs(Deno.args));
 
   if (outcome.kind !== "run") {
     const isVerb = (name: string) => name === "help" || registry.get(name) !== undefined;

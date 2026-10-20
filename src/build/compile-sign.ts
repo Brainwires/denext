@@ -347,20 +347,95 @@ async function signWindows(binary: string, ctx: SignRun): Promise<CompileSignRes
   return { signed: true, detail: `Authenticode-signed (${tool}, timestamp ${timestamp})` };
 }
 
-/** osslsigncode writes a signed copy: sign into a sibling, then replace the binary with it. */
+/** How old a leftover signing directory must be before a later run sweeps it (an hour). */
+const STALE_SIGN_DIR_MS = 60 * 60 * 1000;
+
+/**
+ * Remove the signing scratch directories (`prefix*`) in `dir` a killed run left behind, once
+ * they are an hour old (a younger one may belong to a run still signing). Best-effort.
+ */
+async function sweepStaleSignDirs(dir: string, prefix: string): Promise<void> {
+  try {
+    for await (const entry of Deno.readDir(dir)) {
+      if (!entry.isDirectory || !entry.name.startsWith(prefix)) continue;
+      const path = join(dir, entry.name);
+      const { mtime } = await Deno.lstat(path);
+      if (mtime && Date.now() - mtime.getTime() > STALE_SIGN_DIR_MS) {
+        await Deno.remove(path, { recursive: true });
+      }
+    }
+  } catch { /* nothing to sweep, or not ours to read */ }
+}
+
+/** The exit code a shell reports for a process ended by `signal`. */
+const SIGNAL_EXIT: Partial<Record<Deno.Signal, number>> = {
+  SIGHUP: 129,
+  SIGINT: 130,
+  SIGTERM: 143,
+  SIGBREAK: 149,
+};
+
+/**
+ * Run `cleanup` (synchronously) and exit when the process is interrupted or terminated, until the
+ * returned function removes the listeners: a `finally` does not run when a signal ends the
+ * process.
+ */
+function cleanupOnSignal(cleanup: () => void): () => void {
+  const signals: Deno.Signal[] = Deno.build.os === "windows"
+    ? ["SIGINT", "SIGBREAK"]
+    : ["SIGINT", "SIGTERM", "SIGHUP"];
+  const added: [Deno.Signal, () => void][] = [];
+  for (const signal of signals) {
+    const listener = () => {
+      cleanup();
+      Deno.exit(SIGNAL_EXIT[signal] ?? 1);
+    };
+    try {
+      Deno.addSignalListener(signal, listener);
+      added.push([signal, listener]);
+    } catch { /* not a signal this platform delivers */ }
+  }
+  return () => {
+    for (const [signal, listener] of added) Deno.removeSignalListener(signal, listener);
+  };
+}
+
+/** Remove `path` and everything under it, now (a signal handler can't wait). */
+function removeNow(path: string | undefined): void {
+  if (path === undefined) return;
+  try {
+    Deno.removeSync(path, { recursive: true });
+  } catch { /* already gone */ }
+}
+
+/**
+ * osslsigncode writes a signed copy: sign into a sibling, then replace the binary with it. The
+ * certificate's password goes through a 0600 file in a private directory of the system's temp
+ * directory (never beside the release binary), removed when signing ends, fails or the process
+ * is interrupted; a directory a killed run left is swept by the next run.
+ */
 async function osslsign(
   binary: string,
   cert: Extract<WindowsCertificate, { kind: "pfx" }>,
   timestamp: string,
   ctx: SignRun,
 ): Promise<void> {
+  const tmp = tempDirOf();
+  await sweepStaleSignDirs(dirname(binary), ".denext-sign-");
+  if (tmp !== undefined) await sweepStaleSignDirs(tmp, "denext-sign-pass-");
   const dir = await Deno.makeTempDir({ dir: dirname(binary), prefix: ".denext-sign-" });
+  let secretDir: string | undefined;
+  const stopCleanup = cleanupOnSignal(() => {
+    removeNow(secretDir);
+    removeNow(dir);
+  });
   const signed = join(dir, "signed.exe");
-  let passFile: string | undefined;
   try {
+    let passFile: string | undefined;
     if (cert.password) {
-      passFile = join(dir, "pass");
-      await Deno.writeTextFile(passFile, cert.password, { mode: 0o600 });
+      secretDir = await Deno.makeTempDir({ prefix: "denext-sign-pass-" });
+      passFile = join(secretDir, "pass");
+      await Deno.writeTextFile(passFile, cert.password, { mode: 0o600, createNew: true });
     }
     await runOrThrow(
       ctx.run,
@@ -369,6 +444,19 @@ async function osslsign(
     );
     await Deno.rename(signed, binary);
   } finally {
+    stopCleanup();
+    if (secretDir !== undefined) await Deno.remove(secretDir, { recursive: true }).catch(() => {});
     await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+}
+
+/** The system's temp directory (where `Deno.makeTempDir()` puts one), or undefined. */
+function tempDirOf(): string | undefined {
+  try {
+    const probe = Deno.makeTempDirSync({ prefix: "denext-sign-probe-" });
+    Deno.removeSync(probe);
+    return dirname(probe);
+  } catch {
+    return undefined;
   }
 }

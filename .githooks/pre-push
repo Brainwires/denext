@@ -1,0 +1,36 @@
+#!/bin/sh
+# denext pre-push hook — `deno task precheck` before a push leaves the machine.
+#
+# It runs the checks that turned CI's `check` and `bundle-budget` jobs red most often: generated
+# files CI diffs (`deno task regen --check`), fmt + lint + type-check of the changed files, the
+# drift tests, doc-lint when a published module changed, and the shared-chunk budget when a
+# client-reachable module changed. A minute or two; the full suites stay in CI. Enable it once
+# per clone with:
+#
+#     deno task hooks:install
+#
+# Each failure prints its fix (most often: `deno task regen`, then commit the files it lists).
+set -e
+
+if command -v deno >/dev/null 2>&1; then
+  DENO=deno
+elif [ -x "$HOME/.deno/bin/deno" ]; then
+  DENO="$HOME/.deno/bin/deno"
+else
+  echo "pre-push: deno not found. Install it (https://deno.com) or add ~/.deno/bin to PATH." >&2
+  exit 1
+fi
+
+# Only a branch push is checked: a tag (the release script pushes one for a commit CI already
+# passed) or a branch deletion carries nothing new.
+pushes_commits=0
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_ref:$local_sha" in
+    refs/tags/*) ;;
+    *:0000000000000000000000000000000000000000) ;;
+    *) pushes_commits=1 ;;
+  esac
+done
+[ "$pushes_commits" = 1 ] || exit 0
+
+"$DENO" task precheck

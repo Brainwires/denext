@@ -4,7 +4,7 @@
 // One test signs a real Mach-O ad-hoc with the real codesign on a Mac.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   macosCodesignArgs,
   notaryCredentials,
@@ -405,9 +405,11 @@ Deno.test("signCompiledBinary (Windows, osslsigncode): the password goes through
   const { dir, bin } = await fixture();
   try {
     let passSeen = "";
+    let passPath = "";
     let mode = 0;
     const { calls, run } = recorder((cmd) => {
       const pass = cmd[cmd.indexOf("-readpass") + 1];
+      passPath = pass;
       passSeen = Deno.readTextFileSync(pass);
       mode = Deno.statSync(pass).mode! & 0o777;
       Deno.writeTextFileSync(cmd[cmd.indexOf("-out") + 1], "signed");
@@ -434,9 +436,103 @@ Deno.test("signCompiledBinary (Windows, osslsigncode): the password goes through
       "Authenticode-signed (osslsigncode, timestamp http://ts.example)",
     );
     for await (const e of Deno.readDir(dir)) assertEquals(e.name, "app", "no scratch left");
+    // The password file is never beside the release binary, and is gone once signing ends.
+    assert(!passPath.startsWith(dir), `the password file sat beside the binary: ${passPath}`);
+    await assertRejects(() => Deno.stat(passPath), Deno.errors.NotFound);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/** Sign `bin` with osslsigncode through `run` (a .pfx with a password). */
+function osslsignWith(dir: string, bin: string, run: ReturnType<typeof recorder>["run"]) {
+  return signCompiledBinary(bin, { explicit: true, config: {}, target: WIN, projectDir: dir }, {
+    run,
+    os: "linux",
+    has: (c) => Promise.resolve(c === "osslsigncode"),
+    env: envOf({ DENEXT_WINDOWS_CERT: "/c/app.pfx", DENEXT_WINDOWS_CERT_PASSWORD: "s3cret" }),
+  });
+}
+
+Deno.test("signCompiledBinary (osslsigncode): a signing dir a killed run left is swept", async () => {
+  const { dir, bin } = await fixture();
+  try {
+    const stale = join(dir, ".denext-sign-old");
+    const fresh = join(dir, ".denext-sign-new");
+    for (const d of [stale, fresh]) {
+      await Deno.mkdir(d);
+      await Deno.writeTextFile(join(d, "pass"), "old-secret");
+    }
+    const hourAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await Deno.utime(stale, hourAgo, hourAgo);
+    const { run } = recorder((cmd) => Deno.writeTextFileSync(cmd[cmd.indexOf("-out") + 1], "s"));
+    await osslsignWith(dir, bin, run);
+    await assertRejects(() => Deno.stat(stale), Deno.errors.NotFound);
+    assert((await Deno.stat(fresh)).isDirectory, "a recent one may be a run still signing");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "signCompiledBinary (osslsigncode): an interrupted signing leaves no password file",
+  ignore: Deno.build.os === "windows",
+  async fn() {
+    const { dir, bin } = await fixture();
+    try {
+      const ready = join(dir, "ready.json");
+      const script = join(dir, "sign.ts");
+      const mod = new URL("../src/build/compile-sign.ts", import.meta.url).href;
+      await Deno.writeTextFile(
+        script,
+        `import { signCompiledBinary } from ${JSON.stringify(mod)};
+await signCompiledBinary(${JSON.stringify(bin)}, {
+  explicit: true, config: {}, target: ${JSON.stringify(WIN)}, projectDir: ${JSON.stringify(dir)},
+}, {
+  os: "linux",
+  has: (c) => Promise.resolve(c === "osslsigncode"),
+  env: (k) => ({ DENEXT_WINDOWS_CERT: "/c/app.pfx", DENEXT_WINDOWS_CERT_PASSWORD: "s3cret" })[k],
+  run: (cmd) => {
+    Deno.writeTextFileSync(${JSON.stringify(ready)}, JSON.stringify(cmd));
+    return new Promise(() => {}); // osslsigncode still running when the signal comes
+  },
+});
+`,
+      );
+      const child = new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "-A",
+          "--no-check",
+          "--config",
+          fromFileUrl(new URL("../deno.json", import.meta.url)),
+          script,
+        ],
+        stdout: "null",
+        stderr: "null",
+      }).spawn();
+      let cmd: string[] | null = null;
+      for (let i = 0; i < 300 && cmd === null; i++) {
+        try {
+          cmd = JSON.parse(await Deno.readTextFile(ready));
+        } catch {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      assert(cmd !== null, "the signing step started");
+      const pass = cmd[cmd.indexOf("-readpass") + 1];
+      assertEquals(await Deno.readTextFile(pass), "s3cret");
+      child.kill("SIGINT");
+      const { code } = await child.status;
+      assertEquals(code, 130);
+      await assertRejects(() => Deno.stat(pass), Deno.errors.NotFound);
+      for await (const e of Deno.readDir(dir)) {
+        assert(!e.name.startsWith(".denext-sign-"), `${e.name} was left beside the binary`);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
 
 Deno.test("signCompiledBinary (Windows, signtool): a failure's message has the password redacted", async () => {

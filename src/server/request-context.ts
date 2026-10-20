@@ -10,7 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // Side effect first: snapshot the root async context at startup, before any request runs.
 import "./root-context.ts";
 import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
-import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
+import { isPrerendering, postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
 import { type CacheScopeKind, currentCacheScope, currentCacheScopeKind } from "./cache-scope.ts";
@@ -386,6 +386,18 @@ export interface RequestContext {
    */
   trackParamReads?: boolean;
   /**
+   * The `searchParams` names the narrowed ISR key keeps (`cacheKeyParams`), set with
+   * {@link trackParamReads}. A read of any other name while a Cache Components shell
+   * prerenders postpones (see {@link trackSearchParamReads}).
+   */
+  keyedParams?: ReadonlySet<string>;
+  /**
+   * Set when a prerender read a `searchParams` name outside {@link keyedParams} without
+   * postponing (inside a `use cache` body): the shell embeds a value its key does not
+   * carry, so it must not be stored.
+   */
+  unkeyedShellRead?: boolean;
+  /**
    * The `searchParams` names read during this render, recorded only while
    * {@link trackParamReads} is set. The page cache dev-warns
    * ({@link warnUnkeyedParamReads}) if a whole-body-cached render read a name the
@@ -416,15 +428,15 @@ function isDev(): boolean {
 export function trackSearchParamReads(searchParams: URLSearchParams): URLSearchParams {
   const ctx = storage.getStore();
   if (!ctx?.trackParamReads) return searchParams;
-  const reads = (ctx.paramReads ??= new Set<string>());
+  const record = (name: string) => noteParamRead(ctx, name);
   const recordAll = () => {
-    for (const name of searchParams.keys()) reads.add(name);
+    for (const name of searchParams.keys()) record(name);
   };
   return new Proxy(searchParams, {
     get(target, prop) {
       if (prop === "get" || prop === "getAll" || prop === "has") {
         return (name: string, ...rest: unknown[]) => {
-          reads.add(name);
+          record(String(name));
           return (target[prop] as (...a: unknown[]) => unknown).call(target, name, ...rest);
         };
       }
@@ -441,13 +453,27 @@ export function trackSearchParamReads(searchParams: URLSearchParams): URLSearchP
 }
 
 /**
+ * Record a read of the `searchParams` name `name`. While a Cache Components shell prerenders, a
+ * name the narrowed key drops is a request-time value, as `searchParams` is in Next: the read
+ * postpones, so the enclosing Suspense boundary becomes a per-request hole (with none above it,
+ * the page is not prerendered at all). Inside a `use cache` body (postponing suppressed) the
+ * value would land in the shell, so the shell is marked unstorable instead.
+ */
+function noteParamRead(ctx: RequestContext, name: string): void {
+  (ctx.paramReads ??= new Set<string>()).add(name);
+  const keyed = ctx.keyedParams;
+  if (!keyed || keyed.has(name) || !isPrerendering()) return;
+  if (shouldPostpone()) postponeDynamic(`searchParams.${name}`);
+  ctx.unkeyedShellRead = true;
+}
+
+/**
  * Detect whether a page cached as a whole body under a NARROWED ISR key
  * (`cacheKeyParams`) read a `searchParams` name that the narrowed key ignores. Such
  * a value is baked into the shared cached render and would be served to other
- * requests — the one genuine Cache-Components correctness edge. Called only from the
- * no-hole store sites, where the entire body is cached and any non-allowlisted read
- * unambiguously bleeds (a with-holes PPR shell can escape the read into a per-request
- * hole, so those sites rely on the documented boundary instead).
+ * requests. Called from the no-hole store sites, where the entire body is cached and any
+ * non-allowlisted read unambiguously bleeds; a PPR shell prerender postpones on such a read
+ * instead (see `noteParamRead`), and this reports the reads that could not be held out of it.
  *
  * Returns `true` when such a leak occurred, so the caller **refuses to store** the
  * render (fail-safe in every environment — a per-request value must never be shared);

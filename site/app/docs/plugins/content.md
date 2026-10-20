@@ -350,8 +350,9 @@ asked for by name, so a config import slowed by a cold cache or a busy machine m
 `denext --help` deliberately does **not** enumerate them: help must not evaluate your
 project. Inside a project it prints a single line pointing at `denext commands` (and noting
 that the verbs are in shell completions too), and stops.
-`denext completions bash|zsh|fish` still merges them in under the same budget (a shell can
-only complete a name it was handed) and then exits for the same reason. The
+`denext completions bash|zsh|fish` completes the verbs `denext commands` last listed, and never
+imports the project either: a completion script is sourced from a shell rc file, so it runs
+whenever a terminal opens, an untrusted clone included. The
 `denext ui` Commands panel shells out to `denext commands --json` rather than importing
 anything itself.
 

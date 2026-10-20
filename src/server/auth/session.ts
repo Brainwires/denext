@@ -146,8 +146,22 @@ function forgetStoredUser(userId: string): void {
 }
 
 /**
+ * A `sessionsValidAfter` at or above this is epoch milliseconds (what {@linkcode endUserSessions}
+ * stamps); below it, epoch seconds (a stamp an earlier denext, or `denext db` admin, wrote).
+ */
+const MS_STAMP = 1e11;
+
+/** A `sessionsValidAfter` in epoch milliseconds, whichever unit it was written in. */
+function stampMs(validAfter: number): number {
+  return validAfter >= MS_STAMP ? validAfter : validAfter * 1000;
+}
+
+/**
  * Whether the user ended this session: it signed in (`authTime`, else its issue time) before
- * the user's `sessionsValidAfter`, to the second.
+ * the user's `sessionsValidAfter`. A millisecond stamp is compared to the millisecond sign-in
+ * time (`authTimeMs`; a session without one counts as signed in at the start of its second), so
+ * a session started in the same second as the revocation, but before it, is ended too; a stamp
+ * in seconds compares to the second.
  *
  * @param user The stored user.
  * @param session The session.
@@ -157,26 +171,29 @@ export function endedByUser(user: AdapterUser, session: AuthSession): boolean {
   const validAfter = user.sessionsValidAfter;
   if (typeof validAfter !== "number") return false;
   const signedIn = session.authTime ?? session.issuedAt;
-  return typeof signedIn !== "number" || signedIn < validAfter;
+  if (typeof signedIn !== "number") return true;
+  if (validAfter < MS_STAMP) return signedIn < validAfter;
+  return (session.authTimeMs ?? signedIn * 1000) < validAfter;
 }
 
 /**
  * End every cookie session of `userId` signed in before now — stateless ones included — by
- * stamping the stored user's `sessionsValidAfter` (never moved back). A user that no longer
- * exists is left alone.
+ * stamping the stored user's `sessionsValidAfter`, in epoch milliseconds (never moved back). A
+ * user that no longer exists is left alone.
  *
  * @param adapter The adapter (its `getUser` / `updateUser`).
  * @param userId The user.
- * @param nowSeconds The clock, epoch seconds.
+ * @param nowMs The clock, epoch milliseconds.
  */
 export async function endUserSessions(
   adapter: Pick<AuthAdapter, "getUser" | "updateUser">,
   userId: string,
-  nowSeconds: number = Math.floor(Date.now() / 1000),
+  nowMs: number = Date.now(),
 ): Promise<void> {
   const user = await adapter.getUser(userId);
   if (!user) return;
-  const at = Math.max(nowSeconds, user.sessionsValidAfter ?? 0);
+  const previous = user.sessionsValidAfter;
+  const at = Math.max(nowMs, typeof previous === "number" ? stampMs(previous) : 0);
   if (at !== user.sessionsValidAfter) {
     await adapter.updateUser({ id: userId, sessionsValidAfter: at });
   }
@@ -279,6 +296,7 @@ function sealOwnedFields(result: AuthSession, minted: AuthSession): AuthSession 
     v: minted.v,
     issuedAt: minted.issuedAt,
     authTime: minted.authTime,
+    authTimeMs: minted.authTimeMs,
     expiresAt: minted.mfaPending ? Math.min(expiresAt, minted.expiresAt) : expiresAt,
   };
   if (pending) sealed.mfaPending = true;
@@ -305,12 +323,17 @@ export async function buildSessionPayload(
   config: AuthConfig,
   user: AuthUser,
   provider: string,
-  issue: IssueAuthSessionOptions & { authTime?: number } = {},
+  issue: IssueAuthSessionOptions & { authTime?: number; authTimeMs?: number } = {},
 ): Promise<AuthSession> {
   const { maxAge, maxLifetime } = resolveAuthOptions(config);
-  const now = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+  const now = Math.floor(nowMs / 1000);
   const lifetime = Math.min(maxAge, issue.lifetime ?? maxAge);
   const authTime = issue.authTime ?? now;
+  // A carried-over `authTime` without its milliseconds counts from the start of its second.
+  const authTimeMs = issue.authTime === undefined
+    ? nowMs
+    : issue.authTimeMs ?? issue.authTime * 1000;
   // A carried-over `authTime` (a native exchange from a web session) brings its ceiling along.
   const ceiling = authTime + maxLifetime;
   let payload: AuthSession = {
@@ -320,6 +343,7 @@ export async function buildSessionPayload(
     v: 2,
     issuedAt: now,
     authTime,
+    authTimeMs,
   };
   if (issue.mfaPending) payload.mfaPending = true;
   if (issue.amr?.length) payload.amr = [...issue.amr];

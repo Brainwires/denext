@@ -45,6 +45,7 @@ import {
   type SecureRunner,
   secureStoreCapability,
   secureStoreCommand,
+  writeRejected,
 } from "../src/desktop/caps/secure-store.ts";
 import { passkeysCapability } from "../src/desktop/caps/passkeys.ts";
 import { clipboardCapability } from "../src/desktop/caps/clipboard.ts";
@@ -2070,6 +2071,34 @@ Deno.test("secureStore: an empty or foreign value reads as absent; a non-string 
   assertEquals(await call(cap, "delete", { key: "k" }), { ok: true }, "delete is idempotent");
 });
 
+Deno.test("secureStore (Windows): a refused write is tried once more; a second refusal names only the HRESULT", async () => {
+  const codes = [1, 0];
+  let sets = 0;
+  const stderr = 'Exception 0x80070490: Element not found. Input: {"value":"c2VjcmV0"}';
+  const cap = secureStoreCapability({
+    service: "svc",
+    os: "windows",
+    run: () => {
+      sets++; // a Windows write runs the script once per try, with no read-back
+      const code = codes.shift() ?? 1;
+      return Promise.resolve({ code, stdout: "", stderr: code ? stderr : "" });
+    },
+  });
+  // The first write is refused (a fresh profile's vault still starting), the retry lands.
+  assertEquals(await call(cap, "set", { key: "k", value: "secret" }), { ok: true });
+  assertEquals(sets, 2);
+  // Refused twice: store_failed, with the Windows code and nothing else from stderr.
+  const err = await call(cap, "set", { key: "k", value: "secret" }).then(
+    () => undefined,
+    (e: DesktopCapError) => e,
+  );
+  assertEquals(err?.code, "store_failed");
+  assertEquals(err?.message, "the secure store rejected the write (0x80070490)");
+  assertEquals(err?.data, { hresult: "0x80070490" });
+  assert(!err?.message.includes("c2VjcmV0"), "no stderr text beyond the code");
+  assertEquals(writeRejected("no code here").message, "the secure store rejected the write");
+});
+
 Deno.test({
   name: "runSecureCli: feeds stdin, captures stdout; a missing backend is `backend_unavailable`",
   ignore: OS === "windows",
@@ -2483,3 +2512,63 @@ async function until(check: () => Promise<boolean>, ms = 3000): Promise<void> {
     await new Promise((r) => setTimeout(r, 5));
   }
 }
+
+Deno.test("fs.download: no custom headers to a private-network host; error bodies only with read scope", async () => {
+  const asked: string[] = [];
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-dl-lan-" });
+  const fakeFetch = ((u: unknown) => {
+    asked.push(String(u));
+    return Promise.resolve(new Response("admin secrets", { status: 401 }));
+  }) as typeof fetch;
+  const capWith = (read: Set<string>, resolved: string[]) =>
+    fsCapability({
+      dirs: { data: root, cache: root, documents: root },
+      read,
+      write: new Set(["$APPDATA"]),
+      downloadTimeoutMs: 5_000,
+      resolveHost: () => Promise.resolve(resolved),
+      fetch: fakeFetch,
+    });
+  try {
+    const lan = capWith(new Set(["$APPDATA"]), ["192.168.1.1"]);
+    for (
+      const url of [
+        "http://192.168.1.1/api",
+        "http://10.0.0.7/api",
+        "http://172.20.0.1/api",
+        "http://[fd00::1]/api",
+        "http://router.lan.test/api", // resolves to 192.168.1.1
+      ]
+    ) {
+      const err = await assertRejects(
+        () =>
+          call(lan, "download", {
+            url,
+            path: "x",
+            directory: "data",
+            headers: { Authorization: "Basic YWRtaW46YWRtaW4=" },
+          }),
+        DesktopCapError,
+      );
+      assertStringIncludes(err.message, "private-network", url);
+    }
+    assertEquals(asked, [], "no request with the page's credentials reached the LAN host");
+    // A plain download from the LAN still works (a desktop app reads its local network).
+    const plain = await assertRejects(
+      () => call(lan, "download", { url: "http://192.168.1.1/f", path: "f", directory: "data" }),
+      DesktopCapError,
+    );
+    assertEquals((plain.data as { body?: string }).body, "admin secrets", "read scope: body kept");
+    // Without read access to the target directory the page gets the status, not the body.
+    const writeOnly = capWith(new Set(), ["93.184.216.34"]);
+    const err = await assertRejects(
+      () =>
+        call(writeOnly, "download", { url: "https://files.test/x", path: "x", directory: "data" }),
+      DesktopCapError,
+    );
+    assertEquals(err.code, "download_failed");
+    assertEquals(err.data as { status: number; body?: string }, { status: 401 });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

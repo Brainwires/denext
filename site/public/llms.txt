@@ -6,6 +6,21 @@
 > same file conventions, hooks, and `app/` router — and existing npm packages work. This file
 > helps AI tools emit correct denext instead of Next.js.
 
+## One install, no toolchain to assemble
+
+- Install the `denext` command (`curl -fsSL https://denext.dev/install.sh | sh`, or
+  `irm https://denext.dev/install.ps1 | iex` on Windows), then `denext create my-app`. Nothing
+  else to install or configure: no Node version manager, bundler, test-runner, linter, formatter
+  or tsconfig setup.
+- Every other tool is pinned to the denext release and fetched on first need: denext's Deno build
+  (`Deno.SQL`, Vitest/Jest compatibility in `deno test`, native TypeScript 7 checking,
+  SHA-256-verified into `<DENO_DIR>/denext-deno/`), esbuild 0.25.5, `denort` for
+  `denext build --compile`, the Gleam compiler and a managed fastlane (pinned portable Ruby,
+  checksum-locked gems; macOS and Linux, a C compiler once). Lightning CSS and swc are denext's own
+  wasm packages; SQLite (`node:sqlite`), Postgres (`Deno.SQL`) and Redis need no driver.
+- Agents: don't spend turns assembling a build. `denext toolchain install --with gleam,fastlane`
+  prefetches everything for offline work; `denext toolchain status` shows what is cached.
+
 ## What differs from Next.js (read first)
 
 - Imports come from `denext`, not `react` — `import { useState } from "denext"`. There is

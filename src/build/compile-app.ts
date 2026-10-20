@@ -7,16 +7,21 @@
 // - the project's server modules (`app/`, the root config, middleware and instrumentation,
 //   `jobs/`, `services/`, `functions/`) — each embedded directory's modules join the compiled module graph, so
 //   their imports (the framework, `jsr:` / `npm:` packages) are embedded too;
-// - the build (`.denext/`: the client bundles, the manifest, the server copies — relocatable, so
-//   they import the embedded project by relative paths), `public/` and the migrations;
+// - the build's outputs (an allow-list of `.denext/` entries, {@linkcode BUILD_OUTPUTS}: the client
+//   bundles, the manifest, the server copies — relocatable, so they import the embedded project by
+//   relative paths — and the first-party plugins' outputs), `public/` and the migrations. The rest
+//   of `.denext/` is development and run-time state (stack backups, the backend's dev keys, the
+//   codebase index, dev-server state) and is never embedded; an entry the list doesn't know is
+//   named in the result's `skipped`, and `compile.include` can add it;
 // - `compile.include` paths.
 //
 // The stylesheet imports need no import map at run time: every module that reaches one is served
 // through its server copy, which imports the stylesheet's JS shim instead (./server-copies.ts).
 // The compile still resolves the CSS import map, so the original modules' graph resolves.
 //
-// Never embedded: `.env*` files and SQLite databases (the binary reads its environment and writes
-// its state in the working directory at run time). The `--allow-*` baked in are the Docker image's
+// Never embedded, wherever they are (`compile.include` too): `.env*` files, SQLite databases,
+// database dumps and the backend's dev key file (the binary reads its environment and writes its
+// state in the working directory at run time). The `--allow-*` baked in are the Docker image's
 // least-privilege set plus `compile.permissions` ({@linkcode compileBuildFlags}); `--allow-all`
 // only when the app opts in.
 
@@ -77,6 +82,11 @@ export interface CompileAppResult {
   permissions: string[];
   /** The signing step's outcome, when signing was asked for. */
   signing?: CompileSignResult;
+  /**
+   * The build directory's entries left out because they are not known build outputs (add one
+   * with `compile.include` when the server reads it at run time).
+   */
+  skipped: string[];
 }
 
 /** Where the generated entry and config live, under the out dir. */
@@ -107,6 +117,76 @@ const EMBEDDED_FILES = [
   "content.config.ts",
 ];
 
+/**
+ * The build directory's entries the binary may need at run time — the only ones embedded. Build
+ * outputs of the framework (bundles, the manifest, server copies, transformed modules, generated
+ * modules an app may import) and of the first-party plugins.
+ */
+const BUILD_OUTPUTS: ReadonlySet<string> = new Set([
+  "manifest.json",
+  "deploy-manifest.json",
+  "client",
+  "client-runtime",
+  "server",
+  "server-copies",
+  "next-compat",
+  "compile",
+  "compiled",
+  "asyncctx",
+  "qrl",
+  "features",
+  "platform-imports",
+  "iso-islands",
+  "css-shims",
+  "emitted",
+  "pages-client",
+  "pages-static",
+  // Generated modules an app imports (`import "../.denext/content.ts"`, the Lustre kits).
+  "api.ts",
+  "routes.ts",
+  "rest.ts",
+  "content.ts",
+  "lustre.ts",
+  "lustre-server.ts",
+  "lustre-view.ts",
+  "lustre",
+  // First-party plugins: content collections, React Router, TanStack Start, OpenAPI, GraphQL.
+  "content-data.json",
+  "content",
+  "react-router",
+  "tanstack-start",
+  "openapi.json",
+  "schema.graphql",
+]);
+
+/**
+ * Build-dir entries known NOT to be build outputs — development, tooling and run-time state — left
+ * out without a mention (an entry neither here nor in {@linkcode BUILD_OUTPUTS} is reported).
+ */
+const KNOWN_STATE: ReadonlySet<string> = new Set([
+  "backups", // `denext stack backup`'s database dumps
+  "rag", // the MCP codebase index
+  "dev.json",
+  "dev-unbundled",
+  "refresh",
+  "commands.json",
+  "notices.json",
+  "services.json",
+  "mobile-dev-backup.json",
+  "mobile-build",
+  "deploy",
+  "deno-dir",
+  "deno.lock",
+  "bin",
+  "export",
+  "tanstack-start-export",
+  ".client.staging",
+  "typescript-check",
+  "analyze-meta.json",
+  "app-config.pre-css.json",
+  "desktop-preload.dev.js",
+]);
+
 /** Build-dir entries that are run-time state or build scratch, never embedded. */
 const BUILD_DIR_EXCLUDES = [
   // The npm tree Deno creates beside the build's CSS config (`nodeModulesDir`): the compile
@@ -122,12 +202,37 @@ const BUILD_DIR_EXCLUDES = [
 
 /**
  * A file that must never be embedded: an env file (secrets), a SQLite database or its journal
- * (data, and it may hold sessions), or a lock.
+ * (data, and it may hold sessions), a database dump (`denext stack backup`'s `.dump` and full
+ * `.tar.gz` backups), the backend's dev key file (its secret and signing keys), or a lock.
  */
 export function neverEmbedded(name: string): boolean {
   return /^\.env(\..+)?$/.test(name) ||
     /\.(db|sqlite|sqlite3)(-wal|-shm|-journal)?$/i.test(name) ||
+    /\.dump$/i.test(name) || /^stack-.*\.tar\.gz$/i.test(name) ||
+    name === "backend-keys.json" ||
     name.startsWith(".denext-lock");
+}
+
+/**
+ * The build directory's entries to embed (the {@linkcode BUILD_OUTPUTS} present) and the ones
+ * left out, project-relative and by name.
+ */
+async function buildDirEntries(
+  outDir: string,
+  rel: (p: string) => string,
+): Promise<{ embedded: string[]; skipped: string[] }> {
+  const embedded: string[] = [];
+  const skipped: string[] = [];
+  for await (const entry of Deno.readDir(outDir)) {
+    if (BUILD_OUTPUTS.has(entry.name)) embedded.push(rel(join(outDir, entry.name)));
+    else if (
+      !BUILD_DIR_EXCLUDES.includes(entry.name) && !KNOWN_STATE.has(entry.name) &&
+      !neverEmbedded(entry.name)
+    ) {
+      skipped.push(entry.name);
+    }
+  }
+  return { embedded: embedded.sort(), skipped: skipped.sort() };
 }
 
 /**
@@ -324,12 +429,16 @@ export function relativeCssRedirects(
   return out;
 }
 
-/** The project-relative paths to embed (those that exist). */
-async function embeddedPaths(paths: ProjectPaths, compile: CompileConfig | undefined) {
+/** The project-relative paths to embed (those that exist), and the build entries left out. */
+async function embeddedPaths(
+  paths: ProjectPaths,
+  compile: CompileConfig | undefined,
+): Promise<{ included: string[]; skipped: string[] }> {
   const rel = (p: string) => relative(paths.projectDir, p).replaceAll("\\", "/");
+  const build = await buildDirEntries(paths.outDir, rel);
   const candidates = [
     rel(paths.appDir),
-    rel(paths.outDir),
+    ...build.embedded,
     ...EMBEDDED_DIRS,
     ...EMBEDDED_FILES,
     ...[paths.middlewarePath, paths.instrumentationPath].filter((p): p is string => !!p).map(rel),
@@ -342,7 +451,7 @@ async function embeddedPaths(paths: ProjectPaths, compile: CompileConfig | undef
   if (paths.publicDir && !out.includes(rel(paths.publicDir))) {
     if (await exists(paths.publicDir)) out.push(rel(paths.publicDir));
   }
-  return out;
+  return { included: out, skipped: build.skipped };
 }
 
 /** The project-relative paths under `included` that must not be embedded. */
@@ -433,7 +542,7 @@ export async function compileApp(
   const entryUrl = toFileUrl(entry).href;
   await Deno.writeTextFile(entry, entrySource(entryUrl, toFileUrl(paths.projectDir + "/").href));
   const config = await writeCompileConfig(paths, dir);
-  const included = await embeddedPaths(paths, compile);
+  const { included, skipped } = await embeddedPaths(paths, compile);
   const excluded = await excludedPaths(paths, included, output);
   const permissions = compileBuildFlags(compile);
   await Deno.mkdir(dirname(output), { recursive: true });
@@ -465,5 +574,5 @@ export async function compileApp(
   }).output();
   if (code !== 0) throw new Error(`deno compile failed (exit ${code})`);
   const signing = await signOutput(output, paths.projectDir, compile, permissions, options);
-  return { output, permissions, signing };
+  return { output, permissions, signing, skipped };
 }

@@ -7,12 +7,11 @@
 //   zsh:   denext completions zsh > "${fpath[1]}/_denext"
 //   fish:  denext completions fish > ~/.config/fish/completions/denext.fish
 //
-// Completions are the one listing that still discovers the PROJECT's verbs eagerly (a shell
-// can only complete a name it was given), so `cli.ts` merges them in first, under the
-// {@link COMMAND_LOAD_BUDGET_MS} budget — a plugin `setup` that hangs costs 1.5 s and the
-// script is emitted without that project's verbs. Because that same `setup` is arbitrary user
-// code that may leave a timer or a watcher open, this verb always `Deno.exit`s once the script
-// is on stdout: a leaked handle must never keep the shell's completion call alive.
+// The project's own verbs are the ones the last `denext commands` recorded (`.denext/commands.json`,
+// trusted only while the files it read are unchanged), merged in by `cli.ts` without importing
+// the project: a completion script is sourced from a shell rc file, so it runs whenever a
+// terminal opens — in an untrusted clone too — and must never run the project's config or a
+// plugin's `setup`. Run `denext commands` once in a project to complete its verbs.
 //
 // The Deno verbs the CLI forwards (`denext compile`, `denext x`, …) are listed too, after the
 // denext and project verbs, with Deno's own summaries: a name a denext or project verb already
@@ -148,7 +147,8 @@ export function makeCompletionsCommand(reg: CommandRegistry): CommandSpec {
   return {
     name: "completions",
     summary: "Print a shell completion script (bash|zsh|fish)",
-    usage: "Completes denext's verbs, the project's own and the Deno verbs denext forwards.\n" +
+    usage: "Completes denext's verbs, the Deno verbs denext forwards and the project's own as\n" +
+      "`denext commands` last listed them (it never imports the project's config).\n" +
       "Deno's own completion script (`deno completions`): `denext deno completions <shell>`.",
     positionals: [{ name: "shell", help: "bash | zsh | fish", required: true }],
     run: (ctx) => {
@@ -161,8 +161,6 @@ export function makeCompletionsCommand(reg: CommandRegistry): CommandSpec {
         Deno.exit(1);
       }
       console.log(script(reg));
-      // Eager project-verb discovery ran a plugin `setup`; exit rather than wait on whatever
-      // handle it may have left open (see the module header).
       Deno.exit(0);
     },
   };

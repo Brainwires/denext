@@ -57,6 +57,83 @@ interface Card {
   link?: { href: string; label: string };
 }
 
+const INSTALL = `# 1. Install denext (Windows: irm https://denext.dev/install.ps1 | iex)
+curl -fsSL https://denext.dev/install.sh | sh
+
+# 2. Create an app
+denext create my-app
+
+# That's the setup. Run it:
+cd my-app && denext task dev`;
+
+/** The pieces a JavaScript project usually assembles, configures and keeps in step by hand. */
+const HAND_ASSEMBLED = [
+  "A runtime, plus a version manager to keep it in step",
+  "A package manager, its lockfile and peer-dependency conflicts",
+  "A TypeScript compiler and a tsconfig",
+  "A bundler and its config",
+  "A test runner, its config and its mocking setup",
+  "A linter, a formatter and a config for each",
+  "A CSS pipeline: PostCSS, Tailwind and their plugins",
+  "A JSX transpiler and its presets",
+  "Database drivers for SQLite, Postgres and Redis",
+  "Ruby, Bundler and fastlane for store builds",
+  "Another runtime to ship a single executable",
+];
+
+const ARRIVES: Card[] = [
+  {
+    title: "Deno, denext's build",
+    body:
+      "Stock Deno plus Deno.SQL and Vitest/Jest compatibility in deno test, for macOS, Linux and Windows on x64 and arm64. A deno you already have is never replaced.",
+  },
+  {
+    title: "TypeScript 7 type checking",
+    body:
+      "The native TypeScript 7 compiler ships with the toolchain and checks denext check, the dev overlay and denext test. No compiler to install, no tsconfig to write.",
+  },
+  {
+    title: "esbuild 0.25.5",
+    body:
+      "The bundler binary ships in the toolchain and is hash-checked; its JavaScript API is vendored into denext, so there is no npm:esbuild to install.",
+  },
+  {
+    title: "Format, lint and test",
+    body:
+      "Deno's formatter, linter and test runner work with no config file, and denext test speaks Vitest's API: vi.mock, fake timers, vi.stubEnv.",
+  },
+  {
+    title: "CSS and source transforms",
+    body:
+      "Lightning CSS and swc run in-process as denext's own wasm packages from JSR. Set tailwind: { input, output } and denext fetches Tailwind v4's standalone binary itself.",
+  },
+  {
+    title: "denort for single executables",
+    body:
+      "denext build --compile builds onto the toolchain's own pinned denort, so one binary carries the same runtime, Deno.SQL included.",
+  },
+  {
+    title: "Databases, no drivers",
+    body:
+      "SQLite through Deno's built-in node:sqlite, Postgres through Deno.SQL, and denext's zero-npm Redis client.",
+  },
+  {
+    title: "The Gleam compiler",
+    body:
+      "Pinned and fetched the first time denext add gleam: or the gleam() plugin needs it. Gleam's JavaScript target needs no Erlang.",
+  },
+  {
+    title: "Managed fastlane",
+    body:
+      "A pinned fastlane on a pinned portable Ruby, with checksum-locked gems, for store builds. macOS and Linux; the first install needs a C compiler.",
+  },
+  {
+    title: "Offline, and tidy",
+    body:
+      "denext toolchain install --with gleam,fastlane fetches everything ahead of time; toolchain status shows what's cached, and uninstall and prune reclaim the space.",
+  },
+];
+
 interface Pillar {
   id: string;
   title: string;
@@ -225,6 +302,68 @@ export default function Landing() {
           <a class="btn" href="/docs/mobile">Mobile</a>
         </div>
         <Code lang="tsx">{SAMPLE}</Code>
+      </section>
+
+      <section id="toolchain" class="pillar toolchain">
+        <div class="pillar-head">
+          <h2>
+            One install. The whole toolchain <span class="accent">arrives on its own</span>.
+          </h2>
+          <p>
+            Deno already gives you a runtime, TypeScript, a formatter, a linter and a test runner in
+            one binary. denext completes the picture for full apps on the web, the phone and the
+            desktop: every other tool a build needs is pinned to your denext release and fetched the
+            first time a command needs it. Nothing to assemble, nothing to configure, nothing to
+            drift.
+          </p>
+        </div>
+        <div class="compare">
+          <div class="compare-col">
+            <h3>The stack you usually assemble by hand</h3>
+            <ul class="compare-list">
+              {HAND_ASSEMBLED.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+            <p class="compare-note">
+              Each one installed, configured and kept compatible with the rest, on every machine and
+              in CI.
+            </p>
+          </div>
+          <div class="compare-col denext-way">
+            <h3>The denext way</h3>
+            <Code lang="sh">{INSTALL}</Code>
+            <p class="compare-note">
+              The installer fetches denext&apos;s Deno toolchain; everything else follows on first
+              use. npm: and jsr: libraries work as usual, and a package.json project brought over
+              from Node.js resolves its packages as Node.js does.
+            </p>
+          </div>
+        </div>
+        <div class="pillar-head">
+          <p>
+            What arrives by itself, pinned to your denext release. The Deno toolchain, esbuild,
+            TypeScript 7, denort, Gleam and fastlane&apos;s Ruby and gems are checked against a
+            SHA-256 pin before they run.
+          </p>
+        </div>
+        <div class="features compact">
+          {ARRIVES.map((f) => (
+            <div key={f.title} class="feature">
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </div>
+          ))}
+        </div>
+        <div class="pillar-head toolchain-agents">
+          <p>
+            <strong>Cheaper for people and for AI agents.</strong>{" "}
+            Setup is hours a person never gets back, and for an agent it is compute and tokens spent
+            on version conflicts and config files. With denext, both spend them on your app instead
+            of on wiring a build.
+          </p>
+        </div>
+        <p class="pillar-link">
+          <a href="/docs/toolchain">How the toolchain is pinned and verified →</a>
+        </p>
       </section>
 
       {PILLARS.map((p) => (

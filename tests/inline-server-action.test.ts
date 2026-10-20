@@ -18,7 +18,9 @@ import {
 import { generateServerStub } from "../src/build/client-imports.ts";
 import { serverStubPlugin, stopNextCompat } from "../src/build/next-compat.ts";
 import { build } from "../src/build/build.ts";
-import { isServerAction } from "../src/runtime/server-action.ts";
+import { ACTION_PREFIX, getServerAction, isServerAction } from "../src/runtime/server-action.ts";
+import { resolveAction } from "../src/server/action-handler.ts";
+import { sealBoundValues } from "../src/server/action-bound.ts";
 
 const MOD = "file:///app/page.tsx";
 
@@ -244,6 +246,42 @@ Deno.test({
     assertStringIncludes(err.message, "app/widget.tsx:3:3");
   } finally {
     await stopNextCompat();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a capturing inline action can't be called through its plain id with forged values", async () => {
+  // The audit's proof: the page's form carries `<id>.<token>`; a POST to the plain `<id>` with
+  // `args` must not reach the hoisted function, whose leading parameters are the captured values.
+  const { code } = await transformInlineServerActions(
+    `export default function Page(userId: string) {
+  async function del() { "use server"; return "deleted " + userId; }
+  return del;
+}
+`,
+    "file:///app/forged-capture.tsx",
+  );
+  const dir = await Deno.makeTempDir({ prefix: "denext_inline_forge_" });
+  try {
+    const file = join(dir, "page.ts");
+    await Deno.writeTextFile(file, code);
+    const mod = await import(`file://${file}`);
+    const del = mod.default("alice");
+    const boundId: string = del.denextActionId;
+    const plainId = boundId.slice(0, boundId.indexOf("."));
+    const at = (id: string) =>
+      new Request(`http://app.test${ACTION_PREFIX}${encodeURIComponent(id)}`, { method: "POST" });
+    // The legitimate call, through the sealed id, gets the captured value.
+    assertEquals(await resolveAction(at(boundId))!(), "deleted alice");
+    // The plain id resolves to nothing: no caller-chosen value ever becomes a captured one.
+    assertEquals(resolveAction(at(plainId)), undefined);
+    assertEquals(getServerAction(plainId), undefined);
+    // A token the server sealed for this action with fewer values than it captures is refused.
+    assertEquals(resolveAction(at(`${plainId}.${sealBoundValues(plainId, [])}`)), undefined);
+    // Binding more values (a nested `.bind`) keeps the captured ones first.
+    const more = del.bind(null, "x");
+    assertEquals(await resolveAction(at(more.denextActionId))!(), "deleted alice");
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });

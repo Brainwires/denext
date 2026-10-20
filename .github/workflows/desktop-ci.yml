@@ -609,7 +609,13 @@ jobs:
       - name: .dmg — mount, find the app, detach
         run: |
           set -eux
-          hdiutil attach -nobrowse -readonly -mountpoint /tmp/denext-dmg "dist/denext native.dmg"
+          # The runner's disk-image service is sometimes still busy ("attach failed - Resource
+          # temporarily unavailable"; 2026-10-13): retry the attach, not the checks after it.
+          for attempt in 1 2 3; do
+            hdiutil attach -nobrowse -readonly -mountpoint /tmp/denext-dmg "dist/denext native.dmg" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 10
+          done
           test -d "/tmp/denext-dmg/denext native.app"
           codesign --verify --deep --strict "/tmp/denext-dmg/denext native.app"
           hdiutil detach /tmp/denext-dmg
@@ -617,6 +623,10 @@ jobs:
         run: |
           set -eux
           pkgutil --check-signature "dist/denext native.pkg" || echo "unsigned .pkg (no DENEXT_INSTALLER_IDENTITY in CI)"
+          # The installer relocates a bundle onto an existing copy with the same identifier, so
+          # with the build's own dist/*.app still on disk the app landed there instead of in
+          # /Applications (2026-10-14). Only the .pkg is under test here.
+          rm -rf "dist/denext native.app"
           sudo installer -pkg "dist/denext native.pkg" -target /
           test -d "/Applications/denext native.app"
           codesign --verify --deep --strict "/Applications/denext native.app"

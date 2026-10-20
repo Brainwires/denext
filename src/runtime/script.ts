@@ -70,6 +70,17 @@ export function scriptWorkerNonce(): string | null {
   return scope.scriptNonce;
 }
 
+/**
+ * The worker-script nonce this response's render already minted (a `<Script strategy="worker">`
+ * rendered with Partytown published), or null — never minting one. What a CSP computed after the
+ * render lists, so a page without a worker script carries no nonce, and what a cache store checks
+ * before keeping a document whose nonce would be replayed to every visitor.
+ */
+export function mintedScriptWorkerNonce(): string | null {
+  if (!slot.__denextScriptWorkers?.lib) return null;
+  return renderScope().scriptNonce ?? null;
+}
+
 const warnedWorkerStrategy = new Set<string>();
 
 /** Why a worker script took the main-thread fallback, and the fix (dev warning text). */

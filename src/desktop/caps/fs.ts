@@ -123,6 +123,35 @@ export function isRefusedDownloadHost(address: string): boolean {
   return mapped !== undefined && isRefusedDownloadHost(mapped);
 }
 
+/**
+ * Whether `address` (an IP literal, or a hostname) is on a private network: RFC 1918
+ * (`10/8`, `172.16/12`, `192.168/16`), carrier-grade NAT (`100.64/10`), IPv6 unique-local
+ * (`fc00::/7`) and their IPv4-mapped forms, or a `.local` (mDNS) name. A download may reach one,
+ * but never with the page's own headers (see {@link fetchChecked}).
+ *
+ * @param address A hostname or IP (IPv6 with or without brackets).
+ * @returns `true` for a private-network target.
+ */
+function isPrivateNetworkHost(address: string): boolean {
+  const h = address.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (h.endsWith(".local")) return true;
+  const v4 = ipv4Octets(h);
+  if (v4) return isPrivateIpv4(v4);
+  if (!h.includes(":")) return false;
+  const zoneless = h.split("%")[0];
+  if (/^f[cd][0-9a-f]{0,2}:/.test(zoneless)) return true;
+  const mapped = mappedIpv4(zoneless);
+  return mapped !== undefined && isPrivateNetworkHost(mapped);
+}
+
+/** RFC 1918 or carrier-grade NAT (`100.64/10`), from an IPv4 address's octets. */
+function isPrivateIpv4([a, b]: number[]): boolean {
+  if (a === 10) return true;
+  if (a === 172) return b >= 16 && b < 32;
+  if (a === 192) return b === 168;
+  return a === 100 && b >= 64 && b < 128;
+}
+
 /** The default resolver: A + AAAA; a permission failure yields `undefined` (see the caller). */
 async function defaultResolveHost(hostname: string): Promise<string[]> {
   const out: string[] = [];
@@ -151,7 +180,7 @@ async function defaultResolveHost(hostname: string): Promise<string[]> {
  * @param url The URL (each redirect hop is checked too).
  * @param resolve The resolver (defaults to {@link Deno.resolveDns}).
  */
-export async function checkDownloadUrl(url: string, resolve?: HostResolver): Promise<void> {
+export async function checkDownloadUrl(url: string, resolve?: HostResolver): Promise<boolean> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -164,10 +193,35 @@ export async function checkDownloadUrl(url: string, resolve?: HostResolver): Pro
     throw refusedTarget(`a "${parsed.protocol}" URL`);
   }
   if (isRefusedDownloadHost(parsed.hostname)) throw refusedTarget("a loopback/link-local host");
-  if (ipv4Octets(parsed.hostname) || parsed.hostname.startsWith("[")) return; // an IP literal
+  if (ipv4Octets(parsed.hostname) || parsed.hostname.startsWith("[")) {
+    return isPrivateNetworkHost(parsed.hostname); // an IP literal
+  }
   const addresses = await (resolve ?? defaultResolveHost)(parsed.hostname);
   if (addresses.some(isRefusedDownloadHost)) {
     throw refusedTarget("the host resolves to a loopback/link-local address");
+  }
+  return isPrivateNetworkHost(parsed.hostname) || addresses.some(isPrivateNetworkHost);
+}
+
+/** The request headers a browser sends cross-origin without a preflight (CORS-safelisted). */
+const SAFELISTED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  "accept",
+  "accept-language",
+  "content-language",
+  "range",
+]);
+
+/**
+ * Refuse sending the page's own headers (an `Authorization`, an API key) to a private-network
+ * host: a browser's `fetch` could not (CORS preflight), and the runtime's download reads the
+ * answer, which would turn a script in the page into a client of the LAN's admin APIs.
+ */
+function assertNoPrivateHeaders(privateTarget: boolean, headers: Headers): void {
+  if (!privateTarget) return;
+  for (const name of headers.keys()) {
+    if (!SAFELISTED_REQUEST_HEADERS.has(name)) {
+      throw refusedTarget(`the "${name}" header to a private-network host`);
+    }
   }
 }
 
@@ -281,9 +335,11 @@ async function fetchChecked(
   signal: AbortSignal,
   cfg: FsCapabilityConfig,
   headers: Headers,
+  privateTarget: boolean,
 ): Promise<Response> {
   const doFetch = cfg.fetch ?? fetch;
   let current = url;
+  assertNoPrivateHeaders(privateTarget, headers);
   for (let hop = 0;; hop++) {
     const res = await doFetch(current, { signal, redirect: "manual", headers });
     const location = res.headers.get("location");
@@ -295,15 +351,25 @@ async function fetchChecked(
     const next = new URL(location, current);
     if (next.origin !== new URL(current).origin) headers.delete("authorization");
     current = next.href;
-    await checkDownloadUrl(current, cfg.resolveHost);
+    assertNoPrivateHeaders(await checkDownloadUrl(current, cfg.resolveHost), headers);
   }
 }
 
 /** The most of a failed answer's body a download keeps for the page (bytes of text). */
 const MAX_ERROR_BODY_CHARS = 64 * 1024;
 
-/** A non-2xx answer as the page's error: `download_failed` with the status and (some of) the body. */
-async function httpFailure(res: Response): Promise<DesktopCapError> {
+/**
+ * A non-2xx answer as the page's error: `download_failed` with the status and, when the page may
+ * read the directory the download was going to (so it could read a successful one), (some of)
+ * the body.
+ */
+async function httpFailure(res: Response, withBody: boolean): Promise<DesktopCapError> {
+  if (!withBody) {
+    await res.body?.cancel();
+    return new DesktopCapError("download_failed", `download failed with status ${res.status}`, {
+      data: { status: res.status },
+    });
+  }
   const text = await res.text().catch(() => "");
   return new DesktopCapError("download_failed", `download failed with status ${res.status}`, {
     data: { status: res.status, body: text.slice(0, MAX_ERROR_BODY_CHARS) },
@@ -407,6 +473,12 @@ function pickedHandle(directory: unknown): string | undefined {
 /** A validation error (a bad `directory`, absolute path, or malformed arg). */
 function badInput(message: string): DesktopCapError {
   return new DesktopCapError("validation", message);
+}
+
+/** Whether the page may read `directory` (a known directory token in the read scope). */
+function readable(cfg: FsCapabilityConfig, directory: unknown): boolean {
+  return (directory === "data" || directory === "cache" || directory === "documents") &&
+    cfg.read.has(DIRECTORY_TOKEN[directory]);
 }
 
 /** The base dir for `directory`, checking the config scope for the given access. */
@@ -597,15 +669,15 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
           const timeout = AbortSignal.timeout(cfg.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS);
           const signal = AbortSignal.any([ctx.signal, timeout, cancel.signal]);
           try {
-            await checkDownloadUrl(url, cfg.resolveHost);
+            const privateTarget = await checkDownloadUrl(url, cfg.resolveHost);
             const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
             await mkdirp(root);
             // A failure past this point is the network's, a cancel, or the disk's (`io`).
             const stopped = (err: unknown): never => {
               throw stoppedError(err, AbortSignal.any([ctx.signal, cancel.signal]), timeout);
             };
-            const res = await fetchChecked(url, signal, cfg, headers).catch(stopped);
-            if (!res.ok) throw await httpFailure(res);
+            const res = await fetchChecked(url, signal, cfg, headers, privateTarget).catch(stopped);
+            if (!res.ok) throw await httpFailure(res, readable(cfg, a.directory));
             await onDisk(() => mkdirp(dirname(target)));
             const bytes = await writeCapped(
               res,

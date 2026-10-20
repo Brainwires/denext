@@ -268,7 +268,9 @@ itself (it reads neither the config keys nor the env vars for them).
 - **`cacheKeyParams`** — `string[]`. Allowlist of query-parameter names that
   fork the ISR page-cache key; every other param (`?utm_*`, `?fbclid`) is
   ignored for keying but still reaches the render via `searchParams`. Unset,
-  every param participates.
+  every param participates. A render that reads a param outside the list is
+  never stored; with `cacheComponents`, reading one while the shell prerenders
+  postpones, so a read inside `<Suspense>` becomes a per-request hole.
 - **`cdnCacheHeaders`** — `boolean | { evenWithMiddleware?: boolean }` (**off
   by default**). Turned on, an ISR page (the render that stores it and every
   hit) answers `Cache-Control: public, s-maxage=<seconds it stays fresh>,

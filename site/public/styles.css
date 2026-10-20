@@ -253,6 +253,84 @@ main {
   font-weight: 600;
 }
 
+/* The toolchain section: hand-assembled stack vs. the two denext commands. */
+.compare {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px 28px 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+  text-align: left;
+}
+
+.compare-col {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+  min-width: 0;
+}
+
+.compare-col.denext-way {
+  border-color: var(--accent);
+}
+
+.compare-col h3 {
+  margin: 0 0 12px;
+  font-size: 16.5px;
+}
+
+.compare-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 14.5px;
+}
+
+.compare-list li {
+  margin: 3px 0;
+}
+
+.compare-col .code {
+  margin: 0 0 12px;
+}
+
+.compare-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.features.compact {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.features.compact .feature {
+  padding: 18px;
+}
+
+.features.compact .feature h3 {
+  font-size: 15.5px;
+}
+
+.features.compact .feature p {
+  font-size: 14px;
+}
+
+.toolchain-agents {
+  margin-bottom: 14px;
+}
+
+@media (max-width: 560px) {
+  .compare {
+    grid-template-columns: 1fr;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
 .closing {
   max-width: 720px;
   margin: 0 auto;

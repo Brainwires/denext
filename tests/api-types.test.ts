@@ -291,6 +291,18 @@ Deno.test("buildPath: a dynamic param can never escape its segment; a catch-all 
     buildPath("/api/user/[id]", { id: "1/../../_denext/action" }),
     "/api/user/1%2F..%2F..%2F_denext%2Faction",
   );
+  // A whole value of `.` or `..` would still be a dot-segment once substituted (encoding leaves
+  // dots alone): `/api/orders/../cancel` normalizes to `/api/cancel`. Refused, as is an empty one.
+  for (const id of ["..", ".", ""]) {
+    assertThrows(
+      () => buildPath("/api/orders/[id]/cancel", { id }),
+      Error,
+      "invalid param value",
+      JSON.stringify(id),
+    );
+  }
+  assertThrows(() => buildPath("/api/orders/[id]", { id: [".."] }), Error, "invalid param value");
+  assertEquals(buildPath("/api/orders/[id]", { id: "..." }), "/api/orders/...");
   // A catch-all spans segments by design — but never through `.`, `..` or an empty one.
   assertThrows(
     () => buildPath("/files/[...path]", { path: "a/../b" }),

@@ -4,6 +4,34 @@ slug: toolchain
 lead: You install denext, nothing else — stock Deno is optional. The denext commands that run Deno run it on denext's own Deno build, which adds Deno.SQL and Vitest/Jest compatibility to deno test. It downloads on first need, is pinned by version and SHA-256, and never replaces a deno on your PATH.
 ---
 
+## What you don't have to set up
+
+Deno already bundles a runtime, TypeScript, a formatter, a linter and a test runner. denext
+completes the picture for full apps (web, mobile, desktop): install the `denext` command, run
+`denext create`, and every other tool arrives on its own, pinned to your denext release and
+fetched the first time a command needs it.
+
+| Instead of installing and configuring…                | denext provides                                                                                                            |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| A runtime and a version manager                       | denext's Deno build, SHA-256-verified into `<DENO_DIR>/denext-deno/` ([below](#where-it-lives-and-how-it-is-verified))     |
+| A TypeScript compiler and a tsconfig                  | [Native TypeScript 7](#native-typescript-7-type-checking), shipped with the toolchain and pinned by hash                   |
+| A bundler                                             | [esbuild 0.25.5](#esbuild), in the toolchain zip and hash-checked; its JS API vendored (no `npm:esbuild`)                  |
+| A test runner, a linter, a formatter and their config | Deno's, with [Vitest/Jest compatibility](#denext-task-deno-task-and-tests) in `deno test`; no config file needed           |
+| A CSS pipeline and a JSX/TS transpiler                | Lightning CSS and swc as denext's own wasm packages; `tailwind: { input, output }` fetches Tailwind v4's standalone binary |
+| Database drivers                                      | SQLite through `node:sqlite`, Postgres through `Deno.SQL`, a zero-npm Redis client ([Database](/docs/database))            |
+| A second runtime for single executables               | The toolchain's own `denort`, pinned and verified, behind `denext build --compile`                                         |
+| A Gleam install                                       | The [pinned Gleam compiler](#gleam), fetched on first need; no Erlang                                                      |
+| Ruby, Bundler and fastlane                            | [Managed fastlane](#fastlane) on a pinned portable Ruby with checksum-locked gems (macOS and Linux; a C compiler once)     |
+
+Working offline? `denext toolchain install --with gleam,fastlane` fetches all of it ahead of time,
+`denext toolchain status` shows what is cached, and `uninstall` / `prune` reclaim the space
+([Commands](#commands)). The framework's runtime pulls nothing from npm (CI enforces it); your app
+can still use `npm:` and `jsr:` libraries, and a `package.json` project brought over from Node.js
+resolves its packages [as Node.js does](#npm-packages-as-on-nodejs). Less setup saves people hours,
+and saves an AI agent the compute and tokens it would spend wiring a build.
+
+## How it works
+
 denext's Deno toolchain is the Deno CLI built from the public
 [Brainwires/deno](https://github.com/Brainwires/deno) fork (`2.9.7-denext.N`, then its own
 version from `3.0.0-rc.1`; see [Versions](#versions)): stock Deno plus
@@ -89,8 +117,8 @@ project's `deno.json` (the Setup page of `denext ui` offers to), beside any feat
 
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
-denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb,
-completions) also re-runs on the project's pinned denext, so the config resolves through the
+denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb) also
+re-runs on the project's pinned denext, so the config resolves through the
 project's import map rather than the binary's embedded one.
 
 ## Where it lives, and how it is verified

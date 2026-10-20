@@ -107,6 +107,16 @@ export function registerServerReference<A extends unknown[], R>(
 }
 
 /**
+ * Remove the handler registered under `id` from the global registry (an inline action re-registered
+ * as bound-only, src/server/action-bound.ts, must not stay callable by its plain id).
+ *
+ * @param id The server-reference id.
+ */
+export function unregisterServerReference(id: string): void {
+  registry.delete(id);
+}
+
+/**
  * Install the server's server-reference decorator (src/server/action-bound.ts): every reference
  * {@linkcode registerServerReference} creates or {@linkcode tagServerExports} tags afterwards
  * passes through it.

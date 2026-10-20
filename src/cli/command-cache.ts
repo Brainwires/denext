@@ -4,13 +4,15 @@
 // Discovering verbs means importing `denext.config.ts` and running every plugin `setup()` —
 // arbitrary user code, under whatever permissions the CLI holds. `denext commands` does that on
 // purpose; `denext --help` must not. So the verb writes what it found to `.denext/commands.json`
-// with a fingerprint of the files that decide the verb set, and help reads it back: a listing
-// whose fingerprint still matches is the project's own verbs, and anything else is no listing at
-// all (help then points at `denext commands`). Reading and writing are best-effort — a cache that
-// is missing, stale or unreadable only costs the listing.
+// with a fingerprint of the files that decide the verb set — keyed with a per-machine secret in
+// the user's cache, so a listing committed to a repository is never trusted on another machine —
+// and help reads it back: a listing whose fingerprint still matches is the project's own verbs,
+// and anything else is no listing at all (help then points at `denext commands`). Reading and
+// writing are best-effort — a cache that is missing, stale or unreadable only costs the listing.
 
 import { dirname, join } from "@std/path";
 import { CONFIG_FILES } from "../build/config-files.ts";
+import { denoCacheDir } from "../build/deno-cache-dir.ts";
 import { type ProjectVerb, VERB_NAME } from "./command.ts";
 
 /** The cache file's contents. */
@@ -51,15 +53,72 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return joined;
 }
 
+/** Where this machine's listing key lives: the user's cache, outside any project. */
+function keyPath(): string {
+  return join(denoCacheDir(), "denext", "command-cache.key");
+}
+
+/** The listing key once read (or made), per key path. */
+const keys = new Map<string, Promise<CryptoKey | null>>();
+
+/** The key file's bytes, made (32 random bytes, owner-only) when there is none yet. */
+async function keyBytes(path: string): Promise<Uint8Array | null> {
+  try {
+    const bytes = await Deno.readFile(path);
+    if (bytes.length >= 32) return bytes;
+  } catch { /* none yet */ }
+  const fresh = crypto.getRandomValues(new Uint8Array(32));
+  try {
+    await Deno.mkdir(dirname(path), { recursive: true });
+    await Deno.writeFile(path, fresh, { createNew: true, mode: 0o600 });
+    return fresh;
+  } catch {
+    // Another process made it first (read theirs), or the cache can't be written (no key).
+    try {
+      const bytes = await Deno.readFile(path);
+      return bytes.length >= 32 ? bytes : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * This machine's key for the listing's fingerprint, or null when it can't be had (then no
+ * listing is ever trusted). It never leaves the user's cache, so a listing committed to a
+ * repository — whose fingerprint inputs and absolute path an attacker can predict — can't carry
+ * a fingerprint this machine accepts.
+ */
+function listingKey(): Promise<CryptoKey | null> {
+  const path = keyPath();
+  let key = keys.get(path);
+  if (!key) {
+    key = keyBytes(path).then((bytes) =>
+      bytes === null ? null : crypto.subtle.importKey(
+        "raw",
+        bytes as BufferSource,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      )
+    ).catch(() => null);
+    keys.set(path, key);
+  }
+  return key;
+}
+
 /**
  * A fingerprint of the files that decide a project's verb set: its denext config, `deno.json`
- * and `deno.lock`. A plugin's own source is not among them — a plugin that changes which verbs
- * it contributes without any of these changing is the one case a cached listing can be stale.
+ * and `deno.lock`, keyed with this machine's {@linkcode listingKey} (HMAC-SHA-256). A plugin's
+ * own source is not among them — a plugin that changes which verbs it contributes without any of
+ * these changing is the one case a cached listing can be stale.
  *
  * @param dir The project directory.
- * @returns The fingerprint, as hex.
+ * @returns The fingerprint, as hex; null when this machine has no key.
  */
-async function fingerprintOf(dir: string): Promise<string> {
+async function fingerprintOf(dir: string): Promise<string | null> {
+  const key = await listingKey();
+  if (key === null) return null;
   const parts: Uint8Array[] = [];
   for (const path of inputs(dir)) {
     const bytes = await bytesOf(path);
@@ -67,7 +126,7 @@ async function fingerprintOf(dir: string): Promise<string> {
     parts.push(new TextEncoder().encode(`${path}:${bytes.length}:`), bytes);
   }
   const data = concat(parts) as BufferSource;
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, data));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -102,7 +161,8 @@ export async function readCommandCache(dir: string): Promise<ProjectVerb[] | nul
     return null;
   }
   if (!isCache(parsed)) return null;
-  return parsed.fingerprint === await fingerprintOf(dir) ? parsed.verbs : null;
+  const fingerprint = await fingerprintOf(dir);
+  return fingerprint !== null && parsed.fingerprint === fingerprint ? parsed.verbs : null;
 }
 
 /**
@@ -114,7 +174,9 @@ export async function readCommandCache(dir: string): Promise<ProjectVerb[] | nul
  */
 export async function writeCommandCache(dir: string, verbs: ProjectVerb[]): Promise<void> {
   const path = cachePath(dir);
-  const cache: CommandCache = { fingerprint: await fingerprintOf(dir), verbs };
+  const fingerprint = await fingerprintOf(dir);
+  if (fingerprint === null) return; // no key on this machine: a listing could never be trusted
+  const cache: CommandCache = { fingerprint, verbs };
   try {
     await Deno.mkdir(dirname(path), { recursive: true });
     await Deno.writeTextFile(path, `${JSON.stringify(cache, null, 2)}\n`);
@@ -157,7 +219,7 @@ interface NoticeLog {
  */
 export async function firstNotice(dir: string, key: string): Promise<boolean> {
   const path = join(dir, ".denext", "notices.json");
-  const fingerprint = await fingerprintOf(dir);
+  const fingerprint = await fingerprintOf(dir) ?? "";
   let log: NoticeLog = { fingerprint, shown: [] };
   try {
     const parsed = JSON.parse(await Deno.readTextFile(path)) as NoticeLog;

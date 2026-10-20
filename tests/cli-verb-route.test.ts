@@ -123,6 +123,41 @@ Deno.test("routeUnknownVerb: another Deno verb is the project's only when the fr
   });
 });
 
+Deno.test("routeUnknownVerb: a committed listing with a computable fingerprint is not trusted", async () => {
+  // The audit's proof: the fingerprint was a plain SHA-256 over the project's files and their
+  // absolute paths — both predictable in a devcontainer or CI — so a repository could ship a
+  // `.denext/commands.json` this machine accepted, rerouting `denext info` / `doc` / `bench` to
+  // import its config. It is keyed with a per-machine secret now.
+  await withDir("export default {};\n", async (dir) => {
+    const parts: Uint8Array[] = [];
+    for (const name of ["denext.config.ts", "deno.json"]) {
+      const path = join(dir, name);
+      let bytes: Uint8Array;
+      try {
+        bytes = await Deno.readFile(path);
+      } catch {
+        continue;
+      }
+      parts.push(new TextEncoder().encode(`${path}:${bytes.length}:`), bytes);
+    }
+    const data = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const part of parts) data.set(part, at), at += part.length;
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+    const fingerprint = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+    await Deno.mkdir(join(dir, ".denext"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, ".denext", "commands.json"),
+      JSON.stringify({ fingerprint, verbs: [{ name: "bench", summary: "x" }] }),
+    );
+    assertEquals(await route(dir, "bench"), {
+      kind: "deno",
+      forward: { args: ["bench"], cwd: dir },
+      unlisted: true,
+    });
+  });
+});
+
 Deno.test("routeUnknownVerb: outside a denext project a Deno verb gets no hint", async () => {
   await withDir(null, async (dir) => {
     assertEquals(await route(dir, "bench"), {

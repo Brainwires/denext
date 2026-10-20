@@ -8,6 +8,162 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.5.1] - 2026-10-20
+
+### Fixed
+
+- **Deno Desktop on Windows: a `secureStore` write the credential vault refuses is tried once
+  more.** A fresh Windows profile's `PasswordVault` can refuse the first write while its service
+  starts; the write now retries after a second before it fails with `store_failed`, and that
+  error names the Windows error code (`0x8007…`, also in `error.data.hresult`) when there is one.
+
+### Security
+
+- **A cached Cache Components shell no longer carries one visitor's query values to another.**
+  With `cacheComponents` and `cacheKeyParams` both set, a page that read a `searchParams` name
+  outside `cacheKeyParams` while its shell prerendered stored that request's value in the shared
+  shell, and later visitors with other values were served it. Such a read now postpones, as
+  `searchParams` does under Next.js's Cache Components: inside a `<Suspense>` boundary it becomes
+  a per-request hole, outside every boundary the page renders per request and is never stored
+  (dev warns, naming the param), and a value that cannot postpone keeps the shell out of the
+  cache. Names listed in `cacheKeyParams` are part of the shell's cache key and stay in the shell.
+  Separately, with `cacheKeyParams` set, a page that awaited `searchParams` (`const sp = await
+  searchParams`) or checked a name with `in` was cached whole even when it used a param outside
+  the list; those reads now count, so such a render is not stored, with or without
+  `cacheComponents`.
+- **Markdown links can no longer inject attributes (`@denext/content-collections`).** Since 4.1.0,
+  a link or reference-link destination containing a control character could split the rendered
+  `<a>` tag, so the link's label landed inside the `href` attribute and a quote in it added
+  attributes of the author's choosing, event handlers included, that ran without a click. Any app
+  that renders untrusted Markdown with `renderMarkdown`, `renderContent` or `<Content>` was exposed
+  to script injection by whoever wrote that Markdown, in the default escape mode and in
+  `html: "sanitize"` alike. The renderer now builds the link's tags on their own, strips control
+  characters (which it uses as internal markers) from the source in both modes, and refuses a
+  destination that contains one.
+- **The values an inline Server Action closes over can no longer be chosen by the caller.** Since
+  4.3.1, an inline `"use server"` function that reads its component's values (a user id, a record
+  id) was also reachable through its plain action id, and a request to that id passed the caller's
+  arguments in place of the values the server had sealed into the form. Any signed-in visitor who
+  could submit the form could make such an action run against another user's or record's id. An
+  inline action that captures values is now registered bound-only: only the encrypted reference
+  the server rendered reaches it, and it must carry every captured value, as with Next.js's
+  encrypted closures. Actions exported from a `"use server"` module are unchanged (they take the
+  caller's arguments by design and must validate them).
+- **A cached page no longer stores one visitor's answer when an API handler copies its request.**
+  The per-visitor tracking that keeps an ISR page or a Cache Components shell from storing an
+  in-process API call's answer (`createApiClient` / `useApi` during a render) missed reads made
+  through a copy of the handler's request: `request.clone()`, `new Request(request)` (with or
+  without init) or `fetch(request)`, as body-reading middleware and some libraries do. A handler
+  that read the visitor's cookie or authorization that way had its answer stored and served to
+  every later visitor. A clone of the handler's request is now tracked like the request itself,
+  and building a request from it counts as reading the visitor's headers it copies.
+- **`denext build --compile` no longer embeds development state and secrets from `.denext/`.**
+  The compiled executable embedded the whole build directory, including database dumps written
+  by `denext stack backup`, `@denext/backend`'s dev key file (its secret key and token-signing
+  key), the MCP codebase index and dev-server state. Anyone holding the binary could read them
+  out of it. Only an allow-list of build outputs is embedded now; database dumps and the key
+  file are refused even from `compile.include`, and the build names any other `.denext/` entry
+  it left out.
+- **`denext ui` and `denext dashboard` no longer send the backend's secret key to another host.**
+  Their calls to the running app's admin endpoint and health probe followed redirects, and fetch
+  keeps a custom `apikey` header across a cross-origin redirect. An app whose middleware or
+  redirect rules sent those paths elsewhere (a canonical-host redirect, an auth redirect) handed
+  the service-role secret key, which bypasses row-level security and opens the auth admin API, to
+  that host and its logs. These calls no longer follow redirects; a redirect is reported as the
+  app's answer.
+- **`denext completions` no longer runs the current directory's project code.** The completion
+  script is meant to be sourced from a shell rc file (`source <(denext completions bash)`), so it
+  runs every time a terminal opens. It imported the `denext.config.ts` of whatever directory that
+  was and ran its plugins' `setup()`, so opening a terminal inside a cloned repository (an editor's
+  integrated terminal opens in the workspace) ran that repository's code. Completions now list
+  denext's verbs, the Deno verbs it forwards and the project verbs the last `denext commands`
+  recorded, and never import the project; run `denext commands` once in a project to complete its
+  own verbs.
+- **`openSqlite`'s refusal of an unsupported key pragma covers quoted names.** A `PRAGMA key`
+  must be refused where SQLite has no SQLCipher (the web build and Deno Desktop), and only
+  `PRAGMA key` as the first statement is accepted in the native shell. The name was compared as
+  written, so a quoted spelling (`PRAGMA "key"`, `PRAGMA [rekey]`) reached the plain driver: on
+  the web and the desktop the database silently stayed unencrypted, and a raw `rekey` got past
+  the shell's rule. Pragma names are now compared unquoted (schema prefix and comments included).
+- **The MCP server's `denext_ui_*` tools require `apply: true` for every change a page can't
+  preview.** A change without `apply` was let through whenever it carried `fields.op: "preview"`,
+  but several pages ignore `op` (running a `deno.json` task, the dev server, setup, project
+  verbs) or write on a field of their own (the Docker panel), so an agent steered by injected
+  text could run a task or write files without the explicit apply step meant to gate it.
+  `op: "preview"` now passes only on the pages that really preview (generate and the database
+  section's writes), and never for setting a user's password.
+- **A `.denext/commands.json` committed to a repository is no longer trusted.** The listing
+  `denext commands` writes decides whether a Deno verb such as `denext info` or `denext doc` runs
+  a project verb instead, which imports the project's config. Its fingerprint could be computed
+  from the repository's own files and a predictable checkout path (a devcontainer, CI), so a
+  repository could ship a listing that made those verbs run its code. The fingerprint is now keyed
+  with a per-machine secret kept in the user's cache directory; listings written by an earlier
+  denext are ignored until `denext commands` runs again.
+- **Signing a compiled Windows binary no longer leaves the certificate's password on disk when
+  interrupted.** With osslsigncode, `denext build --compile --sign` wrote the `.pfx` password to a
+  file beside the release binary in `dist/` and removed it only when signing finished, so a Ctrl-C
+  or a terminated CI step left it there, next to an artifact that is often uploaded or archived.
+  The file now lives in a private directory of the system's temp directory, is removed on
+  SIGINT / SIGTERM as well, and a directory a killed run left behind is swept on the next run.
+- **The typed API client refuses a `[param]` of `.`, `..` or nothing.** Percent-encoding leaves
+  dots alone, so `{ id: ".." }` for `/api/orders/[id]/cancel` built `/api/orders/../cancel`, which
+  URL normalization turns into `/api/cancel`: a value taken from user input could send a call,
+  with whatever credentials the caller adds, to another route. `createApiClient`, `useApi` and
+  `buildPath` now throw for such a value, as they already did for a catch-all segment.
+- **"Sign out everywhere" ends a session started in the same second.** `revokeAllSessions`, a
+  password reset, a ban and the other events that end a user's sessions stamped the time in
+  whole seconds and kept every session that signed in during that second, so someone holding the
+  password could sign in at the moment it was reset and keep their session. The stamp and each
+  session's sign-in time are now kept to the millisecond (`AuthSession.authTimeMs`, also for
+  next-auth database sessions); a session from an earlier version counts as signed in at the start
+  of its second, and stamps written in seconds by an earlier version still apply.
+- **The Tailwind standalone binary is verified before it runs.** The binary `denext build` /
+  `dev` download for Tailwind v4 was pinned by version only and checked only when
+  `DENEXT_TAILWIND_SHA256` was set, so a tampered release asset would have run on every machine
+  that built a Tailwind project. The default release's binaries are now checked against built-in
+  SHA-256s (cross-checked with the release's published sums) and a mismatch is refused; another
+  `DENEXT_TAILWIND_VERSION` needs `DENEXT_TAILWIND_SHA256`, and `TAILWIND_BIN` still runs a local
+  binary you provide.
+- **A page cached for every visitor no longer replays one visitor's script nonce.** With
+  `nextScriptWorkers` on, every page's `Content-Security-Policy` listed a per-response nonce, and
+  an ISR page stored that policy and its worker scripts' nonce, so all visitors got the same,
+  publicly visible nonce, which authorizes any `<script>` carrying it (it would turn an HTML
+  injection elsewhere into script execution). A buffered page now lists a nonce only when it
+  rendered a worker script, and such a page is not stored in the ISR cache. A static export
+  still bakes its pages' nonces in, as a static host can't mint one per response.
+- **File transfers no longer keep request credentials in device backups.** The native
+  `downloadToFile` / `uploadFile` records (`denext mobile add file-transfer`) stored each
+  transfer's request headers, an `Authorization` included, after the transfer had finished, in
+  places iOS and Android back up by default, so a token could end up in an iCloud / Google
+  backup. A finished transfer's headers are now dropped; iOS keeps the records out of backups
+  with file protection, and Android keeps a live transfer's headers in the no-backup folder. Re-run
+  `denext mobile add file-transfer` to update an app's unedited template files.
+- **A Deno Desktop page can no longer call LAN services with its own headers through
+  `downloadToFile`.** The runtime's download is not bound by CORS, so script running in the page
+  could send an `Authorization` or API-key header to a router or another admin API on the local
+  network and read the answer, including a failed request's body, with only write access to a
+  folder. A download to a private-network address (RFC 1918, carrier-grade NAT, IPv6 unique-local,
+  `.local`) now refuses any header beyond the CORS-safelisted ones (`Accept`, `Accept-Language`,
+  `Content-Language`, `Range`), on every redirect hop, and a failed download reports its body only
+  when the page may read the folder it was writing to.
+- **Passkey clone detection through an Auth.js adapter no longer loses a race.** Auth.js's
+  adapter interface has no atomic counter update, so two sign-ins with a cloned authenticator
+  arriving together could both pass the signature-counter check. The read, check and write are
+  now serialized per credential within an instance; across several instances the check remains
+  best-effort, as the adapter interface allows (denext's own adapters update atomically).
+- **Documented: `signtool` sees a `.pfx` password on its command line.** Signing a Windows
+  binary on Windows with `DENEXT_WINDOWS_CERT` + `DENEXT_WINDOWS_CERT_PASSWORD` passes the
+  password to `signtool` as an argument, the only way it takes one, so command-line auditing on
+  the signing machine records it. The deployment guide now says so and recommends a certificate
+  in the user's store (`DENEXT_WINDOWS_CERT_THUMBPRINT`) on a shared or monitored host.
+
+### Docs
+
+- **The managed toolchain, up front.** The home page, the README, Getting started, the toolchain
+  page and `llms.txt` now open with what you no longer set up by hand: one install, then denext's
+  Deno build (native TypeScript 7 checking), esbuild, `denort`, Gleam and a managed fastlane arrive
+  pinned on first need, with Lightning CSS, swc and the database clients built in.
+
 ## [4.5.0] - 2026-10-20
 
 ### Added
@@ -17157,7 +17313,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.1...development
+[4.5.1]: https://jsr.io/@denext/denext@4.5.1
 [4.5.0]: https://jsr.io/@denext/denext@4.5.0
 [4.4.1]: https://jsr.io/@denext/denext@4.4.1
 [4.4.0]: https://jsr.io/@denext/denext@4.4.0

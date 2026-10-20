@@ -94,3 +94,29 @@ Deno.test("trackInheritedReads: during a prerender a read postpones and names th
   assertEquals(t.ctx.postponedBy, "headers");
   assertEquals(t.ctx.usedDynamicApi, undefined, "a postpone is not a dynamic render");
 });
+
+Deno.test("trackInheritedReads: requests derived from a tracked one count as reading it", async () => {
+  const derivations = [
+    (r: Request) => r.clone().headers.get("cookie"),
+    (r: Request) => r.clone().clone().headers.has("authorization"),
+    (r: Request) => new Request(r),
+    (r: Request) => new Request(r, { method: "POST", body: "{}" }),
+  ];
+  for (const derive of derivations) {
+    const t = setup({ cookie: "u=a" });
+    t.read(() => derive(t.request));
+    assertEquals(t.ctx.usedDynamicApi, true, derive.toString());
+  }
+  // Deriving one that holds no inherited header, or reading the request itself, is not a read.
+  const plain = setup({ accept: "x" });
+  plain.read(() => [new Request(plain.request), plain.request.clone()]);
+  assertEquals(plain.ctx.usedDynamicApi, undefined);
+  const own = setup({ cookie: "u=a" });
+  await own.read(async () => {
+    assertEquals([own.request.method, own.request.url], ["GET", "http://localhost/api/me"]);
+    assert(own.request instanceof Request && own.request.constructor === Request);
+    assertEquals(await own.request.text(), "");
+    assert(own.request.signal instanceof AbortSignal);
+  });
+  assertEquals(own.ctx.usedDynamicApi, undefined, "its own methods and getters read nothing");
+});

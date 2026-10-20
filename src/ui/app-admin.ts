@@ -95,6 +95,15 @@ function deadline(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+/**
+ * Is `res` a redirect? A call to the app never follows one (`redirect: "manual"`): fetch would
+ * carry the `apikey` header (the backend's secret key) to wherever it points, another origin
+ * included. A manual redirect reads as a 3xx, or as an opaque redirect (status 0) in a browser.
+ */
+function isRedirect(res: Response): boolean {
+  return res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400);
+}
+
 /** A JSON GET against the app, as `{ ok: false, reason }` for anything but a JSON 2xx. */
 async function getJson<T>(
   target: AppTarget,
@@ -106,10 +115,19 @@ async function getJson<T>(
   try {
     res = await appFetch(`${target.url.replace(/\/+$/, "")}${path}`, {
       headers,
+      redirect: "manual",
       signal: deadline(signal),
     });
   } catch {
     return { ok: false, reason: `the app at ${target.url} did not answer` };
+  }
+  if (isRedirect(res)) {
+    await res.body?.cancel();
+    return {
+      ok: false,
+      reason: `the app answered a redirect (${res.status}) for ${path}; the admin endpoint is ` +
+        "not followed elsewhere (its secret key would go with it)",
+    };
   }
   const body = await res.json().catch(() => null) as (T & { reason?: string }) | null;
   if (!res.ok || body === null) {
@@ -235,8 +253,13 @@ export interface AppProbe {
 export async function appProbe(target: AppTarget, signal?: AbortSignal): Promise<AppProbe> {
   try {
     const res = await appFetch(`${target.url.replace(/\/+$/, "")}/_denext/health`, {
+      redirect: "manual",
       signal: deadline(signal),
     });
+    if (isRedirect(res)) {
+      await res.body?.cancel();
+      return { status: "degraded", httpStatus: res.status, checks: {} };
+    }
     const body = await res.json().catch(() => ({})) as { checks?: Record<string, string> };
     return {
       status: res.ok ? "ok" : "degraded",

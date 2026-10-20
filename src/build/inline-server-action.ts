@@ -25,7 +25,10 @@
 //     const del = _dnxBindAction(_dnxInlineAction0, () => [id], "del");
 //     const _dnxInlineAction0 = _dnxServerRef("a…", (id, ...args) => (async function del() {
 //       "use server"; await remove(id);
-//     })(...args));
+//     })(...args), 1);
+//
+//   The trailing count registers it bound-only: a request naming its plain id is an unknown
+//   action, so a caller can never supply the captured values as arguments.
 // - Client side ({@linkcode findInlineServerActions}, {@linkcode inlineServerActionError}): a
 //   module the browser gets must not hold one at all — its body, and whatever it closes over,
 //   would ship. Next refuses the build with the same message.
@@ -276,7 +279,10 @@ function nestedEdits(
     edits.push({ start, end, text: "" });
     edits.push({ start: at, end: at, text: `const ${name} = ${site};` });
   }
-  return `const ${ref} = _dnxServerRef(${id}, ${handler});`;
+  // A capturing action is registered bound-only (its capture count passed): its plain id never
+  // resolves, so the values it closes over come only from a token the server sealed.
+  const captures = bound.length === 0 ? "" : `, ${bound.length}`;
+  return `const ${ref} = _dnxServerRef(${id}, ${handler}${captures});`;
 }
 
 /**

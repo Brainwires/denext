@@ -30,7 +30,7 @@
 
 import type { CspSetting, RouteCsp } from "./segment-config.ts";
 import { swapRuntimeHash } from "./swap-runtime.ts";
-import { scriptWorkerNonce } from "../runtime/script.ts";
+import { mintedScriptWorkerNonce, scriptWorkerNonce } from "../runtime/script.ts";
 
 export type { CspSetting, RouteCsp };
 
@@ -86,9 +86,13 @@ function styleSources(styleHashes: string[], route?: RouteCsp): string[] {
  * `'unsafe-inline'`, which a nonce would switch off (CSP Level 2); there inline script runs
  * anyway, so the nonce would guard nothing.
  */
-function scriptSources(fixed: string[], route?: RouteCsp): string[] {
+function scriptSources(fixed: string[], route?: RouteCsp, mint = true): string[] {
   const extra = route?.scriptSrc ?? [];
-  const nonce = extra.includes("'unsafe-inline'") ? null : scriptWorkerNonce();
+  const nonce = extra.includes("'unsafe-inline'")
+    ? null
+    : mint
+    ? scriptWorkerNonce()
+    : mintedScriptWorkerNonce();
   return ["'self'", ...fixed, ...extra, ...(nonce ? [`'nonce-${nonce}'`] : [])];
 }
 
@@ -145,7 +149,9 @@ export async function computeCsp(html: string, route?: RouteCsp): Promise<string
     styles.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
   );
 
-  return assembleCsp(scriptSources([], route), styleSources(styleHashes, route), route);
+  // The document is rendered: only a nonce its worker scripts carry is listed (a page without
+  // one gets none, so a cached copy replays no nonce that would authorize an injected script).
+  return assembleCsp(scriptSources([], route, false), styleSources(styleHashes, route), route);
 }
 
 /**

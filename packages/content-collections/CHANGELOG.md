@@ -1,5 +1,16 @@
 # @denext/content-collections
 
+## [0.7.1] - 2026-10-20
+
+- Requires `@denext/denext` ^4.5.1.
+
+### Security
+
+- **Markdown link labels can no longer inject attributes.** A crafted link label could break out
+  of the rendered `href` and add event-handler attributes, in both the default `"escape"` mode
+  and `"sanitize"` mode. Internal marker characters are now stripped from input and attributes
+  are escaped at emission. Upgrade if you render untrusted Markdown.
+
 ## [0.7.0] - 2026-10-19
 
 - Requires `@denext/denext` ^4.4.0.

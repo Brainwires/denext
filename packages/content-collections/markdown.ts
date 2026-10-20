@@ -69,8 +69,10 @@ function safeHref(raw: string): string | null {
   // A destination with whitespace is not a link in CommonMark — and it is also how a code-span
   // placeholder (see `renderInline`) could be smuggled into the attribute and restored there
   // as raw markup after escaping. Refuse both.
-  // deno-lint-ignore no-control-regex -- the NUL placeholder delimiter
-  if (/[\s\u0000\u0002]/.test(raw)) return null;
+  // Any control character is refused as well: the renderer's markers are control characters, and
+  // `renderMarkdown` strips them from the source, so this is defence in depth.
+  // deno-lint-ignore no-control-regex -- C0 controls and DEL
+  if (/[\s\u0000-\u001f\u007f]/.test(raw)) return null;
   // The inline pass already HTML-escaped `raw`; undo that before the scheme test so an
   // `&#106;avascript:` style entity can't hide the scheme, then re-escape for the attribute.
   const decoded = raw.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
@@ -110,20 +112,24 @@ interface LinkRefs {
   raw: SanitizeDocument | null;
 }
 
-/** An `<a>` for an (already-escaped) label and raw href, or the bare label for a script URL. */
-function renderLink(label: string, href: string): string {
+/** The `<a ...>` open tag for a raw href, or null for a script URL (the link is dropped). */
+function anchorOpenTag(href: string): string | null {
   const safe = safeHref(href);
-  if (safe === null) return label; // a script-bearing URL: keep the text, drop the link
+  if (safe === null) return null;
   const external = /^https?:\/\//.test(safe);
   const rel = external ? ` rel="noopener noreferrer" target="_blank"` : "";
-  return `<a href="${safe}"${rel}>${label}</a>`;
+  return `<a href="${safe}"${rel}>`;
 }
 
-/** `renderLink`, with the `<a ...>` and `</a>` tags held out so the label alone stays inline. */
+/**
+ * A link for an (already-escaped) label and raw href, with the `<a ...>` and `</a>` tags held out
+ * so the label alone stays inline (and takes emphasis); a script URL keeps only the label. The
+ * two tags are built and held separately: the label is never spliced into a rendered tag, so
+ * nothing in the destination can move where the label lands.
+ */
 function holdAnchor(label: string, href: string, hold: (html: string) => string): string {
-  const html = renderLink("\u0001", href);
-  const at = html.indexOf("\u0001");
-  return at < 0 ? label : hold(html.slice(0, at)) + label + hold(html.slice(at + 1));
+  const open = anchorOpenTag(href);
+  return open === null ? label : hold(open) + label + hold("</a>");
 }
 
 /** The start of the backtick run of exactly `len` at or after `from`, or -1. */
@@ -823,10 +829,7 @@ export function renderMarkdown(body: string, options: MarkdownOptions = {}): str
   const raw = options.html === "sanitize"
     ? new SanitizeDocument(resolveSanitizePolicy(options.sanitize))
     : null;
-  // deno-lint-ignore no-control-regex -- NUL delimits the inline placeholders
-  let source = body.replace(/\r\n/g, "\n").replace(/\u0000/g, "");
-  // deno-lint-ignore no-control-regex -- U+0002 / U+0003 delimit the raw-HTML and link markers
-  if (raw !== null) source = source.replace(/[\u0002\u0003]/g, "");
+  const source = stripControls(body.replace(/\r\n/g, "\n"));
   const { lines, refs } = collectLinkRefs(source.split("\n"), raw);
   const out: string[] = [];
   let i = 0;
@@ -843,6 +846,17 @@ export function renderMarkdown(body: string, options: MarkdownOptions = {}): str
   const closing = closeCarried(raw); // raw containers still open at the end of the document
   if (closing !== "") out.push(closing);
   return raw.resolve(finishDocument(out, refs));
+}
+
+/**
+ * The source without C0 control characters other than tab, line feed, vertical tab, form feed and
+ * carriage return. The renderer's markers are control characters (U+0000 delimits the held-markup
+ * placeholders, U+0002 the raw-HTML markers, U+0003 the fragment-link markers), so none can be
+ * forged from the source, in either mode; no other control character is meaningful Markdown.
+ */
+function stripControls(source: string): string {
+  // deno-lint-ignore no-control-regex -- the renderer's own markers are C0 controls
+  return source.replace(/[\u0000-\u0008\u000e-\u001f]/g, "");
 }
 
 /** The rendered blocks joined, with the footnotes section (when one is referenced) last. */

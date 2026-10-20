@@ -14,7 +14,12 @@ import { markVerified, resetPassword } from "../src/server/auth/email.ts";
 import { resolveAuthOptions } from "../src/server/auth/options.ts";
 import { hashPassword } from "../src/server/auth/password.ts";
 import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
-import { endedByUser, endUserSessions, readAuthSession } from "../src/server/auth/session.ts";
+import {
+  buildSessionPayload,
+  endedByUser,
+  endUserSessions,
+  readAuthSession,
+} from "../src/server/auth/session.ts";
 import { denextAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
 import { issueVerificationToken } from "../src/server/auth/verification.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
@@ -121,10 +126,42 @@ Deno.test("endedByUser: a session that signed in before sessionsValidAfter is en
 Deno.test("endUserSessions: stamps now, never moves the stamp back, skips a missing user", async () => {
   const adapter = inMemoryAuthAdapter();
   const user = await adapter.createUser({ email: "a@x.test" });
-  await endUserSessions(adapter, user.id, 2_000);
-  await endUserSessions(adapter, user.id, 1_500);
-  assertEquals((await adapter.getUser(user.id))?.sessionsValidAfter, 2_000);
+  await endUserSessions(adapter, user.id, 1_760_000_002_000);
+  await endUserSessions(adapter, user.id, 1_760_000_001_500);
+  assertEquals((await adapter.getUser(user.id))?.sessionsValidAfter, 1_760_000_002_000);
+  // A stamp an earlier denext wrote (epoch seconds) is never moved back either.
+  const legacy = await adapter.createUser({ email: "b@x.test" });
+  await adapter.updateUser({ id: legacy.id, sessionsValidAfter: 1_760_000_005 });
+  await endUserSessions(adapter, legacy.id, 1_760_000_001_500);
+  assertEquals((await adapter.getUser(legacy.id))?.sessionsValidAfter, 1_760_000_005_000);
   await endUserSessions(adapter, "nobody", 3_000); // no throw
+});
+
+Deno.test("sign out everywhere ends a session signed in earlier in the same second, not a later one", async () => {
+  // The audit's proof: the stamp and the sign-in time were whole seconds compared with `<`, so
+  // a session an attacker started in the same second as a password reset or `revokeAllSessions`
+  // survived it.
+  const config: AuthConfig = {
+    secret: "a-secret-that-is-at-least-32-characters",
+    providers: [credentials({})],
+  };
+  const adapter = inMemoryAuthAdapter();
+  const stored = await adapter.createUser({ email: "c@x.test" });
+  // Start right after a second boundary, so everything below happens within one second.
+  while (Date.now() % 1000 > 100) await new Promise((r) => setTimeout(r, 5));
+  const tick = () => new Promise((r) => setTimeout(r, 3));
+  const before = await buildSessionPayload(config, { id: stored.id }, "credentials");
+  await tick();
+  await endUserSessions(adapter, stored.id);
+  await tick();
+  const after = await buildSessionPayload(config, { id: stored.id }, "credentials");
+  assertEquals(before.authTime, after.authTime, "the same second");
+  const user = (await adapter.getUser(stored.id))!;
+  assert(endedByUser(user, before), "the session signed in before the stamp is ended");
+  assert(!endedByUser(user, after), "the session signed in after it is kept");
+  // A session from before this change (no millisecond sign-in time) in that second is ended.
+  const { authTimeMs: _ms, ...legacy } = before;
+  assert(endedByUser(user, legacy));
 });
 
 // ---- revokeAllSessions -----------------------------------------------------------------------------

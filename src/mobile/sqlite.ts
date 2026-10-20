@@ -564,8 +564,33 @@ function checkName(fn: string, name: string): void {
   }
 }
 
-/** A SQLCipher key pragma's name: `key`, `rekey`, `hexkey`, `textrekey`, … */
-const KEY_PRAGMA = /^\s*pragma\s+(?:[\w"`[\]]+\s*\.\s*)?((?:hex|text)?(?:re)?key)\b/i;
+/** An SQL identifier as written: bare, or quoted with `"…"`, `'…'`, `` `…` `` or `[…]`. */
+const IDENT = "(?:\\w+|\"(?:[^\"]|\"\")*\"|'(?:[^']|'')*'|`(?:[^`]|``)*`|\\[[^\\]]*\\])";
+
+/** A pragma statement's (optionally schema-qualified) name, as written. */
+const PRAGMA_NAME = new RegExp(`^\\s*pragma\\b\\s*(?:${IDENT}\\s*\\.\\s*)?(${IDENT})`, "i");
+
+/** A SQLCipher key pragma's name, unquoted: `key`, `rekey`, `hexkey`, `textrekey`, … */
+const KEY_NAME = /^(?:hex|text)?(?:re)?key$/i;
+
+/** An identifier without its quotes (SQLite takes `"key"`, `'key'`, `` `key` `` and `[key]` alike). */
+function unquoted(ident: string): string {
+  const q = ident[0];
+  if (q === "[") return ident.slice(1, -1);
+  if (q === '"' || q === "'" || q === "`") return ident.slice(1, -1).replaceAll(q + q, q);
+  return ident;
+}
+
+/**
+ * The key pragma `statement` runs — its unquoted name and where its argument starts — or null when
+ * it is no key pragma. The name is compared unquoted, so a quoted spelling is the same pragma.
+ */
+function keyPragmaOf(statement: string): { name: string; end: number } | null {
+  const m = PRAGMA_NAME.exec(statement);
+  if (!m) return null;
+  const name = unquoted(m[1]);
+  return KEY_NAME.test(name) ? { name, end: m.index + m[0].length } : null;
+}
 
 /** `'…'` / `"…"` as its text (doubled quotes undone), or undefined for anything else. */
 function quotedText(text: string): string | undefined {
@@ -583,18 +608,18 @@ function quotedText(text: string): string | undefined {
 function keyPragma(name: string, sql: string): { passphrase: string; rest: string[] } | null {
   if (!/pragma/i.test(sql) || !/key/i.test(sql)) return null;
   const statements = splitSqlStatements(sql);
-  const at = statements.findIndex((st) => KEY_PRAGMA.test(st));
+  const at = statements.findIndex((st) => keyPragmaOf(st) !== null);
   if (at === -1) return null;
-  const m = KEY_PRAGMA.exec(statements[at])!;
-  const passphrase = quotedText(statements[at].slice(m.index + m[0].length));
-  if (at !== 0 || m[1].toLowerCase() !== "key" || passphrase === undefined) {
+  const pragma = keyPragmaOf(statements[at])!;
+  const passphrase = quotedText(statements[at].slice(pragma.end));
+  if (at !== 0 || pragma.name.toLowerCase() !== "key" || passphrase === undefined) {
     throw new SqliteEncryptionError(
       "UNSUPPORTED",
       `openSqlite("${name}"): only PRAGMA key = '<passphrase>', as the first statement, is ` +
         `supported (not "${statements[at].trim()}"); nothing ran.`,
     );
   }
-  if (statements.slice(1).some((st) => KEY_PRAGMA.test(st))) {
+  if (statements.slice(1).some((st) => keyPragmaOf(st) !== null)) {
     throw new SqliteEncryptionError(
       "UNSUPPORTED",
       `openSqlite("${name}"): one key pragma per call; nothing ran.`,

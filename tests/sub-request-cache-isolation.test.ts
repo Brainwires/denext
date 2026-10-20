@@ -20,7 +20,19 @@ import type { VNode } from "../src/jsx/types.ts";
 const ORIGIN = "http://localhost";
 
 /** How the API handler learns who is calling. */
-type Read = "none" | "raw-get" | "raw-has" | "raw-iterate" | "raw-foreach" | "cookies" | "headers";
+type Read =
+  | "none"
+  | "raw-get"
+  | "raw-has"
+  | "raw-iterate"
+  | "raw-foreach"
+  | "cookies"
+  | "headers"
+  | "clone"
+  | "clone-of-clone"
+  | "new-request"
+  | "new-request-init"
+  | "new-headers";
 
 /** Handler runs so far (a `has()` read reveals no name, so its answer carries the run). */
 let runs = 0;
@@ -40,6 +52,13 @@ const READERS: Record<Read, (req: Request) => string> = {
   },
   "cookies": () => cookies().get("u")?.value ?? "anon",
   "headers": () => headers().get("cookie") ?? "anon",
+  // Requests derived from the handed one carry its headers: their reads count the same.
+  "clone": (req) => req.clone().headers.get("cookie") ?? "anon",
+  "clone-of-clone": (req) => req.clone().clone().headers.get("cookie") ?? "anon",
+  "new-request": (req) => new Request(req).headers.get("cookie") ?? "anon",
+  "new-request-init": (req) =>
+    new Request(req, { method: "POST", body: "{}" }).headers.get("cookie") ?? "anon",
+  "new-headers": (req) => new Headers(req.headers).get("cookie") ?? "anon",
 };
 
 const who = (req: Request, read: Read): string => READERS[read](req);
@@ -119,7 +138,19 @@ async function visit(read: Read, mode: Mode) {
   return out;
 }
 
-const READS: Read[] = ["raw-get", "raw-has", "raw-iterate", "raw-foreach", "cookies", "headers"];
+const READS: Read[] = [
+  "raw-get",
+  "raw-has",
+  "raw-iterate",
+  "raw-foreach",
+  "cookies",
+  "headers",
+  "clone",
+  "clone-of-clone",
+  "new-request",
+  "new-request-init",
+  "new-headers",
+];
 
 for (const mode of ["isr", "ppr", "flight-ppr"] as const) {
   for (const read of READS) {

@@ -247,8 +247,10 @@ beside it. It embeds:
 - the server modules (`app/`, the Pages Router's `pages/`, `denext.config.ts`, `middleware.ts`,
   `instrumentation.ts`, `jobs/`, `services/`, `functions/`), plus everything they import:
   the framework and your `jsr:` and `npm:` packages;
-- the build (`.denext/`: client bundles, manifest, server copies), `public/`,
-  `migrations/` and `supabase/migrations/`;
+- the build's outputs in `.denext/` (client bundles, manifest, server copies, generated modules
+  and the first-party plugins' outputs; an allow-list), `public/`, `migrations/` and
+  `supabase/migrations/`. The rest of `.denext/` is development and run-time state and is not
+  embedded; the build names any entry it doesn't know, which `compile.include` can add;
 - any paths you list in `compile.include` (data files the app reads at run
   time, or a module that only a computed `import()` reaches).
 
@@ -268,8 +270,9 @@ startup. It also sets the production signal (`DENEXT_ENV` / `NODE_ENV`). Each
 verb (`start`, `job`, `db`) loads the production tier of the `.env` files in
 the **working directory**.
 
-**Nothing secret is baked in.** `.env*` files and SQLite databases are never
-embedded, and the environment is read at run time. What the binary writes goes
+**Nothing secret is baked in.** `.env*` files, SQLite databases, database dumps
+(`denext stack backup`'s) and `@denext/backend`'s dev key file are never embedded,
+even from `compile.include`, and the environment is read at run time. What the binary writes goes
 to the working directory:
 
 - the page cache, the job history and `@denext/backend`'s storage metadata go
@@ -342,7 +345,10 @@ packager's: `DENEXT_WINDOWS_CERT` (a `.pfx`) with `DENEXT_WINDOWS_CERT_PASSWORD`
 `DENEXT_WINDOWS_CERT_THUMBPRINT` for a certificate in the Windows certificate store. On Windows
 it signs with `signtool` (Windows SDK). On macOS and Linux it signs with `osslsigncode` (`brew
 install osslsigncode`, `apt install osslsigncode`), which reads the password from a private
-temporary file, never from its command line; a store thumbprint needs `signtool`.
+temporary file, never from its command line; a store thumbprint needs `signtool`. `signtool`
+takes a `.pfx` password only on its command line (`/p`), where process auditing (Sysmon, an EDR)
+on the signing machine records it: on a shared or monitored Windows signing host, import the
+certificate into the user's store and sign by `DENEXT_WINDOWS_CERT_THUMBPRINT` instead.
 
 A Linux executable carries no OS signature, so `--sign` refuses a Linux target. Publish a
 checksum, or a detached signature of the archive.
