@@ -88,7 +88,9 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
         run: deno task badge:tests --check
 
-      - name: Doc lint (JSR documentation coverage)
+      - name: Doc lint (JSR documentation coverage + docs anchors)
+        # The task also runs scripts/check-doc-anchors.ts: every `/docs/<page>#<anchor>` link
+        # must name an id the docs site renders.
         # Use the deno.json task as the single source of truth for the file list —
         # a hardcoded duplicate here drifts (e.g. missing class-component.ts /
         # next/cookies.ts) and reports false private-type-ref errors.

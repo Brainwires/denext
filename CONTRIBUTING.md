@@ -518,6 +518,11 @@ deployed.
 - **Zero-npm runtime:** nothing under
   `src/{jsx,runtime,client,server,compat,plugin}` may import npm — CI enforces
   this (`tests/no-npm-compat-guard.test.ts`).
+- **Docs anchors:** `deno task doc-lint` also renders every docs page and checks each
+  `/docs/<page>#<anchor>` link (docs sources, AGENTS.md, README.md, CHANGELOG.md and the other
+  root guides) against the ids the site really renders (`scripts/check-doc-anchors.ts`). The root
+  guides are read on GitHub and JSR too, so their docs links are absolute
+  (`https://denext.dev/docs/…`).
 - **Docs on public API:** exported symbols on the public entry points need JSDoc
   (`deno task doc-lint`) — the framework's entries AND every first-party package's
   published entrypoints (JSR scores "has docs for most symbols" per package; a raw

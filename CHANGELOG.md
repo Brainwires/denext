@@ -224,6 +224,14 @@ and this project adheres to
 
 ### Fixed
 
+- **Markdown heading ids match GitHub's for emphasis and code spans (`@denext/content-collections`,
+  the docs site).** A heading such as ``## `requestTimeout` bounds _awaiting_`` kept the emphasis
+  underscores in its id (`…-_awaiting_`), and a code span that looked like a tag
+  (`` `<Script strategy="worker">` ``) was dropped from it, so links written against GitHub's
+  anchors missed. Ids now drop `_em_` / `__strong__` delimiters (a `snake_case` word keeps its
+  underscores) and keep a code span's text. `deno task doc-lint` now checks every
+  `/docs/<page>#<anchor>` link against the ids the docs site renders.
+
 - **A live view's or MVU program's `send(…)` binds to a JSX `on*` prop under `deno check`.**
   `onClick={send({ type: "inc" })}` (the `defineLiveView` example in the guide and AGENTS.md) failed
   type checking with TS2322: the handler `send` returns took a DOM `Event`, and a JSX handler
@@ -1233,7 +1241,7 @@ and this project adheres to
   nonce the page's CSP lists, `boot.js` holds every `text/partytown` script inert until it has
   checked that nonce, and the service worker serves Partytown's sandbox only to a tab a checked
   boot announced, so an HTML injection gains nothing (see the
-  [security notes](/docs/security#script-strategyworker-partytown-and-html-injection)). App Router
+  [security notes](https://denext.dev/docs/security#script-strategyworker-partytown-and-html-injection)). App Router
   pages are supported, and a worker script a client component renders after load, on a page that
   loaded `boot.js`, is handed to Partytown too. Without the flag or the package the script still
   runs on the main thread, and the dev warning names the fix. Nothing reaches a page that does not
@@ -3602,7 +3610,7 @@ and this project adheres to
   authorizes a fork of its own executable that has an IPC channel, so a module sidecar no longer
   grants `run: ["*"]` for its children. Under the stock runtime and `deno run`, `spawnSelf` still
   checks `run` over the executable and says what to grant. Docs:
-  [Deno Desktop › Sidecars](/docs/desktop#desktop-sidecars).
+  [Deno Desktop › Sidecars](https://denext.dev/docs/desktop#desktop-sidecars).
 
 ### Fixed
 
@@ -4035,7 +4043,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   importer's `AsyncLocalStorage` / `AsyncContext` back once it is evaluated: the next `Deno.serve`
   request no longer sees the previous request's store. On Windows a passkey request whose window
   closes at once now frees the one-ceremony slot. Still needs at least denext.9. Docs:
-  [Deno Desktop runtime › Headless workers and forks of the app](/docs/desktop-runtime#headless-workers-and-forks-of-the-app).
+  [Deno Desktop runtime › Headless workers and forks of the app](https://denext.dev/docs/desktop-runtime#headless-workers-and-forks-of-the-app).
 
 ### Fixed
 
@@ -4281,7 +4289,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   whatever the store does. `denext task --history [--json]` / `--clear-history` read and clear
   through the configured store, and `denext ui`'s Cron page reads through the store API (the
   default file in-process, an app's own store through those commands). Guide:
-  [Scheduled tasks › Where history is kept](https://denext.dev/docs/tasks#history-store).
+  [Scheduled tasks › Where history is kept](https://denext.dev/docs/jobs#history-store).
 - **Postgres everywhere** (`denext/server`): `postgresAuthAdapter({ sql | url })` meets the same
   `AuthAdapter` contract as `sqliteAuthAdapter` (the shared contract suite runs against a real
   server), with its `sessions` store, on a database every replica shares; `postgresSessionStore`,
@@ -4422,7 +4430,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   secrets or bootstrap, and its stdout starts clean (the runtime's two start-up lines are
   removed). It needs the sidecar's `permissions.run` to cover the app's executable (`["*"]`, as
   its installed path is the user's). `runDesktop` resolves with `sidecarChild` set in a child.
-  Docs: [Desktop › A child of the sidecar](/docs/desktop#desktop-sidecars-children).
+  Docs: [Desktop › A child of the sidecar](https://denext.dev/docs/desktop#desktop-sidecars-children).
 
 ### Fixed
 
@@ -4780,7 +4788,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   layered sheet and uniwind's config registers the app's themes, as uniwind's Vite plugin does:
   the `denext patch` step of the recipe is gone. `reactNative: { uniwind: { extraThemes } }` names
   the themes beyond `light` / `dark` (`withUniwindConfig`'s option); `uniwind: false` turns it off.
-  Docs: [Recipe: uniwind and Tailwind](/docs/react-native#recipe-uniwind-and-tailwind).
+  Docs: [Recipe: uniwind and Tailwind](https://denext.dev/docs/react-native#recipe-uniwind-and-tailwind).
 - **`@legendapp/list/keyboard` and `@legendapp/list/reanimated` run on denext's LegendList.**
   They wrapped the real list's private `internal` API and failed the build; now
   `KeyboardAwareLegendList` adds the height of a field docked below it (`contentInsetEndAdjustment`,
@@ -4815,7 +4823,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   and **`desktop.update.ui`** (`{ feedUrl, publicKey, platform? }`)
   configures the UI overlay in `denext.config.ts`: the generated `desktop.ts` now serves it (no
   hand-written `runDesktop({ updater })`), and its feed host and the overlay's write access join
-  the packaged app's least-privilege flags. Docs: [Updates everywhere](/docs/updates).
+  the packaged app's least-privilege flags. Docs: [Updates everywhere](https://denext.dev/docs/updates).
 - **Sidecars can start with the user's login-shell environment (`loginShellEnv`).** An app opened
   from the Dock or a desktop launcher inherits a minimal `PATH`, so a backend could not find what
   Homebrew, nvm, asdf or mise installed (`git`, `node`, `codex`, `claude`). With
@@ -4827,7 +4835,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   found on it. A failure or a timeout logs one warning and keeps the inherited environment. Only the
   sidecars that opt in see the variables (never the page, never `DENO_*` / `DENEXT_*`); macOS and
   Linux, a no-op on Windows. The packaged app's `--allow-run` lists the usual shells. Docs:
-  [Desktop › The user's login-shell environment](/docs/desktop#desktop-sidecars-login-shell).
+  [Desktop › The user's login-shell environment](https://denext.dev/docs/desktop#desktop-sidecars-login-shell).
 
 ### Changed
 
