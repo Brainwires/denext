@@ -137,6 +137,14 @@ and this project adheres to
   backup. A finished transfer's headers are now dropped; iOS keeps the records out of backups
   with file protection, and Android keeps a live transfer's headers in the no-backup folder. Re-run
   `denext mobile add file-transfer` to update an app's unedited template files.
+- **A Deno Desktop page can no longer call LAN services with its own headers through
+  `downloadToFile`.** The runtime's download is not bound by CORS, so script running in the page
+  could send an `Authorization` or API-key header to a router or another admin API on the local
+  network and read the answer, including a failed request's body, with only write access to a
+  folder. A download to a private-network address (RFC 1918, carrier-grade NAT, IPv6 unique-local,
+  `.local`) now refuses any header beyond the CORS-safelisted ones (`Accept`, `Accept-Language`,
+  `Content-Language`, `Range`), on every redirect hop, and a failed download reports its body only
+  when the page may read the folder it was writing to.
 
 ### Docs
 

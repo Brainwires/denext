@@ -2512,3 +2512,63 @@ async function until(check: () => Promise<boolean>, ms = 3000): Promise<void> {
     await new Promise((r) => setTimeout(r, 5));
   }
 }
+
+Deno.test("fs.download: no custom headers to a private-network host; error bodies only with read scope", async () => {
+  const asked: string[] = [];
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-dl-lan-" });
+  const fakeFetch = ((u: unknown) => {
+    asked.push(String(u));
+    return Promise.resolve(new Response("admin secrets", { status: 401 }));
+  }) as typeof fetch;
+  const capWith = (read: Set<string>, resolved: string[]) =>
+    fsCapability({
+      dirs: { data: root, cache: root, documents: root },
+      read,
+      write: new Set(["$APPDATA"]),
+      downloadTimeoutMs: 5_000,
+      resolveHost: () => Promise.resolve(resolved),
+      fetch: fakeFetch,
+    });
+  try {
+    const lan = capWith(new Set(["$APPDATA"]), ["192.168.1.1"]);
+    for (
+      const url of [
+        "http://192.168.1.1/api",
+        "http://10.0.0.7/api",
+        "http://172.20.0.1/api",
+        "http://[fd00::1]/api",
+        "http://router.lan.test/api", // resolves to 192.168.1.1
+      ]
+    ) {
+      const err = await assertRejects(
+        () =>
+          call(lan, "download", {
+            url,
+            path: "x",
+            directory: "data",
+            headers: { Authorization: "Basic YWRtaW46YWRtaW4=" },
+          }),
+        DesktopCapError,
+      );
+      assertStringIncludes(err.message, "private-network", url);
+    }
+    assertEquals(asked, [], "no request with the page's credentials reached the LAN host");
+    // A plain download from the LAN still works (a desktop app reads its local network).
+    const plain = await assertRejects(
+      () => call(lan, "download", { url: "http://192.168.1.1/f", path: "f", directory: "data" }),
+      DesktopCapError,
+    );
+    assertEquals((plain.data as { body?: string }).body, "admin secrets", "read scope: body kept");
+    // Without read access to the target directory the page gets the status, not the body.
+    const writeOnly = capWith(new Set(), ["93.184.216.34"]);
+    const err = await assertRejects(
+      () =>
+        call(writeOnly, "download", { url: "https://files.test/x", path: "x", directory: "data" }),
+      DesktopCapError,
+    );
+    assertEquals(err.code, "download_failed");
+    assertEquals(err.data as { status: number; body?: string }, { status: 401 });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
