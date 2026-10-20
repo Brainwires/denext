@@ -20,6 +20,12 @@
 // The native loader also passes its config to `deno info --config`, which needs the real
 // Windows path — so it gets that one, plus an explicit `nodeModulesDir` so it never runs the
 // WASM discovery at all. On every other OS the options pass through untouched.
+//
+// On every OS: an app inside a Deno workspace that doesn't list it (a monorepo's root deno.json
+// whose `workspace` names other packages) fails the loader's discovery with
+// `WorkspaceDiscoverError(ConfigNotWorkspaceMember …)`, where Deno itself only warns and runs the
+// app on its own config. The loader is handed a stand-in beside the app's config — the same
+// fields, plus `"workspace": []` so discovery stops there — removed when the process exits.
 
 import {
   DEFAULT_LOADER,
@@ -27,7 +33,7 @@ import {
   type DenoPluginsOptions,
   denoResolverPlugin,
 } from "@luca/esbuild-deno-loader";
-import { dirname, extname, fromFileUrl, join, toFileUrl } from "@std/path";
+import { dirname, extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import type * as esbuild from "./esbuild/mod.ts";
 
@@ -200,13 +206,91 @@ function windowsLoaderOptions(options: DenoPluginsOptions): DenoPluginsOptions {
   return { ...options, configPath, nodeModulesDir };
 }
 
+/** A config file's parsed JSON(C) object, or `null` (absent, unreadable, not an object). */
+function readConfigObject(path: string): Record<string, unknown> | null {
+  try {
+    const json = parseJsonc(Deno.readTextFileSync(path));
+    return json && typeof json === "object" && !Array.isArray(json)
+      ? json as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a workspace's `members` (as its root `rootDir` lists them) include `dir`. A glob member
+ * never counts: the loader's discovery can't expand one (it fails with `ResolveMember`), so an
+ * app it names builds on its own config like any other app the workspace doesn't list.
+ */
+function listsMember(rootDir: string, members: unknown[], dir: string): boolean {
+  return members.some((m) => typeof m === "string" && resolve(rootDir, m) === dir);
+}
+
+/**
+ * Whether the config at `configPath` sits inside a Deno workspace that doesn't list its
+ * directory: the nearest ancestor `deno.json(c)` with a `workspace` array names other members.
+ */
+function outsideItsWorkspace(configPath: string, config: Record<string, unknown>): boolean {
+  if (config.workspace !== undefined) return false; // a workspace root itself
+  const dir = dirname(configPath);
+  for (let up = dirname(dir), below = dir; up !== below; below = up, up = dirname(up)) {
+    for (const name of ["deno.json", "deno.jsonc"]) {
+      const members = readConfigObject(join(up, name))?.workspace;
+      if (Array.isArray(members)) return !listsMember(up, members, dir);
+    }
+  }
+  return false;
+}
+
+/** The stand-in configs written this process, by original path (removed on exit). */
+const standIns = new Map<string, string>();
+
+/** Remove every stand-in config (the process is exiting). */
+function removeStandIns(): void {
+  for (const path of standIns.values()) {
+    try {
+      Deno.removeSync(path);
+    } catch { /* already gone */ }
+  }
+  standIns.clear();
+}
+
+/**
+ * The config the loader is handed for `configPath`: the path itself, or — for an app inside a
+ * workspace that doesn't list it — a stand-in beside it with the same fields and
+ * `"workspace": []`, written once per process (so relative imports, `scopes` and the
+ * `node_modules` directory resolve exactly as from the app's own config).
+ *
+ * @param configPath A deno.json path or `file://` URL.
+ * @returns The path or URL to hand the loader.
+ */
+function standaloneConfig(configPath: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(configPath) && !configPath.startsWith("file:")) {
+    return configPath;
+  }
+  const path = asPath(configPath);
+  const known = standIns.get(path);
+  if (known) return known;
+  const config = readConfigObject(path);
+  if (!config || !outsideItsWorkspace(path, config)) return configPath;
+  const standIn = join(dirname(path), `.deno.denext-loader-${Deno.pid}.json`);
+  Deno.writeTextFileSync(standIn, JSON.stringify({ ...config, workspace: [] }));
+  if (standIns.size === 0) globalThis.addEventListener("unload", removeStandIns);
+  standIns.set(path, standIn);
+  return standIn;
+}
+
 /**
  * `denoPlugins(options)` with the Windows path fixes applied (identical elsewhere).
  *
  * @param options The loader options; `configPath` may be a path or a `file://` URL.
  * @returns The plugins to append to an esbuild plugin chain.
  */
-export function denoLoaderPlugins(options: DenoPluginsOptions = {}): esbuild.Plugin[] {
+export function denoLoaderPlugins(given: DenoPluginsOptions = {}): esbuild.Plugin[] {
+  const options = given.configPath === undefined
+    ? given
+    : { ...given, configPath: standaloneConfig(given.configPath) };
   if (!WINDOWS) {
     return [
       denoResolverPlugin(options) as esbuild.Plugin,

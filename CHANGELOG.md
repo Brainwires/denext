@@ -304,6 +304,12 @@ and this project adheres to
   `denext deploy prepare --preset generic-host --domain <host>`, or `DENEXT_CANONICAL_ORIGIN`, and
   without one `prepare` warns and the origin is read from the env file.
 
+- **An app inside a Deno workspace that doesn't list it builds.** A monorepo's root `deno.json`
+  whose `workspace` names other packages made the esbuild Deno loader fail with
+  `WorkspaceDiscoverError(ConfigNotWorkspaceMember …)` (then `Cannot read properties of undefined
+  (reading 'loadEsm')`), so a migrated Next app there didn't build, while Deno itself only warns
+  and runs the app on its own config. The loader now gets the app's own config, as Deno does.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed
