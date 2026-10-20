@@ -23,7 +23,7 @@ import type { RefreshResolution, RefreshSwapHooks } from "./refresh-swap.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
 import {
   componentDisplayName,
-  memoClassElement,
+  REACT_ELEMENT_TYPE,
   resolveComponentType,
 } from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
@@ -220,9 +220,6 @@ function renderClassFiber(inst: Fiber): VNode | null {
 
 type RenderFn = (props: unknown, ref?: unknown) => VNode;
 
-/** Per class: the render function a `memo(Class)` fiber runs (renders the class as its child). */
-const memoClassRenders = /* @__PURE__ */ new WeakMap<object, RenderFn>();
-
 /**
  * Resolve memo/forwardRef object wrappers to the render function. The fast path (a plain
  * function type) returns it unchanged with a single typeof check. A wrapper hiding a
@@ -233,14 +230,17 @@ const memoClassRenders = /* @__PURE__ */ new WeakMap<object, RenderFn>();
  */
 function resolveRenderTarget(rawType: unknown): { fn: unknown; forwardsRef: boolean } {
   const resolved = resolveComponentType(rawType);
-  if (resolved.fn !== rawType && isClassComponent(resolved.fn)) {
-    const ctor = resolved.fn as object;
-    let fn = memoClassRenders.get(ctor);
-    if (fn === undefined) {
-      fn = (props: unknown) => memoClassElement(ctor, props) as VNode;
-      memoClassRenders.set(ctor, fn);
-    }
-    return { fn, forwardsRef: false };
+  // The flag first: with class components compiled out, this branch folds away, as before.
+  if (__DENEXT_CLASS_COMPONENTS__ && resolved.fn !== rawType && isClassComponent(resolved.fn)) {
+    // The element react-brands.ts' `memoClassElement` builds, inlined (the shared chunk's
+    // budget); `resolved` is this call's own object.
+    const type = resolved.fn as VNode["type"];
+    resolved.fn = (props: VNode["props"]): VNode => ({
+      $$typeof: REACT_ELEMENT_TYPE,
+      type,
+      props,
+      key: null,
+    });
   }
   return resolved;
 }

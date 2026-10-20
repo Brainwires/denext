@@ -170,7 +170,7 @@ export function invokeComponent(resolved: ResolvedComponentType, props: unknown)
 
 /**
  * The element a `memo(Class)` wrapper renders: the class itself, with the wrapper's props
- * (its `ref` included, minus the `key` the wrapper already used). React renders a memo of a
+ * (its `ref` included). React renders a memo of a
  * non-function type the same way — the memo's fiber compares props (shallow by default, or
  * the `compare` given), and the class below it re-renders unless its own
  * `shouldComponentUpdate` / `PureComponent` check bails.
@@ -179,13 +179,10 @@ export function invokeComponent(resolved: ResolvedComponentType, props: unknown)
  * @param props The memo element's props.
  * @returns A React element of `ctor`.
  */
-export function memoClassElement(ctor: unknown, props: unknown): unknown {
-  let p = (props ?? {}) as Record<string, unknown>;
-  if ("key" in p) {
-    const { key: _key, ...rest } = p;
-    p = rest;
-  }
-  return { [TYPEOF_KEY]: REACT_ELEMENT_TYPE, type: ctor, props: p, key: null };
+function memoClassElement(ctor: unknown, props: unknown): unknown {
+  // denext keeps an element's `key` in its props (`element()` reads it there), so the class
+  // sees the same props it would rendered directly; the wrapper's key stays the wrapper's.
+  return { [TYPEOF_KEY]: REACT_ELEMENT_TYPE, type: ctor, props: props ?? {}, key: null };
 }
 
 /**
