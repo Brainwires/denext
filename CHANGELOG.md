@@ -16,7 +16,8 @@ and this project adheres to
   scheduler and the event-replay dispatcher at startup even when it had no `client:*` island
   waiting, because the bundler places code by file and the generated entries' runtime barrel
   re-exported the isomorphic-island module those two share; that module is now its own internal
-  entrypoint. The class-component preload hint no longer reads comments, so "a Server Component"
+  entrypoint (`installIsoIslands` and `isoIslandChunk`, which only generated code imports, leave
+  `denext/client-runtime` for `denext/iso-island`). The class-component preload hint no longer reads comments, so "a Server Component"
   in one no longer installs the class runtime at startup. The submit side of a function-valued
   form action (`<form action={fn}>`, `useActionState`) is a chunk loaded by the first such form,
   well before it can be submitted; a submit that beats it is held, never sent natively. Measured:

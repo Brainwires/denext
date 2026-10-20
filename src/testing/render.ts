@@ -8,6 +8,7 @@
 
 import { act, createRoot, type Root } from "../client/mod.ts";
 import { setDocument } from "../client/reconciler.ts";
+import { installFormActions } from "../client/dom-props.ts";
 import { installErrorTexts } from "../client/fiber/error-texts.ts";
 import { installDevRender } from "../client/fiber/dev-render.ts";
 import type { VNode } from "../jsx/types.ts";
@@ -483,6 +484,9 @@ export async function render(ui: VNode): Promise<RenderResult> {
   const container = doc.createElement("div");
   setDocument(doc as unknown as Parameters<typeof setDocument>[0]);
   const root: Root = createRoot(container as unknown as Parameters<typeof createRoot>[0]);
+  // A function-valued form action's submit runtime loads on demand in an app; a test submits
+  // right after rendering, so have it in place first (a submit then runs synchronously).
+  await installFormActions();
   await act(() => {
     root.render(ui);
   });
