@@ -98,6 +98,12 @@ and this project adheres to
   repository could ship a listing that made those verbs run its code. The fingerprint is now keyed
   with a per-machine secret kept in the user's cache directory; listings written by an earlier
   denext are ignored until `denext commands` runs again.
+- **Signing a compiled Windows binary no longer leaves the certificate's password on disk when
+  interrupted.** With osslsigncode, `denext build --compile --sign` wrote the `.pfx` password to a
+  file beside the release binary in `dist/` and removed it only when signing finished, so a Ctrl-C
+  or a terminated CI step left it there, next to an artifact that is often uploaded or archived.
+  The file now lives in a private directory of the system's temp directory, is removed on
+  SIGINT / SIGTERM as well, and a directory a killed run left behind is swept on the next run.
 
 ### Docs
 
