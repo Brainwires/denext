@@ -248,7 +248,7 @@
       "name": "completions",
       "summary": "Print a shell completion script (bash|zsh|fish)",
       "usage": "denext completions <shell>",
-      "description": "Completes denext's verbs, the project's own and the Deno verbs denext forwards.\nDeno's own completion script (`deno completions`): `denext deno completions <shell>`.",
+      "description": "Completes denext's verbs, the Deno verbs denext forwards and the project's own as\n`denext commands` last listed them (it never imports the project's config).\nDeno's own completion script (`deno completions`): `denext deno completions <shell>`.",
       "flags": [],
       "positionals": [
         {
