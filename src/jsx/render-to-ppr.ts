@@ -186,6 +186,8 @@ export interface PrerenderResult {
   postponedIds: string[];
   /** True when a dynamic read escaped the root: the page is fully dynamic (no shell). */
   dynamic: boolean;
+  /** The dynamic API whose read escaped the root (set with `dynamic`). */
+  postponedBy?: string;
 }
 
 /**
@@ -203,7 +205,9 @@ export async function prerenderToShell(
     const shell = await renderer.resolveChildren(node, []);
     return { shell, postponedIds: renderer.postponedIds, dynamic: false };
   } catch (err) {
-    if (isPostpone(err)) return { shell: "", postponedIds: [], dynamic: true };
+    if (isPostpone(err)) {
+      return { shell: "", postponedIds: [], dynamic: true, postponedBy: err.api };
+    }
     throw err;
   } finally {
     setDispatcher(prev);

@@ -157,7 +157,9 @@ export default function Feed() {
         <li>
           A <code>searchParams</code> read of a name outside <code>cacheKeyParams</code>{" "}
           when that allowlist is configured (the value would be baked into a body served to
-          everyone; dev warns which param).
+          everyone; dev warns which param). With <code>cacheComponents</code>{" "}
+          on, such a read inside a <code>&lt;Suspense&gt;</code>{" "}
+          becomes a per-request hole instead, and the shell around it is cached.
         </li>
         <li>
           Metadata that needs the request's host: an auto-populated <code>og:image</code>{" "}

@@ -254,6 +254,8 @@ export interface PrerenderFlightResult {
   postponedIds: string[];
   /** True when a dynamic read escaped the root: the page is fully dynamic (no shell). */
   dynamic: boolean;
+  /** The dynamic API whose read escaped the root (set with `dynamic`). */
+  postponedBy?: string;
 }
 
 /**
@@ -304,7 +306,7 @@ export async function prerenderToShellFlight(
     };
   } catch (err) {
     endSignalCollection(); // reset the module collector on any throw
-    if (isPostpone(err)) return empty(true);
+    if (isPostpone(err)) return { ...empty(true), postponedBy: err.api };
     throw err;
   } finally {
     setDispatcher(prev);

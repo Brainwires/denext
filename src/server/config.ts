@@ -1982,8 +1982,9 @@ export interface DenextConfig {
    * (`cookies()`/`headers()`) inside `use cache` throws (`"use cache: private"` may read
    * them); a streamed hole can't add an
    * inline `<style>`/`<script>` or hoist an in-boundary `<title>`/`<meta>` into the
-   * already-flushed head; and `searchParams` read outside a Suspense boundary with
-   * `cacheKeyParams` can reflect one request's value.
+   * already-flushed head. With `cacheKeyParams` set, reading a `searchParams` name outside
+   * it postpones like `cookies()` (outside every Suspense boundary, the page renders per
+   * request and is not stored).
    *
    * Next.js's `experimental.cacheComponents` spelling is kept as an obsolete alias for
    * migrated Next apps (see {@linkcode resolveCacheComponents}); this top-level field wins.

@@ -219,26 +219,44 @@ async function isStaticParamDisallowed(
 function pageProps(params: RouteParams, search: URLSearchParams): PageProps {
   const tracked = trackSearchParamReads(search);
   // Built from the PLAIN params (iterating the tracker would count every name as read).
-  const record = trackRecordReads(searchParamsRecord(search, tracked), tracked);
-  return { params: asyncProps({ ...params }), searchParams: asyncProps(record) };
+  const record = asyncProps(searchParamsRecord(search, tracked));
+  return { params: asyncProps({ ...params }), searchParams: trackRecordReads(record, tracked) };
 }
 
+type SearchParamsProp = SearchParams & { readonly raw: URLSearchParams };
+
+/** Whether `prop` names a query parameter on the record (not `raw` or the awaitable's `then`). */
+const isParamKey = (prop: string | symbol): prop is string =>
+  typeof prop === "string" && prop !== "raw" && prop !== "then";
+
 /**
- * Route a record's property reads through the tracked `URLSearchParams` so the ISR
- * narrowed-key dev-warn sees them (a `Proxy` is only installed when tracking is on —
- * `trackSearchParamReads` returns its input untouched otherwise).
+ * Route a record's reads through the tracked `URLSearchParams` so the page cache sees them
+ * (a `Proxy` is only installed when tracking is on — `trackSearchParamReads` returns its
+ * input untouched otherwise): a property read or an `in` check reads that name, listing the
+ * keys reads every name, and `await` resolves to a view tracked the same way.
  */
-function trackRecordReads(
-  record: SearchParams & { readonly raw: URLSearchParams },
-  tracked: URLSearchParams,
-): SearchParams & { readonly raw: URLSearchParams } {
+function trackRecordReads<T extends SearchParamsProp>(record: T, tracked: URLSearchParams): T {
   if (!currentContext()?.trackParamReads) return record;
-  return new Proxy(record, {
-    get(target, prop, receiver) {
-      if (typeof prop === "string" && prop !== "raw" && prop !== "then") tracked.has(prop);
-      return Reflect.get(target, prop, receiver);
-    },
-  });
+  const view = <V extends object>(target: V): V =>
+    new Proxy(target, {
+      get(t, prop, receiver) {
+        if (isParamKey(prop)) tracked.has(prop);
+        const value = Reflect.get(t, prop, receiver);
+        if (prop !== "then" || typeof value !== "function") return value;
+        // `await searchParams` resolves to a plain snapshot: hand back a tracked view of it.
+        return (onFulfilled?: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+          (value as PromiseLike<object>["then"]).call(t, view).then(onFulfilled, onRejected);
+      },
+      has(t, prop) {
+        if (isParamKey(prop)) tracked.has(prop);
+        return Reflect.has(t, prop);
+      },
+      ownKeys(t) {
+        tracked.keys();
+        return Reflect.ownKeys(t);
+      },
+    });
+  return view(record);
 }
 
 /**
@@ -712,6 +730,8 @@ export async function renderPageFlightShell(
 export interface PrerenderedPage {
   /** True ⇒ no static shell; render this request via {@link renderPage}. */
   dynamic: boolean;
+  /** With `dynamic`: the dynamic API whose read escaped every Suspense boundary, if one did. */
+  postponedBy?: string;
   /** The static shell body (holes shown as marker-wrapped fallbacks). */
   shellBody: string;
   /** Dynamic-hole ids, in order. Empty ⇒ a fully static page (cache as usual). */
@@ -756,7 +776,7 @@ export async function prerenderPage(
 ): Promise<PrerenderedPage> {
   const ctx = await buildPageContext(match, request, load, options);
   const { tree, metadata, viewport, config } = ctx;
-  const bail = (): PrerenderedPage => dynamicPrerender(ctx);
+  const bail = (postponedBy?: string): PrerenderedPage => dynamicPrerender(ctx, postponedBy);
 
   // dynamicParams:false with an unenumerated param: fall back to the normal render,
   // which throws notFound() and serves the 404 UI.
@@ -771,7 +791,7 @@ export async function prerenderPage(
     const result = await withPrerender(() => prerenderToShell(tree, { head }));
     const shellSignalState = finishSignals();
     // A caught control signal must not be cached as a 200 shell either.
-    if (result.dynamic || ctx.signal.status) return bail();
+    if (result.dynamic || ctx.signal.status) return bail(result.postponedBy);
     return {
       dynamic: false,
       shellBody: result.shell,
@@ -793,9 +813,10 @@ export async function prerenderPage(
 }
 
 /** The `{ dynamic: true }` prerender result: the caller falls back to the normal render. */
-function dynamicPrerender(ctx: PageContext): PrerenderedPage {
+function dynamicPrerender(ctx: PageContext, postponedBy?: string): PrerenderedPage {
   return {
     dynamic: true,
+    ...(postponedBy ? { postponedBy } : {}),
     shellBody: "",
     holeIds: [],
     metadata: ctx.metadata,
@@ -863,8 +884,8 @@ export async function prerenderPageFlight(
 ): Promise<PrerenderedFlightPage> {
   const ctx = await buildPageContext(match, request, load, options);
   const { tree, metadata, viewport, config } = ctx;
-  const bail = (): PrerenderedFlightPage => ({
-    ...dynamicPrerender(ctx),
+  const bail = (postponedBy?: string): PrerenderedFlightPage => ({
+    ...dynamicPrerender(ctx, postponedBy),
     flightShell: null,
     flightIslands: [],
     flightSignalState: {},
@@ -880,7 +901,7 @@ export async function prerenderPageFlight(
       prerenderToShellFlight(tree, { head, resumable: config.resumable })
     );
     // A caught control signal must not be cached as a 200 shell either.
-    if (result.dynamic || ctx.signal.status) return bail();
+    if (result.dynamic || ctx.signal.status) return bail(result.postponedBy);
     return {
       dynamic: false,
       shellBody: result.shell,

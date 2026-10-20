@@ -17,6 +17,19 @@ and this project adheres to
 
 ### Security
 
+- **A cached Cache Components shell no longer carries one visitor's query values to another.**
+  With `cacheComponents` and `cacheKeyParams` both set, a page that read a `searchParams` name
+  outside `cacheKeyParams` while its shell prerendered stored that request's value in the shared
+  shell, and later visitors with other values were served it. Such a read now postpones, as
+  `searchParams` does under Next.js's Cache Components: inside a `<Suspense>` boundary it becomes
+  a per-request hole, outside every boundary the page renders per request and is never stored
+  (dev warns, naming the param), and a value that cannot postpone keeps the shell out of the
+  cache. Names listed in `cacheKeyParams` are part of the shell's cache key and stay in the shell.
+  Separately, with `cacheKeyParams` set, a page that awaited `searchParams` (`const sp = await
+  searchParams`) or checked a name with `in` was cached whole even when it used a param outside
+  the list; those reads now count, so such a render is not stored, with or without
+  `cacheComponents`.
+
 - **Markdown links can no longer inject attributes (`@denext/content-collections`).** Since 4.1.0,
   a link or reference-link destination containing a control character could split the rendered
   `<a>` tag, so the link's label landed inside the `href` attribute and a quote in it added

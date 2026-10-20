@@ -22,6 +22,7 @@ import {
 } from "./page-document.ts";
 import { mayCacheRender, pageCacheEntry, withCdnCacheControl } from "./page-cache-flow.ts";
 import { classRendered } from "../runtime/render-scope.ts";
+import { warnUnkeyedParamReads } from "./request-context.ts";
 
 type Prerendered = PrerenderedPage | PrerenderedFlightPage;
 
@@ -67,13 +68,21 @@ function flightDocumentFields(pre: Prerendered, useFlight: boolean) {
  * rebuilt per request; the head extras/title let a later hit rebuild the head) — plus,
  * for a Flight route, its Flight payload — and stream it for THIS request. The tags
  * stored are those the static shell accrued (its `use cache` islands), before the
- * per-request hole render adds its own.
+ * per-request hole render adds its own. A shell that embeds a `searchParams` value its key
+ * drops (read inside a `use cache` body, where it cannot postpone) is served to this request
+ * only.
  */
 async function serveShellWithHoles(
   pr: PageRequest,
   pre: Prerendered,
   timing: CacheEntryTiming,
 ): Promise<Response> {
+  const served = () =>
+    servePprShell(pr, shellFromPrerender(pre, pr.useFlight), "MISS", pr.pageLoad);
+  if (pr.state.ctx.unkeyedShellRead) {
+    warnUnkeyedParamReads(pr.state.ctx, pr.state.app.config.cacheKeyParams ?? []);
+    return served();
+  }
   await pr.state.app.config.pageCache!.set(
     pr.cacheKey,
     pageCacheEntry(pr, pre.shellBody, 200, timing, {
@@ -88,7 +97,7 @@ async function serveShellWithHoles(
       ...flightShellFields(pre, pr.useFlight),
     }),
   );
-  return servePprShell(pr, shellFromPrerender(pre, pr.useFlight), "MISS", pr.pageLoad);
+  return served();
 }
 
 /**
@@ -132,7 +141,15 @@ async function serveStaticShell(
 export async function servePrerendered(pr: PageRequest): Promise<Response | null> {
   if (!pr.state.app.config.cacheComponents || !pr.cacheable) return null;
   const pre = await prerenderShell(pr);
-  if (!pre || pre.dynamic) return null;
+  if (!pre) return null;
+  if (pre.dynamic) {
+    // An un-keyed `searchParams` read outside every Suspense boundary: the page renders per
+    // request and is never stored; say so in dev, with the fix.
+    if (pre.postponedBy?.startsWith("searchParams.")) {
+      warnUnkeyedParamReads(pr.state.ctx, pr.state.app.config.cacheKeyParams ?? []);
+    }
+    return null;
+  }
   const timing = pageCacheTiming(pre.config);
   if (timing === null) return null;
   return pre.holeIds.length > 0

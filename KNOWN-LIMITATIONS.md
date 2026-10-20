@@ -92,8 +92,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   same position in the component's DOM (its first element when the placeholder's shape differs).
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have
   flushed); its late `<title>`/`<meta>` stays inline.
-- **`searchParams` read outside a hole with `cacheKeyParams` set** can reflect another request;
-  a whole-body cache refuses to store such a render, a PPR shell relies on the hole.
 
 ### Typed API, Live and GraphQL
 

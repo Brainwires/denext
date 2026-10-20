@@ -171,6 +171,15 @@ const getPrice = cache(async (sku: string) => {
         now works on routes with a <code>"use client"</code>{" "}
         boundary too — islands in the cached shell and inside resumed holes both hydrate.
       </p>
+      <p>
+        With <code>cacheKeyParams</code> set, a <code>searchParams</code>{" "}
+        name outside that allowlist is a request-time value, as <code>searchParams</code>{" "}
+        is in Next: reading it while the shell prerenders postpones like <code>cookies()</code>{" "}
+        does, so the enclosing <code>&lt;Suspense&gt;</code>{" "}
+        becomes a per-request hole. Read outside every boundary, it keeps the page from being
+        prerendered: that page renders per request, is never stored, and dev warns with the param's
+        name. A name in the allowlist is part of the shell's cache key and stays in the shell.
+      </p>
       <Callout kind="note">
         Cache Components / PPR is a stable <strong>opt-in</strong> — off unless you set{" "}
         <code>cacheComponents: true</code> (the legacy <code>experimental.cacheComponents</code>

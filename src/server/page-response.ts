@@ -304,9 +304,13 @@ async function renderAndServe(pr: PageRequest): Promise<Response> {
 /** Serve a matched page (GET/HEAD, or a soft-nav POST carrying an over-large render payload). */
 export async function servePage(state: RequestState, match: MatchedPageRequest): Promise<Response> {
   const pr = await preparePageRequest(state, match);
-  // When the key is narrowed, record which searchParams the render reads so a
-  // whole-body-cached render can dev-warn if it baked in a dropped param.
-  if (pr.cacheable && state.app.config.cacheKeyParams) state.ctx.trackParamReads = true;
+  // When the key is narrowed, record which searchParams the render reads: a cached render
+  // must not embed a dropped param's value (a shell prerender postpones on one instead).
+  const { cacheKeyParams } = state.app.config;
+  if (pr.cacheable && cacheKeyParams) {
+    state.ctx.trackParamReads = true;
+    state.ctx.keyedParams = new Set(cacheKeyParams);
+  }
   const cached = await serveFromPageCache(pr);
   if (cached) return cached;
   const prerendered = await servePrerendered(pr);
