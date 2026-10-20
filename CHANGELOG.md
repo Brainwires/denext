@@ -335,6 +335,11 @@ and this project adheres to
   response carries the id its log line has in `x-request-id`, not only error responses. With
   logging off nothing changes: the headers stay Next.js's.
 
+- **The image optimizer answers `400` for a source that is no image.** A local file such as
+  `/_denext/image?url=/styles.css&w=64&q=75` answered `500` and logged the decoder's full stack on
+  every request, an unauthenticated way to fill the server log. It now answers `400` "The
+  requested resource isn't a valid image." (Next.js's answer) and logs one line.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed
