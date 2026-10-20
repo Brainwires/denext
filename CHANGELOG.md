@@ -84,6 +84,13 @@ and this project adheres to
   written, so a quoted spelling (`PRAGMA "key"`, `PRAGMA [rekey]`) reached the plain driver: on
   the web and the desktop the database silently stayed unencrypted, and a raw `rekey` got past
   the shell's rule. Pragma names are now compared unquoted (schema prefix and comments included).
+- **The MCP server's `denext_ui_*` tools require `apply: true` for every change a page can't
+  preview.** A change without `apply` was let through whenever it carried `fields.op: "preview"`,
+  but several pages ignore `op` (running a `deno.json` task, the dev server, setup, project
+  verbs) or write on a field of their own (the Docker panel), so an agent steered by injected
+  text could run a task or write files without the explicit apply step meant to gate it.
+  `op: "preview"` now passes only on the pages that really preview (generate and the database
+  section's writes), and never for setting a user's password.
 
 ### Docs
 

@@ -49,6 +49,43 @@ Deno.test("uiCallRefusal: reads go, a change needs a preview or apply, paths sta
   );
 });
 
+Deno.test("uiCallRefusal: op preview passes only where the endpoint really previews", () => {
+  const panel = (id: string) => UI_PANELS.find((p) => p.id === id)!;
+  // The audit's proof: `/tasks/run` ignores `op`, so a "preview" ran the task.
+  const tasks = { path: "/tasks/run", method: "POST", fields: { task: "deploy", op: "preview" } };
+  assertStringIncludes(uiCallRefusal(panel("tasks"), tasks, false)!, "apply: true");
+  assertEquals(uiCallRefusal(panel("tasks"), tasks, true), null);
+  // Docker writes on `confirm=1` whatever `op` says; dev, setup and commands act at once.
+  for (
+    const [id, path] of [
+      ["docker", "/docker"],
+      ["dev", "/dev"],
+      ["setup", "/setup"],
+      [
+        "commands",
+        "/commands",
+      ],
+      ["config", "/config"],
+      ["plugins", "/plugins"],
+    ]
+  ) {
+    const call = { path, method: "POST", fields: { op: "preview", confirm: "1" } };
+    assertStringIncludes(uiCallRefusal(panel(id), call, false)!, "apply: true", path);
+  }
+  // A user's password is set at once (its preview would echo it): no preview there.
+  const password = {
+    path: "/database/users",
+    method: "POST",
+    fields: { op: "preview", action: "password", id: "u1" },
+  };
+  assertStringIncludes(uiCallRefusal(panel("database"), password, false)!, "apply: true");
+  const ban = { ...password, fields: { op: "preview", action: "ban", id: "u1" } };
+  assertEquals(uiCallRefusal(panel("database"), ban, false), null);
+  // A DELETE is never a preview.
+  const del = { path: "/plugins", method: "DELETE", fields: { op: "preview" } };
+  assertStringIncludes(uiCallRefusal(panel("plugins"), del, false)!, "apply: true");
+});
+
 /** A minimal project the UI can manage. */
 async function project(): Promise<string> {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_mcp_ui_" }));

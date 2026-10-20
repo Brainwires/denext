@@ -224,6 +224,30 @@ async function readStream(res: Response, timeoutMs = DEFAULT_STREAM_MS): Promise
   return lines.join("\n");
 }
 
+/**
+ * The UI pages whose POST really previews when `op` is not `"apply"` (they write only on
+ * `op=apply`). Every other change — a page that ignores `op` (`/tasks/run`), acts at once
+ * (`/dev`, `/setup`, `/commands`) or writes on a field of its own (`/docker`'s `confirm`) — needs
+ * `apply: true`, whatever `op` it carries.
+ */
+const PREVIEW_PAGES: ReadonlySet<string> = new Set([
+  "/generate",
+  "/database/rows",
+  "/database/policies",
+  "/database/migrations",
+  "/database/storage",
+  "/database/users",
+  "/database/realtime",
+]);
+
+/** Whether `call` is a preview its page honours (so it changes nothing). */
+function isHonouredPreview(call: UiCall): boolean {
+  if (call.method !== "POST" || call.fields?.op !== "preview") return false;
+  if (!PREVIEW_PAGES.has(call.path)) return false;
+  // Setting a user's password runs at once: its preview would carry the password back.
+  return !(call.path === "/database/users" && call.fields?.action === "password");
+}
+
 /** Why a call is refused before it is sent, or null when it may go. */
 export function uiCallRefusal(
   panel: UiPanel,
@@ -238,7 +262,7 @@ export function uiCallRefusal(
   }
   if (!["GET", "POST", "DELETE"].includes(call.method)) return "method must be GET, POST or DELETE";
   if (call.method === "GET" || apply) return null;
-  if (call.fields?.op === "preview") return null;
+  if (isHonouredPreview(call)) return null;
   return `${call.method} ${call.path} changes the project. Send it as a preview first ` +
     `(fields.op = "preview", where the panel offers one: it answers with what would change), ` +
     `then call again with apply: true to make the change.`;
