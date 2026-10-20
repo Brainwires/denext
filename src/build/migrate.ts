@@ -2839,11 +2839,15 @@ export function desktopAppName(title: string): string {
  */
 const MIGRATED_RUN = "deno run -A --node-modules-dir=none";
 
+/** The permissions a SPA's `start` needs: the set `denext create`'s `start` task has. */
+const LEAST_PRIVILEGE_START = "--allow-net --allow-read --allow-env --allow-write=.denext";
+
 function spaTasks(
   desktop: boolean,
   cli: string,
   hasIcon: boolean,
   nodeModulesDir: "manual" | "auto" = "auto",
+  start: "least-privilege" | "all" = "all",
 ): Record<string, string> {
   // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
   // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
@@ -2864,11 +2868,13 @@ function spaTasks(
     dev: `${run} ${cli} dev .`,
     build: `${run} ${cli} build .`,
     export: `${run} ${cli} export .`,
-    // `-A`: a migrated app's `start` re-execs a child `deno` to apply the CSS shim import map
-    // (`maybeReexecForCss`) and, for a manual-`node_modules` app, the merged module config
-    // (`maybeReexecForModules`) — so it needs run + write + read + env + net (effectively the
-    // full set every denext example's `start` uses). A tighter scope crashes on the re-exec.
-    start: `${run} ${cli} start .`,
+    // A SPA's `start` serves its export and spawns nothing, so it gets the least-privilege set
+    // `denext create` writes. `-A` for an App Router app: its next-compat build's `start` re-execs
+    // a child `deno` to apply the CSS shim import map (`maybeReexecForCss`), which needs an
+    // unscoped `--allow-run` (equivalent to every permission) and writes the app's deno.json.
+    start: start === "least-privilege"
+      ? `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START} ${cli} start .`
+      : `${run} ${cli} start .`,
   };
   if (desktop) tasks.desktop = desktopTask(hasIcon);
   return tasks;
@@ -3352,7 +3358,10 @@ async function writeSpaProjectFiles(
   const denoJson = spaDenoJson(
     imports,
     nodeModulesDir,
-    { ...spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir), ...cap?.tasks },
+    {
+      ...spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir, "least-privilege"),
+      ...cap?.tasks,
+    },
   );
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
@@ -3515,7 +3524,7 @@ async function writeExpoDenoJson(
   o: { nodeModulesDir: "manual" | "auto"; installed: boolean; written: string[] },
 ): Promise<boolean> {
   const tasks = {
-    ...spaTasks(false, cli, false, o.nodeModulesDir),
+    ...spaTasks(false, cli, false, o.nodeModulesDir, "least-privilege"),
     ...capacitorTasks(cli, { run: MIGRATED_RUN, installed: o.installed }),
   };
   return await finishSpaProjectFiles(

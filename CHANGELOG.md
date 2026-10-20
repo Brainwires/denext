@@ -317,6 +317,13 @@ and this project adheres to
   (reading 'loadEsm')`), so a migrated Next app there didn't build, while Deno itself only warns
   and runs the app on its own config. The loader now gets the app's own config, as Deno does.
 
+- **A migrated SPA or Expo app's `start` runs least-privilege.** `denext migrate` wrote every
+  `start` task with `-A`, so the production server of a migrated app had every permission. A SPA
+  or Expo migration now writes the set `denext create` does
+  (`--allow-net --allow-read --allow-env --allow-write=.denext`). A migrated App Router app keeps
+  `-A`: its `start` re-runs itself under a stylesheet import map, which needs an unscoped
+  `--allow-run`; the production checklist says so.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

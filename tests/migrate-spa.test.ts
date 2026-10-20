@@ -77,12 +77,21 @@ async function assertPnpmDesktopDenoJson(dir: string): Promise<void> {
   assert(cfg.tasks.dev && cfg.tasks.desktop, "dev + desktop tasks");
   // Manual mode: the CLI itself runs OUTSIDE the app's manual node_modules (its own esbuild
   // etc. come from Deno's cache; the re-exec'd build child uses the merged manual config).
-  for (const t of ["dev", "build", "export", "start"]) {
+  for (const t of ["dev", "build", "export"]) {
     assert(
       String(cfg.tasks[t]).startsWith("deno run -A --node-modules-dir=none "),
       `${t} task runs the CLI with --node-modules-dir=none: ${cfg.tasks[t]}`,
     );
   }
+  // A SPA's `start` serves the export and spawns nothing: the least-privilege set `denext
+  // create` writes, not `-A` (up to 4.5.0 every migrated app's production server had every
+  // permission).
+  assert(
+    String(cfg.tasks.start).startsWith(
+      "deno run --node-modules-dir=none --allow-net --allow-read --allow-env --allow-write=.denext ",
+    ),
+    cfg.tasks.start,
+  );
   assertDesktopTask(cfg.tasks.desktop);
 }
 

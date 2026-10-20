@@ -86,6 +86,14 @@ Each line: what to set → where it is documented. Config keys go in
   boot; `/_denext/health` reports `"cacheStore": "memory"`). The scaffold's
   `denext task start` already grants it. →
   [Health & readiness](/docs/deploy#13-health--readiness)
+- Run the server on denext's Deno toolchain (`denext task start`, the binary
+  `denext toolchain path` prints, or what `denext deploy prepare` writes): on another Deno the
+  least-privilege `start` stops and says so, since `Deno.SQL` / `postgresClient()` would be
+  missing. → [Toolchain](/docs/toolchain)
+- Know what your `start` is granted. `denext create` and a migrated SPA or Expo app write the
+  least-privilege set above. A migrated App Router app's `start` keeps `-A`: its build serves
+  stylesheets through an import map `start` applies by re-running itself, which takes an
+  unscoped `--allow-run` (as good as every permission) and a write to the app's `deno.json`.
 - Back up `.denext/*.db` and any app database (`auth.db` from
   `sqliteAuthAdapter`, `.denext/sessions.db` from `sqliteSessionStore`, your own
   `app.db`) like any SQLite file: copy the `-wal`/`-shm` siblings too, or use
