@@ -31,6 +31,7 @@ import {
   reportBoundaryErrors,
   titleOf,
 } from "./page-document.ts";
+import { documentBody } from "./response-headers.ts";
 import { cacheAndServeBuffered, pageCacheKey, serveFromPageCache } from "./page-cache-flow.ts";
 import { servePrerendered } from "./page-prerender.ts";
 import { pageCacheTiming } from "./cache.ts";
@@ -258,8 +259,8 @@ async function bufferedResponse(pr: PageRequest, rendered: RenderedPage): Promis
       ...(dynamic ? { vary: "x-denext-nav, Cookie" } : {}),
     }
     : undefined;
-  const body = pr.state.request.method === "HEAD" ? null : doc;
-  return htmlResponse(pr.state, body, rendered.status, csp, navHeaders);
+  const { body, headers } = documentBody(pr.state.request, doc);
+  return htmlResponse(pr.state, body, rendered.status, csp, { ...navHeaders, ...headers });
 }
 
 /** Turn a completed render into its response: soft-nav payload, cached document, or buffered document. */

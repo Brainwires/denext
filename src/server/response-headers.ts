@@ -108,3 +108,22 @@ export function notFound(pathname: string): Response {
     { status: 404, headers: { "content-type": "text/html; charset=utf-8" } },
   );
 }
+
+/**
+ * The body and extra headers of an HTML document response to `request`: a HEAD gets no body but
+ * the length its GET's would have (left to the server, a body-less response says `0`).
+ *
+ * @param request The request.
+ * @param doc The rendered document.
+ * @returns The body to send and the headers to add.
+ */
+export function documentBody(
+  request: Request,
+  doc: string,
+): { body: string | null; headers: Record<string, string> } {
+  if (request.method !== "HEAD") return { body: doc, headers: {} };
+  return {
+    body: null,
+    headers: { "content-length": String(new TextEncoder().encode(doc).byteLength) },
+  };
+}

@@ -340,6 +340,10 @@ and this project adheres to
   every request, an unauthenticated way to fill the server log. It now answers `400` "The
   requested resource isn't a valid image." (Next.js's answer) and logs one line.
 
+- **`HEAD` of a page carries its length.** The body was dropped and the server then sent
+  `content-length: 0`; a `HEAD` of a page or of the 404 page now carries the length its `GET`
+  has (uncompressed).
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

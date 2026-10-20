@@ -43,7 +43,7 @@ import {
   type RequestState,
   retarget,
 } from "./pipeline-state.ts";
-import { htmlHeaders, notFound } from "./response-headers.ts";
+import { documentBody, htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
 import { applyCors, endpointCorsPolicy, isPreflight, preflightResponse } from "./cors.ts";
 
@@ -424,8 +424,8 @@ async function serveNotFoundPage(state: RequestState, manifest: RouteManifest): 
     publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
   });
   const csp = await resolveCsp(doc, undefined, config.csp);
-  const body = state.request.method === "HEAD" ? null : doc;
-  return finalize(state, new Response(body, { status, headers: htmlHeaders(csp) }));
+  const { body, headers } = documentBody(state.request, doc);
+  return finalize(state, new Response(body, { status, headers: htmlHeaders(csp, headers) }));
 }
 
 /**
