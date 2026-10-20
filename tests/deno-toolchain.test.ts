@@ -456,10 +456,20 @@ Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every fa
       env: envOf({}),
       missingGrants: () => Promise.resolve(["--allow-run"]),
     });
-    // A process scoped down on purpose (the least-privilege `start` task) stays on the Deno that
-    // launched it without a warning on every start.
+    // A process scoped down (the least-privilege `start` task) can't start the toolchain: the
+    // choice carries the refusal a project-code verb ends with (never silently stock Deno, where
+    // Deno.SQL and the toolchain's other changes are missing), naming every way out.
     assert(grants.kind === "stock" && grants.warning === undefined);
     assertStringIncludes(grants.reason, "lacks --allow-run");
+    assert(grants.refusal, "a refusal for the project-code verbs");
+    for (
+      const text of [
+        "--allow-run",
+        "denext task start",
+        "denext toolchain path",
+        "DENEXT_DENO=stock",
+      ]
+    ) assertStringIncludes(grants.refusal, text);
 
     const off = await refusal(resolveDenoToolchain({ ...base, env: envOf({}), fetch: offline }));
     assertStringIncludes(off, "Are you offline?");

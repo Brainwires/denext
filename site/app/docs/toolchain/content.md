@@ -158,17 +158,18 @@ The binary is cached beside Deno's own cache:
 denext never falls back to another Deno on its own. On a platform with no pinned build, offline on
 first use, or behind a failed or mismatching download, a command that needs the toolchain stops
 with one error that says why, names the fix (`denext toolchain install`) and the two explicit
-opt-outs above. A process
-that lacks the grants to install and run it (`--allow-run`, and read/write on the cache
-directory) stays on the Deno that launched it without a warning: that is the least-privilege
-`start` task `denext create` scaffolds (`deno run --allow-net --allow-read --allow-env
---allow-write=.denext …`), so production `start` runs on whichever `deno` started it. That
-`start` spawns no child process (the build already wrote what it serves), so it needs no
-`--allow-run` either. Run `start`
-with `-A` (or add `--allow-run` and write access to the cache) to serve on the toolchain, or
-start the server with `denext deno run …`. `denext toolchain status` says which Deno a command
-runs on. Only `denext toolchain install` fails when the toolchain can't be had, since installing
-it is all it does.
+opt-outs above. A command that runs project code (`start`, `dev`, `build`, `job`, …) in a process
+that lacks the grants to install and run the toolchain (`--allow-run`, and read/write on the cache
+directory) stops too, rather than run on another Deno, where `Deno.SQL` (`postgresClient()`, the
+Prisma adapter) and the toolchain's other changes would be missing. That is the case for the
+least-privilege `start` task `denext create` scaffolds (`deno run --allow-net --allow-read
+--allow-env --allow-write=.denext …`) when stock Deno runs it, so launch it on the toolchain
+instead: `denext task start` (a task's `deno` is the toolchain), the binary `denext toolchain path`
+prints, or the Dockerfile / systemd unit that [`denext deploy prepare`](/docs/deploy) writes, which
+run the server on the toolchain directly. Started on the toolchain, that `start` spawns no child
+process, so it needs no `--allow-run`. Running `start` with `-A` (or with `--allow-run` and write
+access to the cache) also works: it re-runs itself on the toolchain. `DENEXT_DENO=stock` keeps the
+command on the Deno that started it. `denext toolchain status` says which Deno a command runs on.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
 

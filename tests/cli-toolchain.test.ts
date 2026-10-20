@@ -175,6 +175,27 @@ Deno.test("maybeReexecToolchain: an opt-out continues in-process; a toolchain th
   }
 });
 
+Deno.test("maybeReexecToolchain: a project-code verb that can't start the toolchain refuses, never serves on stock", async () => {
+  // The least-privilege `start` (no --allow-run) on stock Deno: it used to serve in-process, so
+  // Deno.SQL / postgresClient() worked in `dev` and were missing in production.
+  const lacking: DenoToolchainChoice = {
+    kind: "stock",
+    reason: "this process lacks --allow-run (for /cache)",
+    refusal: "denext: this process can't start denext's Deno toolchain. Fix: …",
+  };
+  const refused = deps(lacking);
+  await assertRejects(
+    () => maybeReexecToolchain(true, refused.d),
+    Error,
+    "can't start denext's Deno toolchain",
+  );
+  assertEquals(refused.seen.spawned, []);
+  // A verb that runs no project code only hands the toolchain on: it keeps its Deno, silently.
+  const handing = deps(lacking, { handOff: true });
+  assertEquals(await maybeReexecToolchain(false, handing.d), false);
+  assertEquals(handing.vars.DENO_BIN, undefined);
+});
+
 Deno.test("maybeReexecToolchain: under deno run, a verb that runs no project code hands the toolchain to its children", async () => {
   const { d, seen, vars } = deps(TOOLCHAIN, {
     handOff: true,

@@ -322,12 +322,24 @@ Deno.test("the secrets follow the features: auth, backend, storage", () => {
   assert(names({ storage: true }).includes("MINIO_ROOT_PASSWORD"));
 });
 
-Deno.test("the Dockerfile runs on denext's toolchain only when Postgres / the backend needs it", () => {
-  const plain = renderDockerfile({ mode: "server", denoTag: "2.9.7" });
-  assert(!plain.includes("toolchain"), "a plain app keeps the stock runtime");
-  const pg = renderDockerfile({ mode: "server", denoTag: "2.9.7", postgres: true });
-  assertStringIncludes(pg, "jsr:@denext/denext/cli toolchain path");
-  assertStringIncludes(pg, "ENV PATH=/deno-dir/toolchain-bin:$PATH");
+Deno.test("every Dockerfile serves on denext's toolchain, linked before its CMD", () => {
+  // Up to 4.5.0 only a Postgres / backend image did: a plain app's `start` ran on the image's
+  // stock Deno, so Deno.SQL (postgresClient(), the Prisma adapter) was missing in production.
+  for (
+    const options of [
+      { mode: "server", denoTag: "2.9.7" },
+      { mode: "server", denoTag: "2.9.7", postgres: true },
+      { mode: "static", denoTag: "2.9.7" },
+    ] as const
+  ) {
+    const file = renderDockerfile(options);
+    // `toolchain path` installs the pinned build SHA-256-verified (the build already did).
+    assertStringIncludes(file, "jsr:@denext/denext/cli toolchain path");
+    const path = file.indexOf("ENV PATH=/deno-dir/toolchain-bin:$PATH");
+    assert(path > 0, file);
+    assert(path < file.indexOf("\nCMD "), "linked before the server starts");
+    assert(path < file.indexOf("HEALTHCHECK"), "the probe runs on it too");
+  }
 });
 
 Deno.test("dockerPlan: the stack adds .env.example, --dev adds compose.dev.yml", async () => {

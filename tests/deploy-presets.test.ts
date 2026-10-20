@@ -139,6 +139,39 @@ Deno.test("deploy preset generic-host: systemd unit, nginx, Caddy, env example",
   await checkPreset(genericHost({ name: "shop", domain: "shop.example.com" }), "generic-host");
 });
 
+Deno.test("deploy preset generic-host: the unit serves on denext's toolchain from the app's DENO_DIR", async () => {
+  // Up to 4.5.0 the unit ran `/usr/local/bin/deno` (stock: no Deno.SQL) and resolved JSR from the
+  // service user's home at start, which ProtectHome / ProtectSystem=strict hide or make read-only.
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const { ctx, files } = recordingContext(manifest, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.com" }).prepare(ctx);
+    const unit = files.get("output/shop.service") ?? "";
+    assertStringIncludes(unit, "Environment=DENO_DIR=/srv/shop/.deno\n");
+    assertStringIncludes(unit, "ExecStart=/srv/shop/.deno/bin/deno run ");
+    const build = files.get("output/build.sh") ?? "";
+    assertStringIncludes(build, "export DENO_DIR=/srv/shop/.deno\n");
+    assertStringIncludes(build, "deno task build\n");
+    assertStringIncludes(
+      build,
+      `ln -sf "$(deno run -A 'jsr:@denext/denext@^4.1.0/cli' toolchain path)" "/srv/shop/.deno/bin/deno"`,
+    );
+    // A compiled build embeds the toolchain's runtime: the unit runs the executable, no script.
+    const compiled = recordingContext(
+      { ...manifest, compile: { output: "dist/shop", permissions: [] } },
+      paths.projectDir,
+    );
+    await genericHost({ name: "shop", domain: "shop.example.com" }).prepare(compiled.ctx);
+    assertStringIncludes(
+      compiled.files.get("output/shop.service") ?? "",
+      "ExecStart=/srv/shop/shop\n",
+    );
+    assertEquals(compiled.files.has("output/build.sh"), false);
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
 Deno.test("deploy preset static: refuses an app with server routes, listing each", async () => {
   const { paths, manifest } = await fixtureManifest();
   try {

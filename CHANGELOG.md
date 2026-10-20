@@ -272,6 +272,19 @@ and this project adheres to
   runtime drops the forbidden and hop-by-hop request headers, and `Authorization` on a redirect
   to another origin.
 
+- **Production `start` and every deploy target run on denext's Deno toolchain, as `dev` does.**
+  The least-privilege `start` task (no `--allow-run`) served on whatever Deno launched it, so
+  `Deno.SQL` (`postgresClient()`, the `denext/prisma-adapter`) worked in `dev` and was missing in
+  production, in the generated Docker image and systemd unit too. A command that runs project
+  code in a process without the grants to start the toolchain now stops with the ways out
+  (`denext task start`, the binary `denext toolchain path` prints, the generated image or unit,
+  or `--allow-run`); `DENEXT_DENO=stock` still keeps it on the Deno that started it. Every
+  generated Dockerfile (the `docker` and `fly` presets, `denext generate docker`, static images
+  included) links the toolchain the build downloaded and SHA-256-verified first on `PATH`, so the
+  server, its health check and the stack's services run on it. The `generic-host` unit runs the
+  toolchain binary from the app's own `DENO_DIR`, linked by a new `build.sh`. Deno Deploy runs its
+  own Deno; its preset keeps warning that `Deno.SQL` is not there.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

@@ -21,7 +21,9 @@ emit correct denext instead of Next.js.
    **`deno.json`**. Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s
    `imports` map. Run it with `denext task dev` / `denext task build` /
    `denext task start` (the `denext` command brings its own Deno — no Deno install needed; with
-   Deno installed, `deno task dev` runs the same task). Migrating a Next app? `denext migrate` does it in one pass
+   Deno installed, `deno task dev` runs the same task; the least-privilege `start` must be launched
+   on denext's toolchain — `denext task start`, or the image / unit `denext deploy prepare` writes —
+   and stops with the fix on stock Deno). Migrating a Next app? `denext migrate` does it in one pass
    — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
    your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`

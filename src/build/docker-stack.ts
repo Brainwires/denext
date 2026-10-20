@@ -345,14 +345,6 @@ export function stackEnv(options: StackOptions): StackEnvVar[] {
   return STACK_ENV.filter((v) => v.when(options));
 }
 
-/**
- * Whether the app must run on denext's Deno toolchain: `@denext/backend`'s Postgres client
- * (`Deno.SQL`) is part of it, and the least-privilege `start` task cannot re-exec onto it.
- */
-export function needsToolchain(options: StackOptions): boolean {
-  return options.postgres === true || options.backend === true;
-}
-
 /** Whether these options render the stack layout (any service beyond the app). */
 export function isStack(options: StackOptions): boolean {
   return options.postgres === true || options.storage === true || options.migrate === true;

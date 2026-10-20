@@ -1,6 +1,8 @@
 // The `generic-host` deploy preset: a VPS or bare-metal host. It writes a systemd unit that runs
 // the production server (the `build --compile` executable when the build made one, else the
-// least-privilege `start` command) with the sandboxing systemd offers, an nginx and a Caddy
+// least-privilege `start` command on denext's Deno toolchain) with the sandboxing systemd offers,
+// a `build.sh` that builds a release on the host (dependencies and the toolchain into a `DENO_DIR`
+// inside the app directory, so the sandboxed unit resolves nothing at start), an nginx and a Caddy
 // reverse-proxy snippet (TLS, the connection ceiling, long cache on content-hashed files), and an
 // `env.example` listing the variables the app reads — under `.denext/deploy/generic-host/`, for
 // you to copy onto the host. There is no `denext deploy` step: how files reach a host is yours.
@@ -22,7 +24,10 @@ export interface GenericHostPresetOptions {
   port?: number;
   /** The public domain the proxy serves (default `example.com`). */
   domain?: string;
-  /** The `deno` the unit runs (default `/usr/local/bin/deno`); unused with a compiled build. */
+  /**
+   * The Deno the unit runs the server on (default `<directory>/.deno/bin/deno`: denext's Deno
+   * toolchain, which `build.sh` links there); unused with a compiled build.
+   */
   deno?: string;
   /** Concurrent connections per client address the proxy allows (default 100). */
   maxConnections?: number;
@@ -75,15 +80,29 @@ function checkOptions(o: Resolved): Resolved {
 /** Fill in the defaults, then check every value. */
 function resolveOptions(options: GenericHostPresetOptions, projectDir: string): Resolved {
   const name = appName(options.name, projectDir);
+  const directory = options.directory ?? `/srv/${name}`;
   return checkOptions({
     name,
-    directory: options.directory ?? `/srv/${name}`,
+    directory,
     user: options.user ?? name,
     port: options.port ?? 3000,
     domain: options.domain ?? "example.com",
-    deno: options.deno ?? "/usr/local/bin/deno",
+    deno: options.deno ?? `${directory}/${TOOLCHAIN_LINK}`,
     maxConnections: options.maxConnections ?? 100,
   });
+}
+
+/** `DENO_DIR` on the host, relative to the app directory: the build's caches, read at start. */
+const DENO_DIR = ".deno";
+/** Where `build.sh` links denext's Deno toolchain, relative to the app directory. */
+const TOOLCHAIN_LINK = `${DENO_DIR}/bin/deno`;
+
+/** The denext CLI module the start command runs (the version the build used). */
+function cliModule(manifest: DeployManifest): string {
+  return manifest.server.command.find((w) =>
+    /^(?:jsr:|npm:|https?:\/\/)\S*denext\S*\/cli(?:\.ts)?$/.test(w)
+  ) ??
+    `jsr:@denext/denext@^${manifest.denext}/cli`;
 }
 
 /** The `ExecStart` command line. */
@@ -105,8 +124,10 @@ function renderSystemdUnit(manifest: DeployManifest, o: Resolved): string {
 #
 # Install: copy to /etc/systemd/system/${o.name}.service, put the variables from env.example in
 # /etc/${o.name}/env (mode 600), then \`systemctl daemon-reload && systemctl enable --now ${o.name}\`.
-# Deploy: put the new release in ${o.directory}, run \`deno task build\` there (unless it is a
+# Deploy: put the new release in ${o.directory}, run build.sh there as ${o.user} (unless it is a
 # compiled build), then \`systemctl restart ${o.name}\` (SIGTERM drains in-flight requests).
+# build.sh resolves every dependency and denext's Deno toolchain into DENO_DIR below, so the
+# sandboxed server (ProtectHome, a read-only system) loads them without the network or a home.
 [Unit]
 Description=${o.name} (denext)
 After=network-online.target
@@ -117,6 +138,7 @@ Type=simple
 User=${o.user}
 WorkingDirectory=${o.directory}
 Environment=PORT=${o.port}
+Environment=DENO_DIR=${o.directory}/${DENO_DIR}
 Environment=DENEXT_CANONICAL_ORIGIN=https://${o.domain}
 Environment=DENEXT_LOG=json
 EnvironmentFile=-/etc/${o.name}/env
@@ -135,6 +157,33 @@ ReadWritePaths=${o.directory}/${manifest.server.buildDir}
 
 [Install]
 WantedBy=multi-user.target
+`;
+}
+
+/**
+ * `build.sh`: build a release on the host as the service user — the dependencies, the build and
+ * denext's Deno toolchain (downloaded and SHA-256-verified by the CLI) all into the app's own
+ * `DENO_DIR`, then the toolchain linked where the unit runs it.
+ *
+ * @param manifest The deploy manifest.
+ * @param o The resolved options.
+ * @returns The script.
+ */
+function renderBuildScript(manifest: DeployManifest, o: Resolved): string {
+  return `#!/bin/sh
+${header("generic-host", "#")}
+#
+# Build a release in ${o.directory} as the service user, then restart the unit:
+#   sudo -u ${o.user} sh build.sh && sudo systemctl restart ${o.name}
+# Needs a \`deno\` on PATH (any version: the build runs on denext's Deno toolchain).
+set -eu
+cd ${o.directory}
+export DENO_DIR=${o.directory}/${DENO_DIR}
+deno install
+deno task build
+# The server runs on the toolchain the build used (Deno.SQL / postgresClient() included).
+mkdir -p "$DENO_DIR/bin"
+ln -sf "$(deno run -A '${cliModule(manifest)}' toolchain path)" "${o.directory}/${TOOLCHAIN_LINK}"
 `;
 }
 
@@ -237,6 +286,9 @@ export function genericHost(options: GenericHostPresetOptions = {}): DeployAdapt
     prepare: async (ctx) => {
       const o = resolveOptions(options, ctx.projectDir);
       await ctx.writeFile(`${o.name}.service`, renderSystemdUnit(ctx.manifest, o));
+      if (!ctx.manifest.compile) {
+        await ctx.writeFile("build.sh", renderBuildScript(ctx.manifest, o));
+      }
       await ctx.writeFile("nginx.conf", renderNginx(ctx.manifest, o));
       await ctx.writeFile("Caddyfile", renderCaddyfile(o));
       await ctx.writeFile("env.example", renderEnvExample(ctx.manifest));

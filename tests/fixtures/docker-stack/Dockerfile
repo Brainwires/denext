@@ -21,8 +21,9 @@ RUN deno install
 COPY --chown=deno:deno . .
 RUN deno task build
 
-# Run on denext's Deno toolchain (Deno.SQL, the Postgres client @denext/backend uses). The build
-# above already downloaded it into DENO_DIR; link it first on PATH for `deno task start`.
+# Run on denext's Deno toolchain, as `dev` and `build` do (Deno.SQL / postgresClient(), the
+# Prisma adapter). The build above already downloaded it into DENO_DIR and verified its SHA-256;
+# `toolchain path` re-verifies it and the link puts it first on PATH for everything below.
 RUN mkdir -p /deno-dir/toolchain-bin && \
   ln -sf "$(deno run -A --config deno.json jsr:@denext/denext@^4.0.0/cli toolchain path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH

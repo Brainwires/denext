@@ -66,13 +66,13 @@ written to a file or passed on a command line, and nothing is pushed without an 
 marker is there, so delete the marker line to keep your edits (`--force` replaces it anyway).
 Deno's own `deno deploy` is `denext deno deploy`.
 
-| Preset                          | Writes                                                                                                                                                                                                                                                                                                           | `denext deploy`                                                      | Can't support                                                                                                                                                                                                  |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker({ … })`                 | what `denext generate docker` writes (`Dockerfile`, compose file, `.dockerignore`; `stack: true` adds Postgres, storage and migrations)                                                                                                                                                                          | `docker build -t <image>`; `push: true` pushes (your `docker login`) | nothing app-side; persistence is a volume you mount, and replicas are separate nodes ([multi-instance](/docs/multi-instance))                                                                                  |
-| `fly({ app, region })`          | the Docker files plus `fly.toml`: `PORT`, `SIGTERM` with a 30 s kill timeout (above the drain), a health check on `/_denext/health`, the required secrets listed; machines stay on when the app has schedules or services                                                                                        | `fly deploy --remote-only` (needs `flyctl` and `FLY_API_TOKEN`)      | a persistent cache across machines and deploys (use a shared `cache.store`); schedules run on every machine, so keep one or use a shared job runner                                                            |
-| `denoDeploy({ org, app })`      | `denext.deploy.ts`, the entrypoint: the schedules registered with `Deno.cron` at its top level (where Deno Deploy records crons), the cache on Deno KV when `cache.store` is unset, then the server; `.denext/deploy/deno-deploy/app.json` with the build settings and the one-time `deno deploy create` command | `deno deploy --prod` (needs `DENO_DEPLOY_TOKEN`)                     | a persistent disk (SQLite files, the default job history), `Deno.SQL` (use postgres.js), long-lived `services/` (isolates start and stop on demand), the `build --compile` executable                          |
-| `genericHost({ name, domain })` | under `.denext/deploy/generic-host/`: a systemd unit (the compiled executable when there is one, else the least-privilege `start`; `SIGTERM`, sandboxing, `ReadWritePaths` on the build dir), nginx and Caddy snippets, `env.example`                                                                            | none: copy the files to the host yourself                            | rolling restarts across hosts (one unit, one process); schedules run in that process, so run one instance or move them to timers running `denext job <name>`                                                   |
-| `staticHost()`                  | runs `denext export`, then `out/_headers` (immutable caching for the content-hashed files)                                                                                                                                                                                                                       | none: upload `out/` with your host's tool                            | **refuses** an app with any `isr`, `dynamic`, `route-handler` or `middleware` route and lists each one with its reason; metadata routes, `jobs/`, `services/` and the image optimizer are reported as warnings |
+| Preset                          | Writes                                                                                                                                                                                                                                                                                                                                            | `denext deploy`                                                      | Can't support                                                                                                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker({ … })`                 | what `denext generate docker` writes (`Dockerfile`, compose file, `.dockerignore`; `stack: true` adds Postgres, storage and migrations)                                                                                                                                                                                                           | `docker build -t <image>`; `push: true` pushes (your `docker login`) | nothing app-side; persistence is a volume you mount, and replicas are separate nodes ([multi-instance](/docs/multi-instance))                                                                                  |
+| `fly({ app, region })`          | the Docker files plus `fly.toml`: `PORT`, `SIGTERM` with a 30 s kill timeout (above the drain), a health check on `/_denext/health`, the required secrets listed; machines stay on when the app has schedules or services                                                                                                                         | `fly deploy --remote-only` (needs `flyctl` and `FLY_API_TOKEN`)      | a persistent cache across machines and deploys (use a shared `cache.store`); schedules run on every machine, so keep one or use a shared job runner                                                            |
+| `denoDeploy({ org, app })`      | `denext.deploy.ts`, the entrypoint: the schedules registered with `Deno.cron` at its top level (where Deno Deploy records crons), the cache on Deno KV when `cache.store` is unset, then the server; `.denext/deploy/deno-deploy/app.json` with the build settings and the one-time `deno deploy create` command                                  | `deno deploy --prod` (needs `DENO_DEPLOY_TOKEN`)                     | a persistent disk (SQLite files, the default job history), `Deno.SQL` (use postgres.js), long-lived `services/` (isolates start and stop on demand), the `build --compile` executable                          |
+| `genericHost({ name, domain })` | under `.denext/deploy/generic-host/`: a systemd unit (the compiled executable when there is one, else the least-privilege `start` on denext's toolchain from the app's own `DENO_DIR`; `SIGTERM`, sandboxing, `ReadWritePaths` on the build dir), a `build.sh` that builds a release as the service user, nginx and Caddy snippets, `env.example` | none: copy the files to the host yourself                            | rolling restarts across hosts (one unit, one process); schedules run in that process, so run one instance or move them to timers running `denext job <name>`                                                   |
+| `staticHost()`                  | runs `denext export`, then `out/_headers` (immutable caching for the content-hashed files)                                                                                                                                                                                                                                                        | none: upload `out/` with your host's tool                            | **refuses** an app with any `isr`, `dynamic`, `route-handler` or `middleware` route and lists each one with its reason; metadata routes, `jobs/`, `services/` and the image optimizer are reported as warnings |
 
 Your own adapter is an object with a `name`, a `prepare(ctx)` and, optionally, a `deploy(ctx)`;
 `ctx` carries the `manifest`, `writeFile(path, contents, { in: "output" | "project", marker })`
@@ -137,6 +137,13 @@ RUN deno install
 # The sources change every build; the dependency layer above stays cached.
 COPY --chown=deno:deno . .
 RUN deno task build
+
+# Run on denext's Deno toolchain, as `dev` and `build` do (Deno.SQL / postgresClient(), the
+# Prisma adapter). The build above already downloaded it into DENO_DIR and verified its SHA-256;
+# `toolchain path` re-verifies it and the link puts it first on PATH for everything below.
+RUN mkdir -p /deno-dir/toolchain-bin && \
+  ln -sf "$(deno run -A --config deno.json jsr:@denext/denext@^4.0.0/cli toolchain path)" /deno-dir/toolchain-bin/deno
+ENV PATH=/deno-dir/toolchain-bin:$PATH
 
 # The production server listens on 3000 and binds 0.0.0.0 by default (see
 # `deno task start`). Change the port with `ENV PORT=<n>`
@@ -404,19 +411,22 @@ WorkingDirectory=/srv/my-app
 Environment=PORT=3000
 Environment=SESSION_SECRET=…
 Environment=DENEXT_CANONICAL_ORIGIN=https://example.com
-ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .
+# The toolchain binary `denext toolchain path` prints (here linked into the app's DENO_DIR).
+Environment=DENO_DIR=/srv/my-app/.deno
+ExecStart=/srv/my-app/.deno/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .
 Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
 
 Run `denext task build` (or `deno task build`) in your deploy step, then
-`systemctl restart my-app`. The least-privilege `start` spawns no child process, so it runs
-on whichever `deno` the unit names; it needs no `--allow-run` and no toolchain download.
-An app whose Postgres client is `Deno.SQL` (`postgresClient()`, `@denext/backend`'s default)
-needs that `deno` to be [denext's toolchain](/docs/toolchain): point `ExecStart` at the path
-`denext toolchain path` prints, or give the app a postgres.js client
-([Databases › Postgres](/docs/database#postgres)).
+`systemctl restart my-app`. The server runs on [denext's Deno toolchain](/docs/toolchain), the
+runtime `dev` and `build` use (`Deno.SQL` / `postgresClient()` included): point `ExecStart` at
+the binary `denext toolchain path` prints (a link to it keeps the unit stable across upgrades).
+Started there, the least-privilege `start` spawns no child process, so it needs no `--allow-run`.
+On any other `deno` it stops with the ways out instead of serving without the toolchain. The
+`generic-host` preset (`denext deploy prepare --preset generic-host`) writes this unit and a
+`build.sh` that does both steps.
 Front it with nginx/Caddy for TLS + the concurrency limit (§1).
 
 ### Single binary

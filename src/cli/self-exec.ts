@@ -870,8 +870,8 @@ function onToolchainNow(deps: ReexecToolchainDeps): boolean {
  * `DENEXT_DENO=<path>` child: marker `path`) never re-execs. Neither a leaked marker (an
  * absolute-path stock `deno` inside `denext task`) nor an older `-denext.N` build (a stale
  * `toolchain link`) counts as the toolchain: they re-exec onto the pinned one. An explicit opt-out
- * (`DENEXT_DENO=stock`), no pin, or a process without the grants to start it continues the command
- * in-process; a toolchain that can't be had (offline, no build for this host, a failed download)
+ * (`DENEXT_DENO=stock`) or no pin continues the command in-process; a process without the grants
+ * to start the toolchain refuses with the resolver's `refusal` (its ways out); a toolchain that can't be had (offline, no build for this host, a failed download)
  * throws the resolver's `denext:` error with the fix — never another Deno. A serving verb already
  * on the toolchain without its runtime flags re-runs once on the same binary
  * ({@linkcode reexecForRuntimeFlags}).
@@ -891,6 +891,7 @@ export async function maybeReexecToolchain(
   if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
+  if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
   if (choice.kind === "stock") return false;
   // The child gets the runtime flags with the spawn; told so, it skips their check.
   const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;

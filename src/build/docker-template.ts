@@ -19,7 +19,6 @@ import { denoReleaseVersion } from "./deno-version.ts";
 import {
   DOCKER_SENTINEL,
   isStack,
-  needsToolchain,
   renderComposeDev,
   renderEnvExample,
   renderStackCompose,
@@ -158,16 +157,19 @@ function healthcheck(port: number): string {
 }
 
 /**
- * Put denext's Deno toolchain (which the build above already downloaded into `DENO_DIR`) first
- * on `PATH`, so `deno task start` and the migrations service run on it. `@denext/backend`'s
- * Postgres client (`Deno.SQL`) is part of that runtime, and the least-privilege `start` task has
- * no `--allow-run` to re-exec onto it by itself.
+ * Put denext's Deno toolchain (which the build above already downloaded into `DENO_DIR`, checked
+ * against the SHA-256 the CLI pins) first on `PATH`, so the server, its health probe, `deno task`
+ * and the stack's services all run on it — the runtime `dev` and `build` use. The image's own Deno
+ * only bootstraps the CLI: the least-privilege `start` task has no `--allow-run` to re-exec onto
+ * the toolchain by itself, and on any other Deno `Deno.SQL` (`postgresClient()`, the Prisma
+ * adapter) and the toolchain's other changes would be missing.
  */
 function toolchainLayer(options: DockerOptions): string {
   const cli = (options.cli ?? ["jsr:@denext/denext/cli"]).join(" ");
   return `
-# Run on denext's Deno toolchain (Deno.SQL, the Postgres client @denext/backend uses). The build
-# above already downloaded it into DENO_DIR; link it first on PATH for \`deno task start\`.
+# Run on denext's Deno toolchain, as \`dev\` and \`build\` do (Deno.SQL / postgresClient(), the
+# Prisma adapter). The build above already downloaded it into DENO_DIR and verified its SHA-256;
+# \`toolchain path\` re-verifies it and the link puts it first on PATH for everything below.
 RUN mkdir -p /deno-dir/toolchain-bin && \\
   ln -sf "$(deno run -A ${cli} toolchain path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH
@@ -197,7 +199,7 @@ RUN deno install
 # The sources change every build; the dependency layer above stays cached.
 COPY --chown=deno:deno . .
 RUN deno task build
-${needsToolchain(options) ? toolchainLayer(options) : ""}
+${toolchainLayer(options)}
 # The production server listens on ${port} and binds 0.0.0.0 by default (see
 # \`deno task start\`). Change the port with \`ENV PORT=<n>\`
 # (and EXPOSE) — \`start\` reads $PORT.
@@ -233,7 +235,7 @@ RUN deno install
 # Build the static export into out/ (denext fetches deps from JSR/npm here).
 COPY --chown=deno:deno . .
 RUN deno task export
-
+${toolchainLayer(options)}
 # Serve the static export with Deno's std file server (each route is a real
 # index.html, so no SPA history-fallback is needed).
 EXPOSE ${port}
