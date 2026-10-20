@@ -173,6 +173,39 @@ and this project adheres to
   the signing machine records it. The deployment guide now says so and recommends a certificate
   in the user's store (`DENEXT_WINDOWS_CERT_THUMBPRINT`) on a shared or monitored host.
 
+### Fixed
+
+- **`memo()` of a class component renders, as in React.** It threw "memo() of a class component
+  is unsupported" on the server and in the browser, so migrated React code crashed at render.
+  `memo(Class)` now renders the class below the memo, which compares props shallowly by default,
+  or with the `compare` function given, and the class still runs its own `shouldComponentUpdate` /
+  `PureComponent` check. Reconciler error code 4 is retired.
+- **`/auth/v1` mail templates run as Go templates, as GoTrue renders them.** A
+  `GOTRUE_MAILER_TEMPLATES_*` template that used `{{ if }}`, `{{ range }}`, `{{ with }}`,
+  variables, pipes or `{{ .Data.… }}` was dropped for the built-in one. Templates now render for
+  every action (confirmation, recovery, magic_link, invite, email_change, reauthentication) over
+  the data GoTrue gives each one, the user's metadata as `.Data` included, with Go's control
+  structures and builtin functions; every value is still HTML-escaped. Only a template that can't
+  be parsed or run (`define` / `template`, an unknown function) falls back to the built-in one,
+  with the reason logged.
+- **`denext start` on Windows drains on Ctrl-C and Ctrl-Break.** The console's event reached the
+  server, which began to drain, and the CLI process above it, which ended the server with
+  `TerminateProcess` on the spot: in-flight requests were cut, and the `services/` stop, the
+  plugin teardowns and `onShutdown()` never ran. The CLI now leaves the first event to the server
+  (a second one still stops it outright), so Ctrl-C, Ctrl-Break and a service wrapper's stop run
+  the same drain, services stop, teardowns and `onShutdown()` as SIGTERM does elsewhere. A closed
+  console window, logoff and system shutdown start it too, though Windows ends the process before
+  it can finish (see Known limitations).
+- **`openPhotoPicker()` from the react-native-permissions shim opens the photo picker.** It
+  rejected; it is now a thin wrapper over `pickImage({ source: "photos" })` from `denext/mobile`
+  and resolves once the picker closes, a cancel included.
+- **A release that stops while waiting for JSR resumes.** `deno task release` gave up after 45
+  minutes of waiting for JSR to list the `@denext/docs-corpus` version it pushed, and a second run
+  refused the existing tag. The wait now polls JSR for the exact version with backoff for up to 3
+  hours, every stop prints the command that resumes it, and running the release again picks up the
+  remaining tags, pushes and the PR hand-over (`--resume-from corpus | tag | push | pr` names the
+  step).
+
 ### Docs
 
 - **The managed toolchain, up front.** The home page, the README, Getting started, the toolchain

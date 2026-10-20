@@ -10,6 +10,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
+import { spawnStoppable } from "../helpers/console-ctrl.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -87,16 +88,19 @@ async function cli(dir: string, args: string[]): Promise<void> {
 }
 
 /**
- * `denext start`, then SIGTERM while `/api/slow` is in flight: the request's body, how long the
+ * `denext start`, then a stop while `/api/slow` is in flight — SIGTERM on POSIX, the console's
+ * Ctrl-C (or, with `kind: "break"`, Ctrl-Break) on Windows: the request's body, how long the
  * process took to exit after the signal, and its output. Fails if it outlives the deadline by far.
  */
 async function startThenStop(
   dir: string,
   env: Record<string, string>,
+  kind: "c" | "break" = "c",
 ): Promise<{ text: string; exitMs: number; output: string }> {
   const port = freePort();
-  const child = new Deno.Command(Deno.execPath(), {
-    args: [
+  const server = spawnStoppable(
+    Deno.execPath(),
+    [
       "run",
       "-A",
       "--config",
@@ -107,12 +111,9 @@ async function startThenStop(
       String(port),
       dir,
     ],
-    cwd: dir,
-    env: { NO_COLOR: "1", DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+    { cwd: dir, env: { NO_COLOR: "1", DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env } },
+  );
+  const child = server.child;
   let output = "";
   const read = async (stream: ReadableStream<Uint8Array>) => {
     const d = new TextDecoder();
@@ -135,7 +136,7 @@ async function startThenStop(
     const inFlight = fetch(`${origin}/api/slow`).then((r) => r.text());
     await new Promise((r) => setTimeout(r, 300)); // the handler is running
     const signalled = performance.now();
-    child.kill("SIGTERM");
+    await server.stop(kind);
     const text = await inFlight;
     let hung = false;
     const guard = setTimeout(() => {
@@ -157,10 +158,8 @@ async function startThenStop(
 
 Deno.test({
   name: "denext start: an open pool no longer holds the process past the drain deadline",
-  // Windows has no SIGTERM: Deno's `kill("SIGTERM")` there is `TerminateProcess`, a hard stop no
-  // handler sees, and a console Ctrl+C cannot be sent to another process. The drain this test
-  // times is only observable on POSIX (as in tests/integration/cli-ui.test.ts).
-  ignore: Deno.build.os === "windows",
+  // On Windows the stop is the console's Ctrl-C / Ctrl-Break (tests/helpers/console-ctrl.ts):
+  // Windows has no SIGTERM, and `kill("SIGTERM")` there is `TerminateProcess`.
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async (t) => {
@@ -194,6 +193,18 @@ Deno.test({
           assert(r.exitMs < DRAIN_MS, `exited ${r.exitMs} ms after SIGTERM:\n${r.output}`);
         },
       );
+
+      // Windows: Ctrl-Break (what a service wrapper may send instead) drains the same way.
+      await t.step({
+        name: "Ctrl-Break drains and runs onShutdown too",
+        ignore: Deno.build.os !== "windows",
+        fn: async () => {
+          const r = await startThenStop(dir, { ...env, FIXTURE_CLOSE_ON_SHUTDOWN: "1" }, "break");
+          assertEquals(r.text, "slow done");
+          assertStringIncludes(r.output, "onShutdown closed the pool");
+          assert(r.exitMs < DRAIN_MS, `exited ${r.exitMs} ms after Ctrl-Break:\n${r.output}`);
+        },
+      });
     } finally {
       await removeTempDir(dir);
     }

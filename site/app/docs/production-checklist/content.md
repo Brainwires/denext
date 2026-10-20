@@ -7,7 +7,7 @@ lead: The go-live list, one line per item, with the exact config key, flag or en
 ## What denext does before you do anything
 
 A freshly built app served by `denext start` already **drains on
-`SIGTERM`/`SIGINT`** (stops accepting connections, finishes in-flight requests,
+`SIGTERM`/`SIGINT`** (on Windows, Ctrl-C / Ctrl-Break; stops accepting connections, finishes in-flight requests,
 bounded by a 10 s deadline, and exits by it even when an open handle such as a
 database pool outlives the shutdown), **times out** any request still running after 30 s
 with a `503` and aborts the render's cooperative `AbortSignal`, **sheds** load

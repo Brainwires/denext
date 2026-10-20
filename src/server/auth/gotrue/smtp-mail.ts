@@ -5,10 +5,12 @@
  * `backend({ supabase })` reads them from the environment ({@linkcode goTrueSmtpFromEnv}); a
  * `supabase.auth.smtp` object sets them in code.
  *
- * Templates take GoTrue's simple placeholders — `{{ .ConfirmationURL }}`, `{{ .Token }}`,
- * `{{ .TokenHash }}`, `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}`, `{{ .RedirectTo }}`
- * — each HTML-escaped. A template that uses any other Go template action (`{{ if … }}`,
- * `{{ .Data.… }}`) is not rendered; the built-in one is sent instead and the reason logged.
+ * Templates are Go templates over the data GoTrue gives each mail kind — `{{ .ConfirmationURL }}`,
+ * `{{ .Token }}`, `{{ .TokenHash }}`, `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}`,
+ * `{{ .RedirectTo }}`, `{{ .Data }}` (the user's metadata) — with `if` / `with` / `range`,
+ * variables, pipes and the builtin functions ({@linkcode executeGoTemplate}); every value is
+ * HTML-escaped. A template that can't be parsed or run (`define` / `template`, an unknown
+ * function) is not sent; the built-in one is, and the reason logged.
  * A template URL is fetched (http(s) only, 10 s, at most 1 MiB, a redirect followed only to an
  * `https:` URL on the same origin) on first use and kept for 10 minutes; a failed fetch falls
  * back to the built-in template.
@@ -17,6 +19,7 @@
  */
 
 import { readCappedBody } from "../../body.ts";
+import { executeGoTemplate, GoTemplateError } from "./go-template.ts";
 import { type SmtpMailer, smtpMailer, type SmtpMailerOptions } from "../smtp.ts";
 
 /** The mails GoTrue sends, by the names its subject and template settings use. */
@@ -56,6 +59,8 @@ export interface GoTrueMailInput {
   email: string;
   /** For an email change: the new address. */
   newEmail?: string;
+  /** The user's metadata (`{{ .Data }}`). */
+  data?: Record<string, unknown>;
 }
 
 /** Where log lines go. */
@@ -209,39 +214,46 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-/** The placeholders a template may use, and their values. */
-function placeholders(input: GoTrueMailInput): Record<string, string> {
-  return {
-    ConfirmationURL: input.confirmationUrl,
-    Token: input.token,
-    TokenHash: input.tokenHash,
+/**
+ * The data GoTrue renders each mail kind's template over (its `templatemailer` maps): every kind
+ * has `SiteURL`, `Email`, `Token` and `Data`; all but reauthentication add the link
+ * (`ConfirmationURL`, `TokenHash`, `RedirectTo`); an email change adds `NewEmail` and
+ * `SendingTo`.
+ */
+function templateData(kind: GoTrueMailKind, input: GoTrueMailInput): Record<string, unknown> {
+  const data: Record<string, unknown> = {
     SiteURL: input.siteUrl,
     Email: input.email,
-    NewEmail: input.newEmail ?? "",
-    RedirectTo: input.redirectTo,
+    Token: input.token,
+    Data: input.data ?? {},
   };
+  if (kind !== "reauthentication") {
+    data.ConfirmationURL = input.confirmationUrl;
+    data.TokenHash = input.tokenHash;
+    data.RedirectTo = input.redirectTo;
+  }
+  if (kind === "email_change") {
+    data.NewEmail = input.newEmail ?? "";
+    data.SendingTo = input.to;
+  }
+  return data;
 }
 
 /**
- * Render a template's placeholders (values HTML-escaped), or `null` when it uses any template
- * action this renderer doesn't support.
+ * Render a template as GoTrue does — a Go template over the mail kind's data, every value
+ * HTML-escaped — or `null` when it can't be parsed or run.
  *
  * @param template The template.
  * @param input What the mail is rendered from.
  * @returns The HTML, or `null`.
  */
 export function renderGoTrueTemplate(template: string, input: GoTrueMailInput): string | null {
-  const values = placeholders(input);
-  let unsupported = false;
-  const html = template.replace(/\{\{-?\s*([^}]*?)\s*-?\}\}/g, (_, action: string) => {
-    const name = /^\.([A-Za-z]+)$/.exec(action)?.[1];
-    if (name === undefined || !(name in values)) {
-      unsupported = true;
-      return "";
-    }
-    return escapeHtml(values[name]);
-  });
-  return unsupported ? null : html;
+  try {
+    return executeGoTemplate(template, templateData(mailKindOf(input.action), input), escapeHtml);
+  } catch (error) {
+    if (error instanceof GoTemplateError) return null;
+    throw error;
+  }
 }
 
 /** The plain-text part: the link and the code, whatever the HTML template says. */
@@ -354,8 +366,8 @@ export function goTrueSmtpSender(
       let html = custom === null ? null : renderGoTrueTemplate(custom, input);
       if (custom !== null && html === null) {
         logger.warn(
-          `/auth/v1: the ${kind} template uses template actions beyond the supported ` +
-            "placeholders; using the built-in one",
+          `/auth/v1: the ${kind} template could not be rendered as a Go template; ` +
+            "using the built-in one",
         );
       }
       html ??= renderGoTrueTemplate(DEFAULT_TEMPLATES[kind], input)!;

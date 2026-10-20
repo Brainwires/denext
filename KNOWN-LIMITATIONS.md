@@ -68,6 +68,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   that imports a checkout on `D:` (as `migrate --denext-local-path` writes) fails to load, in
   Deno rather than in denext. Put both on the same drive (CI's `windows-tests` job points
   `TEMP` / `TMP` at the checkout's drive for this reason).
+- **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
+  `denext start` begins its graceful shutdown on those events too, but Windows ends a console
+  process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
+  the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
+  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 

@@ -138,11 +138,11 @@ export function isComponentType(type: unknown): boolean {
 }
 
 /**
- * Invoke a resolved **non-class** component: a forwardRef render fn receives
- * `(props, ref)` (denext threads `ref` via `props.ref`); a plain component receives
- * `(props)`. A wrapper hiding a class (`memo(Class)`) can't go through the object
- * path — the class runtime needs the raw constructor — so this throws a guided error
- * rather than the opaque native "Class constructor cannot be invoked without 'new'".
+ * Invoke a resolved component: a forwardRef render fn receives `(props, ref)` (denext
+ * threads `ref` via `props.ref`); a plain component receives `(props)`. A wrapper hiding a
+ * class (`memo(Class)`) renders the class as its one child element, as React's
+ * MemoComponent does ({@link memoClassElement}), so the class runtime gets the raw
+ * constructor and the `ref` reaches the instance.
  *
  * @param resolved The output of {@link resolveComponentType}.
  * @param props The element's props.
@@ -158,10 +158,7 @@ export function invokeComponent(resolved: ResolvedComponentType, props: unknown)
     );
   }
   if ((fn as { prototype?: { isReactComponent?: unknown } }).prototype?.isReactComponent != null) {
-    throw new Error(
-      "denext: memo() of a class component is unsupported; wrap the class in a " +
-        "function component (or memo the function) instead.",
-    );
+    return memoClassElement(fn, props);
   }
   return resolved.forwardsRef
     ? (fn as (p: unknown, ref?: unknown) => unknown)(
@@ -169,6 +166,26 @@ export function invokeComponent(resolved: ResolvedComponentType, props: unknown)
       (props as { ref?: unknown })?.ref ?? null,
     )
     : (fn as (p: unknown) => unknown)(props);
+}
+
+/**
+ * The element a `memo(Class)` wrapper renders: the class itself, with the wrapper's props
+ * (its `ref` included, minus the `key` the wrapper already used). React renders a memo of a
+ * non-function type the same way — the memo's fiber compares props (shallow by default, or
+ * the `compare` given), and the class below it re-renders unless its own
+ * `shouldComponentUpdate` / `PureComponent` check bails.
+ *
+ * @param ctor The wrapped class constructor.
+ * @param props The memo element's props.
+ * @returns A React element of `ctor`.
+ */
+export function memoClassElement(ctor: unknown, props: unknown): unknown {
+  let p = (props ?? {}) as Record<string, unknown>;
+  if ("key" in p) {
+    const { key: _key, ...rest } = p;
+    p = rest;
+  }
+  return { [TYPEOF_KEY]: REACT_ELEMENT_TYPE, type: ctor, props: p, key: null };
 }
 
 /**

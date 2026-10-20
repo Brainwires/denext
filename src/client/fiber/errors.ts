@@ -11,8 +11,7 @@ export const ERR_MORE_HOOKS = 1;
 export const ERR_UPDATE_DEPTH = 2;
 /** A component returned a Promise on the client (async components are server-only). */
 export const ERR_ASYNC_COMPONENT = 3;
-/** `memo()` wraps a class component. */
-export const ERR_MEMO_CLASS = 4;
+// Code 4 (`memo()` of a class component) is retired: memo(Class) renders, as in React.
 /** A class component rendered with the class runtime off (or after it failed to load). */
 export const ERR_CLASS_DISABLED = 5;
 

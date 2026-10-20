@@ -17,6 +17,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
+import { spawnStoppable } from "../helpers/console-ctrl.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -218,13 +219,13 @@ const DRAIN_MS = 3000;
 /** Start the binary on a free port and wait until `/` answers. */
 async function serve(bin: string, cwd: string, env: Record<string, string>): Promise<Served> {
   const port = freePort();
-  const child = new Deno.Command(bin, {
+  // On Windows the stop is the console's Ctrl-C (tests/helpers/console-ctrl.ts): `kill("SIGTERM")`
+  // there is `TerminateProcess`, which no handler sees.
+  const server = spawnStoppable(bin, [], {
     cwd,
     env: { NO_COLOR: "1", PORT: String(port), DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+  });
+  const child = server.child;
   let output = "";
   const drain = async (stream: ReadableStream<Uint8Array>) => {
     const d = new TextDecoder();
@@ -245,7 +246,7 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
   let signalled = false;
   const stop = async (withinMs = 30_000) => {
     // Once: a second SIGTERM ends the process on the spot (the shutdown handler is one-shot).
-    if (!exited && !signalled) child.kill("SIGTERM");
+    if (!exited && !signalled) await server.stop();
     signalled = true;
     let hung = false;
     const guard = setTimeout(() => {
@@ -262,7 +263,7 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
     const inFlight = fetch(origin + path).then((r) => r.text());
     await new Promise((r) => setTimeout(r, 300)); // the handler is running
     const at = performance.now();
-    child.kill("SIGTERM");
+    await server.stop();
     signalled = true;
     const text = await inFlight;
     const out = await stop(DRAIN_MS + 10_000);
@@ -374,17 +375,14 @@ Deno.test({
               assert(/-denext\.\d+$/.test(runtime.deno), runtime.deno);
             }
             // A handle nothing closes holds the process after the drain: the in-flight request
-            // still finishes, and the process exits at the drain deadline anyway. POSIX only:
-            // Windows has no SIGTERM (Deno's `kill("SIGTERM")` there is `TerminateProcess`, which
-            // no handler sees), so there is no drain to observe and `stop()` below ends it.
-            if (Deno.build.os !== "windows") {
-              const shut = await app.stopDuring("/api/slow");
-              stopped = true;
-              output = shut.output;
-              assertEquals(shut.text, "slow done");
-              assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
-              assertStringIncludes(output, "open handle");
-            }
+            // still finishes, and the process exits at the drain deadline anyway (on Windows after
+            // the console's Ctrl-C).
+            const shut = await app.stopDuring("/api/slow");
+            stopped = true;
+            output = shut.output;
+            assertEquals(shut.text, "slow done");
+            assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
+            assertStringIncludes(output, "open handle");
           } finally {
             if (!stopped) output = await app.stop();
           }

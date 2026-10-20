@@ -111,7 +111,16 @@ Deno.test("permissions: check / request map onto denext's states; other platform
     assertEquals(response.status, RESULTS.GRANTED);
     assertEquals(response.settings.alert, true);
   });
-  await assertRejects(() => openPhotoPicker(), Error, "pickImage");
+  // openPhotoPicker is pickImage({ source: "photos" }): the system photo picker; a cancel resolves.
+  const picker = fakePlugin(["getPhoto"], {
+    getPhoto: { webPath: "capacitor://localhost/_capacitor_file_/p.jpg", format: "jpeg" },
+  });
+  await inShell("ios", { Camera: picker.plugin }, async () => {
+    assertEquals(await openPhotoPicker(), undefined);
+  });
+  assertEquals(picker.calls.length, 1);
+  assertEquals(picker.calls[0][0], "getPhoto");
+  assertEquals((picker.calls[0][1] as Any).source, "PHOTOS");
   assertEquals(RNPermissions.check, check);
   assertEquals(RNPermissions.RESULTS, RESULTS);
 });

@@ -9,9 +9,13 @@ import { denoExecutable } from "../build/bundle.ts";
 import type { CommandContext } from "./command.ts";
 import { explainBuildFailure, explainedToolOutput } from "./explain-output.ts";
 
-/** Termination signals to trap for graceful shutdown (platform-dependent). */
+/**
+ * Termination signals to trap for graceful shutdown (platform-dependent). On Windows, Deno maps
+ * the console's events to signals: Ctrl-C is `SIGINT`, Ctrl-Break `SIGBREAK`, a closed console
+ * window `SIGHUP`, and logoff / system shutdown `SIGTERM`.
+ */
 export const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
-  ? ["SIGINT", "SIGBREAK"]
+  ? ["SIGINT", "SIGBREAK", "SIGHUP", "SIGTERM"]
   : ["SIGINT", "SIGTERM"];
 
 /**

@@ -381,12 +381,11 @@ Where `@denext/backend` deliberately departs from Supabase. See
   and a personal OAuth login linked to it would outlive that. Okta, WorkOS, Clerk and Auth0
   Organizations enforce the same rule. Linking still works from an SSO session, so the user keeps
   the provider's tokens for API access; the linked identity only can't sign in.
-- **`/auth/v1` mail templates take GoTrue's placeholders only.** `GOTRUE_MAILER_TEMPLATES_*`
-  are fetched and rendered with `{{ .ConfirmationURL }}`, `{{ .Token }}`, `{{ .TokenHash }}`,
-  `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{ .RedirectTo }}`; a template with any
-  other Go template action (`{{ if }}`, `{{ .Data }}`) gets the built-in one instead. SMTP needs
-  TLS (implicit on 465, else STARTTLS), where GoTrue falls back to plaintext when the server
-  offers no STARTTLS.
+- **`/auth/v1` mail templates take Go's template language without `define` / `template`.**
+  `GOTRUE_MAILER_TEMPLATES_*` render as GoTrue renders them (fields, `.Data`, `if` / `with` /
+  `range`, variables, pipes and the builtin functions); one that defines or calls a named template,
+  or calls `js`, `slice` or `call`, gets the built-in one instead. SMTP needs TLS (implicit on 465,
+  else STARTTLS), where GoTrue falls back to plaintext when the server offers no STARTTLS.
 - **`/auth/v1` `logout?scope=global` also ends denextAuth cookie sessions.** GoTrue's global
   logout ends the user's token sessions; denext ends their cookie sessions too (stateless ones
   through `sessionsValidAfter`), and `scope=others` ends every cookie session while keeping the
