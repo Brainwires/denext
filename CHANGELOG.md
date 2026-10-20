@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **Markdown links can no longer inject attributes (`@denext/content-collections`).** Since 4.1.0,
+  a link or reference-link destination containing a control character could split the rendered
+  `<a>` tag, so the link's label landed inside the `href` attribute and a quote in it added
+  attributes of the author's choosing, event handlers included, that ran without a click. Any app
+  that renders untrusted Markdown with `renderMarkdown`, `renderContent` or `<Content>` was exposed
+  to script injection by whoever wrote that Markdown, in the default escape mode and in
+  `html: "sanitize"` alike. The renderer now builds the link's tags on their own, strips control
+  characters (which it uses as internal markers) from the source in both modes, and refuses a
+  destination that contains one.
+
 ## [4.5.0] - 2026-10-20
 
 ### Added
