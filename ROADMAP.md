@@ -10,7 +10,14 @@
 
 ## Deno toolchain
 
-- **Deno's next minor:** rebase denext's patches onto it and cut a new `-denext.N`. That release
+- **Publish runtime 3.0.0-rc.1 (`denext-runtime-v3.0.0-rc.1`) and pin it.** 4.5.0 shipped three
+  features that stay inert on the pinned 2.9.7-denext.22: `denext/prisma-adapter` (it needs
+  `Deno.SQL` result columns), Linux `windowBlur` and Linux security-key passkeys (Clerk's included).
+  The pin also brings the native type check's fix for absolute `file:` imports. Once it is pinned,
+  un-skip the Prisma adapter suites (`tests/prisma-adapter-sqlite.test.ts`,
+  `tests/prisma-adapter-postgres-integration.test.ts`, `tests/e2e/prisma-deno-sql.e2e.test.ts`)
+  in CI.
+- **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
 
 ## Deno Desktop
@@ -61,11 +68,12 @@
   background audio with the lock-screen / notification controls
   (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
   the controls reaching the page, the Android foreground service), and `pickMedia`'s
-  multi-select and video picks, on an iPhone and an Android phone.
-- **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
-  verification.
-
-## `denext ui` and DevTools
+  multi-select and video picks, on an iPhone and an Android phone; React Native Skia with
+  Reanimated and inside the Capacitor shell's WebViews.
+- **Managed fastlane on macOS arm64:** run `denext toolchain install --with fastlane` and one lane
+  (`denext fastlane ios build`) on an Apple-silicon Mac. The Ruby there is
+  pinned and its hash checked, but the install has not been run; drop the KNOWN-LIMITATIONS
+  clause once it passes.
 
 ## Build toolchain: waiting on `deno bundle`
 

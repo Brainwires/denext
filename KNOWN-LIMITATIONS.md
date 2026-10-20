@@ -33,8 +33,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 ### denext's Deno toolchain
 
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
-  arm64). Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
-  Vitest/Jest compatibility in `deno test`.
+  arm64). Elsewhere, and offline on first use, a command that needs the toolchain stops with an
+  error naming `denext toolchain install`; `DENEXT_DENO=stock` runs stock Deno instead, without
+  `Deno.SQL` or Vitest/Jest compatibility in `deno test`.
 - **Windows on Arm has run on a VM, not yet on Arm64 hardware** (last verified on toolchain
   2.9.7-denext.21). On
   a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
@@ -244,8 +245,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **The compiled `denext` binary re-execs the denext the project pins** for every module-loading
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
-  need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
-  `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
+  need; no Deno install required). Offline on first use, with no toolchain cached, it stops with
+  the fix (`denext toolchain install` once online); `DENEXT_DENO=stock` runs a `deno` on PATH
+  instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
@@ -326,7 +328,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   workers don't run there; `requestAnimationFrame` is capped at 60 Hz on 120 Hz displays
   ([WebKit 294338](https://bugs.webkit.org/show_bug.cgi?id=294338); lifting it is an App Review
   risk denext won't take); Live Activities and configurable widgets are iOS-only (configurable
-  from iOS 17; push-to-start from 17.2); App Groups and push need a paid Apple Developer team.
+  from iOS 17; push-to-start from 17.2); App Groups and push need a paid Apple Developer team; a
+  LAN host (an OTA origin, `mobile dev --lan`, a file transfer) is unreachable until the user
+  allows Local Network access (iOS asks once; Settings → Privacy & Security → Local Network), and
+  until then requests fail with -1009 (the OTA check and file transfers add that hint).
 - **Android:** the WebView is whatever the device has installed, so features and bugs vary;
   widgets are static (no configure activity); push needs `google-services.json`; `mobile dev`
   relies on `usesCleartextTraffic`, which an app's own `networkSecurityConfig` overrides.

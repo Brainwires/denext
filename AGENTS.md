@@ -321,7 +321,7 @@ https://denext.dev/docs/errors-as-values
 ```ts
 import { redirect } from "denext";
 import { auth, cookies, createApi, getSession, requireAuth, requireSession } from "denext/server";
-// cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
+// cookies are Secure (over HTTPS) + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
 const session = await getSession<{ userId: string }>({
   secret: Deno.env.get("SESSION_SECRET")!,
 });
@@ -1139,8 +1139,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `denext toolchain uninstall <version>|--all` and `prune` remove cached versions (the pinned one
   only with `--force`; `--dry-run`, `--json`).
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
-  runs it on the toolchain (with no toolchain and no `deno` it refuses, naming
-  `denext toolchain install`), and the installer runs `toolchain install` (+ `toolchain link`
+  runs it on the toolchain (with no toolchain it refuses, naming `denext toolchain install`;
+  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6; an absolute `file:` import
   doesn't resolve under it yet), and in a `package.json` project without a `deno.json` it runs npm

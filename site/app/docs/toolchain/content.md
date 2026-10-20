@@ -319,7 +319,7 @@ denext toolchain uninstall <version>   # remove a cached version: its Deno toolc
 denext toolchain uninstall --all       # every cached version but the pinned one (--force: that one too)
 denext toolchain prune         # every version but the pinned ones (this denext's, and the project's here)
 denext deno <args…>            # run the toolchain's deno with <args…> verbatim; its exit code
-denext <deno verb> <args…>     # the same for any verb denext doesn't define (stock fallback)
+denext <deno verb> <args…>     # the same for any verb denext doesn't define (falls through to Deno's verb)
 ```
 
 `link` is the only command that puts the toolchain on your `PATH`, and only after you add the line
