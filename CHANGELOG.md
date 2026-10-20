@@ -39,7 +39,6 @@ and this project adheres to
   `html: "sanitize"` alike. The renderer now builds the link's tags on their own, strips control
   characters (which it uses as internal markers) from the source in both modes, and refuses a
   destination that contains one.
-
 - **The values an inline Server Action closes over can no longer be chosen by the caller.** Since
   4.3.1, an inline `"use server"` function that reads its component's values (a user id, a record
   id) was also reachable through its plain action id, and a request to that id passed the caller's
@@ -49,7 +48,6 @@ and this project adheres to
   the server rendered reaches it, and it must carry every captured value, as with Next.js's
   encrypted closures. Actions exported from a `"use server"` module are unchanged (they take the
   caller's arguments by design and must validate them).
-
 - **A cached page no longer stores one visitor's answer when an API handler copies its request.**
   The per-visitor tracking that keeps an ISR page or a Cache Components shell from storing an
   in-process API call's answer (`createApiClient` / `useApi` during a render) missed reads made
@@ -58,7 +56,6 @@ and this project adheres to
   that read the visitor's cookie or authorization that way had its answer stored and served to
   every later visitor. A clone of the handler's request is now tracked like the request itself,
   and building a request from it counts as reading the visitor's headers it copies.
-
 - **`denext build --compile` no longer embeds development state and secrets from `.denext/`.**
   The compiled executable embedded the whole build directory, including database dumps written
   by `denext stack backup`, `@denext/backend`'s dev key file (its secret key and token-signing
@@ -66,7 +63,6 @@ and this project adheres to
   out of it. Only an allow-list of build outputs is embedded now; database dumps and the key
   file are refused even from `compile.include`, and the build names any other `.denext/` entry
   it left out.
-
 - **`denext ui` and `denext dashboard` no longer send the backend's secret key to another host.**
   Their calls to the running app's admin endpoint and health probe followed redirects, and fetch
   keeps a custom `apikey` header across a cross-origin redirect. An app whose middleware or
@@ -74,7 +70,6 @@ and this project adheres to
   the service-role secret key, which bypasses row-level security and opens the auth admin API, to
   that host and its logs. These calls no longer follow redirects; a redirect is reported as the
   app's answer.
-
 - **`denext completions` no longer runs the current directory's project code.** The completion
   script is meant to be sourced from a shell rc file (`source <(denext completions bash)`), so it
   runs every time a terminal opens. It imported the `denext.config.ts` of whatever directory that
@@ -83,6 +78,12 @@ and this project adheres to
   denext's verbs, the Deno verbs it forwards and the project verbs the last `denext commands`
   recorded, and never import the project; run `denext commands` once in a project to complete its
   own verbs.
+- **`openSqlite`'s refusal of an unsupported key pragma covers quoted names.** A `PRAGMA key`
+  must be refused where SQLite has no SQLCipher (the web build and Deno Desktop), and only
+  `PRAGMA key` as the first statement is accepted in the native shell. The name was compared as
+  written, so a quoted spelling (`PRAGMA "key"`, `PRAGMA [rekey]`) reached the plain driver: on
+  the web and the desktop the database silently stayed unencrypted, and a raw `rekey` got past
+  the shell's rule. Pragma names are now compared unquoted (schema prefix and comments included).
 
 ### Docs
 

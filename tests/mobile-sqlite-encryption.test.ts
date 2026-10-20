@@ -160,6 +160,10 @@ Deno.test({
       await assertRejects(() => expo.execAsync("PRAGMA key = 'pw'"), SqliteEncryptionError);
       await assertRejects(() => expo.runAsync("PRAGMA key = 'pw'"), SqliteEncryptionError);
       await assertRejects(() => expo.getFirstAsync("pragma KEY='pw'"), SqliteEncryptionError);
+      // A quoted pragma name is still the key pragma: refused, never run on the plain driver.
+      for (const sql of [`PRAGMA "key" = 'pw'`, "PRAGMA [key] = 'pw'", "PRAGMA 'key' = 'pw'"]) {
+        await assertRejects(() => db.exec(sql), SqliteEncryptionError, "", sql);
+      }
       // A statement that only mentions a key is not a key pragma.
       await db.exec("CREATE TABLE kv (key TEXT); PRAGMA user_version = 3");
       assertEquals(await expo.getFirstAsync("PRAGMA user_version"), { user_version: 3 });
@@ -275,6 +279,15 @@ Deno.test("sqlite encryption: rekey, hexkey and a key pragma that is not first a
         "PRAGMA key = x'00ff'",
         "CREATE TABLE early (v); PRAGMA key = 'pw'",
         "PRAGMA key = 'a'; PRAGMA key = 'b'",
+        // A quoted pragma name is the same pragma to SQLite: never a way past the rule.
+        `PRAGMA "rekey" = 'new'`,
+        "PRAGMA [rekey] = 'new'",
+        "PRAGMA 'hexkey' = '00ff'",
+        "PRAGMA `textrekey` = 'x'",
+        `PRAGMA "main"."rekey" = 'x'`,
+        "PRAGMA [main] . [rekey] = 'x'",
+        "PRAGMA/**/rekey = 'x'",
+        `CREATE TABLE early2 (v); PRAGMA "key" = 'pw'`,
       ]
     ) {
       const err = await assertRejects(() => db.exec(sql), SqliteEncryptionError, "", sql);
