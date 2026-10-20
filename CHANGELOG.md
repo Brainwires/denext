@@ -344,6 +344,12 @@ and this project adheres to
   `content-length: 0`; a `HEAD` of a page or of the 404 page now carries the length its `GET`
   has (uncompressed).
 
+- **A fresh `denext create` app no longer prints Deno's "Ignored build scripts" box.** Every
+  command on a new scaffold, and every Docker build of it, printed it for `npm:@parcel/watcher`
+  (an optional dependency of `sass`, whose prebuilt binary makes the script unneeded). The
+  scaffolded `deno.json` now denies that script (`"allowScripts": { "deny": [...] }`), so it never
+  runs and nothing is printed.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

@@ -366,6 +366,11 @@ export function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
     tasks: scaffoldTasks(opts),
     minimumDependencyAge: DENEXT_MIN_DEP_AGE,
+    // The one npm lifecycle script in the framework's dependency graph: `@parcel/watcher`'s
+    // (through `sass`), which falls back to a native build its prebuilt optional dependency
+    // makes unneeded. Denied, it never runs and Deno stops printing its "Ignored build scripts"
+    // box on every command and every Docker build.
+    allowScripts: { deny: ["npm:@parcel/watcher"] },
     unstable: withDenextUnstable(undefined),
     compilerOptions: {
       jsx: "react-jsx",
