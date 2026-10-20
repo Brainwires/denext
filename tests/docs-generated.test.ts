@@ -6,6 +6,7 @@ import { assertEquals } from "@std/assert";
 import { CLI_OUT, generateCliReference } from "../scripts/gen-cli-reference.ts";
 import { generateMcpReference, MCP_OUT } from "../scripts/gen-mcp-reference.ts";
 import { LLMS_FULL_OUT, LLMS_OUT, llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
+import type { MigrateResult } from "../src/build/migrate.ts";
 
 Deno.test("docs: cli.json is regenerated from the command registry", async () => {
   // Adding/removing a verb, flag or positional (or editing its help text) without running
@@ -48,4 +49,23 @@ Deno.test("docs: the served install.sh matches the one in scripts/", async () =>
     await Deno.readTextFile(new URL("scripts/install.sh", root)),
     "site/public/install.sh is stale — `cp scripts/install.sh site/public/install.sh` and commit",
   );
+});
+
+Deno.test("docs: llms.txt's migrate line names every source `denext migrate` takes", () => {
+  // Keyed by the migrator's own result kinds, so a new source fails to type-check here until it
+  // is named (`spa` / `generic` are the fallbacks, named through Vite and "other SPAs").
+  const names: Record<Exclude<MigrateResult["kind"], "generic">, string[]> = {
+    next: ["Next.js", "Pages Router"],
+    remix: ["Remix", "React Router"],
+    spa: ["Vite"],
+    cra: ["Create React App"],
+    expo: ["Expo"],
+    "tanstack-start": ["TanStack Start"],
+    fresh: ["Fresh"],
+    preact: ["Preact"],
+  };
+  // The bullet, continuation lines included.
+  const line = llmsIndex().match(/^- \*\*Migrate\*\*.*(?:\n {2}.*)*/m)?.[0] ?? "";
+  const missing = Object.values(names).flat().filter((n) => !line.includes(n));
+  assertEquals(missing, [], `llms.txt's migrate line misses: ${missing.join(", ")}`);
 });
