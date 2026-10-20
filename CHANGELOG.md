@@ -372,6 +372,12 @@ and this project adheres to
   `.msi` UpgradeCode. `denext mobile doctor --store` / `--release` now report it as an error
   (`placeholder-app-id`), and `desktop package` warns about it.
 
+- **`denext build --compile` works on release day.** The compile config dropped the app's
+  `minimumDependencyAge` (a scaffold's excludes `jsr:@denext/*`), so for 24 hours after every
+  release `deno compile` refused the just-published `@denext/denext` ("newer than the specified
+  minimum dependency date"), with no workaround. The compile now carries the app's setting, and
+  `DENEXT_MIN_DEP_AGE` reaches it as `--min-dep-age`, as it does every other child of the build.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

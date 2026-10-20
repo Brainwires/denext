@@ -28,7 +28,13 @@
 import { basename, dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
 import type { CompileConfig } from "../server/config.ts";
-import { frameworkImports, frameworkRootUrl, readFrameworkJson } from "./bundle.ts";
+import {
+  frameworkImports,
+  frameworkRootUrl,
+  minDepAgeArgs,
+  minDepAgeConfig,
+  readFrameworkJson,
+} from "./bundle.ts";
 import { relocatableImportMap } from "./desktop-import-map.ts";
 import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
@@ -402,6 +408,9 @@ async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<str
   };
   const nmd = appCfg.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) config.nodeModulesDir = nmd;
+  // The app's dependency-age hold (a scaffold's excludes `jsr:@denext/*`), or the operator's
+  // DENEXT_MIN_DEP_AGE: dropped, `deno compile` refused a just-published @denext/denext for a day.
+  Object.assign(config, minDepAgeConfig(appCfg.minimumDependencyAge));
   await Deno.writeTextFile(file, `${JSON.stringify(config, null, 2)}\n`);
   return file;
 }
@@ -553,6 +562,7 @@ export async function compileApp(
     "--unstable-sloppy-imports",
     ...(options.deno ? [] : toolchainCompileFlags(toolchainVersion())),
     ...permissions,
+    ...minDepAgeArgs(),
     "--config",
     config,
     ...included.flatMap((p) => ["--include", p]),
