@@ -32,10 +32,51 @@ ecosystem to wait for. [Bring your existing app](#bring-your-existing-app).
 Next.js, **0 KB** of JavaScript on a page with no interactivity, and SSR on par or faster.
 [Small and fast](#small-and-fast).
 
+**One install, no toolchain to assemble.** `curl … | sh`, then `denext create`: every other tool a
+build needs arrives by itself the first time a command needs it, pinned to your denext release.
+[One install](#one-install-the-toolchain-arrives-on-its-own).
+
 **Docs:** [denext.dev](https://denext.dev/) · **Package:**
 [jsr.io/@denext/denext](https://jsr.io/@denext/denext) · **Source:**
 [github.com/Brainwires/denext](https://github.com/Brainwires/denext) · **License:**
 [MIT](./LICENSE)
+
+## One install, the toolchain arrives on its own
+
+Deno already gives you a runtime, TypeScript, a formatter, a linter and a test runner in one
+binary. denext completes the picture for full apps on the web, the phone and the desktop, so the
+stack you usually assemble by hand (a runtime and its version manager, a package manager and its
+peer-dependency conflicts, a TypeScript compiler and tsconfig, a bundler, a test runner, a linter
+and a formatter with a config each, a CSS pipeline, database drivers, Ruby and fastlane for store
+builds, another runtime for single executables) comes down to two commands:
+
+```sh
+curl -fsSL https://denext.dev/install.sh | sh     # Windows: irm https://denext.dev/install.ps1 | iex
+denext create my-app
+```
+
+Everything else is pinned to your denext release and fetched the first time a command needs it:
+
+- **denext's Deno build**: stock Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`,
+  SHA-256-verified into `<DENO_DIR>/denext-deno/`, with **native TypeScript 7** type checking. A
+  `deno` you already have is never replaced.
+- **esbuild 0.25.5**, shipped in the toolchain and hash-checked; its JS API is vendored, so there
+  is no `npm:esbuild`.
+- **Format, lint and test** with no config file; `denext test` speaks Vitest's API (`vi.mock`, fake
+  timers).
+- **Lightning CSS and swc** as denext's own wasm packages; `tailwind: { input, output }` and denext
+  fetches Tailwind v4's standalone binary.
+- **`denort`** for `denext build --compile`, pinned and verified beside the CLI.
+- **Databases without drivers**: SQLite through `node:sqlite`, Postgres through `Deno.SQL`, and a
+  zero-npm Redis client.
+- **The Gleam compiler** and **managed fastlane** (a pinned portable Ruby, checksum-locked gems;
+  macOS and Linux, and the first install needs a C compiler), each SHA-256-verified.
+- **Offline and housekeeping**: `denext toolchain install --with gleam,fastlane` fetches it all
+  ahead of time; `toolchain status`, `uninstall` and `prune` keep the cache in check.
+
+The framework's runtime pulls nothing from npm (CI enforces it), while your app can still use
+`npm:` and `jsr:` libraries. Less setup is hours a person keeps, and compute and tokens an AI agent
+spends on your app instead of on wiring a build. [How the toolchain works](https://denext.dev/docs/toolchain).
 
 ## Write it once
 

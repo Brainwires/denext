@@ -17,6 +17,15 @@ export default function GettingStarted() {
       title="Getting started"
       lead="A denext project is a Deno project. No package.json, no node_modules — a deno.json and an app/ directory."
     >
+      <Callout>
+        <strong>Install one thing.</strong> The <code>denext</code>{" "}
+        command is the only install. denext&apos;s Deno build (with native TypeScript 7 checking),
+        esbuild, the formatter, linter and test runner, Lightning CSS and swc, and the database
+        clients come with it or arrive the first time a command needs them, pinned to your denext
+        release; Gleam and a managed fastlane follow the same way when you use them. No bundler,
+        test-runner or compiler config to write. See{" "}
+        <a href="/docs/toolchain">denext&apos;s Deno toolchain</a>.
+      </Callout>
       <h2>Install the CLI</h2>
       <p>
         The <code>denext</code>{" "}

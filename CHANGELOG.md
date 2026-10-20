@@ -47,6 +47,13 @@ and this project adheres to
   file are refused even from `compile.include`, and the build names any other `.denext/` entry
   it left out.
 
+### Docs
+
+- **The managed toolchain, up front.** The home page, the README, Getting started, the toolchain
+  page and `llms.txt` now open with what you no longer set up by hand: one install, then denext's
+  Deno build (native TypeScript 7 checking), esbuild, `denort`, Gleam and a managed fastlane arrive
+  pinned on first need, with Lightning CSS, swc and the database clients built in.
+
 ## [4.5.0] - 2026-10-20
 
 ### Added
