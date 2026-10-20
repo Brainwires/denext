@@ -324,6 +324,11 @@ and this project adheres to
   `-A`: its `start` re-runs itself under a stylesheet import map, which needs an unscoped
   `--allow-run`; the production checklist says so.
 
+- **The default 500 is an HTML page.** With no `error.tsx` or `global-error.tsx`, an unhandled
+  page error answered `text/plain` "Internal Server Error". A request that accepts `text/html` now
+  gets a minimal HTML page (the status, the message and the request id), as Next.js serves its
+  default error page. Other requests keep the plain text, and neither reveals the error.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed
