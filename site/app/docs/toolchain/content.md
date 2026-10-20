@@ -351,9 +351,10 @@ and the toolchain type-checks with its in-process TypeScript 6.0.3 instead, with
 was refused, or that it arrives with the toolchain.
 
 `DENEXT_NATIVE_CHECK=0` (or `false` / `off`) keeps the in-process TypeScript 6.0.3, and a
-`DENO_CHECK_ENGINE` you set yourself always wins. The native check doesn't resolve an absolute
-`file:` import yet (TS2307), so such a project sets `DENEXT_NATIVE_CHECK=0`
-([known limitations](/docs/limitations)); [the differences page](/docs/differences) lists how its
+`DENO_CHECK_ENGINE` you set yourself always wins. Before runtime 3.0.0-rc.1 the native check
+doesn't resolve an absolute `file:` import (TS2307), so such a project sets
+`DENEXT_NATIVE_CHECK=0` there ([known limitations](/docs/limitations)); runtime 3.0.0-rc.1+
+resolves it, and also checks `--doc` code blocks and `deno bundle --check` natively; [the differences page](/docs/differences) lists how its
 output differs, and the [explained type errors](/docs/error-handling#explained-type-errors) read
 both checkers' wording.
 
@@ -464,7 +465,7 @@ the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` include
 and a compiled program keeps `--unstable-no-legacy-abort`. `2.9.7-denext.22` (the build denext
 pins today) type-checks with the native TypeScript 7 compiler, shipped in the CLI zip and pinned
 like the binary, and runs npm packages more as Node.js does; that check doesn't resolve an absolute
-`file:` import yet, so such a project sets `DENEXT_NATIVE_CHECK=0`
+`file:` import (runtime 3.0.0-rc.1+ does), so such a project sets `DENEXT_NATIVE_CHECK=0`
 ([known limitations](/docs/limitations)). Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new release (`-denext.N` up to
 `2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). Deno's next minor

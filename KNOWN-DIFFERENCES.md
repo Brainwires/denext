@@ -533,7 +533,7 @@ from TypeScript 7.0's compiler rather than `tsc` 6:
   `.deno/` (with its own `.gitignore`).
 - A graph the stock project model can't express yet (sloppy imports, `--ext`, `text` / `bytes`
   imports, `@deno-types` / `X-TypeScript-Types` redirects, CommonJS modules, code blocks checked
-  with `--doc`, a Vitest or Jest config's aliases, a custom JSR registry, a worker's graph,
+  with `--doc` before runtime 3.0.0-rc.1, a Vitest or Jest config's aliases, a custom JSR registry, a worker's graph,
   declaration emit) is checked by the in-process TypeScript 6.0.3, as before; before runtime
   `3.0.0-rc.2` so is a graph whose `jsxImportSource` runtime comes through the import map under
   `denext test` / `run --check`. `DENEXT_NATIVE_CHECK=0` selects it for everything.
