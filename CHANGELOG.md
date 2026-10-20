@@ -42,6 +42,18 @@ and this project adheres to
 
 ### Fixed
 
+- **The installed `denext` binary couldn't run `migrate` (and served no MCP guide).** The
+  compiled binary carried the CLI's modules but not the framework files it reads at run time, so
+  `denext migrate` and `migrate --check` stopped at "could not read the framework version" for
+  every project, `denext mcp` reported version `0.0.0` and failed `denext://guide`, and `denext
+  patch create denext` recorded a `+0.0.0` patch mapped to the binary's temporary directory, which
+  no app loads. The binary now embeds `deno.json` and `AGENTS.md`, the framework version is a
+  constant rather than a file read, a patch made from the binary targets the published denext the
+  app runs, and a framework file that cannot be read is an error naming it instead of an empty
+  object. Every place that compiles the CLI goes through one script (`deno task compile`), and the
+  release runs `--version`, `migrate`, `create`, `generate`, `routes`, `patch`, `build` and the MCP
+  server through the binary before uploading it.
+
 - **The dev type-check overlay checks only what an edit changed.** It ran `deno check -- <files>`,
   and `deno check` ignores the files after `--` and checks the whole project, so every edit
   re-checked every module and could report errors in files the edit never touched.

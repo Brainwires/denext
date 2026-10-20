@@ -343,7 +343,7 @@
     "parity:native:gaps": "deno run -A scripts/parity/native/gaps.ts",
     "parity:native:plugins": "deno run -A scripts/parity/native/expo-plugins.ts",
     "docs:build": "deno task docs:api && deno task docs:mcp && deno task docs:cli && deno task docs:examples && deno task gen:plugin-catalog && deno task docs:fixed && deno task docs:corpus && deno task docs:llms && cd site && deno task export && deno task search-index && deno task seo",
-    "compile": "deno compile -A --include src/cli/lazy-modules.generated.ts --output denext cli.ts",
+    "compile": "deno run -A scripts/compile-cli.ts --output denext",
     "bench": "deno run -A --config deno.json bench/run.ts",
     "bench:load": "deno run -A --unstable-kv --config deno.json bench/load/run.ts",
     "bench:pages": "deno run -A --v8-flags=--expose-gc --config deno.json bench/pages/run.ts",

@@ -172,7 +172,7 @@ jobs:
         run: |
           set -eu
           mkdir -p dist/no-deno
-          deno compile -A --include src/cli/lazy-modules.generated.ts --output dist/denext cli.ts
+          deno run -A scripts/compile-cli.ts --output dist/denext
           tar czf dist/no-deno/denext-x86_64-unknown-linux-gnu.tar.gz -C dist denext
           (cd dist/no-deno && sha256sum denext-x86_64-unknown-linux-gnu.tar.gz > SHA256SUMS)
           cp scripts/install.sh scripts/ci/no-deno-e2e.sh dist/no-deno/

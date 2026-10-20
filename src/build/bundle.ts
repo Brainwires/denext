@@ -30,6 +30,7 @@ import {
 import { carryLinks } from "./config-links.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
 import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
+import { VERSION } from "../version.ts";
 
 /**
  * The framework root as a URL, in whatever scheme the framework itself runs under:
@@ -65,14 +66,53 @@ async function readFrameworkText(relative: string): Promise<string> {
   return await res.text();
 }
 
-/** Parse a JSON file under the framework root (scheme-agnostic). `{}` if unreadable. */
+/** Options of {@linkcode readFrameworkJson}. */
+interface ReadFrameworkJsonOptions {
+  /**
+   * The file may legitimately be absent (a framework copy that ships without it): resolve to
+   * `{}` when it cannot be read instead of throwing. A file that exists but does not parse is
+   * still an error.
+   */
+  readonly optional?: boolean;
+}
+
+/**
+ * Parse a JSON file under the framework root (scheme-agnostic).
+ *
+ * Throws, naming the file and where it was looked for, when the file cannot be read — a
+ * compiled `denext` binary carries only the framework files `scripts/compile-cli.ts` embeds, so
+ * a missing one must say so rather than read as an empty object. Pass `{ optional: true }` only
+ * where an absent file is genuinely fine.
+ *
+ * @param relative The path under the framework root (`deno.json`).
+ * @param options Whether the file is optional.
+ * @returns The parsed object.
+ */
 export async function readFrameworkJson(
   relative: string,
+  options: ReadFrameworkJsonOptions = {},
 ): Promise<Record<string, unknown>> {
+  let text: string;
   try {
-    return JSON.parse(await readFrameworkText(relative)) as Record<string, unknown>;
-  } catch {
-    return {};
+    text = await readFrameworkText(relative);
+  } catch (err) {
+    if (options.optional) return {};
+    throw new Error(
+      `denext: could not read the framework file "${relative}" (${frameworkFileUrl(relative)}): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
+    );
+  }
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(
+      `denext: the framework file "${relative}" is not valid JSON: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
+    );
   }
 }
 
@@ -1366,9 +1406,6 @@ function devJsx(
   }
 }
 
-/** The running framework's version (its `deno.json`), read once. */
-let frameworkVersion: Promise<string> | undefined;
-
 let warnedSkew = false;
 
 /**
@@ -1380,8 +1417,7 @@ async function appFrameworkRoot(
   config: { lock?: unknown },
   denext: string | undefined,
 ): Promise<string> {
-  frameworkVersion ??= readFrameworkJson("deno.json").then((c) => String(c.version ?? ""));
-  const running = { root: frameworkRootUrl(), version: await frameworkVersion };
+  const running = { root: frameworkRootUrl(), version: VERSION };
   const root = await appDenextRootFor(configFsPath, config, denext, running);
   const version = root.startsWith(JSR_DENEXT_ROOT) ? root.slice(JSR_DENEXT_ROOT.length, -1) : "";
   if (version && version !== running.version && !warnedSkew) {

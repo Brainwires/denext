@@ -4,9 +4,8 @@
  *
  * Run it directly (`deno run -A jsr:@denext/denext/cli dev .`), install it as a
  * global command (`deno install -A -g -n denext jsr:@denext/denext/cli`), or
- * compile a standalone binary (`deno task compile`: `deno compile -A --include
- * src/cli/lazy-modules.generated.ts --output denext cli.ts` — the include embeds the verbs, which
- * load on demand).
+ * compile a standalone binary (`deno task compile`: scripts/compile-cli.ts, which embeds the
+ * verbs, loaded on demand, and the framework files the CLI reads at run time).
  *
  * This entrypoint owns argv and the module URL every re-exec runs again; the command framework
  * (`src/cli/command.ts`) owns parsing, help, suggestions, and dispatch; `src/cli/run-verb.ts`

@@ -30,6 +30,7 @@ import type { SpaTanstackRouterConfig } from "../server/config.ts";
 import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
+import { VERSION } from "../version.ts";
 import { appendGitignore } from "./gitignore.ts";
 import { ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
@@ -625,16 +626,12 @@ async function frameworkSubpaths(prefixes: string[]): Promise<string[]> {
 }
 
 /**
- * The `@^<version>` suffix that pins a migrated app to this framework's release line. Reads
- * the framework's own `deno.json` scheme-agnostically (a local checkout OR the JSR package —
- * `join(frameworkRoot(), …)` corrupts a `https://` root). Throws rather than silently
- * emitting an unpinned `jsr:@denext/denext`.
+ * The `@^<version>` suffix that pins a migrated app to this framework's release line: the
+ * running framework's {@linkcode VERSION}, a constant (never a file read, so a compiled binary
+ * that embeds no `deno.json` still knows it).
  */
-async function denextVersion(): Promise<string> {
-  const cfg = await readFrameworkJson("deno.json");
-  const version = typeof cfg.version === "string" ? cfg.version : "";
-  if (!version) throw new Error("denext migrate: could not read the framework version");
-  return `@^${version}`;
+function denextVersion(): string {
+  return `@^${VERSION}`;
 }
 
 /** How the generated config points at denext: published JSR (default) or a local checkout. */
@@ -1493,7 +1490,7 @@ async function migrateNextProject(
 ): Promise<MigrateResult> {
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const jsr = R.sub;
   const { imports, hasEffect, ...classified } = await resolveAppRouterImports(dir, R, deps);
 
@@ -1699,7 +1696,7 @@ async function remixAppBase(
 ): Promise<{ R: DenextResolver; imports: Record<string, string> }> {
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
   return { R, imports };
 }
@@ -1865,7 +1862,7 @@ async function migrateTanstackStartProject(
 ): Promise<MigrateResult> {
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, deps);
   const classified = classifyDeps(deps, imports, { pin: false });
   Object.assign(imports, R.tanstackStartEntries());
@@ -1924,7 +1921,7 @@ async function migrateFreshProject(dir: string, options: MigrateOptions): Promis
         "(Fresh 1.x), or a fresh.gen.ts, beside a routes/ directory",
     );
   }
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, {});
   const aliases = freshAliasImports(R.sub);
   Object.assign(imports, aliases);
@@ -3190,7 +3187,7 @@ async function migrateSpaProject(
   source: SpaSource,
   preact: PreactTooling | null = null,
 ): Promise<MigrateResult> {
-  const V = await denextVersion();
+  const V = denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
@@ -3421,7 +3418,7 @@ async function migrateExpoProject(
   deps: Record<string, string>,
   options: MigrateOptions,
 ): Promise<MigrateResult> {
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
   const pkg = await readJson(join(dir, "package.json")) ?? {};
