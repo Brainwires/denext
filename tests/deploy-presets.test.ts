@@ -164,7 +164,7 @@ Deno.test("deploy preset generic-host: the unit serves on denext's toolchain fro
     await genericHost({ name: "shop", domain: "shop.example.com" }).prepare(compiled.ctx);
     assertStringIncludes(
       compiled.files.get("output/shop.service") ?? "",
-      "ExecStart=/srv/shop/shop\n",
+      "ExecStart=/srv/shop/shop --host 127.0.0.1\n",
     );
     assertEquals(compiled.files.has("output/build.sh"), false);
   } finally {
@@ -235,6 +235,32 @@ Deno.test("deploy: --domain reaches the generic-host preset, and only it", () =>
     Error,
     "--domain",
   );
+});
+
+Deno.test("deploy presets generic-host / fly: per-address limits work behind the proxy they generate", async () => {
+  // Up to 4.5.0 neither set the proxy trust, so every request came from the proxy's
+  // loopback/private address and rateLimit(), auth's per-IP budgets and Live's per-IP cap were
+  // silently skipped.
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const host = recordingContext(manifest, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.org" }).prepare(host.ctx);
+    const unit = host.files.get("output/shop.service") ?? "";
+    assertStringIncludes(unit, "Environment=DENEXT_TRUST_PROXY=1\n");
+    // Trusting the forwarded headers is safe only while clients can't reach the server directly.
+    assertStringIncludes(unit, " start . --host 127.0.0.1\n");
+    const nginx = host.files.get("output/nginx.conf") ?? "";
+    // nginx overwrites the client's own X-Forwarded-For instead of appending to it.
+    assertStringIncludes(nginx, "proxy_set_header X-Forwarded-For $remote_addr;");
+    assert(!nginx.includes("$proxy_add_x_forwarded_for"), nginx);
+    const flyCtx = recordingContext(manifest, paths.projectDir);
+    await fly({ app: "shop", denoTag: "2.9.7" }).prepare(flyCtx.ctx);
+    const flyToml = flyCtx.files.get("project/fly.toml") ?? "";
+    assertStringIncludes(flyToml, 'DENEXT_TRUST_PROXY = "1"');
+    assertStringIncludes(flyToml, 'DENEXT_RATE_LIMIT_HEADER = "fly-client-ip"');
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
 });
 
 Deno.test("deploy preset static: refuses an app with server routes, listing each", async () => {

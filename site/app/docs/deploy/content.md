@@ -253,9 +253,20 @@ which per-address limits skip by default, so the stack sets
 reverse proxy also set `DENEXT_TRUST_PROXY=1` (or `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`), so each
 client gets its own budget instead of sharing the proxy's.
 
-**The runtime.** With Postgres or `@denext/backend`, the image runs on denext's Deno toolchain
-(the build already downloaded it; a layer puts it first on `PATH`), because
-`@denext/backend`'s Postgres client is `Deno.SQL`, which stock Deno does not have.
+**Proxies the presets generate.** The `generic-host` unit sets `DENEXT_TRUST_PROXY=1` and
+starts the server with `--host 127.0.0.1`, so only nginx or Caddy on the same host reaches it, and
+its nginx block overwrites `X-Forwarded-For` with the client's address rather than appending to
+it. The `fly` preset's `fly.toml` sets `DENEXT_TRUST_PROXY=1` and
+`DENEXT_RATE_LIMIT_HEADER=fly-client-ip`: fly-proxy connects from a private address and sends the
+client's address in `Fly-Client-IP`. That trusts any private peer, which on Fly includes the
+other machines on your organization's private network; set `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`
+to narrow it. The `docker` preset sets neither: nothing in front of the container is known, and a
+client that reaches the server directly could spoof the headers.
+
+**The runtime.** Every generated image runs on denext's Deno toolchain (the build already
+downloaded it; a layer puts it first on `PATH`), the runtime `dev` and `build` use:
+`@denext/backend`'s Postgres client and `postgresClient()` are `Deno.SQL`, which stock Deno does
+not have.
 
 **Object storage from the browser.** The app talks to the store at `S3_ENDPOINT` (default
 `http://minio:9000`, which only the containers can resolve), and signs every URL it hands a

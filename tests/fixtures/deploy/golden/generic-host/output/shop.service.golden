@@ -20,8 +20,12 @@ Environment=PORT=3000
 Environment=DENO_DIR=/srv/shop/.deno
 Environment=DENEXT_CANONICAL_ORIGIN=https://shop.example.com
 Environment=DENEXT_LOG=json
+# Behind nginx / Caddy every request comes from 127.0.0.1: trust the proxy's X-Forwarded-*
+# headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
+# per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
+Environment=DENEXT_TRUST_PROXY=1
 EnvironmentFile=-/etc/shop/env
-ExecStart=/srv/shop/.deno/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start .
+ExecStart=/srv/shop/.deno/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start . --host 127.0.0.1
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM

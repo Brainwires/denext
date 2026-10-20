@@ -121,11 +121,19 @@ function cliModule(manifest: DeployManifest): string {
     `jsr:@denext/denext@^${manifest.denext}/cli`;
 }
 
-/** The `ExecStart` command line. */
+/**
+ * The `ExecStart` command line. The server listens on loopback only: the unit trusts the proxy's
+ * forwarded headers (`DENEXT_TRUST_PROXY=1`), which is safe only while no client reaches the
+ * server without passing the proxy.
+ */
 function execStart(manifest: DeployManifest, o: Resolved): string {
-  if (manifest.compile) return `${o.directory}/${basename(manifest.compile.output)}`;
+  const loopback = ["--host", "127.0.0.1"];
+  if (manifest.compile) {
+    return [`${o.directory}/${basename(manifest.compile.output)}`, ...loopback].join(" ");
+  }
   const [first, ...rest] = manifest.server.command;
-  return [first === "deno" ? o.deno : first, ...rest].join(" ");
+  const binds = rest.some((w) => /^--(host|hostname)(=|$)/.test(w));
+  return [first === "deno" ? o.deno : first, ...rest, ...(binds ? [] : loopback)].join(" ");
 }
 
 /**
@@ -161,6 +169,10 @@ ${
       : "# DENEXT_CANONICAL_ORIGIN (the public https:// origin) comes from the env file below."
   }
 Environment=DENEXT_LOG=json
+# Behind nginx / Caddy every request comes from 127.0.0.1: trust the proxy's X-Forwarded-*
+# headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
+# per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
+Environment=DENEXT_TRUST_PROXY=1
 EnvironmentFile=-/etc/${o.name}/env
 ExecStart=${execStart(manifest, o)}
 Restart=always
@@ -250,7 +262,9 @@ server {
     proxy_pass http://${zone};
     proxy_http_version 1.1;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # Overwrite, never append: the server trusts this header (DENEXT_TRUST_PROXY=1 in the
+    # unit), so a client's own X-Forwarded-For must not reach it.
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
     # Live (WebSocket) and streamed responses.
     proxy_set_header Upgrade $http_upgrade;

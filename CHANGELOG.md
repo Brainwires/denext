@@ -31,6 +31,15 @@ and this project adheres to
   searchParams`) or checked a name with `in` was cached whole even when it used a param outside
   the list; those reads now count, so such a render is not stored, with or without
   `cacheComponents`.
+- **Per-address limits work behind the proxies the deploy presets generate.** The `generic-host`
+  preset put nginx or Caddy in front of the server and the `fly` preset runs behind fly-proxy, but
+  neither told denext to trust them, so every request came from the proxy's loopback or private
+  address and `rateLimit()`, `denextAuth`'s per-IP budgets and Live's per-IP cap were skipped for
+  everyone (one warning was logged). The `generic-host` unit now sets `DENEXT_TRUST_PROXY=1` and
+  binds the server to `127.0.0.1`, and its nginx block overwrites `X-Forwarded-For` instead of
+  appending the client's own value. `fly.toml` sets `DENEXT_TRUST_PROXY=1` and
+  `DENEXT_RATE_LIMIT_HEADER=fly-client-ip`. Regenerate the files with `denext deploy prepare`.
+
 - **Markdown links can no longer inject attributes (`@denext/content-collections`).** Since 4.1.0,
   a link or reference-link destination containing a control character could split the rendered
   `<a>` tag, so the link's label landed inside the `href` attribute and a quote in it added

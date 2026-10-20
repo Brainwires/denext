@@ -74,6 +74,10 @@ ${
 [env]
   PORT = "${port}"
   DENEXT_LOG = "json"
+  # fly-proxy connects from a private address: trust it, and key the per-address limits
+  # (rateLimit(), auth's per-IP budgets, Live's per-IP cap) on the client address it sends.
+  DENEXT_TRUST_PROXY = "1"
+  DENEXT_RATE_LIMIT_HEADER = "fly-client-ip"
   ${manifest.server.drain.env} = "${manifest.server.drain.ms}"
 
 [http_service]
