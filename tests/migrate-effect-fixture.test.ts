@@ -48,6 +48,8 @@ Deno.test("migrate reproduces the examples/effect golden config files exactly", 
     // Guard the golden itself: the Effect wiring must be present in the committed output.
     assertStringIncludes(golden.get("deno.json")!, '"@denext/effect":');
     assertStringIncludes(golden.get("deno.json")!, '"effect": "npm:effect@');
+    // No exemption from Deno's dependency-age hold: denext's own releases wait like any other.
+    assert(!golden.get("deno.json")!.includes("minimumDependencyAge"));
     assertStringIncludes(
       golden.get("denext.config.ts")!,
       "plugins: [effect()]",

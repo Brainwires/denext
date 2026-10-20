@@ -329,14 +329,6 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  * @returns The file's text.
  */
 /**
- * The `minimumDependencyAge` a generated `deno.json` carries: Deno's default two-day hold on
- * freshly published versions stays on for every dependency EXCEPT denext's own packages, so a
- * project made right after a denext release installs the version that made it (the CLI running
- * is already that release) instead of failing "blocked by the minimum dependency age policy".
- */
-export const DENEXT_MIN_DEP_AGE = { exclude: ["jsr:@denext/*"] } as const;
-
-/**
  * The unstable features a generated `deno.json` turns on. `no-legacy-abort`: Deno.serve's
  * `request.signal` aborts only when a response is NOT delivered, and Deno prints no legacy-abort
  * notice on the first request — what `denext start` / `dev` get from the toolchain's
@@ -365,7 +357,6 @@ export function withDenextUnstable(existing: unknown, extra: readonly string[] =
 export function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
     tasks: scaffoldTasks(opts),
-    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     // The one npm lifecycle script in the framework's dependency graph: `@parcel/watcher`'s
     // (through `sass`), which falls back to a native build its prebuilt optional dependency
     // makes unneeded. Denied, it never runs and Deno stops printing its "Ignored build scripts"

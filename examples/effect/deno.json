@@ -7,11 +7,6 @@
     "start": "deno run -A --node-modules-dir=none jsr:@denext/denext@^4.5.1/cli start ."
   },
   "nodeModulesDir": "auto",
-  "minimumDependencyAge": {
-    "exclude": [
-      "jsr:@denext/*"
-    ]
-  },
   "unstable": [
     "sloppy-imports",
     "no-legacy-abort"

@@ -353,7 +353,11 @@ Deno.test("jsrLookups: versions from meta.json (yanked dropped), the range from 
         scope: "denext",
         name: "myplug",
         latest: "0.3.0",
-        versions: { "0.3.0": {}, "0.2.0": { yanked: true }, "0.1.0": {} },
+        versions: {
+          "0.3.0": { createdAt: "2026-10-20T17:41:55.906009Z" },
+          "0.2.0": { yanked: true, createdAt: "2026-10-01T00:00:00Z" },
+          "0.1.0": { createdAt: "not a date" },
+        },
       }));
     }
     if (input.pathname === "/@denext/myplug/0.3.0/deno.json") {
@@ -366,6 +370,8 @@ Deno.test("jsrLookups: versions from meta.json (yanked dropped), the range from 
   assertEquals(await lookups.versions("@denext/myplug"), {
     latest: "0.3.0",
     versions: ["0.3.0", "0.1.0"],
+    // Publish times for the dependency-age hold; an unparseable one is left out.
+    published: { "0.3.0": "2026-10-20T17:41:55.906009Z" },
   });
   assertEquals(await lookups.denextRange("@denext/myplug", "0.3.0"), "^3.2.0");
   assertEquals(await lookups.denextRange("@denext/myplug", "0.1.0"), null, "no denext import");

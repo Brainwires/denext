@@ -437,6 +437,39 @@ One limitation: Deno 2.9 resolves a `deno.json` `file:` target on another drive 
 `file:///C:/D:/…`, so a project whose `deno.json` points at files on a different drive fails to
 resolve them. Keep the project and its `file:` targets on one drive.
 
+## Supply-chain hold
+
+Deno holds a package version published less than its _minimum dependency age_ ago out of
+resolution: a compromised release is refused while it is fresh. The window is the root
+`deno.json`'s `minimumDependencyAge` (minutes, an ISO-8601 duration such as `"P3D"`, a fixed date,
+or `{ "age": …, "exclude": [...] }`), else `.npmrc`'s `min-release-age`, else Deno's default
+(Deno 2.9.7 holds two days, although its error hint says 24 hours). denext's own packages wait
+like every other dependency: denext never switches the hold off on your behalf, and only forwards
+a `--min-dep-age` you set yourself (`DENEXT_MIN_DEP_AGE`) to the Deno processes it starts.
+
+`denext create`, `denext migrate` and `denext upgrade` pin the newest `@denext/*` versions the
+hold already lets in, read from JSR's publish times. On the day of a release that can be the
+previous version; the command says so in one line and pins it:
+
+```text
+denext 4.5.2 was published 3 h ago; your dependency-age rule allows it from Oct 22, 3:12 PM CDT. Pinned 4.5.1 for now — run "denext upgrade" after that.
+```
+
+Plugins and the other first-party packages get versions that are old enough and work with the
+denext pinned. When no version is old enough the command stops with the same explanation instead
+of Deno's resolver error; when JSR can't be reached it keeps the pins it would write and warns
+that Deno may hold them.
+
+Projects made by `denext create` / `migrate` from 3.0 to 4.5.1 exempted `jsr:@denext/*` in
+`minimumDependencyAge.exclude`. `denext upgrade` removes that one entry (your other entries stay)
+and says why. **If you publish denext yourself** and want your own releases resolved the moment
+they are out, add it back to the project's `deno.json`, knowing it lets any just-published
+`@denext/*` version in:
+
+```json
+"minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
+```
+
 ## Notes: how denext's Deno build is kept current
 
 <a id="versions"></a>**Versions.** Up to `2.9.7-denext.22` each build was named after the Deno release it

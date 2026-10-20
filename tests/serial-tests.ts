@@ -32,6 +32,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/config.test.ts",
   "tests/conformance.test.ts",
   "tests/deno-exec.test.ts",
+  "tests/dep-age.test.ts",
   "tests/desktop-app-dirs.test.ts",
   "tests/desktop-deno-flags.test.ts",
   "tests/desktop-doctor.test.ts",

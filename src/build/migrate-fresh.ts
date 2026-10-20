@@ -17,6 +17,7 @@
 
 import { basename, dirname, extname, join } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
+import { DENEXT_EXCLUDE } from "./dep-age.ts";
 import { exists } from "./migrate-fs.ts";
 import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
 import { mfs } from "./migrate-io.ts";
@@ -813,8 +814,19 @@ export interface FreshDenoJsonInput {
   tasks: Record<string, string>;
   /** The `unstable` list. */
   unstable: string[];
-  /** The `minimumDependencyAge` default. */
-  minimumDependencyAge: unknown;
+}
+
+/**
+ * A `minimumDependencyAge` value without the `"jsr:@denext/*"` exclude entry migrate wrote
+ * before 4.5.2 (every other entry kept; an object left empty becomes `undefined`).
+ */
+function withoutDenextExclude(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const { exclude, ...rest } = value as { exclude?: unknown };
+  if (!Array.isArray(exclude) || !exclude.includes(DENEXT_EXCLUDE)) return value;
+  const kept = exclude.filter((e) => e !== DENEXT_EXCLUDE);
+  const out = kept.length ? { ...rest, exclude: kept } : rest;
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** The Fresh-only tasks a migrated app drops (denext's replace `dev` / `build` / `start`). */
@@ -869,7 +881,8 @@ export function freshDenoJson(
     ...rest,
     tasks: { ...tasks, ...input.tasks },
     nodeModulesDir: "auto",
-    minimumDependencyAge: rest.minimumDependencyAge ?? input.minimumDependencyAge,
+    // The author's own hold, if any — minus the `jsr:@denext/*` exemption an earlier migrate wrote.
+    minimumDependencyAge: withoutDenextExclude(rest.minimumDependencyAge),
     unstable: input.unstable,
     compilerOptions: compilerOptionsFor(rest.compilerOptions),
     imports: { ...imports, ...input.imports },

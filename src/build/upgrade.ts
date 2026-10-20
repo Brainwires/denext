@@ -21,6 +21,9 @@
 //   `--allow-major` opts in.
 // - **An unreachable registry is an error.** A version whose config JSR didn't serve is never
 //   taken as "incompatible": the plan fails with the reason instead.
+// - **Only versions Deno will resolve.** A version published more recently than the project's
+//   minimum dependency age (`src/build/dep-age.ts`; two days by default) is never picked; the
+//   plan names the newest one it skipped and when it becomes eligible.
 // - **The edit is textual.** Only the version inside each matched specifier changes, so the
 //   file keeps its comments, order and formatting (a `deno.jsonc` included).
 //
@@ -29,6 +32,7 @@
 
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { fetchJsrConfig, fetchJsrVersions, type JsrRequestOptions } from "../ui/jsr.ts";
+import { type DepAgeRule, heldUntil, type HeldVersion, holdHead, holdMessage } from "./dep-age.ts";
 
 /**
  * A first-party package specifier with a version: `jsr:@denext/<name>@<op><version>`, or the
@@ -146,8 +150,17 @@ export interface UpgradeStep {
 
 /** The registry lookups the planner needs (injected in tests). */
 export interface UpgradeLookups {
-  /** A package's published versions, or `null` when they can't be read. */
-  versions(name: string): Promise<{ latest: string; versions: readonly string[] } | null>;
+  /**
+   * A package's published versions (with each one's publish time when known), or `null` when
+   * they can't be read.
+   */
+  versions(name: string): Promise<
+    {
+      latest: string;
+      versions: readonly string[];
+      published?: Readonly<Record<string, string>>;
+    } | null
+  >;
   /**
    * The `@denext/denext` range one published version declares: the range, `null` when it does
    * not import denext (any denext will do), `undefined` when it can't be read.
@@ -163,11 +176,29 @@ export interface UpgradeOptions {
   readonly allowDowngrade?: boolean;
   /** Let a package that doesn't import denext move past its own caret range. */
   readonly allowMajor?: boolean;
+  /** The project's dependency-age rule: versions it holds are never picked (default: none). */
+  readonly rule?: DepAgeRule;
+  /** The clock (tests). */
+  readonly now?: Date;
+}
+
+/** A newer version the dependency-age rule held back, and the version pinned instead. */
+export interface HeldStep {
+  /** The held version. */
+  readonly held: HeldVersion;
+  /** What was pinned instead. */
+  readonly pinned: string;
 }
 
 /** The outcome of planning. */
 export type UpgradePlan =
-  | { readonly ok: true; readonly steps: readonly UpgradeStep[]; readonly changed: boolean }
+  | {
+    readonly ok: true;
+    readonly steps: readonly UpgradeStep[];
+    readonly changed: boolean;
+    /** Newer versions the dependency-age rule held back (absent when none). */
+    readonly held?: readonly HeldStep[];
+  }
   | { readonly ok: false; readonly reason: string };
 
 /**
@@ -206,7 +237,7 @@ function catalogRange(name: string, version: string): string | null | undefined 
  * Memoize the lookups for one run (a version's range is asked for once per denext target), turn
  * an unreadable answer into a {@link LookupError}, and stop after {@link MAX_LOOKUPS} reads.
  */
-function cached(lookups: UpgradeLookups) {
+function cached(lookups: UpgradeLookups, rule?: DepAgeRule, now: Date = new Date()) {
   const versions = new Map<string, ReturnType<UpgradeLookups["versions"]>>();
   const ranges = new Map<string, Promise<string | null>>();
   let reads = 0;
@@ -223,10 +254,20 @@ function cached(lookups: UpgradeLookups) {
     }
     return range;
   };
+  const versionsOf = (name: string) => {
+    if (!versions.has(name)) versions.set(name, lookups.versions(name));
+    return versions.get(name)!;
+  };
   return {
-    versions(name: string) {
-      if (!versions.has(name)) versions.set(name, lookups.versions(name));
-      return versions.get(name)!;
+    now,
+    cutoff: rule ? rule.cutoff : null,
+    versions: versionsOf,
+    /** Why `version` is held: the held version's facts, or `null` when Deno resolves it. */
+    async held(name: string, version: string): Promise<HeldVersion | null> {
+      if (!rule) return null;
+      const publishedAt = (await versionsOf(name))?.published?.[version];
+      const until = heldUntil(rule, name, publishedAt, now);
+      return until && publishedAt ? { name, version, publishedAt, until } : null;
     },
     denextRange(name: string, version: string): Promise<string | null> {
       const key = `${name}@${version}`;
@@ -255,13 +296,44 @@ async function compatibleVersion(
   const published = await lookups.versions(pin.name);
   if (!published) throw new LookupError(`couldn't reach JSR to read ${pin.name}'s versions`);
   const pre = (parseVersion(pin.version)?.pre.length ?? 0) > 0;
-  for (const version of candidates(published.versions, pin.version, pre)) {
+  const list = await notHeld(candidates(published.versions, pin.version, pre), pin, lookups);
+  for (const version of list) {
     const range = await lookups.denextRange(pin.name, version);
     if (range === null) {
       if (allowMajor || satisfies(version, `^${pin.version}`)) return version;
     } else if (satisfies(target, range)) return version;
   }
   return null;
+}
+
+/**
+ * The newest version of `name` above `pinned` that the rule holds back (what a hold line
+ * names), or `null`.
+ */
+async function newestHeld(
+  name: string,
+  pinned: string,
+  look: CachedLookups,
+): Promise<HeldVersion | null> {
+  const published = await look.versions(name);
+  if (!published) return null;
+  const pre = (parseVersion(pinned)?.pre.length ?? 0) > 0;
+  for (const version of candidates(published.versions, pinned, pre)) {
+    if (version === pinned) break;
+    const held = await look.held(name, version);
+    if (held) return held;
+  }
+  return null;
+}
+
+/** The hold lines for a finished plan: per package, the newest version it could not take. */
+async function heldSteps(steps: readonly UpgradeStep[], look: CachedLookups): Promise<HeldStep[]> {
+  const out: HeldStep[] = [];
+  for (const step of steps) {
+    const held = await newestHeld(step.name, step.to, look);
+    if (held) out.push({ held, pinned: step.to });
+  }
+  return out;
 }
 
 /** Resolve every non-denext pin against one denext version; `null` names the first misfit. */
@@ -296,12 +368,56 @@ export async function planUpgrade(
   options: UpgradeOptions,
   lookups: UpgradeLookups,
 ): Promise<UpgradePlan> {
+  const memo = memoized(lookups);
+  const down = options.rule && options.to === undefined
+    ? await planEligiblePins(text, memo, options.rule, options.now)
+    : null;
+  if (down && !down.ok && !down.offline) return { ok: false, reason: down.reason };
+  if (down?.ok && down.changed) return await planFromEligible(text, down, options, memo);
   try {
-    return await planWith(text, options, cached(lookups));
+    return await planWith(text, options, cached(memo, options.rule, options.now));
   } catch (err) {
     if (err instanceof LookupError) return { ok: false, reason: err.message };
     throw err;
   }
+}
+
+/**
+ * A pin the rule still holds (an app made before denext stopped exempting itself) first moves
+ * down to the newest version it lets in, so the app resolves today; then the usual plan runs
+ * from there, and its steps are reported from the pins as they were.
+ */
+async function planFromEligible(
+  text: string,
+  down: EligiblePlan & { ok: true },
+  options: UpgradeOptions,
+  memo: UpgradeLookups,
+): Promise<UpgradePlan> {
+  const plan = await planUpgrade(applyUpgrade(text, down.steps), options, memo);
+  if (!plan.ok) return plan;
+  const from = new Map(findPins(text).map((p) => [p.name, p.version]));
+  const steps = plan.steps.map((s) => ({ ...s, from: from.get(s.name) ?? s.from }));
+  const later = plan.held ?? [];
+  const names = new Set(later.map((h) => h.held.name));
+  const held = [...down.held.filter((h) => !names.has(h.held.name)), ...later];
+  return { ok: true, steps, changed: steps.some((s) => s.from !== s.to), held };
+}
+
+/** The lookups with every answer kept for the run (two plans share one set of requests). */
+function memoized(lookups: UpgradeLookups): UpgradeLookups {
+  const versions = new Map<string, ReturnType<UpgradeLookups["versions"]>>();
+  const ranges = new Map<string, ReturnType<UpgradeLookups["denextRange"]>>();
+  return {
+    versions(name) {
+      if (!versions.has(name)) versions.set(name, lookups.versions(name));
+      return versions.get(name)!;
+    },
+    denextRange(name, version) {
+      const key = `${name}@${version}`;
+      if (!ranges.has(key)) ranges.set(key, lookups.denextRange(name, version));
+      return ranges.get(key)!;
+    },
+  };
 }
 
 /** Why `options.to` can't be planned (unpublished, or older than the pin without opt-in). */
@@ -336,22 +452,70 @@ async function planWith(
   if (!published) {
     return { ok: false, reason: "couldn't reach JSR to read @denext/denext's versions" };
   }
-  const refused = refuseTarget(options, denext.version, published.versions);
+  const refused = refuseTarget(options, denext.version, published.versions) ??
+    await refuseHeldTarget(options.to, denext, look);
   if (refused) return { ok: false, reason: refused };
   const pre = (parseVersion(denext.version)?.pre.length ?? 0) > 0;
   const targets = options.to !== undefined
     ? [options.to]
-    : candidates(published.versions, denext.version, pre);
+    : await notHeld(candidates(published.versions, denext.version, pre), denext, look);
   const fit = await firstFit(others, targets, look, options.allowMajor === true);
   if ("misfit" in fit) {
-    return {
-      ok: false,
-      reason: `no published version of ${fit.misfit} supports @denext/denext ${targets[0] ?? "?"}` +
-        (options.to === undefined ? ` (or any older denext down to ${denext.version})` : ""),
-    };
+    return { ok: false, reason: misfitReason(fit.misfit, targets, options, denext) };
   }
-  const steps = [{ name: denext.name, from: denext.version, to: fit.target }, ...fit.steps];
-  return { ok: true, steps, changed: steps.some((s) => s.from !== s.to) };
+  return await finishedPlan(
+    [{ name: denext.name, from: denext.version, to: fit.target }, ...fit.steps],
+    look,
+  );
+}
+
+/** Why no consistent set exists: the package with no version for the denext targets tried. */
+function misfitReason(
+  misfit: string,
+  targets: readonly string[],
+  options: UpgradeOptions,
+  denext: UpgradePin,
+): string {
+  const range = options.to === undefined ? ` (or any older denext down to ${denext.version})` : "";
+  return `no published version of ${misfit} supports @denext/denext ${targets[0] ?? "?"}${range}`;
+}
+
+/** The plan for `steps`, with the hold lines for newer versions it could not take. */
+async function finishedPlan(steps: UpgradeStep[], look: CachedLookups): Promise<UpgradePlan> {
+  const held = await heldSteps(steps, look);
+  return {
+    ok: true,
+    steps,
+    changed: steps.some((s) => s.from !== s.to),
+    ...(held.length ? { held } : {}),
+  };
+}
+
+/**
+ * The versions the rule lets in, in order. The pin itself always stays: an upgrade never moves a
+ * pin backwards.
+ */
+async function notHeld(
+  versions: readonly string[],
+  pin: UpgradePin,
+  look: CachedLookups,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const v of versions) {
+    if (v === pin.version || !(await look.held(pin.name, v))) out.push(v);
+  }
+  return out;
+}
+
+/** Why `--to` can't be pinned yet (the rule holds it), or `null`. */
+async function refuseHeldTarget(
+  to: string | undefined,
+  denext: UpgradePin,
+  look: CachedLookups,
+): Promise<string | null> {
+  if (to === undefined || to === denext.version) return null;
+  const held = await look.held(denext.name, to);
+  return held ? `${holdHead(held, look.now)} --to ${to} can't be pinned until then.` : null;
 }
 
 /** The first denext target (in order) every other pin has a version for, or the last misfit. */
@@ -368,6 +532,124 @@ async function firstFit(
     misfit = resolved.misfit;
   }
   return { misfit };
+}
+
+// ── pinning what the dependency-age rule lets in (`create` / `migrate`) ─────
+
+/** The outcome of {@link planEligiblePins}. */
+export type EligiblePlan =
+  | {
+    readonly ok: true;
+    readonly steps: readonly UpgradeStep[];
+    readonly changed: boolean;
+    readonly held: readonly HeldStep[];
+  }
+  | {
+    readonly ok: false;
+    /** JSR could not be read: nothing is known about the hold. */
+    readonly offline: boolean;
+    readonly reason: string;
+  };
+
+/** Whether a version is a prerelease. */
+function isPre(version: string): boolean {
+  return (parseVersion(version)?.pre.length ?? 0) > 0;
+}
+
+/**
+ * The newest version of `pin` at or below it that the rule lets in and, given a denext
+ * `target`, whose denext range admits it; with the first held version met on the way down.
+ */
+async function eligibleAtOrBelow(
+  pin: UpgradePin,
+  look: CachedLookups,
+  target: string | null,
+): Promise<{ version: string | null; held: HeldVersion | null }> {
+  const published = await look.versions(pin.name);
+  if (!published) throw new LookupError(`couldn't reach JSR to read ${pin.name}'s versions`);
+  // Not published (a development build of the CLI): there is nothing to hold, nor to pick.
+  if (!published.versions.includes(pin.version)) return { version: pin.version, held: null };
+  const pre = isPre(pin.version);
+  const list = published.versions
+    .filter((v) => compareVersions(v, pin.version) <= 0 && (pre || !isPre(v)))
+    .sort((a, b) => compareVersions(b, a));
+  let firstHeld: HeldVersion | null = null;
+  for (const version of list) {
+    const held = await look.held(pin.name, version);
+    if (held) {
+      firstHeld ??= held;
+      continue;
+    }
+    if (target !== null) {
+      const range = await look.denextRange(pin.name, version);
+      if (range !== null && !satisfies(target, range)) continue;
+    }
+    return { version, held: firstHeld };
+  }
+  return { version: null, held: firstHeld };
+}
+
+/**
+ * Plan the pins a freshly generated config (`denext create` / `migrate`) should carry so Deno
+ * resolves them under the project's dependency-age rule: each `@denext/*` pin stays when the
+ * rule already lets it in; otherwise it moves DOWN to the newest version that is old enough —
+ * for a first-party package, one whose denext range admits the denext chosen. Never upward:
+ * that is `denext upgrade`'s job.
+ *
+ * @param text The generated config text.
+ * @param lookups The registry lookups.
+ * @param rule The project's dependency-age rule.
+ * @param now The clock.
+ * @returns The steps and the hold lines, or why nothing eligible exists (`offline` when JSR
+ *   could not be read, so nothing is known).
+ */
+export async function planEligiblePins(
+  text: string,
+  lookups: UpgradeLookups,
+  rule: DepAgeRule,
+  now: Date = new Date(),
+): Promise<EligiblePlan> {
+  const look = cached(lookups, rule, now);
+  try {
+    return await eligibleWith(findPins(text), look);
+  } catch (err) {
+    if (err instanceof LookupError) return { ok: false, offline: true, reason: err.message };
+    throw err;
+  }
+}
+
+/** Why no version of `pin` can be pinned: the hold on it, or no old-enough one fitting `target`. */
+function nothingEligible(
+  pin: UpgradePin,
+  held: HeldVersion | null,
+  target: string,
+  look: CachedLookups,
+): string {
+  return held
+    ? holdMessage(held, null, look.now)
+    : `no version of ${pin.name} old enough for your dependency-age rule supports denext ${target}`;
+}
+
+/** {@link planEligiblePins} over memoized lookups. */
+async function eligibleWith(
+  pins: readonly UpgradePin[],
+  look: CachedLookups,
+): Promise<EligiblePlan> {
+  const denext = pins.find((p) => p.name === "@denext/denext");
+  if (!denext || look.cutoff === null) return { ok: true, steps: [], changed: false, held: [] };
+  const steps: UpgradeStep[] = [];
+  const held: HeldStep[] = [];
+  let target = denext.version;
+  for (const pin of [denext, ...pins.filter((p) => p !== denext)]) {
+    const fit = await eligibleAtOrBelow(pin, look, pin === denext ? null : target);
+    if (fit.version === null) {
+      return { ok: false, offline: false, reason: nothingEligible(pin, fit.held, target, look) };
+    }
+    if (pin === denext) target = fit.version;
+    steps.push({ name: pin.name, from: pin.version, to: fit.version });
+    if (fit.held && fit.version !== pin.version) held.push({ held: fit.held, pinned: fit.version });
+  }
+  return { ok: true, steps, changed: steps.some((s) => s.from !== s.to), held };
 }
 
 /**
@@ -397,7 +679,9 @@ export function jsrLookups(opts: JsrRequestOptions = {}): UpgradeLookups {
   return {
     async versions(name) {
       const res = await fetchJsrVersions(...split(name), opts);
-      return res.ok ? { latest: res.latest, versions: res.versions } : null;
+      return res.ok
+        ? { latest: res.latest, versions: res.versions, published: res.published }
+        : null;
     },
     async denextRange(name, version) {
       const res = await fetchJsrConfig(...split(name), version, opts);

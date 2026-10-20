@@ -207,8 +207,10 @@ Deno.test("bundle: DENEXT_MIN_DEP_AGE is forwarded and the new-release failure i
     1,
     "error: Do not know how to load path: deno:jsr:@denext/denext@^2.0.0\n",
   );
-  assertStringIncludes(msg, "DENEXT_MIN_DEP_AGE=0");
-  assert(!bundleFailureMessage(1, "some other error").includes("minimum-dependency-age"));
+  // The hint never tells the user to switch the hold off: it points at `denext upgrade`.
+  assertStringIncludes(msg, "denext upgrade");
+  assert(!msg.includes("DENEXT_MIN_DEP_AGE=0"));
+  assert(!bundleFailureMessage(1, "some other error").includes("minimum dependency age"));
 });
 
 Deno.test("release: a stable version folds its rc sections into one grouped [X.Y.Z] entry", () => {

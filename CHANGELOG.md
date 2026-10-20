@@ -186,6 +186,23 @@ and this project adheres to
 
 ### Security
 
+- **denext no longer exempts its own packages from Deno's minimum dependency age.** `denext
+  create` and `denext migrate` stopped writing `"minimumDependencyAge": { "exclude":
+  ["jsr:@denext/*"] }`, so a just-published `@denext/*` release waits out Deno's hold (two days by
+  default on Deno 2.9.7) like every other dependency, and a compromised release can be caught
+  before projects resolve it. Instead `create`, `migrate` and `upgrade` read JSR's publish times
+  and pin the newest `@denext/*` versions the project's rule already lets in — first-party
+  packages at versions that also support the denext pinned — printing one line when a newer one
+  is held: `denext 4.5.2 was published 3 h ago; your dependency-age rule allows it from <time>.
+  Pinned 4.5.1 for now — run "denext upgrade" after that.` With nothing old enough the command
+  stops with that explanation instead of a resolver error; offline it keeps its pins and warns.
+  `denext upgrade` removes the `"jsr:@denext/*"` entry from an existing project's
+  `minimumDependencyAge.exclude` (other entries stay), says why, and moves a pin the hold still
+  covers down to the newest eligible release; `denext doctor` flags a `deno.json` that still
+  carries the entry, and `denext ui`'s Setup scaffold pins like `create`. A `deno bundle` failure
+  on a held version now points at `denext upgrade` rather than at switching the hold off. If you
+  publish denext yourself, the entry can be added back:
+  https://denext.dev/docs/toolchain#supply-chain-hold
 - **Per-address limits work behind the proxies the deploy presets generate.** The `generic-host`
   preset put nginx or Caddy in front of the server and the `fly` preset runs behind fly-proxy, but
   neither told denext to trust them, so every request came from the proxy's loopback or private

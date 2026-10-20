@@ -1465,13 +1465,14 @@ function safeEnv(name: string): string | undefined {
 /**
  * Explain a `deno bundle` failure. Deno's "Do not know how to load path: deno:jsr:@denext/…"
  * means the resolver found no version satisfying the range — on a brand-new release that is
- * the minimum-dependency-age policy (no version older than two days matches), not a broken app.
+ * Deno's minimum-dependency-age hold (no version older than the window matches), not a broken app.
  */
 export function bundleFailureMessage(code: number, stderr: string): string {
   const hint = /Do not know how to load path: deno:jsr:@denext\//.test(stderr)
     ? `\nHint: no published version of denext satisfied the import map's range. If the version ` +
-      `you want was published in the last two days, Deno's minimum-dependency-age policy hides it — ` +
-      `re-run with DENEXT_MIN_DEP_AGE=0 (or set "minimumDependencyAge" in your deno.json).`
+      `it names was published within your minimum dependency age (Deno's default is two days), Deno ` +
+      `holds it until then — run \`denext upgrade\` to pin the newest version old enough, or ` +
+      `wait for the hold to pass.`
     : "";
   return `deno bundle failed (${code}):\n${stderr}${hint}\n` +
     `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +

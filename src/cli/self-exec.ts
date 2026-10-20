@@ -196,10 +196,9 @@ export function pinnedDenextCli(dir: string): string | null {
  * in the project directory would discover ({@linkcode nearestConfig}, a workspace member's own
  * file included). The child runs `jsr:@denext/denext@…/cli`, which discovers its config from the
  * working directory, so a verb aimed at a project from outside it (`denext build ./app`) would
- * start the child with another config or none at all — and without the project's
- * `minimumDependencyAge` exclusion of `jsr:@denext/*`, Deno's default hold refuses a denext
- * published in the last two days. From inside the project the child finds the same file itself,
- * so nothing is added ({@linkcode configArgsFor}).
+ * start the child with another config or none at all — and so with another
+ * `minimumDependencyAge` rule (and import map) than the project's own. From inside the project
+ * the child finds the same file itself, so nothing is added ({@linkcode configArgsFor}).
  *
  * @param dir The project directory the verb targets.
  * @param cwd The child's working directory (production: the process's own).

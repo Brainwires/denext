@@ -319,7 +319,6 @@ Deno.test("freshDenoJson: Fresh / Preact / Vite imports out, denext in, the auth
     imports: { denext: "jsr:@denext/denext", fresh: "jsr:@denext/denext/fresh" },
     tasks: { dev: "denext dev" },
     unstable: ["u"],
-    minimumDependencyAge: { exclude: [] },
   });
   assertEquals(merged["//"], "M");
   assertEquals(merged.tasks, { check: "deno check", dev: "denext dev" });
