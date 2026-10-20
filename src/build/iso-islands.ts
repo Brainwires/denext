@@ -28,7 +28,7 @@ const MAYBE = /\bclient:(?:load|idle|visible|interaction|media|only)\b/;
 /** Isomorphic routes: an `isoIslandChunk` stand-in per split component, its tag in place. */
 const ISO_REWRITE: IslandRewrite = {
   splitOnly: true,
-  runtime: `import { isoIslandChunk as __dnxIsoChunk } from "denext/client-runtime";\n`,
+  runtime: `import { isoIslandChunk as __dnxIsoChunk } from "denext/iso-island";\n`,
   declare: (i, loader) => `const __DnxIso${i} = /* @__PURE__ */ __dnxIsoChunk(${loader});\n`,
   open: (i) => `__DnxIso${i}`,
   close: (i) => `__DnxIso${i}`,

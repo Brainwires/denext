@@ -18,7 +18,7 @@ import {
   isBooleanishAttr,
   serializeStyle,
 } from "../jsx/dom-attributes.ts";
-import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
+import type { FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
 import { SVG_NAMESPACE } from "./fiber/fiber-utils.ts";
@@ -211,7 +211,50 @@ const hasOwn = Object.prototype.hasOwnProperty;
 /** The props of an element that had none (a fresh mount's "old" props); never written. */
 export const NO_PROPS: Record<string, unknown> = Object.freeze({});
 
-/** Wire a function-valued form `action` to the form's submit event. */
+/** Runs one submit of a function-valued form action (form-action.ts's `runFormAction`). */
+export type FormActionRunner = (
+  event: Event,
+  state: HostState,
+  action: (payload: unknown) => void,
+  onError: ErrorRouter,
+) => void;
+
+/**
+ * The form-action runtime, installed by form-action.ts when it loads. Null until a
+ * function-valued `action` first renders: an app with no such form never loads it.
+ */
+let runFormAction: FormActionRunner | null = null;
+let formActionLoad: Promise<void> | undefined;
+
+/** Install (or clear, with `null`) the form-action runtime. */
+export function setFormActionRunner(runner: FormActionRunner | null): void {
+  runFormAction = runner;
+  if (!runner) formActionLoad = undefined;
+}
+
+/**
+ * Load and install the form-action runtime (form-action.ts): one coalesced import, retried on
+ * the next use after a failure. Rendering a function-valued `action` calls it; a test that
+ * submits right after its first render awaits it up front.
+ *
+ * @returns Resolves once the runtime is installed.
+ */
+export function installFormActions(): Promise<void> {
+  formActionLoad ??= import("./form-action.ts").then((m) => {
+    runFormAction = m.runFormAction;
+  }, (err) => {
+    formActionLoad = undefined;
+    throw err;
+  });
+  return formActionLoad;
+}
+
+/**
+ * Wire a function-valued form `action` to the form's submit event. The submit is always
+ * intercepted here; the work (FormData, the call, `useFormStatus`) is the on-demand
+ * form-action.ts, whose load starts as soon as such a form renders, so it is in place well
+ * before a person can submit. A submit that beats it waits for the load.
+ */
 function setFormAction(
   el: Element,
   state: HostState,
@@ -220,50 +263,11 @@ function setFormAction(
 ): void {
   const existing = state.listeners?.get("submit");
   if (existing) el.removeEventListener("submit", existing);
+  if (!runFormAction) installFormActions().catch(() => {}); // a submit retries and reports it
   const handler: EventListener = (event) => {
     event.preventDefault();
-    const form = event.target;
-    // Build FormData from the real form element when possible.
-    const FormDataCtor = (globalThis as { FormData?: unknown }).FormData as
-      | (new (form: unknown) => unknown)
-      | undefined;
-    let payload: unknown;
-    try {
-      payload = FormDataCtor && form ? new FormDataCtor(form) : undefined;
-    } catch {
-      payload = undefined; // non-form element (e.g. test shim)
-    }
-    // Drive the form-scoped pending signal (useFormStatus) for the duration of
-    // the action, and route thrown/rejected errors to the nearest boundary.
-    const sig = state.ext?.formStatus;
-    if (sig) {
-      const el = form as { method?: string } | null;
-      beginFormAction(sig, {
-        data: payload as FormData | undefined,
-        method: (el?.method || "post").toLowerCase(),
-        action,
-      });
-    }
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      if (sig) endFormAction(sig);
-    };
-    try {
-      const r = action(payload) as unknown;
-      if (r && typeof (r as { then?: unknown }).then === "function") {
-        (r as Promise<unknown>).then(done, (err) => {
-          done();
-          onError(err);
-        });
-      } else {
-        done(); // synchronous action: already finished
-      }
-    } catch (err) {
-      done();
-      onError(err);
-    }
+    if (runFormAction) return runFormAction(event, state, action, onError);
+    installFormActions().then(() => runFormAction!(event, state, action, onError), onError);
   };
   el.addEventListener("submit", handler);
   (state.listeners ??= new Map()).set("submit", handler);

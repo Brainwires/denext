@@ -281,7 +281,7 @@ export default function Page() {
   assertEquals(split, ["./chart.tsx"]);
   assertStringIncludes(
     code,
-    `import { isoIslandChunk as __dnxIsoChunk } from "denext/client-runtime";`,
+    `import { isoIslandChunk as __dnxIsoChunk } from "denext/iso-island";`,
   );
   assertStringIncludes(
     code,

@@ -408,7 +408,7 @@ export function generateRouteEntry(
   const { singletonImport, singletonInstall } = singletonSupportBlock(opts.usesSingletons ?? true);
   // A `client:*` island hydrates on its own (iso-island.ts): installed before hydration.
   const isoImport = opts.usesIsoIslands
-    ? `import { installIsoIslands } from "denext/client-runtime";\n`
+    ? `import { installIsoIslands } from "denext/iso-island";\n`
     : "";
   const isoInstall = opts.usesIsoIslands ? "installIsoIslands();\n" : "";
   return `// denext generated route entry — do not edit.
@@ -554,15 +554,39 @@ export function appUsesLiveView(rootDir: string, extraFiles: string[] = []): Pro
  * entry install the class runtime eagerly instead of on demand (see
  * {@linkcode classSupportBlock}: a miss is not a crash, the runtime still loads lazily when
  * a page's server render produced a class). A class component in these sources MUST name
- * `Component`/`PureComponent` (in its import or its `extends`); whole-word (`\b`) so
- * `MyComponent` / `componentDidMount` don't trip it. npm packages are not scanned — the word
- * appears in nearly every React package, so the hint would be always-on for no gain.
+ * `Component`/`PureComponent` in code: its `extends` clause, an import or destructuring
+ * list, or a member read (`React.Component`). Comments are not code: "a Server Component"
+ * in one made every Flight app install the 3.2 KB class runtime at startup. Whole-word
+ * (`\b`) so `MyComponent` / `componentDidMount` don't trip it. npm packages are not scanned —
+ * the word appears in nearly every React package, so the hint would be always-on for no gain.
  */
 export function appUsesClassComponents(
   rootDir: string,
   extraFiles: string[] = [],
 ): Promise<boolean> {
-  return scanAppSources(rootDir, (c) => /\b(?:Pure)?Component\b/.test(c), extraFiles);
+  return scanAppSources(rootDir, (c) => CLASS_COMPONENT_USE.test(withoutComments(c)), extraFiles);
+}
+
+/**
+ * A class base named in code: `extends [X.]Component`, an import list naming it, a destructuring
+ * (`const { Component } = React`), or a member read (`React.PureComponent`).
+ */
+const CLASS_COMPONENT_USE = new RegExp(
+  [
+    String.raw`\bextends\s+(?:[\w$]+\s*\.\s*)?(?:Pure)?Component\b`,
+    String.raw`\bimport\s*(?:[\w$]+\s*,\s*)?\{[^}]*\b(?:Pure)?Component\b[^}]*\}`,
+    String.raw`\{[^}]*\b(?:Pure)?Component\b[^}]*\}\s*=(?![=>])`,
+    String.raw`\.\s*(?:Pure)?Component\b`,
+  ].join("|"),
+);
+
+/**
+ * `source` with its `//` line and block comments blanked, for a feature scan. Rough on purpose:
+ * a `//` right after `:` or a quote (a URL in a string) is kept, and a scan that loses a match
+ * to an odd string only skips a preload hint.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
 }
 
 /**
@@ -1298,6 +1322,9 @@ export async function prepareConfig(
     // SPA mode's `client:*` deferred mounts: the build's island rewrite imports `SpaIsland`
     // from it (spa-islands.ts), so only an app with a directive bundles it.
     "denext/spa-island": frameworkFileUrl("src/spa-island.ts"),
+    // Isomorphic `client:*` islands: the route entry's install and the island rewrite's
+    // stand-in import it, only for an app that writes a directive.
+    "denext/iso-island": frameworkFileUrl("src/iso-island.ts"),
     // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
     // and the dev inspector from `denext/devtools`; an app's own import map need not
     // (and usually does not) list those subpaths, so resolve them against the framework.

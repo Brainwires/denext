@@ -9,6 +9,21 @@ and this project adheres to
 ## [Unreleased]
 
 ## [4.5.1] - 2026-10-20
+### Changed
+
+- **Smaller client bundles: code an app never calls is no longer in its startup JavaScript.**
+  A Flight app (Server Components with `"use client"` islands) loaded the lazy-island hydration
+  scheduler and the event-replay dispatcher at startup even when it had no `client:*` island
+  waiting, because the bundler places code by file and the generated entries' runtime barrel
+  re-exported the isomorphic-island module those two share; that module is now its own internal
+  entrypoint. The class-component preload hint no longer reads comments, so "a Server Component"
+  in one no longer installs the class runtime at startup. The submit side of a function-valued
+  form action (`<form action={fn}>`, `useActionState`) is a chunk loaded by the first such form,
+  well before it can be submitted; a submit that beats it is held, never sent natively. Measured:
+  examples/islands' startup JavaScript 76,244 → 68,936 B, examples/hello's shared runtime
+  65,447 → 64,849 B. A build test now asserts that each gated feature's runtime is absent from a
+  minimal app and present in one that uses it; that guard, not the byte budget, is the regression
+  check, and the build-smoke budget moves from 65,500 B to 67,000 B as its backstop.
 
 ### Fixed
 

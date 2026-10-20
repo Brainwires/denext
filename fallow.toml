@@ -191,6 +191,9 @@ entry = [
   # SPA mode's deferred-mount runtime: the build's island rewrite imports it by URL
   # (`denext/spa-island`, src/build/spa-islands.ts), never app code.
   "src/spa-island.ts",
+  # Isomorphic `client:*` islands: the route entry and the island rewrite import it by URL
+  # (`denext/iso-island`, src/build/iso-islands.ts), never app code.
+  "src/iso-island.ts",
   # The next-compat stand-ins a LIBRARY reaches through `next/router` / `next/compat/router`:
   # prebuilt runtime entries (`runtimeEntryPoints` in src/build/next-compat.ts), loaded by URL.
   "src/compat/next/router.ts",
