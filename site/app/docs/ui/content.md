@@ -1081,8 +1081,9 @@ case a listing can be stale, so the footer under it says where it came from. Tha
 content (a clone can commit one), so a name is accepted back only if it fits the verb-name grammar
 (`^[a-z][a-z0-9-]*$`), and every name and summary the CLI prints has its control characters
 removed — a summary is not a place to carry an escape sequence to your terminal.
-`denext completions bash|zsh|fish` enumerates them live instead (a shell can only complete a
-name it was handed) under the same 1.5 s budget, then exits. **A built-in verb always wins a
+`denext completions bash|zsh|fish` completes the same listing and never imports the project
+either: its script is sourced from a shell rc file, so it runs in whatever directory a terminal
+opens in. **A built-in verb always wins a
 name collision** — a `commands:` entry named `dev` is ignored, never shadowing the core
 verb.
 

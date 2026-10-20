@@ -117,8 +117,8 @@ project's `deno.json` (the Setup page of `denext ui` offers to), beside any feat
 
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
-denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb,
-completions) also re-runs on the project's pinned denext, so the config resolves through the
+denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb) also
+re-runs on the project's pinned denext, so the config resolves through the
 project's import map rather than the binary's embedded one.
 
 ## Where it lives, and how it is verified

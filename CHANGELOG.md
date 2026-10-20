@@ -75,6 +75,15 @@ and this project adheres to
   that host and its logs. These calls no longer follow redirects; a redirect is reported as the
   app's answer.
 
+- **`denext completions` no longer runs the current directory's project code.** The completion
+  script is meant to be sourced from a shell rc file (`source <(denext completions bash)`), so it
+  runs every time a terminal opens. It imported the `denext.config.ts` of whatever directory that
+  was and ran its plugins' `setup()`, so opening a terminal inside a cloned repository (an editor's
+  integrated terminal opens in the workspace) ran that repository's code. Completions now list
+  denext's verbs, the Deno verbs it forwards and the project verbs the last `denext commands`
+  recorded, and never import the project; run `denext commands` once in a project to complete its
+  own verbs.
+
 ### Docs
 
 - **The managed toolchain, up front.** The home page, the README, Getting started, the toolchain
