@@ -176,6 +176,18 @@ ENV PATH=/deno-dir/toolchain-bin:$PATH
 `;
 }
 
+/**
+ * For a Gleam app: the CA certificates the Gleam compiler's package fetch (TLS) needs, which the
+ * `denoland/deno` image doesn't ship. Installed as root, before the build runs as `deno`.
+ */
+function caCertificates(options: DockerOptions): string {
+  if (!options.gleam) return "";
+  return `# The Gleam compiler fetches its packages over TLS; the base image ships no CA bundle.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \\
+  rm -rf /var/lib/apt/lists/*
+`;
+}
+
 /** Dockerfile for an App Router / SSR app: build, then run the production server. */
 function dockerfileServerSource(options: DockerOptions): string {
   const port = portOf(options);
@@ -187,7 +199,7 @@ FROM ${denoImage(options)}
 # (\`.denext/cache.db\`) needs the same directory writable — a root-owned tree would
 # silently downgrade the cache to the per-process memory store.
 WORKDIR /app
-RUN chown deno:deno /app
+${caCertificates(options)}RUN chown deno:deno /app
 USER deno
 ENV DENO_DIR=/deno-dir
 
@@ -228,7 +240,7 @@ FROM ${denoImage(options)}
 
 # Build and serve as the image's unprivileged \`deno\` user (never root).
 WORKDIR /app
-RUN chown deno:deno /app
+${caCertificates(options)}RUN chown deno:deno /app
 USER deno
 ENV DENO_DIR=/deno-dir
 

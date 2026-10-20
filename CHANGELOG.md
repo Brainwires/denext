@@ -359,6 +359,13 @@ and this project adheres to
   `--allow-write`, while `denext create`'s `start` grants write to `.denext` only; it now suggests
   that same set (`--allow-net --allow-read --allow-env --allow-write=.denext`).
 
+- **A plugin's failing prepare step stops `build` and `export`.** It was logged and the build went
+  on, to fail later on what the step should have written: a Gleam app whose package fetch failed
+  reported `Module ./ticker.mjs not found`. `build` and `export` now stop with the step's error and
+  the plugin's name; `dev` still logs it and keeps serving. And the generated Dockerfile of an app
+  that compiles Gleam installs CA certificates, which the Gleam compiler's package fetch needs and
+  the `denoland/deno` image doesn't ship.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

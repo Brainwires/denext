@@ -54,7 +54,7 @@ import { collectViteManifest, type ViteManifest, writeViteManifest } from "./vit
 async function preparePlugins(paths: ProjectPaths, mode: "build" | "export"): Promise<void> {
   if ((paths.config?.plugins ?? []).length === 0) return;
   await setupPlugins(paths, mode);
-  await runPluginPrepareSteps(pluginContext(paths));
+  await runPluginPrepareSteps(pluginContext(paths), { failFast: true });
 }
 
 /** The plugin step context of this SPA project. */

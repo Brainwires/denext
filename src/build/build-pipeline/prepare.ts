@@ -50,7 +50,7 @@ function pluginPrepareSteps(paths: ProjectPaths): Promise<void> {
     appDir: paths.appDir,
     outDir: paths.outDir,
     config: paths.config ?? {},
-  });
+  }, { failFast: true });
 }
 
 /**

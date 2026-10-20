@@ -241,7 +241,7 @@ export interface DenextPlugin {
 const requestHandlers: PluginRequestHandler[] = [];
 const buildSteps: PluginBuildStep[] = [];
 /** Prepare steps with their watch globs (see {@linkcode PluginContext.addPrepareStep}). */
-const prepareSteps: Array<{ step: PluginPrepareStep; watch: readonly string[] }> = [];
+const prepareSteps: Array<PrepareEntry> = [];
 const pluginCommands: CommandSpec[] = [];
 const deployAdapters: DeployAdapter[] = [];
 const deployRouteSources: PluginDeployRoutes[] = [];
@@ -316,7 +316,7 @@ interface PluginSinks {
   synthesizer(fn: RouteSynthesizer): void;
   requestHandler(handler: PluginRequestHandler): void;
   buildStep(step: PluginBuildStep): void;
-  prepareStep(entry: { step: PluginPrepareStep; watch: readonly string[] }): void;
+  prepareStep(entry: PrepareEntry): void;
   command(command: CommandSpec): void;
   deployAdapter(adapter: DeployAdapter): void;
   deployRoutes(source: PluginDeployRoutes): void;
@@ -340,7 +340,8 @@ function pluginContext(
     addRouteSynthesizer: (fn) => sinks.synthesizer(fn),
     addRequestHandler: (handler) => sinks.requestHandler(handler),
     addBuildStep: (step) => sinks.buildStep(step),
-    addPrepareStep: (step, opts) => sinks.prepareStep({ step, watch: opts?.watch ?? [] }),
+    addPrepareStep: (step, opts) =>
+      sinks.prepareStep({ step, watch: opts?.watch ?? [], plugin: plugin.name }),
     // Stamped (on a copy — never mutate the plugin's own object) so the CLI can list
     // plugin verbs under "Project commands" instead of among the built-ins.
     addCommand: (command) => {
@@ -394,7 +395,7 @@ export interface AppPlugins {
 export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugins> {
   const synthesizers: RouteSynthesizer[] = [];
   const handlers: PluginRequestHandler[] = [];
-  const prepares: Array<{ step: PluginPrepareStep }> = [];
+  const prepares: Array<PrepareEntry> = [];
   const own: PluginTeardown[] = [];
   const servers = new Set<string>();
   const ignore = () => {};
@@ -596,24 +597,48 @@ export async function runPluginBuildSteps(
 }
 
 /**
- * Run every plugin-registered prepare step in registration order — called once at `denext build` and
- * once at `denext dev` startup. A step that throws is caught and logged so one plugin's codegen
- * failure can't abort the build or the dev boot.
+ * Run every plugin-registered prepare step in registration order — called once at `denext build` /
+ * `export` and once at `denext dev` startup. In `dev` a step that throws is logged and the rest
+ * still run, so one plugin's codegen failure can't take the dev server down; a build passes
+ * `failFast` and stops on it with the plugin named, rather than go on to fail later on the module
+ * the step should have written.
+ *
+ * @param context What each step gets.
+ * @param options `failFast`: throw the first step's failure (build / export).
  */
-export function runPluginPrepareSteps(context: PluginPrepareContext): Promise<void> {
-  return runPrepares(prepareSteps, context);
+export function runPluginPrepareSteps(
+  context: PluginPrepareContext,
+  options: { failFast?: boolean } = {},
+): Promise<void> {
+  return runPrepares(prepareSteps, context, options.failFast === true);
 }
 
-/** Run `steps` in order; a step that throws is logged and the rest still run. */
+/** A registered prepare step: the step, its watch globs, and the plugin that registered it. */
+interface PrepareEntry {
+  step: PluginPrepareStep;
+  watch: readonly string[];
+  plugin: string;
+}
+
+/** Run `steps` in order; a step that throws is logged and the rest still run, or — `failFast` — thrown. */
 async function runPrepares(
-  steps: readonly { step: PluginPrepareStep }[],
+  steps: readonly PrepareEntry[],
   context: PluginPrepareContext,
+  failFast = false,
 ): Promise<void> {
-  for (const { step } of steps) {
+  for (const { step, plugin } of steps) {
     try {
       await step(context);
     } catch (error) {
-      console.error(`denext: a plugin prepare step failed:`, error);
+      if (failFast) {
+        throw new Error(
+          `denext: the ${plugin} plugin's prepare step failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error },
+        );
+      }
+      console.error(`denext: the ${plugin} plugin's prepare step failed:`, error);
     }
   }
 }

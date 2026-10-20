@@ -667,3 +667,27 @@ Deno.test("stack defaults: the app is not the superuser, per-IP limits on, presi
   const dev = parse(renderComposeDev(FULL, 3000)) as { services: Record<string, unknown> };
   assertEquals(dev.services.minio, undefined, "published once, by the production file");
 });
+
+Deno.test("a Gleam app's image installs CA certificates before its build fetches Gleam packages", async () => {
+  // The Gleam compiler fetches packages over TLS and denoland/deno ships no CA bundle: up to 4.5.0
+  // the build failed ("HTTP error … builder error") until ca-certificates was installed by hand.
+  const dir = await Deno.makeTempDir({ prefix: "denext_docker_gleam_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'import { gleam } from "denext/gleam";\nexport default { plugins: [gleam()] };\n',
+    );
+    const { options } = await resolveDocker(dir, { denoTag: "2.9.7" });
+    for (const mode of ["server", "static"] as const) {
+      const file = renderDockerfile({ ...options, mode });
+      const certs = file.indexOf("apt-get install -y --no-install-recommends ca-certificates");
+      assert(certs > 0, file);
+      assert(certs < file.indexOf("USER deno"), "installed as root, before the build");
+    }
+    const plain = renderDockerfile({ mode: "server", denoTag: "2.9.7" });
+    assert(!plain.includes("ca-certificates"), "only when the app compiles Gleam");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

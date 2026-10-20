@@ -48,6 +48,8 @@ export interface StackOptions {
   readonly auth?: boolean;
   /** The app uses `@denext/backend` (adds the backend's API and JWT keys). */
   readonly backend?: boolean;
+  /** The app compiles Gleam: the image installs CA certificates for its package fetch. */
+  readonly gleam?: boolean;
   /** `@denext/backend` storage is configured (adds `DENEXT_STORAGE_SECRET`). */
   readonly backendStorage?: boolean;
   /** `@denext/backend`'s `vault` is configured (adds the required `DENEXT_VAULT_KEY`). */

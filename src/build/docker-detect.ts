@@ -64,6 +64,8 @@ export interface StackDetection {
   readonly auth: boolean;
   /** The app uses `@denext/backend`. */
   readonly backend: boolean;
+  /** The app compiles Gleam (the `gleam()` plugin), whose package fetch needs CA certificates. */
+  readonly gleam?: boolean;
   /** `@denext/backend` storage is configured (any driver). */
   readonly backendStorage: boolean;
   /** `@denext/backend`'s `vault` is configured. */
@@ -295,6 +297,7 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
     reasons,
     auth: /\bdenextAuth\s*\(/.test(config),
     backend,
+    gleam: /["']denext\/gleam["']/.test(config) && /\bgleam\s*\(/.test(config),
     ...backendServices(config, backendInConfig),
     ...(bucket ? { bucket } : {}),
     cli,
@@ -334,6 +337,7 @@ export function resolveStack(
     dashboard: postgres && (overrides.dashboard ?? true),
     auth: detection.auth,
     backend: detection.backend,
+    ...(detection.gleam ? { gleam: true } : {}),
     backendStorage: detection.backendStorage,
     backendVault: detection.backendVault,
     realtimeLogical: detection.realtimeLogical,
