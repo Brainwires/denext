@@ -222,6 +222,14 @@ and this project adheres to
   remaining tags, pushes and the PR hand-over (`--resume-from corpus | tag | push | pr` names the
   step).
 
+### Fixed
+
+- **A live view's or MVU program's `send(…)` binds to a JSX `on*` prop under `deno check`.**
+  `onClick={send({ type: "inc" })}` (the `defineLiveView` example in the guide and AGENTS.md) failed
+  type checking with TS2322: the handler `send` returns took a DOM `Event`, and a JSX handler
+  receives denext's synthetic event. `EventBinding` now takes either, so `onClick`, `onSubmit`,
+  `onInput` and `addEventListener` all accept it. A test type-checks the documented examples.
+
 ### Docs
 
 - **The managed toolchain, up front.** The home page, the README, Getting started, the toolchain
