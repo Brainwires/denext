@@ -479,3 +479,65 @@ export default function About() {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("an ISR page with a worker script is never stored: each visitor gets their own nonce", async () => {
+  const { createApp } = await import("../src/server/app.ts");
+  const { parsePattern } = await import("../src/router/segments.ts");
+  const { inMemoryCacheStore, PageCache, setCacheStore } = await import("../src/server/cache.ts");
+  setCacheStore(inMemoryCacheStore());
+  const page = (filePath: string, routePath: string) => ({
+    kind: "page" as const,
+    pattern: parsePattern(routePath === "/" ? "" : routePath.slice(1)),
+    routePath,
+    filePath,
+    layoutChain: [],
+    templateChain: [],
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+  });
+  const modules: Record<string, unknown> = {
+    "/app/page.tsx": {
+      default: () => h("main", null, h(Script, { src: "/w.js", strategy: "worker" })),
+      revalidate: 60,
+    },
+    "/app/plain/page.tsx": { default: () => h("main", null, "plain"), revalidate: 60 },
+  };
+  const app = createApp({
+    getManifest: () => ({
+      pages: [page("/app/page.tsx", "/"), page("/app/plain/page.tsx", "/plain")],
+      api: [],
+      rootLayout: null,
+      rootNotFound: null,
+      rootGlobalError: null,
+      directives: new Map(),
+    }),
+    load: (fp) => Promise.resolve(modules[fp]),
+    clientEntryFor: () => "/_denext/entry.js",
+    appDir: "/app",
+    pageCache: new PageCache(),
+  });
+  await withWorkers({ lib: LIB }, async () => {
+    const seen: { nonce: string | undefined; csp: string; cache: string | null }[] = [];
+    for (let i = 0; i < 2; i++) {
+      const res = await app(new Request("http://localhost/"));
+      seen.push({
+        nonce: nonces(await res.text())[0],
+        csp: res.headers.get("content-security-policy") ?? "",
+        cache: res.headers.get("x-denext-cache"),
+      });
+    }
+    assert(seen[0].nonce && seen[1].nonce, JSON.stringify(seen));
+    assert(seen[0].nonce !== seen[1].nonce, "the second visitor was replayed the first's nonce");
+    assertStringIncludes(seen[1].csp, `'nonce-${seen[1].nonce}'`);
+    assert(seen.every((s) => s.cache !== "HIT"), JSON.stringify(seen.map((s) => s.cache)));
+    // A page without a worker script lists no nonce, so its cached copy replays none.
+    for (let i = 0; i < 2; i++) {
+      const res = await app(new Request("http://localhost/plain"));
+      await res.body?.cancel();
+      assert(!(res.headers.get("content-security-policy") ?? "").includes("'nonce-"));
+    }
+  });
+});

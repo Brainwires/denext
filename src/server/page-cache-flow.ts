@@ -6,6 +6,7 @@ import { pageCacheTiming } from "./cache.ts";
 import type { RenderedPage } from "./render-page.ts";
 import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
+import { mintedScriptWorkerNonce } from "../runtime/script.ts";
 import { warnUnkeyedParamReads } from "./request-context.ts";
 import { inRootContext } from "./root-context.ts";
 import { raceAbort } from "./abort.ts";
@@ -384,6 +385,9 @@ export async function cacheAndServeBuffered(
     : false;
   const res = htmlResponse(pr.state, cachedDoc, rendered.status, csp, { "x-denext-cache": "MISS" });
   if (unkeyedLeak) return res; // served to this request only: never public
+  // A worker script's CSP nonce is per response: stored, every visitor would get the same one,
+  // which would then authorize any script carrying it. Such a document is never stored.
+  if (mintedScriptWorkerNonce() !== null) return res;
   await config.pageCache!.set(
     pr.cacheKey,
     pageCacheEntry(pr, cachedDoc, rendered.status, timing, { csp }),

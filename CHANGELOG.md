@@ -123,6 +123,13 @@ and this project adheres to
   SHA-256s (cross-checked with the release's published sums) and a mismatch is refused; another
   `DENEXT_TAILWIND_VERSION` needs `DENEXT_TAILWIND_SHA256`, and `TAILWIND_BIN` still runs a local
   binary you provide.
+- **A page cached for every visitor no longer replays one visitor's script nonce.** With
+  `nextScriptWorkers` on, every page's `Content-Security-Policy` listed a per-response nonce, and
+  an ISR page stored that policy and its worker scripts' nonce, so all visitors got the same,
+  publicly visible nonce, which authorizes any `<script>` carrying it (it would turn an HTML
+  injection elsewhere into script execution). A buffered page now lists a nonce only when it
+  rendered a worker script, and such a page is not stored in the ISR cache. A static export
+  still bakes its pages' nonces in, as a static host can't mint one per response.
 
 ### Docs
 
