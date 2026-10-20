@@ -119,9 +119,8 @@ jobs:
           restore-keys: ${{ runner.os }}-deno-
 
       - name: Shared-chunk budget (production build of examples/hello)
-        run: >-
-          deno test -A --unstable-kv --filter "build smoke: examples/hello"
-          tests/integration/build-smoke.test.ts
+        # The same command runs locally (and in `deno task precheck` when a client module changed).
+        run: deno task budget
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).

@@ -417,6 +417,36 @@ function runtimeBackend(
   };
 }
 
+/** How long a refused Windows write waits before its one retry. */
+const WINDOWS_SET_RETRY_MS = 1_000;
+
+/** Resolve after `ms`, or as soon as `signal` aborts. */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
+ * `store_failed` for a write the credential CLI refused, naming the Windows error code
+ * (`0x8007…`) when its stderr carries one. Only that code is taken: the rest of stderr may echo
+ * the input, and the input holds the secret.
+ */
+export function writeRejected(stderr = ""): DesktopCapError {
+  const hresult = stderr.match(/\b0x[0-9A-Fa-f]{8}\b/)?.[0];
+  return new DesktopCapError(
+    "store_failed",
+    `the secure store rejected the write${hresult ? ` (${hresult})` : ""}`,
+    hresult ? { data: { hresult } } : undefined,
+  );
+}
+
 /**
  * The OS credential CLI as a backend (macOS `security`, Windows PowerShell + PasswordVault).
  *
@@ -442,14 +472,18 @@ function cliBackend(os: Exclude<Os, "linux">, service: string, run: SecureRunner
       return code === 0 ? stdout.trim() : null;
     },
     set: async (key, b64, signal) => {
-      const { code } = await exec("set", key, b64, signal);
-      // `security -i` exits 0 whatever its commands did, so on macOS read the value back.
-      const stored = os === "darwin" && code === 0
-        ? (await exec("get", key, undefined, signal)).stdout.trim() === b64
-        : code === 0;
-      if (!stored) {
-        throw new DesktopCapError("store_failed", "the secure store rejected the write");
+      let r = await exec("set", key, b64, signal);
+      if (os === "windows" && r.code !== 0 && !signal.aborted) {
+        // A fresh Windows profile's PasswordVault can refuse the first write while the credential
+        // service starts (CI, 2026-10-14): one more try after a pause, then the error.
+        await abortableDelay(WINDOWS_SET_RETRY_MS, signal);
+        r = await exec("set", key, b64, signal);
       }
+      // `security -i` exits 0 whatever its commands did, so on macOS read the value back.
+      const stored = os === "darwin" && r.code === 0
+        ? (await exec("get", key, undefined, signal)).stdout.trim() === b64
+        : r.code === 0;
+      if (!stored) throw writeRejected(r.stderr);
     },
     delete: async (key, signal) => {
       // A non-zero exit (not found) is fine: delete is idempotent.

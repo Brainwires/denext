@@ -12,9 +12,27 @@ Two helpers make it painless:
 
 ```sh
 deno task check:fix  # command table + deno fmt + deno lint --fix, then a report-only deno lint
-deno task hooks:install   # install the pre-commit hook (once per clone)
+deno task hooks:install   # install the pre-commit and pre-push hooks (once per clone)
+deno task regen           # regenerate every committed file a CI drift test compares
+deno task precheck        # the pre-push gate: regen --check, fmt, lint, type-check, drift tests
+deno task budget          # CI's bundle-budget job: the shared-chunk budget of examples/hello
 deno task release-check   # check + doc-lint + deno publish --dry-run (run before tagging)
 ```
+
+- **`regen`** runs every generator a CI drift test checks, in dependency order: the command
+  table, packed native templates, config schema, serial-test list, plugin catalog, the
+  react-native tables, the served `install.sh` / `install.ps1`, the desktop examples' package
+  scripts, the MCP / CLI / examples / fixed pages, then the docs corpus and `llms*.txt`.
+  `regen --check` lists what is stale and leaves the tree as it was. Stale generated files were
+  most of CI's red `check` runs in October 2026; when a drift test fails, `deno task regen` and
+  commit what it lists.
+- **`precheck`** is what the `pre-push` hook runs (about a minute on an idle machine): `regen
+  --check`; `fmt --check` and `lint` of the files changed since `origin/development` (the whole
+  repo when `deno.json`'s `fmt` or `lint` changed); `deno check` of `cli.ts`, `mod.ts` and the
+  changed TypeScript (changed `.vitest.ts` files on the toolchain); the drift tests
+  (`DRIFT_TESTS` in `scripts/precheck.ts`); `doc-lint` when a published module changed; and
+  `budget` when a module that can reach the client bundle changed. Every failure prints its fix.
+  The full suites stay in CI.
 
 - **`check:fix`** auto-fixes everything that _can_ be auto-fixed — formatting
   and the handful of fixable lint issues — then runs `deno lint` one more time
@@ -31,7 +49,7 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
 - **`hooks:install`** points `core.hooksPath` at [`.githooks/`](./.githooks);
   the `pre-commit` hook runs `check:fix` (fast — no tests) so a commit can't
   land with a formatting or lint problem, then runs the **Fallow gate** (below).
-  Run the full `deno task check` before pushing.
+  The `pre-push` hook runs `deno task precheck` (above) for a branch push; a tag push skips it.
 - **`deno task coverage:fallow`** — run it **before committing** (and again after
   large edits or a disk sweep of git-ignored files). It writes the measured
   per-function coverage map the Fallow gate scores CRAP with; without it fallow

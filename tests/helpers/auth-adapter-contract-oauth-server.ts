@@ -4,6 +4,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import type { AuthAdapter } from "../../src/server/auth/adapter.ts";
+import { at } from "./contract-clock.ts";
 import {
   customProviderStoreOf,
   type OAuthAuthorizationRecord,
@@ -12,8 +13,6 @@ import {
 } from "../../src/server/auth/adapter-oauth-server.ts";
 
 type Case = (adapter: AuthAdapter) => Promise<void>;
-
-const at = (offset: number): number => Math.floor(Date.now() / 1000) + offset;
 
 const client = (id: string, createdAt = at(0)): OAuthClientRecord => ({
   id,

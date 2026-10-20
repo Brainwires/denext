@@ -633,15 +633,19 @@ const windowChecks: Check[] = [
     }
   }],
   ["window: maximize / unmaximize", async () => {
+    // xfwm4 under Xvfb (the Linux CI session) answers `_NET_WM_STATE` late, past 5 s at times
+    // (three desktop-window runs in October 2026), so the state change gets 10 s; a WM that
+    // never answers still fails, with the state it reports.
+    const state = async () => JSON.stringify(await getWindowState());
     await maximizeWindow();
     await unlessTiled(
       "maximized",
-      () => waitFor(async () => (await getWindowState()).maximized, "maximized"),
+      () => waitFor(async () => (await getWindowState()).maximized, "maximized", 10_000, state),
     );
     await unmaximizeWindow();
     await unlessTiled(
       "unmaximized",
-      () => waitFor(async () => !(await getWindowState()).maximized, "unmaximized"),
+      () => waitFor(async () => !(await getWindowState()).maximized, "unmaximized", 10_000, state),
     );
     return "ok";
   }],

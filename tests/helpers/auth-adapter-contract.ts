@@ -15,12 +15,10 @@ import type {
 } from "../../src/server/auth/adapter.ts";
 import type { AuthSession } from "../../src/server/auth/types.ts";
 import { OAUTH_SERVER_CASES } from "./auth-adapter-contract-oauth-server.ts";
+import { at, withPinnedClock } from "./contract-clock.ts";
 
 /** One contract case: exercise a fresh adapter, throw to fail. */
 type Case = (adapter: AuthAdapter) => Promise<void>;
-
-/** Epoch seconds, `offset` seconds from now. */
-const at = (offset: number): number => Math.floor(Date.now() / 1000) + offset;
 
 /** A session payload for the `sessions` cases. */
 const session = (userId: string, expiresAt = at(3600)): AuthSession => ({
@@ -888,8 +886,7 @@ const SSO_CASES: Record<string, Case> = {
   ) => {
     await adapter.createSsoProvider!(ssoProvider("p1", "https://idp", []));
     const user = await adapter.createUser({ email: "s@x.test" });
-    // One expiry for every record: recomputing `at(3600)` for the comparison below read the
-    // next second when the clock ticked between the write and the assertion.
+    // One expiry for every record (`at` is pinned per case, so recomputing it is safe too).
     const inAnHour = at(3600);
     const record = (sessionId: string, nameId: string, expiresAt = inAnHour) => ({
       sessionId,
@@ -946,7 +943,7 @@ async function runCases(
     await t.step(name, async () => {
       const adapter = await make();
       try {
-        await run(adapter);
+        await withPinnedClock(() => run(adapter));
       } finally {
         await adapter.close?.();
       }

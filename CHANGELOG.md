@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deno Desktop on Windows: a `secureStore` write the credential vault refuses is tried once
+  more.** A fresh Windows profile's `PasswordVault` can refuse the first write while its service
+  starts; the write now retries after a second before it fails with `store_failed`, and that
+  error names the Windows error code (`0x8007…`, also in `error.data.hresult`) when there is one.
+
 ### Security
 
 - **Markdown links can no longer inject attributes (`@denext/content-collections`).** Since 4.1.0,

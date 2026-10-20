@@ -45,6 +45,7 @@ import {
   type SecureRunner,
   secureStoreCapability,
   secureStoreCommand,
+  writeRejected,
 } from "../src/desktop/caps/secure-store.ts";
 import { passkeysCapability } from "../src/desktop/caps/passkeys.ts";
 import { clipboardCapability } from "../src/desktop/caps/clipboard.ts";
@@ -2068,6 +2069,34 @@ Deno.test("secureStore: an empty or foreign value reads as absent; a non-string 
   code = 1;
   assertEquals(await rejectCode(call(cap, "set", { key: "k", value: "v" })), "store_failed");
   assertEquals(await call(cap, "delete", { key: "k" }), { ok: true }, "delete is idempotent");
+});
+
+Deno.test("secureStore (Windows): a refused write is tried once more; a second refusal names only the HRESULT", async () => {
+  const codes = [1, 0];
+  let sets = 0;
+  const stderr = 'Exception 0x80070490: Element not found. Input: {"value":"c2VjcmV0"}';
+  const cap = secureStoreCapability({
+    service: "svc",
+    os: "windows",
+    run: () => {
+      sets++; // a Windows write runs the script once per try, with no read-back
+      const code = codes.shift() ?? 1;
+      return Promise.resolve({ code, stdout: "", stderr: code ? stderr : "" });
+    },
+  });
+  // The first write is refused (a fresh profile's vault still starting), the retry lands.
+  assertEquals(await call(cap, "set", { key: "k", value: "secret" }), { ok: true });
+  assertEquals(sets, 2);
+  // Refused twice: store_failed, with the Windows code and nothing else from stderr.
+  const err = await call(cap, "set", { key: "k", value: "secret" }).then(
+    () => undefined,
+    (e: DesktopCapError) => e,
+  );
+  assertEquals(err?.code, "store_failed");
+  assertEquals(err?.message, "the secure store rejected the write (0x80070490)");
+  assertEquals(err?.data, { hresult: "0x80070490" });
+  assert(!err?.message.includes("c2VjcmV0"), "no stderr text beyond the code");
+  assertEquals(writeRejected("no code here").message, "the secure store rejected the write");
 });
 
 Deno.test({

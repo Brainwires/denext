@@ -97,6 +97,51 @@ async function hasPwsh(): Promise<boolean> {
   }
 }
 
+/** 0xC0000005 (an access violation) as the signed exit code Windows reports. */
+const ACCESS_VIOLATION = -1073741819;
+
+/**
+ * Whether `pwsh` itself crashed, not the script it ran: on the windows-11-arm runners PowerShell 7
+ * sometimes dies at startup with "Internal CLR error (0x80131506)" in
+ * `Microsoft.PowerShell.TaskbarJumpList.CreateElevatedEntry`, a background thread the console host
+ * starts to build its taskbar jump list (CI, 2026-10-18 … 10-19: a different install.ps1 test each
+ * time, exit 0xC0000005, no output from the script).
+ */
+export function isPowerShellHostCrash(code: number, output: string): boolean {
+  return code === ACCESS_VIOLATION && output.includes("Internal CLR error");
+}
+
+/**
+ * Run PowerShell (7 when on PATH, else 5.1) non-interactively with `args`. A host crash before
+ * the script's own result ({@link isPowerShellHostCrash}) is retried, twice at most; any other
+ * failure is returned as it is.
+ */
+async function powerShell(
+  args: string[],
+  env: Record<string, string>,
+): Promise<Deno.CommandOutput> {
+  const shell = await hasPwsh() ? "pwsh" : "powershell";
+  const dec = new TextDecoder();
+  for (let attempt = 1;; attempt++) {
+    const r = await new Deno.Command(shell, {
+      args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", ...args],
+      env,
+    }).output();
+    const crashed = isPowerShellHostCrash(r.code, dec.decode(r.stdout) + dec.decode(r.stderr));
+    if (!crashed || attempt === 3) return r;
+    console.warn(`${shell} crashed at startup (Internal CLR error); attempt ${attempt + 1} of 3`);
+  }
+}
+
+Deno.test("install.ps1 harness: only a PowerShell host crash is retried, never the script's failure", () => {
+  const clr = "Fatal error.\r\nInternal CLR error. (0x80131506)\r\n   at Microsoft.PowerShell" +
+    ".TaskbarJumpList.CreateElevatedEntry(System.String)";
+  assert(isPowerShellHostCrash(-1073741819, clr));
+  assert(!isPowerShellHostCrash(1, clr), "the script's own exit code");
+  assert(!isPowerShellHostCrash(-1073741819, "checksum verification FAILED"));
+  assert(!isPowerShellHostCrash(0, ""));
+});
+
 /** Run the installer; returns its exit code and output. */
 async function install(
   release: Release,
@@ -104,18 +149,14 @@ async function install(
   env: Record<string, string> = {},
   args: string[] = [],
 ): Promise<{ code: number; out: string }> {
-  const shell = await hasPwsh() ? "pwsh" : "powershell";
-  const r = await new Deno.Command(shell, {
-    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, ...args],
-    env: {
-      DENEXT_DOWNLOAD_BASE: `${release.base}/dl`,
-      DENEXT_API_BASE: `${release.base}/api`,
-      DENEXT_WEB_BASE: `${release.base}/web`,
-      DENEXT_INSTALL: root,
-      DENEXT_NO_PATH: "1",
-      ...env,
-    },
-  }).output();
+  const r = await powerShell(["-File", SCRIPT, ...args], {
+    DENEXT_DOWNLOAD_BASE: `${release.base}/dl`,
+    DENEXT_API_BASE: `${release.base}/api`,
+    DENEXT_WEB_BASE: `${release.base}/web`,
+    DENEXT_INSTALL: root,
+    DENEXT_NO_PATH: "1",
+    ...env,
+  });
   const dec = new TextDecoder();
   return { code: r.code, out: dec.decode(r.stdout) + dec.decode(r.stderr) };
 }
@@ -580,14 +621,10 @@ ${body}`;
 
 /** Run `script` from a temp .ps1 file (`INSTALLER` names install.ps1); its stdout. */
 async function runPowerShell(script: string, env: Record<string, string> = {}): Promise<string> {
-  const shell = await hasPwsh() ? "pwsh" : "powershell";
   const file = await Deno.makeTempFile({ suffix: ".ps1" });
   try {
     await Deno.writeTextFile(file, script);
-    const r = await new Deno.Command(shell, {
-      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file],
-      env: { INSTALLER: SCRIPT, ...env },
-    }).output();
+    const r = await powerShell(["-File", file], { INSTALLER: SCRIPT, ...env });
     const dec = new TextDecoder();
     assert(r.success, dec.decode(r.stderr) + dec.decode(r.stdout));
     return dec.decode(r.stdout).replace(/\r/g, "");
