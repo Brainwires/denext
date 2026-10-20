@@ -884,6 +884,16 @@ Deno.test("meta warnings: a made-up version or identifier is warned about, a set
   assertEquals(packageMetaWarnings({ version: "1.0.0" }, cfg, bare), []);
 });
 
+Deno.test("meta warnings: the scaffold's com.example placeholder identifier is warned about", () => {
+  // `denext create --desktop` writes com.example.denext; up to 4.5.0 `desktop package` took it
+  // silently, so two careless apps shared keychain items and storage, and an .msi UpgradeCode.
+  const deno = { version: "1.0.0", desktop: { app: { identifier: "com.example.denext" } } };
+  const lines = packageMetaWarnings(deno, {}, packageMetaFrom(deno, {}, "Thing"));
+  assertEquals(lines.length, 1, lines.join("\n"));
+  assertStringIncludes(lines[0], "com.example.denext");
+  assertStringIncludes(lines[0], "placeholder");
+});
+
 Deno.test("tool probe: an executable on PATH is found without a shell, a plain file is not", async () => {
   if (Deno.build.os === "windows") return;
   const dir = await Deno.makeTempDir();

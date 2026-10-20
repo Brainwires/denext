@@ -366,6 +366,12 @@ and this project adheres to
   that compiles Gleam installs CA certificates, which the Gleam compiler's package fetch needs and
   the `denoland/deno` image doesn't ship.
 
+- **A `com.example` placeholder app id is caught before a release.** `denext create --desktop` /
+  `--capacitor` and `migrate` write `com.example.<name>` until you choose yours, and nothing
+  refused it, so two careless apps could share keychain items, storage, push namespaces and an
+  `.msi` UpgradeCode. `denext mobile doctor --store` / `--release` now report it as an error
+  (`placeholder-app-id`), and `desktop package` warns about it.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

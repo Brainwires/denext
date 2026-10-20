@@ -316,3 +316,24 @@ Deno.test("mobile doctor refuses a folder without a Capacitor project", async ()
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("mobile doctor: a com.example placeholder app id is an error in both profiles", async () => {
+  // `denext create --capacitor` and migrate write `com.example.<name>` until you pick yours. Two
+  // careless apps shipped with it would share keychain, storage and push namespaces, and the
+  // stores refuse it; up to 4.5.0 nothing before submission said so.
+  const files = cleanFiles();
+  files["capacitor.config.json"] = JSON.stringify({
+    appId: "com.example.denext",
+    appName: "Example",
+    webDir: "out",
+  });
+  const dir = await project(files);
+  try {
+    for (const profile of ["store", "release"] as const) {
+      const report = await runMobileDoctor({ root: dir, profile });
+      assertEquals(flagged(report, "error"), ["placeholder-app-id"], profile);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

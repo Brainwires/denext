@@ -3960,6 +3960,11 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
             ios/android.webContentsDebuggingEnabled: true
           </code>);
         </li>
+        <li>
+          an <code>appId</code> still on the <code>com.example</code> placeholder the scaffold and
+          {" "}
+          <code>migrate</code> write;
+        </li>
         <li>a missing usage string for an installed plugin (Info.plist);</li>
         <li>a missing or invalid privacy manifest (the check above);</li>
         <li>missing app icons (iOS asset catalog, Android launcher) and launch screens;</li>
