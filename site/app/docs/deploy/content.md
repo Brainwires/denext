@@ -889,6 +889,15 @@ instance that could only answer errors:
 { "status": "degraded", "cache": "ok", "cacheStore": "sqlite", "checks": { "database": "down" } }
 ```
 
+denext registers one itself: `session`. In production a session secret `getSession()` refuses
+(missing, or shorter than 32 characters) marks it `down` the first time it is refused, and a
+`SESSION_SECRET` that is set but too short marks it `down` at boot, before any request. Either
+way the cause is logged once, and the instance stays out of rotation until it restarts with a
+valid secret. denext reports this instead of refusing to start: the secret is whatever value the
+app hands `getSession()`, so denext can't check it before the first call (Next.js reports a
+missing `NEXTAUTH_SECRET` per request too). `denextAuth({ secret })` owns its secret and still
+refuses to boot with a short one.
+
 `denext doctor` runs the backend's checks too: its setup accepts the configuration (API keys,
 storage secret), the database answers, the backend's and the app's migrations are applied, and
 the storage driver answers.

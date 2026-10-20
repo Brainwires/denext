@@ -40,6 +40,13 @@ and this project adheres to
   appending the client's own value. `fly.toml` sets `DENEXT_TRUST_PROXY=1` and
   `DENEXT_RATE_LIMIT_HEADER=fly-client-ip`. Regenerate the files with `denext deploy prepare`.
 
+- **A refused session secret takes the instance out of rotation.** In production `getSession()`
+  refuses a missing or short (under 32 characters) secret, so every page that signs a session
+  answered `500`, while `/_denext/health` kept answering `ok` and load balancers kept routing to
+  the instance. The refusal now marks a built-in `session` readiness check `down` (the probe
+  answers `503`, `"checks": { "session": "down" }`) and logs the cause once, and a `SESSION_SECRET`
+  that is set but too short does so at boot, before any request.
+
 - **Markdown links can no longer inject attributes (`@denext/content-collections`).** Since 4.1.0,
   a link or reference-link destination containing a control character could split the rendered
   `<a>` tag, so the link's label landed inside the `href` attribute and a quote in it added

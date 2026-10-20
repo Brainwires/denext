@@ -17,7 +17,8 @@ Actions (an over-cap body is a `413` before your code runs), bounds a slow body
 read separately, keeps a **request id** on every request (an inbound
 `x-request-id` from a trusted proxy, else a fresh UUID) and echoes it on every error
 response, sets **`httpOnly` + `SameSite=Lax` + `Secure`** on every cookie,
-refuses a session secret shorter than 32 characters in production, ships the
+refuses a session secret shorter than 32 characters in production (and takes the instance
+out of rotation: `/_denext/health` answers `503`), ships the
 **hardening headers** (`X-Content-Type-Options`, `X-Frame-Options`,
 `Referrer-Policy`, HSTS over HTTPS) and a strict hash-based **CSP** on every
 HTML page, redacts server errors, and gives you `safeFetch` — a `fetch` that
