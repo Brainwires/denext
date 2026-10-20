@@ -212,19 +212,26 @@ function resolveSignal(
 }
 
 /**
- * Encode one param value. A dynamic `[x]` is ONE segment: encoded whole, so a `/` (or `..`)
- * in the value can never reach a different route. A catch-all `[...x]` is a `string[]` (or a
- * `/`-joined string) of segments; an empty, `.` or `..` segment is refused for the same reason.
+ * Encode one param value. A dynamic `[x]` is ONE segment: encoded whole, so a `/` in the value
+ * can never reach a different route, and a value of `.`, `..` or nothing (which encoding leaves
+ * as is, and a URL then normalizes away, `/a/../b` → `/b`) is refused. A catch-all `[...x]` is a
+ * `string[]` (or a `/`-joined string) of segments; an empty, `.` or `..` segment is refused for
+ * the same reason.
  */
 function encodeParam(value: string | string[], catchAll: boolean): string {
-  if (!catchAll) return encodeURIComponent(Array.isArray(value) ? value.join("/") : value);
-  const segments = Array.isArray(value) ? value : value.split("/");
-  for (const seg of segments) {
-    if (seg === "" || seg === "." || seg === "..") {
-      throw new Error(`denext api client: invalid catch-all segment ${JSON.stringify(seg)}`);
-    }
+  if (!catchAll) {
+    return encodeSegment(Array.isArray(value) ? value.join("/") : value, "param value");
   }
-  return segments.map(encodeURIComponent).join("/");
+  const segments = Array.isArray(value) ? value : value.split("/");
+  return segments.map((seg) => encodeSegment(seg, "catch-all segment")).join("/");
+}
+
+/** One path segment, encoded; an empty, `.` or `..` one (a URL would normalize it) throws. */
+function encodeSegment(seg: string, what: string): string {
+  if (seg === "" || seg === "." || seg === "..") {
+    throw new Error(`denext api client: invalid ${what} ${JSON.stringify(seg)}`);
+  }
+  return encodeURIComponent(seg);
 }
 
 /** Serialize a query record: arrays repeat the key, `undefined` is skipped, else `String(v)`. */
@@ -246,7 +253,8 @@ function queryString(query: Record<string, unknown> | undefined): string {
  * @param params Values for the pattern's dynamic segments.
  * @param query Extra query-string params.
  * @returns The concrete request path (relative; prefix with a base to make it absolute).
- * @throws Error when a required param is missing, or a catch-all segment is empty, `.` or `..`.
+ * @throws Error when a required param is missing, a param is empty, `.` or `..`, or a catch-all
+ *   segment is.
  */
 export function buildPath(
   pattern: string,

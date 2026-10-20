@@ -104,6 +104,11 @@ and this project adheres to
   or a terminated CI step left it there, next to an artifact that is often uploaded or archived.
   The file now lives in a private directory of the system's temp directory, is removed on
   SIGINT / SIGTERM as well, and a directory a killed run left behind is swept on the next run.
+- **The typed API client refuses a `[param]` of `.`, `..` or nothing.** Percent-encoding leaves
+  dots alone, so `{ id: ".." }` for `/api/orders/[id]/cancel` built `/api/orders/../cancel`, which
+  URL normalization turns into `/api/cancel`: a value taken from user input could send a call,
+  with whatever credentials the caller adds, to another route. `createApiClient`, `useApi` and
+  `buildPath` now throw for such a value, as they already did for a catch-all segment.
 
 ### Docs
 
