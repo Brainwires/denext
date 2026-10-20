@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.5.1] - 2026-10-20
+
 ### Fixed
 
 - **Deno Desktop on Windows: a `secureStore` write the credential vault refuses is tried once
@@ -29,7 +31,6 @@ and this project adheres to
   searchParams`) or checked a name with `in` was cached whole even when it used a param outside
   the list; those reads now count, so such a render is not stored, with or without
   `cacheComponents`.
-
 - **Markdown links can no longer inject attributes (`@denext/content-collections`).** Since 4.1.0,
   a link or reference-link destination containing a control character could split the rendered
   `<a>` tag, so the link's label landed inside the `href` attribute and a quote in it added
@@ -17312,7 +17313,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.1...development
+[4.5.1]: https://jsr.io/@denext/denext@4.5.1
 [4.5.0]: https://jsr.io/@denext/denext@4.5.0
 [4.4.1]: https://jsr.io/@denext/denext@4.4.1
 [4.4.0]: https://jsr.io/@denext/denext@4.4.0
