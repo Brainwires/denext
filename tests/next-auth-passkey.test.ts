@@ -307,7 +307,8 @@ Deno.test("next-auth adapter bridge: a passkey challenge in a shared cache store
     assertEquals(await two.usePasskeyChallenge!("h3"), undefined);
     await one.createPasskeyChallenge!({ hash: "h4", expiresAt: now + 86_400, data: "d4" });
     const capped = (await a.getData("denext:passkey-challenge:h4"))!;
-    assert(capped.expiresAt <= (now + 15 * 60) * 1000);
+    // The cap counts from the bridge's own clock read, which may be a second past `now`.
+    assert(capped.expiresAt <= (now + 1 + 15 * 60) * 1000, String(capped.expiresAt));
     assertEquals(capped.tags, [], "no tag a revalidation could reach");
     // Something else under the key, or a record for another hash, is not a challenge.
     await a.setData("denext:passkey-challenge:h5", {
