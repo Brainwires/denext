@@ -146,7 +146,7 @@ Deno.test("passkeys: a runtime without passkeys → not_supported; capabilities 
   });
 });
 
-Deno.test("passkeys: capabilities mirror @clerk/electron (available on macOS/Windows, not Linux)", async () => {
+Deno.test("passkeys: capabilities mirror @clerk/electron (available on macOS/Windows; Linux with security keys)", async () => {
   const { api } = fake();
   assertEquals(
     await passkeysCapability({ rpIds: PIN, api, os: "darwin" }).methods.capabilities.handler(
@@ -167,6 +167,20 @@ Deno.test("passkeys: capabilities mirror @clerk/electron (available on macOS/Win
       available: boolean;
     };
   assertEquals(linux.available, false);
+  // Runtime 3.0.0-rc.1 on Linux: security keys through libwebauthn are the native path.
+  const keys: DesktopAppApi = {
+    passkeys: {
+      ...api.passkeys!,
+      capabilities: () => Promise.resolve({ platformAuthenticator: false, securityKeys: true }),
+    },
+  };
+  assertEquals(
+    await passkeysCapability({ rpIds: PIN, api: keys, os: "linux" }).methods.capabilities.handler(
+      {},
+      ctx(),
+    ),
+    { available: true, platformAuthenticator: false, securityKeys: true },
+  );
 });
 
 Deno.test("isPasskeyEnvelope: the @clerk/electron result shapes", () => {

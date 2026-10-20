@@ -8,6 +8,114 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-10-20
+
+### Added
+
+- **Linux window blur and native passkeys in `appCapabilities()`.** Under runtime 3.0.0-rc.1 and
+  later it reports two more facts the runtime probes on Linux: `windowBlur` (`"kwin-wayland"` /
+  `"kwin-x11"` when KWin blurs behind translucent windows, else `null` with `windowBlurReason`) and
+  `passkeys` (`"security-keys"` when passkeys with USB security keys work natively, through the
+  runtime's libwebauthn, else `null` with `passkeysReason`); an older runtime reads `"unknown"`.
+  The `passkeys` capability now reports `available` on Linux when the runtime has security keys,
+  so `denext/desktop/clerk` signs in with a security key natively there instead of always going
+  through the browser (a registration that asks for a platform authenticator, as Clerk's do, is
+  refused `not_supported`: Linux has none).
+- **iOS Local Network hint.** Until the user answers iOS's Local Network prompt, a request to a
+  LAN host fails with "The Internet connection appears to be offline" (-1009), which reads like
+  the phone being offline. When the OTA client (`checkForUiUpdate` / `prepareUiUpdate`) or a file
+  transfer (`downloadToFile` / `uploadFile`, natively or in the page) sees that error against an
+  RFC 1918, link-local or `.local` host, its message now says where to allow it (Settings →
+  Privacy & Security → Local Network). `denext mobile add-ota --ota-origin` declares
+  `NSLocalNetworkUsageDescription` in Info.plist when a pinned origin is such a host (an app's
+  own description is kept), and `denext mobile dev --lan` prints how to answer the prompt.
+- **Deno Desktop downloads are tracked transfers.** A `downloadToFile` in a Deno Desktop window
+  is now listed by `fileTransfers()` and reported to `onFileTransfer` (`started`, `progress`,
+  `done`, `failed`, `cancelled`) under its `id`, as on the web and in the native shell, and
+  `cancelFileTransfer(id)` stops it in the runtime (`fs.cancelDownload`, the partial file
+  dropped). The runtime keeps no partial file to resume, so `pauseFileTransfer` on one rejects
+  with code `"unsupported"` instead of answering `false`.
+- **Download progress.** On a terminal, `install.sh` draws curl's progress bar for the release
+  archive (and, on a machine without curl, now downloads with GNU wget, `--show-progress`;
+  HTTPS-only, TLS 1.2+, checksum-verified as before); `install.ps1` streams the archive through
+  `HttpClient` with a `Write-Progress` bar redrawn at most every 250 ms (Invoke-WebRequest's own
+  progress UI slows Windows PowerShell 5.1 down many times); and the CLI's pinned downloads —
+  the Deno toolchain, the Deno Desktop runtime, Gleam, fastlane's Ruby — print one
+  self-redrawing line with the megabytes and percent. In a log or CI nothing is drawn.
+- **`denext toolchain uninstall <version>`, `uninstall --all` and `prune`.** Every Deno toolchain
+  denext ran on stayed in Deno's cache (about 70 MB each, more for a Deno Desktop runtime).
+  `uninstall <version>` removes that version's toolchain and the Deno Desktop runtime of the same
+  version; `prune` removes every version not in use — the Deno toolchain, Deno Desktop runtime,
+  Gleam and fastlane this denext pins are kept, and so are the ones the project in the working
+  directory pins when it pins another denext (offline, `prune` removes nothing without
+  `--force`). The pinned version is refused without `--force`. Each prints what it removed and the
+  space freed, takes `--dry-run` and `--json`, and holds the cache lock while it deletes.
+- **The installers put denext on PATH.** `install.sh` adds one marked block
+  (`# >>> denext >>>` … `# <<< denext <<<`) to the startup file of your login shell — zsh's
+  `~/.zshrc`, bash's `~/.bashrc` (plus, on macOS, the login file bash actually reads), fish's
+  `conf.d/denext.fish`, nushell's `env.nu`, or `~/.profile` — and prints the exact line that puts
+  denext on PATH in the shell you ran it from (a piped script can't change its parent's
+  environment), plus `exec $SHELL -l`. On a terminal it asks, and offers your other installed
+  shells; without one it writes the login shell's file. A re-run updates the block and never adds
+  a second. `sh -s -- --modify-path`, `--modify-path=all`, `--no-modify-path` (or
+  `DENEXT_MODIFY_PATH=1 | all | 0`) choose; `sh -s -- --uninstall` removes the binary, the `deno`
+  link and every block. `install.ps1` takes `-ModifyPath` / `-NoModifyPath` and the same
+  variable, updates this session's `$env:Path` as well as the user `Path` (so `denext` works in
+  the window at once), and keeps the user `Path` a `REG_EXPAND_SZ` value: its `%VARIABLES%` are
+  no longer expanded for good on write.
+- **Prisma over `Deno.SQL`: `denext/prisma-adapter`.** A Prisma driver adapter for SQLite and
+  Postgres on the runtime's built-in `Deno.SQL`, so a Prisma app installs no npm database driver
+  (no `pg`, no `better-sqlite3`, no `links` shim): `new PrismaClient({ adapter: new
+  PrismaDenoSql(url) })`. Postgres results are decoded from the binary format (`int8` /
+  `numeric` exact, `json`, `bytea`, `uuid`, dates and times, enums, domains and arrays of them;
+  `timestamp` read exactly in UTC whatever the process's time zone), SQLite columns take their
+  declared type, database errors become Prisma's (`P2002`, `P2003`, `P2011`, …), and
+  interactive transactions, scripts and `prisma migrate`'s shadow database work. `denext migrate`
+  wires it into a Prisma app's SQLite or Postgres datasource when the runtime supports it;
+  `--prisma-adapter deno-sql | npm | auto` chooses. **Requires denext's Deno runtime 3.0.0-rc.1 or
+  later** (`Deno.SQL`'s result-set column metadata). denext 4.5.0 still pins runtime
+  2.9.7-denext.22, where the adapter is inert: `migrate` on `auto` keeps Prisma's npm adapters,
+  and the adapter throws a clear error if used.
+
+### Changed
+
+- **Every Deno denext runs is its own toolchain, and it no longer falls back to stock Deno on its
+  own.** When denext's Deno toolchain can't be had — offline on first use, no build for the host,
+  a failed or tampered download, an unreadable pin file, a `DENEXT_DENO=<path>` that is not a
+  file — a command now stops with one error naming the fix (`denext toolchain install`) and the
+  explicit opt-outs (`DENEXT_DENO=stock`, `DENEXT_DENO=<path>`), instead of warning once and
+  running whatever `deno` it found. Under `deno run` (the CLI from JSR), the verbs that run no
+  project code but start `deno` — `fmt`, `lint`, `add`, `create`, `generate`, `migrate`,
+  `upgrade`, `ui`, `mcp` — now hand the toolchain to those children, as the compiled binary
+  already did. `desktop run` / `dev` no longer drop to the stock Deno Desktop runtime for a
+  mismatching `deno` unless the Deno was chosen explicitly (`DENEXT_DENO`, `DENO_BIN`); the
+  `deno-deploy` adapter pushes with the toolchain rather than the CLI's own executable; and the
+  fallow pre-commit hook `denext fallow init` writes runs `denext task` when denext is installed.
+  The installers' "keeping your deno" line now says it plainly: denext uses its own Deno, and the
+  `deno` on your PATH is neither changed nor used.
+- **Ready for denext's Deno under its own version.** The runtime and toolchain release after
+  `2.9.7-denext.22` is `3.0.0-rc.1` (then `3.0.0-rc.2`, …; tagged `denext-runtime-v3.0.0-rc.1`),
+  and denext now accepts both schemes, ordered by semver (`2.9.7-denext.22` < `3.0.0-rc.1` <
+  `3.0.0-rc.10` < `3.0.0`): `denext task desktop:pin-runtime` pins such a release (its
+  manifest's `deno` is the Deno release it is built from), the toolchain and `denext test` know
+  it as the toolchain, a `3.0.0-rc.N` `deno` passes the Deno Desktop runtime's "Deno 2.9.7
+  exactly" check for `desktop run` / `dev` / `package` (stock 2.9.7 still does), the
+  `denoland/deno` image tag and `setup-deno` version use the Deno release it is built from, and
+  `denext desktop doctor` compares runtime releases by semver. The pin itself stays
+  `2.9.7-denext.22` until `3.0.0-rc.1` is published.
+
+### Fixed
+
+- Deno Desktop `downloadToFile` (`denext/mobile`) sends `options.headers`, so an authenticated
+  download works; it dropped them. Aborting `options.signal` now cancels the runtime's download
+  (new `fs.cancelDownload`), removes the partial file and rejects with the signal's reason; it
+  did nothing. It also reports `onProgress` (from the `fs` capability's new `progress` events)
+  and fails with the mobile path's `FileTransferError` codes (`HTTP` with `status` and `body`,
+  `NETWORK`, `IO`, `INVALID`, `EXISTS`, `CANCELLED`) instead of a `DesktopBridgeError`
+  (`download_failed`); a refused target is still `forbidden`. As a browser's `fetch` does, the
+  runtime drops the forbidden and hop-by-hop request headers, and `Authorization` on a redirect
+  to another origin.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed
@@ -30,6 +138,15 @@ and this project adheres to
 
 ### Fixed
 
+- **A React Native mode app runs under the strict CSP with no `style-src 'unsafe-inline'`.**
+  react-native-web created its `<style id="react-native-stylesheet">` at run time, which the CSP
+  blocked, so no `StyleSheet.create` style applied (silently, besides the violation report). The
+  SPA shell now carries that element, empty and allowed by its hash; react-native-web adopts it
+  and adds its rules through the CSSOM, which `style-src` does not govern. React Native mode's
+  own rules (`TextInput`'s placeholder and selection colour, a list's hidden scrollbar) go into
+  an adopted constructed style sheet instead of a `<style>` element. The App Router's
+  server-rendered sheet was already allowed by its hash; an e2e now checks it. The React Native
+  Skia recipe drops its `styleSrc: ["'unsafe-inline'"]`.
 - `denext mobile add storage secure-store --encrypted` no longer tells you to run
   `denext mobile add secure-store` too: that run adds it.
 - iOS file transfers: a download resumed right after its pause, before iOS handed over the
@@ -395,15 +512,6 @@ and this project adheres to
 
 ### Fixed
 
-- **A React Native mode app runs under the strict CSP with no `style-src 'unsafe-inline'`.**
-  react-native-web created its `<style id="react-native-stylesheet">` at run time, which the CSP
-  blocked, so no `StyleSheet.create` style applied (silently, besides the violation report). The
-  SPA shell now carries that element, empty and allowed by its hash; react-native-web adopts it
-  and adds its rules through the CSSOM, which `style-src` does not govern. React Native mode's
-  own rules (`TextInput`'s placeholder and selection colour, a list's hidden scrollbar) go into
-  an adopted constructed style sheet instead of a `<style>` element. The App Router's
-  server-rendered sheet was already allowed by its hash; an e2e now checks it. The React Native
-  Skia recipe drops its `styleSrc: ["'unsafe-inline'"]`.
 - **The SPA source transforms run in a project reached through a symlink.** The plugin behind
   Fast Refresh, the auto-memo compiler, the feature and platform folds and `require.context`
   compared esbuild's module paths, which are real paths, with the project directory as given, so
@@ -17049,7 +17157,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.4.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.0...development
+[4.5.0]: https://jsr.io/@denext/denext@4.5.0
 [4.4.1]: https://jsr.io/@denext/denext@4.4.1
 [4.4.0]: https://jsr.io/@denext/denext@4.4.0
 [4.3.1]: https://jsr.io/@denext/denext@4.3.1

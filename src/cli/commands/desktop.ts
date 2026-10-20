@@ -271,18 +271,33 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
   const { config } = paths;
   const denoFlags = desktopDenoFlags(config);
   await syncDesktopAppConfigAt(dir, config);
-  // An unpackaged window falls back to the stock runtime (with a warning) for a `deno` that is not
-  // the runtime's exact version; packaging stays strict.
+  // The window builds on denext's Deno toolchain (this verb re-ran on it), which always matches the
+  // runtime. Only a Deno the user chose explicitly (DENEXT_DENO=stock / <path>, DENO_BIN) may be
+  // another version: then an unpackaged window falls back to the stock runtime with a warning.
+  // Packaging stays strict.
   const runtime = await resolveDesktopRuntimeEnv({
     projectDir: dir,
     deno: denoExecutable(),
-    onDenoMismatch: "stock",
+    onDenoMismatch: denoChosenExplicitly() ? "stock" : "fail",
   });
   const env = {
     ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
     ...(dev ? await devPreloadEnv(paths) : {}),
   };
   return { config, env, buildEnv: runtime.env, denoFlags, buildDir: paths.outDir };
+}
+
+/**
+ * Whether the user picked the Deno to run explicitly: `DENEXT_DENO=stock | <path>`, or a `DENO_BIN`
+ * of their own (a compiled denext sets `DENO_BIN` to the toolchain itself, with the toolchain
+ * marker beside it).
+ */
+export function denoChosenExplicitly(
+  env: (name: string) => string | undefined = (k) => Deno.env.get(k),
+): boolean {
+  const deno = (env("DENEXT_DENO") ?? "").trim().toLowerCase();
+  if (deno !== "" && deno !== "pinned") return true;
+  return Boolean(env("DENO_BIN")) && !env("DENEXT_TOOLCHAIN_ACTIVE");
 }
 
 /**

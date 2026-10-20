@@ -18,6 +18,7 @@ import {
   DenoToolchainDownloadError,
   DenoToolchainHashError,
   type DenoToolchainPin,
+  DenoToolchainRequiredError,
   denoToolchainStatus,
   denoToolchainTarget,
   DenoToolchainUnavailableError,
@@ -413,7 +414,14 @@ Deno.test("resolveDenoToolchain: the pinned binary when it verifies", async () =
   }
 });
 
-Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every failure warns once and falls back", async () => {
+/** The message of the `DenoToolchainRequiredError` `p` rejects with (and that it is one). */
+async function refusal(p: Promise<unknown>): Promise<string> {
+  const err = await assertRejects(() => p, DenoToolchainRequiredError);
+  assert(err.message.startsWith("denext: "), err.message);
+  return err.message;
+}
+
+Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every failure refuses with the fix", async () => {
   const f = await fixture(await zipped(), "zip", "f".repeat(64));
   const base = {
     pin: f.pin,
@@ -435,10 +443,13 @@ Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every fa
     });
     assertEquals(unpinned, { kind: "stock", reason: "not available for this denext version" });
 
-    const other = await resolveDenoToolchain({ ...base, env: envOf({}), target: "linux-riscv64" });
-    assert(other.kind === "stock" && other.warning);
-    assertStringIncludes(other.warning, "has no build for linux-riscv64");
-    assertStringIncludes(other.warning, "DENEXT_DENO=stock");
+    const other = await refusal(resolveDenoToolchain({
+      ...base,
+      env: envOf({}),
+      target: "linux-riscv64",
+    }));
+    assertStringIncludes(other, "has no build for linux-riscv64");
+    assertStringIncludes(other, "DENEXT_DENO=stock");
 
     const grants = await resolveDenoToolchain({
       ...base,
@@ -450,23 +461,23 @@ Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every fa
     assert(grants.kind === "stock" && grants.warning === undefined);
     assertStringIncludes(grants.reason, "lacks --allow-run");
 
-    const off = await resolveDenoToolchain({ ...base, env: envOf({}), fetch: offline });
-    assert(off.kind === "stock" && off.warning);
-    assertStringIncludes(off.warning, "Are you offline?");
-    assertStringIncludes(off.warning, "Running on stock Deno");
+    const off = await refusal(resolveDenoToolchain({ ...base, env: envOf({}), fetch: offline }));
+    assertStringIncludes(off, "Are you offline?");
+    assertStringIncludes(off, "Fix: run `denext toolchain install`");
+    assertStringIncludes(off, "DENEXT_DENO=stock");
+    assertStringIncludes(off, "DENEXT_DENO=<path>");
+    assert(!off.includes("Running on stock Deno"), "never another Deno on its own");
 
-    const tampered = await resolveDenoToolchain({ ...base, env: envOf({}) });
-    assert(tampered.kind === "stock" && tampered.warning);
-    assertStringIncludes(tampered.warning, "REFUSING");
-    assertStringIncludes(tampered.warning, "⚠ Running on stock Deno");
+    const tampered = await refusal(resolveDenoToolchain({ ...base, env: envOf({}) }));
+    assertStringIncludes(tampered, "REFUSING");
+    assertStringIncludes(tampered, "denext toolchain install");
     assertEquals(await names(binDir(f)), [], "the mismatched file was deleted");
 
-    const badPin = await resolveDenoToolchain({
+    const badPin = await refusal(resolveDenoToolchain({
       env: envOf({ DENEXT_TOOLCHAIN_PIN_FILE: join(f.root, "missing.json") }),
       missingGrants: allGranted,
-    });
-    assert(badPin.kind === "stock" && badPin.warning);
-    assertStringIncludes(badPin.warning, "is not a readable pin");
+    }));
+    assertStringIncludes(badPin, "is not a readable pin");
   } finally {
     await f.close();
   }
@@ -482,9 +493,11 @@ Deno.test("resolveDenoToolchain: DENEXT_DENO=<path> runs that binary unverified,
     assert(ok.kind === "toolchain" && ok.warning);
     assertEquals([ok.deno, ok.version], [bin, "path"]);
     assertStringIncludes(ok.warning, "not downloaded, pinned or verified");
-    const missing = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: join(dir, "nope") }) });
-    assert(missing.kind === "stock" && missing.warning);
-    assertStringIncludes(missing.warning, "is not a file");
+    const missing = await refusal(
+      resolveDenoToolchain({ env: envOf({ DENEXT_DENO: join(dir, "nope") }) }),
+    );
+    assertStringIncludes(missing, "is not a file");
+    assertStringIncludes(missing, "DENEXT_DENO=stock");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -518,9 +531,10 @@ Deno.test("DENEXT_DENO: one pair of matching surrounding quotes is stripped (Win
       });
     }
     // Mismatched quotes stay part of the value: a path that is not a file.
-    const mismatched = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: `"${bin}'` }) });
-    assert(mismatched.kind === "stock" && mismatched.warning);
-    assertStringIncludes(mismatched.warning, "is not a file");
+    const mismatched = await refusal(
+      resolveDenoToolchain({ env: envOf({ DENEXT_DENO: `"${bin}'` }) }),
+    );
+    assertStringIncludes(mismatched, "is not a file");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -714,6 +728,73 @@ Deno.test("the desktop runtime accepts the toolchain's deno as its Deno release"
     });
     assertEquals(status.deno.found, `${DESKTOP_RUNTIME_PIN.deno}-denext.15`);
     assert(status.ok, status.detail);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a pin under the fork's own version (3.0.0-rc.1): parsed, downloaded, cached and run", async () => {
+  const OWN = "3.0.0-rc.1";
+  const f = await fixture(await zipped());
+  const dir = await Deno.makeTempDir();
+  try {
+    // An override pin file (a fake release manifest's toolchain pin) with the new version parses.
+    const file = join(dir, "pin.json");
+    await Deno.writeTextFile(file, JSON.stringify({ ...f.pin, version: OWN, deno: "2.9.7" }));
+    const pin = loadDenoToolchainPin((k) => k === "DENEXT_TOOLCHAIN_PIN_FILE" ? file : undefined);
+    assertEquals([pin.version, pin.deno], [OWN, "2.9.7"]);
+    // It downloads into <root>/3.0.0-rc.1/<target>/, verified and stamped with that version.
+    const rt = await ensureDenoToolchain({
+      pin,
+      target: TARGET,
+      os: "linux",
+      cacheRoot: f.root,
+      log: quiet,
+    });
+    assertEquals(rt, {
+      deno: join(f.root, OWN, TARGET, "deno"),
+      version: OWN,
+      target: TARGET,
+      cached: false,
+    });
+    const stamp = JSON.parse(await Deno.readTextFile(join(f.root, OWN, TARGET, TOOLCHAIN_STAMP)));
+    assertEquals(stamp.version, OWN);
+    const opts = { pin, target: TARGET, os: "linux", cacheRoot: f.root, env: envOf({}) };
+    const on = await denoToolchainStatus({ ...opts, running: OWN });
+    assertEquals([on.state, on.active], ["cached", true]);
+    // A run on the last old-scheme toolchain (a stale link) is not this pin.
+    assertFalse((await denoToolchainStatus({ ...opts, running: "2.9.7-denext.22" })).active);
+    const choice = await resolveDenoToolchain({
+      pin,
+      target: TARGET,
+      os: "linux",
+      cacheRoot: f.root,
+      env: envOf({}),
+      fetch: offline,
+      missingGrants: allGranted,
+      log: quiet,
+    });
+    assertEquals(choice, { kind: "toolchain", deno: rt.deno, version: OWN });
+  } finally {
+    await f.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.0-rc.N)", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    for (const found of ["3.0.0-rc.1", "3.0.0-rc.1+ci.42"]) {
+      const status = await desktopRuntimeStatus({
+        projectDir: root,
+        target: "x86_64-unknown-linux-gnu",
+        backend: "webview",
+        cacheRoot: root,
+        env: () => undefined,
+        denoVersion: () => Promise.resolve(found),
+      });
+      assert(status.ok, `${found}: ${status.detail}`);
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }

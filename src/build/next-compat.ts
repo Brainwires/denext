@@ -955,6 +955,8 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/next-auth/providers",
   ...NEXT_AUTH_PROVIDER_MODULES.map((p) => `denext/next-auth/providers/${p}`),
   "denext/better-sqlite3",
+  // The Prisma driver adapter over Deno.SQL (a database client: server only).
+  "denext/prisma-adapter",
   "denext/testing",
   // The `denext ui` form components, rendered to HTML on the server (plugin pages, project verbs).
   "denext/ui-kit",

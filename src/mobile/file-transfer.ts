@@ -9,6 +9,8 @@
  *   session on iOS, a WorkManager job on Android. It carries on while the app is in the
  *   background (and, on iOS, after the system terminates it), and the plugin keeps its record, so
  *   {@linkcode fileTransfers} reports a transfer that finished while the page was gone.
+ * - In a Deno Desktop window the runtime runs a download (`fs.download`); the page tracks it
+ *   (listed, evented, cancelled through `fs.cancelDownload`), but it cannot pause.
  * - Elsewhere it runs in the page: `fetch` with the body read as a stream (download progress,
  *   pause and a range-request resume) and `XMLHttpRequest` for uploads (upload progress), so it
  *   lasts as long as the page does.
@@ -16,6 +18,7 @@
  * @module
  */
 
+import { withLocalNetworkHint } from "./local-network.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 
 /** A transfer's direction. */
@@ -284,6 +287,9 @@ function fromNative(raw: RawTransfer): FileTransferEvent {
     const value = read(raw[key as keyof RawTransfer]);
     if (value !== undefined) out[key] = value;
   }
+  if (typeof out.error === "string") {
+    out.error = withLocalNetworkHint(out.error, String(out.url), out.error);
+  }
   return out as unknown as FileTransferEvent;
 }
 
@@ -374,6 +380,8 @@ interface PageTransfer {
   resume?(): void;
   /** Cancel it while paused (no request is running): settle its promise. */
   cancelPaused?(why: "cancel" | "caller"): void;
+  /** The rejection for a pause, when the transfer's engine cannot pause one. */
+  refusePause?(): unknown;
 }
 
 /** Why a page transfer's request was aborted. */
@@ -519,16 +527,20 @@ function pageInfo(spec: PageTransferSpec, id: string, kind: FileTransferKind): F
   };
 }
 
-/** The failure of an attempt: a write (IO) or the network, resumable when bytes are kept. */
-function attemptFailure(err: unknown, canResume: boolean): {
+/**
+ * The failure of an attempt at `url`: a write (IO) or the network, resumable when bytes are
+ * kept. A network failure iOS's Local Network permission may cause carries the hint.
+ */
+function attemptFailure(err: unknown, canResume: boolean, url: string): {
   code: FileTransferErrorCode;
   message: string;
   resumable: boolean;
 } {
   const code = err instanceof WriteFailure ? "IO" : "NETWORK";
+  const message = String((err as Error)?.message ?? err);
   return {
     code,
-    message: String((err as Error)?.message ?? err),
+    message: code === "NETWORK" ? withLocalNetworkHint(message, url, err) : message,
     resumable: code === "NETWORK" && canResume,
   };
 }
@@ -678,6 +690,7 @@ class PageDownload implements PageTransfer {
     const { code, message, resumable } = attemptFailure(
       err,
       this.#validator !== null && this.info.bytes > 0,
+      this.spec.url,
     );
     pageEvent(this, "failed", { state: "failed", code, error: message, resumable });
     this.#fail(
@@ -700,6 +713,136 @@ export function pageDownload(spec: PageTransferSpec, sink: DownloadSink): Promis
   return new Promise<number>((resolve, reject) => {
     new PageDownload(spec, sink, id, { resolve, reject }).start();
   });
+}
+
+// --- downloads an engine outside the page runs (the Deno Desktop runtime) --------------------
+
+/** What a tracked download's engine is handed: the id, the signal that cancels it, progress. */
+export interface TrackedDownloadHooks {
+  /** The transfer's id. */
+  readonly id: string;
+  /** Aborted when the transfer is cancelled ({@linkcode cancelFileTransfer} or the caller's signal). */
+  readonly signal: AbortSignal;
+  /** Report the bytes so far. */
+  readonly onProgress: (bytes: number, total: number | null) => void;
+}
+
+/** A download another engine runs: how to start it and how to read its failures. */
+export interface TrackedDownloadEngine {
+  /** Run the download; resolves the file's path. */
+  run(hooks: TrackedDownloadHooks): Promise<{ path: string }>;
+  /** The engine's failure as the caller's error (a {@linkcode FileTransferError} for a transfer's). */
+  error(err: unknown, id: string): unknown;
+  /** Whether `err` means the engine is not there: the record is dropped and the caller falls back. */
+  absent(err: unknown): boolean;
+  /** The rejection for {@linkcode pauseFileTransfer}: the engine cannot pause a download. */
+  pauseRefusal(id: string): unknown;
+}
+
+/** A failed transfer's record fields from its error: the code, the message, an HTTP status. */
+function failedPatch(error: unknown): Partial<FileTransferEvent> {
+  const raw = error as { code?: unknown; message?: unknown; status?: unknown } | null;
+  const patch: Record<string, unknown> = {
+    state: "failed",
+    code: typeof raw?.code === "string" ? raw.code : "NETWORK",
+    error: String(raw?.message ?? error),
+  };
+  if (typeof raw?.status === "number") patch.status = raw.status;
+  return patch as Partial<FileTransferEvent>;
+}
+
+/** A download an outside engine runs, tracked like a page transfer (listed, evented, cancelled). */
+class TrackedDownload implements PageTransfer {
+  info: FileTransferInfo;
+  #controller = new AbortController();
+
+  constructor(
+    readonly spec: PageTransferSpec,
+    readonly engine: TrackedDownloadEngine,
+    id: string,
+  ) {
+    this.info = pageInfo(spec, id, "download");
+  }
+
+  abort(reason: AbortWhy): void {
+    this.#controller.abort(reason);
+  }
+
+  refusePause(): unknown {
+    return this.engine.pauseRefusal(this.info.id);
+  }
+
+  async run(): Promise<{ path: string }> {
+    const { id } = this.info;
+    const { signal, onProgress } = this.spec.options;
+    pageTransfers.set(id, this);
+    if (signal?.aborted) {
+      pageEvent(this, "cancelled", { state: "cancelled" });
+      throw abortReason(signal);
+    }
+    const onAbort = () => cancelPage(id, "caller");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    pageEvent(this, "started");
+    const progress = (bytes: number, total: number | null) => {
+      pageEvent(this, "progress", { bytes, total });
+      onProgress?.({ id, kind: "download", bytes, total });
+    };
+    try {
+      const done = await this.engine.run({
+        id,
+        signal: this.#controller.signal,
+        onProgress: progress,
+      });
+      const { bytes } = this.info;
+      pageEvent(this, "done", {
+        state: "done",
+        bytes,
+        total: this.info.total ?? bytes,
+        file: done.path,
+      });
+      return done;
+    } catch (err) {
+      throw this.#failure(err);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /** The error the download rejects with (its event sent; none when the engine is absent). */
+  #failure(err: unknown): unknown {
+    const reason = this.#controller.signal.reason;
+    if (reason === "cancel" || reason === "caller") {
+      pageEvent(this, "cancelled", { state: "cancelled" });
+      return cancelError("downloadToFile", this.info.id, reason, this.spec.options.signal);
+    }
+    if (this.engine.absent(err)) {
+      if (pageTransfers.get(this.info.id) === this) pageTransfers.delete(this.info.id);
+      return err;
+    }
+    const mapped = this.engine.error(err, this.info.id);
+    const cancelled = mapped instanceof FileTransferError && mapped.code === "CANCELLED";
+    if (cancelled) pageEvent(this, "cancelled", { state: "cancelled" });
+    else pageEvent(this, "failed", failedPatch(mapped));
+    return mapped;
+  }
+}
+
+/**
+ * Track a download another engine runs (the Deno Desktop runtime's `fs.download`) like a page
+ * transfer: {@linkcode fileTransfers} lists it, {@linkcode onFileTransfer} gets its `started` /
+ * `progress` / `done` / `failed` / `cancelled` events, {@linkcode cancelFileTransfer} and the
+ * caller's `signal` abort the signal the engine is handed, and {@linkcode pauseFileTransfer}
+ * rejects with the engine's refusal.
+ *
+ * @param spec The transfer.
+ * @param engine The engine.
+ * @returns The file's path, once done.
+ */
+export function trackedDownload(
+  spec: PageTransferSpec,
+  engine: TrackedDownloadEngine,
+): Promise<{ path: string }> {
+  return new TrackedDownload(spec, engine, transferId("downloadToFile", spec.id)).run();
 }
 
 /** Cancel a page transfer; `caller` when the caller's own signal aborted it. */
@@ -887,7 +1030,7 @@ class PageUpload implements PageTransfer {
       pageEvent(this, "cancelled", { state: "cancelled" });
       return cancelError("uploadFile", this.info.id, reason, this.spec.options.signal);
     }
-    const { message } = attemptFailure(err, false);
+    const { message } = attemptFailure(err, false, this.spec.url);
     pageEvent(this, "failed", { state: "failed", code: "NETWORK", error: message });
     return new FileTransferError(`uploadFile: ${message}`, { code: "NETWORK", id: this.info.id });
   }
@@ -905,6 +1048,12 @@ export function pageUpload(spec: PageUploadSpec): Promise<UploadFileResult> {
 
 // --- the transfers the plugin runs ------------------------------------------------------------
 
+/** A plugin failure's text, with the Local Network hint where it applies. */
+function failureText(event: FileTransferEvent, url: string): string {
+  const text = event.error ?? "the transfer failed";
+  return withLocalNetworkHint(text, url, text);
+}
+
 /** How a plugin event settles a transfer's promise: done, an error, or not yet (null). */
 function nativeOutcome(
   event: FileTransferEvent,
@@ -918,7 +1067,7 @@ function nativeOutcome(
   }
   if (event.type !== "failed") return null;
   return {
-    error: new FileTransferError(`${fn}: ${start.url}: ${event.error ?? "the transfer failed"}`, {
+    error: new FileTransferError(`${fn}: ${start.url}: ${failureText(event, start.url)}`, {
       code: (event.code ?? "NETWORK") as FileTransferErrorCode,
       id: start.id,
       status: event.status,
@@ -989,7 +1138,7 @@ export function nativeTransfer(
 /**
  * Every transfer this page knows: in the shell, the plugin's records (running, paused, and
  * finished ones not yet forgotten — those that finished while the page was gone included);
- * on the web, the ones this page started.
+ * on the web and in a Deno Desktop window, the ones this page started.
  *
  * @returns The transfers.
  */
@@ -1006,6 +1155,9 @@ export async function fileTransfers(): Promise<FileTransferInfo[]> {
  * continues from them where the server allows a range (else it starts over). Its
  * `downloadToFile` promise stays pending until then. Uploads cannot pause.
  *
+ * A Deno Desktop download cannot pause (the runtime keeps no partial file to resume): this
+ * rejects with code `"unsupported"`; cancel it and download it again.
+ *
  * @param id The transfer's id.
  * @returns Whether it paused.
  */
@@ -1013,6 +1165,7 @@ export async function pauseFileTransfer(id: string): Promise<boolean> {
   const page = pageTransfers.get(id);
   if (page) {
     if (page.info.kind !== "download" || page.info.state !== "running") return false;
+    if (page.refusePause) throw page.refusePause();
     page.abort("pause");
     return true;
   }

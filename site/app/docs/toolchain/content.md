@@ -5,7 +5,8 @@ lead: You install denext, nothing else — stock Deno is optional. The denext co
 ---
 
 denext's Deno toolchain is the Deno CLI built from the public
-[Brainwires/deno](https://github.com/Brainwires/deno) fork (`2.9.7-denext.N`): stock Deno plus
+[Brainwires/deno](https://github.com/Brainwires/deno) fork (`2.9.7-denext.N`, then its own
+version from `3.0.0-rc.1`; see [Versions](#versions)): stock Deno plus
 `Deno.SQL` (the Postgres client behind [`postgresClient()`](/docs/database#postgres)) and
 Vitest/Jest compatibility in `deno test`. denext manages it the same way it manages the
 [Deno Desktop runtime](/docs/desktop-runtime): each denext release pins one build per platform by
@@ -40,25 +41,29 @@ first online run does the same in the background (a failed attempt retries after
 verb used offline afterwards (`--cached-only`, `denext ui --offline`) still loads. The binary
 embeds every verb already.
 
-When the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a host with no build)
-the binary falls back to a stock `deno` — `DENO_BIN`, `~/.deno/bin/deno`, then `deno` on PATH —
-and with none of those it stops with one error that names the fix: run `denext toolchain install`
-once you are online, or install Deno.
+When the toolchain can't be had (offline on first use, a host with no build, a failed or
+mismatching download) the command stops with one error that names the fix — run
+`denext toolchain install` once you are online — and the explicit opt-outs. denext never runs
+another Deno on its own. With `DENEXT_DENO=stock` the binary runs a stock `deno` — `DENO_BIN`,
+`~/.deno/bin/deno`, then `deno` on PATH — and with none of those it stops with the same kind of
+error.
 
 ## Which commands use it
 
-The commands that execute your project's code switch to the toolchain on their own:
+Every command that runs Deno runs it on the toolchain. The commands that execute your project's
+code switch to it on their own, and the others hand it to the `deno` they start:
 
-| Command                                                                                                       | On the toolchain                 |
-| ------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `dev`, `build`, `export`, `start`                                                                             | yes                              |
-| `test`, `check`, `job`                                                                                        | yes                              |
-| `analyze`, `profile`, `doctor`                                                                                | yes                              |
-| `desktop run \| dev \| build \| package`                                                                      | yes                              |
-| `mobile dev \| build`                                                                                         | yes                              |
-| a project's own verbs (`denext.config.ts` `commands`, plugins)                                                | yes                              |
-| `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)                                        | yes (stock when it can't be had) |
-| help, `--version`, `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp`, `toolchain` | no (yes under the binary)        |
+| Command                                                                       | On the toolchain      |
+| ----------------------------------------------------------------------------- | --------------------- |
+| `dev`, `build`, `export`, `start`                                             | yes                   |
+| `test`, `check`, `job`                                                        | yes                   |
+| `analyze`, `profile`, `doctor`                                                | yes                   |
+| `desktop run \| dev \| build \| package`                                      | yes                   |
+| `mobile dev \| build`                                                         | yes                   |
+| a project's own verbs (`denext.config.ts` `commands`, plugins)                | yes                   |
+| `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)        | yes                   |
+| `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp` | the `deno` they start |
+| help, `--version`, `toolchain`, `completions`                                 | no (they run no Deno) |
 
 When one of them starts under stock Deno, denext re-runs the same invocation under the toolchain:
 the same arguments, working directory, standard streams and exit code, with Ctrl-C and `SIGTERM`
@@ -103,13 +108,15 @@ The binary is cached beside Deno's own cache:
 
 - The download goes to a temporary file in that same directory. Its SHA-256 is checked against
   the pin before it is extracted, made executable or renamed. A mismatch deletes the file
-  unexecuted and the command continues on stock Deno with a loud warning.
+  unexecuted and the command stops with the refusal and the fix.
 - The verified binary is renamed into place atomically, and a stamp file records its size,
   modification time and hash. Later runs trust it only while it still has that size and
   modification time; otherwise it is re-hashed, and a missing stamp means a fresh download. That
   fast path is the same trust Deno gives its own module cache: whoever can write to `DENO_DIR`
   can change what runs, so keep a shared or group-writable `DENO_DIR` to trusted users (or run
   `denext toolchain status --verify`).
+- On a terminal the download prints one self-redrawing line with the megabytes received and the
+  percent; in a log or CI it prints nothing.
 - Two commands starting at once download it once: the second prints
   `Blocking waiting for file lock on Deno toolchain cache` and adopts the first one's binary.
 
@@ -120,8 +127,10 @@ The binary is cached beside Deno's own cache:
 | `DENEXT_DENO=stock`  | Everything runs on the Deno that started the CLI, silently.             |
 | `DENEXT_DENO=<path>` | That binary is used as the toolchain, unverified (one warning per run). |
 
-The toolchain never makes a command fail. On a platform with no pinned build, offline, or behind a
-failed download, the command prints one warning saying why and continues on stock Deno. A process
+denext never falls back to another Deno on its own. On a platform with no pinned build, offline on
+first use, or behind a failed or mismatching download, a command that needs the toolchain stops
+with one error that says why, names the fix (`denext toolchain install`) and the two explicit
+opt-outs above. A process
 that lacks the grants to install and run it (`--allow-run`, and read/write on the cache
 directory) stays on the Deno that launched it without a warning: that is the least-privilege
 `start` task `denext create` scaffolds (`deno run --allow-net --allow-read --allow-env
@@ -249,8 +258,7 @@ call `deno test` directly so you can change them, or run them with `denext task`
 A verb denext does not define itself is Deno's, run on the toolchain exactly as
 `denext deno <verb>` would — `denext compile`, `denext run`, `denext x`, `denext bench`,
 `denext serve`, … — with the arguments verbatim and the exit code and signals passed back. Like
-`denext deno`, a forwarded verb falls back to stock Deno (with the usual one warning) when the
-toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
+`denext deno`, a forwarded verb stops with the fix when the toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
 `denext https://example.com/x.ts`) is `deno run`. denext's built-in verbs come first, then the
 project's own verbs, then Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
 
@@ -278,6 +286,9 @@ denext toolchain status        # pinned versions (Deno, TypeScript, Gleam, fastl
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
+denext toolchain uninstall <version>   # remove a cached version: its Deno toolchain and Deno Desktop runtime
+denext toolchain uninstall --all       # every cached version but the pinned one (--force: that one too)
+denext toolchain prune         # every version but the pinned ones (this denext's, and the project's here)
 denext deno <args…>            # run the toolchain's deno with <args…> verbatim; its exit code
 denext <deno verb> <args…>     # the same for any verb denext doesn't define (stock fallback)
 ```
@@ -286,6 +297,16 @@ denext <deno verb> <args…>     # the same for any verb denext doesn't define (
 it prints. Windows gets a `deno.cmd` shim. `unlink` refuses to touch a `deno` it didn't create. After a denext
 upgrade pins a newer toolchain, `denext toolchain status` warns that the link points at the old one
 and `link` replaces it (commands switch to the pinned build either way).
+
+Every version denext ever ran on stays cached until you remove it — each Deno toolchain is about
+70 MB, a Deno Desktop runtime more. `uninstall <version>` removes that version's toolchain (its
+esbuild, TypeScript compiler and `denort` live inside it) and the Deno Desktop runtime of the same
+version. `prune` keeps only what is in use: the Deno toolchain, Deno Desktop runtime, Gleam and
+fastlane this denext pins, and — inside a project that pins another denext — the ones that version
+pins (read from its published pin files; offline, `prune` removes nothing unless `--force`). The
+version this denext pins is refused unless you pass `--force`. Each prints what it removed and the
+space freed; `--dry-run` only lists it, and `--json` reports it for scripts. They hold the cache
+lock, so they never delete a download in progress.
 
 `denext doctor` reports the toolchain as one check: the pinned version, whether it is cached and
 verified, and whether the run is on it or on stock Deno, and why.
@@ -371,6 +392,18 @@ resolve them. Keep the project and its `file:` targets on one drive.
 
 ## Notes: how denext's Deno build is kept current
 
+<a id="versions"></a>**Versions.** Up to `2.9.7-denext.22` each build was named after the Deno release it
+was built from plus `-denext.N`. From `3.0.0-rc.1` (then `3.0.0-rc.2`, …) the fork has its own
+version, which names no Deno release; `3.0.0` final carries Deno's planned 3.0 milestone. The two
+schemes sort in release order by semver (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.10` <
+`3.0.0`), and denext accepts both: a pin, a `Deno.version.deno` and a `DENO_BIN` are compared that
+way. The Deno release a build is made from is the pin's `deno` field (2.9.7 for every build so
+far): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
+[Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.7 exactly" check use. Releases are tagged
+`denext-runtime-v<version>` on [Brainwires/deno](https://github.com/Brainwires/deno/releases). The
+toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
+stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
+
 **Tracking Deno.** The toolchain is Deno's latest release (2.9.7) plus denext's patches — `Deno.SQL`,
 Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
 published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we
@@ -387,7 +420,8 @@ pins today) type-checks with the native TypeScript 7 compiler, shipped in the CL
 like the binary, and runs npm packages more as Node.js does; that check doesn't resolve an absolute
 `file:` import yet, so such a project sets `DENEXT_NATIVE_CHECK=0`
 ([known limitations](/docs/limitations)). Each new Deno
-release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
+release is adopted by rebasing the patches onto it and cutting a new release (`-denext.N` up to
+`2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
 **Support across denext releases.** The patches are carried forward from release to release. Each
@@ -400,5 +434,5 @@ the bundled esbuild) falls back or says why it can't.
 downloads the pinned build for the platform into `<DENO_DIR>/denext-deno/`, verifies its SHA-256
 against the pin, records a stamp and re-runs itself on it. Every child process it starts (tasks,
 the UI, the MCP server, builds) finds that `deno` first on `PATH`. The `deno` on your `PATH` is never
-replaced (`denext toolchain link` opts in), and a failed download falls back to stock Deno with one
-warning. From `2.9.7-denext.17` the same download also carries esbuild 0.25.5.
+replaced (`denext toolchain link` opts in), and a failed download stops the command with the fix
+(earlier versions fell back to stock Deno with one warning). From `2.9.7-denext.17` the same download also carries esbuild 0.25.5.

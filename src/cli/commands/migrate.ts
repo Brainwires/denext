@@ -249,7 +249,9 @@ function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
   printReviewNotes(p.warnings, 8);
   console.log(
     `    ‼️  run \`denext task ${p.setupTask}\` ONCE (` +
-      (p.provider === "sqlite" ? "bundles the compat, installs" : "installs") +
+      (p.adapter === "@prisma/adapter-better-sqlite3"
+        ? "bundles the compat, installs"
+        : "installs") +
       ", `prisma generate` + `migrate deploy` / `db push`) before `denext task build`/`dev`.",
   );
 }
@@ -573,7 +575,16 @@ function migrateOptions(ctx: CommandContext): MigrateOptions {
     capacitor: ctx.flags["enable-capacitor"] === true,
     appId: ctx.flags["app-id"] as string | undefined,
     platforms: listFlag(ctx.flags.platform),
+    prismaAdapter: prismaAdapterFlag(ctx.flags["prisma-adapter"]),
   };
+}
+
+/** `--prisma-adapter`: `auto` (absent), `deno-sql` or `npm`. */
+function prismaAdapterFlag(value: unknown): MigrateOptions["prismaAdapter"] {
+  if (value === undefined || value === "auto" || value === "deno-sql" || value === "npm") {
+    return value;
+  }
+  throw new Error(`--prisma-adapter must be auto, deno-sql or npm (got ${JSON.stringify(value)})`);
 }
 
 /** A comma-separated list flag (`--platform ios,android`), undefined when absent. */
@@ -816,6 +827,14 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         alias: "y",
         type: "boolean",
         help: "Apply the codemod without prompting",
+      },
+      {
+        name: "prisma-adapter",
+        type: "string",
+        valueName: "<auto|deno-sql|npm>",
+        help: "A Prisma app's SQLite / Postgres driver adapter: deno-sql (denext/prisma-adapter " +
+          "over Deno.SQL, no npm driver), npm (@prisma/adapter-better-sqlite3 / -pg), or auto " +
+          "(deno-sql when the runtime supports it; the default)",
       },
       {
         name: "denext-local-path",

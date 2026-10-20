@@ -14,12 +14,12 @@ import {
   linkDenoToolchain,
   resolveDenoToolchain,
   staleToolchainLink,
-  TOOLCHAIN_ACTIVE_ENV,
   TOOLCHAIN_ENV,
   toolchainEnvValue,
   unlinkDenoToolchain,
 } from "../../build/deno-toolchain.ts";
 import { esbuildBinaryStatus } from "../../build/esbuild/binary.ts";
+import { toolchainRemove } from "./toolchain-prune.ts";
 import { ensureGleamToolchain, gleamToolchainStatus } from "../../build/gleam-toolchain.ts";
 import {
   ensureFastlaneToolchain,
@@ -52,7 +52,7 @@ async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
   if (raw !== "" && raw.toLowerCase() !== "pinned") {
     const choice = await resolveDenoToolchain();
     if (choice.warning) console.error(choice.warning);
-    if (choice.kind === "stock") Deno.exit(1);
+    if (choice.kind === "stock") Deno.exit(1); // a process without the grants to run it
     return { deno: choice.deno, marker: choice.version };
   }
   const rt = await requireToolchain();
@@ -63,10 +63,9 @@ async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
  * Run the toolchain's `deno` with `args` verbatim in `cwd` and exit with its code — `denext deno
  * …`, and (with `forwarded`) every Deno verb denext forwards (`denext compile …`, `denext
  * main.ts`) and `denext task`. Both take {@linkcode forwardedDeno}'s choice (its PATH rule and the
- * toolchain marker included), falling back to stock Deno with the choice's one warning when the
- * toolchain can't be had: `denext compile` works wherever `deno compile` does. `denext deno` also
- * says `DENEXT_DENO=stock` once, and treats a `DENEXT_DENO=<path>` that isn't a file as an error
- * (exit 1): that binary was asked for by name. Never returns.
+ * toolchain marker included); when the toolchain can't be had that throws a `denext:` error naming
+ * the fix and the explicit opt-outs, never running another Deno on its own. `denext deno` also
+ * says `DENEXT_DENO=stock` once. Never returns.
  *
  * @param args The arguments for `deno`.
  * @param cwd The directory to run in.
@@ -83,8 +82,6 @@ export async function runDenoPassthrough(
   }
   const chosen = await forwardedDeno();
   if (chosen.warning) console.error(chosen.warning);
-  const onToolchain = TOOLCHAIN_ACTIVE_ENV in chosen.env;
-  if (!forwarded && !onToolchain && raw !== "" && raw !== "stock" && raw !== "pinned") Deno.exit(1);
   return await spawnDenoAndExit(args, cwd, chosen.env, chosen.deno);
 }
 
@@ -208,7 +205,8 @@ async function link(unlink: boolean): Promise<void> {
 
 export const toolchainCommand: CommandSpec = {
   name: "toolchain",
-  summary: "Manage denext's Deno toolchain (install | status | path | link | unlink)",
+  summary:
+    "Manage denext's Deno toolchain (install | status | path | link | unlink | uninstall | prune)",
   usage: "denext runs the commands that execute project code on its own pinned Deno build\n" +
     "(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\n" +
     "verified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n" +
@@ -218,11 +216,21 @@ export const toolchainCommand: CommandSpec = {
     "  denext toolchain status       Pinned versions (Deno, Gleam, fastlane), cache state (--json)\n" +
     "  denext toolchain path         Print the binary's path (installs it first)\n" +
     "  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n" +
-    "  denext toolchain unlink       Remove that link (only what link created)",
+    "  denext toolchain unlink       Remove that link (only what link created)\n" +
+    "  denext toolchain uninstall <version>   Remove a cached version (its Deno toolchain and\n" +
+    "                                Deno Desktop runtime); the pinned one only with --force\n" +
+    "  denext toolchain uninstall --all       Remove every cached version but the pinned one\n" +
+    "  denext toolchain prune        Remove every version but the one this denext pins (and the\n" +
+    "                                one the project here pins), Gleam and fastlane included\n" +
+    "  (uninstall and prune show the space freed; --dry-run lists it, --json for scripts)",
   positionals: [{
     name: "action",
-    help: "install | status | path | link | unlink",
+    help: "install | status | path | link | unlink | uninstall | prune",
     required: true,
+  }, {
+    name: "versions",
+    help: "uninstall: the versions to remove",
+    variadic: true,
   }],
   flags: [{
     name: "verify",
@@ -234,6 +242,18 @@ export const toolchainCommand: CommandSpec = {
     valueName: "<tool>",
     repeatable: true,
     help: "install: also fetch these pinned tools (gleam, fastlane)",
+  }, {
+    name: "all",
+    type: "boolean",
+    help: "uninstall: every cached version (the pinned one too with --force)",
+  }, {
+    name: "force",
+    type: "boolean",
+    help: "uninstall: remove a version even when it is the pinned one",
+  }, {
+    name: "dry-run",
+    type: "boolean",
+    help: "uninstall, prune: list what would be removed and the space it frees; remove nothing",
   }],
   run: async (ctx) => {
     const action = ctx.positionals[0];
@@ -244,9 +264,10 @@ export const toolchainCommand: CommandSpec = {
       return;
     }
     if (action === "link" || action === "unlink") return await link(action === "unlink");
+    if (action === "uninstall" || action === "prune") return await toolchainRemove(ctx);
     console.error(
       `denext: unknown toolchain action ${JSON.stringify(action ?? "")} ` +
-        "(install | status | path | link | unlink)",
+        "(install | status | path | link | unlink | uninstall | prune)",
     );
     Deno.exit(1);
   },

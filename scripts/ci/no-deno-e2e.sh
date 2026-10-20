@@ -91,6 +91,8 @@ echo "ok: refused with the fix"
 
 echo "--- the installer's default links deno to the toolchain"
 DENEXT_ARTIFACTS="$ART" sh "$ART/install.sh"
-deno --version | grep -q -- "-denext\." || fail "deno is not the toolchain"
+# denext's Deno: 3.0.0-rc.N on (its own version), 2.9.7-denext.N before (src/build/deno-version.ts).
+deno --version | head -1 | grep -Eq -- '^deno ([0-9]+\.[0-9]+\.[0-9]+-denext\.|[3-9]\.)' ||
+  fail "deno is not the toolchain"
 deno task build
 echo "no-deno e2e: ALL OK"

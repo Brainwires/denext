@@ -21,6 +21,7 @@
  * @module
  */
 
+import { withLocalNetworkHint } from "./local-network.ts";
 import { runtimePlatform, shellPlugin } from "./bridge.ts";
 import { listenerDisposer, type ListenerHandle } from "./plugin.ts";
 import {
@@ -485,7 +486,7 @@ async function fetchManifest(
   } catch (err) {
     return controller.signal.aborted
       ? `manifest request timed out after ${timeoutMs} ms`
-      : `manifest request failed: ${messageOf(err)}`;
+      : `manifest request failed: ${withLocalNetworkHint(messageOf(err), baseUrl, err)}`;
   } finally {
     clearTimeout(timer);
   }
@@ -572,7 +573,10 @@ async function install<P extends DenextOtaPlugin>(
   try {
     result = await call(plugin, { baseUrl, headers, manifest });
   } catch (err) {
-    return { stop: refusal(err) };
+    const stop = refusal(err);
+    // A file the native side could not fetch from a LAN server: maybe iOS's Local Network prompt.
+    if (stop.kind !== "error") return { stop };
+    return { stop: { ...stop, reason: withLocalNetworkHint(stop.reason, baseUrl, err) } };
   }
   return isNoOp(result, noOpKey) ? { stop: { kind: "current" } } : { manifest };
 }

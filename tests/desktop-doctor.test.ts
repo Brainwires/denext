@@ -328,6 +328,16 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
     pin: pin(45),
   });
   assertEquals(checksOf(toolchain).filter((c) => c === "error:runtime"), []);
+  // ...and so is the toolchain under its own version (3.0.0-rc.N), built from the pin's Deno.
+  const own = await runDesktopDoctor({
+    ...linux,
+    runtimeStatus: () =>
+      Promise.resolve(
+        status({ deno: { found: "3.0.0-rc.1", required: "2.9.7" } }),
+      ),
+    pin: pin(45),
+  });
+  assertEquals(checksOf(own).filter((c) => c === "error:runtime"), []);
   // Off Linux the pre-probe pin is not a finding (the facts only matter there).
   const mac = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status()),
@@ -416,6 +426,18 @@ Deno.test("desktop doctor: notification clicks, scheduled notifications and the 
   assertStringIncludes(older.findings[0].message, "predates Linux notification cold starts");
   assertStringIncludes(older.findings[0].fix, "2.9.7-denext.11");
   assert(!older.checks.includes("badge"));
+  // The runtime under its own version (3.0.0-rc.1 on) is newer than every 2.9.7-denext.N.
+  for (const version of ["3.0.0-rc.1", "3.0.0-rc.10", "3.0.0"]) {
+    const own = await runDesktopDoctor({
+      runtimeStatus: () => Promise.resolve(status({ version })),
+      os: "linux",
+      env: env({ XDG_SESSION_TYPE: "wayland" }),
+      run: fakeRun(sway),
+      pin: pin(49, version),
+    });
+    assertEquals(own.runtime.linuxNotifications, true, version);
+    assert(own.checks.includes("badge"), version);
+  }
   // gdbus: the registry from the portal's introspection.
   const gdbus = "gdbus call --session --timeout 5";
   const facts = await probeLinuxSession(

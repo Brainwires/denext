@@ -27,7 +27,7 @@ import { dirname, join, resolve } from "@std/path";
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import type { FileEntry } from "../../mobile/filesystem.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
-import { type DesktopCapability, DesktopCapError } from "../extension.ts";
+import { type DesktopCapability, type DesktopCapCtx, DesktopCapError } from "../extension.ts";
 import { confineRelative, isReservedDataName, refuseReservedDataPath } from "../path-scope.ts";
 import type { PickedPaths } from "../picked-paths.ts";
 
@@ -171,56 +171,231 @@ export async function checkDownloadUrl(url: string, resolve?: HostResolver): Pro
   }
 }
 
-/** `fetch` with redirects followed BY HAND, re-checking every hop with {@link checkDownloadUrl}. */
+/**
+ * Request headers a page may not set, as `fetch` refuses them in a browser (the Fetch standard's
+ * forbidden request-header names), plus the hop-by-hop headers a proxy strips. They are dropped,
+ * not sent, the way a browser's `fetch` ignores them.
+ */
+const FORBIDDEN_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  "accept-charset",
+  "accept-encoding",
+  "access-control-request-headers",
+  "access-control-request-method",
+  "connection",
+  "content-length",
+  "cookie",
+  "cookie2",
+  "date",
+  "dnt",
+  "expect",
+  "host",
+  "keep-alive",
+  "origin",
+  "referer",
+  "set-cookie",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "via",
+]);
+
+/** The method-override headers the Fetch standard forbids when they name a forbidden method. */
+const METHOD_OVERRIDE_HEADERS: ReadonlySet<string> = new Set([
+  "x-http-method",
+  "x-http-method-override",
+  "x-method-override",
+]);
+
+/** The most request headers a download takes from the page. */
+const MAX_DOWNLOAD_HEADERS = 64;
+
+/**
+ * Whether the page may send header `name` with `value` (lower-cased name): not a forbidden or
+ * hop-by-hop name, no `proxy-` / `sec-` prefix, no method override naming CONNECT/TRACE/TRACK.
+ *
+ * @param name The header name, lower-cased.
+ * @param value The header value.
+ * @returns `true` when the header is sent.
+ */
+export function isAllowedDownloadHeader(name: string, value: string): boolean {
+  if (FORBIDDEN_REQUEST_HEADERS.has(name)) return false;
+  if (name.startsWith("proxy-") || name.startsWith("sec-")) return false;
+  if (!METHOD_OVERRIDE_HEADERS.has(name)) return true;
+  return !value.split(",").some((m) => /^(connect|trace|track)$/i.test(m.trim()));
+}
+
+/**
+ * The page's `headers` arg as the request's {@link Headers}: a record of strings (a malformed one
+ * is a `validation` error), with the headers a browser's `fetch` would not send dropped.
+ */
+function downloadHeaders(raw: unknown): Headers {
+  const headers = new Headers();
+  for (const [name, value] of headerEntries(raw)) {
+    if (typeof value !== "string") throw badInput(`header "${name}" must be a string`);
+    try {
+      if (isAllowedDownloadHeader(name.toLowerCase(), value)) headers.append(name, value);
+    } catch {
+      throw badInput(`header "${name}" is not a valid header`);
+    }
+  }
+  return headers;
+}
+
+/** The `headers` arg's entries: none when absent, a `validation` error when not a small object. */
+function headerEntries(raw: unknown): Array<[string, unknown]> {
+  if (raw === undefined || raw === null) return [];
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw badInput("headers must be an object of strings");
+  }
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length > MAX_DOWNLOAD_HEADERS) {
+    throw badInput(`at most ${MAX_DOWNLOAD_HEADERS} headers`);
+  }
+  return entries;
+}
+
+/** A download's own `id` arg (the page's transfer id), or `undefined` when none was sent. */
+function downloadId(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > 200) {
+    throw badInput("id must be a string of 1 to 200 characters");
+  }
+  return raw;
+}
+
+/** Why a download's request stopped: the page cancelled it, it timed out, or the network failed. */
+function stoppedError(err: unknown, cancel: AbortSignal, timeout: AbortSignal): DesktopCapError {
+  if (err instanceof DesktopCapError) return err;
+  if (cancel.aborted) return new DesktopCapError("cancelled", "the download was cancelled");
+  if (timeout.aborted) return new DesktopCapError("network", "the download timed out");
+  return new DesktopCapError("network", "the download failed: the connection was lost");
+}
+
+/**
+ * `fetch` with redirects followed BY HAND, re-checking every hop with {@link checkDownloadUrl}.
+ * Like a browser's `fetch`, a redirect to another origin drops `Authorization`.
+ */
 async function fetchChecked(
   url: string,
   signal: AbortSignal,
   cfg: FsCapabilityConfig,
+  headers: Headers,
 ): Promise<Response> {
   const doFetch = cfg.fetch ?? fetch;
   let current = url;
   for (let hop = 0;; hop++) {
-    const res = await doFetch(current, { signal, redirect: "manual" });
+    const res = await doFetch(current, { signal, redirect: "manual", headers });
     const location = res.headers.get("location");
     if (res.status < 300 || res.status >= 400 || location === null) return res;
     await res.body?.cancel();
     if (hop >= MAX_DOWNLOAD_REDIRECTS) {
-      throw new DesktopCapError("download_failed", "too many redirects");
+      throw new DesktopCapError("network", "too many redirects");
     }
-    current = new URL(location, current).href;
+    const next = new URL(location, current);
+    if (next.origin !== new URL(current).origin) headers.delete("authorization");
+    current = next.href;
     await checkDownloadUrl(current, cfg.resolveHost);
   }
 }
 
+/** The most of a failed answer's body a download keeps for the page (bytes of text). */
+const MAX_ERROR_BODY_CHARS = 64 * 1024;
+
+/** A non-2xx answer as the page's error: `download_failed` with the status and (some of) the body. */
+async function httpFailure(res: Response): Promise<DesktopCapError> {
+  const text = await res.text().catch(() => "");
+  return new DesktopCapError("download_failed", `download failed with status ${res.status}`, {
+    data: { status: res.status, body: text.slice(0, MAX_ERROR_BODY_CHARS) },
+  });
+}
+
+/** How often a download reports progress (ms), as the native transfer plugin does. */
+const PROGRESS_EVERY_MS = 200;
+
+/** Reports a download's progress (`bytes`, `total`), at most every {@link PROGRESS_EVERY_MS}. */
+type ProgressReporter = (bytes: number, total: number | null, force?: boolean) => void;
+
+/** A reporter that emits `progress` events for transfer `id` (none without an id). */
+function progressReporter(ctx: DesktopCapCtx, id: string | undefined): ProgressReporter {
+  let last = -Infinity;
+  return (bytes, total, force = false) => {
+    if (id === undefined) return;
+    const now = Date.now();
+    if (!force && now - last < PROGRESS_EVERY_MS) return;
+    last = now;
+    ctx.emit("progress", { id, bytes, total });
+  };
+}
+
+/** Run a file-system step, its failure an `io` error (the disk, not the network). */
+async function onDisk<T>(step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch {
+    throw new DesktopCapError("io", "the download could not be written");
+  }
+}
+
+/** Write every byte of `chunk` to `file`. */
+async function writeAll(file: Deno.FsFile, chunk: Uint8Array): Promise<void> {
+  let written = 0;
+  while (written < chunk.byteLength) written += await file.write(chunk.subarray(written));
+}
+
+/** The size a response declares (`Content-Length`), or `null`. */
+function declaredLength(res: Response): number | null {
+  const raw = res.headers.get("content-length");
+  const declared = raw === null ? NaN : Number(raw);
+  return Number.isFinite(declared) ? declared : null;
+}
+
+/** The `download` args, checked: the URL, the optional transfer id and the request headers. */
+function downloadArgs(a: { url?: unknown; id?: unknown; headers?: unknown }): {
+  url: string;
+  id: string | undefined;
+  headers: Headers;
+} {
+  if (typeof a.url !== "string") throw badInput("url must be a string");
+  return { url: a.url, id: downloadId(a.id), headers: downloadHeaders(a.headers) };
+}
+
 /**
  * Stream `res`'s body to `target` through a `.part` file, aborting past `maxBytes` (nothing is
- * left behind on failure), then rename it into place.
+ * left behind on failure, a cancel included), then rename it into place. Resolves the size.
  */
-async function writeCapped(res: Response, target: string, maxBytes: number): Promise<void> {
-  const declared = Number(res.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > maxBytes) {
+async function writeCapped(
+  res: Response,
+  target: string,
+  maxBytes: number,
+  progress: ProgressReporter = () => {},
+): Promise<number> {
+  const total = declaredLength(res);
+  if (total !== null && total > maxBytes) {
     await res.body?.cancel();
     throw new DesktopCapError("too_large", `the download is over ${maxBytes} bytes`);
   }
   const part = `${target}.${crypto.randomUUID()}.part`;
-  const file = await Deno.open(part, { write: true, createNew: true });
+  const file = await onDisk(() => Deno.open(part, { write: true, createNew: true }));
   let ok = false;
+  let bytes = 0;
   try {
-    let total = 0;
+    progress(0, total, true);
     for await (const chunk of res.body ?? new ReadableStream<Uint8Array>()) {
-      total += chunk.byteLength;
-      if (total > maxBytes) {
+      bytes += chunk.byteLength;
+      if (bytes > maxBytes) {
         throw new DesktopCapError("too_large", `the download is over ${maxBytes} bytes`);
       }
-      let written = 0;
-      while (written < chunk.byteLength) written += await file.write(chunk.subarray(written));
+      await onDisk(() => writeAll(file, chunk));
+      progress(bytes, total);
     }
     ok = true;
   } finally {
     file.close();
     if (!ok) await Deno.remove(part).catch(() => {});
   }
-  await Deno.rename(part, target);
+  await onDisk(() => Deno.rename(part, target));
+  return bytes;
 }
 
 /** A `directory` arg that names a picked handle (`{ picked: "<handle>" }`) instead of a token. */
@@ -329,8 +504,11 @@ function encodingOf(value: unknown): "utf8" | "base64" {
  * @returns The `fs` {@link DesktopCapability}.
  */
 export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
+  /** The downloads running under a page-given id (for `cancelDownload`). */
+  const running = new Map<string, { cancel: AbortController; settled: Promise<void> }>();
   return {
     name: "fs",
+    events: ["progress"],
     methods: {
       readFile: {
         permissions: { read: [...cfg.read] },
@@ -399,26 +577,58 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         timeoutMs: false,
         permissions: { write: [...cfg.write], net: ["*"] },
         handler: async (args, ctx) => {
-          const a = (args ?? {}) as { url?: unknown; path?: unknown; directory?: unknown };
-          if (typeof a.url !== "string") throw badInput("url must be a string");
-          await checkDownloadUrl(a.url, cfg.resolveHost);
-          const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
-          await mkdirp(root);
-          const signal = AbortSignal.any([
-            ctx.signal,
-            AbortSignal.timeout(cfg.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS),
-          ]);
-          const res = await fetchChecked(a.url, signal, cfg);
-          if (!res.ok) {
-            await res.body?.cancel();
-            throw new DesktopCapError(
-              "download_failed",
-              `download failed with status ${res.status}`,
-            );
+          const a = (args ?? {}) as {
+            url?: unknown;
+            path?: unknown;
+            directory?: unknown;
+            id?: unknown;
+            headers?: unknown;
+          };
+          const { url, id, headers } = downloadArgs(a);
+          if (id !== undefined && running.has(id)) {
+            throw new DesktopCapError("exists", `download ${id} is already running`, {
+              status: 409,
+            });
           }
-          await mkdirp(dirname(target));
-          await writeCapped(res, target, cfg.downloadMaxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES);
-          return { path: target };
+          // Registered before the first await, so a cancel can never slip in ahead of it.
+          const cancel = new AbortController();
+          const settled = Promise.withResolvers<void>();
+          if (id !== undefined) running.set(id, { cancel, settled: settled.promise });
+          const timeout = AbortSignal.timeout(cfg.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS);
+          const signal = AbortSignal.any([ctx.signal, timeout, cancel.signal]);
+          try {
+            await checkDownloadUrl(url, cfg.resolveHost);
+            const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
+            await mkdirp(root);
+            // A failure past this point is the network's, a cancel, or the disk's (`io`).
+            const stopped = (err: unknown): never => {
+              throw stoppedError(err, AbortSignal.any([ctx.signal, cancel.signal]), timeout);
+            };
+            const res = await fetchChecked(url, signal, cfg, headers).catch(stopped);
+            if (!res.ok) throw await httpFailure(res);
+            await onDisk(() => mkdirp(dirname(target)));
+            const bytes = await writeCapped(
+              res,
+              target,
+              cfg.downloadMaxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES,
+              progressReporter(ctx, id),
+            ).catch(stopped);
+            return { path: target, bytes };
+          } finally {
+            if (id !== undefined) running.delete(id);
+            settled.resolve();
+          }
+        },
+      },
+      cancelDownload: {
+        // Answers once the download has stopped and its partial file is gone.
+        handler: async (args) => {
+          const id = downloadId((args as { id?: unknown } | null)?.id);
+          const entry = id === undefined ? undefined : running.get(id);
+          if (!entry) return { cancelled: false };
+          entry.cancel.abort();
+          await entry.settled;
+          return { cancelled: true };
         },
       },
     },

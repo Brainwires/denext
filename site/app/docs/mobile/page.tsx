@@ -286,9 +286,14 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         (without one, iOS 14+ silently denies local-network requests and the app hangs on its splash
         screen). <code>mobile dev</code>{" "}
         adds both for the session, merging into an existing ATS dict and keeping an existing
-        description, and puts the plist back with the config. A changed Info.plist is a native
-        change: rebuild and run the app from Xcode (it prints so). Xcode opens{" "}
-        <code>ios/App/App.xcworkspace</code> for a CocoaPods project and{" "}
+        description, and puts the plist back with the config. On the app&apos;s first launch iOS
+        asks for Local Network access: allow it. Until then, or once denied, every request to the
+        dev server fails with &quot;The Internet connection appears to be offline&quot; (-1009) and
+        the page never loads, so the live-reload client cannot report it; <code>mobile dev</code>
+        {" "}
+        prints the setting to turn on (Settings → Privacy &amp; Security → Local Network → the app).
+        A changed Info.plist is a native change: rebuild and run the app from Xcode (it prints so).
+        Xcode opens <code>ios/App/App.xcworkspace</code> for a CocoaPods project and{" "}
         <code>ios/App/App.xcodeproj</code>{" "}
         for a Swift Package Manager one (Capacitor 8's default), and the printed steps name
         whichever exists.
@@ -2135,8 +2140,9 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         </li>
         <li>
           in a Deno Desktop window with the <code>fs</code>{" "}
-          capability, the runtime downloads it in the Deno process (no progress; the request{" "}
-          <code>headers</code> and <code>signal</code> are not passed to it);
+          capability, the runtime downloads it in the Deno process with the request{" "}
+          <code>headers</code> (CORS does not apply), reports progress, and cancels it when{" "}
+          <code>signal</code> aborts, removing the partial file;
         </li>
         <li>
           in the shell with <code>@capacitor/filesystem</code> but no{" "}
@@ -2261,13 +2267,30 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         rejects with the signal&apos;s reason). A non-2xx answer rejects with code{" "}
         <code>"HTTP"</code>, its <code>status</code> and <code>body</code>; a network failure with
         {" "}
-        <code>"NETWORK"</code>, <code>resumable</code> when the bytes so far can be kept.{" "}
-        <code>fileTransfers()</code>{" "}
+        <code>"NETWORK"</code>, <code>resumable</code>{" "}
+        when the bytes so far can be kept. On iOS, a transfer to a LAN host (RFC 1918, link-local,
+        {" "}
+        <code>.local</code>) fails with &quot;The Internet connection appears to be offline&quot;
+        until the user allows the app&apos;s Local Network access; that error&apos;s message then
+        says where to allow it (the app needs an <code>NSLocalNetworkUsageDescription</code>{" "}
+        in Info.plist for iOS to ask). <code>fileTransfers()</code>{" "}
         lists the plugin&apos;s records (running, paused, and finished ones the app has not dropped
         with{" "}
         <code>forgetFileTransfer(id)</code>), so a transfer that finished while the page was gone is
         still reported. In a Deno Desktop window <code>downloadToFile</code>{" "}
-        fetches in the Deno process (no progress) and <code>uploadFile</code>{" "}
+        fetches in the Deno process, with the same <code>onProgress</code>, <code>signal</code> and
+        {" "}
+        <code>FileTransferError</code> codes; the runtime drops the request headers a browser&apos;s
+        {" "}
+        <code>fetch</code> refuses (<code>Cookie</code>,{" "}
+        <code>Host</code>, the hop-by-hop ones, …) and, like{" "}
+        <code>fetch</code>, a redirect to another origin drops{" "}
+        <code>Authorization</code>. It is a transfer like any other under its <code>id</code>:{" "}
+        <code>fileTransfers()</code> lists it, <code>onFileTransfer</code> gets its events, and{" "}
+        <code>cancelFileTransfer</code>{" "}
+        stops it in the runtime and drops the partial file. It cannot pause (the runtime keeps no
+        partial file to resume): <code>pauseFileTransfer</code> rejects with code{" "}
+        <code>"unsupported"</code>. <code>uploadFile</code>{" "}
         reads the file through the runtime and sends it from the page.
       </p>
       <Callout kind="note">
@@ -3258,6 +3281,25 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         only from a pinned https origin or loopback: any script in the page can call the plugin, so
         an unsigned update from whatever server it names would replace the UI for good.{" "}
         <code>denext mobile doctor --release</code> fails when OTA is installed without a key.
+      </p>
+      <p>
+        <strong>A server on the local network (iOS).</strong>{" "}
+        An update server on your LAN (a dev machine, <code>ota:serve</code>{" "}
+        in the mobile example) is reached only once the user allows the app iOS&apos;s Local Network
+        access. Until then iOS fails every request to it with{" "}
+        <code>NSURLErrorNotConnectedToInternet</code>{" "}
+        (-1009, &quot;The Internet connection appears to be offline&quot;); against an RFC 1918,
+        link-local or <code>.local</code> host, <code>checkForUiUpdate</code> /{" "}
+        <code>prepareUiUpdate</code> add a hint to that error&apos;s <code>reason</code>{" "}
+        (allow it in Settings → Privacy &amp; Security → Local Network). iOS shows the prompt only
+        when Info.plist declares <code>NSLocalNetworkUsageDescription</code>:{" "}
+        <code>add-ota --ota-origin</code>{" "}
+        adds one (keeping the app&apos;s own) when a pinned origin is such a host. A
+        <code>baseUrl</code> the app picks at run time is not known to{" "}
+        <code>add-ota</code>: add the key yourself. Bonjour service types (<code>
+          NSBonjourServices
+        </code>) are needed only to browse for services, not to reach a <code>.local</code>{" "}
+        name or an address.
       </p>
       <p>
         <strong>Release order and the native gate.</strong> Signing also stamps a{" "}

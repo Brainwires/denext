@@ -12,6 +12,7 @@ import {
   denoToolchainCacheRoot,
   DenoToolchainHashError,
   type DenoToolchainPin,
+  DenoToolchainRequiredError,
   denoToolchainStatus,
   denoToolchainTarget,
   DenoToolchainUnavailableError,
@@ -137,7 +138,7 @@ Deno.test("windows targets: x86_64 and aarch64 names; the checked-in pin's Windo
     assert(DENO_TOOLCHAIN.denort?.["windows-aarch64"], "the pin carries a windows-aarch64 denort");
   }
   // A pin without a windows-aarch64 build (before 2.9.7-denext.21): a clear refusal before any
-  // download, and a stock fallback.
+  // download, and no other Deno on its own: the resolver refuses with the fix.
   const s = await winServer(await releaseZip());
   try {
     const err = await assertRejects(
@@ -145,17 +146,21 @@ Deno.test("windows targets: x86_64 and aarch64 names; the checked-in pin's Windo
       DenoToolchainUnavailableError,
     );
     assertStringIncludes(err.message, `has no build for windows-aarch64 (it has: ${WIN})`);
-    const choice = await resolveDenoToolchain({
-      env: envFrom({}),
-      pin: s.pin,
-      target: "windows-aarch64",
-      os: "windows",
-      cacheRoot: s.cache,
-      log: silent,
-      missingGrants: granted,
-    });
-    assert(choice.kind === "stock" && choice.warning);
-    assertStringIncludes(choice.warning, "has no build for windows-aarch64");
+    const refused = await assertRejects(
+      () =>
+        resolveDenoToolchain({
+          env: envFrom({}),
+          pin: s.pin,
+          target: "windows-aarch64",
+          os: "windows",
+          cacheRoot: s.cache,
+          log: silent,
+          missingGrants: granted,
+        }),
+      DenoToolchainRequiredError,
+    );
+    assertStringIncludes(refused.message, "has no build for windows-aarch64");
+    assertStringIncludes(refused.message, "DENEXT_DENO=stock");
     assertEquals(s.requests(), 0);
   } finally {
     await s.dispose();
@@ -313,18 +318,21 @@ Deno.test("windows corrupt download: DenoToolchainHashError, nothing installed, 
     assertStringIncludes(err.message, "SHA-256 mismatch");
     assertStringIncludes(err.message, s.pin.targets[WIN].file);
     assertEquals(await entries(installDir(s)), [], "no deno.exe, no stamp, no temp dir");
-    const choice = await resolveDenoToolchain({
-      env: envFrom({}),
-      pin: s.pin,
-      target: WIN,
-      os: "windows",
-      cacheRoot: s.cache,
-      log: silent,
-      missingGrants: granted,
-    });
-    assert(choice.kind === "stock" && choice.warning);
-    assertStringIncludes(choice.warning, "REFUSING");
-    assertStringIncludes(choice.warning, "⚠ Running on stock Deno");
+    const refused = await assertRejects(
+      () =>
+        resolveDenoToolchain({
+          env: envFrom({}),
+          pin: s.pin,
+          target: WIN,
+          os: "windows",
+          cacheRoot: s.cache,
+          log: silent,
+          missingGrants: granted,
+        }),
+      DenoToolchainRequiredError,
+    );
+    assertStringIncludes(refused.message, "REFUSING");
+    assertStringIncludes(refused.message, "denext toolchain install");
   } finally {
     await s.dispose();
   }
@@ -366,10 +374,12 @@ Deno.test("windows DENEXT_DENO=<path>: a drive-letter path (as cmd.exe sets it) 
     }
     if (onWindows) assert(/^[A-Za-z]:\\/.test(resolve(exe)), resolve(exe));
     const missing = "C:\\Program Files\\denext-missing\\deno.exe";
-    const gone = await resolveDenoToolchain({ env: envFrom({ DENEXT_DENO: missing }) });
-    assert(gone.kind === "stock" && gone.warning);
-    assertStringIncludes(gone.warning, "is not a file; running on stock Deno");
-    assertStringIncludes(gone.warning, "deno.exe");
+    const gone = await assertRejects(
+      () => resolveDenoToolchain({ env: envFrom({ DENEXT_DENO: missing }) }),
+      DenoToolchainRequiredError,
+    );
+    assertStringIncludes(gone.message, "is not a file");
+    assertStringIncludes(gone.message, "deno.exe");
     const status = await denoToolchainStatus({
       env: envFrom({ DENEXT_DENO: exe }),
       pin: DENO_TOOLCHAIN,

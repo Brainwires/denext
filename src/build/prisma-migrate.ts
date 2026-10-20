@@ -9,9 +9,12 @@
 // A Postgres or MySQL datasource takes the same path with that database's driver adapter
 // instead: `@prisma/adapter-pg` (over the npm `pg` driver) or `@prisma/adapter-mariadb` (over
 // the npm `mariadb` driver, which speaks MySQL too). Those are pure-JS drivers on Deno's Node
-// compat, so they need no `links` substitution and no bundled compat. (Deno.SQL, denext's
-// built-in Postgres client, cannot back a Prisma adapter: its results carry neither the ordered
-// column names nor the type OIDs a driver adapter's result set must report.)
+// compat, so they need no `links` substitution and no bundled compat.
+//
+// On denext's Deno runtime 3.0.0-rc.1 and later, whose `Deno.SQL` reports each result
+// column's type, a SQLite or Postgres datasource is wired to `denext/prisma-adapter` instead:
+// Prisma's driver adapter over `Deno.SQL`, with no npm database driver, no `links` shim and no
+// bundled compat (`MigrateOptions.prismaAdapter` / `--prisma-adapter` chooses explicitly).
 //
 // This module makes `denext migrate` emit that whole path automatically: it (1) contributes
 // the deno.json wiring (manual node_modules + links + the adapter/client npm pins), (2)
@@ -44,29 +47,39 @@ const SEED_TASK = "prisma:seed";
 /** The datasource providers denext wires a driver adapter for. */
 export type PrismaProvider = "sqlite" | "postgresql" | "mysql";
 
+/** The specifier the generated code imports `denext/prisma-adapter` by. */
+const DENO_SQL_ADAPTER = "denext/prisma-adapter";
+
 /** One datasource provider's driver adapter, as the transform injects it. */
 interface DriverAdapter {
   provider: PrismaProvider;
-  /** The npm package (pinned to {@link PRISMA_VERSION}). */
+  /** The package the injected code imports (npm, or {@link DENO_SQL_ADAPTER}). */
   pkg: string;
+  /** Its import-map target (`npm:<pkg>@<PRISMA_VERSION>`, or denext's subpath). */
+  target: string;
   /** The adapter factory class the package exports. */
   className: string;
   /** The injected factory (`__denextPrismaAdapter`), reading the URL from `envVar`. */
   helper(envVar: string): string;
 }
 
-const SQLITE_ADAPTER: DriverAdapter = {
-  provider: "sqlite",
-  pkg: "@prisma/adapter-better-sqlite3",
-  className: "PrismaBetterSQLite3",
-  helper: () =>
-    `import { PrismaBetterSQLite3 as __PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
-// Prisma resolves a sqlite \`file:\` path relative to the schema dir (prisma/); the runtime
+/** The SQLite URL the runtime opens: Prisma's schema-relative `file:` path, CWD-relative. */
+const SQLITE_URL =
+  `// Prisma resolves a sqlite \`file:\` path relative to the schema dir (prisma/); the runtime
 // adapter resolves it relative to CWD — so normalize to a prisma/-prefixed, CWD-relative path.
 const __denextDbUrl = (() => {
   const p = (Deno.env.get("DATABASE_URL") ?? "file:./prisma/data.db").replace(/^file:/, "").replace(/\\?.*$/, "");
   return \`file:\${p.startsWith("/") || /(^|\\/)prisma\\//.test(p) ? p : "./prisma/" + p.replace(/^\\.?\\//, "")}\`;
-})();
+})();`;
+
+const SQLITE_ADAPTER: DriverAdapter = {
+  provider: "sqlite",
+  pkg: "@prisma/adapter-better-sqlite3",
+  target: `npm:@prisma/adapter-better-sqlite3@${PRISMA_VERSION}`,
+  className: "PrismaBetterSQLite3",
+  helper: () =>
+    `import { PrismaBetterSQLite3 as __PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
+${SQLITE_URL}
 const __denextPrismaAdapter = () => new __PrismaBetterSQLite3({ url: __denextDbUrl });`,
 };
 
@@ -74,6 +87,7 @@ const __denextPrismaAdapter = () => new __PrismaBetterSQLite3({ url: __denextDbU
 const PG_ADAPTER: DriverAdapter = {
   provider: "postgresql",
   pkg: "@prisma/adapter-pg",
+  target: `npm:@prisma/adapter-pg@${PRISMA_VERSION}`,
   className: "PrismaPg",
   helper: (envVar) =>
     `import { PrismaPg as __PrismaPg } from "@prisma/adapter-pg";
@@ -86,6 +100,7 @@ const __denextPrismaAdapter = () =>
 const MYSQL_ADAPTER: DriverAdapter = {
   provider: "mysql",
   pkg: "@prisma/adapter-mariadb",
+  target: `npm:@prisma/adapter-mariadb@${PRISMA_VERSION}`,
   className: "PrismaMariaDb",
   helper: (envVar) =>
     `import { PrismaMariaDb as __PrismaMariaDb } from "@prisma/adapter-mariadb";
@@ -99,6 +114,44 @@ const ADAPTERS: Record<PrismaProvider, DriverAdapter> = {
   postgresql: PG_ADAPTER,
   mysql: MYSQL_ADAPTER,
 };
+
+/**
+ * `denext/prisma-adapter` (Prisma over `Deno.SQL`) for a SQLite or Postgres datasource, imported
+ * from `target` (denext's `prisma-adapter` subpath).
+ */
+function denoSqlAdapter(provider: "sqlite" | "postgresql", target: string): DriverAdapter {
+  const factory = `import { PrismaDenoSql as __PrismaDenoSql } from "${DENO_SQL_ADAPTER}";`;
+  return {
+    provider,
+    pkg: DENO_SQL_ADAPTER,
+    target,
+    className: "PrismaDenoSql",
+    helper: (envVar) =>
+      provider === "sqlite"
+        ? `${factory}
+${SQLITE_URL}
+const __denextPrismaAdapter = () => new __PrismaDenoSql(__denextDbUrl);`
+        : `${factory}
+// The datasource URL (\`${envVar}\`, as schema.prisma names it), on the runtime's Deno.SQL.
+const __denextPrismaAdapter = () => new __PrismaDenoSql(Deno.env.get(${
+          JSON.stringify(envVar)
+        }) ?? "");`,
+  };
+}
+
+/**
+ * The adapter for a datasource: `denext/prisma-adapter` for SQLite and Postgres when
+ * `denoSqlTarget` is given (CockroachDB stays on `@prisma/adapter-pg`), else the npm adapter
+ * of the provider; null for a provider with none.
+ */
+function adapterFor(provider: string | null, denoSqlTarget: string | null): DriverAdapter | null {
+  const wired = wiredProvider(provider);
+  if (denoSqlTarget && wired === "sqlite") return denoSqlAdapter("sqlite", denoSqlTarget);
+  if (denoSqlTarget && wired === "postgresql" && provider !== "cockroachdb") {
+    return denoSqlAdapter("postgresql", denoSqlTarget);
+  }
+  return wired ? ADAPTERS[wired] : null;
+}
 
 /** What `schema.prisma`'s `datasource` block declares. */
 export interface PrismaDatasource {
@@ -188,11 +241,14 @@ export function isPrismaDep(name: string): boolean {
  * app depends on `@prisma/client` or carries a `prisma/schema.prisma`. `compatSpecifier` is the
  * specifier the generated setup script bundles denext's `better-sqlite3` compat from (a
  * `jsr:@denext/denext@…/better-sqlite3` on the published path, a `file://` in local-path mode).
+ * `denoSqlTarget`, when given, is where `denext/prisma-adapter` resolves: a SQLite or Postgres
+ * datasource is then wired to it instead of an npm driver adapter.
  */
 export async function detectPrismaWiring(
   dir: string,
   deps: Record<string, string>,
   compatSpecifier: string,
+  denoSqlTarget: string | null = null,
 ): Promise<PrismaWiring | null> {
   const schemaAbs = join(dir, "prisma", "schema.prisma");
   const hasSchema = await fileExists(schemaAbs);
@@ -201,9 +257,8 @@ export async function detectPrismaWiring(
   const datasource = hasSchema
     ? readDatasource(await mfs.readTextFile(schemaAbs))
     : { provider: null, envVar: null };
-  const wired = wiredProvider(datasource.provider);
-  const adapter = wired ? ADAPTERS[wired] : null;
-  const sqlite = wired === "sqlite";
+  const adapter = adapterFor(datasource.provider, denoSqlTarget);
+  const sqlite = adapter === SQLITE_ADAPTER; // the better-sqlite3 path: links + bundled compat
   const plan: TransformPlan = {
     dir,
     compatSpecifier,
@@ -218,7 +273,7 @@ export async function detectPrismaWiring(
   return {
     importsToAdd: {
       "@prisma/client": `npm:@prisma/client@${PRISMA_VERSION}`,
-      ...(adapter ? { [adapter.pkg]: `npm:${adapter.pkg}@${PRISMA_VERSION}` } : {}),
+      ...(adapter ? { [adapter.pkg]: adapter.target } : {}),
     },
     importsToDelete: sqlite ? ["better-sqlite3"] : [],
     links: sqlite ? [`./${PATCH_DIR}`] : [],
@@ -290,12 +345,8 @@ async function transformPrismaApp(plan: TransformPlan): Promise<PrismaMigrateInf
   const packageJsonEdited = await stripPrismaFromPackageJson(join(dir, "package.json"), seed);
   if (seed) await rewriteSeedInPrismaConfig(dir, seed);
 
-  // 5. SQLite: the `links` patch package (its index.mjs is bundled by the setup script). Then
-  //    the setup script + gitignore for the generated (+ bundled) artifacts.
-  const sqlite = adapter?.provider === "sqlite";
-  if (sqlite) await writePatchPackage(dir);
-  await writeSetupScript(dir, sqlite ? plan.compatSpecifier : null, sqlite ? null : plan.envVar);
-  await appendGitignore(dir, ["generated/", ...(sqlite ? [`${PATCH_DIR}/index.mjs`] : [])]);
+  // 5. The `links` patch package (better-sqlite3 only), the setup script, and the gitignore.
+  await writeSetupFiles(plan);
 
   return {
     provider: plan.provider,
@@ -309,6 +360,22 @@ async function transformPrismaApp(plan: TransformPlan): Promise<PrismaMigrateInf
     setupTask: SETUP_TASK,
     warnings,
   };
+}
+
+/**
+ * Step 5 of the transform: SQLite on better-sqlite3 gets the `links` patch package (its
+ * index.mjs is bundled by the setup script); every app gets the setup script and a gitignore
+ * for the generated (+ bundled) artifacts.
+ */
+async function writeSetupFiles(plan: TransformPlan): Promise<void> {
+  const { dir, adapter } = plan;
+  const shim = adapter === SQLITE_ADAPTER;
+  if (shim) await writePatchPackage(dir);
+  await writeSetupScript(dir, {
+    compat: shim ? plan.compatSpecifier : null,
+    envVar: adapter?.provider === "sqlite" ? null : plan.envVar,
+  });
+  await appendGitignore(dir, ["generated/", ...(shim ? [`${PATCH_DIR}/index.mjs`] : [])]);
 }
 
 /** The adapter to inject at each construction site and the variable its URL comes from. */
@@ -495,25 +562,42 @@ async function writePatchPackage(dir: string): Promise<void> {
   );
 }
 
-/**
- * Write the one-shot setup script: (SQLite) bundle the compat → install → generate → migrate
- * deploy / db push. `compatSpecifier` is the compat to bundle into the `links` package (SQLite
- * only, else null); `envVar` the server database's URL variable (Postgres / MySQL, else null),
- * which the script checks is set before it runs the Prisma CLI against it.
- */
-async function writeSetupScript(
-  dir: string,
-  compatSpecifier: string | null,
-  envVar: string | null,
-): Promise<void> {
-  const intro = compatSpecifier !== null
-    ? `// One-time Prisma setup for denext: substitute denext's node:sqlite compat for the adapter's
+/** What the setup script prepares: the compat to bundle, and the server database's URL. */
+interface SetupPlan {
+  /** The compat to bundle into the `links` package (better-sqlite3 path only), else null. */
+  compat: string | null;
+  /**
+   * The server database's URL variable (Postgres / MySQL), which the script checks is set
+   * before it runs the Prisma CLI against it; null for SQLite.
+   */
+  envVar: string | null;
+}
+
+/** The setup script's header comment. */
+function setupIntro({ compat, envVar }: SetupPlan): string {
+  if (compat !== null) {
+    return `// One-time Prisma setup for denext: substitute denext's node:sqlite compat for the adapter's
 // native \`better-sqlite3\` (bundled into the \`links\` package), install, then generate the
-// ESM/Deno Prisma client and create the database schema. Run: \`deno task ${SETUP_TASK}\`.`
-    : `// One-time Prisma setup for denext: install (the driver adapter and its pure-JS driver), then
+// ESM/Deno Prisma client and create the database schema. Run: \`deno task ${SETUP_TASK}\`.`;
+  }
+  if (envVar === null) {
+    return `// One-time Prisma setup for denext: install the Prisma client, then generate the ESM/Deno
+// client and create the SQLite schema. The app reaches SQLite through
+// denext/prisma-adapter (Deno.SQL), no npm driver. Run: \`deno task ${SETUP_TASK}\`.`;
+  }
+  return `// One-time Prisma setup for denext: install (the Prisma client and its driver adapter), then
 // generate the ESM/Deno Prisma client and create the database schema in the server ${envVar}
 // names. Run: \`deno task ${SETUP_TASK}\` with ${envVar} set (or in .env).`;
-  const urlSetup = compatSpecifier !== null
+}
+
+/**
+ * Write the one-shot setup script: (better-sqlite3) bundle the compat → install → generate →
+ * migrate deploy / db push.
+ */
+async function writeSetupScript(dir: string, plan: SetupPlan): Promise<void> {
+  const { compat: compatSpecifier, envVar } = plan;
+  const intro = setupIntro(plan);
+  const urlSetup = envVar === null
     ? `const DATABASE_URL = Deno.env.get("DATABASE_URL") ?? "file:./data.db";
 const PRISMA_ENV: Record<string, string> = { DATABASE_URL };`
     : `const URL_VAR = ${JSON.stringify(envVar)};
@@ -539,7 +623,9 @@ await run("bundle the better-sqlite3 compat", [
 // 2. Install deps + apply the link (materializes the compat as \`better-sqlite3\`).
 await run("install deps + apply the link", ["install"]);`
     : `
-// 1–2. Install deps (the generated client's runtime, the driver adapter and its driver).
+// 1–2. Install deps (the generated client's runtime${
+      envVar === null ? "" : ", the driver adapter"
+    }).
 await run("install deps", ["install"]);`;
   const script =
     `// generated by \`denext migrate\` — safe to edit; re-running migrate may overwrite.

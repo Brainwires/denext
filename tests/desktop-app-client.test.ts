@@ -399,5 +399,30 @@ Deno.test("appCapabilities: the session facts pass a whitelist; anything else re
       [caps.sandbox, caps.sandboxReason, caps.fileChooser, caps.fileChooserReason],
       ["unknown", null, null, null],
     );
+    // The Linux window blur and native passkeys (runtime 3.0.0-rc.1), each with its reason.
+    assertEquals(
+      [caps.windowBlur, caps.windowBlurReason, caps.passkeys, caps.passkeysReason],
+      ["unknown", null, "unknown", null],
+    );
+    wire = { windowBlur: "kwin-x11", passkeys: "security-keys" };
+    caps = await appCapabilities();
+    assertEquals(
+      [caps.windowBlur, caps.windowBlurReason, caps.passkeys, caps.passkeysReason],
+      ["kwin-x11", null, "security-keys", null],
+    );
+    wire = {
+      windowBlur: null,
+      windowBlurReason: "KWin's blur effect is off",
+      passkeys: null,
+      passkeysReason: "no hidraw access",
+    };
+    caps = await appCapabilities();
+    assertEquals(
+      [caps.windowBlur, caps.windowBlurReason, caps.passkeys, caps.passkeysReason],
+      [null, "KWin's blur effect is off", null, "no hidraw access"],
+    );
+    wire = { windowBlur: "<b>", passkeys: true };
+    caps = await appCapabilities();
+    assertEquals([caps.windowBlur, caps.passkeys], ["unknown", "unknown"]);
   });
 });

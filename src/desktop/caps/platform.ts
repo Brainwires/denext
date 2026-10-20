@@ -4,7 +4,9 @@
  * 2.9.7-denext.11 adds how the badge shows and, on Linux, how notifications are sent, whether a
  * click starts a quit app and whether a scheduled one is posted while it is closed. Runtime
  * 2.9.7-denext.12 adds the Chromium sandbox a Linux CEF window runs in and the file chooser a Linux
- * dialog uses, each with the runtime's reason. The runtime (laufey) does the probing:
+ * dialog uses, each with the runtime's reason. Runtime 3.0.0-rc.1 adds, on Linux, whether the
+ * compositor blurs behind a window (KWin's blur) and whether passkeys with USB security keys work
+ * (libwebauthn), each with the runtime's reason when not. The runtime (laufey) does the probing:
  * D-Bus names, the Secret Service's lock state, the portal versions, the cookie store. denext only
  * validates what it answered and passes it on, so the page learns WHY a feature is missing.
  *
@@ -47,6 +49,12 @@ export type SandboxMode = "namespace" | "setuid" | "chromium" | "off";
 /** The file chooser a Linux dialog uses: xdg-desktop-portal's FileChooser, or GTK's own. */
 export type FileChooser = "portal" | "gtk";
 
+/** Linux: the compositor's blur behind translucent windows (KWin's, on Wayland or X11). */
+export type WindowBlur = "kwin-wayland" | "kwin-x11";
+
+/** Linux: passkeys with USB security keys work (libwebauthn beside the runtime's host). */
+export type LinuxPasskeys = "security-keys";
+
 /** The probe facts the capabilities surface. */
 export interface PlatformFacts {
   /** Linux: `wayland` / `x11` / `tty` / `unknown`; `null` on macOS and Windows. */
@@ -85,6 +93,14 @@ export interface PlatformFacts {
   readonly fileChooser: FileChooser | null | Unknown;
   /** Why GTK's, when `fileChooser` is `"gtk"`. */
   readonly fileChooserReason: string | null;
+  /** Linux: the compositor blurs behind translucent windows; `null` when not (and elsewhere). */
+  readonly windowBlur: WindowBlur | null | Unknown;
+  /** Linux: why not, when `windowBlur` is `null`. */
+  readonly windowBlurReason: string | null;
+  /** Linux: passkeys with USB security keys work; `null` when not (and on macOS / Windows). */
+  readonly passkeys: LinuxPasskeys | null | Unknown;
+  /** Linux: why not, when `passkeys` is `null`. */
+  readonly passkeysReason: string | null;
 }
 
 /** The longest runtime reason passed on. */
@@ -118,12 +134,18 @@ const UNKNOWN_FACTS: PlatformFacts = Object.freeze({
   sandboxReason: null,
   fileChooser: "unknown",
   fileChooserReason: null,
+  windowBlur: "unknown",
+  windowBlurReason: null,
+  passkeys: "unknown",
+  passkeysReason: null,
 });
 
 const BADGE_SHOWS = new Set(["dock", "launcher-entry", "title"]);
 const TRANSPORTS = new Set(["portal", "freedesktop"]);
 const SANDBOX_MODES = new Set(["namespace", "setuid", "chromium", "off"]);
 const FILE_CHOOSERS = new Set(["portal", "gtk"]);
+const WINDOW_BLURS = new Set(["kwin-wayland", "kwin-x11"]);
+const LINUX_PASSKEYS = new Set(["security-keys"]);
 
 /** `value` when it is `null` or in `allowed`, else `"unknown"` (an older runtime omits the key). */
 function oneOfOrNull<T extends string>(
@@ -186,6 +208,21 @@ export async function platformFacts(api: DesktopAppApi | undefined): Promise<Pla
     cookieEncryption: cookie === null || cookie === "os" || cookie === "basic" ? cookie : "unknown",
     ...notificationAndBadgeFacts(raw),
     ...sandboxAndChooserFacts(raw),
+    ...blurAndPasskeyFacts(raw),
+  };
+}
+
+/** The window blur and Linux passkey facts (runtime 3.0.0-rc.1): `"unknown"` before it. */
+function blurAndPasskeyFacts(
+  raw: Record<string, unknown>,
+): Pick<PlatformFacts, "windowBlur" | "windowBlurReason" | "passkeys" | "passkeysReason"> {
+  const windowBlur = oneOfOrNull<WindowBlur>(raw.windowBlur, WINDOW_BLURS);
+  const passkeys = oneOfOrNull<LinuxPasskeys>(raw.passkeys, LINUX_PASSKEYS);
+  return {
+    windowBlur,
+    windowBlurReason: windowBlur === null ? reasonText(raw.windowBlurReason) : null,
+    passkeys,
+    passkeysReason: passkeys === null ? reasonText(raw.passkeysReason) : null,
   };
 }
 
@@ -217,6 +254,10 @@ function notificationAndBadgeFacts(
   | "sandboxReason"
   | "fileChooser"
   | "fileChooserReason"
+  | "windowBlur"
+  | "windowBlurReason"
+  | "passkeys"
+  | "passkeysReason"
 > {
   const badge: BadgeShows | Unknown = BADGE_SHOWS.has(raw.badge as string)
     ? raw.badge as BadgeShows

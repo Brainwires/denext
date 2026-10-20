@@ -1414,6 +1414,12 @@
           "description": "Apply the codemod without prompting"
         },
         {
+          "name": "prisma-adapter",
+          "type": "string",
+          "valueName": "<auto|deno-sql|npm>",
+          "description": "A Prisma app's SQLite / Postgres driver adapter: deno-sql (denext/prisma-adapter over Deno.SQL, no npm driver), npm (@prisma/adapter-better-sqlite3 / -pg), or auto (deno-sql when the runtime supports it; the default)"
+        },
+        {
           "name": "denext-local-path",
           "type": "string",
           "valueName": "<path>",
@@ -2444,9 +2450,9 @@
     },
     {
       "name": "toolchain",
-      "summary": "Manage denext's Deno toolchain (install | status | path | link | unlink)",
-      "usage": "denext toolchain <action> [options]",
-      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain install --with gleam   …and the pinned Gleam compiler\n  denext toolchain install --with fastlane   …and the managed fastlane (Ruby + gems)\n  denext toolchain status       Pinned versions (Deno, Gleam, fastlane), cache state (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n  denext toolchain unlink       Remove that link (only what link created)",
+      "summary": "Manage denext's Deno toolchain (install | status | path | link | unlink | uninstall | prune)",
+      "usage": "denext toolchain <action> [versions...] [options]",
+      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain install --with gleam   …and the pinned Gleam compiler\n  denext toolchain install --with fastlane   …and the managed fastlane (Ruby + gems)\n  denext toolchain status       Pinned versions (Deno, Gleam, fastlane), cache state (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n  denext toolchain unlink       Remove that link (only what link created)\n  denext toolchain uninstall <version>   Remove a cached version (its Deno toolchain and\n                                Deno Desktop runtime); the pinned one only with --force\n  denext toolchain uninstall --all       Remove every cached version but the pinned one\n  denext toolchain prune        Remove every version but the one this denext pins (and the\n                                one the project here pins), Gleam and fastlane included\n  (uninstall and prune show the space freed; --dry-run lists it, --json for scripts)",
       "flags": [
         {
           "name": "verify",
@@ -2458,6 +2464,21 @@
           "type": "string",
           "valueName": "<tool>",
           "description": "install: also fetch these pinned tools (gleam, fastlane)"
+        },
+        {
+          "name": "all",
+          "type": "boolean",
+          "description": "uninstall: every cached version (the pinned one too with --force)"
+        },
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "uninstall: remove a version even when it is the pinned one"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "uninstall, prune: list what would be removed and the space it frees; remove nothing"
         }
       ],
       "positionals": [
@@ -2465,7 +2486,13 @@
           "name": "action",
           "required": true,
           "variadic": false,
-          "description": "install | status | path | link | unlink"
+          "description": "install | status | path | link | unlink | uninstall | prune"
+        },
+        {
+          "name": "versions",
+          "required": false,
+          "variadic": true,
+          "description": "uninstall: the versions to remove"
         }
       ]
     },

@@ -1356,6 +1356,10 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     sandboxReason: null,
     fileChooser: "unknown",
     fileChooserReason: null,
+    windowBlur: "unknown",
+    windowBlurReason: null,
+    passkeys: "unknown",
+    passkeysReason: null,
     bounce: false,
     dockMenu: false,
   });
@@ -1728,6 +1732,55 @@ Deno.test("app: the Linux CEF sandbox and the file chooser follow the probe (run
     "unknown",
     null,
   ]);
+  assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null, "unknown", null]);
+  assertEquals(await capsWith(undefined), ["unknown", null, "unknown", null]);
+});
+
+Deno.test("app: the Linux window blur and native passkeys follow the probe (runtime 3.0.0-rc.1)", async () => {
+  const capsWith = async (features: Record<string, unknown> | undefined) => {
+    const cap = createAppController({
+      window: undefined,
+      api: features ? { platformFeatures: () => Promise.resolve(features) } : {},
+      emit: () => {},
+      Tray: FakeTray,
+      os: "linux",
+    }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    return [caps.windowBlur, caps.windowBlurReason, caps.passkeys, caps.passkeysReason];
+  };
+  // KDE Plasma on Wayland with libwebauthn beside the host: the reasons only travel with null.
+  assertEquals(
+    await capsWith({
+      windowBlur: "kwin-wayland",
+      windowBlurReason: "ignored",
+      passkeys: "security-keys",
+      passkeysReason: "ignored",
+    }),
+    ["kwin-wayland", null, "security-keys", null],
+  );
+  assertEquals((await capsWith({ windowBlur: "kwin-x11" }))[0], "kwin-x11");
+  // GNOME, and a runtime built without the library: null, each with the runtime's reason.
+  assertEquals(
+    await capsWith({
+      windowBlur: null,
+      windowBlurReason: " no org_kde_kwin_blur_manager in the Wayland registry ",
+      passkeys: null,
+      passkeysReason: "liblaufey_webauthn.so is not installed beside the backend",
+    }),
+    [
+      null,
+      "no org_kde_kwin_blur_manager in the Wayland registry",
+      null,
+      "liblaufey_webauthn.so is not installed beside the backend",
+    ],
+  );
+  // macOS / Windows: null, no reason.
+  assertEquals(await capsWith({ windowBlur: null, passkeys: null }), [null, null, null, null]);
+  // An odd value, or a runtime before 3.0.0-rc.1 (no key), reads unknown.
+  assertEquals(
+    await capsWith({ windowBlur: "mutter", passkeys: "platform", passkeysReason: "x" }),
+    ["unknown", null, "unknown", null],
+  );
   assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null, "unknown", null]);
   assertEquals(await capsWith(undefined), ["unknown", null, "unknown", null]);
 });

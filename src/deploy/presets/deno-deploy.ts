@@ -11,6 +11,7 @@ import { join } from "@std/path";
 import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { header, marker, requiredSecrets } from "./shared.ts";
+import { denoExecutable } from "../../build/deno-executable.ts";
 
 /** Options for {@linkcode denoDeploy}. */
 export interface DenoDeployPresetOptions {
@@ -164,7 +165,9 @@ async function denoDeployPush(ctx: DeployContext, options: DenoDeployPresetOptio
         "organization token in the Deno Deploy dashboard and set it",
     );
   }
-  const deno = Deno.execPath();
+  // denext's Deno toolchain (or the Deno the user chose with DENEXT_DENO / DENO_BIN): a compiled
+  // denext's own executable is not `deno`.
+  const deno = denoExecutable();
   const args = [
     deno,
     "deploy",

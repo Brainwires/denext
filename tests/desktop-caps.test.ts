@@ -23,7 +23,12 @@ import {
 } from "../src/build/desktop-capabilities.ts";
 import { deviceCapability } from "../src/desktop/caps/device.ts";
 import { echoCapability } from "../src/desktop/caps/echo.ts";
-import { checkDownloadUrl, fsCapability, isRefusedDownloadHost } from "../src/desktop/caps/fs.ts";
+import {
+  checkDownloadUrl,
+  fsCapability,
+  isAllowedDownloadHeader,
+  isRefusedDownloadHost,
+} from "../src/desktop/caps/fs.ts";
 import { sqliteCapability } from "../src/desktop/caps/sqlite.ts";
 import {
   isExecutableOpenTarget,
@@ -1977,7 +1982,7 @@ Deno.test("fs.download: a non-2xx answer, a declared oversize body and a redirec
     const dl = (url: string) => call(cap, "download", { url, path: "out.bin", directory: "data" });
     assertEquals(await rejectCode(dl("https://files.test/missing")), "download_failed");
     assertEquals(await rejectCode(dl("https://files.test/huge")), "too_large");
-    assertEquals(await rejectCode(dl("https://files.test/loop")), "download_failed");
+    assertEquals(await rejectCode(dl("https://files.test/loop")), "network");
     assertEquals(hops, 6, "the first request plus five followed redirects");
     // An IP-literal host is not looked up in DNS.
     resolved.length = 0;
@@ -2195,3 +2200,286 @@ Deno.test("resolver: a non-string desktop.app.origin fails fast", async () => {
     "must be a string",
   );
 });
+
+// --- fs.download: the page's headers, cancel, progress and failure codes ---------------------
+
+/** An `fs` capability over a temp dir whose downloads go to `fakeFetch` (public DNS answers). */
+async function downloadFixture(fakeFetch: typeof fetch) {
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-dl-xfer-" });
+  const cap = fsCapability({
+    dirs: { data: root, cache: root, documents: root },
+    read: new Set(["$APPDATA"]),
+    write: new Set(["$APPDATA"]),
+    downloadTimeoutMs: 5_000,
+    resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    fetch: fakeFetch,
+  });
+  return { root, cap, cleanup: () => Deno.remove(root, { recursive: true }) };
+}
+
+Deno.test("fs.download: the page's headers are sent, minus the ones a browser's fetch refuses", async () => {
+  const seen: Headers[] = [];
+  const { root, cap, cleanup } = await downloadFixture(
+    ((_u: unknown, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers));
+      return Promise.resolve(new Response("ok"));
+    }) as typeof fetch,
+  );
+  try {
+    await call(cap, "download", {
+      url: "https://files.test/a",
+      path: "a.txt",
+      directory: "data",
+      headers: {
+        Authorization: "Bearer t",
+        "X-Api-Key": "k",
+        Range: "bytes=0-",
+        Host: "evil.test",
+        Cookie: "s=1",
+        Connection: "close",
+        "Transfer-Encoding": "chunked",
+        "Proxy-Authorization": "Basic x",
+        "Sec-Fetch-Site": "none",
+        "X-HTTP-Method-Override": "TRACE",
+        "X-Method-Override": "PATCH",
+      },
+    });
+    assertEquals([...seen[0].keys()].sort(), [
+      "authorization",
+      "range",
+      "x-api-key",
+      "x-method-override",
+    ]);
+    assertEquals(await Deno.readTextFile(join(root, "a.txt")), "ok");
+    assert(isAllowedDownloadHeader("x-http-method", "GET"));
+    assert(!isAllowedDownloadHeader("x-http-method", "get, Connect"));
+    // A malformed headers arg is a validation error, before any request.
+    for (
+      const headers of [
+        "authorization: x",
+        ["a", "b"],
+        { a: 1 },
+        { "bad name": "x" },
+        Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`x-h${i}`, "v"])),
+      ]
+    ) {
+      const n = seen.length;
+      assertEquals(
+        await rejectCode(
+          call(cap, "download", {
+            url: "https://files.test/a",
+            path: "b",
+            directory: "data",
+            headers,
+          }),
+        ),
+        "validation",
+      );
+      assertEquals(seen.length, n);
+    }
+    for (const id of ["", 7, "x".repeat(201)]) {
+      assertEquals(
+        await rejectCode(
+          call(cap, "download", { url: "https://files.test/a", path: "b", directory: "data", id }),
+        ),
+        "validation",
+      );
+    }
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("fs.download: a redirect to another origin drops Authorization (as fetch does); the same origin keeps it", async () => {
+  const seen: Array<[string, string | null]> = [];
+  const { cap, cleanup } = await downloadFixture(
+    ((u: unknown, init?: RequestInit) => {
+      const url = String(u);
+      seen.push([url, new Headers(init?.headers).get("authorization")]);
+      if (url === "https://files.test/start") {
+        return Promise.resolve(new Response(null, { status: 302, headers: { location: "/next" } }));
+      }
+      if (url === "https://files.test/next") {
+        return Promise.resolve(
+          new Response(null, { status: 307, headers: { location: "https://cdn.test/blob" } }),
+        );
+      }
+      return Promise.resolve(new Response("blob"));
+    }) as typeof fetch,
+  );
+  try {
+    await call(cap, "download", {
+      url: "https://files.test/start",
+      path: "r.bin",
+      directory: "data",
+      headers: { authorization: "Bearer t", "x-trace": "1" },
+    });
+    assertEquals(seen, [
+      ["https://files.test/start", "Bearer t"],
+      ["https://files.test/next", "Bearer t"],
+      ["https://cdn.test/blob", null],
+    ]);
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("fs.download: progress events carry the id; a failure's code says what failed", async () => {
+  const { root, cap, cleanup } = await downloadFixture(
+    ((u: unknown) => {
+      const url = String(u);
+      if (url.endsWith("/denied")) {
+        return Promise.resolve(new Response("x".repeat(70_000), { status: 403 }));
+      }
+      if (url.endsWith("/offline")) return Promise.reject(new TypeError("connection refused"));
+      if (url.endsWith("/cut")) {
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new Uint8Array(10));
+            c.error(new TypeError("connection reset"));
+          },
+        });
+        return Promise.resolve(new Response(body));
+      }
+      return Promise.resolve(
+        new Response(new Uint8Array(1000), { headers: { "content-length": "1000" } }),
+      );
+    }) as typeof fetch,
+  );
+  try {
+    const events: Array<[string, unknown]> = [];
+    const c = ctx({ emit: (event, data) => void events.push([event, data]) });
+    const out = await call(
+      cap,
+      "download",
+      { url: "https://files.test/f", path: "f.bin", directory: "data", id: "dl-1" },
+      c,
+    ) as { path: string; bytes: number };
+    assertEquals(out.bytes, 1000);
+    assertEquals(events[0], ["progress", { id: "dl-1", bytes: 0, total: 1000 }]);
+    assert(events.every(([e, d]) => e === "progress" && (d as { id: string }).id === "dl-1"));
+    // Without an id there is nothing to key events on.
+    events.length = 0;
+    await call(
+      cap,
+      "download",
+      { url: "https://files.test/f", path: "g.bin", directory: "data" },
+      c,
+    );
+    assertEquals(events, []);
+
+    const denied = await assertRejects(
+      () =>
+        call(cap, "download", { url: "https://files.test/denied", path: "d", directory: "data" }),
+      DesktopCapError,
+    );
+    assertEquals(denied.code, "download_failed");
+    const data = denied.data as { status: number; body: string };
+    assertEquals([data.status, data.body.length], [403, 64 * 1024]);
+    const dl = (url: string) => call(cap, "download", { url, path: "n.bin", directory: "data" });
+    assertEquals(await rejectCode(dl("https://files.test/offline")), "network");
+    assertEquals(await rejectCode(dl("https://files.test/cut")), "network");
+    assertEquals((await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(), [
+      "f.bin",
+      "g.bin",
+    ]);
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("fs.cancelDownload: stops a running download, answers once the partial file is gone; a taken id is refused", async () => {
+  const started = Promise.withResolvers<void>();
+  const { root, cap, cleanup } = await downloadFixture(
+    ((_u: unknown, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(4096));
+          started.resolve();
+          init?.signal?.addEventListener("abort", () => c.error(init.signal!.reason));
+        },
+      });
+      return Promise.resolve(new Response(body));
+    }) as typeof fetch,
+  );
+  try {
+    const running = call(cap, "download", {
+      url: "https://files.test/slow",
+      path: "sub/slow.bin",
+      directory: "data",
+      id: "slow",
+    });
+    running.catch(() => {});
+    await started.promise;
+    await until(async () => (await listAll(root)).some((n) => n.endsWith(".part")));
+    assertEquals(
+      await rejectCode(
+        call(cap, "download", {
+          url: "https://files.test/x",
+          path: "x",
+          directory: "data",
+          id: "slow",
+        }),
+      ),
+      "exists",
+    );
+    assertEquals(await call(cap, "cancelDownload", { id: "slow" }), { cancelled: true });
+    assertEquals(await listAll(root), ["sub"], "no file and no .part once the cancel answered");
+    assertEquals(await rejectCode(running), "cancelled");
+    // Unknown, finished or malformed ids cancel nothing.
+    assertEquals(await call(cap, "cancelDownload", { id: "slow" }), { cancelled: false });
+    assertEquals(await call(cap, "cancelDownload", {}), { cancelled: false });
+    assertEquals(await rejectCode(call(cap, "cancelDownload", { id: 3 })), "validation");
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("fs.download: the page going away cancels it too (its request's signal)", async () => {
+  const { root, cap, cleanup } = await downloadFixture(
+    ((_u: unknown, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(16));
+          init?.signal?.addEventListener("abort", () => c.error(init.signal!.reason));
+        },
+      });
+      return Promise.resolve(new Response(body));
+    }) as typeof fetch,
+  );
+  try {
+    const page = new AbortController();
+    const running = call(
+      cap,
+      "download",
+      { url: "https://files.test/slow", path: "p.bin", directory: "data" },
+      ctx({ signal: page.signal }),
+    );
+    running.catch(() => {});
+    await until(async () => (await listAll(root)).length > 0);
+    page.abort();
+    assertEquals(await rejectCode(running), "cancelled");
+    assertEquals(await listAll(root), []);
+  } finally {
+    await cleanup();
+  }
+});
+
+/** Every entry name under `dir`, recursively (folders and files). */
+async function listAll(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    out.push(e.name);
+    if (e.isDirectory) out.push(...(await listAll(join(dir, e.name))).map((n) => `${e.name}/${n}`));
+  }
+  return out.sort();
+}
+
+/** Wait until `check()` resolves true, or throw. */
+async function until(check: () => Promise<boolean>, ms = 3000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!(await check())) {
+    if (Date.now() > end) throw new Error("until: timed out");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}

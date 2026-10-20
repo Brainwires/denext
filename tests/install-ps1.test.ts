@@ -558,6 +558,162 @@ Deno.test("install.ps1: -Uninstall removes only what it installed, never a share
   }
 });
 
+/**
+ * Run `body` with install.ps1's functions loaded (everything but the last-line call) and the user
+ * Path store replaced by a variable (`$global:UserPath`, starting at `userPath`), so the Path
+ * logic runs without touching the machine's registry. Prints what `body` writes.
+ */
+async function withInstallerFunctions(userPath: string, body: string): Promise<string> {
+  const harness = `
+$ErrorActionPreference = 'Stop'
+$text = [IO.File]::ReadAllText($env:INSTALLER)
+$text = $text.Substring(0, $text.LastIndexOf('Install-Denext -Uninstall'))
+. ([scriptblock]::Create($text))
+$global:UserPath = $env:FAKE_USER_PATH
+$global:Writes = 0
+$env:Path = 'C:\\Windows\\System32'
+function Get-UserPath { return $global:UserPath }
+function Set-UserPath([string]$value) { $global:UserPath = $value; $global:Writes++ }
+${body}`;
+  return await runPowerShell(harness, { FAKE_USER_PATH: userPath });
+}
+
+/** Run `script` from a temp .ps1 file (`INSTALLER` names install.ps1); its stdout. */
+async function runPowerShell(script: string, env: Record<string, string> = {}): Promise<string> {
+  const shell = await hasPwsh() ? "pwsh" : "powershell";
+  const file = await Deno.makeTempFile({ suffix: ".ps1" });
+  try {
+    await Deno.writeTextFile(file, script);
+    const r = await new Deno.Command(shell, {
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file],
+      env: { INSTALLER: SCRIPT, ...env },
+    }).output();
+    const dec = new TextDecoder();
+    assert(r.success, dec.decode(r.stderr) + dec.decode(r.stdout));
+    return dec.decode(r.stdout).replace(/\r/g, "");
+  } finally {
+    await Deno.remove(file);
+  }
+}
+
+Deno.test(
+  "install.ps1: the user Path gets the bin once, first, with %VARIABLES% kept; Remove takes it out",
+  {
+    ignore: NOT_WINDOWS,
+  },
+  async () => {
+    const out = await withInstallerFunctions(
+      "%USERPROFILE%\\tools;C:\\Other",
+      `
+$bin = 'C:\\Users\\me\\.denext\\bin'
+"add1=$(Add-DenextPath $bin)"
+"user1=$global:UserPath"
+"add2=$(Add-DenextPath "$bin\\")"
+"user2=$global:UserPath"
+"session=$(@(($env:Path -split ';') | Where-Object { $_ -eq $bin }).Count)"
+Remove-DenextPath $bin
+"user3=$global:UserPath"
+"session3=$(@(($env:Path -split ';') | Where-Object { $_ -eq $bin }).Count)"
+"writes=$global:Writes"
+`,
+    );
+    const lines = Object.fromEntries(out.trim().split("\n").map((l) => l.split(/=(.*)/s, 2)));
+    assertEquals(lines.add1, "True");
+    assertEquals(lines.user1, "C:\\Users\\me\\.denext\\bin;%USERPROFILE%\\tools;C:\\Other");
+    assertEquals(lines.add2, "False", "a second run (or a trailing slash) adds nothing");
+    assertEquals(lines.user2, lines.user1);
+    assertEquals(lines.session, "1", "this session's Path has it, once");
+    assertEquals(lines.user3, "%USERPROFILE%\\tools;C:\\Other", "%USERPROFILE% is never expanded");
+    assertEquals(lines.session3, "0");
+    assertEquals(lines.writes, "2");
+  },
+);
+
+Deno.test("install.ps1: -NoModifyPath / -ModifyPath / DENEXT_MODIFY_PATH / DENEXT_NO_PATH", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const out = await withInstallerFunctions(
+    "",
+    `
+"default=$(Test-ModifyPath)"
+"no=$(Test-ModifyPath -NoModifyPath)"
+"yes=$(Test-ModifyPath -ModifyPath)"
+$env:DENEXT_MODIFY_PATH = '0'; "env0=$(Test-ModifyPath)"; "env0flag=$(Test-ModifyPath -ModifyPath)"
+$env:DENEXT_MODIFY_PATH = 'all'; "envall=$(Test-ModifyPath)"
+$env:DENEXT_MODIFY_PATH = ''; $env:DENEXT_NO_PATH = '1'; "nopath=$(Test-ModifyPath)"
+$env:DENEXT_MODIFY_PATH = 'sometimes'
+try { Test-ModifyPath | Out-Null; "bad=accepted" } catch { "bad=$($_.Exception.Message)" }
+`,
+  );
+  const lines = Object.fromEntries(out.trim().split("\n").map((l) => l.split(/=(.*)/s, 2)));
+  assertEquals(lines.default, "True");
+  assertEquals(lines.no, "False");
+  assertEquals(lines.yes, "True");
+  assertEquals(lines.env0, "False");
+  assertEquals(lines.env0flag, "True", "a flag beats the variable");
+  assertEquals(lines.envall, "True");
+  assertEquals(lines.nopath, "False");
+  assertStringIncludes(lines.bad, "DENEXT_MODIFY_PATH=sometimes");
+});
+
+Deno.test("install.ps1: Get-UserPath reads the stored value unexpanded", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  // Read-only: compares the function with the registry's raw value, changes nothing.
+  const out = await runPowerShell(`
+$text = [IO.File]::ReadAllText($env:INSTALLER)
+. ([scriptblock]::Create($text.Substring(0, $text.LastIndexOf('Install-Denext -Uninstall'))))
+$raw = (Get-Item 'HKCU:\\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+if ((Get-UserPath) -ceq "$raw") { 'same' } else { 'different' }`);
+  assertEquals(out.trim(), "same");
+});
+
+Deno.test("install.ps1: the flags are parameters of the script and of Install-Denext", async () => {
+  const script = await Deno.readTextFile(SCRIPT);
+  assertStringIncludes(
+    script,
+    "param([switch]$Uninstall, [switch]$ModifyPath, [switch]$NoModifyPath)",
+  );
+  assert(
+    script.trimEnd().endsWith(
+      "Install-Denext -Uninstall:$Uninstall -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath",
+    ),
+  );
+  // The user Path is read raw and written as REG_EXPAND_SZ, never round-tripped expanded.
+  assertStringIncludes(script, "DoNotExpandEnvironmentNames");
+  assertStringIncludes(script, "RegistryValueKind]::ExpandString");
+  assert(!script.includes("GetEnvironmentVariable('Path', 'User')"));
+});
+
+Deno.test("install.ps1: the archive streams through HttpClient with a throttled progress bar", async () => {
+  // Invoke-WebRequest's own progress UI makes Windows PowerShell 5.1 download many times slower.
+  const script = await Deno.readTextFile(SCRIPT);
+  assertStringIncludes(script, 'return Save-Download "$base/$version/$asset" $zip');
+  assertStringIncludes(script, "ResponseHeadersRead");
+  assertStringIncludes(script, "$timer.ElapsedMilliseconds -ge 250");
+  assertStringIncludes(script, "-PercentComplete $pct");
+  assert(!script.includes("-OutFile $zip"), "the archive never goes through Invoke-WebRequest");
+});
+
+Deno.test("install.ps1: Write-DownloadProgress formats MB and percent", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const out = await runPowerShell(`
+$text = [IO.File]::ReadAllText($env:INSTALLER)
+. ([scriptblock]::Create($text.Substring(0, $text.LastIndexOf('Install-Denext -Uninstall'))))
+function Write-Progress { param($Activity, $Status, $PercentComplete, [switch]$Completed)
+  if ($Completed) { 'done' } else { "$Status|$PercentComplete" } }
+Write-DownloadProgress 35000000 70000000
+Write-DownloadProgress 1500000 $null
+Write-DownloadProgress 0 0 -Completed
+"interactive=$(Test-InteractiveConsole)"`);
+  const lines = out.trim().split("\n");
+  assertEquals(lines[0].replace(/,/g, "."), "35.0 MB / 70.0 MB (50%)|50");
+  assertEquals(lines[1].replace(/,/g, "."), "1.5 MB|");
+  assertEquals(lines[2], "done");
+  assertEquals(lines[3], "interactive=False", "a redirected run draws nothing");
+});
+
 Deno.test("docs: the served install.ps1 matches the one in scripts/", async () => {
   // `irm https://denext.dev/install.ps1 | iex` serves site/public/install.ps1.
   assertEquals(

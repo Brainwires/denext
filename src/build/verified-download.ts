@@ -60,6 +60,73 @@ export interface StreamHashedErrors {
   readonly interrupted: (size: number, cause: unknown) => Error;
 }
 
+/** A download's progress line ({@linkcode downloadProgress}). */
+export interface DownloadProgress {
+  /** The bytes received so far. */
+  update(bytes: number): void;
+  /** Clear the line (the download ended, either way). */
+  done(): void;
+}
+
+/** The seams of {@linkcode downloadProgress} (all default to the process's stderr and clock). */
+export interface DownloadProgressOptions {
+  /** Whether stderr is a terminal (no line otherwise: a log or CI gets nothing). */
+  readonly isTerminal?: () => boolean;
+  /** Write raw text to stderr. */
+  readonly write?: (text: string) => void;
+  /** Milliseconds now. */
+  readonly now?: () => number;
+  /** The least time between two redraws, in ms (default 100). */
+  readonly intervalMs?: number;
+}
+
+/** `12.3 MB` (decimal megabytes, one decimal). */
+function megabytes(bytes: number): string {
+  return `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
+/**
+ * One self-redrawing stderr line for a download — `  <what>: 12.3 / 69.6 MB (17%)`, or just the
+ * bytes when the total is unknown — redrawn at most every 100 ms and cleared when it ends. Silent
+ * when stderr is not a terminal, so logs and CI output stay clean.
+ *
+ * @param what What is being downloaded (`denext's Deno toolchain 2.9.7-denext.22`).
+ * @param total Its size in bytes, when known.
+ * @param options Seams for tests.
+ * @returns The reporter.
+ */
+export function downloadProgress(
+  what: string,
+  total: number | undefined,
+  options: DownloadProgressOptions = {},
+): DownloadProgress {
+  const terminal = (options.isTerminal ?? (() => Deno.stderr.isTerminal()))();
+  const encoder = new TextEncoder();
+  const write = options.write ?? ((t: string) => void Deno.stderr.writeSync(encoder.encode(t)));
+  const now = options.now ?? (() => Date.now());
+  const interval = options.intervalMs ?? 100;
+  let last = -Infinity;
+  let drawn = false;
+  return {
+    update(bytes) {
+      if (!terminal) return;
+      const t = now();
+      const finished = total !== undefined && bytes >= total;
+      if (t - last < interval && !finished) return;
+      last = t;
+      const amount = total
+        ? `${megabytes(bytes)} / ${megabytes(total)} (${Math.floor((bytes / total) * 100)}%)`
+        : megabytes(bytes);
+      write(`\r\x1b[2K  ${what}: ${amount}`);
+      drawn = true;
+    },
+    done() {
+      if (drawn) write("\r\x1b[2K");
+      drawn = false;
+    },
+  };
+}
+
 /**
  * Stream `body` into the NEW file `dest` (it must not exist), hashing it as it goes and refusing it
  * as soon as it holds more than `maxSize` bytes.
@@ -68,6 +135,7 @@ export interface StreamHashedErrors {
  * @param dest The file to create.
  * @param maxSize The most bytes accepted.
  * @param errors The refusals' wording.
+ * @param progress Told the running byte count after each chunk (a {@linkcode downloadProgress}).
  * @returns The byte count and SHA-256.
  */
 export async function streamHashed(
@@ -75,6 +143,7 @@ export async function streamHashed(
   dest: string,
   maxSize: number,
   errors: StreamHashedErrors,
+  progress?: (bytes: number) => void,
 ): Promise<{ size: number; sha256: string }> {
   const hash = createHash("sha256");
   let size = 0;
@@ -86,6 +155,7 @@ export async function streamHashed(
       if (size > maxSize) throw (refused = errors.tooLarge());
       hash.update(chunk);
       for (let off = 0; off < chunk.byteLength;) off += await file.write(chunk.subarray(off));
+      progress?.(size);
     }
   } catch (err) {
     if (err === refused) throw err;

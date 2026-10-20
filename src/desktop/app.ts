@@ -199,6 +199,24 @@ export interface AppCapabilities {
   readonly fileChooser: "portal" | "gtk" | PlatformUnknown | null;
   /** Why GTK's, when `fileChooser` is `"gtk"` (the runtime's reason), or `null`. */
   readonly fileChooserReason: string | null;
+  /**
+   * Linux: the compositor blurs behind translucent windows, KWin's Blur effect on KDE Plasma:
+   * `"kwin-wayland"` or `"kwin-x11"`; `null` when it doesn't (and on macOS / Windows). Probed on
+   * every call (the effect can be turned on and off). The WebView backend can put it behind a
+   * window; CEF can't. `"unknown"` before runtime 3.0.0-rc.1.
+   */
+  readonly windowBlur: "kwin-wayland" | "kwin-x11" | PlatformUnknown | null;
+  /** Linux, when `windowBlur` is `null`: why (the runtime's reason), or `null`. */
+  readonly windowBlurReason: string | null;
+  /**
+   * Linux: `"security-keys"` when passkeys with USB security keys work natively (the runtime's
+   * libwebauthn library is beside its host and can list HID devices); `null` when they don't, and
+   * on macOS / Windows (their OS passkey API; see `passkeysSupported()`). `"unknown"` before
+   * runtime 3.0.0-rc.1, where a Linux window signs in with a passkey through the browser.
+   */
+  readonly passkeys: "security-keys" | PlatformUnknown | null;
+  /** Linux, when `passkeys` is `null`: why (the runtime's reason), or `null`. */
+  readonly passkeysReason: string | null;
   /** {@linkcode bounce} works. */
   readonly bounce: boolean;
   /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
@@ -249,8 +267,8 @@ const SECRET_STATES = [
  * What the application menu, tray and Dock can do on this OS and runtime, plus the session facts
  * the runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the
  * tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);
- * the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12). A fact an older runtime
- * cannot report reads `"unknown"`.
+ * the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and
+ * native Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads `"unknown"`.
  *
  * @returns The capabilities.
  */
@@ -281,6 +299,10 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     sandboxReason: text(raw, "sandboxReason"),
     fileChooser: oneOf(raw, "fileChooser", ["portal", "gtk", null] as const),
     fileChooserReason: text(raw, "fileChooserReason"),
+    windowBlur: oneOf(raw, "windowBlur", ["kwin-wayland", "kwin-x11", null] as const),
+    windowBlurReason: text(raw, "windowBlurReason"),
+    passkeys: oneOf(raw, "passkeys", ["security-keys", null] as const),
+    passkeysReason: text(raw, "passkeysReason"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
   };

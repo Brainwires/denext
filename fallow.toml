@@ -35,6 +35,7 @@ ignoreDependencies = [
   "playwright-core", # deno.json: npm:playwright-core@1.63.0 — test-only: Chromium + WebKit in tests/e2e/spa-shell.e2e.test.ts
   "@supabase/supabase-js", # deno.json: npm:@supabase/supabase-js@2.117.2 — test-only: the REST and Storage parity suites
   "graphql-ws", # deno.json: npm:graphql-ws@6.3.0 — test-only: the real client against @denext/graphql's WebSocket transport
+  "@prisma/driver-adapter-utils", # deno.json: npm:@prisma/driver-adapter-utils@6.19.3 — test-only: the contract denext/prisma-adapter restates (tests/prisma-adapter-types.test.ts)
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",

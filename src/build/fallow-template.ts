@@ -146,13 +146,20 @@ const PRE_COMMIT_HOOK = `#!/bin/sh
 # nothing has to be installed globally.
 set -e
 
-# git runs hooks under /bin/sh, whose PATH often lacks ~/.deno/bin.
-if command -v deno >/dev/null 2>&1; then
+# \`denext task\` runs the task on denext's own Deno toolchain; a plain \`deno\` is the fallback
+# on a machine without denext. git runs hooks under /bin/sh, whose PATH often lacks
+# ~/.denext/bin and ~/.deno/bin.
+if command -v denext >/dev/null 2>&1; then
+  DENO=denext
+elif [ -x "$HOME/.denext/bin/denext" ]; then
+  DENO="$HOME/.denext/bin/denext"
+elif command -v deno >/dev/null 2>&1; then
   DENO=deno
 elif [ -x "$HOME/.deno/bin/deno" ]; then
   DENO="$HOME/.deno/bin/deno"
 else
-  echo "pre-commit: deno not found. Install it (https://deno.com) or add ~/.deno/bin to PATH." >&2
+  echo "pre-commit: neither denext nor deno found. Install denext (https://denext.dev) or add" >&2
+  echo "  ~/.denext/bin to PATH." >&2
   exit 1
 fi
 

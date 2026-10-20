@@ -36,15 +36,36 @@ deno install -A -g -n denext jsr:@denext/denext/cli
 denext toolchain install   # then: the toolchain, and every verb cached for offline use`}
       </Code>
       <p>
+        A script run through a pipe can&apos;t change the PATH of the shell that started it, so{" "}
+        <code>install.sh</code>{" "}
+        adds one marked block (<code># &gt;&gt;&gt; denext &gt;&gt;&gt;</code>) to your login
+        shell&apos;s startup file instead — <code>~/.zshrc</code>, <code>~/.bashrc</code>{" "}
+        (plus the login file bash reads on macOS), fish&apos;s{" "}
+        <code>conf.d/denext.fish</code>, nushell&apos;s <code>env.nu</code>, or{" "}
+        <code>~/.profile</code>{" "}
+        — and prints the one line that puts denext on PATH in the current shell. On a terminal it
+        asks first, and offers your other installed shells too; a re-run updates the block, never
+        adds a second. Flags go after <code>sh -s --</code>: <code>--modify-path</code>{" "}
+        (the login shell, the default without a terminal), <code>--modify-path=all</code>,{" "}
+        <code>--no-modify-path</code> (or <code>DENEXT_MODIFY_PATH=1 | all | 0</code>), and{" "}
+        <code>--uninstall</code>, which removes the binary and every block it wrote:
+      </p>
+      <Code lang="sh">
+        {`curl -fsSL https://denext.dev/install.sh | sh -s -- --no-modify-path
+curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
+      </Code>
+      <p>
         After installing the binary, the installer runs <code>denext toolchain install</code>{" "}
         — denext's own Deno build, downloaded into Deno's cache and SHA-256-verified — and, only
         when no <code>deno</code> is on your PATH, <code>denext toolchain link</code>, so{" "}
         <code>deno</code> runs that toolchain too (a link at{" "}
-        <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). It never replaces a{" "}
-        <code>deno</code> you have. <code>DENEXT_NO_DENO_LINK=1</code> skips the link and{" "}
-        <code>DENEXT_NO_TOOLCHAIN=1</code>{" "}
+        <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). A <code>deno</code>{" "}
+        you have is never replaced, and never used by denext either.{" "}
+        <code>DENEXT_NO_DENO_LINK=1</code> skips the link and <code>DENEXT_NO_TOOLCHAIN=1</code>
+        {" "}
         both steps; a failed download (offline) is one warning, and the binary fetches the toolchain
-        on the first command that needs it instead. Every verb that runs Deno —{" "}
+        on the first command that needs it instead — a command that can&apos;t get it stops with the
+        fix rather than run another Deno. Every verb that runs Deno —{" "}
         <code>
           denext task …
         </code>, <code>denext test</code>, <code>denext fmt</code>,{" "}
@@ -104,7 +125,9 @@ denext toolchain install   # then: the toolchain, and every verb cached for offl
         emulation, for a release that predates it), verifies it the same way, installs{" "}
         <code>denext.exe</code> to <code>%USERPROFILE%\.denext\bin</code> and adds that to your user
         {" "}
-        <code>Path</code> (<code>DENEXT_NO_PATH=1</code> leaves it alone). Uninstall with{" "}
+        <code>Path</code> and to the current session&apos;s, so <code>denext</code>{" "}
+        works in that window at once (<code>-NoModifyPath</code> or{" "}
+        <code>DENEXT_MODIFY_PATH=0</code> leaves both alone). Uninstall with{" "}
         <code>&amp; ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall</code>.
         The Homebrew formula, the Scoop manifest and the winget manifests are generated from each
         stable release&apos;s checksums and published to the <code>Brainwires/homebrew-denext</code>

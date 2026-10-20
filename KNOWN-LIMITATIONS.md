@@ -281,8 +281,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
 - **Prisma auto-migration wires SQLite, Postgres (CockroachDB too) and MySQL only:** a
   `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
-  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). Postgres runs over npm
-  `pg`, not denext's `Deno.SQL`, whose results carry no column types for a Prisma adapter.
+  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). SQLite and Postgres
+  run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
+  3.0.0-rc.1 or later; on an earlier runtime migrate wires Prisma's npm adapters
+  (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
+  and MySQL always take theirs.
+- **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
+  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query), and reads `money` with
+  two fractional digits (`lc_monetary` `C` / `en_US`).
 
 ### Fresh and Preact
 
@@ -350,8 +356,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   yet run on a device in the background. Android's WorkManager stops a job after about ten
   minutes: a download resumes from its `.part` file on the next run, an upload starts over; uploads
   cannot pause anywhere. iOS may defer a background transfer started while the app is already in
-  the background. On the web a transfer lasts as long as the page, and a Deno Desktop
-  `downloadToFile` reports no progress.
+  the background. On the web a transfer lasts as long as the page, and a Deno Desktop download
+  cannot pause (`pauseFileTransfer` rejects `unsupported`; cancel it and start it again).
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
@@ -455,7 +461,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   sends the app a forged callback is refused: each sign-in's redirect carries a per-session
   `denext_nonce` the callback must bring back, so the forgery protection does not depend on Clerk
   binding its `rotating_token_nonce` to the client.
-- **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement
+- **Native passkeys:** on Linux (no OS API) only USB security keys, under runtime 3.0.0-rc.1+
+  (libwebauthn; no platform authenticator, the browser otherwise); macOS needs the
+  associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted

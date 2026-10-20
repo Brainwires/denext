@@ -9,6 +9,7 @@
 // The same stack in headless Chromium: tests/e2e/desktop-bridge-browser.e2e.test.ts.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
+import { join } from "@std/path";
 import { desktopExtension, isDesktopBridgeError, onDesktopEvent } from "../src/desktop/client.ts";
 import {
   desktopRpc,
@@ -16,8 +17,19 @@ import {
   resetDesktopBridgeForTesting,
 } from "../src/desktop/bridge-client.ts";
 import { echoCapability } from "../src/desktop/caps/echo.ts";
+import { fsCapability } from "../src/desktop/caps/fs.ts";
 import type { DesktopCapability } from "../src/desktop/extension.ts";
 import { readClipboard } from "../src/mobile/clipboard.ts";
+import {
+  cancelFileTransfer,
+  FileTransferError,
+  type FileTransferEvent,
+  fileTransfers,
+  onFileTransfer,
+  pauseFileTransfer,
+  resetFileTransfersForTesting,
+} from "../src/mobile/file-transfer.ts";
+import { downloadToFile } from "../src/mobile/filesystem.ts";
 import {
   type BridgeServer,
   injectedGlobal,
@@ -373,3 +385,213 @@ Deno.test(
     }
   },
 );
+
+// --- downloadToFile over the real wire: headers, abort, progress, errors --------------------
+
+/** The process's own `fetch`, captured before a page shim replaces the global. */
+const realFetch = globalThis.fetch;
+
+/** A file server on loopback that wants `authorization: Bearer s3cret` for `/secret.bin`. */
+function startFileServer() {
+  const body = new Uint8Array(256 * 1024).map((_, i) => i % 251);
+  const gate = Promise.withResolvers<void>();
+  const state = { slowStarted: false, slowCancelled: false, sawAuth: [] as (string | null)[] };
+  const controller = new AbortController();
+  const { promise: listening, resolve } = Promise.withResolvers<number>();
+  const server = Deno.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: controller.signal,
+    onListen: ({ port }) => resolve(port),
+  }, (req) => {
+    const path = new URL(req.url).pathname;
+    state.sawAuth.push(req.headers.get("authorization"));
+    if (req.headers.get("authorization") !== "Bearer s3cret") {
+      return new Response("who are you?", { status: 401 });
+    }
+    if (path === "/secret.bin") {
+      return new Response(body, { headers: { "content-length": String(body.byteLength) } });
+    }
+    if (path === "/slow.bin") {
+      // The first 64 KiB, then nothing until the test releases the gate (or the client goes away).
+      const stream = new ReadableStream<Uint8Array>({
+        async pull(c) {
+          if (!state.slowStarted) {
+            state.slowStarted = true;
+            c.enqueue(body.subarray(0, 64 * 1024));
+            return;
+          }
+          await gate.promise;
+          c.enqueue(body.subarray(64 * 1024));
+          c.close();
+        },
+        cancel() {
+          state.slowCancelled = true;
+        },
+      });
+      return new Response(stream, { headers: { "content-length": String(body.byteLength) } });
+    }
+    return new Response("not here", { status: 404 });
+  });
+  return {
+    body,
+    state,
+    release: () => gate.resolve(),
+    port: listening,
+    async close() {
+      gate.resolve();
+      controller.abort();
+      await server.finished;
+    },
+  };
+}
+
+/** Run `fn` as the page of a runtime whose `fs` downloads `https://files.test/*` from `files`. */
+async function withDownloads(
+  fn: (ctx: { root: string; files: ReturnType<typeof startFileServer> }) => Promise<void>,
+): Promise<void> {
+  const files = startFileServer();
+  const port = await files.port;
+  const root = await Deno.makeTempDir({ prefix: "denext-wire-dl-" });
+  const fs = fsCapability({
+    dirs: { data: root, cache: root, documents: root },
+    read: new Set(["$APPDATA"]),
+    write: new Set(["$APPDATA"]),
+    // A public name for the loopback server (the runtime refuses loopback targets).
+    resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    fetch: ((input: string | URL | Request, init?: RequestInit) =>
+      realFetch(
+        String(input).replace("https://files.test", `http://127.0.0.1:${port}`),
+        init,
+      )) as typeof fetch,
+  });
+  try {
+    await withPage([fs], () => fn({ root, files }));
+  } finally {
+    await files.close();
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+/** Every file name under `dir`, recursively. */
+async function filesUnder(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    if (e.isDirectory) {
+      out.push(...(await filesUnder(join(dir, e.name))).map((n) => `${e.name}/${n}`));
+    } else out.push(e.name);
+  }
+  return out.sort();
+}
+
+Deno.test({
+  ...TEST,
+  name: "wire: downloadToFile sends the page's headers (an authenticated download) with progress",
+}, async () => {
+  await withDownloads(async ({ root, files }) => {
+    const progress: Array<{ bytes: number; total: number | null }> = [];
+    const done = await downloadToFile("https://files.test/secret.bin", "dl/secret.bin", {
+      id: "secret",
+      headers: { authorization: "Bearer s3cret", host: "evil.test", cookie: "a=b" },
+      onProgress: ({ id, kind, bytes, total }) => {
+        assertEquals([id, kind], ["secret", "download"]);
+        progress.push({ bytes, total });
+      },
+    });
+    assertEquals(
+      await Deno.realPath(done.path),
+      await Deno.realPath(join(root, "dl", "secret.bin")),
+    );
+    assertEquals(await Deno.readFile(join(root, "dl", "secret.bin")), files.body);
+    assertEquals(files.state.sawAuth, ["Bearer s3cret"]);
+    // At the end, the whole size; never more than that on the way.
+    assertEquals(progress.at(-1), { bytes: files.body.byteLength, total: files.body.byteLength });
+    assert(progress.every((p) => p.bytes <= files.body.byteLength));
+  });
+});
+
+Deno.test({
+  ...TEST,
+  name:
+    "wire: aborting downloadToFile's signal stops the runtime's download and drops the partial file",
+}, async () => {
+  await withDownloads(async ({ root, files }) => {
+    const abort = new AbortController();
+    const reason = new Error("the user closed the dialog");
+    const run = downloadToFile("https://files.test/slow.bin", "dl/slow.bin", {
+      headers: { authorization: "Bearer s3cret" },
+      signal: abort.signal,
+    });
+    run.catch(() => {});
+    await until(() => files.state.slowStarted, 5_000);
+    abort.abort(reason);
+    const settled = await Promise.race([
+      run.then(() => "resolved", (err) => err),
+      new Promise((r) => setTimeout(() => r("still running"), 3_000)),
+    ]);
+    assertEquals(settled, reason, "the promise rejects with the signal's reason");
+    await until(() => files.state.slowCancelled, 3_000);
+    // Nothing is left behind: no file and no `.part`.
+    assertEquals(await filesUnder(root), []);
+  });
+});
+
+Deno.test({
+  ...TEST,
+  name:
+    "wire: a non-2xx download rejects with a FileTransferError (HTTP, status, body), as on mobile",
+}, async () => {
+  await withDownloads(async ({ root }) => {
+    const err = await assertRejects(
+      () => downloadToFile("https://files.test/secret.bin", "nope.bin", { id: "no-auth" }),
+      FileTransferError,
+    );
+    assertEquals([err.code, err.id, err.status, err.body], [
+      "HTTP",
+      "no-auth",
+      401,
+      "who are you?",
+    ]);
+    assertEquals(await filesUnder(root), []);
+  });
+});
+
+Deno.test({
+  ...TEST,
+  name:
+    "wire: a desktop download is a tracked transfer: listed with progress, cancelFileTransfer stops it",
+}, async () => {
+  resetFileTransfersForTesting();
+  await withDownloads(async ({ root, files }) => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    const run = downloadToFile("https://files.test/slow.bin", "dl/slow.bin", {
+      id: "wire-slow",
+      headers: { authorization: "Bearer s3cret" },
+    });
+    run.catch(() => {});
+    await until(() => files.state.slowStarted, 5_000);
+    // The runtime's first progress event (0 of 256 KiB) reaches the record and the listeners.
+    await until(() => events.some((e) => e.type === "progress" && e.total !== null), 5_000);
+    const [listed] = await fileTransfers();
+    assertEquals([listed.id, listed.kind, listed.state, listed.total], [
+      "wire-slow",
+      "download",
+      "running",
+      files.body.byteLength,
+    ]);
+    const paused = await pauseFileTransfer("wire-slow").catch((e) => e);
+    assert(isDesktopBridgeError(paused));
+    assertEquals(paused.code, "unsupported");
+    assert(await cancelFileTransfer("wire-slow"));
+    const err = await assertRejects(() => run, FileTransferError);
+    assertEquals([err.code, err.id], ["CANCELLED", "wire-slow"]);
+    await until(() => files.state.slowCancelled, 3_000);
+    assertEquals((await fileTransfers())[0].state, "cancelled");
+    assertEquals(events.at(-1)?.type, "cancelled");
+    // Nothing is left behind: no file and no `.part`.
+    assertEquals(await filesUnder(root), []);
+    stop();
+  });
+  resetFileTransfersForTesting();
+});

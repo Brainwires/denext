@@ -135,6 +135,12 @@ export interface DesktopRpcOptions {
    * `false` waits as long as the call takes (a native dialog the user is looking at).
    */
   readonly timeoutMs?: number | false;
+  /**
+   * Aborting it abandons the call: the request is dropped and the call rejects with the
+   * signal's reason. (A method that waits on the page also stops in the runtime when its request
+   * goes away.)
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** A runtime message as the page keeps it: a string, trimmed to a bounded length. */
@@ -183,9 +189,9 @@ function fromEnvelope<O>(cap: string, method: string, status: number, body: unkn
  * @param cap The capability (`"secureStore"`, or an extension's name).
  * @param method The method.
  * @param args The arguments (JSON-serialisable).
- * @param options `timeoutMs`.
+ * @param options `timeoutMs` and `signal`.
  * @returns The method's result. Rejects with a {@linkcode DesktopBridgeError}; off desktop
- * with `unavailable`, before any request is made.
+ * with `unavailable`, before any request is made; with the signal's reason once `signal` aborts.
  */
 export async function desktopRpc<O = unknown>(
   cap: string,
@@ -199,9 +205,16 @@ export async function desktopRpc<O = unknown>(
   }
   const body = encodeBody(cap, method, args);
   const timeout = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
+  const { signal } = options;
+  if (signal?.aborted) throw signal.reason;
   const abort = new AbortController();
   const timer = timeout === false ? undefined : setTimeout(() => abort.abort(), timeout);
-  const timedOut = () => desktopError(cap, method, "timeout", `no answer in ${timeout} ms`);
+  const onAbort = () => abort.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const timedOut = () =>
+    signal?.aborted
+      ? signal.reason
+      : desktopError(cap, method, "timeout", `no answer in ${timeout} ms`);
   try {
     let res: Response;
     try {
@@ -232,6 +245,7 @@ export async function desktopRpc<O = unknown>(
     return fromEnvelope<O>(cap, method, res.status, parsed);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 

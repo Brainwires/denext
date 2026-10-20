@@ -350,9 +350,11 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
    (`~/.denext/bin`; checksum-verified; `DENEXT_VERSION` picks a release). The installer then
    runs `denext toolchain install`, and — only when no `deno` is on your PATH — `denext
    toolchain link`, so `deno` is that toolchain too (`DENEXT_NO_DENO_LINK=1` skips the link,
-   `DENEXT_NO_TOOLCHAIN=1` both; an existing `deno` is never replaced). On Windows,
-   `irm https://denext.dev/install.ps1 | iex` in PowerShell does the same per-user, no admin
-   (`%USERPROFILE%\.denext\bin`, added to your user `Path`; uninstall with
+   `DENEXT_NO_TOOLCHAIN=1` both; an existing `deno` is never replaced). It adds `~/.denext/bin`
+   to PATH in your shell's startup file (one marked block; it asks on a terminal;
+   `sh -s -- --no-modify-path` or `--modify-path=all` choose, `--uninstall` removes it all). On
+   Windows, `irm https://denext.dev/install.ps1 | iex` in PowerShell does the same per-user, no
+   admin (`%USERPROFILE%\.denext\bin`, added to your user `Path` and the current session's; uninstall with
    `& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall`; Windows on Arm
    gets a native Arm64 binary). Package managers: `brew install brainwires/denext/denext`
    (Homebrew, macOS and Linux), `scoop bucket add denext https://github.com/Brainwires/scoop-denext`

@@ -1030,8 +1030,9 @@ cache uses Deno's built-in `node:sqlite`.)
   SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
   The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and
   links it as `deno` only when none is on `PATH`), and every child the CLI starts finds it first
-  on `PATH`. `denext toolchain install|status|path|link|unlink`; `DENEXT_DENO=stock` opts out,
-  and a failed download falls back to stock Deno with one warning. See
+  on `PATH`. `denext toolchain install|status|path|link|unlink`, and `uninstall <version>|--all`
+  / `prune` to remove cached versions with the space freed; `DENEXT_DENO=stock` opts out,
+  and a toolchain that can't be had stops the command with the fix (never another Deno). See
   [the toolchain](https://denext.dev/docs/toolchain). — `src/cli/self-exec.ts`,
   `src/build/deno-executable.ts`.
 - **Every Deno verb through `denext`** — a verb denext doesn't define (`compile`, `run`, `x`,

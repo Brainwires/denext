@@ -9,6 +9,7 @@ import { join } from "@std/path";
 import {
   childToolchainMarker,
   entrypointArg,
+  handsToolchainToChildren,
   isStandaloneBinary,
   legacyAbortActive,
   maybeReexecPinned as reexecPinned,
@@ -359,6 +360,8 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
       : undefined,
     execPath: Deno.execPath(),
     pids: { pid: Deno.pid, ppid: Deno.ppid },
+    // A verb that runs no project code still hands the toolchain to the `deno` it spawns.
+    handOff: handsToolchainToChildren(command, ctx.positionals[0], standalone),
   });
 }
 

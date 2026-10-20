@@ -38,7 +38,7 @@ import {
   type DesktopRuntimeStatus,
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
-import { denoReleaseVersion } from "./deno-version.ts";
+import { compareDenoVersions, denoReleaseVersion } from "./deno-version.ts";
 import {
   CEF_SIGNING_FIX,
   cefCertificateProblem,
@@ -225,15 +225,18 @@ export interface DesktopDoctorOptions {
 const PLATFORM_FEATURES_API = 45;
 
 /**
- * The runtime release (`2.9.7-denext.N`) that brought Linux notification cold starts, scheduled
- * notifications posted while the app is closed and launcher badges.
+ * The runtime release that brought Linux notification cold starts, scheduled notifications posted
+ * while the app is closed and launcher badges.
  */
-const LINUX_NOTIFICATIONS_RELEASE = 11;
+const LINUX_NOTIFICATIONS_RELEASE = "2.9.7-denext.11";
 
-/** `N` of a `…-denext.N` runtime version, or `null`. */
-function runtimeRelease(version: unknown): number | null {
-  const m = typeof version === "string" ? /-denext\.(\d+)$/.exec(version) : null;
-  return m ? Number(m[1]) : null;
+/**
+ * Whether the pinned runtime `version` is `release` or later, by semver (the runtime's own
+ * `3.0.0-rc.N` sorts after every `2.9.7-denext.N`).
+ */
+function runtimeAtLeast(version: unknown, release: string): boolean {
+  return typeof version === "string" && /^\d+\.\d+\.\d+/.test(version) &&
+    compareDenoVersions(version, release) >= 0;
 }
 
 /** One D-Bus call's bound. */
@@ -927,10 +930,10 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
   if (s.deno.found === null || denoReleaseVersion(s.deno.found) !== s.deno.required) {
     add(
       "error",
-      `the runtime ${s.version} needs Deno ${s.deno.required} exactly; \`deno\` is ` +
-        `${s.deno.found ?? "not found"}`,
+      `the runtime ${s.version} needs Deno ${s.deno.required} exactly (stock, or denext's ` +
+        `Deno toolchain built from it); \`deno\` is ${s.deno.found ?? "not found"}`,
       `deno upgrade --version ${s.deno.required} (or point DENO_BIN at a Deno ` +
-        `${s.deno.required} binary)`,
+        `${s.deno.required} binary, or at denext's Deno toolchain: \`denext toolchain path\`)`,
     );
   }
   if (s.cache === "unpinned") {
@@ -1265,12 +1268,12 @@ export async function runDesktopDoctor(
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const linuxChecks = options.linux ?? os === "linux";
   const laufeyApiVersion = (pin as { laufeyApiVersion?: number }).laufeyApiVersion ?? 0;
-  const release = runtimeRelease((pin as { version?: unknown }).version);
+  const pinVersion = (pin as { version?: unknown }).version;
   const runtime: DoctorRuntime = {
     status: await options.runtimeStatus(),
     laufeyApiVersion,
     platformFeatures: laufeyApiVersion >= PLATFORM_FEATURES_API,
-    linuxNotifications: release !== null && release >= LINUX_NOTIFICATIONS_RELEASE,
+    linuxNotifications: runtimeAtLeast(pinVersion, LINUX_NOTIFICATIONS_RELEASE),
   };
   const linux = linuxChecks
     ? await probeLinuxSession(

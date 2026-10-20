@@ -16,8 +16,10 @@ import {
   plistEntry,
   plistTopDict,
   withManifestMetaData,
+  withPlistDefault,
   withPlistString,
 } from "./mobile-native-config.ts";
+import { isLocalNetworkHost } from "../mobile/local-network.ts";
 import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "./ota-native-templates.ts";
 import { OTA_PRIVACY, writePrivacyManifests } from "./mobile-privacy.ts";
 import {
@@ -238,6 +240,30 @@ function notePartialUpgrade(inst: Installer, platform: string, since: ReportMark
   );
 }
 
+/** The `NSLocalNetworkUsageDescription` add-ota declares for a LAN origin when the app has none. */
+export const OTA_LOCAL_NETWORK_USAGE = "Downloads app updates from a server on your local network.";
+
+/**
+ * When a pinned origin is on the local network (RFC 1918, link-local, `.local`), declare
+ * `NSLocalNetworkUsageDescription` in Info.plist: without it iOS 14+ never shows its Local
+ * Network prompt and fails every request to that server with -1009. An app's own description is
+ * kept; a plist with no place for it is a manual step.
+ */
+async function declareLocalNetwork(inst: Installer, path: string): Promise<void> {
+  const lan = (inst.opts.origins ?? []).some((o) => isLocalNetworkHost(new URL(o).hostname));
+  if (!lan) return;
+  const text = await inst.read(path);
+  const next = text === undefined
+    ? null
+    : withPlistDefault(text, "NSLocalNetworkUsageDescription", OTA_LOCAL_NETWORK_USAGE);
+  if (next === null) {
+    inst.report.manual.push(
+      `${inst.rel(path)}: add the string key NSLocalNetworkUsageDescription (why the app ` +
+        "reaches the local network) to the top-level dict: a pinned OTA origin is a LAN host.",
+    );
+  } else await inst.edit(path, () => next);
+}
+
 async function installIos(inst: Installer): Promise<void> {
   if (!(await hasIosApp(inst))) return;
   const root = inst.opts.dir;
@@ -272,6 +298,7 @@ async function installIos(inst: Installer): Promise<void> {
     },
     `add the string key ${IOS_ORIGINS_KEY} (the space-separated origins) to the top-level dict.`,
   );
+  await declareLocalNetwork(inst, nativeJoin(root, IOS_APP, "Info.plist"));
 }
 
 async function installAndroid(inst: Installer): Promise<void> {

@@ -616,7 +616,7 @@ searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.user
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
-`"<app id> Safe Storage"` keychain item, `"os"`) / `sandbox` / `fileChooser` from the
+`"<app id> Safe Storage"` keychain item, `"os"`) / `sandbox` / `fileChooser` / `windowBlur` / `passkeys` from the
 runtime's probe (`"unknown"` before the runtime that added each), and `denext desktop doctor [--linux]`
 lists what the session lacks, with fixes. `desktop.linux.requireSandbox: true` makes a Linux CEF app
 exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+).
@@ -663,12 +663,13 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.22 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 2.9.7-denext.22 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on, newer by semver; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
-`dev` warn and use the stock runtime when `deno` is not 2.9.7 (`DENO_BIN` points them at a 2.9.7
-binary); `package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
+`dev` build on denext's Deno toolchain, which always matches; only under an explicit
+`DENEXT_DENO=stock | <path>` or `DENO_BIN` of another version do they warn and use the stock runtime;
+`package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
 a version MSI/Debian can't express) is skipped with a warning; an asked-for one fails.
 `DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit, sidecar }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
 Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop({ sidecars })`,
@@ -696,8 +697,9 @@ your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/
 makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
 Native passkeys are macOS (needs the associated-domains entitlement: `desktop.macos: {
-provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
-passkey API, so `denext/desktop/clerk` signs in through the browser. On Linux a `.deb` / `.rpm` install
+provisioningProfile, entitlements }` signs it in with the profile) and Windows; Linux has no OS
+passkey API, so there USB security keys work natively under runtime 3.0.0-rc.1+ (libwebauthn beside
+the host) and `denext/desktop/clerk` signs in through the browser otherwise. On Linux a `.deb` / `.rpm` install
 (xdg-desktop-portal 1.19+, systemd user manager) posts scheduled notifications while the app is closed
 and a click starts it; an AppImage or tarball delivers only while the app runs. OS limits:
 https://denext.dev/docs/limitations
@@ -842,6 +844,10 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 ```
 
 Open the connection once at module scope; do writes in Server Actions.
+Prisma (SQLite / Postgres) with no npm driver: `new PrismaClient({ adapter: new
+PrismaDenoSql(Deno.env.get("DATABASE_URL")!) })` with `PrismaDenoSql` from `denext/prisma-adapter`
+(Prisma's `prisma-client` generator, `runtime = "deno"`; needs runtime 3.0.0-rc.1+);
+`denext migrate` wires it (`--prisma-adapter deno-sql | npm | auto`).
 Postgres (every replica sharing one database): `postgresClient(url)` from `denext/server` is a
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
 `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
@@ -1121,10 +1127,15 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
-  opts out, `DENEXT_DENO=<path>` uses a given binary, and any failure falls back to stock Deno with
-  one warning. `denext task <name>` is Deno's `deno task` on the toolchain, and every
+  opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
+  first use, no build for the host, a failed download) the command stops with the fix
+  (`denext toolchain install`) — denext never runs another Deno on its own. Every other verb that
+  starts `deno` (`fmt`, `lint`, `add`, `ui`, `mcp`, `create`, …) hands it the toolchain too.
+  `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
-  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`.
+  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`;
+  `denext toolchain uninstall <version>|--all` and `prune` remove cached versions (the pinned one
+  only with `--force`; `--dry-run`, `--json`).
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
   runs it on the toolchain (with no toolchain and no `deno` it refuses, naming
   `denext toolchain install`), and the installer runs `toolchain install` (+ `toolchain link`

@@ -323,8 +323,16 @@ async function runTask(request: Request, ctx: UiContext): Promise<Response> {
   }
   return sseProcess(
     async (line, signal) => {
-      // The same Deno, and the same `deno` on the task's PATH, as `denext task <name>`.
-      const { deno, env, warning } = await forwardedDeno();
+      // The same Deno, and the same `deno` on the task's PATH, as `denext task <name>`; when the
+      // toolchain can't be had, the refusal (with its fix) is the task's output.
+      let chosen;
+      try {
+        chosen = await forwardedDeno();
+      } catch (err) {
+        for (const l of (err instanceof Error ? err.message : String(err)).split("\n")) line(l);
+        return 1;
+      }
+      const { deno, env, warning } = chosen;
       if (warning) line(warning);
       return (await runDeno(["task", name], { cwd: ctx.dir, onLine: line, signal, deno, env }))
         .code;

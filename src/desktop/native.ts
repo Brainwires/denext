@@ -115,19 +115,74 @@ export async function fsListDir(path: string, directory: FileDirectory): Promise
   return Array.isArray(raw) ? raw.map(toEntry) : [];
 }
 
+/** What {@linkcode fsDownload} takes besides the URL and the file (the transfer's options). */
+export interface DesktopDownloadOptions {
+  /** The transfer's id: the key of its `progress` events and of `cancelDownload`. */
+  readonly id: string;
+  /** Request headers (the runtime drops the ones a browser's `fetch` would not send). */
+  readonly headers?: Readonly<Record<string, string>>;
+  /** Aborting it cancels the download in the runtime (its partial file removed). */
+  readonly signal?: AbortSignal;
+  /** Called with the bytes so far: as the runtime reports them, and once at the end. */
+  readonly onProgress?: (bytes: number, total: number | null) => void;
+}
+
+/** The reason an aborted signal carries (an `AbortError` when it has none). */
+function reasonOf(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The download was aborted.", "AbortError");
+}
+
+/** Forward the runtime's `fs` `progress` events for download `id` to `onProgress`. */
+function forwardDownloadProgress(
+  id: string,
+  onProgress: DesktopDownloadOptions["onProgress"],
+): () => void {
+  if (!onProgress) return () => {};
+  return subscribeDesktopEvent("fs", "progress", (data) => {
+    const d = data as { id?: unknown; bytes?: unknown; total?: unknown } | null;
+    if (d?.id !== id || typeof d.bytes !== "number") return;
+    onProgress(d.bytes, typeof d.total === "number" ? d.total : null);
+  });
+}
+
 /**
  * `downloadToFile` on desktop: the runtime fetches `url` itself (no CORS, no bytes through the
- * page) and writes the file. It resolves the absolute path.
+ * page) with the page's request `headers`, and writes the file, reporting progress as `fs`
+ * `progress` events. Aborting `signal` sends `cancelDownload` (which answers once the partial
+ * file is gone) and rejects with the signal's reason. It resolves the absolute path.
  */
 export async function fsDownload(
   url: string,
   path: string,
   directory: FileDirectory,
+  options: DesktopDownloadOptions = { id: crypto.randomUUID() },
 ): Promise<{ path: string }> {
-  const out = await desktopRpc<{ path?: unknown }>("fs", "download", { url, path, directory }, {
-    timeoutMs: false,
-  });
-  return { path: typeof out?.path === "string" ? out.path : path };
+  const { id, signal, onProgress } = options;
+  if (signal?.aborted) throw reasonOf(signal);
+  const call = new AbortController();
+  let cancelled: Promise<void> | undefined;
+  const onAbort = () => {
+    cancelled = desktopRpc("fs", "cancelDownload", { id }).then(() => {}, () => {})
+      .finally(() => call.abort(reasonOf(signal!)));
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const stop = forwardDownloadProgress(id, onProgress);
+  try {
+    const args = { url, path, directory, id, headers: { ...(options.headers ?? {}) } };
+    const out = await desktopRpc<{ path?: unknown; bytes?: unknown }>("fs", "download", args, {
+      timeoutMs: false,
+      signal: call.signal,
+    });
+    if (typeof out?.bytes === "number") onProgress?.(out.bytes, out.bytes);
+    return { path: typeof out?.path === "string" ? out.path : path };
+  } catch (err) {
+    if (!signal?.aborted) throw err;
+    await cancelled;
+    throw reasonOf(signal);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    stop();
+  }
 }
 
 // --- sqlite (cap "sqlite") --------------------------------------------------
