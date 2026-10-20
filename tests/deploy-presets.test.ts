@@ -172,6 +172,71 @@ Deno.test("deploy preset generic-host: the unit serves on denext's toolchain fro
   }
 });
 
+Deno.test("deploy preset generic-host: no domain bakes in no example.com; env.example is filled", async () => {
+  // Up to 4.5.0 a missing domain wrote DENEXT_CANONICAL_ORIGIN=https://example.com into the unit
+  // and `server_name example.com` into nginx, and env.example listed only the app's own reads.
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const { ctx, files, warnings } = recordingContext(manifest, paths.projectDir);
+    await genericHost({ name: "shop" }).prepare(ctx);
+    for (const [name, text] of files) assert(!text.includes("example.com"), `${name}:\n${text}`);
+    const unit = files.get("output/shop.service") ?? "";
+    assert(!unit.includes("Environment=DENEXT_CANONICAL_ORIGIN"), "read from the env file instead");
+    assertStringIncludes(files.get("output/nginx.conf") ?? "", "server_name _;");
+    assert(
+      warnings.some((w) => w.includes("no domain") && w.includes("--domain")),
+      warnings.join("\n"),
+    );
+    const env = files.get("output/env.example") ?? "";
+    assertStringIncludes(env, "\nDENEXT_CANONICAL_ORIGIN=\n");
+    assertStringIncludes(env, "\n# DENEXT_SHUTDOWN_DRAIN_MS=10000\n");
+    // The prepare environment's canonical origin names the domain when no option does.
+    const fromEnv = recordingContext(manifest, paths.projectDir, {
+      vars: { DENEXT_CANONICAL_ORIGIN: "https://shop.example.org" },
+    });
+    await genericHost({ name: "shop" }).prepare(fromEnv.ctx);
+    assertStringIncludes(
+      fromEnv.files.get("output/shop.service") ?? "",
+      "Environment=DENEXT_CANONICAL_ORIGIN=https://shop.example.org\n",
+    );
+    assertEquals(fromEnv.warnings.filter((w) => w.includes("no domain")), []);
+    // A secret the app reads says how long it must be.
+    const secrets = recordingContext(
+      {
+        ...manifest,
+        env: [{
+          name: "SESSION_SECRET",
+          required: true,
+          public: false,
+          sources: ["lib/session.ts"],
+        }],
+      },
+      paths.projectDir,
+    );
+    await genericHost({ name: "shop", domain: "shop.example.org" }).prepare(secrets.ctx);
+    assertStringIncludes(
+      secrets.files.get("output/env.example") ?? "",
+      "at least 32 random characters",
+    );
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy: --domain reaches the generic-host preset, and only it", () => {
+  const paths = { projectDir: "/p", config: {} } as unknown as ProjectPaths;
+  assertEquals(
+    resolveDeployAdapter(paths, "generic-host", { domain: "shop.example.org" })?.name,
+    "generic-host",
+  );
+  assertThrows(() => resolveDeployAdapter(paths, "docker", { domain: "x.org" }), Error, "--domain");
+  assertThrows(
+    () => resolveDeployAdapter(paths, undefined, { domain: "x.org" }),
+    Error,
+    "--domain",
+  );
+});
+
 Deno.test("deploy preset static: refuses an app with server routes, listing each", async () => {
   const { paths, manifest } = await fixtureManifest();
   try {

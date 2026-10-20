@@ -285,6 +285,16 @@ and this project adheres to
   toolchain binary from the app's own `DENO_DIR`, linked by a new `build.sh`. Deno Deploy runs its
   own Deno; its preset keeps warning that `Deno.SQL` is not there.
 
+- **The `generic-host` systemd unit starts under its own sandbox.** It resolved JSR from the service
+  user's home at start, which `ProtectHome=true` and `ProtectSystem=strict` hide or make read-only,
+  so it failed unless the build ran as that user with a home outside `/home`. The unit and the new
+  `build.sh` now use a `DENO_DIR` inside the app directory, filled at build time. `env.example`
+  lists the server's own settings (`DENEXT_CANONICAL_ORIGIN`, the drain deadline) and says how
+  long a secret must be. With no domain the preset no longer writes `example.com` into the unit,
+  nginx and Caddy files: the domain comes from `genericHost({ domain })`, the new
+  `denext deploy prepare --preset generic-host --domain <host>`, or `DENEXT_CANONICAL_ORIGIN`, and
+  without one `prepare` warns and the origin is read from the env file.
+
 ## [4.4.1] - 2026-10-19
 
 ### Changed

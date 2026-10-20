@@ -22,6 +22,8 @@ import { setupPlugins } from "./pipeline-shared.ts";
 export interface DeployFlowOptions {
   /** A preset name (`--preset`), instead of the configured adapter. */
   readonly preset?: string;
+  /** The public domain (`--domain`), for `--preset generic-host`. */
+  readonly domain?: string;
   /** Write and run nothing (`--dry-run`). */
   readonly dryRun?: boolean;
   /** Replace hand-edited project files too (`--force`). */
@@ -76,7 +78,15 @@ async function loadDeploy(dir: string, options: DeployFlowOptions): Promise<Load
   const paths = await resolveProject(dir);
   await setupPlugins(paths, "build");
   const manifest = await manifestFor(paths, options);
-  return { paths, manifest, adapter: resolveDeployAdapter(paths, options.preset) };
+  return {
+    paths,
+    manifest,
+    adapter: resolveDeployAdapter(
+      paths,
+      options.preset,
+      options.domain === undefined ? {} : { domain: options.domain },
+    ),
+  };
 }
 
 /** The context options for an adapter run. */

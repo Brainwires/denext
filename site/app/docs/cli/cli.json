@@ -540,13 +540,19 @@
       "name": "deploy",
       "summary": "Prepare (and push) the app for a deploy target: docker, fly, deno-deploy, …",
       "usage": "denext deploy [action] [dir] [options]",
-      "description": "Usage: denext deploy [prepare] [dir] [--preset <name>] [--dry-run] [--force]\n\n  prepare  Run the deploy adapter's prepare: write the target's files from the deploy\n           manifest (.denext/deploy-manifest.json) the last `denext build` wrote\n  (none)   prepare, then push with the target's CLI — fly (flyctl + FLY_API_TOKEN),\n           deno-deploy (deno deploy + DENO_DEPLOY_TOKEN), docker (docker build [+ push])\n\nThe adapter is denext.config's `deploy.adapter` (presets in denext/deploy), else one a\nplugin contributed, else --preset: docker | fly | deno-deploy | generic-host | static.\n`denext build` runs the configured adapter's prepare after every build. Credentials are\nread from the environment only, and nothing is pushed without `denext deploy`.\nDeno's own `deno deploy`: `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters",
+      "description": "Usage: denext deploy [prepare] [dir] [--preset <name>] [--domain <host>] [--dry-run] [--force]\n\n  prepare  Run the deploy adapter's prepare: write the target's files from the deploy\n           manifest (.denext/deploy-manifest.json) the last `denext build` wrote\n  (none)   prepare, then push with the target's CLI — fly (flyctl + FLY_API_TOKEN),\n           deno-deploy (deno deploy + DENO_DEPLOY_TOKEN), docker (docker build [+ push])\n\nThe adapter is denext.config's `deploy.adapter` (presets in denext/deploy), else one a\nplugin contributed, else --preset: docker | fly | deno-deploy | generic-host | static.\n`denext build` runs the configured adapter's prepare after every build. Credentials are\nread from the environment only, and nothing is pushed without `denext deploy`.\nDeno's own `deno deploy`: `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters",
       "flags": [
         {
           "name": "preset",
           "type": "string",
           "valueName": "<name>",
           "description": "Use this preset (default options) instead of the configured adapter"
+        },
+        {
+          "name": "domain",
+          "type": "string",
+          "valueName": "<host>",
+          "description": "The public domain, for --preset generic-host (its unit, nginx and Caddy files)"
         },
         {
           "name": "dry-run",
