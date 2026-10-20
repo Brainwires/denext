@@ -8,7 +8,8 @@
 // request; only the request handed to the handler is tracked. The app's own `middleware.ts`
 // runs inside the self-call too, and what it reads it can hand on (a rewrite, a request header
 // it sets): its handler's request is tracked the same way, and so is a matcher's `has` /
-// `missing` condition on an inherited header or the cookie.
+// `missing` condition on an inherited header or the cookie. A request derived from a tracked one
+// (`clone()`, `new Request(req)`, `fetch(req)`) carries the visitor's headers, so it counts too.
 
 import { copyRemoteAddr } from "./remote-addr.ts";
 import {
@@ -74,14 +75,19 @@ function trackedCookies(jar: object, onRead: (api: string) => void): object {
 
 /**
  * Make `request`'s reads of the headers in `inherited` (and of a `NextRequest`'s `cookies`)
- * count as the handler reading the visitor's request. Mutates and returns `request`.
+ * count as the handler reading the visitor's request, and so every request derived from it:
+ * `clone()` returns a tracked clone, and building a request from it (`new Request(req)`,
+ * `new Request(req, init)`, `fetch(req)`) copies the inherited headers, so it counts as a read
+ * as soon as it happens (the derived request is not tracked, so its reads would not be).
  *
- * @param request The request handed to the route handler.
+ * @param request The request handed to the route handler (its `headers` / `cookies` are replaced).
  * @param inherited The lower-case names the self-call inherited from its caller.
- * @returns The same request.
+ * @returns The request to hand the handler: a view of `request` that reports those reads.
  */
 export function trackInheritedReads(request: Request, inherited: ReadonlySet<string>): Request {
-  const headers = trackedHeaders(request.headers, inherited, markInheritedRequestRead);
+  const raw = request.headers;
+  const holdsInherited = () => [...inherited].some((name) => raw.has(name));
+  const headers = trackedHeaders(raw, inherited, markInheritedRequestRead);
   Object.defineProperty(request, "headers", { value: headers, configurable: true });
   const jar = (request as { cookies?: unknown }).cookies;
   if (jar && typeof jar === "object") {
@@ -90,7 +96,27 @@ export function trackInheritedReads(request: Request, inherited: ReadonlySet<str
       configurable: true,
     });
   }
-  return request;
+  const view = new Proxy(request, {
+    get(target, prop) {
+      // A request's internal slots are symbol-keyed own properties. Its own methods and getters
+      // run on `target` (bound below), so a slot read through the view comes from outside: the
+      // `Request` constructor or `fetch` copying the header list into a request of their own.
+      if (typeof prop === "symbol" && Object.hasOwn(target, prop) && holdsInherited()) {
+        markInheritedRequestRead("headers");
+      }
+      const value = Reflect.get(target, prop, target);
+      if (prop === "clone" && typeof value === "function") {
+        return () => {
+          const copy = value.call(target) as Request;
+          copyRemoteAddr(target, copy);
+          return trackInheritedReads(copy, inherited);
+        };
+      }
+      return typeof value === "function" && prop !== "constructor" ? value.bind(target) : value;
+    },
+  });
+  copyRemoteAddr(request, view);
+  return view;
 }
 
 /**

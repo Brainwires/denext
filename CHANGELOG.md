@@ -30,6 +30,15 @@ and this project adheres to
   encrypted closures. Actions exported from a `"use server"` module are unchanged (they take the
   caller's arguments by design and must validate them).
 
+- **A cached page no longer stores one visitor's answer when an API handler copies its request.**
+  The per-visitor tracking that keeps an ISR page or a Cache Components shell from storing an
+  in-process API call's answer (`createApiClient` / `useApi` during a render) missed reads made
+  through a copy of the handler's request: `request.clone()`, `new Request(request)` (with or
+  without init) or `fetch(request)`, as body-reading middleware and some libraries do. A handler
+  that read the visitor's cookie or authorization that way had its answer stored and served to
+  every later visitor. A clone of the handler's request is now tracked like the request itself,
+  and building a request from it counts as reading the visitor's headers it copies.
+
 ## [4.5.0] - 2026-10-20
 
 ### Added
