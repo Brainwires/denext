@@ -125,6 +125,12 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
         folder = base.appendingPathComponent("transfers", isDirectory: true)
         super.init()
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // The records hold a live transfer's request headers (an Authorization, say): keep the
+        // folder out of device backups.
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        var marked = folder
+        try? marked.setResourceValues(excluded)
         if let data = try? Data(contentsOf: folder.appendingPathComponent("transfers.json")),
            let saved = try? JSONDecoder().decode([DenextTransferRecord].self, from: data) {
             for record in saved { records[record.id] = record }
@@ -234,11 +240,23 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
         return folder.appendingPathComponent(safe + suffix)
     }
 
-    /// Save the records. Runs on \`state\`.
+    /// Whether a record is over for good (nothing can resume it): its request headers go.
+    private static func finished(_ r: DenextTransferRecord) -> Bool {
+        r.state == "done" || r.state == "cancelled" || (r.state == "failed" && !r.resumable)
+    }
+
+    /// Save the records, dropping the request headers (credentials, often) of every finished
+    /// one first. Runs on \`state\`.
     private func save() {
+        for (id, record) in records where Self.finished(record) && !record.headers.isEmpty {
+            records[id]?.headers = [:]
+        }
         let list = records.values.sorted { $0.id < $1.id }
         if let data = try? JSONEncoder().encode(list) {
-            try? data.write(to: folder.appendingPathComponent("transfers.json"), options: .atomic)
+            try? data.write(
+                to: folder.appendingPathComponent("transfers.json"),
+                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            )
         }
     }
 
@@ -1377,12 +1395,42 @@ final class DenextTransferStore {
         return new File(folder(directory), path);
     }
 
+    /**
+     * Where a live record's request headers (an Authorization, say) are kept: the app's
+     * no-backup folder, never the backed-up preferences.
+     */
+    private File headersFile(String id) {
+        File dir = new File(context.getNoBackupFilesDir(), "denext_transfer_headers");
+        return new File(dir, Integer.toHexString(id.hashCode()) + "-" + id.length() + ".json");
+    }
+
+    /** Whether a record is over for good (nothing can resume it): its request headers go. */
+    private static boolean finished(JSONObject record) {
+        String state = record.optString("state");
+        return state.equals("done") || state.equals("cancelled")
+            || (state.equals("failed") && !record.optBoolean("resumable"));
+    }
+
     synchronized JSONObject record(String id) {
         String text = prefs.getString(id, null);
         if (text == null) return null;
         try {
-            return new JSONObject(text);
-        } catch (JSONException e) {
+            JSONObject record = new JSONObject(text);
+            File file = headersFile(id);
+            if (!finished(record) && file.isFile()) {
+                byte[] bytes = new byte[(int) file.length()];
+                try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+                    int at = 0;
+                    while (at < bytes.length) {
+                        int n = in.read(bytes, at, bytes.length - at);
+                        if (n < 0) break;
+                        at += n;
+                    }
+                }
+                record.put("headers", new JSONObject(new String(bytes, "UTF-8")));
+            }
+            return record;
+        } catch (JSONException | java.io.IOException e) {
             return null;
         }
     }
@@ -1399,11 +1447,36 @@ final class DenextTransferStore {
         return out;
     }
 
+    /**
+     * Save a record. Its request headers go to the no-backup folder while it is live, and are
+     * deleted once it is finished; the preferences (backed up) never hold them.
+     */
     synchronized void put(JSONObject record) {
-        prefs.edit().putString(record.optString("id"), record.toString()).apply();
+        String id = record.optString("id");
+        JSONObject headers = record.optJSONObject("headers");
+        File file = headersFile(id);
+        if (headers != null && !finished(record)) {
+            file.getParentFile().mkdirs();
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                out.write(headers.toString().getBytes("UTF-8"));
+            } catch (java.io.IOException e) {
+                // Unwritten: the transfer runs on without them after a restart.
+            }
+        } else if (finished(record)) {
+            file.delete();
+        }
+        JSONObject saved;
+        try {
+            saved = new JSONObject(record.toString());
+        } catch (JSONException e) {
+            return;
+        }
+        saved.remove("headers");
+        prefs.edit().putString(id, saved.toString()).apply();
     }
 
     synchronized void remove(String id) {
+        headersFile(id).delete();
         prefs.edit().remove(id).apply();
     }
 

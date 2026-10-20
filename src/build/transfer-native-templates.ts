@@ -9,9 +9,10 @@
 //   forwards `handleEventsForBackgroundURLSession` to the manager.
 // - Android: `dev/denext/transfer/`: `DenextTransferPlugin.java` (registered from `MainActivity`),
 //   `DenextTransferWorker.java` (one unique WorkManager job per transfer, network-constrained),
-//   `DenextTransferStore.java` (the records, in shared preferences) and `DenextTransferHttp.java`
-//   (the HTTP half in plain Java: range-resumed downloads, multipart uploads). The app's
-//   build.gradle gains `androidx.work:work-runtime`.
+//   `DenextTransferStore.java` (the records, in shared preferences; a live record's request
+//   headers in the no-backup folder) and `DenextTransferHttp.java` (the HTTP half in plain
+//   Java: range-resumed downloads, multipart uploads). The app's build.gradle gains
+//   `androidx.work:work-runtime`.
 //
 // The JS contract (src/mobile/file-transfer.ts): `start({ id, kind, url, directory, path, method,
 // headers, multipart?, mimeType?, background })` → `{ id }`; `pause` / `resume` / `cancel` /
@@ -35,7 +36,7 @@ import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-ma
 import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 
 /** The generation of the templates, stamped into every file the installer writes. */
-export const TRANSFER_TEMPLATE_VERSION = 3;
+export const TRANSFER_TEMPLATE_VERSION = 4;
 
 /**
  * A template as the installer writes it: a first line

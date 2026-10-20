@@ -130,6 +130,13 @@ and this project adheres to
   injection elsewhere into script execution). A buffered page now lists a nonce only when it
   rendered a worker script, and such a page is not stored in the ISR cache. A static export
   still bakes its pages' nonces in, as a static host can't mint one per response.
+- **File transfers no longer keep request credentials in device backups.** The native
+  `downloadToFile` / `uploadFile` records (`denext mobile add file-transfer`) stored each
+  transfer's request headers, an `Authorization` included, after the transfer had finished, in
+  places iOS and Android back up by default, so a token could end up in an iCloud / Google
+  backup. A finished transfer's headers are now dropped; iOS keeps the records out of backups
+  with file protection, and Android keeps a live transfer's headers in the no-backup folder. Re-run
+  `denext mobile add file-transfer` to update an app's unedited template files.
 
 ### Docs
 
