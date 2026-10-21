@@ -4,8 +4,8 @@
 // dependency. Served through `@fs`, the SPA dev entry's `denext/devtools` import loaded a second
 // copy of the runtime beside the dependency chunk's — two reconcilers on one page, which broke
 // react-native-gesture-handler's ref callback in tests/e2e/reanimated.e2e.test.ts (dev only).
-import { assertEquals } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { assert, assertEquals } from "@std/assert";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { resolveFirstParty } from "../src/build/dev-unbundled/resolve.ts";
 import { createUnbundledState, norm } from "../src/build/dev-unbundled/state.ts";
 
@@ -49,5 +49,46 @@ Deno.test("dev aliases: a prefix alias into the framework checkout is not a firs
   } finally {
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(shared, { recursive: true });
+  }
+});
+
+// The same through symlinks (macOS's `/var` → `/private/var`, a symlinked workspace): an import
+// map naming the checkout by a symlinked spelling is still the framework, and a project opened
+// through a symlink still owns its aliases. A prefix test on the raw spellings missed both.
+Deno.test("dev aliases: a framework checkout and a project named through symlinks", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_fw_alias_link_" });
+  try {
+    const app = join(dir, "app");
+    await Deno.mkdir(join(app, "src"), { recursive: true });
+    await Deno.writeTextFile(join(app, "src/main.tsx"), "export {};\n");
+    await Deno.writeTextFile(join(app, "src/util.ts"), "export const u = 1;\n");
+    try {
+      await Deno.symlink(fromFileUrl(FW), join(dir, "fw"), { type: "dir" });
+      await Deno.symlink(app, join(dir, "link"), { type: "dir" });
+    } catch (err) {
+      console.warn(`skipped: this host can't create a directory symlink (${err})`);
+      return;
+    }
+    const fw = `${toFileUrl(join(dir, "fw")).href}/`;
+    const project = join(dir, "link");
+    await Deno.writeTextFile(
+      join(app, "deno.json"),
+      JSON.stringify({
+        imports: { "denext": `${fw}mod.ts`, "denext/": `${fw}src/`, "~/": "./src/" },
+      }),
+    );
+    const st = createUnbundledState({
+      projectDir: project,
+      appDir: join(project, "src"),
+      configPath: join(project, "deno.json"),
+      outDir: join(project, ".denext"),
+      spaEntry: join(project, "src/main.tsx"),
+    });
+    const main = join(project, "src/main.tsx");
+    assertEquals(await resolveFirstParty(st, "denext/devtools", main), null);
+    assertEquals(await resolveFirstParty(st, "denext", main), null);
+    assert((await resolveFirstParty(st, "~/util", main))?.endsWith("/src/util.ts"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

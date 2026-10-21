@@ -5,6 +5,7 @@
 // broken client bundle. It also covers the ssr:false code-split path end to end.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
 import { build } from "../../src/build/build.ts";
 
@@ -484,6 +485,87 @@ Deno.test("build smoke: a Flight app (examples/islands) ships the Flight soft-na
   );
   await assertFlightStartupLean(clientDir);
 });
+
+/** Each shared chunk's byte size, sorted (chunk names are content hashes, so they match too). */
+async function sharedChunkSizes(clientDir: string): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && /^chunk-.*\.js$/.test(e.name)) {
+      out.push(`${e.name} ${(await Deno.stat(join(clientDir, e.name))).size}`);
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * A temp dir with a symlink `link` → `target`, or `null` (with the reason logged) on a host that
+ * can't create one: Windows needs Developer Mode or the symlink privilege.
+ */
+async function tempSymlink(target: string): Promise<{ dir: string; link: string } | null> {
+  const dir = await Deno.makeTempDir({ prefix: "denext-build-symlink-" });
+  const link = join(dir, "link");
+  try {
+    await Deno.symlink(target, link, { type: "dir" });
+    return { dir, link };
+  } catch (err) {
+    await Deno.remove(dir, { recursive: true });
+    console.warn(`skipped: this host can't create a directory symlink (${err})`);
+    return null;
+  }
+}
+
+// A project reached through a symlink (macOS's `/var` → `/private/var` puts every `$TMPDIR`
+// project behind one; a symlinked home or workspace folder too) builds what its real path does.
+// Deno resolves the app's imports from the real location of its deno.json, so a symlinked spelling
+// of the project once reached the JSX runtime under two paths and bundled it twice (+450 B).
+Deno.test("build smoke: examples/hello built through a symlink matches its real-path build", async () => {
+  const real = await sharedChunkSizes(join((await build(EXAMPLE)).outDir, "client"));
+  const made = await tempSymlink(fromFileUrl(new URL("../..", import.meta.url)));
+  if (!made) return;
+  try {
+    const result = await build(join(made.link, "examples", "hello"));
+    const clientDir = join(result.outDir, "client");
+    assertEquals(await sharedChunkSizes(clientDir), real);
+    await assertGatedRuntimeAbsent(clientDir);
+  } finally {
+    await Deno.remove(made.dir, { recursive: true });
+  }
+});
+
+// An app whose import map names the framework checkout through a symlink: the crawl's framework
+// modules then carry the symlinked spelling while the framework's own URL is the real path, and a
+// prefix test between the two put the whole framework "outside" the app. Every build-time feature
+// scan then read the framework's sources and matched, installing every gated runtime (the class,
+// Activity, ViewTransition, singleton and iso-island runtimes: +5.5 KB over hello's shared graph).
+Deno.test("build smoke: an app that maps denext through a symlink installs no unused runtime", async () => {
+  const made = await tempSymlink(fromFileUrl(new URL("../..", import.meta.url)));
+  if (!made) return;
+  try {
+    const app = join(made.dir, "app");
+    await Deno.mkdir(app);
+    for (const entry of ["app", "public", "middleware.ts"]) {
+      await copy(join(EXAMPLE, entry), join(app, entry));
+    }
+    const config = JSON.parse(await Deno.readTextFile(join(EXAMPLE, "deno.json")));
+    delete config.lint;
+    delete config.tasks;
+    for (const [k, v] of Object.entries(config.imports as Record<string, string>)) {
+      config.imports[k] = join(made.link, v.replace(/^\.\.\/\.\.\//, ""));
+    }
+    await Deno.writeTextFile(join(app, "deno.json"), JSON.stringify(config));
+    const clientDir = join((await build(app)).outDir, "client");
+    await assertGatedRuntimeAbsent(clientDir);
+    assertBelowBudget(await sharedChunkSizes(clientDir));
+  } finally {
+    await Deno.remove(made.dir, { recursive: true });
+  }
+});
+
+/** The shared-chunk total of `sizes` (from {@linkcode sharedChunkSizes}) is under budget. */
+function assertBelowBudget(sizes: string[]): void {
+  const total = sizes.reduce((n, s) => n + Number(s.split(" ")[1]), 0);
+  assert(total < SHARED_BUDGET, budgetMessage(total));
+}
 
 /**
  * The files a page loads before any of its code runs: `entries` and, transitively, every chunk
