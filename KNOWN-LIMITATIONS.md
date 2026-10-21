@@ -58,19 +58,32 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline
   before either has happened fails to load. The compiled binary embeds every verb.
-- **Before runtime 3.0.0-rc.1, the native type check can't resolve an absolute `file:` import.**
-  `import { x } from "file:///abs/path/mod.ts"` (in source, or an import-map target that is a
-  `file:` URL) reports TS2307 under TypeScript 7 on `2.9.7-denext.22`, inside the project or
-  outside it, where Deno and the in-process TypeScript resolve it. On that runtime, type-check such
-  a project with `DENEXT_NATIVE_CHECK=0` (`DENO_CHECK_ENGINE=tsc` for a plain `deno check`), or
-  import by a relative path or an import-map alias to a relative path. Runtime 3.0.0-rc.1+
-  resolves it.
-- **Before runtime `3.0.0-rc.2`, a `tsconfig.json` that sets `paths` loses the import map under
-  the native check.** Its `paths` replace the generated ones, so `jsr:` / `npm:` / import-map
-  imports report TS2307 and JSX TS2875 (a Next.js app keeps its `tsconfig.json` after `denext
-  migrate`); one with `baseUrl` or `"moduleResolution": "node"` stops at TS5102 / TS5108. Delete
-  `paths` / `baseUrl` from `tsconfig.json` (the import map carries them after `migrate`), or set
-  `DENEXT_NATIVE_CHECK=0`.
+- **The TypeScript 7 language server (the editor default) does less than the TypeScript 6
+  service.** `"deno.unstable": ["tsgo-lsp"]`, which `create`, `migrate` and `upgrade` write into
+  `.vscode/settings.json`, runs the dated 7.1 nightly the toolchain pins. Against the in-process
+  TypeScript 6 service it:
+  - resolves only what `deno sync-types` expresses as `paths` and `.deno/` files, with the same
+    gaps as the native check (no sloppy imports, `@deno-types` / `X-TypeScript-Types`, per-member
+    `jsxImportSource`), types `jsr:` packages from `npm.jsr.io` whatever `JSR_URL` says, and sees
+    a dependency added by editing an import only after the next `deno cache`;
+  - writes a root `tsconfig.json` (or adds `"./.deno/tsconfig.json"` to an existing one's
+    `extends`) and `.deno/` into the project; `DENO_TSGO_LSP_SYNC_TYPES=0` stops that, at the cost
+    of the import map's types;
+  - picks Deno's lib types per project, not per file (a worker module gets the window's types),
+    and has no Vitest / Jest types for `*.vitest.ts`;
+  - answers nothing inside remote documents (`deno:/https/…`), and a definition in a dependency
+    lands on its `.deno/` mirror rather than the `https:` / `jsr:` URL;
+  - skips notebook cells, semantic tokens, references / implementations code lenses, import
+    updates on a file rename, `deno/inferredType`, and quick fixes that rewrite an auto-import to
+    an import-map alias / `jsr:` / `npm:` specifier (its own relative or `paths` key is used);
+  - has the nightly's quick-fix set only (no "Did you mean …" spelling or add-`await` fixes yet;
+    auto-import and organize imports work), and outside a generated tsconfig uses tsgo's
+    non-strict defaults;
+  - runs as one extra process (about 100–250 MB) beside `deno lsp`.
+
+  Each has the same way out: `"deno.unstable": []` in `.vscode/settings.json` keeps TypeScript 6
+  for that project, `DENEXT_TSGO_LSP=0` stops `create` / `migrate` / `upgrade` writing the entry,
+  and `DENO_UNSTABLE_TSGO_LSP=0` in the language server's environment overrides the setting.
 - **On Windows, keep a project and its `file:` imports on one drive.** Deno 2.9 resolves a
   `deno.json` whose `file:` targets sit on another drive as `file:///C:/D:/…`, so an app on `C:`
   that imports a checkout on `D:` (as `migrate --denext-local-path` writes) fails to load, in

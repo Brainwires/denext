@@ -8,6 +8,46 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-10-21
+
+### Added
+
+- **The toolchain installs and verifies `deno lsp`'s TypeScript 7 language server.** The CLI
+  archive's `typescript-lsp/` (the dated 7.1 nightly `deno lsp`'s tsgo backend runs) is pinned as
+  `tsgoLsp` beside the compiler's `tsgo` entry and installed beside `deno` only when its binary
+  and whole directory hash to the pin; `denext toolchain status` prints a `typescript lsp` line.
+  `deno task desktop:pin-runtime` records it from a release manifest's `typescript_lsp`, or from
+  the attested archive itself when the manifest has none.
+
+### Changed
+
+- **denext pins runtime `3.0.0-rc.2`** (from `2.9.7-denext.22`; the Deno toolchain and the Deno
+  Desktop runtime move together). What waited on `3.0.0-rc.1` now works on the pinned build:
+  `denext/prisma-adapter` (`Deno.SQL` result column types), Linux window blur and native USB
+  security keys in `appCapabilities()`, the native TypeScript 7 check resolving absolute `file:`
+  imports and checking `--doc` code blocks and `deno bundle --check`. `3.0.0-rc.2` adds:
+  - the rustls / rustls-webpki / webpki-roots security advisories, fixed;
+  - `--max-memory` / `--max-cpu-time` / `--max-time` on the CLI;
+  - `--allow-net-connect` / `--allow-net-listen`;
+  - a native check that keeps its generated project across edits, checks an import-map JSX
+    runtime natively and adapts a `tsconfig.json`'s TypeScript-7-removed options.
+- **The editor's Deno language server runs TypeScript 7 by default.** `denext create` / `init`
+  and `denext migrate` write `"deno.unstable": ["tsgo-lsp"]` into `.vscode/settings.json`, and
+  `denext upgrade` adds it to existing settings that turn the Deno LSP on and set no
+  `deno.unstable` (as a splice: comments and formatting stay). A project's own `deno.unstable` is
+  never touched. Keep TypeScript 6 with `"deno.unstable": []`, or set `DENEXT_TSGO_LSP=0` so
+  denext writes no entry; [known limitations](https://denext.dev/docs/limitations) lists what the
+  TypeScript 7 service doesn't do yet. A new app's `.gitignore` lists `/tsconfig.json`, the root
+  config the language server's `deno sync-types` generates.
+
+### Fixed
+
+- **tsconfig `paths` behind an array `extends`.** The `paths` denext reads for platform files and
+  `migrate` followed only a string `extends`; an array is now followed as TypeScript does (the
+  last entry declaring `paths` wins), and Deno's generated `.deno/tsconfig.json` (its type
+  mirrors, which `deno sync-types` makes the root tsconfig extend) is never read as the project's
+  own aliases.
+
 ## [4.5.2] - 2026-10-21
 
 ### Added
@@ -17519,7 +17559,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.6.0...development
+[4.6.0]: https://jsr.io/@denext/denext@4.6.0
 [4.5.2]: https://jsr.io/@denext/denext@4.5.2
 [4.5.1]: https://jsr.io/@denext/denext@4.5.1
 [4.5.0]: https://jsr.io/@denext/denext@4.5.0

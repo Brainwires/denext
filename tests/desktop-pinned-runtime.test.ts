@@ -1714,6 +1714,13 @@ Deno.test("the checked-in toolchain pin: the runtime pin's release, every target
       assertEquals(a.esbuild.version, ESBUILD_VERSION, `${key}: esbuild`);
       assert(/^[0-9a-f]{64}$/.test(a.esbuild.sha256), `${key}: esbuild sha256`);
     }
+    // A toolchain with native type checking pins its TypeScript 7 language server too.
+    if (a.tsgo) {
+      assert(a.tsgoLsp, `${key}: tsgoLsp`);
+      assert(/^7\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(a.tsgoLsp.version), `${key}: lsp version`);
+      assert(/^[0-9a-f]{64}$/.test(a.tsgoLsp.sha256), `${key}: lsp sha256`);
+      assert(/^[0-9a-f]{64}$/.test(a.tsgoLsp.treeSha256), `${key}: lsp treeSha256`);
+    }
     assertEquals(
       a.url,
       `https://github.com/Brainwires/deno/releases/download/${rt.tag}/${a.file}`,
@@ -1863,6 +1870,117 @@ Deno.test("attestPin checks the esbuild inside each CLI zip against its pinned S
       attestPin(pin, { archives: dir, cli: tampered, run: ok })
     );
     assertStringIncludes((err as Error).message, "esbuild sha256");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("toolchainPinFromRelease pins a manifest's typescript_lsp (a dated nightly) as tsgoLsp", () => {
+  const sha = "b".repeat(64);
+  const r = releaseWithCli();
+  // deno-lint-ignore no-explicit-any
+  for (const t of Object.values(r.manifest.cli.targets) as any[]) {
+    t.typescript_check = { version: "7.0.2", sha256: sha, tree_sha256: sha };
+    t.typescript_lsp = { version: "7.1.0-dev.20261017.1", sha256: sha, tree_sha256: sha };
+  }
+  const pin = toolchainPinFromRelease(TAG, r.manifest, r.sums)!;
+  assertEquals(pin.targets["darwin-aarch64"].tsgo?.version, "7.0.2");
+  assertEquals(pin.targets["darwin-aarch64"].tsgoLsp, {
+    version: "7.1.0-dev.20261017.1",
+    sha256: sha,
+    treeSha256: sha,
+  });
+  // deno-lint-ignore no-explicit-any
+  (r.manifest.cli.targets["aarch64-apple-darwin"] as any).typescript_lsp.version = "latest";
+  assertThrows(
+    () => toolchainPinFromRelease(TAG, r.manifest, r.sums),
+    Error,
+    "bad tsgoLsp version latest",
+  );
+});
+
+Deno.test("attestPin records an unlisted typescript-lsp/ from the attested CLI zip, and refuses one that lies about its binary", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const enc = new TextEncoder();
+    const checkTsc = enc.encode("#!/bin/sh\necho Version 7.0.2\n");
+    const lspTsc = enc.encode("#!/bin/sh\necho Version 7.1.0-dev.20261017.1\n");
+    const lib = enc.encode("interface Array<T> {}\n");
+    const tree = async (files: Record<string, Uint8Array>) => {
+      let text = "";
+      for (const n of Object.keys(files).sort()) text += `${n}\0${await sha256Hex(files[n])}\n`;
+      return await sha256Hex(enc.encode(text));
+    };
+    const file = "deno-cli-2.9.7-denext.1-x86_64-unknown-linux-gnu.zip";
+    const write = async (lspSha: string) => {
+      const info = { role: "lsp", version: "7.1.0-dev.20261017.1", sha256: lspSha };
+      const bytes = await zip([
+        { name: "deno", data: "deno", unixMode: 0o100755 },
+        { name: "typescript-check/tsc", data: checkTsc, unixMode: 0o100755 },
+        { name: "typescript-check/lib.es5.d.ts", data: lib },
+        { name: "typescript-lsp/tsc", data: lspTsc, unixMode: 0o100755 },
+        { name: "typescript-lsp/lib.es5.d.ts", data: lib },
+        { name: "typescript-lsp/typescript.json", data: JSON.stringify(info) },
+      ]);
+      await Deno.writeFile(join(dir, file), bytes);
+      return bytes;
+    };
+    const pin: PinFile = {
+      schema: 1,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      denoSha: "",
+      laufeySha: "",
+      laufeyApiVersion: null,
+      targets: {},
+    };
+    const cli = (
+      bytes: Uint8Array,
+      tsgo: { version: string; sha256: string; treeSha256: string },
+    ) => ({
+      schema: 1 as const,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      targets: {
+        "linux-x86_64": {
+          file,
+          url: `https://example.invalid/${file}`,
+          sha256: "",
+          size: bytes.length,
+          format: "zip" as const,
+          tsgo,
+        } as Record<string, unknown> & { sha256: string },
+      },
+    });
+    const ok = () => Promise.resolve(0);
+    const checkPin = {
+      version: "7.0.2",
+      sha256: await sha256Hex(checkTsc),
+      treeSha256: await tree({ "tsc": checkTsc, "lib.es5.d.ts": lib }),
+    };
+    const good = await write(await sha256Hex(lspTsc));
+    const c = cli(good, checkPin);
+    c.targets["linux-x86_64"].sha256 = await sha256Hex(good);
+    // deno-lint-ignore no-explicit-any
+    await attestPin(pin, { archives: dir, cli: c as any, run: ok });
+    assertEquals(c.targets["linux-x86_64"].tsgoLsp, {
+      version: "7.1.0-dev.20261017.1",
+      sha256: await sha256Hex(lspTsc),
+      treeSha256: await tree({ "tsc": lspTsc, "lib.es5.d.ts": lib }),
+    });
+    // A typescript.json that names another binary's hash: nothing is pinned.
+    const lying = await write("0".repeat(64));
+    const bad = cli(lying, checkPin);
+    bad.targets["linux-x86_64"].sha256 = await sha256Hex(lying);
+    const err = await assertRejects(() =>
+      // deno-lint-ignore no-explicit-any
+      attestPin(pin, { archives: dir, cli: bad as any, run: ok })
+    );
+    assertStringIncludes((err as Error).message, "its typescript.json's");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

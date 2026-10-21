@@ -34,6 +34,8 @@ Deno.test("scaffoldFiles: plain project", () => {
   // The native TypeScript 7 check and the tsgo language server cache into `.deno/`.
   const gitignore = files.find((f) => f.path === ".gitignore")!.content.split("\n");
   assert(gitignore.includes(".deno/"), gitignore.join("\n"));
+  // ...and the language server's `deno sync-types` writes a root tsconfig.json extending it.
+  assert(gitignore.includes("/tsconfig.json"), gitignore.join("\n"));
 });
 
 Deno.test("scaffoldFiles: the page is a Server Component and the counter is a 'use client' island", () => {
@@ -727,6 +729,8 @@ Deno.test("scaffoldProject writes the .vscode files that turn on the Deno LSP (u
     assert(written.includes("app/counter.tsx"), "the island is written to disk");
     const settings = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "settings.json")));
     assertEquals(settings["deno.enable"], true);
+    // The editor's Deno language server runs TypeScript 7 (tsgo) by default.
+    assertEquals(settings["deno.unstable"], ["tsgo-lsp"]);
     const ext = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")));
     assertEquals(ext.recommendations, ["denoland.vscode-deno"]);
   } finally {
@@ -766,7 +770,11 @@ Deno.test("init merges into an existing .vscode/settings.json instead of refusin
     const written = await scaffoldProject({ dir, allowExisting: true });
     assert(written.includes(".vscode/settings.json"));
     const settings = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "settings.json")));
-    assertEquals(settings, { "editor.tabSize": 2, "deno.enable": true });
+    assertEquals(settings, {
+      "editor.tabSize": 2,
+      "deno.enable": true,
+      "deno.unstable": ["tsgo-lsp"],
+    });
     const ext = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")));
     assertEquals(ext.recommendations, ["esbenp.prettier-vscode", "denoland.vscode-deno"]);
   } finally {

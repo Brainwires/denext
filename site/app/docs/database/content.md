@@ -350,8 +350,7 @@ const { url, options } = postgresConnection(Deno.env.get("DATABASE_URL")!, undef
 const adapter = new PrismaDenoSql(new Deno.SQL(url, { ...options, max: 20 }));
 ```
 
-**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins
-2.9.7-denext.22 until that runtime is published; there `migrate` keeps Prisma's npm adapters). The adapter reads
+**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins 3.0.0-rc.2). The adapter reads
 each result column's type from `Deno.SQL`'s `result.columns`, which earlier
 runtimes do not report; on one of them it throws a clear error. `denext dev`,
 `build`, `start` and `test` run on the toolchain runtime; `denoSqlHasColumns()`
@@ -390,8 +389,7 @@ Its tests: a type round-trip matrix against Postgres 17 and SQLite
 `tests/prisma-adapter-sqlite.test.ts`) and an end-to-end test that runs
 `prisma migrate dev` and CRUD with relations on both
 (`tests/e2e/prisma-deno-sql.e2e.test.ts`). They need runtime 3.0.0-rc.1 or later
-and are skipped on the pinned 2.9.7-denext.22, so CI does not run them until that
-runtime is pinned; until then CI checks the adapter against a fake `Deno.SQL`
+(an older runtime skips them); a fake `Deno.SQL` checks the adapter on any runtime
 (`tests/prisma-adapter.test.ts`).
 
 ### Prisma (verified recipe — Rust-free, over `node:sqlite`)

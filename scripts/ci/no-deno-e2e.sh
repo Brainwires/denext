@@ -45,8 +45,14 @@ denext create my-app --yes
 cd my-app
 mkdir -p tests
 cat > tests/smoke.test.ts <<'TS'
+// denext's Deno (src/build/deno-version.ts isDenextDenoVersion): `2.9.7-denext.N` up to
+// 2.9.7-denext.22, the fork's own `3.0.0-rc.N` from 3.0.0-rc.1 on.
+const DENEXT_DENO = /^(\d+\.\d+\.\d+-denext\.\d+|3\.0\.0-rc\.\d+)(\+[0-9A-Za-z.-]+)?$/;
 Deno.test("the app's tests run on denext's toolchain", () => {
-  if (!Deno.version.deno.includes("-denext.")) throw new Error(`stock deno ${Deno.version.deno}`);
+  const v = Deno.version.deno;
+  if (!DENEXT_DENO.test(v)) throw new Error(`stock deno ${v}`);
+  // Only the toolchain has the built-in Postgres client.
+  if (typeof (Deno as unknown as { SQL?: unknown }).SQL !== "function") throw new Error(`no Deno.SQL on ${v}`);
 });
 TS
 
@@ -92,7 +98,7 @@ echo "ok: refused with the fix"
 echo "--- the installer's default links deno to the toolchain"
 DENEXT_ARTIFACTS="$ART" sh "$ART/install.sh"
 # denext's Deno: 3.0.0-rc.N on (its own version), 2.9.7-denext.N before (src/build/deno-version.ts).
-deno --version | head -1 | grep -Eq -- '^deno ([0-9]+\.[0-9]+\.[0-9]+-denext\.|[3-9]\.)' ||
+deno --version | head -1 | grep -Eq -- '^deno ([0-9]+\.[0-9]+\.[0-9]+-denext\.[0-9]+|3\.0\.0-rc\.[0-9]+)([+ ]|$)' ||
   fail "deno is not the toolchain"
 deno task build
 echo "no-deno e2e: ALL OK"

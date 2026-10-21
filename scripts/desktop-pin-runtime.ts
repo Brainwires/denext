@@ -36,6 +36,14 @@
 // and the whole directory. Before that release the field is absent (the toolchain type-checks
 // with its in-process TypeScript).
 //
+// The same zips (2.9.7-denext.22 on) carry `typescript-lsp/` too: the dated TypeScript 7.1 nightly
+// `deno lsp`'s tsgo backend runs (`tsc[.exe]`, its `lib.*.d.ts`, and a `typescript.json` naming role
+// `lsp` and the version). It is pinned beside the archive as `tsgoLsp: { version, sha256,
+// treeSha256 }`: from the manifest's `typescript_lsp` entry when the release records one (checked
+// against the archive like `typescript_check`), else recorded from the attested archive itself —
+// the binary's hash must match what its `typescript.json` claims, and the directory is hashed the
+// same way. denext's toolchain installs it beside `deno`, where `deno lsp` looks first.
+//
 // From 2.9.7-denext.20 the release also ships `deno-denort-<version>-<target>.zip` (the standalone
 // runtime the fork's `deno compile` builds onto, holding `denort[.exe]`; the manifest's `denort`
 // section): the toolchain pin records them under `denort`, keyed like the CLI archives, with the
@@ -110,7 +118,12 @@ interface PinTsgo {
 }
 
 /** One CLI archive in the toolchain pin. */
-type CliPinArtifact = PinArtifact & { format: "zip"; esbuild?: PinEsbuild; tsgo?: PinTsgo };
+type CliPinArtifact = PinArtifact & {
+  format: "zip";
+  esbuild?: PinEsbuild;
+  tsgo?: PinTsgo;
+  tsgoLsp?: PinTsgo;
+};
 
 /** One denort archive in the toolchain pin. */
 type DenortPinArtifact = PinArtifact & { format: "zip" };
@@ -283,19 +296,31 @@ function cliArtifact(ctx: ReleaseCtx, target: string, a: Loose): CliPinArtifact 
     a,
   );
   const esbuild = cliEsbuild(where, a.esbuild);
-  const tsgo = cliTsgo(where, a.typescript_check);
-  return { ...artifact, ...(esbuild ? { esbuild } : {}), ...(tsgo ? { tsgo } : {}) };
+  const tsgo = cliTsgo(where, a.typescript_check, "tsgo");
+  const tsgoLsp = cliTsgo(where, a.typescript_lsp, "tsgoLsp");
+  return {
+    ...artifact,
+    ...(esbuild ? { esbuild } : {}),
+    ...(tsgo ? { tsgo } : {}),
+    ...(tsgoLsp ? { tsgoLsp } : {}),
+  };
 }
 
-/** A CLI entry's `tsgo` (absent before native type checking), checked for shape. */
-function cliTsgo(where: string, t: Loose): PinTsgo | undefined {
+/** A TypeScript 7 release (`7.0.2`) or a dated nightly (`7.1.0-dev.20261017.1`). */
+const TS_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+
+/**
+ * A CLI entry's `tsgo` / `tsgoLsp` (`typescript_check` / `typescript_lsp`; absent before native
+ * type checking, and `typescript_lsp` while the manifest doesn't record it), checked for shape.
+ */
+function cliTsgo(where: string, t: Loose, name: string): PinTsgo | undefined {
   if (t === undefined || t === null) return undefined;
   const version = String(t.version ?? "");
   const sha256 = String(t.sha256 ?? "");
   const treeSha256 = String(t.tree_sha256 ?? "");
-  if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`${where}: bad tsgo version ${version}`);
-  if (!/^[0-9a-f]{64}$/.test(sha256)) fail(`${where}: bad tsgo sha256`);
-  if (!/^[0-9a-f]{64}$/.test(treeSha256)) fail(`${where}: bad tsgo tree_sha256`);
+  if (!TS_VERSION.test(version)) fail(`${where}: bad ${name} version ${version}`);
+  if (!/^[0-9a-f]{64}$/.test(sha256)) fail(`${where}: bad ${name} sha256`);
+  if (!/^[0-9a-f]{64}$/.test(treeSha256)) fail(`${where}: bad ${name} tree_sha256`);
   return { version, sha256, treeSha256 };
 }
 
@@ -429,7 +454,7 @@ async function sha256File(path: string): Promise<string> {
 function pinArchives(
   pin: PinFile,
   cli?: ToolchainPinFile | null,
-): (PinArtifact & { esbuild?: PinEsbuild; tsgo?: PinTsgo })[] {
+): (PinArtifact & { esbuild?: PinEsbuild; tsgo?: PinTsgo; tsgoLsp?: PinTsgo })[] {
   return [
     ...Object.values(pin.targets).flatMap((t) => BACKENDS.flatMap((b) => t[b] ? [t[b]!] : [])),
     ...Object.values(cli?.targets ?? {}),
@@ -451,31 +476,75 @@ async function archiveFile(
   return path;
 }
 
-/** The `typescript-check/` inside a CLI zip must hash to its pinned SHA-256s (checked in a temp dir). */
-async function checkZipTsgo(
-  a: PinArtifact & { tsgo?: PinTsgo },
-  path: string,
-  tmp: string,
-): Promise<void> {
-  if (!a.tsgo) return;
+/**
+ * The `typescript-check/` and `typescript-lsp/` inside a CLI zip must hash to their pinned
+ * SHA-256s (checked in a temp dir). A `typescript-lsp/` the manifest did not record is pinned
+ * from the archive (`a.tsgoLsp` is set): its `typescript.json` must name role `lsp`, a version and
+ * the binary's own SHA-256.
+ */
+async function checkZipTsgo(a: CliPinArtifact | PinArtifact, path: string, tmp: string) {
+  const cli = a as CliPinArtifact;
+  // A CLI zip with native type checking carries the language server too (2.9.7-denext.22 on).
+  if (!a.file.startsWith(CLI_PREFIX) || (!cli.tsgo && !cli.tsgoLsp)) return;
   const out = await Deno.makeTempDir({ dir: tmp, prefix: "x-" });
   try {
     const dest = join(out, "x");
     await extractArchive(path, "zip", dest);
     const exe = a.file.includes("windows") ? "tsc.exe" : "tsc";
-    const got = await sha256File(join(dest, "typescript-check", exe)).catch(() =>
-      fail(`${a.file}: the manifest pins a tsgo, the archive has no typescript-check/${exe}`)
-    );
-    if (got !== a.tsgo.sha256) {
-      fail(`${a.file}: typescript-check/${exe} sha256 ${got} != pinned ${a.tsgo.sha256}`);
-    }
-    const tree = await tsgoTreeSha256(join(dest, "typescript-check"));
-    if (tree !== a.tsgo.treeSha256) {
-      fail(`${a.file}: typescript-check/ tree sha256 ${tree} != pinned ${a.tsgo.treeSha256}`);
+    if (cli.tsgo) await checkTsDir(a.file, join(dest, "typescript-check"), exe, cli.tsgo);
+    const lspDir = join(dest, "typescript-lsp");
+    if (cli.tsgoLsp) await checkTsDir(a.file, lspDir, exe, cli.tsgoLsp);
+    else {
+      const recorded = await recordTsDir(a.file, lspDir, exe, "lsp");
+      if (recorded) cli.tsgoLsp = recorded;
     }
   } finally {
     await Deno.remove(out, { recursive: true }).catch(() => {});
   }
+}
+
+/** One extracted TypeScript directory must hash to `pinned` (binary + tree). */
+async function checkTsDir(file: string, dir: string, exe: string, pinned: PinTsgo) {
+  const name = dir.split(/[\\/]/).pop()!;
+  const got = await sha256File(join(dir, exe)).catch(() =>
+    fail(`${file}: the manifest pins it, the archive has no ${name}/${exe}`)
+  );
+  if (got !== pinned.sha256) {
+    fail(`${file}: ${name}/${exe} sha256 ${got} != pinned ${pinned.sha256}`);
+  }
+  const tree = await tsgoTreeSha256(dir);
+  if (tree !== pinned.treeSha256) {
+    fail(`${file}: ${name}/ tree sha256 ${tree} != pinned ${pinned.treeSha256}`);
+  }
+}
+
+/**
+ * The pin of an extracted TypeScript directory the manifest does not record, from the attested
+ * archive: `undefined` when the archive has none; else its `typescript.json` must name `role`, a
+ * version and the binary's actual SHA-256.
+ */
+export async function recordTsDir(
+  file: string,
+  dir: string,
+  exe: string,
+  role: string,
+): Promise<PinTsgo | undefined> {
+  const name = dir.split(/[\\/]/).pop()!;
+  const got = await sha256File(join(dir, exe)).catch(() => null);
+  if (got === null) return undefined;
+  const info: Loose = await Deno.readTextFile(join(dir, "typescript.json")).then(
+    JSON.parse,
+    () => fail(`${file}: ${name}/ has no readable typescript.json`),
+  );
+  const version = String(info?.version ?? "");
+  if (info?.role !== role) {
+    fail(`${file}: ${name}/typescript.json role ${info?.role}, expected ${role}`);
+  }
+  if (!TS_VERSION.test(version)) fail(`${file}: ${name}/typescript.json bad version ${version}`);
+  if (info.sha256 !== got) {
+    fail(`${file}: ${name}/${exe} sha256 ${got} != its typescript.json's ${info.sha256}`);
+  }
+  return { version, sha256: got, treeSha256: await tsgoTreeSha256(dir) };
 }
 
 /** The esbuild inside a CLI zip must hash to its pinned SHA-256 (checked in a temp dir). */

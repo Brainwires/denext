@@ -13,6 +13,7 @@ import {
   splitTestArgs,
 } from "../src/cli/commands/test-passes.ts";
 import { resolveDenoToolchain } from "../src/build/deno-toolchain.ts";
+import { isDenextDenoVersion } from "../src/build/deno-version.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
@@ -120,7 +121,7 @@ Deno.test("findVitestFiles: project Vitest files, not dependencies, dot dirs or 
 
 /** denext's Deno toolchain binary, or null when it is unavailable here. */
 async function toolchain(): Promise<string | null> {
-  if (/-denext\.\d+$/.test(Deno.version.deno)) return Deno.execPath();
+  if (isDenextDenoVersion(Deno.version.deno)) return Deno.execPath();
   const choice = await resolveDenoToolchain().catch(() => null);
   return choice?.kind === "toolchain" ? choice.deno : null;
 }

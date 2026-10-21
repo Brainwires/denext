@@ -667,7 +667,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 2.9.7-denext.22 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on, newer by semver; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-rc.2 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on, newer by semver; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1145,7 +1145,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6; an absolute `file:` import
-  doesn't resolve under it yet), and in a `package.json` project without a `deno.json` it runs npm
+  doesn't resolve under it yet) and its `deno lsp` runs TypeScript 7 too (`"deno.unstable":
+  ["tsgo-lsp"]` in the `.vscode/settings.json` that `create` / `migrate` / `upgrade` write;
+  `"deno.unstable": []` or `DENEXT_TSGO_LSP=0` keeps TypeScript 6), and in a `package.json` project without a `deno.json` it runs npm
   packages as Node.js does (hoisted `node_modules`, Node's export conditions, extensionless and
   `tsconfig` `paths` imports, git / tarball dependencies, the project's own lifecycle scripts);
   everywhere it runs a CommonJS `.js` file as CommonJS and serves `better-sqlite3` over the built-in

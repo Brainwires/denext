@@ -334,9 +334,15 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         <code>.vscode/extensions.json</code> recommending{" "}
         <code>denoland.vscode-deno</code>; install the extension when prompted and the editor uses
         the same resolution, types and lint plugin as the CLI. Any editor that speaks the Deno
-        language server works the same way. Type-check from the terminal with{" "}
-        <code>denext check</code>, and lint with <code>denext lint</code> — the{" "}
-        <code>denext/*</code>{" "}
+        language server works the same way. The settings also hold{" "}
+        <code>"deno.unstable": ["tsgo-lsp"]</code>, which runs the language server on its TypeScript
+        7 backend (the native build denext's Deno toolchain ships); <code>"deno.unstable": []</code>
+        {" "}
+        keeps TypeScript 6, and <code>DENEXT_TSGO_LSP=0</code> stops denext writing the entry (see
+        {" "}
+        <a href="/docs/toolchain#typescript-7-language-server">TypeScript 7 language server</a>).
+        Type-check from the terminal with <code>denext check</code>, and lint with{" "}
+        <code>denext lint</code> — the <code>denext/*</code>{" "}
         rules (rules-of-hooks, directive placement) run there too. Both forward to Deno and print
         each diagnostic they recognize as a plain-language explanation with a fix, the original kept
         under it (<code>--raw</code>, or{" "}

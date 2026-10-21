@@ -49,6 +49,7 @@ on:
       - "src/cli/self-exec.ts"
       - "src/cli/shared.ts"
       - "src/ts/check.ts"
+      - "src/ts/lsp-settings.ts"
       - "src/expo/manifest.ts"
       - "src/mcp/inspect.ts"
       - "src/mcp/next-denext-map.ts"

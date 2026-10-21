@@ -21,6 +21,7 @@ import {
   readProjectRule,
   stripDenextExclude,
 } from "../../build/dep-age.ts";
+import { addTsgoLspSetting, tsgoLspByDefault } from "../../ts/lsp-settings.ts";
 
 /** The project config `upgrade` edits: `deno.json`, else `deno.jsonc`. */
 async function configPath(dir: string): Promise<string | null> {
@@ -99,6 +100,39 @@ interface UpgradeOutcome {
   readonly stripped: readonly string[];
   /** The clock the plan was made at (for the hold lines). */
   readonly now: Date;
+  /** The editor settings that get (or would get) the TypeScript 7 language server, if any. */
+  readonly editor: { readonly path: string; readonly written: boolean } | null;
+}
+
+/**
+ * The project's `.vscode/settings.json` text with `"deno.unstable": ["tsgo-lsp"]` added — the
+ * TypeScript 7 language server, denext's default for new apps — when the settings turn the Deno
+ * LSP on (`"deno.enable": true`) and choose no `deno.unstable` of their own; `null` otherwise
+ * (no settings, another editor setup, a `deno.unstable` the user set, a symlinked file, or
+ * `DENEXT_TSGO_LSP=0`). The rest of the file keeps its bytes.
+ *
+ * @param dir The project directory.
+ * @param env Env reader (default: the process environment).
+ * @returns The settings path and its new text, or `null`.
+ */
+export async function editorSettingUpdate(
+  dir: string,
+  env?: (name: string) => string | undefined,
+): Promise<{ path: string; text: string } | null> {
+  if (!tsgoLspByDefault(env)) return null;
+  const path = join(dir, ".vscode", "settings.json");
+  const info = await Deno.lstat(path).catch(() => null);
+  if (!info?.isFile) return null;
+  const before = await Deno.readTextFile(path);
+  let settings: unknown;
+  try {
+    settings = parseJsonc(before);
+  } catch {
+    return null;
+  }
+  if ((settings as Record<string, unknown> | null)?.["deno.enable"] !== true) return null;
+  const text = addTsgoLspSetting(before);
+  return text === null ? null : { path, text };
 }
 
 /** Print the outcome: one JSON document, or the human report. */
@@ -116,6 +150,7 @@ function printOutcome(
       files: changedFiles,
       ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
       ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
+      ...(o.editor ? { editorSettings: o.editor } : {}),
       ...(unresolved.length ? { unresolvedMembers: unresolved } : {}),
     }));
     return;
@@ -123,6 +158,7 @@ function printOutcome(
   report(o.plan, o.path, o.check, o.written, o.now);
   reportExclude(o.dir, o.stripped, o.written);
   reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved);
+  reportEditor(o.dir, o.editor);
   if (o.lock === true) console.log("deno.lock refreshed.");
   if (o.lock === false) {
     console.error(
@@ -200,10 +236,27 @@ export async function runUpgrade(
   const written = changed && !check && ctx.flags["dry-run"] !== true;
   const changedFiles = plan.ok ? await applyToFiles(read, files, plan.steps, written) : [];
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
-  const outcome = { dir, path, plan, check, written, lock, stripped, now };
+  const editor = plan.ok
+    ? await applyEditorSetting(dir, !check && ctx.flags["dry-run"] !== true)
+    : null;
+  const outcome = { dir, path, plan, check, written, lock, stripped, now, editor };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved });
   if (!plan.ok) return 1;
   return check && changed ? 1 : 0;
+}
+
+/**
+ * The editor half of an upgrade: {@linkcode editorSettingUpdate}, written when `write` (not with
+ * `--dry-run` / `--check`, which only report it; it never changes `--check`'s exit code).
+ */
+async function applyEditorSetting(
+  dir: string,
+  write: boolean,
+): Promise<UpgradeOutcome["editor"]> {
+  const update = await editorSettingUpdate(dir);
+  if (!update) return null;
+  if (write) await Deno.writeTextFile(update.path, update.text);
+  return { path: update.path, written: write };
 }
 
 /** `--to`, `--allow-downgrade`, `--allow-major` as planner options. */
@@ -247,6 +300,16 @@ async function applyToFiles(
     if (write) await Deno.writeTextFile(f.path, next);
   }
   return changed;
+}
+
+/** The editor settings that got (or would get) the TypeScript 7 language server. */
+function reportEditor(dir: string, editor: UpgradeOutcome["editor"]): void {
+  if (!editor) return;
+  console.log(
+    `\n${editor.written ? "Added" : "Would add"} "deno.unstable": ["tsgo-lsp"] to ` +
+      `${relative(dir, editor.path)}: the editor's Deno language server runs TypeScript 7 ` +
+      `(DENEXT_TSGO_LSP=0 leaves it out; "deno.unstable": [] keeps TypeScript 6).`,
+  );
 }
 
 /** Why the `jsr:@denext/*` exclude entry was removed (or would be). */
@@ -312,6 +375,8 @@ export const upgradeCommand: CommandSpec = {
     "Only versions Deno's minimum dependency age already lets in are pinned (a newer one is\n" +
     "named, with when it becomes eligible; a pin still held moves down to one that resolves),\n" +
     'and the "jsr:@denext/*" entry older projects carry in minimumDependencyAge.exclude is removed.\n' +
+    'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +
+    '"deno.unstable": ["tsgo-lsp"] (the TypeScript 7 language server; DENEXT_TSGO_LSP=0 skips it).\n' +
     "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [

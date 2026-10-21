@@ -5,18 +5,11 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.5.2**; 4.x patch and minor releases are cut from
+> The current release is denext **4.6.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
 ## Deno toolchain
 
-- **Publish runtime 3.0.0-rc.1 (`denext-runtime-v3.0.0-rc.1`) and pin it.** 4.5.0 shipped three
-  features that stay inert on the pinned 2.9.7-denext.22: `denext/prisma-adapter` (it needs
-  `Deno.SQL` result columns), Linux `windowBlur` and Linux security-key passkeys (Clerk's included).
-  The pin also brings the native type check's fix for absolute `file:` imports. Once it is pinned,
-  un-skip the Prisma adapter suites (`tests/prisma-adapter-sqlite.test.ts`,
-  `tests/prisma-adapter-postgres-integration.test.ts`, `tests/e2e/prisma-deno-sql.e2e.test.ts`)
-  in CI.
 - **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
 
