@@ -439,3 +439,59 @@ Deno.test("renderShell: a control signal in a nested inline boundary is the shel
     console.error = origError;
   }
 });
+
+// ---- Per-request cost: deciding the tokens compiles nothing ------------------------------------
+//
+// Each render's boundary tokens carry a fresh nonce. Matching them with a `RegExp` built from it
+// compiled a new pattern for every render — about 7% of a streamed page's server CPU. The tokens
+// are scanned with `indexOf` instead; the count of `RegExp`s a render builds is the guard.
+
+/** Runs `fn` with `globalThis.RegExp` counting the patterns built through it. */
+async function countRegExps(fn: () => Promise<void>): Promise<number> {
+  const Original = globalThis.RegExp;
+  let built = 0;
+  globalThis.RegExp = new Proxy(Original, {
+    construct(target, args, newTarget) {
+      built++;
+      return Reflect.construct(target, args, newTarget);
+    },
+    apply(target, self, args) {
+      built++;
+      return Reflect.apply(target, self, args);
+    },
+  });
+  try {
+    await fn();
+  } finally {
+    globalThis.RegExp = Original;
+  }
+  return built;
+}
+
+Deno.test("a streamed render with boundaries builds no RegExp, inline or streamed", async () => {
+  const tree = () =>
+    h(
+      "div",
+      null,
+      boundary(h("p", null, "x", boundary("nested"))),
+      boundary(h(Use, { p: later("T", 5) })),
+    );
+  let html = "";
+  const built = await countRegExps(async () => {
+    for (let i = 0; i < 3; i++) html = await streamToString(renderToReadableStream(tree()));
+  });
+  assertEquals(built, 0, "no pattern compiled per render");
+  assertStringIncludes(html, "<!--$--><p>x<!--$-->nested<!--/$--></p><!--/$-->");
+  assertStringIncludes(html, '<div data-dnx-b="');
+  assertStringIncludes(html, "<b>T</b>");
+});
+
+Deno.test("text that imitates a boundary token is left alone; the real tokens still decide", async () => {
+  const fake = "\u0000dnx-sb:0123456789abcdef:dnx0";
+  const html = await streamToString(
+    renderToReadableStream(h("div", null, fake, boundary(h("p", null, "x")), `${fake}\u0000`)),
+  );
+  assertStringIncludes(html, "<!--$--><p>x</p><!--/$-->", "the real boundary is inline");
+  assert(!html.includes('data-dnx-b="'), "nothing streamed or replaced by the imitation");
+  assertEquals(html.split("dnx-sb:0123456789abcdef").length, 3, "both imitations kept");
+});

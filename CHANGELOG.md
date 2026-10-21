@@ -37,6 +37,13 @@ and this project adheres to
   build and the swc codegen through the production server, the CLI's shared helpers and the plugin
   kit, and `deno compile` embedded all of it with its npm dependencies.
 
+- **Performance: a streamed page no longer compiles a regular expression per request.** Each
+  render's Suspense boundary tokens carry a fresh nonce, and since 4.4.0 the server matched them
+  with a `RegExp` built from that nonce, so every page with a boundary (a `dynamic()` island, a
+  `<Suspense>`) compiled a new pattern per request. The tokens are now found with `indexOf`, with
+  the same matches. On `examples/hello` this restores the SSR throughput lost since 4.0.0: about
+  20% more requests per second than 4.6.0, and above 4.0.0's.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added
