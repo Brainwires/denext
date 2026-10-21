@@ -238,11 +238,37 @@ Deno.test("SpaIsland client:interaction: the placeholder until the first interac
     assertEquals(imported, 0);
     await act(() => fireEventOn(button, "pointerdown"));
     await settle();
+    assertEquals(imported, 1, "the press starts the import");
+    assertEquals(texts(screen), [], "the mount waits for the press's release");
+    await act(() => fireEventOn(button, "pointerup"));
+    await act(() => fireEventOn(button, "click"));
+    await settle();
     assertEquals(texts(screen), ["diff"]);
     assertEquals(imported, 1);
     await screen.unmount();
   });
 });
+
+/** Replay through the test DOM (it has no `dispatchEvent` / `focus`): `fn` runs with them on. */
+async function withReplayDom(log: string[], fn: () => Promise<void>): Promise<void> {
+  const proto = DomEl.prototype as unknown as {
+    dispatchEvent?: (e: Event) => boolean;
+    focus?: () => void;
+  };
+  proto.dispatchEvent = function (this: DomEl, e: Event) {
+    fireEventOn(this, e.type);
+    return true;
+  };
+  proto.focus = function (this: DomEl) {
+    log.push(`focus:${this.textContent}`);
+  };
+  try {
+    await withScheduler(fn);
+  } finally {
+    delete proto.dispatchEvent;
+    delete proto.focus;
+  }
+}
 
 Deno.test("SpaIsland client:interaction: the gesture that mounts it is replayed on the mounted component", async () => {
   const log: string[] = [];
@@ -258,60 +284,130 @@ Deno.test("SpaIsland client:interaction: the gesture that mounts it is replayed 
       }, "b"),
     );
   }
-  const proto = DomEl.prototype as unknown as {
-    dispatchEvent?: (e: Event) => boolean;
-    focus?: () => void;
-  };
-  // The test DOM has neither: dispatch through its own propagation, record focus.
-  proto.dispatchEvent = function (this: DomEl, e: Event) {
-    fireEventOn(this, e.type);
-    return true;
-  };
-  proto.focus = function (this: DomEl) {
-    log.push(`focus:${this.textContent}`);
-  };
-  try {
-    await withScheduler(async () => {
-      let resolve: (c: unknown) => void = () => {};
-      const loader = () => new Promise((r) => (resolve = r));
-      const screen = await render(h(
-        "section",
-        null,
-        h("h2", null, "title"),
-        h(SpaIsland as never, {
-          __dnxLoad: loader,
-          "client:interaction": true,
-          // The placeholder mirrors the panel's shape: its second button is the one pressed.
-          "client:placeholder": h(
-            "div",
-            null,
-            h("button", null, "a"),
-            h("button", { "data-ph": "" }, "b"),
-          ),
-        }),
-      ));
-      await settle();
-      const ph = all(screen as never).find((e) => e.getAttribute("data-ph") !== null)!;
-      // A real gesture: pointerdown starts the import, focus and click land before it resolves.
-      const asEvent = { constructor: Event };
-      await act(() => fireEventOn(ph, "pointerdown", asEvent));
-      await act(() => fireEventOn(ph, "focusin", asEvent));
-      await act(() => fireEventOn(ph, "click", asEvent));
-      assertEquals(log, [], "nothing ran on the placeholder");
-      await act(() => resolve(Panel));
-      await settle();
-      assert(all(screen as never).some((e) => e.getAttribute("data-panel") !== null));
-      assertEquals(
-        log,
-        ["pointerdown", "focus:b", "click"],
-        "the gesture is replayed, in order, on the element in the placeholder's position",
-      );
-      await screen.unmount();
-    });
-  } finally {
-    delete proto.dispatchEvent;
-    delete proto.focus;
+  await withReplayDom(log, async () => {
+    let resolve: (c: unknown) => void = () => {};
+    const loader = () => new Promise((r) => (resolve = r));
+    const screen = await render(h(
+      "section",
+      null,
+      h("h2", null, "title"),
+      h(SpaIsland as never, {
+        __dnxLoad: loader,
+        "client:interaction": true,
+        // The placeholder mirrors the panel's shape: its second button is the one pressed.
+        "client:placeholder": h(
+          "div",
+          null,
+          h("button", null, "a"),
+          h("button", { "data-ph": "" }, "b"),
+        ),
+      }),
+    ));
+    await settle();
+    const ph = all(screen as never).find((e) => e.getAttribute("data-ph") !== null)!;
+    // A real gesture: pointerdown starts the import, focus and click land before it resolves.
+    const asEvent = { constructor: Event };
+    await act(() => fireEventOn(ph, "pointerdown", asEvent));
+    await act(() => fireEventOn(ph, "focusin", asEvent));
+    await act(() => fireEventOn(ph, "click", asEvent));
+    assertEquals(log, [], "nothing ran on the placeholder");
+    await act(() => resolve(Panel));
+    await settle();
+    assert(all(screen as never).some((e) => e.getAttribute("data-panel") !== null));
+    assertEquals(
+      log,
+      ["pointerdown", "focus:b", "click"],
+      "the gesture is replayed, in order, on the element in the placeholder's position",
+    );
+    await screen.unmount();
+  });
+});
+
+/** A placeholder button and a deferred panel whose button records its pointerdown and click. */
+function pressFixture(log: string[]) {
+  function Panel(): VNode {
+    return h("button", {
+      "data-panel": "",
+      onPointerDown: () => log.push("pointerdown"),
+      onClick: () => log.push("click"),
+    }, "open");
   }
+  let resolve: (c: unknown) => void = () => {};
+  const loader = () => new Promise((r) => (resolve = r));
+  const island = h(SpaIsland as never, {
+    __dnxLoad: loader,
+    "client:interaction": true,
+    "client:placeholder": h("button", { "data-ph": "" }, "open"),
+  });
+  return { island, resolve: () => resolve(Panel) };
+}
+
+const panelMounted = (screen: { container: unknown }) =>
+  all(screen as never).some((e) => e.getAttribute("data-panel") !== null);
+
+Deno.test("SpaIsland client:interaction: an import that lands mid-press waits for the click, which is replayed", async () => {
+  const log: string[] = [];
+  await withReplayDom(log, async () => {
+    const { island, resolve } = pressFixture(log);
+    const screen = await render(h("section", null, island));
+    await settle();
+    const ph = all(screen as never).find((e) => e.getAttribute("data-ph") !== null)!;
+    const asEvent = { constructor: Event };
+    // The press starts the import, which resolves while the button is still held down (a cached
+    // chunk loads faster than a human click): the placeholder must stay to take the release.
+    await act(() => fireEventOn(ph, "pointerdown", asEvent));
+    await act(() => resolve());
+    await settle();
+    assertEquals(panelMounted(screen), false, "the mount waits for the press to end");
+    await act(() => fireEventOn(ph, "pointerup", asEvent));
+    await act(() => fireEventOn(ph, "click", asEvent));
+    await settle();
+    assert(panelMounted(screen));
+    assertEquals(log, ["pointerdown", "click"], "the click that ended the press is replayed");
+    await screen.unmount();
+  });
+});
+
+Deno.test("SpaIsland client:interaction: a release with no click (dragged off) mounts after the grace", async () => {
+  const log: string[] = [];
+  await withReplayDom(log, async () => {
+    const { island, resolve } = pressFixture(log);
+    const screen = await render(
+      h("section", null, h("p", { "data-off": "" }, "elsewhere"), island),
+    );
+    await settle();
+    const ph = all(screen as never).find((e) => e.getAttribute("data-ph") !== null)!;
+    const off = all(screen as never).find((e) => e.getAttribute("data-off") !== null)!;
+    const asEvent = { constructor: Event };
+    await act(() => fireEventOn(ph, "pointerdown", asEvent));
+    await act(() => resolve());
+    await settle();
+    assertEquals(panelMounted(screen), false);
+    // Released outside the placeholder: no click follows.
+    await act(() => fireEventOn(off, "pointerup", asEvent));
+    await settle();
+    assertEquals(panelMounted(screen), false, "a click may still follow the release");
+    await act(() => new Promise((r) => setTimeout(r, 150)));
+    await settle();
+    assert(panelMounted(screen), "mounted once the grace ran out");
+    assertEquals(log, ["pointerdown"], "only the press is replayed");
+    await screen.unmount();
+  });
+});
+
+Deno.test("SpaIsland client:interaction: an island unmounted mid-press drops the press", async () => {
+  const log: string[] = [];
+  await withReplayDom(log, async () => {
+    const { island, resolve } = pressFixture(log);
+    const screen = await render(h("section", null, island));
+    await settle();
+    const ph = all(screen as never).find((e) => e.getAttribute("data-ph") !== null)!;
+    await act(() => fireEventOn(ph, "pointerdown", { constructor: Event }));
+    await screen.unmount();
+    await act(() => resolve());
+    await settle();
+    assertEquals(log, [], "nothing mounts or replays");
+  });
 });
 
 Deno.test("SpaIsland client:interaction: the trigger listeners are passive (touchstart never holds a scroll)", async () => {

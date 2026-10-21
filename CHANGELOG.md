@@ -69,6 +69,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A SPA `client:interaction` island no longer loses the click that mounts it.** The press
+  (pointerdown, touchstart or keydown) imported the component and mounted it as soon as its chunk
+  arrived. A cached chunk often arrives before the button is released, and then the component
+  replaced the placeholder mid-press. The browser's click targeted the removed placeholder and never
+  fired, so the mounted component saw only the pointerdown. The import still starts on the press,
+  but the mount now waits for the press to end: the click that ends it (which is replayed with the
+  rest of the gesture), 100 ms after a release that brings no click, or 3 s at most.
 - **A project or framework checkout reached through a symlink builds what its real path does.**
   Building a project under macOS's `$TMPDIR` (`/var` is a link to `/private/var`), a symlinked home
   or workspace folder, or with an import map that names a local denext checkout through a symlink
