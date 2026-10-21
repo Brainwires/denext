@@ -70,6 +70,14 @@ and this project adheres to
 
   A stock Deno (`DENEXT_DENO=stock`, or a `DENO_BIN` without the flag) keeps the seeded entry and
   the runtime gate, unchanged.
+
+- **The repository's test suites run on denext's Deno toolchain.** `deno task test` / `test:unit`
+  / `test:integration` (`scripts/test-run.ts`) run every pass on the toolchain whenever it
+  resolves, not only under coverage, and CI's type-check and unit / integration jobs run on it
+  (stock Deno stays for `deno fmt`, `deno lint`, the doc lint and publishing). A new `macos-tests`
+  CI job runs the unit suite on macOS arm64, with a real ad-hoc `codesign` of a compiled binary,
+  and a release now needs it green.
+
 - **A `denext build --compile` binary embeds only the production server's code.** Its module
   graph no longer reaches the build pipeline, so a minimal app's binary drops from about 214 MB
   to about 135 MB (macOS x86_64): the 47 MB of npm build tooling (Prettier, Babel, `sass`, `zod`,

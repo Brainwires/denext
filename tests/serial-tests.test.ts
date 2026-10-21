@@ -23,6 +23,7 @@ import {
   findVitestFiles,
   isToolchainBuild,
   removeTempRoot,
+  stockPassDeno,
   tempRootEnv,
   testPasses,
   wantsCoverage,
@@ -345,4 +346,15 @@ Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp r
   } finally {
     await Deno.remove(machineTmp, { recursive: true });
   }
+});
+
+Deno.test("test-run: the stock test files run on the toolchain whenever it resolved", () => {
+  // Not only under coverage: the suite runs on the Deno users run (ci.yml's check job included).
+  assertEquals(
+    stockPassDeno("/cache/denext-deno/3.0.0-rc.2/deno", "/usr/bin/deno"),
+    "/cache/denext-deno/3.0.0-rc.2/deno",
+  );
+  // `DENEXT_DENO=stock` (null) and a toolchain that could not be had (false): the running Deno.
+  assertEquals(stockPassDeno(null, "/usr/bin/deno"), "/usr/bin/deno");
+  assertEquals(stockPassDeno(false, "/usr/bin/deno"), "/usr/bin/deno");
 });

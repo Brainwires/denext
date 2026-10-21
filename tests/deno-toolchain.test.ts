@@ -12,6 +12,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
+import { parse as parseYaml } from "@std/yaml";
 import {
   DENO_TOOLCHAIN,
   denortTargetKey,
@@ -150,6 +151,41 @@ Deno.test("ci.yml's backend-integration toolchain matches the checked-in linux-x
   assertEquals(env("DENEXT_DENO_RELEASE"), `denext-runtime-v${DENO_TOOLCHAIN.version}`);
   assertEquals(env("DENEXT_DENO_ZIP"), pin.file);
   assertEquals(env("DENEXT_DENO_SHA256"), pin.sha256, "re-pin ci.yml's hash with the toolchain");
+});
+
+/** A ci.yml step, as parsed. */
+interface CiStep {
+  name?: string;
+  uses?: string;
+  run?: string;
+}
+
+Deno.test("ci.yml: tests and the type-check run on the toolchain; stock Deno only for fmt / lint / doc-lint", async () => {
+  const ci = parseYaml(
+    await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url)),
+  ) as { jobs: Record<string, { steps: CiStep[] }> };
+  const onPath = (s: CiStep) => s.run?.includes("scripts/ci/toolchain-on-path.ts") ?? false;
+  // A step that runs project code under `deno`: a test, a task that tests or builds, a type-check.
+  const runsDeno = (s: CiStep) =>
+    /\bdeno (?:test|check|task (?!doc-lint\b))/.test(s.run ?? "") && !onPath(s);
+  const stockOnly = (s: CiStep) => /\bdeno (?:fmt|lint|task doc-lint)\b/.test(s.run ?? "");
+  const switched: string[] = [];
+  for (const [name, job] of Object.entries(ci.jobs)) {
+    const setup = job.steps.findIndex((s) => s.uses?.startsWith("denoland/setup-deno@") ?? false);
+    // coverage: stock Deno starts scripts/test-run.ts, which runs every pass on the toolchain under
+    // --coverage; backend-integration installs the toolchain itself (the test above).
+    if (setup === -1 || name === "coverage") continue;
+    const at = job.steps.findIndex(onPath);
+    assert(at > setup, `${name}: puts the toolchain on PATH after setting up the stock Deno`);
+    job.steps.forEach((s, i) => {
+      if (runsDeno(s)) assert(i > at, `${name}: "${s.name}" runs on the toolchain`);
+      if (stockOnly(s)) assert(i < at, `${name}: "${s.name}" stays on the stock Deno`);
+    });
+    switched.push(name);
+  }
+  for (const job of ["check", "integration", "windows-tests", "macos-tests"]) {
+    assert(switched.includes(job), `${job} runs on the toolchain`);
+  }
 });
 
 Deno.test("ensureDenort: the pinned denort, verified into its own cache dir; a mismatch is refused", async () => {
