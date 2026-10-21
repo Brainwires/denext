@@ -37,7 +37,7 @@ import {
 } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
 import { denoReleaseVersion } from "./deno-version.ts";
-import { supportsNetSplit } from "./net-permissions.ts";
+import { NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 
 /** A runtime backend (`deno desktop --backend`). */
@@ -1141,12 +1141,12 @@ export function desktopRuntimeDenoFlags(
  * (`--allow-net-connect` + `--allow-net-listen`, see `src/build/net-permissions.ts`): it builds on
  * denext's pinned Deno Desktop runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local
  * `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) whose version has the split, and the Deno
- * running the build parses the flags. That Deno is this process's own: a packaging script runs on
- * the `deno` it spawns (`denext task` puts the toolchain first on `PATH`), and `desktop run` /
- * `dev` re-ran on the Deno they build with.
+ * running the build (`denoVersion`) parses the flags. `desktop run` / `dev` re-ran on the Deno they
+ * build with, so theirs is this process's own; a packaging script spawns the `deno` on `PATH`,
+ * which may be another one ({@linkcode desktopNetSplitFor}).
  *
  * @param env Reads an environment variable.
- * @param denoVersion This process's Deno version.
+ * @param denoVersion The building Deno's version (default: this process's).
  * @param pin The runtime pin.
  * @returns Whether to bake the split flags.
  */
@@ -1158,6 +1158,27 @@ export function desktopNetSplit(
   const mode = (env(RUNTIME_ENV) ?? "").trim().toLowerCase();
   if (mode === "stock" || env(RUNTIME_DIR_ENV)) return false;
   return supportsNetSplit(pin.version) && supportsNetSplit(denoVersion);
+}
+
+/**
+ * {@linkcode desktopNetSplit} for the `deno` a packaging script spawns (`deno` on `PATH`, which
+ * under a plain `deno task` or a CI's own Deno need not be the Deno running the script): its
+ * version is read from `deno --version`. Not run under `DENEXT_DESKTOP_RUNTIME=stock` or a local
+ * runtime build; a `deno` that can't be run reads as no split.
+ *
+ * @param deno The `deno` the build runs.
+ * @param env Reads an environment variable.
+ * @param version Reads a Deno's version (a test seam).
+ * @returns Whether to bake the split flags.
+ */
+export async function desktopNetSplitFor(
+  deno: string = "deno",
+  env: EnvGet = processEnv,
+  version: (deno: string) => Promise<string> = denoCliVersion,
+): Promise<boolean> {
+  // The env and the pin first (with a Deno that has the split), so a stock runtime spawns nothing.
+  if (!desktopNetSplit(env, NET_SPLIT_RELEASE)) return false;
+  return desktopNetSplit(env, await version(deno).catch(() => ""));
 }
 
 /**

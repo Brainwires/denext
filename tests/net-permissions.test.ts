@@ -18,7 +18,7 @@ import {
   wantsNetSplit,
 } from "../src/build/compile-app.ts";
 import { desktopBuildFlags } from "../src/build/desktop-capabilities.ts";
-import { desktopNetSplit } from "../src/build/desktop-runtime.ts";
+import { desktopNetSplit, desktopNetSplitFor } from "../src/build/desktop-runtime.ts";
 import { withNetHosts } from "../src/build/desktop-launch.ts";
 import { renderDockerfile } from "../src/build/docker-template.ts";
 import { directionalNetFlags } from "../src/cli/run-verb.ts";
@@ -193,6 +193,32 @@ Deno.test("desktopNetSplit: the pinned runtime and a Deno that parses the flags"
   assertFalse(desktopNetSplit(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/rt" }), "3.0.0-rc.2", pin));
   assertFalse(desktopNetSplit(env({}), "2.9.7", pin), "a stock deno compiles");
   assertFalse(desktopNetSplit(env({}), "3.0.0-rc.2", { version: "2.9.7-denext.22" }));
+});
+
+Deno.test("desktopNetSplitFor: the `deno` a packaging script spawns, not the script's own Deno", async () => {
+  // Desktop CI's packaging runs the script on the toolchain while `deno` on PATH is stock 2.9.7:
+  // deciding from the script's own Deno baked flags the spawned `deno desktop` refused.
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+  const probed: string[] = [];
+  const version = (v: string) => (deno: string) => {
+    probed.push(deno);
+    return Promise.resolve(v);
+  };
+  assertFalse(await desktopNetSplitFor("deno", env({}), version("2.9.7")));
+  assert(await desktopNetSplitFor("deno", env({}), version("3.0.0-rc.2")));
+  assertFalse(
+    await desktopNetSplitFor("deno", env({}), () => Promise.reject(new Error("not found"))),
+  );
+  assertEquals(probed, ["deno", "deno"]);
+  // The stock runtime asks nothing of `deno`.
+  assertFalse(
+    await desktopNetSplitFor(
+      "deno",
+      env({ DENEXT_DESKTOP_RUNTIME: "stock" }),
+      version("3.0.0-rc.2"),
+    ),
+  );
+  assertEquals(probed.length, 2);
 });
 
 Deno.test("renderDockerfile: the server listens only on its port; the static server only listens", () => {

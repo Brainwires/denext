@@ -16,7 +16,7 @@ import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
-import { desktopNetSplit } from "./desktop-runtime.ts";
+import { desktopNetSplitFor } from "./desktop-runtime.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
@@ -708,18 +708,18 @@ export function desktopBuildFlags(
  * config is imported dynamically at run time from a caller-supplied URL, so it is never part of
  * this module's own dependency graph (nor a build-time import of user code). The network grant is
  * split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or
- * later ({@linkcode desktopNetSplit}); `DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a
- * stock `deno` keep `--allow-net`.
+ * later, read from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});
+ * `DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a stock `deno` keep `--allow-net`.
  *
  * @param entryUrl The packaging script's `import.meta.url`.
  * @param os The target OS.
- * @param netSplit Override the detection (default {@linkcode desktopNetSplit}).
+ * @param netSplit Override the detection (default {@linkcode desktopNetSplitFor}).
  * @returns The `--allow-*` flags, ready to splice into the `deno desktop` argv.
  */
 export async function desktopPackageFlags(
   entryUrl: string,
   os: DesktopOs,
-  netSplit: boolean = desktopNetSplit(),
+  netSplit?: boolean,
 ): Promise<string[]> {
   let config: unknown;
   try {
@@ -728,7 +728,7 @@ export async function desktopPackageFlags(
   } catch {
     // no denext.config.ts (or it exports no config) → baseline only
   }
-  return desktopBuildFlags(config, os, { netSplit });
+  return desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
 }
 
 /** The `desktop.capabilities.extensions` module paths from a config object (each a project-relative

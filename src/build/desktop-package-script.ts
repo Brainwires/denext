@@ -12,7 +12,11 @@ import {
 } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
-import { desktopNetSplit, desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
+import {
+  desktopNetSplitFor,
+  desktopRuntimeDenoFlags,
+  desktopRuntimeEnv,
+} from "./desktop-runtime.ts";
 import {
   type DesktopInstallerPlan,
   desktopInstallerPlan,
@@ -548,7 +552,7 @@ export async function desktopBundleCommand(
     ...await desktopPackageFlags(
       entryUrl,
       os,
-      Boolean(runtimeEnv.DENORT_DESKTOP_BIN) && desktopNetSplit(),
+      Boolean(runtimeEnv.DENORT_DESKTOP_BIN) && await desktopNetSplitFor(),
     ),
     ...denoFlags,
     // The pinned runtime's own flags (`--unstable-no-legacy-abort`).
