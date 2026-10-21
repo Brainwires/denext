@@ -20,7 +20,7 @@ import {
   type PsRow,
   type StackIo,
 } from "../src/cli/commands/stack-io.ts";
-import { runStack } from "../src/cli/commands/stack.ts";
+import { runStack, stackCommand } from "../src/cli/commands/stack.ts";
 import {
   backupKind,
   parseManifest,
@@ -774,6 +774,16 @@ Deno.test("restoreCap / parseSize / parseDfAvailable: the cap's sources and the 
     undefined,
   );
   assertEquals(parseDfAvailable(""), undefined);
+});
+
+Deno.test("stack restore: the help and the guide say a backup must be trusted (its SQL runs as the superuser)", async () => {
+  const usage = stackCommand.usage!.replace(/\s+/g, " ");
+  assertMatch(usage, /Restore only a backup you trust: its SQL runs as the database superuser/);
+  const guide = (await Deno.readTextFile(
+    new URL("../site/app/docs/deploy/content.md", import.meta.url),
+  )).replace(/\s+/g, " ");
+  assertMatch(guide, /Restore only a backup you trust.*runs as the database superuser/);
+  assert(!/backup is untrusted input/i.test(guide));
 });
 
 Deno.test("hostFreeBytes: the host's free space where a path lives; undefined when it can't tell", async () => {

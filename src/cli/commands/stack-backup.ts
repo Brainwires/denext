@@ -12,9 +12,13 @@
 //                          database that already has tables unless --yes, then pg_restore
 //                          --clean --if-exists in one transaction, with the app stopped
 //
-// A full backup is untrusted input when it is restored: it is extracted by `safe-extract.ts`
-// (no absolute paths, no `..`, no link leaving the directory, no hard links or devices), and
-// only the steps restore knows are run, from the files the manifest names.
+// A backup must be TRUSTED input: its SQL runs as the database superuser (`psql` for roles.sql,
+// extensions.sql and settings.sql, `pg_restore` for the dump), so a crafted one can run `\!`
+// shell commands or `COPY … TO PROGRAM` inside the db container and change any role. What
+// restore does guard is the host: a full backup is extracted by `safe-extract.ts` (no absolute
+// paths, no `..`, no link leaving the directory, no hard links or devices) under a size cap
+// derived from the free disk, and only the steps restore knows are run, from the files the
+// manifest names.
 
 import { isAbsolute, join, resolve } from "@std/path";
 import type { CommandContext } from "../command.ts";

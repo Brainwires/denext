@@ -178,6 +178,12 @@ and this project adheres to
   touched, saying how large it may be and why. The new `--max-size <size>` (`20G`, `512M`, bytes)
   lowers the cap, and stands in for the measurement where free space can't be read (else 16 GiB).
 
+- **`denext stack restore` says plainly that a backup must be trusted.** Its SQL runs as the
+  database superuser (`psql` for a full backup's roles, extensions and settings, `pg_restore` for
+  the dump), so a crafted backup can run shell commands in the `db` container. The command's help
+  and the [Operating the stack](https://denext.dev/docs/deploy#operating-the-stack) guide now say
+  to restore only a backup you trust; the archive checks protect the host, not the database.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added

@@ -365,7 +365,11 @@ a `MANIFEST.txt` that records the restore order. Every Postgres tool runs inside
 `db` container, so the machine needs no Postgres client. Backups are written 0600 and never
 overwrite an existing file.
 
-**Restore.** `restore <file>` recognizes a dump or a full backup by its first bytes. It refuses
+**Restore.** Restore only a backup you trust, such as one your own stack wrote: its SQL runs as
+the database superuser (`psql` for the roles, extensions and settings, `pg_restore` for the dump),
+so a crafted backup can run shell commands inside the `db` container (`\!`, `COPY … TO PROGRAM`)
+and change any role or setting. The checks below protect the machine running `restore`, not the
+database. `restore <file>` recognizes a dump or a full backup by its first bytes. It refuses
 a database that already has tables unless you pass `--yes` (a stack that ran its migrations
 already has some). It then stops the app, runs `pg_restore --clean --if-exists` in one
 transaction (the full backup's steps in its manifest's order), and starts the app again. A full
