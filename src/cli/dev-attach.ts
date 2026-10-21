@@ -14,7 +14,7 @@ import { denoExecutable } from "../build/bundle.ts";
 import { DEV_TOKEN_ENV, newDevToken, withDevTokenParam } from "../build/dev-server/dev-token.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { cliInvocation } from "../ui/proc.ts";
-import { SHUTDOWN_SIGNALS } from "./shared.ts";
+import { SHUTDOWN_SIGNALS } from "./shutdown.ts";
 
 /**
  * A `denext dev` server a verb started or attached to. Structurally identical to (and assignable

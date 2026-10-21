@@ -41,12 +41,14 @@ import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import { createNextCompatServerLoader } from "../next-compat-loader.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { createUseCacheLoader } from "../use-cache-loader.ts";
-import { projectPlatformRedirects } from "../platform-extensions.ts";
 import { precompiledServerLoader } from "../server-copies.ts";
-import { projectInlineServerActionModules } from "../inline-server-action.ts";
 import type { AssetResolvers } from "./assets.ts";
-import type { BuildInfo, FlightBoundary } from "./manifest.ts";
+import {
+  type BuildInfo,
+  type FlightBoundary,
+  requireStartupCompile,
+  type StartupCompile,
+} from "./manifest.ts";
 
 /**
  * The SSR module loader. next-compat redirects route source modules to their react→denext
@@ -56,40 +58,30 @@ import type { BuildInfo, FlightBoundary } from "./manifest.ts";
  * transformed copies from a previous run first (copy names key on source URL, not
  * content, so a stale copy could otherwise shadow edited source after a restart without
  * a rebuild).
+ *
+ * @param paths The project paths.
+ * @param info The build manifest.
+ * @param compile The startup compiler for a build that recorded no server copies (none in a
+ *   compiled app).
+ * @returns The loader.
  */
-export async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<ModuleLoader> {
-  let load: ModuleLoader = defaultLoader;
-  const compat = info.nextCompat && info.compatModuleMap.size > 0;
-  if (compat) {
-    load = createNextCompatServerLoader(load, { moduleMap: info.compatModuleMap });
-  }
+export async function prodLoader(
+  paths: ProjectPaths,
+  info: BuildInfo,
+  compile?: StartupCompile,
+): Promise<ModuleLoader> {
   // A compat bundle already carries the `"use cache"` transform (applied at bundle time, so
   // the module stays inside the react→denext bundle); the runtime rewrite is for native apps.
+  if (info.nextCompat && info.compatModuleMap.size > 0) {
+    return createNextCompatServerLoader(defaultLoader, { moduleMap: info.compatModuleMap });
+  }
   // The same rewrite applies the web target's platform files (`.web.tsx`) to the server render,
   // matching the client bundle the build made. The build compiled those copies already
   // (./server-copies.ts): use them, with no walk and no write (a read-only `.denext` works).
-  if (!compat) {
-    const precompiled = precompiledServerLoader(load, paths, info.serverCopies);
-    if (precompiled) return precompiled;
-  }
+  const precompiled = precompiledServerLoader(defaultLoader, paths, info.serverCopies);
+  if (precompiled) return precompiled;
   // An older build, or a project moved since it was built: compile at startup.
-  const useCache = resolveCacheComponents(paths.config) && !compat;
-  const redirects = compat
-    ? {}
-    : await projectPlatformRedirects(paths.projectDir, paths.config, "web");
-  // Inline `"use server"` functions compile into server references through the same copies.
-  const inline = !compat && (await projectInlineServerActionModules(paths.projectDir)).length > 0;
-  if (useCache || inline || Object.keys(redirects).length > 0) {
-    const cacheDir = join(paths.outDir, "server-cache");
-    await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
-    load = createUseCacheLoader(load, {
-      projectDir: paths.projectDir,
-      cacheDir,
-      redirects,
-      useCache,
-    });
-  }
-  return load;
+  return await requireStartupCompile(compile, "server copies").loader(paths, defaultLoader);
 }
 
 /** Load middleware once at startup. */

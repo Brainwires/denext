@@ -1,7 +1,8 @@
 // Production build, stage 4: public-env tree-shaking, self-hosted fonts, the build
 // manifest, precompression, the atomic client swap, typed modules, and the size summary.
 
-import { buildServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
+import type { ServerCopiesManifest } from "../server-copies.ts";
+import { buildServerCopies } from "../server-copies-build.ts";
 import { walk } from "@std/fs";
 import { join } from "@std/path";
 import { resetFonts } from "../../compat/next/font/registry.ts";

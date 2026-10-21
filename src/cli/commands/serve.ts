@@ -6,7 +6,8 @@
 import { parsePlatform, type Platform, PLATFORM_ENV } from "../../build/platform-extensions.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { markProduction, portOf, SERVE_FLAGS } from "./start-options.ts";
-import { ensureAppDir, installShutdown, projectDir, runBuildStep } from "../shared.ts";
+import { ensureAppDir, projectDir, runBuildStep } from "../shared.ts";
+import { installShutdown } from "../shutdown.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { startDevServer } from "../../build/dev-server.ts";
 import { startProdServer } from "../../build/prod-server.ts";

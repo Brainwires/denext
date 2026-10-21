@@ -8,6 +8,8 @@
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
+import { frameworkFileUrl, frameworkRootUrl } from "./framework-root.ts";
+export { frameworkFileUrl, frameworkRootUrl };
 import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
 import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
@@ -31,23 +33,6 @@ import { carryLinks } from "./config-links.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
 import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
 import { VERSION } from "../version.ts";
-
-/**
- * The framework root as a URL, in whatever scheme the framework itself runs under:
- * `file://…` from a local checkout, `https://jsr.io/@denext/denext/<ver>/` when a consumer
- * runs the CLI straight from JSR (`deno run -A jsr:@denext/denext/cli …`). Always ends with a
- * slash. This is the scheme-agnostic base — prefer it (+ {@link frameworkFileUrl} /
- * {@link readFrameworkText}) over {@link frameworkRoot}, whose filesystem path only exists for
- * a local checkout.
- */
-export function frameworkRootUrl(): string {
-  return new URL("../../", import.meta.url).href;
-}
-
-/** The URL of a file/module under the framework root, in the framework's own scheme. */
-export function frameworkFileUrl(relative: string): string {
-  return new URL(relative, frameworkRootUrl()).href;
-}
 
 /**
  * Read a text file under the framework root: `Deno.readTextFile` for a local checkout,

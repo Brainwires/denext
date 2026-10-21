@@ -11,7 +11,8 @@
 // directly gets a clean resolution instead of a torn-down process.
 
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { installShutdown, projectDir } from "../shared.ts";
+import { projectDir } from "../shared.ts";
+import { installShutdown } from "../shutdown.ts";
 import { openBrowser } from "../../ui/open.ts";
 import {
   DEFAULT_UI_PORT,

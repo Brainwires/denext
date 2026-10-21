@@ -13,7 +13,8 @@
 
 import { join } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { installShutdown, projectDir } from "../shared.ts";
+import { projectDir } from "../shared.ts";
+import { installShutdown } from "../shutdown.ts";
 import { parseEnv } from "../../server/env.ts";
 import { startUiServer } from "../../ui/server.ts";
 import { DASH_MIN_PASSWORD } from "../../ui/dashboard.ts";

@@ -18,11 +18,11 @@
 
 import { fromFileUrl, resolve } from "@std/path";
 import { CommandRegistry, type CommandSpec } from "../cli/command.ts";
-import { installShutdown } from "../cli/shared.ts";
+import { installShutdown } from "../cli/shutdown.ts";
 import { jobCommand } from "../cli/commands/job.ts";
 import { dbCommand } from "../cli/commands/db.ts";
 import { markProduction, portOf, SERVE_FLAGS } from "../cli/commands/start-options.ts";
-import { startProdServer } from "../build/prod-server.ts";
+import { startAppProdServer } from "../build/prod-server/start.ts";
 import { loadEnv } from "../server/env.ts";
 import { abortJobRuns } from "../server/jobs.ts";
 import { setStandaloneState } from "../server/standalone.ts";
@@ -42,7 +42,7 @@ function startSpec(projectDir: string): CommandSpec {
       // Shutdown aborts every job run's signal, `runJob()` calls that passed none included.
       controller.signal.addEventListener("abort", abortJobRuns, { once: true });
       const port = portOf(ctx);
-      await startProdServer({
+      await startAppProdServer({
         projectDir,
         port: port ?? 3000,
         hostname: ctx.flags.host as string | undefined,

@@ -5,13 +5,8 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, resolve } from "@std/path";
-import {
-  commandCwd,
-  ensureAppDir,
-  projectDir,
-  runBuildStep,
-  SHUTDOWN_SIGNALS,
-} from "../src/cli/shared.ts";
+import { commandCwd, ensureAppDir, projectDir, runBuildStep } from "../src/cli/shared.ts";
+import { SHUTDOWN_SIGNALS } from "../src/cli/shutdown.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 
 /** Build a minimal CommandContext with optional overrides. */

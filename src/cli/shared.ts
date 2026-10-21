@@ -10,15 +10,6 @@ import type { CommandContext } from "./command.ts";
 import { explainBuildFailure, explainedToolOutput } from "./explain-output.ts";
 
 /**
- * Termination signals to trap for graceful shutdown (platform-dependent). On Windows, Deno maps
- * the console's events to signals: Ctrl-C is `SIGINT`, Ctrl-Break `SIGBREAK`, a closed console
- * window `SIGHUP`, and logoff / system shutdown `SIGTERM`.
- */
-export const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
-  ? ["SIGINT", "SIGBREAK", "SIGHUP", "SIGTERM"]
-  : ["SIGINT", "SIGTERM"];
-
-/**
  * The `.env` tier the module gate loads for a verb: the process's own mode when the deployer
  * set one (`DENEXT_ENV`, else `NODE_ENV`), else the verb's declared tier, else `undefined` so
  * {@linkcode loadEnv} falls back to its default (`development`).
@@ -44,27 +35,6 @@ export function envTierFor(
  */
 export function projectDir(ctx: CommandContext): string {
   return resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
-}
-
-/**
- * Abort `controller` on the first termination signal (and stop trapping, so the
- * process exits once the server drains). Passing the controller's signal to the
- * server makes Deno.serve stop accepting and wait for in-flight requests.
- */
-export function installShutdown(controller: AbortController): void {
-  const onSignal = () => {
-    controller.abort();
-    for (const sig of SHUTDOWN_SIGNALS) {
-      try {
-        Deno.removeSignalListener(sig, onSignal);
-      } catch { /* not installed */ }
-    }
-  };
-  for (const sig of SHUTDOWN_SIGNALS) {
-    try {
-      Deno.addSignalListener(sig, onSignal);
-    } catch { /* signal unsupported on this platform */ }
-  }
 }
 
 /** Whether this invocation asked for diagnostic output (`--verbose` anywhere in argv). */

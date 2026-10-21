@@ -29,6 +29,7 @@ import { basename, dirname, join, relative, resolve, toFileUrl } from "@std/path
 import { walk } from "@std/fs";
 import type { CompileConfig } from "../server/config.ts";
 import {
+  frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
   minDepAgeArgs,
@@ -401,10 +402,15 @@ async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<str
   const mapped = Object.fromEntries(
     Object.entries(map.imports ?? {}).filter(([key]) => !(key in cssRedirects)),
   );
+  const configUrl = toFileUrl(file).href;
   const config: Record<string, unknown> = {
     compilerOptions,
     ...map,
-    imports: { ...mapped, ...relativeCssRedirects(cssRedirects, toFileUrl(file).href) },
+    imports: {
+      ...mapped,
+      ...relativeCssRedirects(cssRedirects, configUrl),
+      ...relativeCssRedirects(buildOnlyStubs(), configUrl),
+    },
   };
   const nmd = appCfg.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) config.nodeModulesDir = nmd;
@@ -413,6 +419,33 @@ async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<str
   Object.assign(config, minDepAgeConfig(appCfg.minimumDependencyAge));
   await Deno.writeTextFile(file, `${JSON.stringify(config, null, 2)}\n`);
   return file;
+}
+
+/**
+ * The framework's build-only modules a server's graph may still reach, by framework path: the
+ * plugin kit's build-step primitives (the Remix codegen included) and the public build entrypoints (`denext/build/next-compat`,
+ * `denext/bundle`, `denext/build/css`), which a plugin's runtime code imports but only calls from
+ * a build step.
+ */
+export const BUILD_ONLY_MODULES: readonly string[] = [
+  "src/build/plugin-kit-build.ts",
+  "src/build/remix-codegen.ts",
+  "src/build/next-compat-public.ts",
+  "src/build/plugin-bundle.ts",
+  "src/build/plugin-css.ts",
+];
+
+/**
+ * {@linkcode BUILD_ONLY_MODULES}, each mapped to ./build-only-stub.ts (their exports, the build
+ * ones refusing): the binary then embeds none of the build tooling behind them (esbuild, swc,
+ * lightningcss, sass, `@mdx-js/mdx`). Keys and values are the running framework's URLs; an app on
+ * another copy of denext keeps the real modules (a larger binary, nothing broken).
+ *
+ * @returns Module URL → the stub's URL.
+ */
+export function buildOnlyStubs(): Record<string, string> {
+  const stub = frameworkFileUrl("src/build/build-only-stub.ts");
+  return Object.fromEntries(BUILD_ONLY_MODULES.map((m) => [frameworkFileUrl(m), stub]));
 }
 
 /**

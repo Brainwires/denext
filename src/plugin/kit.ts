@@ -145,12 +145,15 @@ export type {
   VProps,
 } from "../server/mod.ts";
 
+// The build-step primitives below (the next-compat build, MDX, bundling, CSS, scaffolding) come
+// through ONE module, ../build/plugin-kit-build.ts, and the Remix codegen from its own:
+// `denext build --compile` maps both to a stub (../build/build-only-stub.ts), so a compiled app,
+// whose plugins never run a build step, embeds none of the build tooling.
+
 // ── next-compat (npm React drop-in) build ──────────────────────────────────
 // Compile an app's `react`/`next/*`-importing modules onto denext's React.
-export {
-  buildNextCompatModules,
-  createNextCompatServerLoader,
-} from "../build/next-compat-public.ts";
+export { buildNextCompatModules } from "../build/plugin-kit-build.ts";
+export { createNextCompatServerLoader } from "../build/next-compat-loader.ts";
 export type {
   BuildNextCompatModulesOptions,
   CompatReactNativeOptions,
@@ -161,7 +164,7 @@ export type {
 // Compile one MDX/Markdown source to a component-module string with the framework's
 // (build-time, opt-in npm) `@mdx-js/mdx` — what `@denext/content-collections` precompiles
 // `.mdx` entries with. Pass `jsxImportSource: "denext"` for a native app.
-export { compileMdxSource } from "../build/next-compat.ts";
+export { compileMdxSource } from "../build/plugin-kit-build.ts";
 export type { MdxBuildOptions } from "../build/next-compat.ts";
 
 // ── Incremental static regeneration ────────────────────────────────────────
@@ -171,11 +174,11 @@ export { PageCache } from "../server/mod.ts";
 // ── Client-route bundling (build step) ─────────────────────────────────────
 // Produce a route's browser entry bundle — call from an `addBuildStep` to emit a
 // plugin's client bundles for production.
-export { bundleRoutes, platformClientRedirects } from "../build/plugin-bundle.ts";
+export { bundleRoutes, platformClientRedirects } from "../build/plugin-kit-build.ts";
 
 // ── CSS pipeline (build step) ──────────────────────────────────────────────
 // Compile and collect a route's CSS the same way the core App Router does.
-export { buildAppCss, extractRouteCss } from "../build/plugin-css.ts";
+export { buildAppCss, extractRouteCss } from "../build/plugin-kit-build.ts";
 export type { AppCss } from "../build/plugin-css.ts";
 
 // ── Client hydration & fast refresh ────────────────────────────────────────
@@ -198,4 +201,4 @@ export * as remixCodegen from "../build/remix-codegen.ts";
 // ── Scaffolding ─────────────────────────────────────────────────────────────
 // The Edge Function `denext generate function` writes, for a plugin verb that scaffolds one
 // into its own directory (`denext functions new <name>`).
-export { edgeFunctionSource } from "../build/generate.ts";
+export { edgeFunctionSource } from "../build/plugin-kit-build.ts";

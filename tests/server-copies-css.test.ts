@@ -6,11 +6,11 @@
 import { assert, assertEquals } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
-  buildServerCopies,
   buildServesCss,
   parseServerCopies,
   precompiledServerLoader,
 } from "../src/build/server-copies.ts";
+import { buildServerCopies } from "../src/build/server-copies-build.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 

@@ -202,6 +202,63 @@ async function run(
   return { code: r.code, out: dec.decode(r.stdout) + dec.decode(r.stderr) };
 }
 
+/**
+ * npm packages that are build tooling (the CLI's bundler, CSS, MDX and router-codegen chains): a
+ * compiled server embeds none of them. Before the standalone entry was split from the build
+ * modules, a hello app's binary carried 47 MB of these.
+ */
+const BUILD_ONLY_NPM = [
+  "prettier",
+  "@babel",
+  "sass",
+  "zod",
+  "@tanstack",
+  "jiti",
+  "caniuse-lite",
+  "@mdx-js",
+  "esbuild",
+  "typescript",
+  "browserslist",
+  "unplugin",
+];
+
+/**
+ * The most the fixture's binary may embed (`deno compile`'s `Files:` total, the backend plugin and
+ * `npm:postgres` included): about 19 MB, where the CLI's build modules once added ~90 MB.
+ */
+const EMBEDDED_FILES_CEILING_MB = 26;
+
+/**
+ * Check `deno compile`'s listing of what it embedded (`out`): no build-only npm package, none of
+ * the build wasm (swc, lightningcss), and a bounded total.
+ */
+function assertSlimEmbed(out: string): void {
+  const lines = out.split(/\r?\n/);
+  const start = lines.findIndex((l) => l.includes(".deno_compile_node_modules"));
+  const npm: string[] = [];
+  if (start >= 0) {
+    // A single package collapses onto the entry's own line (`…node_modules/localhost/postgres/…`).
+    const own = /\.deno_compile_node_modules[\\/]localhost[\\/](@?[\w.-]+)/.exec(lines[start]);
+    if (own) npm.push(own[1]);
+    for (const line of lines.slice(start + 1)) {
+      if (/^[├└]/.test(line) || line.trim() === "") break; // the next top-level entry
+      const name = /[─┬] (@?[\w.-]+)[/ ]/.exec(line)?.[1];
+      if (name) npm.push(name);
+    }
+  }
+  const embedded = BUILD_ONLY_NPM.filter((p) => npm.includes(p));
+  assertEquals(embedded, [], `build-only npm packages embedded:\n${out}`);
+  for (const wasm of ["denext_swc.wasm", "denext_lightningcss.wasm"]) {
+    assert(!out.includes(wasm), `${wasm} embedded:\n${out}`);
+  }
+  const files = /^Files: ([\d.]+)(KB|MB|GB)/m.exec(out);
+  assert(files, `no embedded-files total in:\n${out}`);
+  const mb = Number(files[1]) * ({ KB: 1 / 1024, MB: 1, GB: 1024 } as const)[
+    files[2] as "KB" | "MB" | "GB"
+  ];
+  assert(mb < EMBEDDED_FILES_CEILING_MB, `${mb} MB embedded:\n${out}`);
+}
+
 /** A running binary: fetch its pages, then stop it. */
 interface Served {
   get(path: string): Promise<{ status: number; type: string; text: string }>;
@@ -314,6 +371,7 @@ Deno.test({
         assertEquals(r.code, 0, r.out);
         assertStringIncludes(r.out, "--allow-write=.denext,.storage,app.db");
         assert(!r.out.includes("--allow-all"), r.out);
+        assertSlimEmbed(r.out);
         // Every local module the binary loads is reached by a relative path, so it resolves to
         // its embedded copy: an absolute one would read this checkout from disk instead.
         const compileDir = join(project, ".denext", "compile");

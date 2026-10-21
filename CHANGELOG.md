@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **A `denext build --compile` binary embeds only the production server's code.** Its module
+  graph no longer reaches the build pipeline, so a minimal app's binary drops from about 214 MB
+  to about 135 MB (macOS x86_64): the 47 MB of npm build tooling (Prettier, Babel, `sass`, `zod`,
+  the TanStack router plugin, `jiti`, `caniuse-lite`, `@mdx-js/mdx`, …) and about
+  26 MB of the framework's source and wasm (swc, lightningcss) are gone. The standalone entry runs the
+  App Router server directly (never the SPA server), and the plugin kit's build-step functions
+  (`bundleRoutes`, `buildAppCss`, `extractRouteCss`, `compileMdxSource`, `remixCodegen`,
+  `edgeFunctionSource`, the next-compat build, `denext/bundle`, `denext/build/css`) are stand-ins
+  in the binary that throw if called: a plugin's build step only runs at `denext build`. A
+  compiled App Router app refuses a build that recorded no server copies or client boundary (one
+  made by an older denext), naming the fix, instead of compiling them at startup.
+
 ### Fixed
 
 - **A `ref` on a class component reaches the class instance, as in React.** `<MyClass ref={r} />`
@@ -18,6 +32,10 @@ and this project adheres to
   like a mount, `memo(Class)` passes it through to the instance, and the class's own `this.props`
   no longer carries `ref` (React 19 strips it), on the client and on the server. The ref used to
   be dropped. The work stays in the on-demand class runtime chunk.
+- **`denext build --compile` no longer embeds the CLI's build tooling** in every binary: the
+  standalone entry reached `src/build/spa.ts`, the bundler, the CSS pipeline, the next-compat
+  build and the swc codegen through the production server, the CLI's shared helpers and the plugin
+  kit, and `deno compile` embedded all of it with its npm dependencies.
 
 ## [4.6.0] - 2026-10-21
 

@@ -23,7 +23,8 @@ import {
 } from "../bundle.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { dirExists, setupPlugins } from "../pipeline-shared.ts";
+import { setupPlugins } from "../pipeline-shared.ts";
+import { dirExists } from "../paths.ts";
 import { buildSpa } from "../spa.ts";
 import { type BuildContext, type BuildResult, log } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
