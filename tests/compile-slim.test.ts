@@ -221,6 +221,9 @@ Deno.test("prodLoader / resolveFlightBoundary: no startup compiler, no record â†
     );
     assertEquals(none.flightRoutes.size, 0);
     assertEquals(none.boundary.client.size + none.boundary.server.size, 0);
+    // A Pages Router app (no `app/`) records no copies: its pages load as they are.
+    await Deno.remove(join(dir, "app"), { recursive: true });
+    assertEquals(typeof await prodLoader(await resolveProject(dir), NO_BUILD), "function");
     // Recorded copies need no compiler.
     const recorded: BuildInfo = {
       ...NO_BUILD,
