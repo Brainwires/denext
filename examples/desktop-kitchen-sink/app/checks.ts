@@ -1107,7 +1107,10 @@ const securityChecks: Check[] = [
     "passkeys: an RP outside desktop.capabilities.passkeys is refused before the OS",
     async ({ setup }) => {
       const caps = await raw("passkeys").capabilities({});
-      eq(caps.available, setup.os !== "linux", "capabilities().available");
+      // macOS / Windows: the OS passkey API. Linux: the runtime's libwebauthn (3.0.0-rc.1 on),
+      // exactly when the runtime reports security keys. The pin below holds either way.
+      const native = setup.os !== "linux" || await linuxSecurityKeys();
+      eq(caps.available, native, "capabilities().available");
       const codes: string[] = [];
       for (const kind of ["get", "create"] as const) {
         const envelope = await raw("passkeys")[kind]({
@@ -1121,11 +1124,13 @@ const securityChecks: Check[] = [
   ],
   ["passkeys: the native path answers without a ceremony", async ({ setup }) => {
     // Pinned, so it reaches the runtime; not a domain name, so the native parser refuses it before
-    // any OS request. Linux has no platform authenticator API at all.
+    // any OS request. Linux has no OS passkey API: a runtime without libwebauthn (before
+    // 3.0.0-rc.1, or the library missing) has no native path at all.
     const envelope = await raw("passkeys").get({
       optionsJson: JSON.stringify(passkeyOptions("get", "bad_rp.invalid")),
     });
-    const want = setup.os === "linux" ? "not_supported" : "invalid_rp";
+    const native = setup.os !== "linux" || await linuxSecurityKeys();
+    const want = native ? "invalid_rp" : "not_supported";
     eq(envelopeCode(envelope), want, "a pinned but malformed RP");
     return `${want} (${(envelope as { error?: { message?: string } }).error?.message ?? ""})`;
   }],
@@ -1185,6 +1190,11 @@ const securityChecks: Check[] = [
     },
   ],
 ];
+
+/** Linux: whether the runtime reports native passkeys with USB security keys (libwebauthn). */
+async function linuxSecurityKeys(): Promise<boolean> {
+  return (await appCapabilities()).passkeys === "security-keys";
+}
 
 /** Whether the passkeys-bridge check already ran in this page (it switches passkeys off). */
 let passkeysBridgeRan = false;
