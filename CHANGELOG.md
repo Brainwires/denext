@@ -184,6 +184,14 @@ and this project adheres to
   and the [Operating the stack](https://denext.dev/docs/deploy#operating-the-stack) guide now say
   to restore only a backup you trust; the archive checks protect the host, not the database.
 
+- **Docs: an `aal1` access token is `authenticated` under row-level security.** With
+  `@denext/backend`, the token of a user who owes a second factor runs `db()`, auto-REST,
+  Realtime and Storage queries as that user, as on Supabase, while `auth()` reads it as signed out.
+  The backend guide's new
+  [MFA and row-level security](https://denext.dev/docs/backend#mfa-and-row-level-security) section
+  and the security page say so and show the restrictive `aal2` policy that keeps a table behind
+  the second factor.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added

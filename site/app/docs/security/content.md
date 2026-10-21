@@ -502,7 +502,8 @@ or weaker than ideal.
 > history is in the `Security` entries of the [changelog](/docs/changelog) from
 > 0.12.0 (the original six residual-risk gaps closed, ten CVE classes locked in
 > with parity tests) through 2.0.0 (the auth-hardening pass and the weak-secret
-> boot guard), and 2.5 closed the OIDC audience row below. One row remains open:
+> boot guard), and 2.5 closed the OIDC audience row below. One row remains open, and one is a
+> documented difference from `auth()`:
 
 1. **🟡 Server-Action / RSC CPU & concurrency throttling — mostly mitigated.**
    The slow-body vector is CLOSED (idle timeout on the action body reader → 408,
@@ -517,6 +518,12 @@ or weaker than ideal.
    is refused even when `aud` still lists us. A provider whose IdP legitimately
    mints multi-audience tokens without `azp` can opt back into membership with
    `strictAudience: false`.
+3. **🟡 `aal1` access tokens under row-level security — by design, as on Supabase.**
+   With `@denext/backend`, an `/auth/v1` access token of a user who owes a second factor
+   (`aal: "aal1"`) is `authenticated` under RLS, while `auth()` reads it as signed out. A
+   table that must stay behind the second factor needs a policy checking
+   `auth.jwt() ->> 'aal' = 'aal2'`:
+   [MFA and row-level security](/docs/backend#mfa-and-row-level-security).
 
 ### `<Script strategy="worker">` (Partytown) and HTML injection
 

@@ -14,6 +14,8 @@ import {
   verifySecondFactor,
 } from "../src/server/auth/mfa.ts";
 import { sessionFromJwtBearer } from "../src/server/auth/gotrue/access.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { resolveIdentity } from "../packages/backend/server.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
 import { Authenticator } from "./helpers/soft-authenticator.ts";
@@ -141,6 +143,18 @@ Deno.test("a TOTP factor enrolled through denextAuth is an /auth/v1 factor, and 
     assertEquals(native.id, enrolment.factorId);
     assertEquals(native.status, "verified");
     assertEquals((await sessionFromJwtBearer(app.config, aal1))?.mfaPending, true);
+    // Row-level security reads the token's own claims, as Supabase does: the aal1 token is
+    // `authenticated` there (policies that need the second factor check `aal`), while `auth()`
+    // fails closed on it. Documented in the backend guide (MFA and row-level security).
+    const rls = await runWithContext(
+      createRequestContext(
+        new Request(`${ORIGIN}/rest/v1/notes`, {
+          headers: { apikey: app.publishableKey, authorization: `Bearer ${aal1}` },
+        }),
+      ),
+      () => resolveIdentity(),
+    );
+    assertEquals([rls.role, rls.claims.aal], ["authenticated", "aal1"]);
 
     // A password-only session can't add a factor of its own and step up with it.
     const sneaky = await api(app, "/factors", {
@@ -489,4 +503,15 @@ Deno.test("recovery codes: denext's backup codes through /auth/v1", async () => 
     assertExists(removed.json.id);
     assertEquals((await api(app, "/factors/recovery-codes", { token: aal2 })).status, 404);
   });
+});
+
+Deno.test("docs: the backend guide and the security page say an aal1 token is authenticated under RLS", async () => {
+  const read = async (path: string) =>
+    (await Deno.readTextFile(new URL(path, import.meta.url))).replace(/\s+/g, " ");
+  const backend = await read("../site/app/docs/backend/content.md");
+  assert(backend.includes("### MFA and row-level security"));
+  assert(/aal1` token .*under RLS that token is `authenticated`/.test(backend));
+  assert(backend.includes("using ((select auth.jwt() ->> 'aal') = 'aal2')"));
+  const security = await read("../site/app/docs/security/content.md");
+  assert(security.includes("(/docs/backend#mfa-and-row-level-security)"));
 });

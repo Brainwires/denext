@@ -1527,7 +1527,7 @@ same factors as denext's cookie sign-in, so a factor enrolled either way is enfo
   a factor is a session `auth()` reads as `null` (it fails closed, like a pending cookie), so
   `requireSession` and Server Actions refuse it. Row-level security reads the token's own
   claims (`auth.jwt() ->> 'aal'`), as on Supabase: a policy that needs the second factor checks
-  for `aal2`.
+  for `aal2` ([MFA and row-level security](/docs/backend#mfa-and-row-level-security)).
 - **Adding a factor needs the one already held.** Once a user holds a verified factor, an
   `aal1` session can't enroll another, verify a new one or register a passkey through
   `/auth/v1` (`403 insufficient_aal`), and a pending cookie session can't enroll or confirm a

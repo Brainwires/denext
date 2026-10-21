@@ -677,6 +677,25 @@ a `begin` inside it is a savepoint. A thrown error rolls back the transaction an
 `backend({ postgres: { rls: { claims: (session) => ({ tenant: … }) } } })` and read them as
 `auth.jwt() ->> 'tenant'`; `sub`, `role` and `email` cannot be overridden.
 
+### MFA and row-level security
+
+Row-level security trusts an access token's own claims, as Supabase does. A user who has enrolled
+a second factor but signed in with only a password holds an `aal1` token until they verify it,
+and under RLS that token is `authenticated` like any other: `db()`, auto-REST, Realtime and
+Storage's `rls: true` all run its queries as the user. This differs from [`auth()`](/docs/auth),
+which reads such a token as `null` (it owes a factor, so `requireSession` and Server Actions
+refuse it). A table that must stay behind the second factor needs a policy that checks for it;
+Supabase's pattern is a restrictive policy:
+
+```sql
+create policy "second factor required" on notes
+  as restrictive to authenticated
+  using ((select auth.jwt() ->> 'aal') = 'aal2');
+```
+
+A denext session (the cookie) is never `aal1` while it owes a factor: it is pending, and RLS sees it
+as signed out (`anon`) until the factor is verified.
+
 ### Setup: the roles and `auth.*`
 
 The first scoped query applies the migration `backend_rls_0001` (recorded in `backend_migrations`):
