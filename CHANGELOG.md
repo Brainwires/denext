@@ -93,6 +93,12 @@ and this project adheres to
 - **A `defineApi` handler whose result is `any` type-checks.** A handler returning an untyped
   value (`JSON.parse(...)`, `await res.json()`) was reported as returning an `err()` with an
   undeclared code, a misleading compile error. The `err()` code check now accepts an `any` result.
+- **`stopServices()` resolves only once the services' last status snapshot is on disk.** A call
+  made while a stop was already in progress (the server's drain, then the app's own shutdown
+  code) returned at once, before that stop had written `.denext/services.json`; and a debounced
+  snapshot write still in flight could land after the final one, leaving an older snapshot (or
+  its temporary file) behind. A concurrent call now waits for the stop in progress, and the
+  snapshot writes run one at a time, in order.
 - **A SPA `client:interaction` island no longer loses the click that mounts it.** The press
   (pointerdown, touchstart or keydown) imported the component and mounted it as soon as its chunk
   arrived. A cached chunk often arrives before the button is released, and then the component
