@@ -50,7 +50,8 @@ function writeLazy(dir: string, version: string): Promise<void> {
 
 /** A throwaway SPA project; `spaExtra` is spliced into its `spa` config block. */
 async function spaFixture(spaExtra = ""): Promise<string> {
-  const dir = await Deno.makeTempDir({ prefix: "denext_spa_export_" });
+  // Real path: an export names the project by its real path (macOS `/var`, Windows 8.3 names).
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_export_" }));
   await Deno.writeTextFile(join(dir, "deno.json"), DENO_JSON);
   await Deno.writeTextFile(
     join(dir, "denext.config.ts"),
@@ -376,7 +377,8 @@ Deno.test("resolveExportOutDir: symlinks are compared by where they really lead"
 
 /** A throwaway Pages Router project (a `pages/` tree, no `app/`) with a `.git` to protect. */
 async function pagesFixture(): Promise<string> {
-  const dir = await Deno.makeTempDir({ prefix: "denext_pages_export_" });
+  // Real path: an export names the project by its real path (macOS `/var`, Windows 8.3 names).
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_pages_export_" }));
   await Deno.writeTextFile(join(dir, "deno.json"), DENO_JSON);
   await Deno.mkdir(join(dir, "pages"));
   await Deno.writeTextFile(

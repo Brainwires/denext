@@ -69,6 +69,15 @@ and this project adheres to
 
 ### Fixed
 
+- **A project or framework checkout reached through a symlink builds what its real path does.**
+  Building a project under macOS's `$TMPDIR` (`/var` is a link to `/private/var`), a symlinked home
+  or workspace folder, or with an import map that names a local denext checkout through a symlink
+  compared the two spellings of each path as strings. The build-time feature scans then read the
+  framework's own source as app code and installed every on-demand runtime (the class, Activity,
+  ViewTransition, singleton and island runtimes) into apps that use none of them, and a module
+  reached under both spellings was bundled twice. The build, `denext export` and `denext dev` now
+  use the project's real path and compare canonical paths, and the scans warn, instead of failing
+  silently, when the route graph can't be crawled.
 - **A `ref` on a class component reaches the class instance, as in React.** `<MyClass ref={r} />`
   now sets `r.current` to the instance (or calls `r(instance)`) at commit, after
   `componentDidMount`; it is detached (`null`, or a callback ref's returned cleanup) before

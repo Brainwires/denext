@@ -9,6 +9,7 @@ import { markProduction, portOf, SERVE_FLAGS } from "./start-options.ts";
 import { ensureAppDir, projectDir, runBuildStep } from "../shared.ts";
 import { installShutdown } from "../shutdown.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
+import { canonicalPath } from "../../build/canonical-path.ts";
 import { startDevServer } from "../../build/dev-server.ts";
 import { startProdServer } from "../../build/prod-server.ts";
 import { build } from "../../build/build.ts";
@@ -29,7 +30,7 @@ import { applyRawFlag, RAW_FLAG } from "../explain-output.ts";
  * app-dir gate there.
  */
 async function appProject(ctx: CommandContext): Promise<{ dir: string; paths: ProjectPaths }> {
-  const dir = projectDir(ctx);
+  const dir = canonicalPath(projectDir(ctx)); // the real path, as in build() (canonical-path.ts)
   await applyPatchesAtBoot(dir); // patches/*.patch → node_modules + the denext import map
   const paths = await resolveProject(dir);
   if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir, paths.projectDir);
