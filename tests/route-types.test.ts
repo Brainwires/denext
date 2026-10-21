@@ -107,6 +107,8 @@ Deno.test("route-types: the generated module compiles and its types are usable",
       `${dir}/consumer.ts`,
       [
         `import type { ApiRoutes, ParamsOf, Routes } from "./routes.ts";`,
+        // An app imports denext somewhere; the native check maps only the specifiers its graph imports.
+        `import type {} from "denext";`,
         `const home: Routes = "/";`,
         `const post: Routes = \`/blog/\${"hello"}\`;`,
         `const params: ParamsOf<"/blog/[slug]"> = { slug: "hello" };`,
@@ -114,8 +116,16 @@ Deno.test("route-types: the generated module compiles and its types are usable",
         `export { home, post, params, ping };`,
       ].join("\n"),
     );
+    // The generated module augments `denext`, which an app's import map resolves: give the
+    // temp project one, to a stand-in module (TypeScript 7 refuses to augment a module it can't
+    // find, TS2664, where TypeScript 6 let it pass).
+    await Deno.writeTextFile(`${dir}/denext.ts`, "export {};\n");
+    await Deno.writeTextFile(
+      `${dir}/deno.json`,
+      JSON.stringify({ imports: { denext: "./denext.ts" } }),
+    );
     const { code, stderr } = await new Deno.Command(Deno.execPath(), {
-      args: ["check", `${dir}/consumer.ts`],
+      args: ["check", "--config", `${dir}/deno.json`, `${dir}/consumer.ts`],
       env: fileUrlCheckEnv(),
       stderr: "piped",
       stdout: "null",

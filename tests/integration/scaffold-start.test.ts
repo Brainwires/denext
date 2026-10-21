@@ -14,6 +14,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { type ScaffoldOptions, scaffoldProject } from "../../src/build/scaffold.ts";
 import { removeTempDir } from "../helpers/temp.ts";
+import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
@@ -198,7 +199,7 @@ Deno.test({
   // Up to 4.5.0 the least-privilege task (no --allow-run) served in-process on whatever Deno ran
   // it, so `Deno.SQL` (postgresClient(), the Prisma adapter) worked in `dev` and was missing in
   // production. Now it refuses with the ways out — unless this suite already runs on the toolchain.
-  ignore: Deno.version.deno.includes("denext"),
+  ignore: isDenextDenoVersion(Deno.version.deno),
   fn: async () => {
     const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_scaffold_start_" }));
     try {
@@ -229,7 +230,7 @@ Deno.test({
       const { html, output } = await start(dir, cfg, SERVE, "/api/runtime");
       const body = JSON.parse(html) as { sql: string; deno: string };
       assertEquals(body.sql, "function", output);
-      assertStringIncludes(body.deno, "denext");
+      assert(isDenextDenoVersion(body.deno), body.deno);
     } finally {
       await removeTempDir(dir);
     }
