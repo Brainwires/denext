@@ -415,6 +415,8 @@ export function renderToReadableStream(
         ready.reject(err);
         shellReady.reject(err);
         controller.error(err);
+      } finally {
+        renderer.release();
       }
     },
     async pull(controller) {
@@ -499,6 +501,7 @@ export async function renderShell(
     return { shell, holes };
   } finally {
     sink.end();
+    renderer.release();
   }
 }
 

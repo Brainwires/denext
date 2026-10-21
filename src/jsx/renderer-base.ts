@@ -7,7 +7,7 @@
 // resume → atomic hole renders).
 
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
-import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
+import { type Dispatcher, releaseDispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ACTIVITY } from "../runtime/react-extras.ts";
 import {
@@ -93,6 +93,16 @@ export abstract class VNodeRenderer<T> {
   protected activate(scopes: ProviderScope[]): void {
     setDispatcher(this.dispatcher);
     this.activeScopes = scopes;
+  }
+
+  /**
+   * Uninstall this renderer's hook dispatcher once its render (a shell, or a streamed boundary)
+   * is done: left installed, the process-global slot would keep this renderer and its request
+   * alive until the next render. A boundary still rendering activates again before each
+   * component.
+   */
+  release(): void {
+    releaseDispatcher(this.dispatcher);
   }
 
   /** Render children in order (a subclass decides sequential vs concurrent). */
@@ -300,12 +310,15 @@ export abstract class VNodeRenderer<T> {
     const holeScopes = boundaries.open(id, scopes);
     const holeHead: HeadCollector | null = head ? { tags: [] } : null;
     return this.resolve(children, holeScopes, holeScope, holeHead)
-      .then((out) => ({ out, head: holeHead }))
-      .catch(async (err) => ({
-        out: await this.resolveHoleSignal(err, holeScopes, holeScope, replacement),
-        signal: err,
-        head: holeHead,
-      }));
+      .then((out) => {
+        this.release();
+        return { out, head: holeHead };
+      })
+      .catch(async (err) => {
+        const out = await this.resolveHoleSignal(err, holeScopes, holeScope, replacement);
+        this.release();
+        return { out, signal: err, head: holeHead };
+      });
   }
 
   /**

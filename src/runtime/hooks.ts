@@ -156,6 +156,21 @@ export function setDispatcher(d: Dispatcher | null): Dispatcher | null {
 }
 
 /**
+ * Uninstall `d` if it is still the active dispatcher, at the end of a render (or of a piece of a
+ * streamed one). A dispatcher left installed after its render keeps the renderer, and through it
+ * the finished request's render state and the request itself, alive in the process-global slot
+ * until another render replaces it, and makes {@linkcode rendering} report a render that is over.
+ * A render still running installs its dispatcher again before each component it calls, so this is
+ * safe whenever no component is executing.
+ *
+ * @param d The dispatcher of the render that finished.
+ */
+export function releaseDispatcher(d: Dispatcher): void {
+  const holder = globalThis as DispatcherHolder;
+  if (holder[DISPATCHER_KEY] === d) holder[DISPATCHER_KEY] = null;
+}
+
+/**
  * Whether denext is rendering a component right now (its dispatcher is installed). React's
  * hooks hand a call to a `react-reconciler` renderer's dispatcher only when denext is not.
  */
