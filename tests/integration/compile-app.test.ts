@@ -63,7 +63,12 @@ import postgres from "postgres";
 
 const url = Deno.env.get("DATABASE_URL");
 export default {
-  compile: { include: ["lib/motto.txt"], permissions: { write: ["app.db", ".storage"] } },
+  compile: {
+    include: ["lib/motto.txt"],
+    // On the toolchain the network grant is baked by direction: listen on the server's own hosts
+    // (any port: the test picks one at run time), connect anywhere.
+    permissions: { write: ["app.db", ".storage"], netListen: ["0.0.0.0", "127.0.0.1", "localhost"] },
+  },
   plugins: [
     backend(
       url
@@ -122,6 +127,15 @@ export function GET(): Response {
     return Response.json({ wrote: true });
   } catch (err) {
     return Response.json({ wrote: false, error: (err as Error).name });
+  }
+}
+`,
+    "app/api/listen/route.ts": `export function GET(): Response {
+  try {
+    Deno.listen({ hostname: "127.0.0.2", port: 0 }).close();
+    return Response.json({ listened: true });
+  } catch (err) {
+    return Response.json({ listened: false, error: (err as Error).name });
   }
 }
 `,
@@ -370,6 +384,13 @@ Deno.test({
         );
         assertEquals(r.code, 0, r.out);
         assertStringIncludes(r.out, "--allow-write=.denext,.storage,app.db");
+        // The toolchain (3.0.0-rc.2+) compiling onto its own denort bakes the split network grant.
+        if (ON_TOOLCHAIN) {
+          assertStringIncludes(
+            r.out,
+            "--allow-net-connect --allow-net-listen=0.0.0.0,127.0.0.1,localhost",
+          );
+        }
         assert(!r.out.includes("--allow-all"), r.out);
         assertSlimEmbed(r.out);
         // Every local module the binary loads is reached by a relative path, so it resolves to
@@ -425,6 +446,11 @@ Deno.test({
             });
             const outside = JSON.parse((await app.get("/api/outside")).text);
             assertEquals(outside, { wrote: false, error: "NotCapable" });
+            // A listener outside compile.permissions.netListen is refused (the split grant).
+            if (ON_TOOLCHAIN) {
+              const listen = JSON.parse((await app.get("/api/listen")).text);
+              assertEquals(listen, { listened: false, error: "NotCapable" });
+            }
             const stored = JSON.parse((await app.get("/api/backend")).text);
             assertEquals(stored, { text: "stored in the binary's data dir" });
             // Compiled onto the toolchain's own denort (the pinned release): Deno.SQL is there.
