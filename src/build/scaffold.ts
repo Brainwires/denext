@@ -15,6 +15,13 @@ import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
 import { markdownTable, wrapProse } from "./scaffold-markdown.ts";
 import {
+  addTsgoLspSetting,
+  DENO_UNSTABLE_SETTING,
+  needsTsgoLspSetting,
+  TSGO_LSP_FEATURE,
+  tsgoLspByDefault,
+} from "../ts/lsp-settings.ts";
+import {
   MCP_AGENTS_SECTION,
   MCP_README_ROWS,
   mcpTaskCommand,
@@ -44,9 +51,10 @@ export interface ScaffoldOptions {
    */
   template?: ScaffoldTemplate;
   /**
-   * Write `.vscode/settings.json` (`"deno.enable": true`) and `.vscode/extensions.json`
-   * (recommending the Deno extension) so the editor resolves the `denext` import map the
-   * way `deno` does. Defaults to `true`; `denext create --no-vscode` turns it off. Merged
+   * Write `.vscode/settings.json` (`"deno.enable": true`, plus `"deno.unstable": ["tsgo-lsp"]`
+   * for the TypeScript 7 language server unless `DENEXT_TSGO_LSP=0`) and
+   * `.vscode/extensions.json` (recommending the Deno extension) so the editor resolves the
+   * `denext` import map the way `deno` does. Defaults to `true`; `denext create --no-vscode` turns it off. Merged
    * additively into files that already exist (`denext init`), like `denext migrate`.
    */
   vscode?: boolean;
@@ -131,8 +139,9 @@ function readme(opts: ScaffoldOptions, appBase: string): string {
         "(`cookies`, `headers`, `getSession`, caching) and `denext/client`.",
     ),
     opts.vscode === false ? "" : item(
-      "`.vscode/` — turns on the Deno language server (and recommends the Deno extension), so " +
-        "the editor resolves `denext` exactly as `deno check` does.",
+      "`.vscode/` — turns on the Deno language server on its TypeScript 7 backend (and " +
+        "recommends the Deno extension), so the editor resolves `denext` exactly as " +
+        '`deno check` does. `"deno.unstable": []` there keeps TypeScript 6.',
     ),
   ].join("");
   return `# ${name}
@@ -721,8 +730,18 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
 /** The scaffold's `.gitignore`: generated / build outputs to keep out of version control. */
 function scaffoldGitignore(opts: ScaffoldOptions, appBase: string): string {
   // `.denext/` (build output), `out/` (`denext export`), `.deno/` (the native TypeScript 7
-  // check's and the tsgo language server's project cache), env files with secrets.
-  const ignore = [".denext/", "out/", ".deno/", ".env*.local", "*.local", "patches/.work/"];
+  // check's and the tsgo language server's project cache), `/tsconfig.json` (the root config the
+  // tsgo language server's `deno sync-types` generates to extend `.deno/tsconfig.json`; a denext
+  // app keeps its compiler options in deno.json), env files with secrets.
+  const ignore = [
+    ".denext/",
+    "out/",
+    ".deno/",
+    "/tsconfig.json",
+    ".env*.local",
+    "*.local",
+    "patches/.work/",
+  ];
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
@@ -826,7 +845,9 @@ async function refuseToClobber(files: ScaffoldFile[], opts: ScaffoldOptions): Pr
  * `imports` — flags `denext`/`denext/desktop` and the aliased `react` as unresolved even
  * though `deno check` passes and the app builds.
  *
- * Writes `.vscode/settings.json` (`"deno.enable": true`) and `.vscode/extensions.json`
+ * Writes `.vscode/settings.json` (`"deno.enable": true`, and `"deno.unstable": ["tsgo-lsp"]` —
+ * the TypeScript 7 language server, see src/ts/lsp-settings.ts — when the settings name no
+ * `deno.unstable` and `DENEXT_TSGO_LSP` is not `0`) and `.vscode/extensions.json`
  * (recommending `denoland.vscode-deno`, so the LSP is one prompt away). Both are merged
  * additively: any existing keys/recommendations are preserved, the entry is added only when
  * missing, and a re-run with it already present writes nothing (idempotent). Pushes each
@@ -837,16 +858,32 @@ async function refuseToClobber(files: ScaffoldFile[], opts: ScaffoldOptions): Pr
  *
  * @param dir The app directory.
  * @param written Accumulator each changed `.vscode` path (absolute) is pushed onto.
+ * @param options `tsgoLsp`: whether to write the TypeScript 7 language-server setting (default:
+ *   unless `DENEXT_TSGO_LSP=0`).
  */
-export async function ensureVscodeDeno(dir: string, written: string[]): Promise<void> {
+export async function ensureVscodeDeno(
+  dir: string,
+  written: string[],
+  options: { tsgoLsp?: boolean } = {},
+): Promise<void> {
   const vscodeDir = join(dir, ".vscode");
+  const tsgoLsp = options.tsgoLsp ?? tsgoLspByDefault();
 
-  // settings.json → turn on the Deno LSP for this workspace folder.
+  // settings.json → turn on the Deno LSP for this workspace folder, on its TypeScript 7 (tsgo)
+  // backend unless the settings already choose (`deno.unstable`) or DENEXT_TSGO_LSP=0.
   const settingsPath = join(vscodeDir, "settings.json");
-  const settings = (await readVscodeJson(settingsPath)) ?? {};
+  const text = await mfs.readTextFile(settingsPath).catch(() => null);
+  const settings = (text === null ? null : parseVscodeJson(text)) ?? {};
   if (settings["deno.enable"] !== true) {
     settings["deno.enable"] = true;
+    if (tsgoLsp && needsTsgoLspSetting(settings)) {
+      settings[DENO_UNSTABLE_SETTING] = [TSGO_LSP_FEATURE];
+    }
     await writeVscodeJson(vscodeDir, settingsPath, settings, written);
+  } else if (tsgoLsp && text !== null) {
+    // Already on the Deno LSP: add only the backend entry, leaving the rest of the file's bytes.
+    const next = addTsgoLspSetting(text);
+    if (next !== null) await writeVscodeText(vscodeDir, settingsPath, next, written);
   }
 
   // extensions.json → recommend the Deno extension so the LSP is a click away.
@@ -861,25 +898,44 @@ export async function ensureVscodeDeno(dir: string, written: string[]): Promise<
 
 /** Read a `.vscode/*.json` file (JSONC — VSCode allows comments), or null when absent/invalid. */
 async function readVscodeJson(path: string): Promise<Record<string, unknown> | null> {
+  const text = await mfs.readTextFile(path).catch(() => null);
+  return text === null ? null : parseVscodeJson(text);
+}
+
+/** A `.vscode/*.json` file's object (JSONC), or null when it is not one. */
+function parseVscodeJson(text: string): Record<string, unknown> | null {
   try {
-    return parseJsonc(await mfs.readTextFile(path)) as Record<string, unknown>;
+    const value = parseJsonc(text);
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
   } catch {
     return null;
   }
 }
 
 /** Write a `.vscode/*.json` file (mkdir + symlink-safe overwrite), pushing it to `written`. */
-async function writeVscodeJson(
+function writeVscodeJson(
   vscodeDir: string,
   path: string,
   obj: Record<string, unknown>,
+  written: string[],
+): Promise<void> {
+  return writeVscodeText(vscodeDir, path, JSON.stringify(obj, null, 2) + "\n", written);
+}
+
+/** Write a `.vscode/*` file's text (mkdir + symlink-safe overwrite), pushing it to `written`. */
+async function writeVscodeText(
+  vscodeDir: string,
+  path: string,
+  text: string,
   written: string[],
 ): Promise<void> {
   await mfs.mkdir(vscodeDir, { recursive: true });
   // Same symlink guard as migrate's `ensureGitignore`: unlink first so a symlinked target
   // (possible in a cloned third-party repo) isn't followed out of tree.
   await mfs.remove(path).catch(() => {});
-  await mfs.writeTextFile(path, JSON.stringify(obj, null, 2) + "\n");
+  await mfs.writeTextFile(path, text);
   written.push(path);
 }
 

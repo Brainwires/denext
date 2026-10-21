@@ -65,6 +65,32 @@ Deno.test("tsconfig paths: a relative extends chain, then a parent directory's c
   }
 });
 
+Deno.test("tsconfig paths: the tsgo language server's generated .deno/tsconfig.json is never an alias source", async () => {
+  // `deno sync-types` (run by the TypeScript 7 language server) writes `.deno/tsconfig.json`, whose
+  // `paths` map the import map onto Deno's type mirrors, and makes the root tsconfig extend it:
+  // a fresh app gets `{ "_deno_generated": true, "extends": "./.deno/tsconfig.json" }`, and a
+  // project's own string `extends` becomes an array with the generated config first.
+  const generated = JSON.stringify({
+    compilerOptions: { paths: { "react": ["./.deno/npm-compat/react/index.d.ts"] } },
+  });
+  const fresh = await tree({
+    "tsconfig.json": '{ "_deno_generated": true, "extends": "./.deno/tsconfig.json" }',
+    ".deno/tsconfig.json": generated,
+  });
+  const own = await tree({
+    "tsconfig.json": '{ "extends": ["./.deno/tsconfig.json", "./tsconfig.base.json"] }',
+    "tsconfig.base.json": '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+    ".deno/tsconfig.json": generated,
+  });
+  try {
+    assertEquals(await resolveTsPaths(fresh), null);
+    assertEquals(await readTsPathAliases(own), [["@/", join(own, "src") + "/"]]);
+  } finally {
+    await Deno.remove(fresh, { recursive: true });
+    await Deno.remove(own, { recursive: true });
+  }
+});
+
 Deno.test("readImportAliases: tsconfig paths join the import map, which wins on a shared key", async () => {
   const dir = await tree({
     "deno.json": JSON.stringify({ imports: { "@/": "./app/" } }),

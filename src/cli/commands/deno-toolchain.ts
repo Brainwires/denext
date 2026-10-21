@@ -119,6 +119,7 @@ async function status(ctx: CommandContext): Promise<void> {
     statusLine(s.ok, "deno toolchain", s.detail, s.path);
     statusLine(esbuild.ok, "esbuild", esbuild.detail, esbuild.path);
     statusLine(s.tsgo.state !== "refused", "typescript", s.tsgo.detail, s.tsgo.path);
+    statusLine(s.tsgoLsp.state !== "refused", "typescript lsp", s.tsgoLsp.detail, s.tsgoLsp.path);
     statusLine(gleam.ok, "gleam", gleam.detail, gleam.state === "missing" ? null : gleam.path);
     statusLine(
       fastlane.ok,

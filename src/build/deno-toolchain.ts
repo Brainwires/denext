@@ -58,18 +58,21 @@ export interface DenoToolchainEsbuild {
 }
 
 /**
- * The native TypeScript compiler (`typescript@7`, "tsgo") a toolchain archive carries in `typescript-check/`
- * beside `deno` (from the first runtime with native type checking): `tsc[.exe]` and the
- * `lib.*.d.ts` files it loads from its own directory. That runtime type-checks with it by default.
+ * A native TypeScript 7 build ("tsgo") a toolchain archive carries in a directory beside `deno`:
+ * `tsc[.exe]` and the `lib.*.d.ts` files it loads from its own directory. `typescript-check/` is
+ * the compiler the runtime type-checks with by default (from the first runtime with native type
+ * checking); `typescript-lsp/` is the dated 7.1 nightly `deno lsp`'s tsgo language-service backend
+ * runs (`"deno.unstable": ["tsgo-lsp"]`).
  */
 export interface DenoToolchainTsgo {
-  /** The TypeScript release (`7.0.2`). */
+  /** The TypeScript release (`7.0.2`, or a dated nightly such as `7.1.0-dev.20261017.1`). */
   readonly version: string;
-  /** Lowercase hex SHA-256 of `typescript-check/tsc[.exe]`. */
+  /** Lowercase hex SHA-256 of the directory's `tsc[.exe]`. */
   readonly sha256: string;
   /**
-   * Lowercase hex SHA-256 over every file of `typescript-check/` but `typescript.json`: `<name>\0<sha256>\n` per
-   * file, sorted by name (the `tree_sha256` the fork's release manifest records).
+   * Lowercase hex SHA-256 over every file of the directory but `typescript.json`:
+   * `<name>\0<sha256>\n` per file, sorted by name (the `tree_sha256` the fork's release manifest
+   * records).
    */
   readonly treeSha256: string;
 }
@@ -90,8 +93,13 @@ export interface DenoToolchainArtifact {
   readonly format?: "zip" | "tar.gz" | "binary";
   /** The esbuild inside the zip, when the release ships one. */
   readonly esbuild?: DenoToolchainEsbuild;
-  /** The native TypeScript compiler inside the zip, when the release ships one. */
+  /** The native TypeScript compiler inside the zip (`typescript-check/`), when the release ships one. */
   readonly tsgo?: DenoToolchainTsgo;
+  /**
+   * The TypeScript 7 language server inside the zip (`typescript-lsp/`), when the pin names one:
+   * installed beside `deno`, where `deno lsp` finds it before downloading its own copy.
+   */
+  readonly tsgoLsp?: DenoToolchainTsgo;
   /**
    * Request headers the download needs (a registry's anonymous token, such as ghcr.io's for the
    * portable Ruby behind denext's managed fastlane). Never a secret: pins are public.
@@ -250,10 +258,30 @@ function esbuildExeName(os: string): string {
   return os === "windows" ? "esbuild.exe" : "esbuild";
 }
 
-/** The directory beside `deno` that holds the native TypeScript compiler. */
-const TSGO_DIR = "typescript-check";
+/** One of the archive's TypeScript 7 directories beside `deno`: the checker or the language server. */
+interface TsRole {
+  /** The pin's (and the stamp's) field. */
+  readonly key: "tsgo" | "tsgoLsp";
+  /** The directory beside `deno`. */
+  readonly dir: string;
+  /** What a refusal names. */
+  readonly what: string;
+}
 
-/** The native TypeScript compiler's file name (in {@linkcode TSGO_DIR}) on `os`. */
+/** `typescript-check/`: the compiler `deno check` & co. run. */
+const TS_CHECK: TsRole = {
+  key: "tsgo",
+  dir: "typescript-check",
+  what: "native TypeScript compiler",
+};
+/** `typescript-lsp/`: the build `deno lsp`'s tsgo backend runs. */
+const TS_LSP: TsRole = {
+  key: "tsgoLsp",
+  dir: "typescript-lsp",
+  what: "TypeScript language server",
+};
+
+/** A native TypeScript build's file name (in its role's directory) on `os`. */
 function tsgoExeName(os: string): string {
   return os === "windows" ? "tsc.exe" : "tsc";
 }
@@ -294,7 +322,10 @@ interface StampedFile {
 /** The stamp's record of the archive's esbuild: installed (verified), or why it was refused. */
 type StampedEsbuild = (StampedFile & { version: string }) | { refused: string };
 
-/** The stamp's record of the archive's `typescript-check/`: installed (verified), or why it was refused. */
+/**
+ * The stamp's record of one of the archive's TypeScript directories (`typescript-check/`,
+ * `typescript-lsp/`): installed (verified), or why it was refused.
+ */
 type StampedTsgo = (StampedFile & { version: string; treeSha256: string }) | { refused: string };
 
 /** The stamp's contents. */
@@ -308,7 +339,12 @@ interface ToolchainStamp {
   esbuild?: StampedEsbuild;
   /** Present exactly when the pin names a native TypeScript compiler for this archive. */
   tsgo?: StampedTsgo;
+  /** Present exactly when the pin names a TypeScript language server for this archive. */
+  tsgoLsp?: StampedTsgo;
 }
+
+/** The stamp's records of the archive's install steps beside the binary. */
+type StampSteps = Pick<ToolchainStamp, "esbuild" | "tsgo" | "tsgoLsp">;
 
 function readStamp(dir: string): Promise<ToolchainStamp | null> {
   return readJsonFile<ToolchainStamp>(join(dir, TOOLCHAIN_STAMP));
@@ -318,8 +354,9 @@ function readStamp(dir: string): Promise<ToolchainStamp | null> {
 function stampArchiveIs(s: ToolchainStamp, a: DenoToolchainArtifact): boolean {
   return s.archive?.file === a.file && s.archive.sha256 === a.sha256 &&
     typeof s.binary?.sha256 === "string" && typeof s.binary.size === "number" &&
-    // A stamp written without the esbuild (or tsgo) step (an older denext) re-installs to run it.
-    stampHasStep(a.esbuild, s.esbuild) && stampHasStep(a.tsgo, s.tsgo);
+    // A stamp written without the esbuild (or a tsgo) step (an older denext) re-installs to run it.
+    stampHasStep(a.esbuild, s.esbuild) && stampHasStep(a.tsgo, s.tsgo) &&
+    stampHasStep(a.tsgoLsp, s.tsgoLsp);
 }
 
 /** Whether the stamp records an install step the pin asks for (`pinned` absent: none needed). */
@@ -614,16 +651,16 @@ async function stampFile(path: string): Promise<StampedFile> {
 }
 
 /**
- * The stamp for the binary at `path`, as installed (`esbuild` / `tsgo`: those steps' records).
+ * The stamp for the binary at `path`, as installed (`steps`: the esbuild / tsgo steps' records).
  */
 async function stampFor(
   path: string,
   version: string,
   target: string,
   artifact: DenoToolchainArtifact,
-  esbuild?: StampedEsbuild,
-  tsgo?: StampedTsgo,
+  steps: StampSteps = {},
 ): Promise<ToolchainStamp> {
+  const { esbuild, tsgo, tsgoLsp } = steps;
   return {
     schema: 1,
     version,
@@ -632,6 +669,7 @@ async function stampFor(
     binary: await stampFile(path),
     ...(esbuild ? { esbuild } : {}),
     ...(tsgo ? { tsgo } : {}),
+    ...(tsgoLsp ? { tsgoLsp } : {}),
   };
 }
 
@@ -646,7 +684,11 @@ async function restamp(
   const old = await readStamp(dir);
   await writeStamp(
     dir,
-    await stampFor(join(dir, exe), version, target, artifact, old?.esbuild, old?.tsgo),
+    await stampFor(join(dir, exe), version, target, artifact, {
+      esbuild: old?.esbuild,
+      tsgo: old?.tsgo,
+      tsgoLsp: old?.tsgoLsp,
+    }),
   );
 }
 
@@ -698,31 +740,34 @@ export async function tsgoTreeSha256(dir: string): Promise<string> {
 }
 
 /**
- * Install the archive's `typescript-check/` beside `deno` when the pin names one: only a compiler whose
- * binary and whole directory hash to the pinned SHA-256s; anything else is refused and recorded,
- * never installed (the toolchain then type-checks with its in-process TypeScript, see
- * src/ts/engine.ts). Returns the stamp's record (`undefined` when the pin names none).
+ * Install one of the archive's TypeScript directories (`role`: `typescript-check/` or
+ * `typescript-lsp/`) beside `deno` when the pin names it: only a build whose binary and whole
+ * directory hash to the pinned SHA-256s; anything else is refused and recorded, never installed
+ * (the toolchain then type-checks with its in-process TypeScript, see src/ts/engine.ts; `deno lsp`
+ * fetches its own pinned language server). Returns the stamp's record (`undefined` when the pin
+ * names none).
  */
 async function installTsgo(
+  role: TsRole,
   artifact: DenoToolchainArtifact,
   extracted: string | null,
   dir: string,
   os: string,
 ): Promise<StampedTsgo | undefined> {
-  const installed = join(dir, TSGO_DIR);
-  // Whatever an earlier install left goes first: a refused compiler must not linger runnable.
+  const installed = join(dir, role.dir);
+  // Whatever an earlier install left goes first: a refused build must not linger runnable.
   await Deno.remove(installed, { recursive: true }).catch(() => {});
-  const pinned = artifact.tsgo;
+  const pinned = artifact[role.key];
   if (!pinned) return undefined;
   const exe = tsgoExeName(os);
-  const why = await archiveTsgoProblem(pinned, extracted, exe);
+  const why = await archiveTsgoProblem(role, pinned, extracted, exe);
   if (why !== null) {
     return {
-      refused: `the native TypeScript compiler in denext's Deno toolchain (${artifact.file}) ` +
+      refused: `the ${role.what} in denext's Deno toolchain (${artifact.file}) ` +
         `was refused: ${why}`,
     };
   }
-  const from = join(extracted!, TSGO_DIR);
+  const from = join(extracted!, role.dir);
   if (os !== "windows" && Deno.build.os !== "windows") await Deno.chmod(join(from, exe), 0o755);
   await renameRetrying(from, installed);
   return {
@@ -732,17 +777,18 @@ async function installTsgo(
   };
 }
 
-/** Why the extracted archive's `typescript-check/` can't be installed (`null`: it is the pinned one). */
+/** Why the extracted archive's `role` directory can't be installed (`null`: it is the pinned one). */
 async function archiveTsgoProblem(
+  role: TsRole,
   pinned: DenoToolchainTsgo,
   extracted: string | null,
   exe: string,
 ): Promise<string | null> {
-  if (extracted === null) return "a bare-binary toolchain pin carries no typescript-check/";
-  const dir = join(extracted, TSGO_DIR);
+  if (extracted === null) return `a bare-binary toolchain pin carries no ${role.dir}/`;
+  const dir = join(extracted, role.dir);
   const path = join(dir, exe);
   if (!(await Deno.stat(path).catch(() => null))?.isFile) {
-    return `the archive has no ${TSGO_DIR}/${exe}`;
+    return `the archive has no ${role.dir}/${exe}`;
   }
   const got = await sha256File(path);
   if (got !== pinned.sha256) return `SHA-256 mismatch (pinned ${pinned.sha256}, got ${got})`;
@@ -793,11 +839,12 @@ async function install(
     // the next run treats as missing (a fresh download), never as a verified binary.
     await Deno.remove(join(dir, TOOLCHAIN_STAMP)).catch(() => {});
     const esbuild = await installEsbuild(artifact, extracted, dir, os);
-    const tsgo = await installTsgo(artifact, extracted, dir, os);
+    const tsgo = await installTsgo(TS_CHECK, artifact, extracted, dir, os);
+    const tsgoLsp = await installTsgo(TS_LSP, artifact, extracted, dir, os);
     await renameRetrying(binary, join(dir, exe));
     await writeStamp(
       dir,
-      await stampFor(join(dir, exe), version, target, artifact, esbuild, tsgo),
+      await stampFor(join(dir, exe), version, target, artifact, { esbuild, tsgo, tsgoLsp }),
     );
   } finally {
     await Deno.remove(scratch, { recursive: true }).catch(() => {});
@@ -1230,6 +1277,8 @@ export interface DenoToolchainStatus {
   readonly esbuild: ToolchainEsbuildStatus;
   /** The toolchain's native TypeScript compiler (what its type checking runs when it is `ok`). */
   readonly tsgo: ToolchainTsgoStatus;
+  /** The toolchain's TypeScript language server (what `deno lsp`'s tsgo backend runs when `ok`). */
+  readonly tsgoLsp: ToolchainTsgoStatus;
 }
 
 /** Options for {@linkcode denoToolchainStatus}. */
@@ -1341,6 +1390,7 @@ export async function denoToolchainStatus(
   const runningText = runningLine(standalone, mode.mode, active, running);
   const esbuild = await toolchainEsbuild({ ...options, env, pin, target });
   const tsgo = await toolchainTsgo({ ...options, env, pin, target });
+  const tsgoLsp = await toolchainTsgoLsp({ ...options, env, pin, target });
   const base = {
     version: pin.version,
     target,
@@ -1349,6 +1399,7 @@ export async function denoToolchainStatus(
     state: "n/a" as const,
     esbuild,
     tsgo,
+    tsgoLsp,
   };
   if (mode.mode === "stock") {
     return {
@@ -1534,32 +1585,59 @@ export interface ToolchainTsgoStatus {
  * @param options Seams; all default to the process.
  * @returns The state, and the compiler when it is `ok`.
  */
-export async function toolchainTsgo(
+export function toolchainTsgo(
   options: DenoToolchainStatusOptions = {},
 ): Promise<ToolchainTsgoStatus> {
+  return toolchainTsRole(options, TS_CHECK, {
+    na: "that Deno's own type checker runs",
+    none: "this toolchain type-checks with its in-process TypeScript",
+    ok: (v) => `TypeScript ${v} (native, verified)`,
+  });
+}
+
+/**
+ * Whether denext's Deno toolchain has a verified TypeScript 7 language server (`typescript-lsp/`,
+ * what `deno lsp` runs for `"deno.unstable": ["tsgo-lsp"]`) for this host. Never downloads. With
+ * `verify`, the whole directory is re-hashed against the pin. Unlike the checker, a refused or
+ * unpinned one costs nothing but a download: `deno lsp` then fetches its own pinned build and
+ * verifies it against the npm integrity compiled into the runtime.
+ *
+ * @param options Seams; all default to the process.
+ * @returns The state, and the server binary when it is `ok`.
+ */
+export function toolchainTsgoLsp(
+  options: DenoToolchainStatusOptions = {},
+): Promise<ToolchainTsgoStatus> {
+  return toolchainTsRole(options, TS_LSP, {
+    na: "that Deno's own language server runs",
+    none: "this toolchain pins no TypeScript language server (`deno lsp` fetches its own)",
+    ok: (v) => `TypeScript ${v} language server (native, verified)`,
+  });
+}
+
+/** {@linkcode toolchainTsgo} / {@linkcode toolchainTsgoLsp} for `role`, with its report texts. */
+async function toolchainTsRole(
+  options: DenoToolchainStatusOptions,
+  role: TsRole,
+  text: { na: string; none: string; ok: (version: string) => string },
+): Promise<ToolchainTsgoStatus> {
   const q = await stepQuery(options);
-  if ("mode" in q) {
-    return tsgoState("n/a", null, `${TOOLCHAIN_ENV}=${q.mode}: that Deno's own type checker runs`);
-  }
+  if ("mode" in q) return tsgoState("n/a", null, `${TOOLCHAIN_ENV}=${q.mode}: ${text.na}`);
   const { pin, target, artifact, dir, stamp } = q;
-  if (!artifact?.tsgo) {
-    return tsgoState("none", null, "this toolchain type-checks with its in-process TypeScript");
-  }
-  const pinned = artifact.tsgo;
-  if (!stampMatches(stamp, pin.version!, target, artifact)) {
+  const pinned = artifact?.[role.key];
+  if (!pinned) return tsgoState("none", null, text.none);
+  if (!stampMatches(stamp, pin.version!, target, artifact!)) {
     return tsgoState("missing", pinned, `TypeScript ${pinned.version} arrives with the toolchain`);
   }
-  const rec = stamp.tsgo!;
+  const rec = stamp[role.key]!;
   if ("refused" in rec) return tsgoState("refused", pinned, rec.refused);
-  const path = join(dir, TSGO_DIR, tsgoExeName(options.os ?? Deno.build.os));
+  const path = join(dir, role.dir, tsgoExeName(options.os ?? Deno.build.os));
   const why = await installedTsgoProblem(path, rec, pinned, options.verify === true);
-  return why === null
-    ? tsgoState("ok", pinned, `TypeScript ${pinned.version} (native, verified)`, path)
-    : tsgoState(
-      "refused",
-      pinned,
-      `the native TypeScript compiler in denext's Deno toolchain (${path}) was refused: ${why}`,
-    );
+  return why === null ? tsgoState("ok", pinned, text.ok(pinned.version), path) : tsgoState(
+    "refused",
+    pinned,
+    `the ${role.what} in denext's Deno toolchain (${path}) was refused: ${why}`,
+  );
 }
 
 /** A {@linkcode ToolchainTsgoStatus}. */

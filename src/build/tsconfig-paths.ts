@@ -50,19 +50,50 @@ async function pathsOfChain(
   seen.add(file);
   const cfg = await readConfig(file, read);
   if (!cfg) return null;
-  const co = cfg.compilerOptions as { paths?: unknown; baseUrl?: unknown } | undefined;
-  if (co?.paths && typeof co.paths === "object" && Object.keys(co.paths).length > 0) {
-    const baseUrl = typeof co.baseUrl === "string" ? co.baseUrl : ".";
-    return {
-      paths: co.paths as Record<string, string[]>,
-      baseDir: resolve(dirname(file), baseUrl),
-    };
-  }
-  if (typeof cfg.extends === "string" && cfg.extends.startsWith(".")) {
-    const ext = resolve(dirname(file), cfg.extends);
-    return await pathsOfChain(ext.endsWith(".json") ? ext : ext + ".json", read, seen);
+  const own = ownPaths(cfg, file);
+  if (own) return own;
+  for (const path of extendsChain(cfg, file)) {
+    const found = await pathsOfChain(path, read, seen);
+    if (found) return found;
   }
   return null;
+}
+
+/** The `paths` a config declares itself (resolved against its `baseUrl`), or null. */
+function ownPaths(cfg: Record<string, unknown>, file: string): TsPaths | null {
+  const co = cfg.compilerOptions as { paths?: unknown; baseUrl?: unknown } | undefined;
+  if (!co?.paths || typeof co.paths !== "object" || Object.keys(co.paths).length === 0) {
+    return null;
+  }
+  const baseUrl = typeof co.baseUrl === "string" ? co.baseUrl : ".";
+  return { paths: co.paths as Record<string, string[]>, baseDir: resolve(dirname(file), baseUrl) };
+}
+
+/**
+ * The relative configs `cfg` extends, in the order to search them: an array `extends` applies
+ * left to right, later entries overriding, so the last one that declares `paths` wins and they
+ * are tried from the end. Deno's generated `.deno/tsconfig.json` is left out.
+ */
+function extendsChain(cfg: Record<string, unknown>, file: string): string[] {
+  const raw = typeof cfg.extends === "string"
+    ? [cfg.extends]
+    : Array.isArray(cfg.extends)
+    ? cfg.extends.filter((e): e is string => typeof e === "string").reverse()
+    : [];
+  return raw.filter((e) => e.startsWith(".")).map((e) => {
+    const ext = resolve(dirname(file), e);
+    return ext.endsWith(".json") ? ext : ext + ".json";
+  }).filter((path) => !isGeneratedDenoConfig(path));
+}
+
+/**
+ * Whether `path` is the `.deno/tsconfig.json` Deno's native TypeScript 7 tooling generates (`deno
+ * sync-types`, which the tsgo language server runs, makes the root `tsconfig.json` extend it). Its
+ * `paths` map the import map onto Deno's type mirrors in `.deno/` — editor plumbing, never the
+ * project's own aliases — so the chain skips it, as the fork's own check overlay does.
+ */
+function isGeneratedDenoConfig(path: string): boolean {
+  return /[\\/]\.deno[\\/]tsconfig\.json$/.test(path);
 }
 
 /**

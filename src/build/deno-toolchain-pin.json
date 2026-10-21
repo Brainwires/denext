@@ -19,6 +19,11 @@
         "version": "7.0.2",
         "sha256": "a82f731365ad69d5c4c15f5e18fba4584bf3b7b839960172a76c3462b5114bf2",
         "treeSha256": "79becdbd99305621dfa787c178d80052f19d806b9fc45a6a26b76bd7b1b6099d"
+      },
+      "tsgoLsp": {
+        "version": "7.1.0-dev.20261017.1",
+        "sha256": "0a93f17e3e10360b7e91ec8682e411481a65a7ee44a74a82ee0620bf433f9a6c",
+        "treeSha256": "5f2b4239c64b1739cbe01dbc6c81fef698b794a2afcd2cdfb88de64d31146e4a"
       }
     },
     "darwin-x86_64": {
@@ -35,6 +40,11 @@
         "version": "7.0.2",
         "sha256": "76e4987d060ef8207875a53a73619ce665ff16fb2800c0d57a452e21c829bd7b",
         "treeSha256": "ea87e6cf6ae8269bbd2d304371c9c6102afba2f8ad0c172ebbb184d8d29261af"
+      },
+      "tsgoLsp": {
+        "version": "7.1.0-dev.20261017.1",
+        "sha256": "ba254d295de3c7be41993a6992bd81a4f50981455a312f5c610d0c1e3d7003fc",
+        "treeSha256": "db35c16c92b1538c8a9c7d010d6824fbab1e8d6dbfff4a2c4ee9c93942b9bc70"
       }
     },
     "linux-aarch64": {
@@ -51,6 +61,11 @@
         "version": "7.0.2",
         "sha256": "f86e8070c267b12d6c119bf567cb82d8b245e9d93da1864bc7c603cea10a8b2f",
         "treeSha256": "c4877c818ac8422d7439aa7df5354b3566829ad1c526b79389a61688d8871121"
+      },
+      "tsgoLsp": {
+        "version": "7.1.0-dev.20261017.1",
+        "sha256": "247c66eafa8b1fa79b5f679ea807068ba90bc418430231eb7ea50304f190d1a7",
+        "treeSha256": "c6fbf2288a26822728454a19e5b376e8b0f5e3bea00b3f9aed76e1791e5a8a51"
       }
     },
     "linux-x86_64": {
@@ -67,6 +82,11 @@
         "version": "7.0.2",
         "sha256": "4f2de678286401759b3fb4475bafe35b8f32b4b3a07d92642bbf37eadc9b34a4",
         "treeSha256": "8de3dedcb7d0fbcb10a60e45e978e8211b509f1ebbeda71b1b587e8a843bab2d"
+      },
+      "tsgoLsp": {
+        "version": "7.1.0-dev.20261017.1",
+        "sha256": "6fe799b2b2c17ef255e16e019aa576a8daa65a6e8aaabe5d38a71e6012809625",
+        "treeSha256": "9355ff116dff11ea51c9e9d87b7aeb40f89e950b013acd421278fab319867c29"
       }
     },
     "windows-aarch64": {
@@ -83,6 +103,11 @@
         "version": "7.0.2",
         "sha256": "2ec832b3d17ce25676fe92b3810ecc0a7580ffb9287d4972bc9a5acc4da2aa50",
         "treeSha256": "9a5171c26477e034a0a351543b0dc1fd2e112d1165f6588a0066a063f57f648b"
+      },
+      "tsgoLsp": {
+        "version": "7.1.0-dev.20261017.1",
+        "sha256": "a7faeecd1c53cc77ac24090a43f100d5349311fb41157b7ef81d8381c1bd9e1d",
+        "treeSha256": "417404bee932c7c417405a59fd685c3a31956a066fee46728075d3f035e839a0"
       }
     },
     "windows-x86_64": {
@@ -99,6 +124,11 @@
         "version": "7.0.2",
         "sha256": "f9ecfbdc93753d2c972d66a8d0d75f5bd737fd4a5f88b422d9091ea282bcb2c7",
         "treeSha256": "ad9a7b04b42a6adb6f0a19a6a108cf67745f469f5b1f1d0882205acc84669526"
+      },
+      "tsgoLsp": {
+        "version": "7.1.0-dev.20261017.1",
+        "sha256": "1e9ac50b11cd3c5d5e3b78547b1d33ad6f37ae3772b2254ab8b5622e0b426988",
+        "treeSha256": "d3c48f2545fffbd03f67ade1779626e66827246c4f03fad5909fbf92c6cbaf71"
       }
     }
   },

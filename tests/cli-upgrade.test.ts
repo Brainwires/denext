@@ -293,10 +293,17 @@ Deno.test("plan: a prerelease pin may move along its prereleases; a release pin 
   assertEquals(release.steps[0].to, "3.2.0");
 });
 
-/** Run the verb in a temp project; returns the exit code, the output and the file after. */
-async function runIn(flags: Record<string, string | boolean>, json = false) {
+/**
+ * Run the verb in a temp project (with `.vscode/settings.json` holding `settings`, when given);
+ * returns the exit code, the output, the file after and the settings after.
+ */
+async function runIn(flags: Record<string, string | boolean>, json = false, settings?: string) {
   const dir = await Deno.makeTempDir({ prefix: "denext_upgrade_" });
   await Deno.writeTextFile(join(dir, "deno.json"), CONFIG);
+  if (settings !== undefined) {
+    await Deno.mkdir(join(dir, ".vscode"));
+    await Deno.writeTextFile(join(dir, ".vscode", "settings.json"), settings);
+  }
   const printed: string[] = [];
   const [log, err] = [console.log, console.error];
   console.log = (...a: unknown[]) => void printed.push(a.map(String).join(" "));
@@ -314,7 +321,15 @@ async function runIn(flags: Record<string, string | boolean>, json = false) {
         "@denext/myplug": { "0.2.0": "^3.0.0" },
       }),
     );
-    return { code, out: printed.join("\n"), file: await Deno.readTextFile(join(dir, "deno.json")) };
+    const editor = settings === undefined
+      ? undefined
+      : await Deno.readTextFile(join(dir, ".vscode", "settings.json"));
+    return {
+      code,
+      out: printed.join("\n"),
+      file: await Deno.readTextFile(join(dir, "deno.json")),
+      editor,
+    };
   } finally {
     [console.log, console.error] = [log, err];
     await Deno.remove(dir, { recursive: true });
@@ -340,6 +355,26 @@ Deno.test("denext upgrade writes the plan into deno.json", async () => {
     CONFIG.replaceAll("denext@^3.0.0", "denext@^3.2.0").replace("@3.0.0/", "@3.2.0/"),
   );
   assert(run.out.includes("Updated"), run.out);
+});
+
+Deno.test("denext upgrade adds the TypeScript 7 language server to Deno-LSP editor settings that chose none", async () => {
+  const settings = '{\n  // the project\'s own\n  "deno.enable": true\n}\n';
+  const tsgo =
+    '{\n  "deno.unstable": ["tsgo-lsp"],\n  // the project\'s own\n  "deno.enable": true\n}\n';
+  const dry = await runIn({ "dry-run": true }, false, settings);
+  assertEquals([dry.code, dry.editor], [0, settings]);
+  assert(dry.out.includes('Would add "deno.unstable": ["tsgo-lsp"]'), dry.out);
+  const check = await runIn({ check: true }, true, settings);
+  assertEquals(check.editor, settings, "--check writes nothing");
+  assertEquals(JSON.parse(check.out).editorSettings.written, false);
+  const run = await runIn({}, false, settings);
+  assertEquals([run.code, run.editor], [0, tsgo]);
+  assert(run.out.includes('Added "deno.unstable": ["tsgo-lsp"]'), run.out);
+  // a deno.unstable of the project's own (TypeScript 6 kept with []) is never touched
+  const kept = '{ "deno.enable": true, "deno.unstable": [] }\n';
+  const own = await runIn({}, false, kept);
+  assertEquals(own.editor, kept);
+  assert(!own.out.includes("tsgo-lsp"), own.out);
 });
 
 Deno.test("jsrLookups: versions from meta.json (yanked dropped), the range from <version>/deno.json", async () => {

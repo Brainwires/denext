@@ -285,6 +285,8 @@ Deno.test("migrate creates .vscode from scratch when absent", async () => {
       await Deno.readTextFile(join(dir, ".vscode", "settings.json")),
     );
     assertEquals(settings["deno.enable"], true);
+    // The migrated app's Deno language server runs TypeScript 7 (tsgo) by default.
+    assertEquals(settings["deno.unstable"], ["tsgo-lsp"]);
     const ext = JSON.parse(
       await Deno.readTextFile(join(dir, ".vscode", "extensions.json")),
     );

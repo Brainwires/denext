@@ -374,6 +374,46 @@ denext's own tooling reaches TypeScript in one place, `src/ts/`: the engine choi
 (`engine.ts`), the type check the dev overlay runs (`check.ts`) and TypeScript's program API for
 the parity extractors (`program-api.ts`, TypeScript 7.0's IPC client until 7.1's stable API).
 
+## TypeScript 7 language server
+
+The same CLI archive ships a second TypeScript 7 build in `typescript-lsp/`: the dated 7.1 nightly
+(`7.1.0-dev.20261017.1` today) that `deno lsp` runs as its TypeScript 7 ("tsgo") language service.
+The toolchain installs it beside `deno` under the same rule as the compiler (its binary and the
+whole directory must hash to the pin's `tsgoLsp` entry, else it is refused and never installed),
+and `denext toolchain status` prints a `typescript lsp` line for it.
+
+It is the default editor backend in every project denext sets up:
+
+- `denext create` / `init` and `denext migrate` write `"deno.unstable": ["tsgo-lsp"]` into
+  `.vscode/settings.json` beside `"deno.enable": true`;
+- `denext upgrade` adds the same entry to an existing project whose `.vscode/settings.json` turns
+  the Deno language server on and sets no `deno.unstable` of its own (`--dry-run` / `--check`
+  report it without writing). The entry goes in right after the opening `{`; the rest of the file
+  keeps its bytes.
+
+A `deno.unstable` the project already sets, an empty list included, is never changed. To keep the
+TypeScript 6 service:
+
+| Where              | How                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| One project        | `"deno.unstable": []` in `.vscode/settings.json` (or remove `"tsgo-lsp"` from your list)                   |
+| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade`              |
+| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way) |
+
+The editor runs whichever `deno` it finds, so point it at the toolchain: `denext toolchain link`
+puts it on `PATH`, or set the Deno extension's `deno.path` to what `denext toolchain path` prints.
+A `deno` that doesn't find `typescript-lsp/` beside itself downloads the same pinned build into
+`DENO_DIR` on first use and checks it against the integrity compiled into the runtime. Stock Deno
+has no TypeScript 7 backend and keeps its TypeScript 6 service.
+
+The backend learns a project's import map, `jsr:` / `npm:` packages and Deno's own types from the
+stock `tsconfig.json` + `.deno/` tree that `deno sync-types` generates, which it runs for each
+workspace root: a project with no `tsconfig.json` gets one that only extends
+`./.deno/tsconfig.json` (marked `"_deno_generated": true`; a new denext app's `.gitignore` lists
+`/tsconfig.json`), and an existing one gets `"./.deno/tsconfig.json"` added to its `extends`.
+denext's own `paths` reading skips the generated config. What the TypeScript 7 service doesn't do
+yet, next to the TypeScript 6 one, is listed in [known limitations](/docs/limitations).
+
 ## npm packages as on Node.js
 
 From `2.9.7-denext.22`, on the toolchain (`denext dev`, `build`, `start`, `test`, jobs), a project
