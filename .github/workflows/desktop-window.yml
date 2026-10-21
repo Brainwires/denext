@@ -48,6 +48,7 @@ on:
       - "src/cli/explain-output.ts"
       - "src/cli/self-exec.ts"
       - "src/cli/shared.ts"
+      - "src/cli/shutdown.ts"
       - "src/ts/check.ts"
       - "src/ts/lsp-settings.ts"
       - "src/expo/manifest.ts"
