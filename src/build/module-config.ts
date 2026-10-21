@@ -26,6 +26,8 @@ export interface DenoConfigView {
   links?: unknown;
   /** The pre-2.2 spelling of {@link links}. */
   patch?: unknown;
+  /** The lockfile setting (`false`, a path, or `{ path, frozen }`). */
+  lock?: unknown;
 }
 
 /**

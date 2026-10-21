@@ -143,6 +143,54 @@ export default function handler(req: any, res: any) {
   "public/hello.txt": "hello from the pages app\n",
 };
 
+/**
+ * A Pages Router app on npm React (the plugin's compat path: `react` imports, `compatibilityMode`):
+ * its server render loads the compat bundles the build recorded, as the binary can neither build
+ * them nor write them into its embedded `.denext`.
+ */
+const COMPAT_PAGES: Record<string, string> = {
+  // As `denext migrate` writes it: `react` aliased to denext's compat modules.
+  "deno.json": JSON.stringify({
+    nodeModulesDir: "auto",
+    compilerOptions: { jsx: "react-jsx", jsxImportSource: "react" },
+    imports: {
+      "@denext/pages-router": `${FW_URL}packages/pages-router/mod.ts`,
+      "react": `${FW_URL}src/compat/react.ts`,
+      "react/jsx-runtime": `${FW_URL}src/jsx/jsx-runtime.ts`,
+      "react/jsx-dev-runtime": `${FW_URL}src/jsx/jsx-runtime.ts`,
+      "react-dom": `${FW_URL}src/compat/react-dom.ts`,
+    },
+  }),
+  "denext.config.ts": `import { pagesRouter } from "@denext/pages-router";
+export default { compatibilityMode: true, plugins: [pagesRouter()] };
+`,
+  "pages/_app.tsx": `// deno-lint-ignore no-explicit-any
+export default function App({ Component, pageProps }: { Component: any; pageProps: any }) {
+  return <div className="shell"><Component {...pageProps} /></div>;
+}
+`,
+  "pages/index.tsx": `import { useState } from "react";
+export default function Home() {
+  const [n] = useState(3);
+  return <main><h1>compat pages home</h1><p>count {n}</p></main>;
+}
+`,
+  "pages/post/[id].tsx":
+    `export function getServerSideProps({ params }: { params: { id: string } }) {
+  return { props: { id: params.id } };
+}
+export default function Post({ id }: { id: string }) {
+  return <h1>compat post {id}</h1>;
+}
+`,
+  "pages/api/hello.ts": `// deno-lint-ignore no-explicit-any
+export default function handler(req: any, res: any) {
+  res.status(200).json({ compat: req.query.name ?? null });
+}
+`,
+  "public/hello.txt": "hello from the compat pages app\n",
+};
+
 /** Write `files` under `dir`. */
 async function writeFiles(dir: string, files: Record<string, string>): Promise<void> {
   for (const [rel, content] of Object.entries(files)) {
@@ -343,5 +391,25 @@ Deno.test({
       assertEquals(JSON.parse(hello.text), { hello: "bin" });
       assertEquals((await app.get("/hello.txt")).text, "hello from the pages app\n");
       assertEquals((await app.get("/missing")).status, 404);
+    }),
+});
+
+Deno.test({
+  name: "denext build --compile: a compat (npm React) Pages Router app serves its pages",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: () =>
+    compiledApp("denext_compile_compat_pages_", COMPAT_PAGES, "framework", async (app) => {
+      const home = await app.get("/");
+      assertEquals(home.status, 200);
+      assertStringIncludes(home.text, "compat pages home");
+      assert(/count (?:<!-- -->)?3/.test(home.text), home.text);
+      assertStringIncludes(home.text, 'class="shell"');
+      const post = await app.get("/post/7");
+      assertEquals(post.status, 200);
+      assertStringIncludes(post.text, "compat post");
+      const hello = await app.get("/api/hello?name=bin");
+      assertEquals(JSON.parse(hello.text), { compat: "bin" });
+      assertEquals((await app.get("/hello.txt")).text, "hello from the compat pages app\n");
     }),
 });

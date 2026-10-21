@@ -19,6 +19,11 @@ import {
 import { runApiRoute } from "../packages/pages-router/src/api.ts";
 import type { ApiModule, ApiResponse } from "../packages/pages-router/src/api.ts";
 import { inMemoryCacheStore, setCacheStore } from "../src/server/cache.ts";
+import { setStandaloneState } from "../src/server/standalone.ts";
+import {
+  recordCompatModules,
+  recordedCompatModules,
+} from "../packages/pages-router/src/compat-record.ts";
 
 // --- scanning ---------------------------------------------------------------
 
@@ -947,6 +952,145 @@ Deno.test("pagesRouter plugin end-to-end: config → applyPlugins → renders a 
     // Unmatched → null so the core router falls through.
     const miss = await handle!(new Request("http://localhost/nope/nope/nope"));
     assertEquals(miss, null);
+  } finally {
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// --- compat (npm React) server bundles: recorded at build, loaded by a production server --------
+
+/** A project with `deno.json` and `pages/index.tsx`, for the compat-record tests. */
+async function compatProject(): Promise<{ root: string; index: string; record: string }> {
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_pr_compat_" }));
+  await Deno.mkdir(join(root, "pages"));
+  await Deno.mkdir(join(root, ".denext", "pages-compat", "server"), { recursive: true });
+  await Deno.writeTextFile(join(root, "deno.json"), "{}");
+  const index = join(root, "pages", "index.tsx");
+  await Deno.writeTextFile(index, "export default function(){}\n");
+  return { root, index, record: join(root, ".denext", "pages-compat", "modules.json") };
+}
+
+Deno.test("pagesRouter (prod) loads its pages from the compat bundles the build recorded", async () => {
+  resetPlugins();
+  const { root, index, record } = await compatProject();
+  try {
+    await Deno.writeTextFile(
+      record,
+      JSON.stringify({ "pages/index.tsx": "pages-compat/server/app.js#m0" }),
+    );
+    const bundle = join(root, ".denext", "pages-compat", "server", "app.js");
+    const modules: Record<string, unknown> = {
+      [bundle]: { m0: { default: () => h("h1", null, "from the recorded bundle") } },
+      [index]: { default: () => h("h1", null, "from the source") },
+    };
+    // No npm React detected and no `compatibilityMode`: the record alone decides, as in a
+    // compiled app, whose embedded project has no node_modules.
+    await applyPlugins({
+      projectRoot: root,
+      appDir: join(root, "app"),
+      config: { plugins: [pagesRouter()] },
+      mode: "prod",
+      load: (filePath) => Promise.resolve(modules[filePath]),
+    });
+    const home = await getPluginRequestHandler()!(new Request("http://localhost/"));
+    assertStringIncludes(await home!.text(), "from the recorded bundle");
+
+    // A record that misses a page (an older build of other pages) is not used.
+    resetPlugins();
+    await Deno.writeTextFile(record, JSON.stringify({ "pages/other.tsx": "x.js#m0" }));
+    await applyPlugins({
+      projectRoot: root,
+      appDir: join(root, "app"),
+      config: { plugins: [pagesRouter()] },
+      mode: "prod",
+      load: (filePath) => Promise.resolve(modules[filePath]),
+    });
+    const source = await getPluginRequestHandler()!(new Request("http://localhost/"));
+    assertStringIncludes(await source!.text(), "from the source");
+  } finally {
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("compat record: a build's bundle map round-trips relative to another root", async () => {
+  const { root, index } = await compatProject();
+  try {
+    const outDir = join(root, ".denext");
+    const bundle = join(outDir, "pages-compat", "server", "app.js");
+    await recordCompatModules(root, outDir, new Map([[index, `${bundle}#m0`]]));
+    assertEquals(
+      JSON.parse(await Deno.readTextFile(join(outDir, "pages-compat", "modules.json"))),
+      { "pages/index.tsx": "pages-compat/server/app.js#m0" },
+    );
+    // Where the binary embeds the project: the same record, resolved against that root.
+    const moved = join(root, "elsewhere");
+    await Deno.mkdir(join(moved, ".denext", "pages-compat"), { recursive: true });
+    await Deno.copyFile(
+      join(outDir, "pages-compat", "modules.json"),
+      join(moved, ".denext", "pages-compat", "modules.json"),
+    );
+    const map = await recordedCompatModules(moved, join(moved, ".denext"), [
+      join(moved, "pages", "index.tsx"),
+    ]);
+    assertEquals(
+      map?.get(join(moved, "pages", "index.tsx")),
+      `${join(moved, ".denext", "pages-compat", "server", "app.js")}#m0`,
+    );
+    assertEquals(await recordedCompatModules(moved, join(moved, "none"), []), null);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("pagesRouter: a compiled compat app without the record refuses, naming the fix", async () => {
+  resetPlugins();
+  const { root } = await compatProject();
+  const slot = Symbol.for("denext.standalone");
+  setStandaloneState({ projectDir: root, stateDir: join(root, "state"), dataDir: root });
+  try {
+    let error: unknown;
+    try {
+      await applyPlugins({
+        projectRoot: root,
+        appDir: join(root, "app"),
+        config: { plugins: [pagesRouter()], compatibilityMode: true },
+        mode: "prod",
+        load: () => Promise.resolve({}),
+      });
+    } catch (err) {
+      error = err;
+    }
+    assert(error instanceof Error, "setup refuses");
+    assertStringIncludes(error.message, "recorded no compat server bundles");
+    assertStringIncludes(error.message, "denext build --compile");
+  } finally {
+    delete (globalThis as Record<symbol, unknown>)[slot];
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("pagesRouter (build) drops an earlier build's compat record", async () => {
+  resetPlugins();
+  const { root, record } = await compatProject();
+  try {
+    await Deno.writeTextFile(record, JSON.stringify({ "pages/index.tsx": "stale.js#m0" }));
+    await applyPlugins({
+      projectRoot: root,
+      appDir: join(root, "app"),
+      config: { plugins: [pagesRouter()], compatibilityMode: false },
+      mode: "build",
+      load: () => Promise.resolve({}),
+    });
+    let kept = true;
+    try {
+      await Deno.stat(record);
+    } catch {
+      kept = false;
+    }
+    assertEquals(kept, false, "a non-compat build leaves no compat record behind");
   } finally {
     resetPlugins();
     await Deno.remove(root, { recursive: true });

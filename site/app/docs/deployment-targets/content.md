@@ -254,6 +254,17 @@ beside it. It embeds:
 - any paths you list in `compile.include` (data files the app reads at run
   time, or a module that only a computed `import()` reaches).
 
+**Dependencies resolve as your lockfile locks them.** The compile runs with its own config
+(`.denext/compile/deno.json`), so it carries your project's lock and dependency-age rule into it:
+it copies your `deno.lock` (or the file your `lock` setting names) beside that config, and Deno
+resolves every locked specifier to the locked version and checks each package against the locked
+integrity, as `denext build` does. A package that fails the integrity check fails the compile. What
+the compile resolves that your lock does not list yet (the framework's standalone entry, say) is
+recorded in your `deno.lock`; with `"lock": { "frozen": true }` the compile refuses instead,
+listing the entries, and removes the binary. Your `minimumDependencyAge` and your `.npmrc` (its
+`min-release-age` and registries) apply to the compile too; the `.npmrc` copy is never embedded.
+With `"lock": false`, or no lockfile yet, the compile resolves without one, as your build does.
+
 Stylesheet imports work without the CSS import map. Every module that reaches
 a stylesheet is served through its build-time server copy, which imports the
 stylesheet's JS shim instead of the `.css` file. Those copies are relocatable:
@@ -270,7 +281,7 @@ startup. It also sets the production signal (`DENEXT_ENV` / `NODE_ENV`). Each
 verb (`start`, `job`, `db`) loads the production tier of the `.env` files in
 the **working directory**.
 
-**Nothing secret is baked in.** `.env*` files, SQLite databases, database dumps
+**Nothing secret is baked in.** `.env*` files, `.npmrc` files, SQLite databases, database dumps
 (`denext stack backup`'s) and `@denext/backend`'s dev key file are never embedded,
 even from `compile.include`, and the environment is read at run time. What the binary writes goes
 to the working directory:
@@ -421,7 +432,10 @@ build records its server copies as an App Router build does, so its pages take t
 platform files (`.web.tsx`), and `"use cache"` and inline `"use server"` functions work in the
 binary as under `denext start`. A module served without a server copy (a Pages Router page)
 imports its stylesheet through the compile's import map, whose stylesheet entries are relative to
-the embedded config.
+the embedded config. A Pages Router app on npm React (the plugin's compat path) renders its pages
+through the compat server bundles its build made and recorded (`.denext/pages-compat/`), which
+`denext start` loads too instead of rebuilding them at startup; a binary from a build without
+that record refuses to start and says to rebuild it.
 
 A minimal app's binary is about 135 MB (macOS x86_64): about 118 MB is the toolchain's `denort`
 runtime, and about 16 MB is embedded — your app, the build output, `public/` and the production

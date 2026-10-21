@@ -20,8 +20,11 @@
 // The compile still resolves the CSS import map, so the original modules' graph resolves.
 //
 // Never embedded, wherever they are (`compile.include` too): `.env*` files, SQLite databases,
-// database dumps and the backend's dev key file (the binary reads its environment and writes its
-// state in the working directory at run time). The `--allow-*` baked in are the Docker image's
+// database dumps, `.npmrc` files and the backend's dev key file (the binary reads its environment
+// and writes its state in the working directory at run time).
+//
+// The compile resolves the app's dependencies as its lockfile locks them, under its
+// dependency-age rule (./compile-lock.ts). The `--allow-*` baked in are the Docker image's
 // least-privilege set plus `compile.permissions` ({@linkcode compileBuildFlags}); `--allow-all`
 // only when the app opts in.
 
@@ -47,6 +50,12 @@ import {
   signCompiledBinary,
 } from "./compile-sign.ts";
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
+import {
+  carryNpmrc,
+  type CompileLock,
+  seedCompileLock,
+  settleCompileLock,
+} from "./compile-lock.ts";
 import {
   denortTargetKey,
   type DenoToolchainPin,
@@ -150,6 +159,7 @@ const BUILD_OUTPUTS: ReadonlySet<string> = new Set([
   "emitted",
   "pages-client",
   "pages-static",
+  "pages-compat",
   // Generated modules an app imports (`import "../.denext/content.ts"`, the Lustre kits).
   "api.ts",
   "routes.ts",
@@ -212,13 +222,14 @@ const BUILD_DIR_EXCLUDES = [
 /**
  * A file that must never be embedded: an env file (secrets), a SQLite database or its journal
  * (data, and it may hold sessions), a database dump (`denext stack backup`'s `.dump` and full
- * `.tar.gz` backups), the backend's dev key file (its secret and signing keys), or a lock.
+ * `.tar.gz` backups), the backend's dev key file (its secret and signing keys), an `.npmrc` (it
+ * may hold registry tokens), or a lock.
  */
 export function neverEmbedded(name: string): boolean {
   return /^\.env(\..+)?$/.test(name) ||
     /\.(db|sqlite|sqlite3)(-wal|-shm|-journal)?$/i.test(name) ||
     /\.dump$/i.test(name) || /^stack-.*\.tar\.gz$/i.test(name) ||
-    name === "backend-keys.json" ||
+    name === "backend-keys.json" || name === ".npmrc" ||
     name.startsWith(".denext-lock");
 }
 
@@ -434,10 +445,21 @@ function entrySource(entryUrl: string, projectUrl: string): string {
  * The deno config the compile resolves with: the app's import map (plus the framework's, for a
  * local checkout, and the build's CSS import map, so the original modules' stylesheet imports
  * resolve to their shims), every local target made relative to the written config so the binary
- * resolves it to the embedded copy.
+ * resolves it to the embedded copy; the app's lockfile and `.npmrc` beside it (./compile-lock.ts).
  */
-async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<string> {
+async function writeCompileConfig(
+  paths: ProjectPaths,
+  dir: string,
+  entryUrl: string,
+): Promise<{ file: string; lock: CompileLock }> {
   const appCfg = await readConfig(paths.configPath);
+  const lock = await seedCompileLock(
+    paths.configPath,
+    appCfg.lock,
+    dir,
+    standaloneSpecifier(entryUrl),
+  );
+  await carryNpmrc(paths.projectDir, dir);
   const local = frameworkRootUrl().startsWith("file:");
   const css = await readConfig(join(paths.outDir, "css-config.json"));
   const cssRedirects = Object.fromEntries(
@@ -464,14 +486,29 @@ async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<str
       ...relativeCssRedirects(cssRedirects, configUrl),
       ...relativeCssRedirects(buildOnlyStubs(), configUrl),
     },
+    ...resolutionSettings(appCfg, lock),
   };
-  const nmd = appCfg.nodeModulesDir;
-  if (nmd && nmd !== "none" && nmd !== false) config.nodeModulesDir = nmd;
-  // The app's dependency-age hold (a scaffold's excludes `jsr:@denext/*`), or the operator's
-  // DENEXT_MIN_DEP_AGE: dropped, `deno compile` refused a just-published @denext/denext for a day.
-  Object.assign(config, minDepAgeConfig(appCfg.minimumDependencyAge));
   await Deno.writeTextFile(file, `${JSON.stringify(config, null, 2)}\n`);
-  return file;
+  return { file, lock };
+}
+
+/**
+ * The compile config's resolution settings from the app's: the lock copied beside it (or none, as
+ * the app has none), a non-`none` `nodeModulesDir`, and the dependency-age hold.
+ */
+function resolutionSettings(
+  appCfg: { nodeModulesDir?: unknown; minimumDependencyAge?: unknown },
+  lock: CompileLock,
+): Record<string, unknown> {
+  const nmd = appCfg.nodeModulesDir;
+  return {
+    lock: lock.path ? "./deno.lock" : false,
+    ...(nmd && nmd !== "none" ? { nodeModulesDir: nmd } : {}),
+    // The app's dependency-age hold (a scaffold's excludes `jsr:@denext/*`), or the operator's
+    // DENEXT_MIN_DEP_AGE: dropped, `deno compile` refused a just-published @denext/denext for a
+    // day.
+    ...minDepAgeConfig(appCfg.minimumDependencyAge),
+  };
 }
 
 /**
@@ -581,6 +618,35 @@ async function excludedPaths(
   return [...out].sort();
 }
 
+/**
+ * Run `deno compile`, then settle its lockfile against the app's (./compile-lock.ts): a frozen
+ * lock that refuses what the compile resolved leaves no binary behind.
+ */
+async function runDenoCompile(
+  deno: string,
+  args: string[],
+  cwd: string,
+  denort: string | undefined,
+  lock: CompileLock,
+  output: string,
+): Promise<void> {
+  const { code } = await new Deno.Command(deno, {
+    args,
+    cwd,
+    ...(denort ? { env: { DENORT_BIN: denort } } : {}),
+    stdin: "null",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).output();
+  if (code !== 0) throw new Error(`deno compile failed (exit ${code})`);
+  try {
+    await settleCompileLock(lock);
+  } catch (err) {
+    await Deno.remove(output).catch(() => {});
+    throw err;
+  }
+}
+
 /** `--sign` / `compile.sign` over the written binary (./compile-sign.ts). */
 function signOutput(
   output: string,
@@ -640,7 +706,7 @@ export async function compileApp(
   const entry = join(dir, "main.ts");
   const entryUrl = toFileUrl(entry).href;
   await Deno.writeTextFile(entry, entrySource(entryUrl, toFileUrl(paths.projectDir + "/").href));
-  const config = await writeCompileConfig(paths, dir);
+  const { file: config, lock } = await writeCompileConfig(paths, dir, entryUrl);
   const { included, skipped } = await embeddedPaths(paths, compile);
   const excluded = await excludedPaths(paths, included, output);
   // Only for the toolchain compile ({@linkcode onToolchain}): an explicit `deno` keeps its own.
@@ -664,15 +730,7 @@ export async function compileApp(
     output,
     entry,
   ];
-  const { code } = await new Deno.Command(deno, {
-    args,
-    cwd: paths.projectDir,
-    ...(denort ? { env: { DENORT_BIN: denort } } : {}),
-    stdin: "null",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
-  if (code !== 0) throw new Error(`deno compile failed (exit ${code})`);
+  await runDenoCompile(deno, args, paths.projectDir, denort, lock, output);
   const signing = await signOutput(output, paths.projectDir, compile, permissions, options);
   return { output, permissions, signing, skipped };
 }

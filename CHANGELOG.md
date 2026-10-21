@@ -111,6 +111,26 @@ and this project adheres to
   `<Suspense>`) compiled a new pattern per request. The tokens are now found with `indexOf`, with
   the same matches. On `examples/hello` this restores the SSR throughput lost since 4.0.0: about
   20% more requests per second than 4.6.0, and above 4.0.0's.
+- **A compat (npm React) Pages Router app runs as a `denext build --compile` binary.**
+  `@denext/pages-router` built its compat server bundles at every production start, writing them
+  into `.denext`; a binary has no bundler and a read-only embedded `.denext`, so it crashed at
+  startup (`buildNextCompatModules is denext build tooling`). The build now makes them under
+  `.denext/pages-compat/` and records them, and `denext start` and the binary load that record (a
+  binary from an older build refuses, saying to rebuild it). `denext start` also stops rebuilding
+  them on every start.
+
+### Security
+
+- **`denext build --compile` resolves dependencies as the app's lockfile locks them.** The
+  compile resolves with its own config under `.denext/compile/`, which had no lockfile: the
+  binary embedded whatever the app's ranges resolved to that day, possibly a newer, unvetted
+  version than the app's `deno.lock` pins, with no integrity check, and an `.npmrc`
+  `min-release-age` hold did not apply either. The compile now copies the app's lockfile (its
+  `lock` setting's path, or `deno.lock`) and `.npmrc` beside its config, so every locked package
+  resolves to the locked version and is checked against the locked integrity, and the dependency
+  age rule holds. What the compile resolves that the lock lacks is recorded in the app's
+  `deno.lock`; a frozen lock (`"lock": { "frozen": true }`) refuses it instead and the binary is
+  removed. An `.npmrc` is never embedded in a binary.
 
 ### Security
 
