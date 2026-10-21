@@ -200,20 +200,21 @@ function renderClassFiber(inst: Fiber): VNode | null {
   }
   if (cs === null) return awaitClassRuntime(inst);
   const { vnode, bailed } = cs.renderClassInstance(inst as never);
-  if (bailed) {
-    inst.bits |= BailedBit;
-    return (inst.child?.vnode as VNode) ?? null;
-  }
-  // Class lifecycle callbacks (componentDidMount / componentDidUpdate) are queued onto the
-  // fiber's effect arrays by the class-support bridge, NOT through scheduleEffect — so set
-  // the HasEffect bit here too, or the flags-guided commit collectors would prune the class
-  // fiber and its lifecycle would never fire. Set at render time so bubbleFlags carries it.
+  // Class lifecycle callbacks (componentDidMount / componentDidUpdate) and the class ref are
+  // queued onto the fiber's effect arrays by the class-support bridge, NOT through
+  // scheduleEffect — so set the HasEffect bit here too, or the flags-guided commit collectors
+  // would prune the class fiber and its lifecycle would never fire. Set at render time so
+  // bubbleFlags carries it; a bail can still queue a changed ref.
   if (
     (inst.pendingEffects && inst.pendingEffects.length > 0) ||
     (inst.passiveEffects && inst.passiveEffects.length > 0) ||
     (inst.ext?.insertionEffects && inst.ext.insertionEffects.length > 0)
   ) {
     inst.flags |= HasEffect;
+  }
+  if (bailed) {
+    inst.bits |= BailedBit;
+    return (inst.child?.vnode as VNode) ?? null;
   }
   return (vnode as VNode) ?? null;
 }

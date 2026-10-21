@@ -47,8 +47,8 @@ export function instantiateClass(
 
 /**
  * Server-render a class component to a vnode: instantiate, apply
- * `getDerivedStateFromProps`, call `render()`. No lifecycle effects (React server
- * behavior).
+ * `getDerivedStateFromProps`, call `render()`. No lifecycle effects and no ref: as React's
+ * server renderer does, a `ref` is dropped from the props the class sees and never attached.
  *
  * @param type The class component.
  * @param props The props.
@@ -56,6 +56,10 @@ export function instantiateClass(
  * @returns The rendered vnode.
  */
 export function renderClassToVNode(type: unknown, props: unknown, context: unknown): unknown {
+  if (props != null && typeof props === "object" && "ref" in props) {
+    const { ref: _ref, ...rest } = props as Record<string, unknown>;
+    props = rest;
+  }
   const c = instantiateClass(type, props, context, null) as Any;
   let state = c.state;
   const g = (type as Any).getDerivedStateFromProps;

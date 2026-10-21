@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `ref` on a class component reaches the class instance, as in React.** `<MyClass ref={r} />`
+  now sets `r.current` to the instance (or calls `r(instance)`) at commit, after
+  `componentDidMount`; it is detached (`null`, or a callback ref's returned cleanup) before
+  `componentWillUnmount`, while a hidden `<Activity>` hides the class, and when the ref changes,
+  even when `shouldComponentUpdate` or a `PureComponent` skips the render. Hydration attaches it
+  like a mount, `memo(Class)` passes it through to the instance, and the class's own `this.props`
+  no longer carries `ref` (React 19 strips it), on the client and on the server. The ref used to
+  be dropped. The work stays in the on-demand class runtime chunk.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added
