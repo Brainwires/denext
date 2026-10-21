@@ -236,11 +236,11 @@ Deno.test("renderDockerfile: the server listens only on its port; the static ser
   const server = renderDockerfile({ mode: "server", port: 8080, startCommand, netSplit: true });
   assert(
     server.includes(
-      'CMD ["deno", "run", "--allow-net-connect", "--allow-net-listen=:8080", "--allow-read",',
+      'CMD ["deno", "run", "--allow-net-connect", "--allow-net-listen=:8080,[::]:8080", "--allow-read",',
     ),
     server,
   );
-  assert(server.includes("A new port needs its --allow-net-listen changed too."));
+  assert(server.includes("A new port needs --allow-net-listen changed too."));
   const legacy = renderDockerfile({ mode: "server", port: 8080, startCommand, netSplit: false });
   assert(legacy.includes('CMD ["deno", "run", "--allow-net", "--allow-read",'));
   assertFalse(legacy.includes("--allow-net-listen"));

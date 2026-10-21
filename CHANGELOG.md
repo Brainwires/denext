@@ -16,7 +16,8 @@ and this project adheres to
   where it needs, and a compromised dependency can no longer open a listener of its own. On that
   runtime:
   - `denext generate docker` (and the `docker()` / `fly()` deploy adapters) turn the `start`
-    command's `--allow-net` into `--allow-net-connect --allow-net-listen=:<port>`, and the static
+    command's `--allow-net` into `--allow-net-connect --allow-net-listen=:<port>,[::]:<port>` (IPv4
+    and IPv6), and the static
     image's file server gets `--allow-net-listen=0.0.0.0:<port>` with no outbound access;
   - the `genericHost()` systemd unit runs `--allow-net-listen=127.0.0.1:<port>` on the toolchain it
     links (a `deno` you name keeps `--allow-net`);

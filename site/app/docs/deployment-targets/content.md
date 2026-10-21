@@ -323,7 +323,8 @@ own server) is refused. The split needs the toolchain compiling onto its own `de
 
 The generated deploy files scope listen for you, because they know the port: `denext generate
 docker` (and the `docker()` / `fly()` adapters) turn the `start` command's `--allow-net` into
-`--allow-net-connect --allow-net-listen=:<port>`, the static image's file server gets
+`--allow-net-connect --allow-net-listen=:<port>,[::]:<port>` (`0.0.0.0`, `[::]`, `127.0.0.1` and
+`localhost` on that port), the static image's file server gets
 `--allow-net-listen` for its port and no outbound access, and `genericHost()`'s systemd unit runs
 `--allow-net-listen=127.0.0.1:<port>` (with `compile.permissions`' directions when you set them).
 All of them run on denext's toolchain; a `start` task with `-A`, a scoped `--allow-net=<hosts>` or a

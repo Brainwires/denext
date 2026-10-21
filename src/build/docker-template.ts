@@ -134,12 +134,13 @@ function execForm(words: readonly string[]): string {
 /**
  * The `start` task's command as the image runs it, or `undefined` (none usable): on a toolchain
  * that splits the network grant ({@linkcode DockerOptions.netSplit}), its unscoped `--allow-net`
- * becomes `--allow-net-connect --allow-net-listen=:<port>`.
+ * becomes `--allow-net-connect --allow-net-listen=:<port>,[::]:<port>`.
  */
 function imageStartCommand(port: number, options: DockerOptions): readonly string[] | undefined {
   const task = options.startCommand;
   if (!task || !(options.netSplit ?? toolchainNetSplit())) return task;
-  return splitNetFlag(task, [`:${port}`]);
+  // `:<port>` is 0.0.0.0, 127.0.0.1 and localhost; `[::]` is the server bound to IPv6's any.
+  return splitNetFlag(task, [`:${port}`, `[::]:${port}`]);
 }
 
 /**
@@ -162,8 +163,8 @@ function serverCmd(port: number, options: DockerOptions): string {
   if (start && start.length !== options.startCommand?.length) {
     lines.push(
       `# Its --allow-net is split by direction (the toolchain's Deno has it): the server may listen`,
-      `# only on port ${port} (0.0.0.0, 127.0.0.1, localhost) and connect anywhere, so no dependency`,
-      `# can open a listener of its own. A new port needs its --allow-net-listen changed too.`,
+      `# only on port ${port} (0.0.0.0, [::], 127.0.0.1, localhost) and connect anywhere, so no`,
+      `# dependency can open a listener of its own. A new port needs --allow-net-listen changed too.`,
     );
   }
   if (port !== DEFAULT_PORT) lines.push(`ENV PORT=${port}`);
