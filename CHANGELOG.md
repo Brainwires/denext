@@ -130,6 +130,10 @@ and this project adheres to
   directory (`/var` → `/private/var`), failed with "Expected a JavaScript or TypeScript module, but
   identified a Css module": the CSS import map named each stylesheet by the walk's path, while the
   re-exec'd process imported it by its real path. The map now redirects both spellings.
+- **`denext dev` no longer leaves a server copy behind when edits outpace its write.** Each edited
+  module keeps its two newest copies in `.denext/server-cache`; a copy dropped while it was still
+  being written was removed first and written afterwards, so it stayed for the session. The
+  removal now waits for the write.
 - **A SPA `client:interaction` island no longer loses the click that mounts it.** The press
   (pointerdown, touchstart or keydown) imported the component and mounted it as soon as its chunk
   arrived. A cached chunk often arrives before the button is released, and then the component

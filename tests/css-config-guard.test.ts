@@ -116,7 +116,8 @@ Deno.test("mobile doctor flags leaked css-shim imports in the app's deno.json", 
 });
 
 Deno.test("buildAppCss never shims the css copied into out/, ios/ or android/", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_cssexcl_" });
+  // The real path: under a symlinked temp dir (macOS) the map also names each sheet's real spelling.
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_cssexcl_" }));
   try {
     await Deno.writeTextFile(join(dir, "deno.json"), `{ "imports": {} }\n`);
     const files = [

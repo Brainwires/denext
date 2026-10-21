@@ -153,8 +153,13 @@ export class DevCopies {
     }
     while (kept.length > 2) {
       const old = kept.shift()!;
+      const writing = this.#written.get(old);
       this.#written.delete(old);
-      Deno.remove(old).catch(() => {});
+      // After its write settles: a copy dropped while still being written would otherwise be
+      // removed first (nothing there yet) and then written, left on disk for the session.
+      const remove = () => Deno.remove(old).catch(() => {});
+      if (writing) writing.then(remove, remove);
+      else remove();
     }
     return done;
   }
