@@ -441,9 +441,10 @@ class S3Client {
         }),
       createMultipart: (bucket, key, contentType) =>
         this.createMultipart(k(bucket, key), contentType),
-      presignPart: (bucket, key, uploadId, partNumber, expiresIn) =>
+      presignPart: (bucket, key, uploadId, partNumber, expiresIn, size) =>
         this.presign("PUT", k(bucket, key), expiresIn, {
           query: { partNumber: String(partNumber), uploadId },
+          ...(size !== undefined ? { headers: { "content-length": String(size) } } : {}),
         }),
       completeMultipart: (bucket, key, uploadId, parts) =>
         this.completeMultipart(k(bucket, key), uploadId, parts),

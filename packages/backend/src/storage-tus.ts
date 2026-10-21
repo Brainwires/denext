@@ -327,7 +327,7 @@ async function create(
   caller: Caller,
   signed?: SignedUpload,
 ): Promise<Response> {
-  sweep(rt);
+  sweepExpiredUploads(rt);
   const c = await creationOf(rt, request, caller, signed);
   const reservation = { upsert: c.upsert, owner: c.owner, userMetadata: c.userMetadata };
   const actor = await actorFor(rt, caller);
@@ -552,7 +552,14 @@ async function uploadPart(
   if (direct.uploadPart) {
     return await direct.uploadPart(at.bucket, at.key, row.upload_id!, partNumber, bytes);
   }
-  const url = await direct.presignPart(at.bucket, at.key, row.upload_id!, partNumber, 900);
+  const url = await direct.presignPart(
+    at.bucket,
+    at.key,
+    row.upload_id!,
+    partNumber,
+    900,
+    bytes.byteLength,
+  );
   const res = await fetch(url, { method: "PUT", body: bytes as BodyInit });
   await res.body?.cancel();
   if (!res.ok) throw new StorageError("driver_error", `part upload failed: HTTP ${res.status}`);
@@ -730,8 +737,14 @@ async function discard(rt: StorageRuntime, row: ResumableRow): Promise<void> {
   await rt.meta.deleteResumable(row.id);
 }
 
-/** Clean up a few expired uploads (in the background of a creation, TUS or signed). */
-function sweep(rt: StorageRuntime): void {
+/**
+ * Clean up a few expired uploads, TUS or signed, in the background of a creation, a completion
+ * or an abort: an upload whose client never completed it loses its staged bytes (or incomplete
+ * multipart upload) once its completion window has passed, with no object or row ever made.
+ *
+ * @param rt The runtime.
+ */
+export function sweepExpiredUploads(rt: StorageRuntime): void {
   rt.meta.expiredResumables(Date.now(), SWEEP).then(async (rows) => {
     for (const row of rows) await discard(rt, row);
   }).catch(() => {});
@@ -772,7 +785,7 @@ export async function trackSignedUpload(
   rt: StorageRuntime,
   upload: SignedUploadState,
 ): Promise<void> {
-  sweep(rt);
+  sweepExpiredUploads(rt);
   await rt.meta.createResumable({
     id: signedUploadId(upload.version),
     bucket_id: upload.bucket,

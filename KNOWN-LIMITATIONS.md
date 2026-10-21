@@ -254,10 +254,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   are capped per identity and per instance; behind a reverse proxy without
   `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
 - **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
-  TypeScript decides, with no `storage` schema to join against). An S3 upload
-  whose client skips the completion call was checked by nobody: record the keys completion
-  returned, and give the bucket lifecycle rules for unrecorded objects and incomplete multipart
-  uploads. Image transforms take PNG, JPEG, GIF, WebP and AVIF sources up to 25 MiB (an AVIF
+  TypeScript decides, with no `storage` schema to join against). A signed upload without a
+  `size` is not length-pinned at the store (S3 has no length range for a presigned `PUT`), so
+  oversized bytes can reach the staging place until the completion refuses them or the sweep
+  frees them; the sweep runs only when an upload is signed, completed or aborted, so give the S3
+  bucket a lifecycle rule on `.denext-staging/` for an app whose uploads can stop for good. Image
+  transforms take PNG, JPEG, GIF, WebP and AVIF sources up to 25 MiB (an AVIF
   only when it declares its size: a still image, not a bare image sequence), at the configured
   `images` sizes and qualities only.
 

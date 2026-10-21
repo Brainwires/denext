@@ -105,6 +105,23 @@ and this project adheres to
   the same matches. On `examples/hello` this restores the SSR throughput lost since 4.0.0: about
   20% more requests per second than 4.6.0, and above 4.0.0's.
 
+### Security
+
+- **`@denext/backend` storage: the store itself refuses a presigned multipart part of the wrong
+  size, and abandoned uploads are swept without waiting for a new one.** A client upload planned
+  as multipart (the sign route's `upload` op above the multipart threshold, through `uploadFile`)
+  presigned each part's `PUT` without its length, so a client could send any amount of data to a
+  part URL; only the completion caught it. Each part URL now signs the part's exact
+  `content-length` (its share of the declared size), as a single presigned `PUT` with a `size`
+  already did, so S3, R2 or MinIO refuses a part of any other size with `403`. The sweep that frees
+  a never-completed upload's staged bytes (or incomplete multipart upload) once its completion
+  window has passed ran only when a new upload was signed; it now also runs when an upload is
+  completed or aborted. A never-completed upload never had an object row and was never served,
+  signed, listed or reported: its bytes wait in the staging place, and only a completion that
+  checks the stored size against the bucket's cap and the declared size, the stored type against
+  the declared one and the bucket's `mime` list, and the first bytes against that type, moves them
+  to the key.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added

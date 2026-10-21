@@ -27,6 +27,7 @@ import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plug
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
+import { runtime } from "../packages/backend/src/runtime.ts";
 
 const allow = () => true;
 const docs = { mime: ["text/plain", "image/png"], maxBytes: 64, authorize: allow };
@@ -156,6 +157,60 @@ Deno.test("fs storage: a signed PUT waits in the staging place until its complet
     });
     assertEquals(swapped.status, 403);
     await swapped.body?.cancel();
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("fs storage: a never-completed upload is never an object, and a completion sweeps it", async () => {
+  const app = await backendApp({ buckets: { docs } });
+  const staged = async () =>
+    (await storedFiles(app.root)).filter((f) => f.startsWith(".denext-staging/"));
+  try {
+    const bucket = storage.bucket("docs", { service: true });
+    // Over the bucket's 64-byte cap with no size declared: the signed PUT itself refuses it
+    // (the fs driver's PUT passes through the server), storing nothing.
+    const big = await bucket.createSignedUploadUrl("big.txt", { contentType: "text/plain" });
+    const refused = await app.call(big.url, {
+      method: "PUT",
+      headers: big.headers,
+      body: "x".repeat(65),
+    });
+    assertEquals(refused.status, 413);
+    await refused.body?.cancel();
+    assertEquals(await staged(), []);
+    // Sent, never completed: nothing serves, lists or reports it.
+    const left = await uploadVia(app, "docs", "never.txt", "left", "text/plain", 4);
+    assertEquals(left.put.status, 200);
+    await left.put.body?.cancel();
+    assertEquals((await staged()).length, 1);
+    assertEquals(await bucket.download("never.txt"), null);
+    assertEquals(await bucket.exists("never.txt"), false);
+    assertEquals((await bucket.list()).objects, []);
+    const url = await bucket.createSignedUrl("never.txt");
+    const get = await app.call(url);
+    assertEquals(get.status, 404);
+    await get.body?.cancel();
+
+    // Its window passes; the next upload's COMPLETION (no new upload is signed) sweeps it.
+    const next = await uploadVia(app, "docs", "ok.txt", "ok", "text/plain", 2);
+    await next.put.body?.cancel();
+    const [leftFile] = (await staged()).filter((f) => !f.endsWith(next.plan.upload.key));
+    const rt = runtime();
+    const rows = await rt.meta.expiredResumables(Date.now() + 86_400_000, 10);
+    const row = rows.find((r) => r.name === "never.txt")!;
+    await rt.meta.deleteResumable(row.id);
+    await rt.meta.createResumable({ ...row, expires_at: Date.now() - 1 });
+    const done = await app.sign({ op: "complete", token: next.plan.upload.token });
+    assertEquals(done.status, 200);
+    await done.body?.cancel();
+    for (let i = 0; i < 200 && (await staged()).length > 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assertEquals(await staged(), [], `${leftFile} was swept`);
+    assertEquals(await rt.meta.getResumable(row.id), null);
+    assertEquals(await bucket.exists("never.txt"), false);
+    assertEquals(await bucket.exists("ok.txt"), true);
   } finally {
     await app.close();
   }
