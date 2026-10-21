@@ -357,43 +357,75 @@
     },
     "@rollup/rollup-darwin-arm64@4.44.0": {
       "integrity": "sha512-VGF3wy0Eq1gcEIkSCr8Ke03CWT+Pm2yveKLaDvq51pPpZza3JX/ClxXOCmTYYq3us5MvEuNRTaeyFThCKRQhOA==",
-      "os": ["darwin"],
-      "cpu": ["arm64"]
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@rollup/rollup-darwin-x64@4.44.0": {
       "integrity": "sha512-fBkyrDhwquRvrTxSGH/qqt3/T0w5Rg0L7ZIDypvBPc1/gzjJle6acCpZ36blwuwcKD/u6oCE/sRWlUAcxLWQbQ==",
-      "os": ["darwin"],
-      "cpu": ["x64"]
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@rollup/rollup-linux-arm64-gnu@4.44.0": {
       "integrity": "sha512-ZTR2mxBHb4tK4wGf9b8SYg0Y6KQPjGpR4UWwTFdnmjB4qRtoATZ5dWn3KsDwGa5Z2ZBOE7K52L36J9LueKBdOQ==",
-      "os": ["linux"],
-      "cpu": ["arm64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@rollup/rollup-linux-arm64-musl@4.44.0": {
       "integrity": "sha512-GFWfAhVhWGd4r6UxmnKRTBwP1qmModHtd5gkraeW2G490BpFOZkFtem8yuX2NyafIP/mGpRJgTJ2PwohQkUY/Q==",
-      "os": ["linux"],
-      "cpu": ["arm64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@rollup/rollup-linux-x64-gnu@4.44.0": {
       "integrity": "sha512-iUVJc3c0o8l9Sa/qlDL2Z9UP92UZZW1+EmQ4xfjTc1akr0iUFZNfxrXJ/R1T90h/ILm9iXEY6+iPrmYB3pXKjw==",
-      "os": ["linux"],
-      "cpu": ["x64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@rollup/rollup-linux-x64-musl@4.44.0": {
       "integrity": "sha512-PQUobbhLTQT5yz/SPg116VJBgz+XOtXt8D1ck+sfJJhuEsMj2jSej5yTdp8CvWBSceu+WW+ibVL6dm0ptG5fcA==",
-      "os": ["linux"],
-      "cpu": ["x64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@rollup/rollup-win32-arm64-msvc@4.44.0": {
       "integrity": "sha512-M0CpcHf8TWn+4oTxJfh7LQuTuaYeXGbk0eageVjQCKzYLsajWS/lFC94qlRqOlyC2KvRT90ZrfXULYmukeIy7w==",
-      "os": ["win32"],
-      "cpu": ["arm64"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@rollup/rollup-win32-x64-msvc@4.44.0": {
       "integrity": "sha512-Q2Mgwt+D8hd5FIPUuPDsvPR7Bguza6yTkJxspDGkZj7tBRn2y4KSWYuIXpftFSjBra76TbKerCV7rgFPQrn+wQ==",
-      "os": ["win32"],
-      "cpu": ["x64"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@stencil/core@4.45.0": {
       "integrity": "sha512-cHd0liRzN+MKf2eoLg4XHzEBQvK04j6g1lhqZb0BR1a5kXUNaYPmS6IlM/YqYMlZ3eSDiGqwjRSx5SIwP1Imow==",
@@ -957,19 +989,27 @@
       ]
     },
     "links": {
-      "jsr:@denext/avif@0.1.2": {},
-      "jsr:@denext/content-collections@0.4.0": {
+      "jsr:@denext/avif@0.2.0": {},
+      "jsr:@denext/backend@0.6.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0",
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/content-collections@0.7.1": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
           "jsr:@std/yaml@1"
         ]
       },
-      "jsr:@denext/denext@2.10.0": {
+      "jsr:@denext/denext@4.6.0": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
+          "jsr:@b-fuze/deno-dom@0.1.56",
+          "jsr:@denext/docs-corpus@4.6.0",
           "jsr:@denext/lightningcss@^1.0.0-rc.72",
           "jsr:@denext/swc@76",
           "jsr:@luca/esbuild-deno-loader@0.11",
@@ -983,55 +1023,69 @@
           "jsr:@std/path@1",
           "jsr:@std/yaml@1",
           "npm:@mdx-js/mdx@3",
+          "npm:@prisma/driver-adapter-utils@6.19.3",
+          "npm:@supabase/supabase-js@2.117.2",
+          "npm:@tanstack/router-plugin@1.168.42",
           "npm:effect@^3.22.0",
-          "npm:esbuild@0.24",
+          "npm:graphql-ws@6.3.0",
+          "npm:jsqr@1.4.0",
+          "npm:playwright-core@1.63.0",
           "npm:sass@^1.80.0",
+          "npm:tus-js-client@4.3.1",
           "npm:ws@8"
         ]
       },
-      "jsr:@denext/effect@0.1.0": {
+      "jsr:@denext/docs-corpus@4.6.0": {},
+      "jsr:@denext/effect@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0",
+          "jsr:@denext/denext@^4.6.0",
           "npm:effect@^3.22.0"
         ]
       },
-      "jsr:@denext/graphql@0.2.0": {
+      "jsr:@denext/graphql@0.6.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0",
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@denext/openapi@0.6",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
         ]
       },
-      "jsr:@denext/htmx@2.0.11": {
+      "jsr:@denext/htmx@2.1.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/lightningcss@1.0.0-rc.72": {},
-      "jsr:@denext/og@0.1.1": {},
-      "jsr:@denext/openapi@0.3.0": {
+      "jsr:@denext/og@0.1.2": {},
+      "jsr:@denext/openapi@0.7.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/pages-router@0.10.0": {
+      "jsr:@denext/pages-router@0.13.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/photon@0.3.6": {},
-      "jsr:@denext/react-router@0.1.1": {
+      "jsr:@denext/react-router@0.5.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/swc@76.0.1": {}
+      "jsr:@denext/swc@76.0.1": {},
+      "jsr:@denext/tanstack-start@0.2.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/path@1"
+        ]
+      }
     }
   }
 }

@@ -28,10 +28,29 @@
       "jsr:@std/path@1"
     ],
     "links": {
-      "jsr:@denext/avif@0.1.0": {},
-      "jsr:@denext/denext@2.0.0-rc.3": {
+      "jsr:@denext/avif@0.2.0": {},
+      "jsr:@denext/backend@0.6.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/content-collections@0.7.1": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/front-matter@1",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1",
+          "jsr:@std/yaml@1"
+        ]
+      },
+      "jsr:@denext/denext@4.6.0": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
+          "jsr:@b-fuze/deno-dom@0.1.56",
+          "jsr:@denext/docs-corpus@4.6.0",
+          "jsr:@denext/lightningcss@^1.0.0-rc.72",
+          "jsr:@denext/swc@76",
           "jsr:@luca/esbuild-deno-loader@0.11",
           "jsr:@std/assert@1",
           "jsr:@std/async@1",
@@ -41,28 +60,71 @@
           "jsr:@std/jsonc@1",
           "jsr:@std/media-types@1",
           "jsr:@std/path@1",
+          "jsr:@std/yaml@1",
           "npm:@mdx-js/mdx@3",
-          "npm:@swc/wasm-web@^1.13.5",
-          "npm:esbuild@0.24",
-          "npm:lightningcss-wasm@^1.33.0",
+          "npm:@prisma/driver-adapter-utils@6.19.3",
+          "npm:@supabase/supabase-js@2.117.2",
+          "npm:@tanstack/router-plugin@1.168.42",
+          "npm:effect@^3.22.0",
+          "npm:graphql-ws@6.3.0",
+          "npm:jsqr@1.4.0",
+          "npm:playwright-core@1.63.0",
           "npm:sass@^1.80.0",
+          "npm:tus-js-client@4.3.1",
           "npm:ws@8"
         ]
       },
-      "jsr:@denext/htmx@2.0.10": {
+      "jsr:@denext/docs-corpus@4.6.0": {},
+      "jsr:@denext/effect@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.0.0-rc.1",
+          "jsr:@denext/denext@^4.6.0",
+          "npm:effect@^3.22.0"
+        ]
+      },
+      "jsr:@denext/graphql@0.6.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@denext/openapi@0.6",
+          "jsr:@std/path@1",
+          "npm:graphql-yoga@^5.10.0",
+          "npm:graphql@^16.9.0"
+        ]
+      },
+      "jsr:@denext/htmx@2.1.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/og@0.1.0": {},
-      "jsr:@denext/pages-router@0.9.0": {
+      "jsr:@denext/lightningcss@1.0.0-rc.72": {},
+      "jsr:@denext/og@0.1.2": {},
+      "jsr:@denext/openapi@0.7.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.0.0-rc.1",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/photon@0.3.4": {}
+      "jsr:@denext/pages-router@0.13.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/photon@0.3.6": {},
+      "jsr:@denext/react-router@0.5.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/swc@76.0.1": {},
+      "jsr:@denext/tanstack-start@0.2.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/path@1"
+        ]
+      }
     }
   }
 }

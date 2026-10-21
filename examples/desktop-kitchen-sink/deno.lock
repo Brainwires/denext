@@ -6,68 +6,120 @@
   "npm": {
     "@node-rs/crc32-android-arm-eabi@1.10.8": {
       "integrity": "sha512-Ed2P9uQAOlOSveuPKSlmCctcZ73+9VIBTD84F8MjfKU26q33Y0hYlcl9vlzfc9UQX7LLMGEZhOuU1xxYtx49tg==",
-      "os": ["android"],
-      "cpu": ["arm"]
+      "os": [
+        "android"
+      ],
+      "cpu": [
+        "arm"
+      ]
     },
     "@node-rs/crc32-android-arm64@1.10.8": {
       "integrity": "sha512-gvEOdU8tkSwK2McdlMeXDoyqtvJFPYShNopJtGaGMNoltN5EzFOsM/7XKF3rk9JLQ9GnZHQrCxur0Cksonow2A==",
-      "os": ["android"],
-      "cpu": ["arm64"]
+      "os": [
+        "android"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@node-rs/crc32-darwin-arm64@1.10.8": {
       "integrity": "sha512-ylDspj/s3i+FCdTGoLZtOBsbR2PvAsI5taJDE5Pl7kDgeKX7IywdAYQtkh2orvTs0RqCjcnIBxrCDI/O/r+z1g==",
-      "os": ["darwin"],
-      "cpu": ["arm64"]
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@node-rs/crc32-darwin-x64@1.10.8": {
       "integrity": "sha512-DVTORLWomcx7F0CxQxlfBszAcMh8IkNGx/hgYHQ4iDnuf/uVjhs7l1hoVBghPymdFxP129+I/+b1WoQBbTJzaQ==",
-      "os": ["darwin"],
-      "cpu": ["x64"]
+      "os": [
+        "darwin"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@node-rs/crc32-freebsd-x64@1.10.8": {
       "integrity": "sha512-ZzuW7RS9VFy7zD64YUFI2dK6tJrlAFfe1NBuNx/ouKZ6SK+NHW5F8hxZNrZCkv2XB7QyZk9wZ53oJ20PKylQTw==",
-      "os": ["freebsd"],
-      "cpu": ["x64"]
+      "os": [
+        "freebsd"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@node-rs/crc32-linux-arm-gnueabihf@1.10.8": {
       "integrity": "sha512-5/2kW7V4KMV3o37ApvcnF4Pk11luzLnd38kQZowVCw5D/xGlCByEQOODfJHX9pv0C+4hp+8Dosul06RODjPEUw==",
-      "os": ["linux"],
-      "cpu": ["arm"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm"
+      ]
     },
     "@node-rs/crc32-linux-arm64-gnu@1.10.8": {
       "integrity": "sha512-Vr1P3+WF+RsUVI8CNLiunl1vuzdpgTR1sf9PxgQFr3o//hh2KdqJeU4zZsFVTn+GbGZtqvRoba0wi8nKMzRLeg==",
-      "os": ["linux"],
-      "cpu": ["arm64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@node-rs/crc32-linux-arm64-musl@1.10.8": {
       "integrity": "sha512-eS8YXANJLBqdOzf5jCNVEXiDI4wjXVqQybaJextJJINvHhnhhOXPar8402GMagewOxGxYsy4C69G8rBIzqL4cg==",
-      "os": ["linux"],
-      "cpu": ["arm64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@node-rs/crc32-linux-x64-gnu@1.10.8": {
       "integrity": "sha512-DFd0eV47MAykz4PQDcBSlEvY3CtXqPt2gkBpvPngCpOUoIJgEk9tKtPjEgUwLatMkvsy4fEvAg7gckGickOyEw==",
-      "os": ["linux"],
-      "cpu": ["x64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@node-rs/crc32-linux-x64-musl@1.10.8": {
       "integrity": "sha512-U7fP8FjDQuOb61YoT8EoWDIJ9x40ZrCzM6OcAH1wqYiu9Z94U14S+i8KwTC7YorotGtICdYZ/APn1eI8vNne5w==",
-      "os": ["linux"],
-      "cpu": ["x64"]
+      "os": [
+        "linux"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@node-rs/crc32-win32-arm64-msvc@1.10.8": {
       "integrity": "sha512-VJezyT9OWnMPnArDR5ok0ARLemiL83LLNYh4MC++oHoLegqzyBllqNlO8fVp2PmczGkn+rfKkZbtG4w3MQ6BbQ==",
-      "os": ["win32"],
-      "cpu": ["arm64"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "arm64"
+      ]
     },
     "@node-rs/crc32-win32-ia32-msvc@1.10.8": {
       "integrity": "sha512-01HooQK7WiG07/vvp0XzRnqSC5cvXvQ1MsQwlH9wwMWZ9qqHRO1j08cSeSt7DM4eALNisfX83bjqqrHzSKI9Iw==",
-      "os": ["win32"],
-      "cpu": ["ia32"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "ia32"
+      ]
     },
     "@node-rs/crc32-win32-x64-msvc@1.10.8": {
       "integrity": "sha512-4O6G7yme7s98LUGwiqW7q2QqYmWD2IRQvV+q7+S4vjkUWiXUMbP8QEPYP9cF2WEQSdXCkyDEqDW10zeUdniPRA==",
-      "os": ["win32"],
-      "cpu": ["x64"]
+      "os": [
+        "win32"
+      ],
+      "cpu": [
+        "x64"
+      ]
     },
     "@node-rs/crc32@1.10.8": {
       "integrity": "sha512-gOYKFwkojSdWrSmreCcGocRcAXSpRkNZYxv6nscmtddSWBKVGypdMbfLxu5qgmymdaCNApajuwZblYEfs7HswA==",
@@ -94,19 +146,27 @@
       "npm:@node-rs/crc32@1.10.8"
     ],
     "links": {
-      "jsr:@denext/avif@0.1.2": {},
-      "jsr:@denext/content-collections@0.4.0": {
+      "jsr:@denext/avif@0.2.0": {},
+      "jsr:@denext/backend@0.6.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.1.0",
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/content-collections@0.7.1": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
           "jsr:@std/yaml@1"
         ]
       },
-      "jsr:@denext/denext@3.1.0": {
+      "jsr:@denext/denext@4.6.0": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
+          "jsr:@b-fuze/deno-dom@0.1.56",
+          "jsr:@denext/docs-corpus@4.6.0",
           "jsr:@denext/lightningcss@^1.0.0-rc.72",
           "jsr:@denext/swc@76",
           "jsr:@luca/esbuild-deno-loader@0.11",
@@ -120,55 +180,69 @@
           "jsr:@std/path@1",
           "jsr:@std/yaml@1",
           "npm:@mdx-js/mdx@3",
+          "npm:@prisma/driver-adapter-utils@6.19.3",
+          "npm:@supabase/supabase-js@2.117.2",
+          "npm:@tanstack/router-plugin@1.168.42",
           "npm:effect@^3.22.0",
-          "npm:esbuild@0.24",
+          "npm:graphql-ws@6.3.0",
+          "npm:jsqr@1.4.0",
+          "npm:playwright-core@1.63.0",
           "npm:sass@^1.80.0",
+          "npm:tus-js-client@4.3.1",
           "npm:ws@8"
         ]
       },
-      "jsr:@denext/effect@0.1.0": {
+      "jsr:@denext/docs-corpus@4.6.0": {},
+      "jsr:@denext/effect@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.1.0",
+          "jsr:@denext/denext@^4.6.0",
           "npm:effect@^3.22.0"
         ]
       },
-      "jsr:@denext/graphql@0.2.0": {
+      "jsr:@denext/graphql@0.6.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.1.0",
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@denext/openapi@0.6",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
         ]
       },
-      "jsr:@denext/htmx@2.0.11": {
+      "jsr:@denext/htmx@2.1.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.1.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/lightningcss@1.0.0-rc.72": {},
-      "jsr:@denext/og@0.1.1": {},
-      "jsr:@denext/openapi@0.3.0": {
+      "jsr:@denext/og@0.1.2": {},
+      "jsr:@denext/openapi@0.7.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.1.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/pages-router@0.10.0": {
+      "jsr:@denext/pages-router@0.13.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.1.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/photon@0.3.6": {},
-      "jsr:@denext/react-router@0.1.1": {
+      "jsr:@denext/react-router@0.5.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.1.0",
+          "jsr:@denext/denext@^4.6.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/swc@76.0.1": {}
+      "jsr:@denext/swc@76.0.1": {},
+      "jsr:@denext/tanstack-start@0.2.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.6.0",
+          "jsr:@std/path@1"
+        ]
+      }
     }
   }
 }

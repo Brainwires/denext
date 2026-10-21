@@ -369,6 +369,7 @@
     "check:fix": "deno task gen:command-table && deno fmt && deno lint --fix && deno lint",
     "hooks:install": "git config core.hooksPath .githooks",
     "regen": "deno run -A scripts/regen.ts",
+    "sync:example-locks": "deno run -A scripts/sync-example-locks.ts",
     "precheck": "deno run -A scripts/precheck.ts",
     "budget": "deno test -A --unstable-kv --filter \"build smoke: examples/hello\" tests/integration/build-smoke.test.ts",
     "check": "deno fmt --check && deno lint && deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/",

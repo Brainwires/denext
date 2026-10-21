@@ -50,6 +50,7 @@ Deno.test("regen: the drift tests' generators are all steps", () => {
       "install.ps1",
       "package scripts",
       "gen-serial-tests",
+      "sync:example-locks",
     ]
   ) assert(names.includes(task), `no regen step for ${task}`);
 });
