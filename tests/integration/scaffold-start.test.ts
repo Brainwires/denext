@@ -96,6 +96,7 @@ async function start(
   dir: string,
   cfg: DenoJson,
   run: Runner = STOCK,
+  path = "/",
 ): Promise<{ html: string; output: string }> {
   const { flags, args } = taskArgs(cfg.tasks.start, dir);
   assert(!flags.some((f) => f === "-A" || f.startsWith("--allow-run")), cfg.tasks.start);
@@ -120,7 +121,7 @@ async function start(
     // Generous: a loaded machine takes a while to load the app's modules.
     for (let i = 0; i < 1200 && !exited && !html; i++) {
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/`);
+        const res = await fetch(`http://127.0.0.1:${port}${path}`);
         const text = await res.text();
         if (res.status === 200) html = text;
       } catch { /* not listening yet */ }
@@ -152,6 +153,17 @@ const CASES: { name: string; opts: Omit<ScaffoldOptions, "dir">; expect: string[
   },
 ];
 
+const TOOLCHAIN = cachedToolchain();
+
+/**
+ * Where the least-privilege `start` runs: on denext's toolchain (a `denext task start`, the
+ * generated image and unit), else — no toolchain cached — this suite's Deno with the explicit
+ * `DENEXT_DENO=stock` opt-out (without it, the task refuses: see the test below).
+ */
+const SERVE: Runner = TOOLCHAIN
+  ? { deno: TOOLCHAIN, env: linkedEnv(TOOLCHAIN) }
+  : { deno: STOCK.deno, env: { ...STOCK.env, DENEXT_DENO: "stock" } };
+
 for (const { name, opts, expect } of CASES) {
   Deno.test(`denext create: ${name}'s least-privilege start task serves the built app`, async () => {
     const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_scaffold_start_" }));
@@ -159,7 +171,7 @@ for (const { name, opts, expect } of CASES) {
       await scaffoldProject({ dir, vscode: false, ...opts });
       const cfg = await pointAtThisCheckout(dir);
       await build(dir, cfg);
-      const { html, output } = await start(dir, cfg);
+      const { html, output } = await start(dir, cfg, SERVE);
       assert(!output.includes("NotCapable"), output);
       assert(html, `start served nothing:\n${output}`);
       for (const text of expect) assertStringIncludes(html, text);
@@ -169,7 +181,60 @@ for (const { name, opts, expect } of CASES) {
   });
 }
 
-const TOOLCHAIN = cachedToolchain();
+/** An API route reporting the runtime that serves it. */
+async function addRuntimeRoute(dir: string): Promise<void> {
+  await Deno.mkdir(join(dir, "app/api/runtime"), { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "app/api/runtime/route.ts"),
+    "export function GET(): Response {\n" +
+      "  // deno-lint-ignore no-explicit-any\n" +
+      "  const sql = typeof (Deno as any).SQL;\n" +
+      "  return Response.json({ sql, deno: Deno.version.deno });\n}\n",
+  );
+}
+
+Deno.test({
+  name: "denext create: the start task never serves on stock Deno without the opt-out",
+  // Up to 4.5.0 the least-privilege task (no --allow-run) served in-process on whatever Deno ran
+  // it, so `Deno.SQL` (postgresClient(), the Prisma adapter) worked in `dev` and was missing in
+  // production. Now it refuses with the ways out — unless this suite already runs on the toolchain.
+  ignore: Deno.version.deno.includes("denext"),
+  fn: async () => {
+    const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_scaffold_start_" }));
+    try {
+      await scaffoldProject({ dir, vscode: false, template: "minimal" });
+      const cfg = await pointAtThisCheckout(dir);
+      await build(dir, cfg);
+      const env = { ...STOCK.env, DENEXT_DENO: "", DENEXT_TOOLCHAIN_ACTIVE: "" };
+      const { html, output } = await start(dir, cfg, { deno: STOCK.deno, env });
+      assertEquals(html, "", `served on stock Deno:\n${output}`);
+      assertStringIncludes(output, "can't start denext's Deno toolchain");
+      assertStringIncludes(output, "denext task start");
+    } finally {
+      await removeTempDir(dir);
+    }
+  },
+});
+
+Deno.test({
+  name: "denext create: the start task on the toolchain serves with Deno.SQL",
+  ignore: TOOLCHAIN === null,
+  fn: async () => {
+    const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_scaffold_start_" }));
+    try {
+      await scaffoldProject({ dir, vscode: false, template: "minimal" });
+      await addRuntimeRoute(dir);
+      const cfg = await pointAtThisCheckout(dir);
+      await build(dir, cfg);
+      const { html, output } = await start(dir, cfg, SERVE, "/api/runtime");
+      const body = JSON.parse(html) as { sql: string; deno: string };
+      assertEquals(body.sql, "function", output);
+      assertStringIncludes(body.deno, "denext");
+    } finally {
+      await removeTempDir(dir);
+    }
+  },
+});
 
 Deno.test({
   name:

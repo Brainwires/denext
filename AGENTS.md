@@ -17,7 +17,9 @@ emit correct denext instead of Next.js.
    **`deno.json`**. Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s
    `imports` map. Run it with `denext task dev` / `denext task build` /
    `denext task start` (the `denext` command brings its own Deno — no Deno install needed; with
-   Deno installed, `deno task dev` runs the same task). Migrating a Next app? `denext migrate` does it in one pass
+   Deno installed, `deno task dev` runs the same task; the least-privilege `start` must be launched
+   on denext's toolchain — `denext task start`, or the image / unit `denext deploy prepare` writes —
+   and stops with the fix on stock Deno). Migrating a Next app? `denext migrate` does it in one pass
    — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
    your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
@@ -47,7 +49,9 @@ emit correct denext instead of Next.js.
    `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
    the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
    together (`--allow-major` also lets a package that imports no denext cross a major; an older
-   `--to` needs `--allow-downgrade`). From 3.x: https://denext.dev/docs/changelog
+   `--to` needs `--allow-downgrade`). `create`, `migrate` and `upgrade` pin only versions
+   Deno's minimum dependency age already lets in (never exempt `jsr:@denext/*` from it):
+   https://denext.dev/docs/toolchain#supply-chain-hold. From 3.x: https://denext.dev/docs/changelog
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
@@ -319,7 +323,7 @@ https://denext.dev/docs/errors-as-values
 ```ts
 import { redirect } from "denext";
 import { auth, cookies, createApi, getSession, requireAuth, requireSession } from "denext/server";
-// cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
+// cookies are Secure (over HTTPS) + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
 const session = await getSession<{ userId: string }>({
   secret: Deno.env.get("SESSION_SECRET")!,
 });
@@ -1137,8 +1141,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `denext toolchain uninstall <version>|--all` and `prune` remove cached versions (the pinned one
   only with `--force`; `--dry-run`, `--json`).
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
-  runs it on the toolchain (with no toolchain and no `deno` it refuses, naming
-  `denext toolchain install`), and the installer runs `toolchain install` (+ `toolchain link`
+  runs it on the toolchain (with no toolchain it refuses, naming `denext toolchain install`;
+  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6; an absolute `file:` import
   doesn't resolve under it yet), and in a `package.json` project without a `deno.json` it runs npm
@@ -1238,8 +1242,13 @@ skips them, so dispatch ci.yml on the commit first
 desktop-ci.yml run on HEAD (Windows / macOS / Linux desktop suites, installers, install.ps1 /
 install.sh) finished with every job green (`DESKTOP_CI_JOBS` in `scripts/release-ci.ts` names the
 ones that must exist): a push runs desktop-ci only when its `paths` filter matches, so dispatch it
-too (`gh workflow run desktop-ci.yml --ref development`) and wait for both. Active
-`development` runs ahead of `main` by design.
+too (`gh workflow run desktop-ci.yml --ref development`). It refuses as well unless the newest
+e2e.yml run on HEAD ran every job green (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`,
+`no-deno`; a one-job `-f job=…` dispatch doesn't count) and the newest desktop-window.yml run on HEAD
+(a real packaged window on Linux, macOS arm64 / x64 and Windows; `DESKTOP_WINDOW_JOBS`) is green:
+e2e runs only on a dispatch and desktop-window only when its `paths` filter matches, so dispatch
+both (`gh workflow run e2e.yml --ref development`, `gh workflow run desktop-window.yml --ref
+development`) and wait for all four. Active `development` runs ahead of `main` by design.
 
 **`main` must always be exactly what is published.** So **cutting a version is not
 done until `development` is merged into `main`** — the release flow is: tag

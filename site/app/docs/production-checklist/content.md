@@ -7,7 +7,7 @@ lead: The go-live list, one line per item, with the exact config key, flag or en
 ## What denext does before you do anything
 
 A freshly built app served by `denext start` already **drains on
-`SIGTERM`/`SIGINT`** (stops accepting connections, finishes in-flight requests,
+`SIGTERM`/`SIGINT`** (on Windows, Ctrl-C / Ctrl-Break; stops accepting connections, finishes in-flight requests,
 bounded by a 10 s deadline, and exits by it even when an open handle such as a
 database pool outlives the shutdown), **times out** any request still running after 30 s
 with a `503` and aborts the render's cooperative `AbortSignal`, **sheds** load
@@ -17,7 +17,8 @@ Actions (an over-cap body is a `413` before your code runs), bounds a slow body
 read separately, keeps a **request id** on every request (an inbound
 `x-request-id` from a trusted proxy, else a fresh UUID) and echoes it on every error
 response, sets **`httpOnly` + `SameSite=Lax` + `Secure`** on every cookie,
-refuses a session secret shorter than 32 characters in production, ships the
+refuses a session secret shorter than 32 characters in production (and takes the instance
+out of rotation: `/_denext/health` answers `503`), ships the
 **hardening headers** (`X-Content-Type-Options`, `X-Frame-Options`,
 `Referrer-Policy`, HSTS over HTTPS) and a strict hash-based **CSP** on every
 HTML page, redacts server errors, and gives you `safeFetch` — a `fetch` that
@@ -85,6 +86,14 @@ Each line: what to set → where it is documented. Config keys go in
   boot; `/_denext/health` reports `"cacheStore": "memory"`). The scaffold's
   `denext task start` already grants it. →
   [Health & readiness](/docs/deploy#13-health--readiness)
+- Run the server on denext's Deno toolchain (`denext task start`, the binary
+  `denext toolchain path` prints, or what `denext deploy prepare` writes): on another Deno the
+  least-privilege `start` stops and says so, since `Deno.SQL` / `postgresClient()` would be
+  missing. → [Toolchain](/docs/toolchain)
+- Know what your `start` is granted. `denext create` and a migrated SPA or Expo app write the
+  least-privilege set above. A migrated App Router app's `start` keeps `-A`: its build serves
+  stylesheets through an import map `start` applies by re-running itself, which takes an
+  unscoped `--allow-run` (as good as every permission) and a write to the app's `deno.json`.
 - Back up `.denext/*.db` and any app database (`auth.db` from
   `sqliteAuthAdapter`, `.denext/sessions.db` from `sqliteSessionStore`, your own
   `app.db`) like any SQLite file: copy the `-wal`/`-shm` siblings too, or use

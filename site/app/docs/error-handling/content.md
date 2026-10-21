@@ -51,6 +51,11 @@ A static site has no server to render it on a failing request, so
 hydration entry, for a host that serves a custom error page. It receives the
 error a production server hands it: the message `Internal Server Error`.
 
+With neither `error.tsx` nor `global-error.tsx` to catch it, a page error answers a minimal HTML
+page (`500`, "Internal Server Error." and the request id), as Next.js serves its default error
+page; a request that doesn't accept `text/html` gets the same text as `text/plain`. Neither says
+anything about the error: the server log has it, under that request id.
+
 ## `notFound()`, `forbidden()`, `unauthorized()`
 
 These are server-side control signals, caught per segment by that level's
@@ -191,6 +196,13 @@ It covers:
 - **Imports**: `react` / `next/*` in new code points to the denext import, a name used without
   importing it (`TS2304`) names the denext module that exports it, and a module that doesn't exist
   gets a did-you-mean from its directory.
+- **Dependencies and module format**: a bare import nothing maps names the package to add
+  (`denext add npm:zod`; a Node built-in gets its `node:` prefix), however the checker words it
+  (`Import "zod" not a dependency` in TypeScript 6, `Cannot find module 'zod'` in TypeScript 7), and
+  `import x = require()` / `export =` (`TS1202`, `TS1203`) get their ES module forms.
+- **Compiler options**: an option TypeScript 7 removed (`baseUrl`, `moduleResolution: node`,
+  `target: es5`; `TS5101`, `TS5102`, `TS5108`) gets the edit that replaces it, and a JSX runtime
+  that doesn't resolve (`TS2875`, with its `TS7026`) the import-map entry it needs.
 - **The typed API client**: an unknown route path or param gets the nearest real one.
 - **denext's lint rules**: `directive-placement`, `rules-of-hooks`, `hooks-in-component`,
   `no-hooks-in-async` and `no-handlers-in-async`, and the opt-in `exhaustive-switch` and

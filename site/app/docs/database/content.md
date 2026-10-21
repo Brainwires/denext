@@ -19,7 +19,7 @@ isn't tested.
 | **Postgres**      | `postgresClient()` (`Deno.SQL`)            | **none**    | ✅ CI against Postgres 17          | multi-instance / large apps       |
 | **MySQL, others** | a Deno or `npm:` driver                    | driver only | ⚠️ not in denext CI                | an existing database              |
 | **Drizzle ORM**   | `better-sqlite3` shim → compat             | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
-| **Prisma**        | `denext/prisma-adapter` (SQLite, Postgres) | ORM only    | ✅ type matrix + e2e (Rust-free)   | typed models + migrations         |
+| **Prisma**        | `denext/prisma-adapter` (SQLite, Postgres) | ORM only    | ⚠️ runtime 3.0.0-rc.1+ (see below) | typed models + migrations         |
 
 ## SQLite via `node:sqlite` (recommended default, zero-npm)
 
@@ -328,6 +328,28 @@ parameters are read rather than sent to the server: `schema` (the
 closes it on `$disconnect()`. `connectToShadowDb()` creates and drops a
 throwaway Postgres database (SQLite: `:memory:`) for `prisma migrate`.
 
+The second argument, `PrismaDenoSqlOptions`, takes:
+
+| Option              | What it does                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| `provider`          | `"postgres"` or `"sqlite"`, when a passed client (or an unusual URL) does not tell           |
+| `schema`            | Postgres: the schema queries run in (the `search_path`), unless the URL's `schema` names one |
+| `timestampFormat`   | SQLite: how `DateTime` arguments are stored (default ISO 8601 text, as Prisma does)          |
+| `shadowDatabaseUrl` | the database `prisma migrate` diffs against (SQLite: default `:memory:`)                     |
+| `disposeClient`     | a passed client: close it on `dispose()` / `$disconnect()` (default: leave it open)          |
+| `sql`               | further `Deno.SQL` options for a client the adapter opens (`tls`, `max`, …)                  |
+
+To open a client of your own from a Prisma URL, `postgresConnection(url, schema)` from the same
+module strips Prisma's parameters and returns `{ url, options, schema }`, the `Deno.SQL` options
+read from them (the [API reference](/docs/api/denext-prisma-adapter) lists every export):
+
+```ts
+import { postgresConnection, PrismaDenoSql } from "denext/prisma-adapter";
+
+const { url, options } = postgresConnection(Deno.env.get("DATABASE_URL")!, undefined);
+const adapter = new PrismaDenoSql(new Deno.SQL(url, { ...options, max: 20 }));
+```
+
 **It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins
 2.9.7-denext.22 until that runtime is published; there `migrate` keeps Prisma's npm adapters). The adapter reads
 each result column's type from `Deno.SQL`'s `result.columns`, which earlier
@@ -363,11 +385,14 @@ What it reads, and how:
 below); the next sections describe the npm adapters, which remain for older
 runtimes, CockroachDB and MySQL.
 
-The adapter is covered by a type round-trip matrix against Postgres 17 and
-SQLite (`tests/prisma-adapter-postgres-integration.test.ts`,
+Its tests: a type round-trip matrix against Postgres 17 and SQLite
+(`tests/prisma-adapter-postgres-integration.test.ts`,
 `tests/prisma-adapter-sqlite.test.ts`) and an end-to-end test that runs
 `prisma migrate dev` and CRUD with relations on both
-(`tests/e2e/prisma-deno-sql.e2e.test.ts`).
+(`tests/e2e/prisma-deno-sql.e2e.test.ts`). They need runtime 3.0.0-rc.1 or later
+and are skipped on the pinned 2.9.7-denext.22, so CI does not run them until that
+runtime is pinned; until then CI checks the adapter against a fake `Deno.SQL`
+(`tests/prisma-adapter.test.ts`).
 
 ### Prisma (verified recipe — Rust-free, over `node:sqlite`)
 

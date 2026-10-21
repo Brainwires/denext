@@ -17,6 +17,7 @@
 
 import { publicGuide } from "./guide.ts";
 import { readPackageFile } from "./package-file.ts";
+import { VERSION } from "../version.ts";
 import { IMPORT_RULES } from "./next-denext-map.ts";
 import { loadCorpus } from "./rag/corpus.ts";
 import { readDocs } from "./rag/read.ts";
@@ -106,15 +107,9 @@ async function readResource(uri: string): Promise<{ mimeType: string; text: stri
   throw new Error(`unknown resource: ${uri}`);
 }
 
-/** The server's own name/version (version read from the package deno.json). */
-async function serverInfo(): Promise<{ name: string; version: string }> {
-  let version = "0.0.0";
-  try {
-    version = JSON.parse(await readPackageFile("deno.json")).version ?? version;
-  } catch {
-    // best-effort — an unreadable/edge deno.json just leaves the placeholder version.
-  }
-  return { name: "denext", version };
+/** The server's own name/version (the framework's `VERSION` constant: no file read). */
+function serverInfo(): { name: string; version: string } {
+  return { name: "denext", version: VERSION };
 }
 
 /** A JSON-RPC error response. */
@@ -160,7 +155,7 @@ export async function dispatch(
         result: {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: {}, resources: {}, prompts: {} },
-          serverInfo: await serverInfo(),
+          serverInfo: serverInfo(),
         },
       };
     case "ping":

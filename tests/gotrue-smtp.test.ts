@@ -122,8 +122,10 @@ Deno.test("gotrue smtp: templates substitute GoTrue's placeholders, HTML-escaped
     '<a href="https://app.test/auth/v1/verify?token=t&amp;type=signup">go</a> 123456 ' +
       "&lt;script&gt;&quot;x&quot;@example.test https://app.test",
   );
-  assertEquals(renderGoTrueTemplate("{{ if .Token }}x{{ end }}", INPUT), null);
-  assertEquals(renderGoTrueTemplate("{{ .Data.name }}", INPUT), null);
+  assertEquals(renderGoTrueTemplate("{{ if .Token }}x{{ end }}", INPUT), "x");
+  assertEquals(renderGoTrueTemplate("{{ .Data.name }}", INPUT), "");
+  // A template Go can't parse falls back (null).
+  assertEquals(renderGoTrueTemplate("{{ if .Token }}x", INPUT), null);
   assertEquals(
     ["signup", "invite", "magiclink", "email", "recovery", "email_change", "reauthentication"]
       .map(mailKindOf),
@@ -137,6 +139,46 @@ Deno.test("gotrue smtp: templates substitute GoTrue's placeholders, HTML-escaped
       "reauthentication",
     ],
   );
+});
+
+Deno.test("gotrue smtp: templates run Go template actions over GoTrue's data", () => {
+  const input: GoTrueMailInput = {
+    ...INPUT,
+    data: { name: "Ada <L>", plan: "pro", roles: ["admin", "dev"], prefs: { lang: "fr" } },
+  };
+  const r = (t: string, i: GoTrueMailInput = input) => renderGoTrueTemplate(t, i);
+  // if / else if / else, comparisons over .Data, and the trim markers.
+  const greet = '{{ if eq .Data.plan "free" }}Free{{ else if eq .Data.plan "pro" -}}  ' +
+    "Pro {{- else }}Other{{ end }}";
+  assertEquals(r(greet), "Pro");
+  assertEquals(r("{{ if not .Data.missing }}none{{ end }}"), "none");
+  assertEquals(r('{{ if and .Token (ne .Email "") }}both{{ end }}'), "both");
+  assertEquals(r("{{ if or .Data.missing .Data.plan }}{{ .Data.plan }}{{ end }}"), "pro");
+  assertEquals(r("{{ if lt (len .Data.roles) 3 }}few{{ end }}"), "few");
+  // range (with variables and an else), with, index, printf, pipes, comments.
+  assertEquals(r("{{ range $i, $r := .Data.roles }}{{ $i }}={{ $r }};{{ end }}"), "0=admin;1=dev;");
+  assertEquals(r("{{ range .Data.none }}x{{ else }}empty{{ end }}"), "empty");
+  assertEquals(r("{{ with .Data.prefs }}{{ .lang }}{{ end }}"), "fr");
+  assertEquals(r("{{ with .Data.missing }}x{{ else }}no{{ end }}"), "no");
+  assertEquals(r('{{ index .Data.roles 1 }}/{{ index .Data.prefs "lang" }}'), "dev/fr");
+  assertEquals(
+    r('{{ printf "%s has %d roles" .Data.name (len .Data.roles) }}'),
+    "Ada &lt;L&gt; has 2 roles",
+  );
+  assertEquals(r('{{ .Data.plan | printf "[%s]" }}{{/* a comment */}}'), "[pro]");
+  assertEquals(r("{{ $u := .SiteURL }}{{ $u }}/x"), "https://app.test/x");
+  assertEquals(r("{{ .Data.name | urlquery }}"), "Ada+%3CL%3E");
+  // Values stay HTML-escaped; `.` and `$` are the whole data.
+  assertEquals(r("{{ .Data.name }}"), "Ada &lt;L&gt;");
+  assertEquals(r("{{ with $.Data }}{{ $.Email }}{{ end }}"), "ada@example.test");
+  // Each kind gets GoTrue's own data: reauthentication has no link, an email change the new address.
+  const reauth = { ...input, action: "reauthentication" };
+  assertEquals(r("[{{ .ConfirmationURL }}]{{ .Token }}", reauth), "[]123456");
+  const change = { ...input, action: "email_change", newEmail: "new@example.test" };
+  assertEquals(r("{{ .Email }} → {{ .NewEmail }}", change), "ada@example.test → new@example.test");
+  assertEquals(r("{{ .NewEmail }}"), "");
+  // A failing action (a call on an unknown function) falls back.
+  assertEquals(r("{{ nosuch .Token }}"), null);
 });
 
 Deno.test("gotrue smtp: a sign-up confirmation goes out over SMTP with GoTrue's subject", async () => {
@@ -182,6 +224,44 @@ Deno.test("gotrue smtp: configured subjects and a fetched template", async () =>
       assert(body.includes('<p>Hi bob@example.test: <a href="https://app.test/auth/v1/verify?'));
       assertEquals(fetches, 1, "the template is fetched once and cached");
     });
+  } finally {
+    await templates.shutdown();
+    await server.close();
+  }
+});
+
+Deno.test("gotrue smtp: a fetched Go template sees the user's metadata as .Data", async () => {
+  const server = startFakeSmtp();
+  const templates = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    () =>
+      new Response(
+        "{{ if .Data.name }}<p>Hi {{ .Data.name }}</p>{{ else }}<p>Hi there</p>{{ end }}" +
+          '{{ with .RedirectTo }}<a href="{{ . }}">back</a>{{ end }}',
+      ),
+  );
+  try {
+    const url = `http://127.0.0.1:${templates.addr.port}/confirm.html`;
+    await withSmtpApp(
+      { smtp: smtpTo(server, { templates: { confirmation: url } }) },
+      async (app) => {
+        const res = await app.fetch(`${ORIGIN}/auth/v1/signup`, {
+          method: "POST",
+          headers: { apikey: app.publishableKey, "content-type": "application/json" },
+          body: JSON.stringify({
+            email: "ada@example.test",
+            password: "a long password",
+            data: { name: "Ada <L>" },
+          }),
+        });
+        await res.body?.cancel();
+        assertEquals(res.status, 200);
+        assertEquals(await signup(app, "bob@example.test"), 200);
+        assert(decoded(server.mail[0].data).includes("<p>Hi Ada &lt;L&gt;</p>"));
+        assert(decoded(server.mail[1].data).includes("<p>Hi there</p>"));
+        assert(decoded(server.mail[1].data).includes('<a href="'));
+      },
+    );
   } finally {
     await templates.shutdown();
     await server.close();

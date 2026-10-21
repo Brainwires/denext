@@ -21,17 +21,16 @@ import { enterScope, ID_PATH_PROP, rootScope } from "../../jsx/tree-id.ts";
 import { setDispatcher } from "../../runtime/hooks.ts";
 import type { RefreshResolution, RefreshSwapHooks } from "./refresh-swap.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
-import { componentDisplayName, resolveComponentType } from "../../runtime/react-brands.ts";
+import {
+  componentDisplayName,
+  REACT_ELEMENT_TYPE,
+  resolveComponentType,
+} from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
 import { loadClassRuntime } from "../class-loader.ts";
 import { findSuspense, updateDepthError } from "./fiber-utils.ts";
 import { isHydrating } from "./hydration.ts";
-import {
-  ERR_ASYNC_COMPONENT,
-  ERR_CLASS_DISABLED,
-  ERR_MEMO_CLASS,
-  reconcilerError,
-} from "./errors.ts";
+import { ERR_ASYNC_COMPONENT, ERR_CLASS_DISABLED, reconcilerError } from "./errors.ts";
 import { scheduleUpdate } from "./scheduler.ts";
 import {
   BailedBit,
@@ -224,14 +223,24 @@ type RenderFn = (props: unknown, ref?: unknown) => VNode;
 /**
  * Resolve memo/forwardRef object wrappers to the render function. The fast path (a plain
  * function type) returns it unchanged with a single typeof check. A wrapper hiding a
- * class (e.g. memo(Class)) can't go through the object path — the class runtime needs
- * the raw constructor — so it is rejected; the guard runs only in the wrapped case so
- * the plain-function hot path pays nothing.
+ * class (`memo(Class)`) renders the class as its one child element, as React's
+ * MemoComponent does: the memo fiber compares props (shallow, or the given `compare`) and
+ * the class fiber below it runs the class runtime with the raw constructor. The check
+ * runs only in the wrapped case, so the plain-function hot path pays nothing.
  */
 function resolveRenderTarget(rawType: unknown): { fn: unknown; forwardsRef: boolean } {
   const resolved = resolveComponentType(rawType);
-  if (resolved.fn !== rawType && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(resolved.fn)) {
-    throw reconcilerError(ERR_MEMO_CLASS);
+  // The flag first: with class components compiled out, this branch folds away, as before.
+  if (__DENEXT_CLASS_COMPONENTS__ && resolved.fn !== rawType && isClassComponent(resolved.fn)) {
+    // The element react-brands.ts' `memoClassElement` builds, inlined (the shared chunk's
+    // budget); `resolved` is this call's own object.
+    const type = resolved.fn as VNode["type"];
+    resolved.fn = (props: VNode["props"]): VNode => ({
+      $$typeof: REACT_ELEMENT_TYPE,
+      type,
+      props,
+      key: null,
+    });
   }
   return resolved;
 }

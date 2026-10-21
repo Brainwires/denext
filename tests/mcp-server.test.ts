@@ -14,6 +14,7 @@ import {
   runStdioServer,
 } from "../src/mcp/server.ts";
 import { activeTools, resolveToolNames, TOOL_GROUPS, TOOLS } from "../src/mcp/tools.ts";
+import { VERSION } from "../src/version.ts";
 
 // ── dispatch: every method + error path ───────────────────────────────────────
 
@@ -22,8 +23,8 @@ Deno.test("dispatch: initialize advertises tools/resources/prompts + a real vers
   const caps = res?.result.capabilities;
   assert(caps.tools && caps.resources && caps.prompts, "all three capabilities advertised");
   assertEquals(res?.result.serverInfo.name, "denext");
-  // The version is read from the package deno.json — a real semver, not the 0.0.0 placeholder.
-  assert(/^\d+\.\d+\.\d+/.test(res?.result.serverInfo.version), res?.result.serverInfo.version);
+  // The version is the framework VERSION constant (no file read, so a compiled binary has it).
+  assertEquals(res?.result.serverInfo.version, VERSION);
 });
 
 Deno.test("dispatch: ping returns an empty result", async () => {

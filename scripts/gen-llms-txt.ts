@@ -105,7 +105,9 @@ export function llmsIndex(): string {
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
   running dev server's errors + console, render a route/component server-side, and search or
   read every docs page and API symbol offline (\`denext_search_docs\` / \`denext_read_docs\`).
-- **Migrate** a Next.js / Remix / Pages-Router app in one pass: \`denext migrate\`.
+- **Migrate** an app in one pass with \`denext migrate\`: Next.js (App Router, or the Pages Router
+  through \`@denext/pages-router\`), Remix and React Router, TanStack Start, Fresh, Preact, Expo /
+  React Native, and Vite / Create React App / other SPAs (\`--from <framework>\` forces one).
   \`denext migrate --check [--json]\` reports what it would change and what won't migrate,
   writing nothing.
 `;

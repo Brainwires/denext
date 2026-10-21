@@ -52,6 +52,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/platform", file: `${ROOT}src/platform.ts` },
   { module: "denext/result", file: `${ROOT}src/result.ts` },
   { module: "denext/signals", file: `${ROOT}src/compat/preact/signals.ts` },
+  { module: "denext/prisma-adapter", file: `${ROOT}src/server/prisma-adapter/mod.ts` },
   { module: "denext/jsx-directives", file: `${ROOT}src/jsx-directives.ts` },
   { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
   { module: "denext/plugin-kit", file: `${ROOT}src/plugin/kit.ts` },

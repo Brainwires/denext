@@ -24,7 +24,7 @@ export const deployCommand: CommandSpec = {
   envTier: "production",
   summary: "Prepare (and push) the app for a deploy target: docker, fly, deno-deploy, …",
   usage: [
-    "Usage: denext deploy [prepare] [dir] [--preset <name>] [--dry-run] [--force]",
+    "Usage: denext deploy [prepare] [dir] [--preset <name>] [--domain <host>] [--dry-run] [--force]",
     "",
     "  prepare  Run the deploy adapter's prepare: write the target's files from the deploy",
     "           manifest (.denext/deploy-manifest.json) the last `denext build` wrote",
@@ -51,6 +51,12 @@ export const deployCommand: CommandSpec = {
       valueName: "<name>",
       help: "Use this preset (default options) instead of the configured adapter",
     },
+    {
+      name: "domain",
+      type: "string",
+      valueName: "<host>",
+      help: "The public domain, for --preset generic-host (its unit, nginx and Caddy files)",
+    },
     { name: "dry-run", type: "boolean", help: "Say what would be written and run; do neither" },
     {
       name: "force",
@@ -62,6 +68,7 @@ export const deployCommand: CommandSpec = {
     const { prepareOnly, dir } = parseArgs(ctx);
     const options = {
       preset: ctx.flags.preset as string | undefined,
+      domain: ctx.flags.domain as string | undefined,
       dryRun: ctx.flags["dry-run"] === true,
       force: ctx.flags.force === true,
     };

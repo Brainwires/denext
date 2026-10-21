@@ -12,6 +12,7 @@
 // channel subscription goes (the Live socket in the browser, the channel transport on the
 // server) and in what context an effect runs (the server runs them as the connection's viewer).
 
+import type { SyntheticEvent } from "../compat/react-types.ts";
 import type { VNodeChildren } from "../jsx/types.ts";
 
 /** What an `update` (or `init`) returns: the next model, and the effects to run. */
@@ -131,8 +132,13 @@ export interface EventPayload {
 /** A message, or a function building one from the event (`null` dispatches nothing). */
 export type MsgSource<Msg> = Msg | ((payload: EventPayload) => Msg | null | undefined);
 
-/** What `send(…)` returns: an event handler for any `on*` prop. */
-export type EventBinding = (event: Event) => void;
+/**
+ * What `send(…)` returns: an event handler for any `on*` prop. It takes the synthetic event a
+ * JSX handler receives (`onClick`, `onSubmit`, `onInput`, …) or a DOM `Event`
+ * (`addEventListener`), and reads only its target, `key` and type.
+ */
+// deno-lint-ignore no-explicit-any -- any element / native event, as each `on*` prop narrows it
+export type EventBinding = (event: Event | SyntheticEvent<any, any>) => void;
 
 /**
  * Bind a message to an event: `onClick={send({ type: "inc" })}`, or with the event's payload

@@ -423,12 +423,8 @@ function reactNativeListTypes(nm: string): { flat: string; section: string; virt
 /** The TypeScript-side capture, run over the installed packages in `dir`. */
 // fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
 async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
-  // TypeScript 7's native compiler, through its IPC API (the async client: the sync one needs raw
-  // pipe descriptors Deno's `node:child_process` doesn't expose).
-  // deno-lint-ignore no-import-prefix
-  const ts = await import("npm:typescript@~7.0.2/unstable/async");
-  // deno-lint-ignore no-import-prefix
-  const { SyntaxKind } = await import("npm:typescript@~7.0.2/unstable/ast");
+  // TypeScript 7's native compiler, through its program API (src/ts/program-api.ts).
+  const { ts, SyntaxKind } = await import("../../../src/ts/program-api.ts");
   const kinds = {
     Interface: SyntaxKind.InterfaceDeclaration,
     TypeAlias: SyntaxKind.TypeAliasDeclaration,

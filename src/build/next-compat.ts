@@ -405,6 +405,8 @@ function reactNativeRuntimeEntries(u: EntryUrl): Record<string, string> {
     "lists-legend-list": u("src/lists/legend-list.ts"),
     // SPA mode's `client:*` deferred mounts (see spa-islands.ts).
     "spa-island": u("src/spa-island.ts"),
+    // Isomorphic `client:*` islands (see iso-islands.ts).
+    "iso-island": u("src/iso-island.ts"),
     // React Native mode's community-package stand-ins (see react-native-aliases.ts).
     ...communityRuntimeEntries(u),
   };
@@ -922,6 +924,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/lists/legend-list": "lists-legend-list.js",
   // SPA mode's `client:*` deferred mounts (see spa-islands.ts).
   "denext/spa-island": "spa-island.js",
+  // Isomorphic `client:*` islands (see iso-islands.ts).
+  "denext/iso-island": "iso-island.js",
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };

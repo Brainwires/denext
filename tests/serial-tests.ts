@@ -32,6 +32,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/config.test.ts",
   "tests/conformance.test.ts",
   "tests/deno-exec.test.ts",
+  "tests/dep-age.test.ts",
   "tests/desktop-app-dirs.test.ts",
   "tests/desktop-deno-flags.test.ts",
   "tests/desktop-doctor.test.ts",
@@ -127,7 +128,7 @@ export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
   "src/build/desktop.ts":
     "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
     "that declares sidecars, after its own server took it; no test sets or reads that variable",
-  "src/build/native-check.ts":
+  "src/ts/engine.ts":
     "applyNativeCheckEngine sets DENO_CHECK_ENGINE for the verb's Deno children only when the " +
     "`denext` entrypoint's run half calls it (src/cli/run-verb.ts, exempt below); tests pass their " +
     "own setEnv / env seams",

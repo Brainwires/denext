@@ -33,8 +33,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 ### denext's Deno toolchain
 
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
-  arm64). Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
-  Vitest/Jest compatibility in `deno test`.
+  arm64). Elsewhere, and offline on first use, a command that needs the toolchain stops with an
+  error naming `denext toolchain install`; `DENEXT_DENO=stock` runs stock Deno instead, without
+  `Deno.SQL` or Vitest/Jest compatibility in `deno test`.
 - **Windows on Arm has run on a VM, not yet on Arm64 hardware** (last verified on toolchain
   2.9.7-denext.21). On
   a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
@@ -57,17 +58,29 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline
   before either has happened fails to load. The compiled binary embeds every verb.
-- **The native type check on runtime 2.9.7-denext.22 can't resolve an absolute `file:` import.**
+- **Before runtime 3.0.0-rc.1, the native type check can't resolve an absolute `file:` import.**
   `import { x } from "file:///abs/path/mod.ts"` (in source, or an import-map target that is a
-  `file:` URL) reports TS2307 under TypeScript 7, inside the project or outside it, where Deno and
-  the in-process TypeScript resolve it. Until a runtime with the fix is pinned, type-check such a
-  project with `DENEXT_NATIVE_CHECK=0` (`DENO_CHECK_ENGINE=tsc` for a plain `deno check`), or
-  import by a relative path or an import-map alias to a relative path.
+  `file:` URL) reports TS2307 under TypeScript 7 on `2.9.7-denext.22`, inside the project or
+  outside it, where Deno and the in-process TypeScript resolve it. On that runtime, type-check such
+  a project with `DENEXT_NATIVE_CHECK=0` (`DENO_CHECK_ENGINE=tsc` for a plain `deno check`), or
+  import by a relative path or an import-map alias to a relative path. Runtime 3.0.0-rc.1+
+  resolves it.
+- **Before runtime `3.0.0-rc.2`, a `tsconfig.json` that sets `paths` loses the import map under
+  the native check.** Its `paths` replace the generated ones, so `jsr:` / `npm:` / import-map
+  imports report TS2307 and JSX TS2875 (a Next.js app keeps its `tsconfig.json` after `denext
+  migrate`); one with `baseUrl` or `"moduleResolution": "node"` stops at TS5102 / TS5108. Delete
+  `paths` / `baseUrl` from `tsconfig.json` (the import map carries them after `migrate`), or set
+  `DENEXT_NATIVE_CHECK=0`.
 - **On Windows, keep a project and its `file:` imports on one drive.** Deno 2.9 resolves a
   `deno.json` whose `file:` targets sit on another drive as `file:///C:/D:/…`, so an app on `C:`
   that imports a checkout on `D:` (as `migrate --denext-local-path` writes) fails to load, in
   Deno rather than in denext. Put both on the same drive (CI's `windows-tests` job points
   `TEMP` / `TMP` at the checkout's drive for this reason).
+- **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
+  `denext start` begins its graceful shutdown on those events too, but Windows ends a console
+  process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
+  the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
+  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 
@@ -239,8 +252,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **The compiled `denext` binary re-execs the denext the project pins** for every module-loading
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
-  need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
-  `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
+  need; no Deno install required). Offline on first use, with no toolchain cached, it stops with
+  the fix (`denext toolchain install` once online); `DENEXT_DENO=stock` runs a `deno` on PATH
+  instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
@@ -321,7 +335,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   workers don't run there; `requestAnimationFrame` is capped at 60 Hz on 120 Hz displays
   ([WebKit 294338](https://bugs.webkit.org/show_bug.cgi?id=294338); lifting it is an App Review
   risk denext won't take); Live Activities and configurable widgets are iOS-only (configurable
-  from iOS 17; push-to-start from 17.2); App Groups and push need a paid Apple Developer team.
+  from iOS 17; push-to-start from 17.2); App Groups and push need a paid Apple Developer team; a
+  LAN host (an OTA origin, `mobile dev --lan`, a file transfer) is unreachable until the user
+  allows Local Network access (iOS asks once; Settings → Privacy & Security → Local Network), and
+  until then requests fail with -1009 (the OTA check and file transfers add that hint).
 - **Android:** the WebView is whatever the device has installed, so features and bugs vary;
   widgets are static (no configure activity); push needs `google-services.json`; `mobile dev`
   relies on `usesCleartextTraffic`, which an app's own `networkSecurityConfig` overrides.

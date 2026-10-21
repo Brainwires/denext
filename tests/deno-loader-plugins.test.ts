@@ -149,3 +149,84 @@ Deno.test("withLoaderMap: a module the loader answers as js takes the build's lo
     await esbuild.stop();
   }
 });
+
+for (const loader of ["portable", "native"] as const) {
+  Deno.test(`denoLoaderPlugins (${loader}): an app inside a Deno workspace that doesn't list it builds`, async () => {
+    // A monorepo's root deno.json with a `workspace` that doesn't name the app (examples/effect
+    // in this repo): the loader's workspace discovery failed with
+    // `WorkspaceDiscoverError(ConfigNotWorkspaceMember …)` where Deno itself only warns, and
+    // next-compat's esbuild path fell over. The app's own config is what it builds with.
+    const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-loader-ws-" }));
+    try {
+      await Deno.mkdir(join(root, "packages", "lib"), { recursive: true });
+      await Deno.writeTextFile(
+        join(root, "deno.json"),
+        JSON.stringify({ workspace: ["./packages/lib"] }),
+      );
+      await Deno.writeTextFile(
+        join(root, "packages", "lib", "deno.json"),
+        JSON.stringify({ name: "@x/lib", version: "0.0.0", exports: "./mod.ts" }),
+      );
+      await Deno.writeTextFile(join(root, "packages", "lib", "mod.ts"), "export const v = 1;\n");
+      const app = join(root, "apps", "web");
+      await Deno.mkdir(app, { recursive: true });
+      await Deno.writeTextFile(
+        join(app, "deno.json"),
+        JSON.stringify({ imports: { "#greet": "./greet.ts" } }),
+      );
+      await Deno.writeTextFile(join(app, "greet.ts"), 'export const greet = "NON_MEMBER_OK";\n');
+      await Deno.writeTextFile(
+        join(app, "main.ts"),
+        'import { greet } from "#greet";\nconsole.log(greet);\n',
+      );
+      const result = await esbuild.build({
+        entryPoints: [join(app, "main.ts")],
+        absWorkingDir: app,
+        bundle: true,
+        write: false,
+        format: "esm",
+        logLevel: "silent",
+        plugins: denoLoaderPlugins({ configPath: join(app, "deno.json"), loader }),
+      });
+      assert(result.outputFiles[0].text.includes("NON_MEMBER_OK"));
+      // Whatever stand-in config the loader was handed is gone once the build is.
+      await esbuild.stop();
+      dispatchEvent(new Event("unload"));
+      assertEquals(
+        [...Deno.readDirSync(app)].map((e) => e.name).sort(),
+        ["deno.json", "greet.ts", "main.ts"],
+      );
+    } finally {
+      await esbuild.stop();
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}
+
+Deno.test("denoLoaderPlugins: a workspace member builds through its workspace, no stand-in", async () => {
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-loader-member-" }));
+  try {
+    const app = join(root, "apps", "web");
+    await Deno.mkdir(app, { recursive: true });
+    await Deno.writeTextFile(
+      join(root, "deno.json"),
+      JSON.stringify({ workspace: ["./apps/web/"] }),
+    );
+    await Deno.writeTextFile(join(app, "deno.json"), JSON.stringify({ imports: {} }));
+    await Deno.writeTextFile(join(app, "main.ts"), 'console.log("MEMBER_OK");\n');
+    const result = await esbuild.build({
+      entryPoints: [join(app, "main.ts")],
+      absWorkingDir: app,
+      bundle: true,
+      write: false,
+      format: "esm",
+      logLevel: "silent",
+      plugins: denoLoaderPlugins({ configPath: join(app, "deno.json"), loader: "portable" }),
+    });
+    assert(result.outputFiles[0].text.includes("MEMBER_OK"));
+    assertEquals([...Deno.readDirSync(app)].map((e) => e.name).sort(), ["deno.json", "main.ts"]);
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(root, { recursive: true });
+  }
+});

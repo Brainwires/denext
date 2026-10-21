@@ -75,13 +75,7 @@ async function exportPagesRouter(
 ): Promise<StaticExportResult> {
   // Validate the target first: the swap below replaces it wholesale.
   const outDir = await resolveExportOutDir(paths, options.outDir);
-  await setupPlugins(paths, "export");
-  await runPluginPrepareSteps({
-    projectRoot: paths.projectDir,
-    appDir: paths.appDir,
-    outDir: paths.outDir,
-    config: paths.config ?? {},
-  });
+  await setupExportPlugins(paths);
   // The files steps publish with `emitFile` are collected aside and copied in after `public/`.
   const emitted = join(paths.outDir, EMITTED_DIR);
   await Deno.remove(emitted, { recursive: true }).catch(() => {});
@@ -162,6 +156,17 @@ async function exportLoader(
   });
 }
 
+/** Set up the config's plugins for an export and run their prepare steps (a failure stops it). */
+async function setupExportPlugins(paths: ProjectPaths): Promise<void> {
+  await setupPlugins(paths, "export");
+  await runPluginPrepareSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  }, { failFast: true });
+}
+
 /** Set up plugins, scan the routes, resolve i18n and the output dirs, pick the loader. */
 export async function prepareExport(
   projectDir: string,
@@ -170,13 +175,7 @@ export async function prepareExport(
 ): Promise<ExportContext> {
   // Validate the target first: the swap in `finishExport` replaces it wholesale.
   const finalOutDir = await resolveExportOutDir(paths, options.outDir);
-  await setupPlugins(paths, "export");
-  await runPluginPrepareSteps({
-    projectRoot: paths.projectDir,
-    appDir: paths.appDir,
-    outDir: paths.outDir,
-    config: paths.config ?? {},
-  });
+  await setupExportPlugins(paths);
   const manifest = await scanRoutes(paths.appDir);
   const platform = options.platform ?? "web";
   const platformRedirects = await targetPlatformFiles(paths, manifest, platform);

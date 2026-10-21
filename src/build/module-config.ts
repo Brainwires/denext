@@ -293,8 +293,9 @@ export async function ensureFrameworkNodeModules(outDir: string): Promise<boolea
   // Pin to the framework's own resolved versions (from its deno.lock) instead of the
   // caret ranges, so this build machinery can't resolve a different, newer-in-range (or
   // maliciously published) version than the framework was tested against. Falls back to
-  // the range for any dep the lock doesn't cover.
-  const pinned = pinNpmToLock(npm, await readFrameworkJson("deno.lock"));
+  // the range for any dep the lock doesn't cover — and for every dep when the framework copy
+  // ships no lock (optional: the published package is not guaranteed to carry one).
+  const pinned = pinNpmToLock(npm, await readFrameworkJson("deno.lock", { optional: true }));
   const fwDir = join(outDir, ".fwdeps");
   const nm = join(fwDir, "node_modules");
   // A synthetic project carrying ONLY the framework's npm deps. `auto` lets Deno build the

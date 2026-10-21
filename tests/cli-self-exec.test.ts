@@ -542,8 +542,8 @@ Deno.test("mergeRunFlags: the parent's own resolution flags replace denext's def
 
 Deno.test("pinnedConfigArgs hands the pinned child the project's config only from outside it", async () => {
   // The child is `deno run jsr:@denext/denext@…/cli`, which discovers its config from the working
-  // directory; from outside the project it would run with none, losing the project's
-  // `minimumDependencyAge` exclusion of `jsr:@denext/*` (a fresh release would be refused).
+  // directory; from outside the project it would run with none, losing the project's import map
+  // and its own `minimumDependencyAge` rule.
   const root = await tree({
     "app/deno.json": '{ "imports": { "denext": "jsr:@denext/denext@^4.0.0" } }',
     "app/src/x.ts": "",

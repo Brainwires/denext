@@ -1,0 +1,12 @@
+TS5101: `baseUrl` goes away in TypeScript 7
+
+  TypeScript 6 deprecated this option, and TypeScript 7 (the native type checker) refuses it.
+
+  Fix: Delete `baseUrl` from tsconfig.json and start each `paths` target with `./` (relative to tsconfig.json). A bare import that only `baseUrl` resolved needs an entry in deno.json `imports`.
+
+  Original (deno check):
+  │ TS5101 [ERROR]: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+  │   Visit https://aka.ms/ts6 for migration information.
+
+error: Type checking failed.
+

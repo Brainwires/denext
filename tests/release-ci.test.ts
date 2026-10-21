@@ -6,7 +6,11 @@ import {
   type CiJob,
   type CiRun,
   DESKTOP_CI_JOBS,
+  DESKTOP_WINDOW_JOBS,
   desktopCiVerdict,
+  desktopWindowVerdict,
+  E2E_JOBS,
+  e2eVerdict,
   RELEASE_CI_JOBS,
   releaseCiHint,
   releaseCiVerdict,
@@ -201,4 +205,113 @@ Deno.test("release CI gate: the release script runs it before changing anything"
   const src = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
   const main = src.slice(src.indexOf("async function main()"));
   assert(main.indexOf("checkCi(") < main.indexOf("prepareRelease("), "CI is checked first");
+});
+
+/** `names` with `conclusion`, then `over` on top (extra names are added). */
+function namedJobs(
+  names: readonly string[],
+  conclusion: string,
+  over: Record<string, string> = {},
+) {
+  return [...new Set([...names, ...Object.keys(over)])].map((name) => ({
+    name,
+    status: "completed",
+    conclusion: over[name] ?? conclusion,
+  }));
+}
+
+Deno.test("e2e gate: e2e.yml's newest run on HEAD must have run every job, green", async () => {
+  assertEquals(E2E_JOBS, ["e2e", "migration-beds", "timer-stress", "no-deno"]);
+  const green = fakeGh([run(1, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+    1: namedJobs(E2E_JOBS, "success"),
+  });
+  const ok = await e2eVerdict(SHA, green.gh);
+  assert(ok.ok, ok.reason);
+  assertEquals(green.calls[0].slice(0, 6), [
+    "run",
+    "list",
+    "--workflow",
+    "e2e.yml",
+    "--commit",
+    SHA,
+  ]);
+  // A one-job dispatch (`-f job=e2e`) skips the rest: it can't vouch for a release.
+  const one = await e2eVerdict(
+    SHA,
+    fakeGh([run(2, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+      2: namedJobs(E2E_JOBS, "skipped", { e2e: "success" }),
+    }).gh,
+  );
+  assert(!one.ok);
+  assertStringIncludes(one.reason, "no-deno: skipped");
+  const red = await e2eVerdict(
+    SHA,
+    fakeGh([run(3, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+      3: namedJobs(E2E_JOBS, "success", { e2e: "failure" }),
+    }).gh,
+  );
+  assertStringIncludes(red.reason, "e2e: failure");
+  const none = await e2eVerdict(SHA, fakeGh([], {}).gh);
+  assert(!none.ok);
+  assertStringIncludes(none.reason, "no e2e.yml run");
+});
+
+Deno.test("desktop window gate: desktop-window.yml's newest run on HEAD, every OS green", async () => {
+  assertEquals(DESKTOP_WINDOW_JOBS, [
+    "window test (linux-x64)",
+    "window test (macos-arm64)",
+    "window test (macos-x64)",
+    "window test (windows-x64)",
+    "results by OS",
+  ]);
+  const ok = await desktopWindowVerdict(
+    SHA,
+    fakeGh([run(1, "push", "2026-10-06T10:00:00Z")], {
+      1: namedJobs(DESKTOP_WINDOW_JOBS, "success"),
+    }).gh,
+  );
+  assert(ok.ok, ok.reason);
+  const red = await desktopWindowVerdict(
+    SHA,
+    fakeGh([run(1, "push", "2026-10-06T10:00:00Z")], {
+      1: namedJobs(DESKTOP_WINDOW_JOBS, "success", { "window test (windows-x64)": "failure" }),
+    }).gh,
+  );
+  assert(!red.ok);
+  assertStringIncludes(red.reason, "desktop-window.yml push run on");
+  assertStringIncludes(red.reason, "window test (windows-x64): failure");
+  const running = await desktopWindowVerdict(
+    SHA,
+    fakeGh([run(2, "workflow_dispatch", "2026-10-06T10:00:00Z", "in_progress")], {}).gh,
+  );
+  assertStringIncludes(running.reason, "in_progress");
+});
+
+Deno.test("release CI gate: the hint dispatches every gated workflow, e2e with every job", () => {
+  const hint = releaseCiHint("development");
+  for (const w of ["ci.yml", "desktop-ci.yml", "e2e.yml", "desktop-window.yml"]) {
+    assertStringIncludes(hint, `gh workflow run ${w} --ref development`);
+  }
+  assert(!hint.includes("-f job="), "e2e.yml runs every job (job=all, the default)");
+});
+
+Deno.test("e2e + desktop window gates: every required job is named in its workflow", async () => {
+  const e2e = await Deno.readTextFile(new URL("../.github/workflows/e2e.yml", import.meta.url));
+  for (const job of E2E_JOBS) assertStringIncludes(e2e, `\n  ${job}:\n`, job);
+  const win = await Deno.readTextFile(
+    new URL("../.github/workflows/desktop-window.yml", import.meta.url),
+  );
+  assertStringIncludes(win, "name: window test (${{ matrix.label }})");
+  assertStringIncludes(win, "name: results by OS");
+  for (const job of DESKTOP_WINDOW_JOBS.filter((j) => j.startsWith("window test"))) {
+    assertStringIncludes(win, `label: ${/\((.*)\)/.exec(job)![1]} }`, job);
+  }
+});
+
+Deno.test("release CI gate: the release script checks all four workflows", async () => {
+  const src = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
+  const check = src.slice(src.indexOf("async function checkCi("));
+  for (const v of ["releaseCiVerdict", "desktopCiVerdict", "e2eVerdict", "desktopWindowVerdict"]) {
+    assertStringIncludes(check.slice(0, check.indexOf("\n}\n")), v);
+  }
 });

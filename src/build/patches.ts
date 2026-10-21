@@ -27,7 +27,9 @@ import type { Plugin } from "./esbuild/mod.ts";
 import { walk } from "@std/fs";
 import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
 import { denoExecutable } from "./deno-executable.ts";
-import { frameworkRootUrl, minDepAgeArgs, readFrameworkJson } from "./bundle.ts";
+import { frameworkRootUrl, minDepAgeArgs } from "./bundle.ts";
+import { JSR_DENEXT_ROOT } from "./app-framework-root.ts";
+import { VERSION } from "../version.ts";
 import {
   applyFileDiff,
   createUnifiedDiff,
@@ -66,7 +68,7 @@ export interface PatchEntry {
 export interface PatchOptions {
   /** The framework root URL (default: the running framework's). */
   frameworkRoot?: string;
-  /** The framework version (default: read from the framework's `deno.json`). */
+  /** The framework version (default: the running framework's `VERSION`). */
   frameworkVersion?: string;
   /** Where a pristine copy of `pkg@version` lives (default: Deno's npm cache, populated on demand). */
   npmPristine?: (pkg: string, version: string) => Promise<string>;
@@ -417,9 +419,20 @@ async function removeIfPresent(path: string): Promise<boolean> {
 
 // ── denext itself ──────────────────────────────────────────────────────────────
 
-async function frameworkVersion(opts: PatchOptions): Promise<string> {
-  if (opts.frameworkVersion) return opts.frameworkVersion;
-  return String((await readFrameworkJson("deno.json")).version ?? "0.0.0");
+function frameworkVersion(opts: PatchOptions): string {
+  return opts.frameworkVersion || VERSION;
+}
+
+/**
+ * The framework root a patch is made against: the running framework's — except in a compiled
+ * `denext` binary, whose own root is a temporary directory the app never loads from. The app
+ * runs the published denext there, so the patch targets that copy's JSR root (the pinned
+ * denext re-materializes it against its own root when `dev` / `build` / `start` apply it).
+ */
+function defaultFrameworkRoot(): string {
+  return (Deno.build as { standalone?: boolean }).standalone === true
+    ? `${JSR_DENEXT_ROOT}${VERSION}/`
+    : frameworkRootUrl();
 }
 
 /** A pristine framework file by project-relative path (`src/server/document.ts`). */
@@ -448,7 +461,7 @@ export async function editDenextFile(
 ): Promise<string> {
   const path = workPath(projectDir, rel);
   if (await exists(path)) return path;
-  const root = opts.frameworkRoot ?? frameworkRootUrl();
+  const root = opts.frameworkRoot ?? defaultFrameworkRoot();
   let text = await pristineFrameworkFile(root, rel);
   const current = (await listPatches(projectDir)).find((p) => p.kind === "denext");
   const diff = current
@@ -469,8 +482,8 @@ export async function createDenextPatch(
   projectDir: string,
   opts: PatchOptions = {},
 ): Promise<CreatedPatch> {
-  const root = opts.frameworkRoot ?? frameworkRootUrl();
-  const version = await frameworkVersion(opts);
+  const root = opts.frameworkRoot ?? defaultFrameworkRoot();
+  const version = frameworkVersion(opts);
   const workDir = join(projectDir, PATCHES_DIR, WORK_DIR, MATERIALIZED_DIR);
   const diffs: string[] = [];
   const files: string[] = [];
@@ -518,8 +531,8 @@ async function materializeDenextPatch(
   opts: PatchOptions = {},
 ): Promise<Materialized> {
   const log = opts.log ?? console.warn;
-  const root = opts.frameworkRoot ?? frameworkRootUrl();
-  const version = await frameworkVersion(opts);
+  const root = opts.frameworkRoot ?? defaultFrameworkRoot();
+  const version = frameworkVersion(opts);
   if (version !== entry.version) {
     log(
       `denext patch: denext is ${version} but the patch was made against ${entry.version} — applying anyway`,

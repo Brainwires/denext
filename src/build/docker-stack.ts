@@ -48,6 +48,8 @@ export interface StackOptions {
   readonly auth?: boolean;
   /** The app uses `@denext/backend` (adds the backend's API and JWT keys). */
   readonly backend?: boolean;
+  /** The app compiles Gleam: the image installs CA certificates for its package fetch. */
+  readonly gleam?: boolean;
   /** `@denext/backend` storage is configured (adds `DENEXT_STORAGE_SECRET`). */
   readonly backendStorage?: boolean;
   /** `@denext/backend`'s `vault` is configured (adds the required `DENEXT_VAULT_KEY`). */
@@ -343,14 +345,6 @@ export const STACK_ENV: readonly StackEnvVar[] = [
 /** The variables these options need, in {@linkcode STACK_ENV} order. */
 export function stackEnv(options: StackOptions): StackEnvVar[] {
   return STACK_ENV.filter((v) => v.when(options));
-}
-
-/**
- * Whether the app must run on denext's Deno toolchain: `@denext/backend`'s Postgres client
- * (`Deno.SQL`) is part of it, and the least-privilege `start` task cannot re-exec onto it.
- */
-export function needsToolchain(options: StackOptions): boolean {
-  return options.postgres === true || options.backend === true;
 }
 
 /** Whether these options render the stack layout (any service beyond the app). */

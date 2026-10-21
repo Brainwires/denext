@@ -285,3 +285,23 @@ Deno.test("renderMarkdown: heading ids match GitHub for punctuation between spac
     `<h2 id="known-gaps--residual-risk">Known Gaps &amp; Residual Risk</h2>`,
   );
 });
+
+Deno.test("renderMarkdown: heading ids drop emphasis markers and keep code-span text, as GitHub does", () => {
+  // `_awaiting_` is emphasis: GitHub anchors the rendered text, so its underscores go.
+  assertStringIncludes(
+    renderMarkdown("## 2. `requestTimeout` bounds _awaiting_, not _CPU_"),
+    `<h2 id="2-requesttimeout-bounds-awaiting-not-cpu">`,
+  );
+  assertStringIncludes(renderMarkdown("## __Strong__ and *em*"), `<h2 id="strong-and-em">`);
+  // A code span's text is literal, even when it looks like a tag; snake_case stays.
+  assertStringIncludes(
+    renderMarkdown('### `<Script strategy="worker">` (Partytown) and HTML injection'),
+    `<h3 id="script-strategyworker-partytown-and-html-injection">`,
+  );
+  assertStringIncludes(
+    renderMarkdown("## `snake_case` and my_var"),
+    `<h2 id="snake_case-and-my_var">`,
+  );
+  // Real inline HTML outside a code span still contributes no text.
+  assertStringIncludes(renderMarkdown("## Hi <sup>beta</sup>"), `<h2 id="hi-beta">`);
+});

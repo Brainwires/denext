@@ -457,3 +457,17 @@ Deno.test("--offline runs doctor through a no-net child and deno install --cache
 });
 
 // ── the dev server: starting it must not destroy the page showing its output ──
+
+Deno.test("the scaffold writes no dependency-age exemption; offline it keeps the pin and says why", async () => {
+  const h = await ui({}, { offline: true });
+  try {
+    const outcome = await outcomeOf(h, "scaffold");
+    assert(outcome.ok, outcome.message);
+    assertStringIncludes(outcome.message, "denext ui can't reach JSR");
+    assertStringIncludes(outcome.message, "kept them as written");
+    const config = JSON.parse(await Deno.readTextFile(join(h.dir, "deno.json")));
+    assert(!("minimumDependencyAge" in config), "Deno's own hold applies to @denext/* too");
+  } finally {
+    await stop(h);
+  }
+});

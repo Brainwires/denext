@@ -1,6 +1,8 @@
-// Imports: a `react` / `next/*` import in new code (point at the denext import map), a module
-// that doesn't exist (did-you-mean over its directory), and a name used without importing it.
+// Imports: a `react` / `next/*` import in new code (point at the denext import map), a bare
+// specifier nothing maps, a module that doesn't exist (did-you-mean over its directory), a name
+// used without importing it, and CommonJS `import x = require()` / `export =` in an ES module.
 
+import { builtinModules } from "node:module";
 import { basename, dirname, extname, isAbsolute, toFileUrl } from "@std/path";
 import { suggest } from "../../cli/command.ts";
 import { lookupImport } from "../../mcp/next-denext-map.ts";
@@ -58,6 +60,89 @@ export function importSourceRule({ d, source }: RuleInput): RuleResult | null {
     fix: rewritten && rewritten !== line
       ? `Change the import:\n${line.trim()}\n→ ${rewritten.trim()}`
       : `Import from "${rule.to}" instead.`,
+  };
+}
+
+/** Node's built-in modules (`fs`, `path`, …), which Deno imports with the `node:` prefix. */
+const NODE_BUILTINS: ReadonlySet<string> = new Set(
+  builtinModules.filter((m) => !m.startsWith("_")).map((m) => m.replace(/^node:/, "")),
+);
+
+/** Whether `spec` is a bare specifier: no relative or absolute path, no scheme, no `#` import. */
+function isBare(spec: string): boolean {
+  return !/^(?:\.{0,2}\/|#|[a-z][a-z0-9+.-]*:)/i.test(spec);
+}
+
+/** The package a bare specifier names (`lodash/fp` → `lodash`, `@scope/pkg/x` → `@scope/pkg`). */
+function packageOf(spec: string): string {
+  const parts = spec.split("/");
+  return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+/**
+ * TS2307 / TS2792 on a bare specifier that nothing maps. The in-process checker says `Import "x"
+ * not a dependency` (with a `deno add` hint), the native TypeScript 7 one `Cannot find module 'x'
+ * or its corresponding type declarations`: the same fix either way.
+ */
+export function bareSpecifierRule({ d }: RuleInput): RuleResult | null {
+  if (d.code !== "TS2307" && d.code !== "TS2792") return null;
+  const spec = specifierOf(d.message);
+  if (!spec || !isBare(spec)) return null;
+  const pkg = packageOf(spec);
+  if (NODE_BUILTINS.has(pkg)) {
+    return {
+      title: `Import Node's \`${pkg}\` as "node:${spec}"`,
+      why: `"${spec}" is one of Node's built-in modules, which Deno imports with the \`node:\` ` +
+        `prefix; without it, it is looked up as a package.`,
+      fix: `Change the import to "node:${spec}".`,
+    };
+  }
+  return {
+    title: `"${pkg}" is not a dependency`,
+    why: `A bare import resolves through the import map (deno.json \`imports\`) or package.json ` +
+      `\`dependencies\`, and neither lists "${pkg}".`,
+    // A JSR package name is always scoped (`@std/path`); an npm one may be either.
+    fix: `Add it: ${
+      pkg.startsWith("@")
+        ? `\`denext add jsr:${pkg}\` for a JSR package, \`denext add npm:${pkg}\` for an npm one`
+        : `\`denext add npm:${pkg}\``
+    }, or map "${pkg}" in deno.json \`imports\`.`,
+  };
+}
+
+/** `import x = require("m")` → `import * as x from "m"` on the line, when it has that shape. */
+function esmImport(line: string): string | null {
+  const m = /^(\s*)import\s+([\w$]+)\s*=\s*require\(\s*(["'])([^"']+)\3\s*\)\s*;?/.exec(line);
+  return m ? `${m[1]}import * as ${m[2]} from ${m[3]}${m[4]}${m[3]};` : null;
+}
+
+/**
+ * TS1202 / TS1203: `import x = require()` / `export =` (CommonJS forms) in an ES module, which
+ * every module of a denext app is. TypeScript 7 reports `import = require()` too, where the
+ * in-process checker let it through.
+ */
+export function esmSyntaxRule({ d, source }: RuleInput): RuleResult | null {
+  if (d.code !== "TS1202" && d.code !== "TS1203") return null;
+  const line = source && d.line ? lineText(source, d.line) : "";
+  if (d.code === "TS1202") {
+    const rewritten = esmImport(line);
+    return {
+      title: "`import … = require()` in an ES module",
+      why: "This file is an ES module, which imports with `import`; `import x = require()` is " +
+        "TypeScript's CommonJS form.",
+      fix: rewritten
+        ? `Change the import:\n${line.trim()}\n→ ${rewritten.trim()}`
+        : 'Use `import * as x from "mod"` (or a named / default import) instead.',
+    };
+  }
+  const value = /^\s*export\s*=\s*(.+?);?\s*$/.exec(line)?.[1];
+  return {
+    title: "`export =` in an ES module",
+    why: "This file is an ES module, which exports with `export`; `export =` is TypeScript's " +
+      "CommonJS form.",
+    fix: value
+      ? `Change the export:\n${line.trim()}\n→ export default ${value};`
+      : "Use `export default` (or named exports) instead.",
   };
 }
 

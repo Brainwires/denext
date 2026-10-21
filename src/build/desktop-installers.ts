@@ -382,6 +382,13 @@ export function packageMetaWarnings(
         "it derives the .msi UpgradeCode and names the app to the OS, so changing it after a " +
         "release makes the next version install beside the old one instead of upgrading it.",
     );
+  } else if (/^com\.example(\.|$)/i.test(identifier)) {
+    out.push(
+      `  ⚠ desktop.app.identifier ${identifier} is the com.example placeholder: apps shipped with ` +
+        "it share keychain items, storage and an .msi UpgradeCode. Set a reverse-DNS id on a " +
+        "domain you own before the first release; changing it later makes the next version " +
+        "install beside the old one.",
+    );
   }
   return out;
 }

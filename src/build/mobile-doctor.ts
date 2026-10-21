@@ -222,6 +222,29 @@ const serverUrl: Check = {
     })),
 };
 
+/** A reverse-DNS id still on the scaffold's / migrate's placeholder domain. */
+const PLACEHOLDER_ID = /^com\.example(\.|$)/i;
+
+const placeholderAppId: Check = {
+  id: "placeholder-app-id",
+  profiles: ["store", "release"],
+  run: (p) =>
+    perConfig(
+      p,
+      (c) => typeof c.appId === "string" && PLACEHOLDER_ID.test(c.appId),
+      (label) => ({
+        check: "placeholder-app-id",
+        level: "error",
+        message: `${label}: appId ${
+          JSON.stringify(p.configs.find((s) => s.label === label)!.config.appId)
+        } is the com.example placeholder: two apps shipped with it share keychain, storage and ` +
+          "push namespaces, and the stores refuse it",
+        fix: "set appId to a reverse-DNS id on a domain you own (com.yourcompany.app), then " +
+          "`npx cap sync`",
+      }),
+    ),
+};
+
 const webviewDebugging: Check = {
   id: "webview-debugging",
   profiles: ["store", "release"],
@@ -1366,6 +1389,7 @@ const androidRouteProcessor: Check = {
 /** Every check, in report order. */
 const CHECKS: readonly Check[] = [
   serverUrl,
+  placeholderAppId,
   webviewDebugging,
   cleartext,
   mixedContent,

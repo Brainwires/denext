@@ -14,6 +14,10 @@ kill_timeout = "30s"
 [env]
   PORT = "3000"
   DENEXT_LOG = "json"
+  # fly-proxy connects from a private address: trust it, and key the per-address limits
+  # (rateLimit(), auth's per-IP budgets, Live's per-IP cap) on the client address it sends.
+  DENEXT_TRUST_PROXY = "1"
+  DENEXT_RATE_LIMIT_HEADER = "fly-client-ip"
   DENEXT_SHUTDOWN_DRAIN_MS = "10000"
 
 [http_service]

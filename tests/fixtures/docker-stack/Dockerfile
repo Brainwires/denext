@@ -21,11 +21,16 @@ RUN deno install
 COPY --chown=deno:deno . .
 RUN deno task build
 
-# Run on denext's Deno toolchain (Deno.SQL, the Postgres client @denext/backend uses). The build
-# above already downloaded it into DENO_DIR; link it first on PATH for `deno task start`.
+# Run on denext's Deno toolchain, as `dev` and `build` do (Deno.SQL / postgresClient(), the
+# Prisma adapter). The build above already downloaded it into DENO_DIR and verified its SHA-256;
+# `toolchain path` re-verifies it and the link puts it first on PATH for everything below.
 RUN mkdir -p /deno-dir/toolchain-bin && \
   ln -sf "$(deno run -A --config deno.json jsr:@denext/denext@^4.0.0/cli toolchain path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH
+
+# One access-log line per request (JSON, with its request id; every response carries the id in
+# x-request-id). Set DENEXT_LOG=1 for a compact human line, or remove it to log none.
+ENV DENEXT_LOG=json
 
 # The production server listens on 3000 and binds 0.0.0.0 by default (see
 # `deno task start`). Change the port with `ENV PORT=<n>`

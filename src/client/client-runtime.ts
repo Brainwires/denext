@@ -31,11 +31,11 @@ export { clientActionStub } from "../runtime/server-action.ts";
 // otherwise calls `loadClassRuntime()` — the single dynamic-import site — when the document
 // says the server rendered a class. The install itself is deliberately NOT re-exported here.
 export { loadClassRuntime } from "./class-loader.ts";
-// Isomorphic islands: the route entry emits `installIsoIslands()` ONLY when the app's sources use
-// a `client:*` directive (a build scan), so an app without one drops the island runtime.
-// A split island's stand-in (`isoIslandChunk`) is imported by the build's island rewrite
-// (src/build/iso-islands.ts) only into the modules it rewrites.
-export { installIsoIslands, isoIslandChunk } from "./iso-island.ts";
+// Isomorphic islands (`installIsoIslands`, `isoIslandChunk`) are NOT re-exported here: they are
+// `denext/iso-island` (src/iso-island.ts), which the generated code imports only when the app
+// writes a `client:*` directive. A re-export here put the island runtime's files in every
+// entry's static graph, which hoisted the `denext/lazy` hydration scheduler they share into
+// every Flight app's startup chunk.
 // Activity: the entry emits `installActivitySupport()` to wire the offscreen scheduler into
 // the reconciler seam ONLY when the app uses `<Activity>` — so an app that never renders one
 // drops this re-export (and the whole offscreen begin logic) via tree-shaking.

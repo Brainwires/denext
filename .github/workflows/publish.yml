@@ -215,9 +215,10 @@ jobs:
         run: |
           out=denext
           case "${{ matrix.target }}" in *windows*) out=denext.exe ;; esac
-          # The verbs load on demand through computed imports (src/cli/lazy-command.ts), which
-          # `deno compile` cannot see: this file imports each of them so the binary embeds them.
-          deno compile -A --target ${{ matrix.target }} --include src/cli/lazy-modules.generated.ts --output "$out" cli.ts
+          # scripts/compile-cli.ts is the one `deno compile` of the CLI: it embeds the verbs (loaded
+          # on demand through computed imports `deno compile` cannot see) and the framework files
+          # the CLI reads at run time (deno.json, AGENTS.md).
+          deno run -A scripts/compile-cli.ts --target ${{ matrix.target }} --output "$out"
           ls -lh "$out"
 
       # The binary has to RUN, not merely link: `--version` proves it starts and knows it is a
@@ -245,6 +246,16 @@ jobs:
           printf '%s\n' "$out"
           [ "$code" -eq 1 ] || { echo "::error::expected exit 1 from an unpinned build, got $code"; exit 1; }
           printf '%s\n' "$out" | grep -F "pins no denext" >/dev/null
+
+      # The verbs that read framework files at run time, run by this very binary before it is
+      # uploaded: `migrate --check` / `migrate` on a Next.js app, `create`, `generate`, `routes`,
+      # `patch … denext`, `build` (on the denext just published) and the MCP server. 4.5.1 shipped
+      # a binary without its deno.json, and `migrate` failed while every source-run test passed.
+      - name: Smoke-test the binary's verbs
+        if: matrix.smoke
+        env:
+          DENEXT_SMOKE_BINARY: ${{ github.workspace }}/denext
+        run: deno test -A tests/integration/cli-binary-smoke.test.ts
 
       # Unsigned macOS binaries are quarantined by Gatekeeper on download. Signing needs an
       # Apple Developer ID; notarisation needs an App Store Connect key. Both are repository

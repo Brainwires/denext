@@ -79,9 +79,17 @@ export type JsrSearchResult =
 /** The outcome of {@linkcode fetchJsrMeta}. */
 export type JsrMetaResult = { readonly ok: true; readonly latest: string } | JsrFailure;
 
-/** A package's published versions (yanked ones left out) and its `latest`. */
+/**
+ * A package's published versions (yanked ones left out), its `latest`, and each version's
+ * publish time (`createdAt`, an ISO date) where the registry gives one.
+ */
 export type JsrVersionsResult =
-  | { readonly ok: true; readonly latest: string; readonly versions: readonly string[] }
+  | {
+    readonly ok: true;
+    readonly latest: string;
+    readonly versions: readonly string[];
+    readonly published: Readonly<Record<string, string>>;
+  }
   | JsrFailure;
 
 /** Options every JSR request takes. */
@@ -206,10 +214,16 @@ export async function fetchJsrVersions(
   const doc = await fetchMetaDocument(scope, name, opts);
   if (!doc.ok) return doc;
   if (!isRecord(doc.meta.versions)) return failure("unexpected response shape");
-  const versions = Object.entries(doc.meta.versions)
-    .filter(([v, info]) => isVersion(v) && !(isRecord(info) && info.yanked === true))
-    .map(([v]) => v);
-  return { ok: true, latest: doc.latest, versions };
+  const entries = Object.entries(doc.meta.versions)
+    .filter(([v, info]) => isVersion(v) && !(isRecord(info) && info.yanked === true));
+  const published: Record<string, string> = {};
+  for (const [v, info] of entries) {
+    const at = isRecord(info) ? info.createdAt : undefined;
+    if (typeof at === "string" && at.length <= 64 && !Number.isNaN(Date.parse(at))) {
+      published[v] = at;
+    }
+  }
+  return { ok: true, latest: doc.latest, versions: entries.map(([v]) => v), published };
 }
 
 /** `meta.json`, validated: a record naming this package, with a semver `latest`. */

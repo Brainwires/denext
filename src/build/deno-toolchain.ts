@@ -701,7 +701,7 @@ export async function tsgoTreeSha256(dir: string): Promise<string> {
  * Install the archive's `typescript-check/` beside `deno` when the pin names one: only a compiler whose
  * binary and whole directory hash to the pinned SHA-256s; anything else is refused and recorded,
  * never installed (the toolchain then type-checks with its in-process TypeScript, see
- * src/build/native-check.ts). Returns the stamp's record (`undefined` when the pin names none).
+ * src/ts/engine.ts). Returns the stamp's record (`undefined` when the pin names none).
  */
 async function installTsgo(
   artifact: DenoToolchainArtifact,
@@ -982,6 +982,12 @@ export type DenoToolchainChoice =
     readonly reason: string;
     /** Say this once (a failure or a missing grant), or nothing (an opt-out, no pin yet). */
     readonly warning?: string;
+    /**
+     * Set when the toolchain is pinned but this process lacks the grants to start it: the
+     * `denext:` message a verb that runs project code ends with instead of running on this Deno
+     * (a verb that only hands the toolchain to its children keeps its Deno, silently).
+     */
+    readonly refusal?: string;
   };
 
 /** Options for {@linkcode resolveDenoToolchain}. */
@@ -1150,10 +1156,27 @@ async function pinnedObstacle(
   }
   const missing = await missingGrants(cacheRoot);
   if (missing.length === 0) return null;
-  // Silently: a process run without these grants was scoped down on purpose (the least-privilege
-  // `start` task `denext create` scaffolds), and it runs on whichever Deno launched it. A warning
-  // here would repeat on every production start with nothing for the operator to fix.
-  return stockChoice(`this process lacks ${missing.join(" ")} (for ${cacheRoot})`);
+  // A process scoped down on purpose (the least-privilege `start` task `denext create` scaffolds)
+  // can't start the toolchain. A verb that runs project code refuses with the ways out rather than
+  // run on this Deno: there `Deno.SQL` (`postgresClient()`, the Prisma adapter) and the toolchain's
+  // other changes would be missing in production while `dev` had them.
+  return {
+    kind: "stock",
+    reason: `this process lacks ${missing.join(" ")} (for ${cacheRoot})`,
+    refusal: grantsRefusal(pin.version, missing, cacheRoot),
+  };
+}
+
+/** The refusal of {@linkcode pinnedObstacle}: what a project-code verb ends with, and the fixes. */
+function grantsRefusal(version: string, missing: readonly string[], cacheRoot: string): string {
+  return `denext: this process can't start denext's Deno toolchain ${version} (it lacks ` +
+    `${missing.join(" ")} for ${cacheRoot}), and project code runs on the toolchain, not on ` +
+    `Deno ${Deno.version.deno}.\n` +
+    "  Run the command on the toolchain itself: `denext task start` (a task's `deno` is the " +
+    "toolchain), the binary `denext toolchain path` prints, or the image / unit " +
+    "`denext deploy prepare` writes.\n" +
+    `  Or grant ${missing.join(" ")} so it re-runs itself on the toolchain.\n` +
+    `  ${TOOLCHAIN_ENV}=stock runs it on this Deno instead (no Deno.SQL / postgresClient()).`;
 }
 
 /** The pinned toolchain (installed and verified), or the silent stock choice of {@linkcode pinnedObstacle}. */
@@ -1492,7 +1515,7 @@ export interface ToolchainTsgoStatus {
   /**
    * `ok` = installed and verified (the toolchain type-checks with it); `missing` = the toolchain
    * is not cached; `refused` = it failed verification (type checking falls back to the in-process
-   * TypeScript, see src/build/native-check.ts); `none` = this pin's toolchain ships none (it
+   * TypeScript, see src/ts/engine.ts); `none` = this pin's toolchain ships none (it
    * type-checks in-process); `n/a` = `DENEXT_DENO=stock` or a path.
    */
   readonly state: "ok" | "missing" | "refused" | "none" | "n/a";

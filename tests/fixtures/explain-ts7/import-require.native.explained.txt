@@ -1,0 +1,21 @@
+TS1202: `import … = require()` in an ES module
+  at main.ts:1:1
+
+  > 1 | import path = require("node:path");
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    2 | 
+
+  This file is an ES module, which imports with `import`; `import x = require()` is TypeScript's CommonJS form.
+
+  Fix: Change the import:
+  import path = require("node:path");
+  → import * as path from "node:path";
+
+  Original (deno check):
+  │ TS1202 [ERROR]: Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from "mod"', 'import {a} from "mod"', 'import d from "mod"', or another module format instead.
+  │ import path = require("node:path");
+  │ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  │     at file:///app/main.ts:1:1
+
+error: Type checking failed.
+

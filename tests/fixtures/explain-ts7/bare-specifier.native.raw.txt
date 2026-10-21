@@ -1,0 +1,6 @@
+TS2307 [ERROR]: Cannot find module 'zod' or its corresponding type declarations.
+import { z } from "zod";
+                  ~~~~~
+    at file:///app/main.ts:1:19
+
+error: Type checking failed.

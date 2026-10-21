@@ -30,6 +30,7 @@ import {
 import { carryLinks } from "./config-links.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
 import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
+import { VERSION } from "../version.ts";
 
 /**
  * The framework root as a URL, in whatever scheme the framework itself runs under:
@@ -65,14 +66,53 @@ async function readFrameworkText(relative: string): Promise<string> {
   return await res.text();
 }
 
-/** Parse a JSON file under the framework root (scheme-agnostic). `{}` if unreadable. */
+/** Options of {@linkcode readFrameworkJson}. */
+interface ReadFrameworkJsonOptions {
+  /**
+   * The file may legitimately be absent (a framework copy that ships without it): resolve to
+   * `{}` when it cannot be read instead of throwing. A file that exists but does not parse is
+   * still an error.
+   */
+  readonly optional?: boolean;
+}
+
+/**
+ * Parse a JSON file under the framework root (scheme-agnostic).
+ *
+ * Throws, naming the file and where it was looked for, when the file cannot be read — a
+ * compiled `denext` binary carries only the framework files `scripts/compile-cli.ts` embeds, so
+ * a missing one must say so rather than read as an empty object. Pass `{ optional: true }` only
+ * where an absent file is genuinely fine.
+ *
+ * @param relative The path under the framework root (`deno.json`).
+ * @param options Whether the file is optional.
+ * @returns The parsed object.
+ */
 export async function readFrameworkJson(
   relative: string,
+  options: ReadFrameworkJsonOptions = {},
 ): Promise<Record<string, unknown>> {
+  let text: string;
   try {
-    return JSON.parse(await readFrameworkText(relative)) as Record<string, unknown>;
-  } catch {
-    return {};
+    text = await readFrameworkText(relative);
+  } catch (err) {
+    if (options.optional) return {};
+    throw new Error(
+      `denext: could not read the framework file "${relative}" (${frameworkFileUrl(relative)}): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
+    );
+  }
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(
+      `denext: the framework file "${relative}" is not valid JSON: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
+    );
   }
 }
 
@@ -408,7 +448,7 @@ export function generateRouteEntry(
   const { singletonImport, singletonInstall } = singletonSupportBlock(opts.usesSingletons ?? true);
   // A `client:*` island hydrates on its own (iso-island.ts): installed before hydration.
   const isoImport = opts.usesIsoIslands
-    ? `import { installIsoIslands } from "denext/client-runtime";\n`
+    ? `import { installIsoIslands } from "denext/iso-island";\n`
     : "";
   const isoInstall = opts.usesIsoIslands ? "installIsoIslands();\n" : "";
   return `// denext generated route entry — do not edit.
@@ -554,15 +594,39 @@ export function appUsesLiveView(rootDir: string, extraFiles: string[] = []): Pro
  * entry install the class runtime eagerly instead of on demand (see
  * {@linkcode classSupportBlock}: a miss is not a crash, the runtime still loads lazily when
  * a page's server render produced a class). A class component in these sources MUST name
- * `Component`/`PureComponent` (in its import or its `extends`); whole-word (`\b`) so
- * `MyComponent` / `componentDidMount` don't trip it. npm packages are not scanned — the word
- * appears in nearly every React package, so the hint would be always-on for no gain.
+ * `Component`/`PureComponent` in code: its `extends` clause, an import or destructuring
+ * list, or a member read (`React.Component`). Comments are not code: "a Server Component"
+ * in one made every Flight app install the 3.2 KB class runtime at startup. Whole-word
+ * (`\b`) so `MyComponent` / `componentDidMount` don't trip it. npm packages are not scanned —
+ * the word appears in nearly every React package, so the hint would be always-on for no gain.
  */
 export function appUsesClassComponents(
   rootDir: string,
   extraFiles: string[] = [],
 ): Promise<boolean> {
-  return scanAppSources(rootDir, (c) => /\b(?:Pure)?Component\b/.test(c), extraFiles);
+  return scanAppSources(rootDir, (c) => CLASS_COMPONENT_USE.test(withoutComments(c)), extraFiles);
+}
+
+/**
+ * A class base named in code: `extends [X.]Component`, an import list naming it, a destructuring
+ * (`const { Component } = React`), or a member read (`React.PureComponent`).
+ */
+const CLASS_COMPONENT_USE = new RegExp(
+  [
+    String.raw`\bextends\s+(?:[\w$]+\s*\.\s*)?(?:Pure)?Component\b`,
+    String.raw`\bimport\s*(?:[\w$]+\s*,\s*)?\{[^}]*\b(?:Pure)?Component\b[^}]*\}`,
+    String.raw`\{[^}]*\b(?:Pure)?Component\b[^}]*\}\s*=(?![=>])`,
+    String.raw`\.\s*(?:Pure)?Component\b`,
+  ].join("|"),
+);
+
+/**
+ * `source` with its `//` line and block comments blanked, for a feature scan. Rough on purpose:
+ * a `//` right after `:` or a quote (a URL in a string) is kept, and a scan that loses a match
+ * to an odd string only skips a preload hint.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
 }
 
 /**
@@ -1298,6 +1362,9 @@ export async function prepareConfig(
     // SPA mode's `client:*` deferred mounts: the build's island rewrite imports `SpaIsland`
     // from it (spa-islands.ts), so only an app with a directive bundles it.
     "denext/spa-island": frameworkFileUrl("src/spa-island.ts"),
+    // Isomorphic `client:*` islands: the route entry's install and the island rewrite's
+    // stand-in import it, only for an app that writes a directive.
+    "denext/iso-island": frameworkFileUrl("src/iso-island.ts"),
     // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
     // and the dev inspector from `denext/devtools`; an app's own import map need not
     // (and usually does not) list those subpaths, so resolve them against the framework.
@@ -1339,9 +1406,6 @@ function devJsx(
   }
 }
 
-/** The running framework's version (its `deno.json`), read once. */
-let frameworkVersion: Promise<string> | undefined;
-
 let warnedSkew = false;
 
 /**
@@ -1353,8 +1417,7 @@ async function appFrameworkRoot(
   config: { lock?: unknown },
   denext: string | undefined,
 ): Promise<string> {
-  frameworkVersion ??= readFrameworkJson("deno.json").then((c) => String(c.version ?? ""));
-  const running = { root: frameworkRootUrl(), version: await frameworkVersion };
+  const running = { root: frameworkRootUrl(), version: VERSION };
   const root = await appDenextRootFor(configFsPath, config, denext, running);
   const version = root.startsWith(JSR_DENEXT_ROOT) ? root.slice(JSR_DENEXT_ROOT.length, -1) : "";
   if (version && version !== running.version && !warnedSkew) {
@@ -1438,13 +1501,14 @@ function safeEnv(name: string): string | undefined {
 /**
  * Explain a `deno bundle` failure. Deno's "Do not know how to load path: deno:jsr:@denext/…"
  * means the resolver found no version satisfying the range — on a brand-new release that is
- * the minimum-dependency-age policy (no version older than two days matches), not a broken app.
+ * Deno's minimum-dependency-age hold (no version older than the window matches), not a broken app.
  */
 export function bundleFailureMessage(code: number, stderr: string): string {
   const hint = /Do not know how to load path: deno:jsr:@denext\//.test(stderr)
     ? `\nHint: no published version of denext satisfied the import map's range. If the version ` +
-      `you want was published in the last two days, Deno's minimum-dependency-age policy hides it — ` +
-      `re-run with DENEXT_MIN_DEP_AGE=0 (or set "minimumDependencyAge" in your deno.json).`
+      `it names was published within your minimum dependency age (Deno's default is two days), Deno ` +
+      `holds it until then — run \`denext upgrade\` to pin the newest version old enough, or ` +
+      `wait for the hold to pass.`
     : "";
   return `deno bundle failed (${code}):\n${stderr}${hint}\n` +
     `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +

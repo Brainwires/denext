@@ -1,6 +1,6 @@
 // The diagnostics explainer on the native TypeScript 7 compiler's output: the fixtures of
 // tests/explain-diagnostics.test.ts, captured with `deno check` on a toolchain that type-checks
-// natively (src/build/native-check.ts) into tests/fixtures/explain-native/, explain to the
+// natively (src/ts/engine.ts) into tests/fixtures/explain-native/, explain to the
 // snapshots beside them — and name the same fix as the in-process captures. TypeScript 7 sorts a
 // union's members (`"dark" | "light"`), so lists are compared as sets.
 

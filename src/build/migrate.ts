@@ -30,8 +30,9 @@ import type { SpaTanstackRouterConfig } from "../server/config.ts";
 import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
+import { VERSION } from "../version.ts";
 import { appendGitignore } from "./gitignore.ts";
-import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
+import { ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
@@ -625,16 +626,12 @@ async function frameworkSubpaths(prefixes: string[]): Promise<string[]> {
 }
 
 /**
- * The `@^<version>` suffix that pins a migrated app to this framework's release line. Reads
- * the framework's own `deno.json` scheme-agnostically (a local checkout OR the JSR package —
- * `join(frameworkRoot(), …)` corrupts a `https://` root). Throws rather than silently
- * emitting an unpinned `jsr:@denext/denext`.
+ * The `@^<version>` suffix that pins a migrated app to this framework's release line: the
+ * running framework's {@linkcode VERSION}, a constant (never a file read, so a compiled binary
+ * that embeds no `deno.json` still knows it).
  */
-async function denextVersion(): Promise<string> {
-  const cfg = await readFrameworkJson("deno.json");
-  const version = typeof cfg.version === "string" ? cfg.version : "";
-  if (!version) throw new Error("denext migrate: could not read the framework version");
-  return `@^${version}`;
+function denextVersion(): string {
+  return `@^${VERSION}`;
 }
 
 /** How the generated config points at denext: published JSR (default) or a local checkout. */
@@ -923,7 +920,6 @@ async function writeAppRouterDenoJson(
     // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
-    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     ...(prismaWiring?.links.length ? { links: prismaWiring.links } : {}),
     unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
@@ -1494,7 +1490,7 @@ async function migrateNextProject(
 ): Promise<MigrateResult> {
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const jsr = R.sub;
   const { imports, hasEffect, ...classified } = await resolveAppRouterImports(dir, R, deps);
 
@@ -1700,7 +1696,7 @@ async function remixAppBase(
 ): Promise<{ R: DenextResolver; imports: Record<string, string> }> {
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
   return { R, imports };
 }
@@ -1866,7 +1862,7 @@ async function migrateTanstackStartProject(
 ): Promise<MigrateResult> {
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, deps);
   const classified = classifyDeps(deps, imports, { pin: false });
   Object.assign(imports, R.tanstackStartEntries());
@@ -1874,7 +1870,6 @@ async function migrateTanstackStartProject(
   const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, {
     tasks: spaTasks(false, R.cli, false, "manual"),
     nodeModulesDir: "manual",
-    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     // Start apps import extensionless (`./routeTree.gen`), as Vite resolves them.
     unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
@@ -1926,7 +1921,7 @@ async function migrateFreshProject(dir: string, options: MigrateOptions): Promis
         "(Fresh 1.x), or a fresh.gen.ts, beside a routes/ directory",
     );
   }
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, {});
   const aliases = freshAliasImports(R.sub);
   Object.assign(imports, aliases);
@@ -1940,7 +1935,6 @@ async function migrateFreshProject(dir: string, options: MigrateOptions): Promis
     imports,
     tasks: appRouterTasks(R, null),
     unstable: withDenextUnstable(detection.config.unstable),
-    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
   });
   await mfs.writeTextFile(configPath, JSON.stringify(merged, null, 2) + "\n");
   written.unshift(configPath);
@@ -2839,11 +2833,15 @@ export function desktopAppName(title: string): string {
  */
 const MIGRATED_RUN = "deno run -A --node-modules-dir=none";
 
+/** The permissions a SPA's `start` needs: the set `denext create`'s `start` task has. */
+const LEAST_PRIVILEGE_START = "--allow-net --allow-read --allow-env --allow-write=.denext";
+
 function spaTasks(
   desktop: boolean,
   cli: string,
   hasIcon: boolean,
   nodeModulesDir: "manual" | "auto" = "auto",
+  start: "least-privilege" | "all" = "all",
 ): Record<string, string> {
   // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
   // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
@@ -2864,11 +2862,13 @@ function spaTasks(
     dev: `${run} ${cli} dev .`,
     build: `${run} ${cli} build .`,
     export: `${run} ${cli} export .`,
-    // `-A`: a migrated app's `start` re-execs a child `deno` to apply the CSS shim import map
-    // (`maybeReexecForCss`) and, for a manual-`node_modules` app, the merged module config
-    // (`maybeReexecForModules`) — so it needs run + write + read + env + net (effectively the
-    // full set every denext example's `start` uses). A tighter scope crashes on the re-exec.
-    start: `${run} ${cli} start .`,
+    // A SPA's `start` serves its export and spawns nothing, so it gets the least-privilege set
+    // `denext create` writes. `-A` for an App Router app: its next-compat build's `start` re-execs
+    // a child `deno` to apply the CSS shim import map (`maybeReexecForCss`), which needs an
+    // unscoped `--allow-run` (equivalent to every permission) and writes the app's deno.json.
+    start: start === "least-privilege"
+      ? `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START} ${cli} start .`
+      : `${run} ${cli} start .`,
   };
   if (desktop) tasks.desktop = desktopTask(hasIcon);
   return tasks;
@@ -3037,7 +3037,6 @@ function spaDenoJson(
   return {
     tasks,
     nodeModulesDir,
-    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
       jsx: "react-jsx",
@@ -3188,7 +3187,7 @@ async function migrateSpaProject(
   source: SpaSource,
   preact: PreactTooling | null = null,
 ): Promise<MigrateResult> {
-  const V = await denextVersion();
+  const V = denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
@@ -3352,7 +3351,10 @@ async function writeSpaProjectFiles(
   const denoJson = spaDenoJson(
     imports,
     nodeModulesDir,
-    { ...spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir), ...cap?.tasks },
+    {
+      ...spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir, "least-privilege"),
+      ...cap?.tasks,
+    },
   );
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
@@ -3416,7 +3418,7 @@ async function migrateExpoProject(
   deps: Record<string, string>,
   options: MigrateOptions,
 ): Promise<MigrateResult> {
-  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
   const pkg = await readJson(join(dir, "package.json")) ?? {};
@@ -3515,7 +3517,7 @@ async function writeExpoDenoJson(
   o: { nodeModulesDir: "manual" | "auto"; installed: boolean; written: string[] },
 ): Promise<boolean> {
   const tasks = {
-    ...spaTasks(false, cli, false, o.nodeModulesDir),
+    ...spaTasks(false, cli, false, o.nodeModulesDir, "least-privilege"),
     ...capacitorTasks(cli, { run: MIGRATED_RUN, installed: o.installed }),
   };
   return await finishSpaProjectFiles(

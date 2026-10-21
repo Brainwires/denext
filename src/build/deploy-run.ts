@@ -9,7 +9,7 @@
 import { DELIMITER, dirname, isAbsolute, join } from "@std/path";
 import type { DeployAdapter, DeployContext, DeployWriteOptions } from "../deploy/adapter.ts";
 import type { DeployManifest } from "../deploy/manifest.ts";
-import { PRESET_NAMES, presetAdapter } from "../deploy/presets.ts";
+import { PRESET_NAMES, presetAdapter, type PresetOverrides } from "../deploy/presets.ts";
 import { getPluginDeployAdapters } from "../plugin/mod.ts";
 import type { ProjectPaths } from "./paths.ts";
 
@@ -22,12 +22,23 @@ const DEPLOY_DIR = "deploy";
  *
  * @param paths The resolved project.
  * @param preset A preset name from `--preset`.
+ * @param overrides What the CLI's flags set on the preset (`--domain`).
  * @returns The adapter, or `null`.
  * @throws When `preset` names no preset.
  */
-export function resolveDeployAdapter(paths: ProjectPaths, preset?: string): DeployAdapter | null {
+export function resolveDeployAdapter(
+  paths: ProjectPaths,
+  preset?: string,
+  overrides: PresetOverrides = {},
+): DeployAdapter | null {
+  if (preset === undefined && overrides.domain !== undefined) {
+    throw new Error(
+      "denext: --domain applies to --preset generic-host; a configured adapter takes its " +
+        "options in denext.config (genericHost({ domain }))",
+    );
+  }
   if (preset !== undefined) {
-    const adapter = presetAdapter(preset);
+    const adapter = presetAdapter(preset, overrides);
     if (!adapter) {
       throw new Error(
         `denext: unknown deploy preset "${preset}" (expected: ${PRESET_NAMES.join(", ")})`,

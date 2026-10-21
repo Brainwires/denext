@@ -72,6 +72,7 @@ Deno.test("classifyChunk: shared runtime, islands, and entries by name prefix", 
   // The framework's own lazily loaded modules are on-demand, never islands (`denext analyze`).
   assertEquals(classifyChunk("flight-nav-stream-KUBQ2GO7.js"), "on-demand");
   assertEquals(classifyChunk("flight-value-holes-LZ4ZSTDZ.js"), "on-demand");
+  assertEquals(classifyChunk("form-action-3QZ7KD2M.js"), "on-demand");
 });
 
 Deno.test("bundleRoleLines: isolates the shared-runtime subtotal (the budget target)", () => {

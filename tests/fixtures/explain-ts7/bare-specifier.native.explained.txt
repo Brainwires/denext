@@ -1,0 +1,19 @@
+TS2307: "zod" is not a dependency
+  at main.ts:1:19
+
+  > 1 | import { z } from "zod";
+                          ^^^^^
+    2 | 
+
+  A bare import resolves through the import map (deno.json `imports`) or package.json `dependencies`, and neither lists "zod".
+
+  Fix: Add it: `denext add npm:zod`, or map "zod" in deno.json `imports`.
+
+  Original (deno check):
+  │ TS2307 [ERROR]: Cannot find module 'zod' or its corresponding type declarations.
+  │ import { z } from "zod";
+  │                   ~~~~~
+  │     at file:///app/main.ts:1:19
+
+error: Type checking failed.
+

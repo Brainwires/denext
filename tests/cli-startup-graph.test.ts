@@ -14,6 +14,7 @@ import { materializeCommand } from "../src/cli/lazy-command.ts";
 import { generate, MODULES_OUT, TABLE_OUT } from "../scripts/gen-command-table.ts";
 import { VERSION as CLI_VERSION } from "../src/version.ts";
 import { VERSION } from "../mod.ts";
+import { CLI_COMPILE_INCLUDES, compileCliArgs } from "../scripts/compile-cli.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 
@@ -130,33 +131,38 @@ Deno.test("src/version.ts carries the framework VERSION", () => {
   assertEquals(CLI_VERSION, VERSION);
 });
 
-Deno.test("every `deno compile` of the CLI embeds the on-demand modules", async () => {
+Deno.test("every compile of the CLI goes through scripts/compile-cli.ts", async () => {
   // A binary built without `--include src/cli/lazy-modules.generated.ts` starts and prints its
-  // version, but every verb fails to load. Each place the repo compiles cli.ts must pass it.
+  // version, but every verb fails to load; one built without the framework files the CLI reads
+  // at run time (deno.json, AGENTS.md) fails in those verbs (4.5.1: `migrate`, the MCP guide).
+  // So no place spells out its own `deno compile … cli.ts`: each runs the one script.
   const files = [
     "deno.json",
     ...[...Deno.readDirSync(join(ROOT, ".github/workflows"))].map((e) =>
       `.github/workflows/${e.name}`
     ),
-    "tests/integration/cli-compiled-binary.test.ts",
   ];
   let compiles = 0;
   for (const file of files) {
     const text = await Deno.readTextFile(join(ROOT, file));
-    // A one-line `deno compile … cli.ts` (workflows, the task), or the test's argv array.
-    const lines = text.split("\n").filter((line) => /deno compile .*cli\.ts/.test(line));
-    for (const line of lines) {
-      compiles++;
+    for (const line of text.split("\n")) {
       assert(
-        line.includes("--include src/cli/lazy-modules.generated.ts"),
-        `${file}: ${line.trim()}`,
+        !/deno compile .*cli\.ts/.test(line),
+        `${file} compiles the CLI by hand: ${line.trim()}`,
       );
-    }
-    if (file.endsWith(".test.ts")) {
-      compiles++;
-      assert(text.includes(`"src/cli/lazy-modules.generated.ts"`), `${file} compiles without it`);
+      if (line.includes("scripts/compile-cli.ts")) compiles++;
     }
   }
-  // publish.yml's release binaries, e2e, desktop-ci (2), the task and the binary test.
-  assert(compiles >= 6, `found ${compiles} compiles of cli.ts; the scan lost some`);
+  // publish.yml's release binaries, e2e, desktop-ci (3) and the task.
+  assert(compiles >= 6, `found ${compiles} compiles of the CLI; the scan lost some`);
+  for (const file of CLI_COMPILE_INCLUDES) {
+    assert((await Deno.stat(join(ROOT, file))).isFile, `${file} is embedded but missing`);
+  }
+  assert(CLI_COMPILE_INCLUDES.includes("src/cli/lazy-modules.generated.ts"));
+  const args = compileCliArgs({ output: "out", target: "x86_64-unknown-linux-gnu" });
+  assertEquals(args.slice(0, 4), ["compile", "-A", "--target", "x86_64-unknown-linux-gnu"]);
+  assertEquals(args.slice(-3), ["--output", "out", "cli.ts"]);
+  for (const file of CLI_COMPILE_INCLUDES) {
+    assert(args.join(" ").includes(`--include ${file}`), file);
+  }
 });

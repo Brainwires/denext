@@ -26,7 +26,7 @@ import {
   processGoTrueSmtp,
 } from "./smtp-mail.ts";
 import { GoTrueError } from "./errors.ts";
-import { userJson } from "./user.ts";
+import { userJson, userMetadataOf } from "./user.ts";
 
 /** The MAC domain of a link secret. */
 const LINK_DOMAIN = "denext.gotrue.otp-link.v1";
@@ -284,6 +284,7 @@ async function sendOverSmtp(ctx: GoTrueContext, input: AuthEmailInput, link: str
     redirectTo: input.redirectTo,
     email: input.user?.email ?? input.email,
     ...(input.action === "email_change" ? { newEmail: input.email } : {}),
+    data: input.user ? userMetadataOf(input.user) : {},
   });
 }
 

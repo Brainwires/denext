@@ -45,8 +45,20 @@ function fresh(path: string, youngerThanMs = Infinity): boolean {
   }
 }
 
+/** Where the cache writes, and with which config (tests point both away from the project). */
+export interface CliCacheOptions {
+  /** Deno's cache directory, where the markers go (default: Deno's own). */
+  cacheDir?: string;
+  /**
+   * The config / lock flags `deno cache` gets (default: the ones this process was started with,
+   * so the modules resolve as the running CLI's do).
+   */
+  configArgs?: string[];
+}
+
 /** The `deno cache` argv for `url` with the resolution flags this process was started with. */
-async function cacheArgs(url: string): Promise<string[]> {
+async function cacheArgs(url: string, configArgs?: string[]): Promise<string[]> {
+  if (configArgs) return ["cache", "--quiet", ...configArgs, url];
   // A computed URL, so the CLI's startup graph does not take self-exec.ts in with this module.
   const { toolchainConfigArgs }: typeof import("./self-exec.ts") = await import(
     new URL("./self-exec.ts", import.meta.url).href
@@ -59,23 +71,27 @@ async function cacheArgs(url: string): Promise<string[]> {
  * a binary.
  *
  * @param url The lazy-modules URL (the running CLI's own, by default).
+ * @param options Where the marker goes and the config `deno cache` runs with.
  * @returns Whether the modules are cached (`true` when there was nothing to do).
  */
-export async function cacheCliModules(url: string = CLI_MODULES_URL): Promise<boolean> {
+export async function cacheCliModules(
+  url: string = CLI_MODULES_URL,
+  options: CliCacheOptions = {},
+): Promise<boolean> {
   if (!isRemoteCli(url)) return true;
   const { success } = await new Deno.Command(Deno.execPath(), {
-    args: await cacheArgs(url),
+    args: await cacheArgs(url, options.configArgs),
     stdin: "null",
     stdout: "null",
     stderr: "inherit",
   }).output();
-  if (success) markCached(url);
+  if (success) markCached(url, options.cacheDir);
   return success;
 }
 
 /** Record that `url`'s graph is cached. */
-function markCached(url: string): void {
-  const marker = cliCacheMarker(url);
+function markCached(url: string, cacheDir?: string): void {
+  const marker = cliCacheMarker(url, cacheDir);
   Deno.mkdirSync(join(marker, ".."), { recursive: true });
   Deno.writeTextFileSync(marker, new Date().toISOString());
 }
@@ -87,11 +103,15 @@ function markCached(url: string): void {
  * exactly as it was, and is retried on a later run.
  *
  * @param url The lazy-modules URL (the running CLI's own, by default).
+ * @param options Where the markers go and the config `deno cache` runs with.
  */
-export async function warmCliModules(url: string = CLI_MODULES_URL): Promise<void> {
+export async function warmCliModules(
+  url: string = CLI_MODULES_URL,
+  options: CliCacheOptions = {},
+): Promise<void> {
   if (!isRemoteCli(url)) return;
   try {
-    const marker = cliCacheMarker(url);
+    const marker = cliCacheMarker(url, options.cacheDir);
     if (fresh(marker) || fresh(`${marker}.attempt`, RETRY_AFTER_MS)) return;
     Deno.mkdirSync(join(marker, ".."), { recursive: true });
     Deno.writeTextFileSync(`${marker}.attempt`, new Date().toISOString());
@@ -105,7 +125,7 @@ export async function warmCliModules(url: string = CLI_MODULES_URL): Promise<voi
     const child = new Deno.Command(Deno.execPath(), {
       args: ["eval", "--quiet", script],
       env: {
-        DENEXT_CLI_CACHE_ARGS: JSON.stringify(await cacheArgs(url)),
+        DENEXT_CLI_CACHE_ARGS: JSON.stringify(await cacheArgs(url, options.configArgs)),
         DENEXT_CLI_CACHE_MARKER: marker,
       },
       stdin: "null",

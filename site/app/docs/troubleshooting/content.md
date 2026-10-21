@@ -39,29 +39,18 @@ See [Migrating from Remix](/docs/migrating-remix) § 1.
 
 ## A freshly published `@denext/*` version is refused ("minimum dependency age")
 
-**Cause.** Deno's minimum-dependency-age policy refuses a JSR version for its
-first two days (Deno 2.9's default cutoff is 48 hours back, although its error hint
-says 24). A supply-chain delay, not an error.
+**Cause.** Deno's minimum-dependency-age hold refuses a JSR version until it is
+old enough (Deno 2.9.7 holds two days by default, although its error hint says 24
+hours). A supply-chain delay, not an error: it is the window in which a
+compromised release would be caught.
 
-**Fix.** Projects made by `denext create` or `denext migrate` (3.0 and later) already
-exempt denext's own packages, and only those, keeping the hold for every
-other dependency (a compiled `denext` binary passes that `deno.json` to the
-pinned CLI it starts, also when run from outside the project). For an older project,
-add the same to its `deno.json`:
-
-```json
-"minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
-```
-
-For a one-off run, pass the flag on `deno run`, or set the env var so the
-`deno bundle` child a `denext build` spawns inherits it too:
-
-```sh
-deno run --min-dep-age=0 -A jsr:@denext/denext/cli build
-DENEXT_MIN_DEP_AGE=0 denext task build
-```
-
-See [Contributing](/docs/contributing) → release gotchas.
+**Fix.** Run `denext upgrade`: it pins the newest `@denext/*` versions your rule
+already lets in (moving a pin that is still held down to the previous release)
+and prints when the newer one becomes eligible; run it again after that.
+`denext create` and `denext migrate` pin that way from the start. See
+[the toolchain's supply-chain hold](/docs/toolchain#supply-chain-hold) for how
+the rule is read, and for adding `"jsr:@denext/*"` to
+`minimumDependencyAge.exclude` if you publish denext yourself.
 
 ## Stale `css-shims` entries left in your app's `deno.json`
 
@@ -316,7 +305,7 @@ not their full text (a dev build, `denext dev`, and `denext/testing` throw the f
 | 1    | Rendered more hooks than during the previous render (a conditional hook)         |
 | 2    | Maximum update depth exceeded: the component schedules an update on every render |
 | 3    | An async component rendered on the client (async components are server-only)     |
-| 4    | `memo()` of a class component (wrap the class in a function component instead)   |
+| 4    | Retired: `memo()` of a class component now renders, as in React                  |
 | 5    | A class component with the class runtime off, or after it failed to load         |
 
 **Fix.** Reproduce it under `denext dev` for the full message, the component stack and the

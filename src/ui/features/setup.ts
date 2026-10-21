@@ -26,6 +26,8 @@ import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { setJsonValue } from "../../build/json-edit.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
 import { generateArtifact } from "../../build/generate.ts";
+import { offlineNote, pinEligibleFile } from "../../build/eligible-pins.ts";
+import { jsrAvailable } from "../jsr.ts";
 import {
   DENEXT_UNSTABLE,
   denoJson,
@@ -658,6 +660,19 @@ async function opScaffoldPage(ctx: UiContext): Promise<OpOutcome> {
   }
 }
 
+/**
+ * Pin the scaffolded project's denext to the newest version Deno's dependency-age hold lets in
+ * (this denext's own release can be too new for it), as `denext create` does; offline, or
+ * without net access to jsr.io, the pin stays and the note says Deno may hold it.
+ */
+async function pinScaffolded(ctx: UiContext): Promise<{ ok: boolean; notes: readonly string[] }> {
+  if (!await jsrAvailable(ctx, "registry")) {
+    return { ok: true, notes: [offlineNote("denext ui can't reach JSR")] };
+  }
+  const out = await pinEligibleFile(await uiSafeJoin(ctx.dir, "deno.json"), ctx.dir);
+  return { ok: out.ok, notes: out.error ? [out.error] : out.notes };
+}
+
 /** Step 7's write: scaffold a whole project into an empty directory. */
 async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<OpOutcome> {
   if (s.kind !== "empty") {
@@ -677,11 +692,12 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
       fallow: on("fallow"),
       mcp: on("mcp"),
     });
+    const held = await pinScaffolded(ctx);
     return {
       step: "features",
-      ok: true,
+      ok: held.ok,
       redirect: true,
-      message: `Wrote ${written.length} files.`,
+      message: [`Wrote ${written.length} files.`, ...held.notes].join(" "),
     };
   } catch (error) {
     return { step: "features", ok: false, message: `scaffold failed: ${reason(error)}` };

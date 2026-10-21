@@ -366,6 +366,12 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    `DESKTOP_CI_JOBS` lists the ones that must exist). A push runs desktop-ci only
    when its `paths` filter matches, so dispatch it as well:
    `gh workflow run desktop-ci.yml --ref development`, and wait for it.
+   And it needs the newest e2e.yml run on HEAD to have run every job green
+   (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`, `no-deno`; a one-job
+   `-f job=…` dispatch skips the rest and doesn't count) and the newest
+   desktop-window.yml run on HEAD green (`DESKTOP_WINDOW_JOBS`: a real window on
+   every desktop OS). Dispatch both: `gh workflow run e2e.yml --ref development`
+   and `gh workflow run desktop-window.yml --ref development`.
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every
@@ -498,11 +504,11 @@ only that package, on its own tag:
   tree; CI does not use `--allow-dirty`.
 - **Versions are immutable.** A published version can't be replaced — a mistake
   means bumping to the next patch.
-- **Minimum-dependency-age.** For the first two days (Deno 2.9's default), importing the new
-  version outside a project needs `--min-dep-age=0`. Projects from `denext create` /
-  `denext migrate` exempt `jsr:@denext/*` in their `deno.json`; elsewhere
-  `DENEXT_MIN_DEP_AGE=0` forwards the override to denext's `deno bundle` children.
-  A supply-chain delay, not an error.
+- **Minimum-dependency-age.** For the first two days (Deno 2.9.7's default), Deno holds the new
+  version: importing it outside a project needs `--min-dep-age=0`, and `DENEXT_MIN_DEP_AGE=0`
+  forwards that override to denext's children. Users keep the hold: `denext create` /
+  `migrate` / `upgrade` pin the newest version old enough for it (the previous release, on
+  release day) and say when the new one becomes eligible. A supply-chain delay, not an error.
 - **Provenance requires the tag path.** Publishing manually from a laptop skips
   provenance — always release via the tag push so CI does it.
 - `unanalyzable-dynamic-import` lines in publish output are **warnings**
@@ -518,6 +524,11 @@ deployed.
 - **Zero-npm runtime:** nothing under
   `src/{jsx,runtime,client,server,compat,plugin}` may import npm — CI enforces
   this (`tests/no-npm-compat-guard.test.ts`).
+- **Docs anchors:** `deno task doc-lint` also renders every docs page and checks each
+  `/docs/<page>#<anchor>` link (docs sources, AGENTS.md, README.md, CHANGELOG.md and the other
+  root guides) against the ids the site really renders (`scripts/check-doc-anchors.ts`). The root
+  guides are read on GitHub and JSR too, so their docs links are absolute
+  (`https://denext.dev/docs/…`).
 - **Docs on public API:** exported symbols on the public entry points need JSDoc
   (`deno task doc-lint`) — the framework's entries AND every first-party package's
   published entrypoints (JSR scores "has docs for most symbols" per package; a raw

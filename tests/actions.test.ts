@@ -5,6 +5,11 @@ import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts"
 import { useActionState, useFormStatus } from "../src/runtime/actions.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
+import { installFormActions } from "../src/client/dom-props.ts";
+
+// The form-action runtime loads on demand (on the first function-valued `action`); these tests
+// submit right after the first render, so install it up front rather than race its import.
+await installFormActions();
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;

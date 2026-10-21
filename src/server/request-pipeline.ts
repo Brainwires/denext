@@ -43,7 +43,7 @@ import {
   type RequestState,
   retarget,
 } from "./pipeline-state.ts";
-import { htmlHeaders, notFound } from "./response-headers.ts";
+import { documentBody, htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
 import { applyCors, endpointCorsPolicy, isPreflight, preflightResponse } from "./cors.ts";
 
@@ -424,8 +424,8 @@ async function serveNotFoundPage(state: RequestState, manifest: RouteManifest): 
     publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
   });
   const csp = await resolveCsp(doc, undefined, config.csp);
-  const body = state.request.method === "HEAD" ? null : doc;
-  return finalize(state, new Response(body, { status, headers: htmlHeaders(csp) }));
+  const { body, headers } = documentBody(state.request, doc);
+  return finalize(state, new Response(body, { status, headers: htmlHeaders(csp, headers) }));
 }
 
 /**
@@ -629,9 +629,36 @@ async function handlePipelineError(state: RequestState, error: unknown): Promise
   } else {
     console.error("denext: unhandled error while handling", ctx.requestId, pathname, error);
   }
-  return new Response("Internal Server Error", {
+  return defaultErrorResponse(request, ctx.requestId);
+}
+
+/** HTML-escape `text` for an element body. */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/**
+ * The response to an error nothing else handled: for a request that takes HTML, a minimal page
+ * (as Next.js serves its default error page when there is no `error.tsx` / `global-error.tsx`),
+ * else plain text. Neither says anything about the error; the server log has it under the id.
+ */
+function defaultErrorResponse(request: Request, requestId: string): Response {
+  const headers = { "x-request-id": requestId };
+  if (!(request.headers.get("accept") ?? "").includes("text/html")) {
+    return new Response("Internal Server Error", {
+      status: 500,
+      headers: { ...headers, "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  const html = "<!DOCTYPE html>" +
+    '<html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    "<title>500 — Internal Server Error</title></head><body>" +
+    '<div class="denext-error"><h1>500</h1><p>Internal Server Error.</p>' +
+    `<p><small>Request id: ${escapeHtml(requestId)}</small></p></div></body></html>`;
+  return new Response(html, {
     status: 500,
-    headers: { "content-type": "text/plain; charset=utf-8", "x-request-id": ctx.requestId },
+    headers: { ...headers, "content-type": "text/html; charset=utf-8" },
   });
 }
 

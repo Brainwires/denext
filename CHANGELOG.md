@@ -8,6 +8,212 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.5.2] - 2026-10-21
+
+### Added
+
+- **Explanations for what TypeScript 7 says.** The explained type errors (`denext check`, the dev
+  overlay, `denext_explain_error`) now cover a bare import nothing maps, worded either way
+  (TypeScript 6's `Import "zod" not a dependency`, TypeScript 7's `Cannot find module 'zod'`):
+  the package to `denext add`, or a Node built-in's `node:` prefix; `import x = require()` and
+  `export =` in an ES module (TS1202, TS1203); a `tsconfig.json` option TypeScript 7 removed
+  (TS5101 / TS5102 / TS5108: `baseUrl`, `moduleResolution: node`, `target: es5`, …, and TS5090
+  for a `paths` target without `./`); a JSX runtime that doesn't resolve (TS2875, TS7026).
+- **`src/ts/`, denext's one seam to TypeScript.** The engine choice (`engine.ts`, formerly
+  `src/build/native-check.ts`), the type check the dev overlay runs (`check.ts`, which hands back
+  parsed diagnostics) and TypeScript's program API for the parity tooling (`program-api.ts`, 7.0's
+  IPC client, not published) live there, so moving to TypeScript 7.1's stable API is a change in
+  that directory.
+
+### Changed
+
+- **Smaller client bundles: code an app never calls is no longer in its startup JavaScript.**
+  A Flight app (Server Components with `"use client"` islands) loaded the lazy-island hydration
+  scheduler and the event-replay dispatcher at startup even when it had no `client:*` island
+  waiting, because the bundler places code by file and the generated entries' runtime barrel
+  re-exported the isomorphic-island module those two share; that module is now its own internal
+  entrypoint (`installIsoIslands` and `isoIslandChunk`, which only generated code imports, leave
+  `denext/client-runtime` for `denext/iso-island`). The class-component preload hint no longer reads comments, so "a Server Component"
+  in one no longer installs the class runtime at startup. The submit side of a function-valued
+  form action (`<form action={fn}>`, `useActionState`) is a chunk loaded by the first such form,
+  well before it can be submitted; a submit that beats it is held, never sent natively. Measured:
+  examples/islands' startup JavaScript 76,244 → 68,936 B, examples/hello's shared runtime
+  65,447 → 64,849 B. A build test now asserts that each gated feature's runtime is absent from a
+  minimal app and present in one that uses it; that guard, not the byte budget, is the regression
+  check, and the build-smoke budget moves from 65,500 B to 67,000 B as its backstop.
+
+### Fixed
+
+- **The installed `denext` binary couldn't run `migrate` (and served no MCP guide).** The
+  compiled binary carried the CLI's modules but not the framework files it reads at run time, so
+  `denext migrate` and `migrate --check` stopped at "could not read the framework version" for
+  every project, `denext mcp` reported version `0.0.0` and failed `denext://guide`, and `denext
+  patch create denext` recorded a `+0.0.0` patch mapped to the binary's temporary directory, which
+  no app loads. The binary now embeds `deno.json` and `AGENTS.md`, the framework version is a
+  constant rather than a file read, a patch made from the binary targets the published denext the
+  app runs, and a framework file that cannot be read is an error naming it instead of an empty
+  object. Every place that compiles the CLI goes through one script (`deno task compile`), and the
+  release runs `--version`, `migrate`, `create`, `generate`, `routes`, `patch`, `build` and the MCP
+  server through the binary before uploading it.
+- **The dev type-check overlay checks only what an edit changed.** It ran `deno check -- <files>`,
+  and `deno check` ignores the files after `--` and checks the whole project, so every edit
+  re-checked every module and could report errors in files the edit never touched.
+- **A one-character error span (`^`) no longer leaks into the explanation** as part of the
+  message: both checkers underline a one-character span with `^`, which the parser took for a
+  message line.
+- **`memo()` of a class component renders, as in React.** It threw "memo() of a class component
+  is unsupported" on the server and in the browser, so migrated React code crashed at render.
+  `memo(Class)` now renders the class below the memo, which compares props shallowly by default,
+  or with the `compare` function given, and the class still runs its own `shouldComponentUpdate` /
+  `PureComponent` check. Reconciler error code 4 is retired.
+- **`/auth/v1` mail templates run as Go templates, as GoTrue renders them.** A
+  `GOTRUE_MAILER_TEMPLATES_*` template that used `{{ if }}`, `{{ range }}`, `{{ with }}`,
+  variables, pipes or `{{ .Data.… }}` was dropped for the built-in one. Templates now render for
+  every action (confirmation, recovery, magic_link, invite, email_change, reauthentication) over
+  the data GoTrue gives each one, the user's metadata as `.Data` included, with Go's control
+  structures and builtin functions; every value is still HTML-escaped. Only a template that can't
+  be parsed or run (`define` / `template`, an unknown function) falls back to the built-in one,
+  with the reason logged.
+- **`denext start` on Windows drains on Ctrl-C and Ctrl-Break.** The console's event reached the
+  server, which began to drain, and the CLI process above it, which ended the server with
+  `TerminateProcess` on the spot: in-flight requests were cut, and the `services/` stop, the
+  plugin teardowns and `onShutdown()` never ran. The CLI now leaves the first event to the server
+  (a second one still stops it outright), so Ctrl-C, Ctrl-Break and a service wrapper's stop run
+  the same drain, services stop, teardowns and `onShutdown()` as SIGTERM does elsewhere. A closed
+  console window, logoff and system shutdown start it too, though Windows ends the process before
+  it can finish (see Known limitations).
+- **`openPhotoPicker()` from the react-native-permissions shim opens the photo picker.** It
+  rejected; it is now a thin wrapper over `pickImage({ source: "photos" })` from `denext/mobile`
+  and resolves once the picker closes, a cancel included.
+- **A release that stops while waiting for JSR resumes.** `deno task release` gave up after 45
+  minutes of waiting for JSR to list the `@denext/docs-corpus` version it pushed, and a second run
+  refused the existing tag. The wait now polls JSR for the exact version with backoff for up to 3
+  hours, every stop prints the command that resumes it, and running the release again picks up the
+  remaining tags, pushes and the PR hand-over (`--resume-from corpus | tag | push | pr` names the
+  step).
+- **Markdown heading ids match GitHub's for emphasis and code spans (`@denext/content-collections`,
+  the docs site).** A heading such as ``## `requestTimeout` bounds _awaiting_`` kept the emphasis
+  underscores in its id (`…-_awaiting_`), and a code span that looked like a tag
+  (`` `<Script strategy="worker">` ``) was dropped from it, so links written against GitHub's
+  anchors missed. Ids now drop `_em_` / `__strong__` delimiters (a `snake_case` word keeps its
+  underscores) and keep a code span's text. `deno task doc-lint` now checks every
+  `/docs/<page>#<anchor>` link against the ids the docs site renders.
+- **A live view's or MVU program's `send(…)` binds to a JSX `on*` prop under `deno check`.**
+  `onClick={send({ type: "inc" })}` (the `defineLiveView` example in the guide and AGENTS.md) failed
+  type checking with TS2322: the handler `send` returns took a DOM `Event`, and a JSX handler
+  receives denext's synthetic event. `EventBinding` now takes either, so `onClick`, `onSubmit`,
+  `onInput` and `addEventListener` all accept it. A test type-checks the documented examples.
+- **Production `start` and every deploy target run on denext's Deno toolchain, as `dev` does.**
+  The least-privilege `start` task (no `--allow-run`) served on whatever Deno launched it, so
+  `Deno.SQL` (`postgresClient()`, the `denext/prisma-adapter`) worked in `dev` and was missing in
+  production, in the generated Docker image and systemd unit too. A command that runs project
+  code in a process without the grants to start the toolchain now stops with the ways out
+  (`denext task start`, the binary `denext toolchain path` prints, the generated image or unit,
+  or `--allow-run`); `DENEXT_DENO=stock` still keeps it on the Deno that started it. Every
+  generated Dockerfile (the `docker` and `fly` presets, `denext generate docker`, static images
+  included) links the toolchain the build downloaded and SHA-256-verified first on `PATH`, so the
+  server, its health check and the stack's services run on it. The `generic-host` unit runs the
+  toolchain binary from the app's own `DENO_DIR`, linked by a new `build.sh`. Deno Deploy runs its
+  own Deno; its preset keeps warning that `Deno.SQL` is not there.
+- **The `generic-host` systemd unit starts under its own sandbox.** It resolved JSR from the service
+  user's home at start, which `ProtectHome=true` and `ProtectSystem=strict` hide or make read-only,
+  so it failed unless the build ran as that user with a home outside `/home`. The unit and the new
+  `build.sh` now use a `DENO_DIR` inside the app directory, filled at build time. `env.example`
+  lists the server's own settings (`DENEXT_CANONICAL_ORIGIN`, the drain deadline) and says how
+  long a secret must be. With no domain the preset no longer writes `example.com` into the unit,
+  nginx and Caddy files: the domain comes from `genericHost({ domain })`, the new
+  `denext deploy prepare --preset generic-host --domain <host>`, or `DENEXT_CANONICAL_ORIGIN`, and
+  without one `prepare` warns and the origin is read from the env file.
+- **An app inside a Deno workspace that doesn't list it builds.** A monorepo's root `deno.json`
+  whose `workspace` names other packages made the esbuild Deno loader fail with
+  `WorkspaceDiscoverError(ConfigNotWorkspaceMember …)` (then `Cannot read properties of undefined
+  (reading 'loadEsm')`), so a migrated Next app there didn't build, while Deno itself only warns
+  and runs the app on its own config. The loader now gets the app's own config, as Deno does.
+- **A migrated SPA or Expo app's `start` runs least-privilege.** `denext migrate` wrote every
+  `start` task with `-A`, so the production server of a migrated app had every permission. A SPA
+  or Expo migration now writes the set `denext create` does
+  (`--allow-net --allow-read --allow-env --allow-write=.denext`). A migrated App Router app keeps
+  `-A`: its `start` re-runs itself under a stylesheet import map, which needs an unscoped
+  `--allow-run`; the production checklist says so.
+- **The default 500 is an HTML page.** With no `error.tsx` or `global-error.tsx`, an unhandled
+  page error answered `text/plain` "Internal Server Error". A request that accepts `text/html` now
+  gets a minimal HTML page (the status, the message and the request id), as Next.js serves its
+  default error page. Other requests keep the plain text, and neither reveals the error.
+- **The Docker image logs requests, and a logged request's response carries its id.** The
+  generated Dockerfile now sets `DENEXT_LOG=json`, as the `fly` and `generic-host` presets did, so
+  a container has an access log. While requests are logged (`DENEXT_LOG` or `onRequest`), every
+  response carries the id its log line has in `x-request-id`, not only error responses. With
+  logging off nothing changes: the headers stay Next.js's.
+- **The image optimizer answers `400` for a source that is no image.** A local file such as
+  `/_denext/image?url=/styles.css&w=64&q=75` answered `500` and logged the decoder's full stack on
+  every request, an unauthenticated way to fill the server log. It now answers `400` "The
+  requested resource isn't a valid image." (Next.js's answer) and logs one line.
+- **`HEAD` of a page carries its length.** The body was dropped and the server then sent
+  `content-length: 0`; a `HEAD` of a page or of the 404 page now carries the length its `GET`
+  has (uncompressed).
+- **A fresh `denext create` app no longer prints Deno's "Ignored build scripts" box.** Every
+  command on a new scaffold, and every Docker build of it, printed it for `npm:@parcel/watcher`
+  (an optional dependency of `sass`, whose prebuilt binary makes the script unneeded). The
+  scaffolded `deno.json` now denies that script (`"allowScripts": { "deny": [...] }`), so it never
+  runs and nothing is printed.
+- **`denext upgrade` refreshes `deno.lock`.** It rewrote `deno.json` and left `deno.lock` on the
+  old pins, so a CI `deno install --frozen` failed until someone ran a task. After writing, an
+  existing lock is refreshed with `deno install --lockfile-only` (nothing is installed); if that
+  fails, `upgrade` says to run `deno install`. `--json` reports `lockRefreshed`.
+- **`denext audit` suggests the start task's own permissions.** Its baseline listed an unscoped
+  `--allow-write`, while `denext create`'s `start` grants write to `.denext` only; it now suggests
+  that same set (`--allow-net --allow-read --allow-env --allow-write=.denext`).
+- **A plugin's failing prepare step stops `build` and `export`.** It was logged and the build went
+  on, to fail later on what the step should have written: a Gleam app whose package fetch failed
+  reported `Module ./ticker.mjs not found`. `build` and `export` now stop with the step's error and
+  the plugin's name; `dev` still logs it and keeps serving. And the generated Dockerfile of an app
+  that compiles Gleam installs CA certificates, which the Gleam compiler's package fetch needs and
+  the `denoland/deno` image doesn't ship.
+- **A `com.example` placeholder app id is caught before a release.** `denext create --desktop` /
+  `--capacitor` and `migrate` write `com.example.<name>` until you choose yours, and nothing
+  refused it, so two careless apps could share keychain items, storage, push namespaces and an
+  `.msi` UpgradeCode. `denext mobile doctor --store` / `--release` now report it as an error
+  (`placeholder-app-id`), and `desktop package` warns about it.
+- **`denext build --compile` works on release day.** The compile config dropped the app's
+  `minimumDependencyAge` (a scaffold's excludes `jsr:@denext/*`), so for 24 hours after every
+  release `deno compile` refused the just-published `@denext/denext` ("newer than the specified
+  minimum dependency date"), with no workaround. The compile now carries the app's setting, and
+  `DENEXT_MIN_DEP_AGE` reaches it as `--min-dep-age`, as it does every other child of the build.
+
+### Security
+
+- **denext no longer exempts its own packages from Deno's minimum dependency age.** `denext
+  create` and `denext migrate` stopped writing `"minimumDependencyAge": { "exclude":
+  ["jsr:@denext/*"] }`, so a just-published `@denext/*` release waits out Deno's hold (two days by
+  default on Deno 2.9.7) like every other dependency, and a compromised release can be caught
+  before projects resolve it. Instead `create`, `migrate` and `upgrade` read JSR's publish times
+  and pin the newest `@denext/*` versions the project's rule already lets in — first-party
+  packages at versions that also support the denext pinned — printing one line when a newer one
+  is held: `denext 4.5.2 was published 3 h ago; your dependency-age rule allows it from <time>.
+  Pinned 4.5.1 for now — run "denext upgrade" after that.` With nothing old enough the command
+  stops with that explanation instead of a resolver error; offline it keeps its pins and warns.
+  `denext upgrade` removes the `"jsr:@denext/*"` entry from an existing project's
+  `minimumDependencyAge.exclude` (other entries stay), says why, and moves a pin the hold still
+  covers down to the newest eligible release; `denext doctor` flags a `deno.json` that still
+  carries the entry, and `denext ui`'s Setup scaffold pins like `create`. A `deno bundle` failure
+  on a held version now points at `denext upgrade` rather than at switching the hold off. If you
+  publish denext yourself, the entry can be added back:
+  https://denext.dev/docs/toolchain#supply-chain-hold
+- **Per-address limits work behind the proxies the deploy presets generate.** The `generic-host`
+  preset put nginx or Caddy in front of the server and the `fly` preset runs behind fly-proxy, but
+  neither told denext to trust them, so every request came from the proxy's loopback or private
+  address and `rateLimit()`, `denextAuth`'s per-IP budgets and Live's per-IP cap were skipped for
+  everyone (one warning was logged). The `generic-host` unit now sets `DENEXT_TRUST_PROXY=1` and
+  binds the server to `127.0.0.1`, and its nginx block overwrites `X-Forwarded-For` instead of
+  appending the client's own value. `fly.toml` sets `DENEXT_TRUST_PROXY=1` and
+  `DENEXT_RATE_LIMIT_HEADER=fly-client-ip`. Regenerate the files with `denext deploy prepare`.
+- **A refused session secret takes the instance out of rotation.** In production `getSession()`
+  refuses a missing or short (under 32 characters) secret, so every page that signs a session
+  answered `500`, while `/_denext/health` kept answering `ok` and load balancers kept routing to
+  the instance. The refusal now marks a built-in `session` readiness check `down` (the probe
+  answers `503`, `"checks": { "session": "down" }`) and logs the cause once, and a `SESSION_SECRET`
+  that is set but too short does so at boot, before any request.
+
 ## [4.5.1] - 2026-10-20
 
 ### Fixed
@@ -1070,7 +1276,7 @@ and this project adheres to
   nonce the page's CSP lists, `boot.js` holds every `text/partytown` script inert until it has
   checked that nonce, and the service worker serves Partytown's sandbox only to a tab a checked
   boot announced, so an HTML injection gains nothing (see the
-  [security notes](/docs/security#script-strategyworker-partytown-and-html-injection)). App Router
+  [security notes](https://denext.dev/docs/security#script-strategyworker-partytown-and-html-injection)). App Router
   pages are supported, and a worker script a client component renders after load, on a page that
   loaded `boot.js`, is handed to Partytown too. Without the flag or the package the script still
   runs on the main thread, and the dev warning names the fix. Nothing reaches a page that does not
@@ -3439,7 +3645,7 @@ and this project adheres to
   authorizes a fork of its own executable that has an IPC channel, so a module sidecar no longer
   grants `run: ["*"]` for its children. Under the stock runtime and `deno run`, `spawnSelf` still
   checks `run` over the executable and says what to grant. Docs:
-  [Deno Desktop › Sidecars](/docs/desktop#desktop-sidecars).
+  [Deno Desktop › Sidecars](https://denext.dev/docs/desktop#desktop-sidecars).
 
 ### Fixed
 
@@ -3872,7 +4078,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   importer's `AsyncLocalStorage` / `AsyncContext` back once it is evaluated: the next `Deno.serve`
   request no longer sees the previous request's store. On Windows a passkey request whose window
   closes at once now frees the one-ceremony slot. Still needs at least denext.9. Docs:
-  [Deno Desktop runtime › Headless workers and forks of the app](/docs/desktop-runtime#headless-workers-and-forks-of-the-app).
+  [Deno Desktop runtime › Headless workers and forks of the app](https://denext.dev/docs/desktop-runtime#headless-workers-and-forks-of-the-app).
 
 ### Fixed
 
@@ -4118,7 +4324,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   whatever the store does. `denext task --history [--json]` / `--clear-history` read and clear
   through the configured store, and `denext ui`'s Cron page reads through the store API (the
   default file in-process, an app's own store through those commands). Guide:
-  [Scheduled tasks › Where history is kept](https://denext.dev/docs/tasks#history-store).
+  [Scheduled tasks › Where history is kept](https://denext.dev/docs/jobs#history-store).
 - **Postgres everywhere** (`denext/server`): `postgresAuthAdapter({ sql | url })` meets the same
   `AuthAdapter` contract as `sqliteAuthAdapter` (the shared contract suite runs against a real
   server), with its `sessions` store, on a database every replica shares; `postgresSessionStore`,
@@ -4259,7 +4465,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   secrets or bootstrap, and its stdout starts clean (the runtime's two start-up lines are
   removed). It needs the sidecar's `permissions.run` to cover the app's executable (`["*"]`, as
   its installed path is the user's). `runDesktop` resolves with `sidecarChild` set in a child.
-  Docs: [Desktop › A child of the sidecar](/docs/desktop#desktop-sidecars-children).
+  Docs: [Desktop › A child of the sidecar](https://denext.dev/docs/desktop#desktop-sidecars-children).
 
 ### Fixed
 
@@ -4617,7 +4823,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   layered sheet and uniwind's config registers the app's themes, as uniwind's Vite plugin does:
   the `denext patch` step of the recipe is gone. `reactNative: { uniwind: { extraThemes } }` names
   the themes beyond `light` / `dark` (`withUniwindConfig`'s option); `uniwind: false` turns it off.
-  Docs: [Recipe: uniwind and Tailwind](/docs/react-native#recipe-uniwind-and-tailwind).
+  Docs: [Recipe: uniwind and Tailwind](https://denext.dev/docs/react-native#recipe-uniwind-and-tailwind).
 - **`@legendapp/list/keyboard` and `@legendapp/list/reanimated` run on denext's LegendList.**
   They wrapped the real list's private `internal` API and failed the build; now
   `KeyboardAwareLegendList` adds the height of a field docked below it (`contentInsetEndAdjustment`,
@@ -4652,7 +4858,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   and **`desktop.update.ui`** (`{ feedUrl, publicKey, platform? }`)
   configures the UI overlay in `denext.config.ts`: the generated `desktop.ts` now serves it (no
   hand-written `runDesktop({ updater })`), and its feed host and the overlay's write access join
-  the packaged app's least-privilege flags. Docs: [Updates everywhere](/docs/updates).
+  the packaged app's least-privilege flags. Docs: [Updates everywhere](https://denext.dev/docs/updates).
 - **Sidecars can start with the user's login-shell environment (`loginShellEnv`).** An app opened
   from the Dock or a desktop launcher inherits a minimal `PATH`, so a backend could not find what
   Homebrew, nvm, asdf or mise installed (`git`, `node`, `codex`, `claude`). With
@@ -4664,7 +4870,7 @@ These are what moving a 3.x app to 4.0 involves. This section is the record.
   found on it. A failure or a timeout logs one warning and keeps the inherited environment. Only the
   sidecars that opt in see the variables (never the page, never `DENO_*` / `DENEXT_*`); macOS and
   Linux, a no-op on Windows. The packaged app's `--allow-run` lists the usual shells. Docs:
-  [Desktop › The user's login-shell environment](/docs/desktop#desktop-sidecars-login-shell).
+  [Desktop › The user's login-shell environment](https://denext.dev/docs/desktop#desktop-sidecars-login-shell).
 
 ### Changed
 
@@ -17313,7 +17519,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.2...development
+[4.5.2]: https://jsr.io/@denext/denext@4.5.2
 [4.5.1]: https://jsr.io/@denext/denext@4.5.1
 [4.5.0]: https://jsr.io/@denext/denext@4.5.0
 [4.4.1]: https://jsr.io/@denext/denext@4.4.1

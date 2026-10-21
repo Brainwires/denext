@@ -1,4 +1,4 @@
-// The native TypeScript compiler half of src/build/deno-toolchain.ts and src/build/native-check.ts:
+// The native TypeScript compiler half of src/build/deno-toolchain.ts and src/ts/engine.ts:
 // a toolchain zip's `typescript-check/` is installed beside `deno` only when its binary and whole directory
 // hash to the pin (else refused and recorded in the stamp), `toolchain status` reports it, and the
 // type-check engine decision falls back to the runtime's in-process TypeScript when the compiler
@@ -20,7 +20,7 @@ import {
   CHECK_ENGINE_ENV,
   nativeCheckDecision,
   runtimeSupportsNativeCheck,
-} from "../src/build/native-check.ts";
+} from "../src/ts/engine.ts";
 import { sha256Hex, zip, type ZipEntry } from "./_archive-fixtures.ts";
 
 const TARGET = "linux-x86_64";

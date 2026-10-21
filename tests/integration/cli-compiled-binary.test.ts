@@ -9,9 +9,9 @@
 // DENEXT_TEST_COMPILED_CLI=1.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { join } from "@std/path";
+import { compiledCli } from "./_compiled-cli.ts";
 
-const ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const enabled = Deno.env.get("DENEXT_TEST_COMPILED_CLI") === "1";
 
 /** A published denext + @denext/backend pair the project pins (the child runs these). */
@@ -51,22 +51,7 @@ Deno.test({
   async fn() {
     const tmp = await Deno.makeTempDir({ prefix: "denext_compiled_cli_" });
     try {
-      const bin = join(tmp, Deno.build.os === "windows" ? "denext.exe" : "denext");
-      const compiled = await new Deno.Command(Deno.execPath(), {
-        args: [
-          "compile",
-          "-A",
-          "--include",
-          join(ROOT, "src/cli/lazy-modules.generated.ts"),
-          "--output",
-          bin,
-          join(ROOT, "cli.ts"),
-        ],
-        cwd: ROOT,
-        stdout: "inherit",
-        stderr: "inherit",
-      }).output();
-      assert(compiled.success, "deno compile failed");
+      const bin = await compiledCli();
       const project = join(tmp, "app");
       await Deno.mkdir(join(project, "app"), { recursive: true });
       await Deno.writeTextFile(

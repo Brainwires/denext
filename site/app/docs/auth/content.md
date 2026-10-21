@@ -2766,10 +2766,23 @@ both `GOTRUE_SMTP_HOST` and `GOTRUE_SMTP_ADMIN_EMAIL` are set. The transport is
 [`smtpMailer()`](#sending-mail-over-smtp), so TLS is required (465 is implicit TLS, any other port
 must offer STARTTLS). Subjects default to GoTrue's ("Confirm Your Email", "Your Magic Link", …). A
 template is a URL of an HTML file, fetched on first use (http(s), 10 s, a redirect followed only to
-`https:` on the same origin, at most 1 MiB) and kept for 10 minutes; it takes `{{ .ConfirmationURL
-}}`, `{{ .Token }}`, `{{ .TokenHash }}`, `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{
-.RedirectTo }}`, each HTML-escaped. A template with any other Go template action (`{{ if }}`, `{{
-.Data }}`), or one that can't be fetched, is replaced by the built-in one and the reason logged.
+`https:` on the same origin, at most 1 MiB) and kept for 10 minutes. It is a Go template, rendered
+as GoTrue renders it, over the data GoTrue gives each action: every one has `{{ .SiteURL }}`,
+`{{ .Email }}`, `{{ .Token }}` and `{{ .Data }}` (the user's metadata); all but reauthentication
+add `{{ .ConfirmationURL }}`, `{{ .TokenHash }}` and `{{ .RedirectTo }}`, and an email change adds
+`{{ .NewEmail }}` and `{{ .SendingTo }}`. `if` / `else if` / `else`, `with`, `range` (with
+`break` / `continue`), variables, pipes, `{{- … -}}` trim markers, comments and the builtin
+functions (`and`, `or`, `not`, `len`, `index`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `print`,
+`printf`, `println`, `html`, `urlquery`) work, and every value written out is HTML-escaped:
+
+```html
+<h2>{{ if .Data.name }}Welcome, {{ .Data.name }}{{ else }}Welcome{{ end }}</h2>
+<p><a href="{{ .ConfirmationURL }}">Confirm your email</a></p>
+{{- if eq .Data.plan "team" }}<p>Your team is waiting.</p>{{ end }}
+```
+
+A template that can't be parsed or run (`define` / `template` / `block`, an unknown function), or
+one that can't be fetched, is replaced by the built-in one and the reason logged.
 `denext generate docker --stack` lists the `GOTRUE_SMTP_*` variables in `.env.example`.
 
 ### SAML single sign-on

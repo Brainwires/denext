@@ -212,6 +212,18 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * react-dom/server's synchronous `renderToString` writes a `<!--$!-->` boundary, so that
  * hydration moved to suspense-hydration.ts, which the compat `react-dom/client` / `react-dom`
  * modules install; its gate is asserted in {@link assertGatedRuntimeAbsent}.
+ * Re-based 65.5 → 67 KB (67,000 B) on 2026-10-20, the maintainer's decision, with a standing
+ * order: the budget is the backstop, and the real guard is that nothing the app never calls is
+ * compiled in. The shared graph stood at 65,447 B (53 B of headroom). A per-module audit of it
+ * (plans/bundle-dead-code.md) then cut 598 B with no change in behaviour (measured 64,849 B,
+ * 2,151 B under the new budget): a function-valued form action's submit work (FormData, the
+ * call, `useFormStatus`) is the on-demand `form-action-*` chunk, loaded by the first such form
+ * (−360 B), and the class runtime's constructor left the shared graph, where the server
+ * renderer's file had hoisted it (−238 B). The same audit took the class runtime and the lazy
+ * hydration scheduler out of every Flight app's startup graph (examples/islands: 76,244 →
+ * 68,936 B). Each gate is asserted in {@link assertGatedRuntimeAbsent} and, for the Flight
+ * startup graph, {@link assertFlightStartupLean}; `bundle-features` proves each one still ships
+ * when the app uses it.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -228,7 +240,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
 }
 
 /** The shared-chunk budget for examples/hello, in raw bytes (its history is in the comment above). */
-const SHARED_BUDGET = 65_500;
+const SHARED_BUDGET = 67_000;
 
 /** The over-budget message: how far over, how to reproduce it, and the two ways out. */
 function budgetMessage(total: number): string {
@@ -303,6 +315,9 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["observeUsing", "Fragment-ref runtime (fragment-instance.ts)"],
     // Hydrating react-dom/server's `<!--$!-->` boundaries ships with the compat react-dom modules.
     ['"$!"', "client-rendered boundary hydration (suspense-hydration.ts)"],
+    // The feature runtimes below ship only when the app uses the feature; each one's positive
+    // half is FEATURE_MARKERS, asserted against the bundle-features fixture.
+    ...FEATURE_MARKERS.map(({ marker, what }): [string, string] => [marker, what]),
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {
@@ -318,6 +333,34 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     );
   }
 }
+
+/**
+ * Feature runtimes that must be ABSENT from a minimal app's shared chunks (examples/hello uses
+ * none of them) and PRESENT in the client output of an app that uses them
+ * (tests/fixtures/bundle-features uses each once). Each marker is a string that survives
+ * minification and appears only in that feature's code. A miss in hello means a static import
+ * re-coupled the feature to the core; a miss in the fixture means the gate dropped a feature an
+ * app needs.
+ */
+const FEATURE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
+  // A function-valued `<form action>`'s submit: the on-demand form-action chunk.
+  { marker: "globalThis.FormData", what: "form-action submit runtime (form-action.ts)" },
+  // Isomorphic `client:*` islands: `denext/iso-island`, imported only for a directive.
+  { marker: "display:contents", what: "isomorphic island runtime (iso-island.ts)" },
+  // Flight `client:*` islands: `denext/lazy`, loaded by a page with lazy islands.
+  { marker: "data-dnx-hydrated", what: "lazy island boot (lazy-boot.ts)" },
+  { marker: "qrl handler failed", what: "resumable event dispatcher (qrl-dispatch.ts)" },
+  // A Server Action call from the browser.
+  { marker: "x-denext-action", what: "Server Action dispatch (server-action.ts)" },
+  // Model–View–Update: `denext/mvu`.
+  { marker: "too many pending effects", what: "MVU runtime (runtime/mvu.ts)" },
+  // The wire codec (Flight values, actions, Live): Flight and Live apps only.
+  { marker: "denext.wire.notTagged", what: "wire codec (wire-codec.ts)" },
+  // Live: the socket transport and the channel protocol.
+  { marker: "channel-unsubscribe", what: "Live client (live-client.ts)" },
+  // The Flight client (payload parser + soft navigation).
+  { marker: "__denext_flight", what: "Flight client runtime" },
+];
 
 Deno.test("build smoke: examples/hello emits a client entry, a code-split island chunk, and a shared chunk", async () => {
   const result = await build(EXAMPLE);
@@ -385,6 +428,81 @@ Deno.test("build smoke: a Flight app (examples/islands) ships the Flight soft-na
     "signalState",
     "the Flight soft-nav runtime is missing from a Flight app",
   );
+  await assertFlightStartupLean(clientDir);
+});
+
+/**
+ * The files a page loads before any of its code runs: `entries` and, transitively, every chunk
+ * they import statically (a dynamic `import()` is not followed). Returns their concatenated text.
+ */
+async function startupGraph(clientDir: string, entries: string[]): Promise<string> {
+  const seen = new Set<string>();
+  const queue = [...entries];
+  let text = "";
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const src = await Deno.readTextFile(join(clientDir, file));
+    text += src;
+    for (const m of src.matchAll(/(?:from|import)\s*"\.\/([^"]+\.js)"/g)) queue.push(m[1]);
+  }
+  return text;
+}
+
+/**
+ * The startup half of the import gates on a Flight app. The bundler places code by FILE: a module
+ * the startup graph reaches through ANY static import, even an unused re-export, and a lazily
+ * loaded chunk also uses ships in a chunk every page loads. examples/islands has lazy `client:*`
+ * islands (its lazy chunk legitimately carries the scheduler) and no class component, form
+ * action or isomorphic island, so none of those runtimes may be in its startup graph.
+ */
+async function assertFlightStartupLean(clientDir: string): Promise<void> {
+  const startup = await startupGraph(clientDir, ["__denext_flight__.js"]);
+  const absent: Array<[string, string]> = [
+    // Hoisted out of `denext/lazy` by the client-runtime barrel's iso-island re-export once.
+    [
+      "requestIdleCallback",
+      "lazy island scheduler (lazy-hydrate.ts; it belongs to the lazy-* chunk)",
+    ],
+    ["qrl handler failed", "resumable event dispatcher (qrl-dispatch.ts; the lazy-* chunk's)"],
+    // Installed eagerly once because the page's comment said "Server Component".
+    ["componentDidMount", "class-component runtime (it belongs to the class-runtime-* chunk)"],
+    ["display:contents", "isomorphic island runtime"],
+    ["globalThis.FormData", "form-action submit runtime (it belongs to the form-action-* chunk)"],
+  ];
+  for (const [marker, what] of absent) {
+    assert(
+      !startup.includes(marker),
+      `the Flight startup graph contains "${marker}" — the ${what}`,
+    );
+  }
+}
+
+const FEATURES_FIXTURE = fromFileUrl(
+  new URL("../fixtures/bundle-features", import.meta.url),
+);
+
+// The positive half of FEATURE_MARKERS: an app that uses each gated feature ships its runtime.
+// One build, one step per feature.
+Deno.test("build smoke: an app that uses each gated feature ships its runtime", async (t) => {
+  const result = await build(FEATURES_FIXTURE);
+  const clientDir = join(result.outDir, "client");
+  let all = "";
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && e.name.endsWith(".js")) all += await Deno.readTextFile(join(clientDir, e.name));
+  }
+  for (const { marker, what } of FEATURE_MARKERS) {
+    await t.step(what, () => {
+      assert(all.includes(marker), `the ${what} is missing ("${marker}") from an app that uses it`);
+    });
+  }
+  // The page names a class component, so the build's preload hint installs the class runtime
+  // in the route's startup graph instead of loading it on demand.
+  await t.step("class-component runtime, eager when the app names a class", async () => {
+    const startup = await startupGraph(clientDir, ["index.js"]);
+    assertStringIncludes(startup, "componentDidMount");
+  });
 });
 
 // The probe is memoized per process, so run it in a subprocess with DENO_BIN

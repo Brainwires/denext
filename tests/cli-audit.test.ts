@@ -97,3 +97,18 @@ Deno.test("emits a CycloneDX SBOM", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("the suggested permissions are the least-privilege start set (write scoped to .denext)", async () => {
+  // Up to 4.5.0 it suggested an unscoped --allow-write, where `denext create`'s start task grants
+  // write to `.denext` only: two different least-privilege messages for the same server.
+  const dir = await fixture({}, {});
+  try {
+    const { scaffoldFiles } = await import("../src/build/scaffold.ts");
+    const deno = scaffoldFiles({ dir }).find((f) => f.path === "deno.json")!;
+    const start = (JSON.parse(deno.content).tasks.start as string).split(" ");
+    const report = await auditProject(dir);
+    assertEquals(report.permissions, start.filter((w) => w.startsWith("--allow-")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

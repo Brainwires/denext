@@ -192,3 +192,31 @@ Deno.test("appUsesClassComponents reads sibling-package modules passed as extraF
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("appUsesClassComponents ignores comments: a 'Server Component' note is no class", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_class_scan_" });
+  const page = (src: string) => Deno.writeTextFile(join(dir, "app", "page.tsx"), src);
+  try {
+    await Deno.mkdir(join(dir, "app"));
+    // Every Flight example opens with such a note; it once made each one install the class
+    // runtime at startup.
+    await page(
+      `// A Server Component page.\n/* No PureComponent here either. */\n` +
+        `export default function Page() { return <p>A Server Component</p>; } // a Component\n`,
+    );
+    assertEquals(await appUsesClassComponents(dir), false, "comments and prose are no class");
+    for (
+      const src of [
+        `import { Component } from "denext";\nexport class A extends Component {}\n`,
+        `import React from "react";\nexport class A extends React.PureComponent {}\n`,
+        `import { PureComponent as P, useState } from "react";\n`,
+        `const { Component } = React;\n`,
+      ]
+    ) {
+      await page(src);
+      assertEquals(await appUsesClassComponents(dir), true, src);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

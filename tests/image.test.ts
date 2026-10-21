@@ -430,3 +430,26 @@ Deno.test("fetchRemoteImage stops after too many redirects", async () => {
   const out = await fetchRemoteImage(new URL("https://cdn.example.com/a.png"), opts, fetchImpl);
   assertEquals(out, null);
 });
+
+Deno.test("optimizeImage answers 400 (as Next) for a local file that is no image, with one log line", async () => {
+  // Up to 4.5.0 `/_denext/image?url=/styles.css` answered 500 and logged the decoder's full stack
+  // on every request: an unauthenticated way to fill the server log.
+  const dir = await Deno.makeTempDir({ prefix: "denext_not_image_" });
+  const logged: unknown[][] = [];
+  const [error, warn] = [console.error, console.warn];
+  console.error = console.warn = (...args: unknown[]) => void logged.push(args);
+  try {
+    await Deno.writeTextFile(`${dir}/styles.css`, "body { color: red }\n".repeat(20));
+    const res = await optimizeImage(
+      new Request("http://x/_denext/image?url=/styles.css&w=64&q=75"),
+      { publicDir: dir },
+    );
+    assertEquals(res.status, 400);
+    assertEquals(await res.text(), "The requested resource isn't a valid image.");
+    assertEquals(logged.length, 1, JSON.stringify(logged));
+    assert(logged[0].every((a) => typeof a === "string"), "one line, no stack");
+  } finally {
+    [console.error, console.warn] = [error, warn];
+    await Deno.remove(dir, { recursive: true });
+  }
+});

@@ -81,10 +81,20 @@ function safeHref(raw: string): string | null {
   return escapeAttr(decoded);
 }
 
+/** A heading's anchor text with its inline markup removed, as GitHub slugs the rendered text. */
+function headingText(s: string): string {
+  // Code spans are literal (`<Script>` stays text); outside them inline HTML contributes no
+  // text and `_em_` / `__strong__` delimiters go (a snake_case word keeps its underscores).
+  return s.split(/(`+[^`]*`+)/).map((part, i) =>
+    i % 2 === 1 ? part.replace(/^`+|`+$/g, "") : part
+      .replace(/<[^>]+>/g, "")
+      .replace(/(^|[^\w])(_{1,2})(?=\S)([^_]*?\S)\2(?![\w])/g, "$1$3")
+  ).join("");
+}
+
 function slugify(s: string): string {
-  return s
+  return headingText(s)
     .toLowerCase()
-    .replace(/<[^>]+>/g, "")
     .replace(/[^\w\s-]/g, "")
     .trim()
     // One hyphen per space, not one per run: GitHub does not collapse runs, so

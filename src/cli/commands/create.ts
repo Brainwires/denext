@@ -2,13 +2,17 @@
 // dir). Both bypass the app-dir / CSS re-exec checks — no project exists yet — and
 // share one implementation parameterized by mode.
 
-import { resolve } from "@std/path";
+import { join, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import {
+  denoJson,
   SCAFFOLD_TEMPLATES,
+  type ScaffoldOptions,
   scaffoldProject,
   type ScaffoldTemplate,
 } from "../../build/scaffold.ts";
+import { pinEligible } from "../../build/eligible-pins.ts";
+import { applyUpgrade } from "../../build/upgrade.ts";
 import { multiSelect } from "../../build/multi-select.ts";
 
 /** One scaffold-time feature toggle: the option it sets, its flag, and its label. */
@@ -107,8 +111,7 @@ async function runCreate(
   }
   const selected = selectFeatures(ctx);
   const on = (k: string): boolean => selected.has(k);
-  console.log(`\n  Scaffolding a denext app in ${dir}\n`);
-  const written = await scaffoldProject({
+  const options: ScaffoldOptions = {
     dir,
     template: template as ScaffoldTemplate,
     tailwind: on("tailwind"),
@@ -122,8 +125,10 @@ async function runCreate(
     mcp: on("mcp"),
     vscode: ctx.flags["no-vscode"] !== true,
     allowExisting: mode === "init",
-  });
+  };
+  const { written, notes: held } = await scaffoldEligible(options, mode);
   for (const p of written) console.log(`   + ${p}`);
+  for (const note of held) console.log(`\n  ${note}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
   const notes = featureNotes(on);
   if (template === "lustre") {
@@ -138,6 +143,29 @@ async function runCreate(
       `  from JSR — a few seconds; later runs are cached.)\n` +
       (notes.length ? "\n" + notes.join("\n") + "\n" : ""),
   );
+}
+
+/**
+ * Scaffold with the newest denext Deno's dependency-age hold lets in — this CLI's own release
+ * can be too new for it. Checked before anything is written, so a project that can't resolve
+ * yet is never made (that exits 1 with when it can).
+ */
+async function scaffoldEligible(
+  options: ScaffoldOptions,
+  mode: "create" | "init",
+): Promise<{ written: string[]; notes: readonly string[] }> {
+  const eligible = await pinEligible(denoJson(options), options.dir);
+  if (!eligible.ok) {
+    console.error(`denext ${mode}: ${eligible.error}`);
+    Deno.exit(1);
+  }
+  console.log(`\n  Scaffolding a denext app in ${options.dir}\n`);
+  const written = await scaffoldProject(options);
+  if (eligible.steps.length && written.includes("deno.json")) {
+    const path = join(options.dir, "deno.json");
+    await Deno.writeTextFile(path, applyUpgrade(await Deno.readTextFile(path), eligible.steps));
+  }
+  return { written, notes: eligible.notes };
 }
 
 /** The target directory: the positional, or `.` for `init`; `create` requires one. */

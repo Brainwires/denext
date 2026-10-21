@@ -44,22 +44,5 @@ export function createFormStatusSignal(): FormStatusSignal {
   return { pending: 0, data: null, method: null, action: null, listeners: new Set() };
 }
 
-/** Mark a submission started on `signal` (recording what was submitted) and notify subscribers. */
-export function beginFormAction(signal: FormStatusSignal, submission: FormSubmission = {}): void {
-  signal.pending++;
-  signal.data = submission.data ?? null;
-  signal.method = submission.method ?? "post";
-  signal.action = submission.action ?? null;
-  for (const l of signal.listeners) l();
-}
-
-/** Mark a submission finished on `signal` and notify subscribers. */
-export function endFormAction(signal: FormStatusSignal): void {
-  signal.pending = Math.max(0, signal.pending - 1);
-  if (signal.pending === 0) {
-    signal.data = null;
-    signal.method = null;
-    signal.action = null;
-  }
-  for (const l of signal.listeners) l();
-}
+// `beginFormAction` / `endFormAction` (the submit side) live with the rest of the form-action
+// runtime in src/client/form-action.ts, which loads on the first function-valued `action`.

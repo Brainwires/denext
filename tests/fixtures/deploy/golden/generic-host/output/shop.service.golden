@@ -3,8 +3,10 @@
 #
 # Install: copy to /etc/systemd/system/shop.service, put the variables from env.example in
 # /etc/shop/env (mode 600), then `systemctl daemon-reload && systemctl enable --now shop`.
-# Deploy: put the new release in /srv/shop, run `deno task build` there (unless it is a
+# Deploy: put the new release in /srv/shop, run build.sh there as shop (unless it is a
 # compiled build), then `systemctl restart shop` (SIGTERM drains in-flight requests).
+# build.sh resolves every dependency and denext's Deno toolchain into DENO_DIR below, so the
+# sandboxed server (ProtectHome, a read-only system) loads them without the network or a home.
 [Unit]
 Description=shop (denext)
 After=network-online.target
@@ -15,10 +17,15 @@ Type=simple
 User=shop
 WorkingDirectory=/srv/shop
 Environment=PORT=3000
+Environment=DENO_DIR=/srv/shop/.deno
 Environment=DENEXT_CANONICAL_ORIGIN=https://shop.example.com
 Environment=DENEXT_LOG=json
+# Behind nginx / Caddy every request comes from 127.0.0.1: trust the proxy's X-Forwarded-*
+# headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
+# per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
+Environment=DENEXT_TRUST_PROXY=1
 EnvironmentFile=-/etc/shop/env
-ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start .
+ExecStart=/srv/shop/.deno/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start . --host 127.0.0.1
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM

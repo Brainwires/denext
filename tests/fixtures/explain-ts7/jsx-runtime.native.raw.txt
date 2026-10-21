@@ -1,0 +1,18 @@
+TS7026 [ERROR]: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+  return <p>Hello</p>;
+         ~~~
+    at file:///app/main.tsx:2:10
+
+TS2875 [ERROR]: This JSX tag requires the module path 'preact/jsx-runtime' to exist, but none could be found. Make sure you have types for the appropriate package installed.
+  return <p>Hello</p>;
+         ~~~~~~~~~~~~
+    at file:///app/main.tsx:2:10
+
+TS7026 [ERROR]: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+  return <p>Hello</p>;
+                 ~~~~
+    at file:///app/main.tsx:2:18
+
+Found 3 errors.
+
+error: Type checking failed.

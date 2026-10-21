@@ -1,0 +1,12 @@
+TS5102 [ERROR]: Option 'baseUrl' has been removed. Please remove it from your configuration.
+  Use '"paths": {"*": ["./*"]}' instead.
+
+TS5108 [ERROR]: Option 'moduleResolution=node10' has been removed. Please remove it from your configuration.
+
+TS5108 [ERROR]: Option 'target=ES5' has been removed. Please remove it from your configuration.
+
+TS5090 [ERROR]: Non-relative paths are not allowed. Did you forget a leading './'?
+
+Found 4 errors.
+
+error: Type checking failed.

@@ -29,6 +29,7 @@ import { capacitorConfigFile } from "../../build/capacitor-config.ts";
 import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
 import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop-app-config.ts";
 import { readJson } from "../../build/json-edit.ts";
+import { DENEXT_EXCLUDE } from "../../build/dep-age.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import { denoExecutable } from "../../build/bundle.ts";
@@ -293,6 +294,26 @@ export async function platformFilesCheck(
   return report ? { name: "platform files", ...report, critical: false } : null;
 }
 
+/**
+ * The dependency-age exemption check: a `deno.json` that lists `"jsr:@denext/*"` in
+ * `minimumDependencyAge.exclude` (what `create` / `migrate` wrote before 4.5.2) lets a
+ * just-published `@denext/*` release in before Deno's hold has passed. Null without one.
+ */
+export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
+  const age = (await readDenoJson(dir))?.minimumDependencyAge as { exclude?: unknown } | undefined;
+  const exclude = age && typeof age === "object" && Array.isArray(age.exclude) ? age.exclude : [];
+  if (!exclude.includes(DENEXT_EXCLUDE)) return null;
+  return {
+    name: "dependency age",
+    ok: false,
+    detail: `deno.json exempts "${DENEXT_EXCLUDE}" from Deno's minimum dependency age, so a ` +
+      "just-published @denext/* release resolves before the hold has passed; fix: " +
+      "`denext upgrade` removes the entry and pins versions old enough (keep it only if you " +
+      "publish denext yourself)",
+    critical: false,
+  };
+}
+
 /** The project's parsed `deno.json` (else `deno.jsonc`), or `null`. */
 async function readDenoJson(dir: string): Promise<Record<string, unknown> | null> {
   for (const name of ["deno.json", "deno.jsonc"]) {
@@ -543,6 +564,8 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   if (desktopRuntime) checks.push(desktopRuntime);
   const signing = await compileSigningCheck(paths.config);
   if (signing) checks.push(signing);
+  const depAge = await depAgeExemptionCheck(paths.projectDir);
+  if (depAge) checks.push(depAge);
   checks.push(...await backendChecks(paths.projectDir, paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };

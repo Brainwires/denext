@@ -158,17 +158,18 @@ The binary is cached beside Deno's own cache:
 denext never falls back to another Deno on its own. On a platform with no pinned build, offline on
 first use, or behind a failed or mismatching download, a command that needs the toolchain stops
 with one error that says why, names the fix (`denext toolchain install`) and the two explicit
-opt-outs above. A process
-that lacks the grants to install and run it (`--allow-run`, and read/write on the cache
-directory) stays on the Deno that launched it without a warning: that is the least-privilege
-`start` task `denext create` scaffolds (`deno run --allow-net --allow-read --allow-env
---allow-write=.denext …`), so production `start` runs on whichever `deno` started it. That
-`start` spawns no child process (the build already wrote what it serves), so it needs no
-`--allow-run` either. Run `start`
-with `-A` (or add `--allow-run` and write access to the cache) to serve on the toolchain, or
-start the server with `denext deno run …`. `denext toolchain status` says which Deno a command
-runs on. Only `denext toolchain install` fails when the toolchain can't be had, since installing
-it is all it does.
+opt-outs above. A command that runs project code (`start`, `dev`, `build`, `job`, …) in a process
+that lacks the grants to install and run the toolchain (`--allow-run`, and read/write on the cache
+directory) stops too, rather than run on another Deno, where `Deno.SQL` (`postgresClient()`, the
+Prisma adapter) and the toolchain's other changes would be missing. That is the case for the
+least-privilege `start` task `denext create` scaffolds (`deno run --allow-net --allow-read
+--allow-env --allow-write=.denext …`) when stock Deno runs it, so launch it on the toolchain
+instead: `denext task start` (a task's `deno` is the toolchain), the binary `denext toolchain path`
+prints, or the Dockerfile / systemd unit that [`denext deploy prepare`](/docs/deploy) writes, which
+run the server on the toolchain directly. Started on the toolchain, that `start` spawns no child
+process, so it needs no `--allow-run`. Running `start` with `-A` (or with `--allow-run` and write
+access to the cache) also works: it re-runs itself on the toolchain. `DENEXT_DENO=stock` keeps the
+command on the Deno that started it. `denext toolchain status` says which Deno a command runs on.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
 
@@ -318,7 +319,7 @@ denext toolchain uninstall <version>   # remove a cached version: its Deno toolc
 denext toolchain uninstall --all       # every cached version but the pinned one (--force: that one too)
 denext toolchain prune         # every version but the pinned ones (this denext's, and the project's here)
 denext deno <args…>            # run the toolchain's deno with <args…> verbatim; its exit code
-denext <deno verb> <args…>     # the same for any verb denext doesn't define (stock fallback)
+denext <deno verb> <args…>     # the same for any verb denext doesn't define (falls through to Deno's verb)
 ```
 
 `link` is the only command that puts the toolchain on your `PATH`, and only after you add the line
@@ -350,10 +351,28 @@ and the toolchain type-checks with its in-process TypeScript 6.0.3 instead, with
 was refused, or that it arrives with the toolchain.
 
 `DENEXT_NATIVE_CHECK=0` (or `false` / `off`) keeps the in-process TypeScript 6.0.3, and a
-`DENO_CHECK_ENGINE` you set yourself always wins. The native check doesn't resolve an absolute
-`file:` import yet (TS2307), so such a project sets `DENEXT_NATIVE_CHECK=0`
-([known limitations](/docs/limitations)); [the differences page](/docs/differences) lists how its
-output differs.
+`DENO_CHECK_ENGINE` you set yourself always wins. Before runtime 3.0.0-rc.1 the native check
+doesn't resolve an absolute `file:` import (TS2307), so such a project sets
+`DENEXT_NATIVE_CHECK=0` there ([known limitations](/docs/limitations)); runtime 3.0.0-rc.1+
+resolves it, and also checks `--doc` code blocks and `deno bundle --check` natively; [the differences page](/docs/differences) lists how its
+output differs, and the [explained type errors](/docs/error-handling#explained-type-errors) read
+both checkers' wording.
+
+The dev type-check overlay checks only the files an edit changed (and what they import). From
+runtime `3.0.0-rc.2` the native check also:
+
+- keeps the project it generates (`.deno/`) across edits that change only the app's own source,
+  instead of generating it for every check (a change to `deno.json`, the lockfile, an installed
+  `node_modules` or the external modules generates it again);
+- checks an app whose `jsxImportSource` runtime comes through the import map (`"jsxImportSource":
+  "denext"`, as every denext app has) natively under `denext test` and `run --check` too;
+- reads a `tsconfig.json` as TypeScript 7 does: the options TypeScript 7 removed (`baseUrl`,
+  `"moduleResolution": "node"`, `"target": "es5"`, …) are adapted rather than stopping the check,
+  and the file's `paths` sit beside the import map's mappings rather than replacing them.
+
+denext's own tooling reaches TypeScript in one place, `src/ts/`: the engine choice
+(`engine.ts`), the type check the dev overlay runs (`check.ts`) and TypeScript's program API for
+the parity extractors (`program-api.ts`, TypeScript 7.0's IPC client until 7.1's stable API).
 
 ## npm packages as on Node.js
 
@@ -418,6 +437,39 @@ One limitation: Deno 2.9 resolves a `deno.json` `file:` target on another drive 
 `file:///C:/D:/…`, so a project whose `deno.json` points at files on a different drive fails to
 resolve them. Keep the project and its `file:` targets on one drive.
 
+## Supply-chain hold
+
+Deno holds a package version published less than its _minimum dependency age_ ago out of
+resolution: a compromised release is refused while it is fresh. The window is the root
+`deno.json`'s `minimumDependencyAge` (minutes, an ISO-8601 duration such as `"P3D"`, a fixed date,
+or `{ "age": …, "exclude": [...] }`), else `.npmrc`'s `min-release-age`, else Deno's default
+(Deno 2.9.7 holds two days, although its error hint says 24 hours). denext's own packages wait
+like every other dependency: denext never switches the hold off on your behalf, and only forwards
+a `--min-dep-age` you set yourself (`DENEXT_MIN_DEP_AGE`) to the Deno processes it starts.
+
+`denext create`, `denext migrate` and `denext upgrade` pin the newest `@denext/*` versions the
+hold already lets in, read from JSR's publish times. On the day of a release that can be the
+previous version; the command says so in one line and pins it:
+
+```text
+denext 4.5.2 was published 3 h ago; your dependency-age rule allows it from Oct 22, 3:12 PM CDT. Pinned 4.5.1 for now — run "denext upgrade" after that.
+```
+
+Plugins and the other first-party packages get versions that are old enough and work with the
+denext pinned. When no version is old enough the command stops with the same explanation instead
+of Deno's resolver error; when JSR can't be reached it keeps the pins it would write and warns
+that Deno may hold them.
+
+Projects made by `denext create` / `migrate` from 3.0 to 4.5.1 exempted `jsr:@denext/*` in
+`minimumDependencyAge.exclude`. `denext upgrade` removes that one entry (your other entries stay)
+and says why. **If you publish denext yourself** and want your own releases resolved the moment
+they are out, add it back to the project's `deno.json`, knowing it lets any just-published
+`@denext/*` version in:
+
+```json
+"minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
+```
+
 ## Notes: how denext's Deno build is kept current
 
 <a id="versions"></a>**Versions.** Up to `2.9.7-denext.22` each build was named after the Deno release it
@@ -446,7 +498,7 @@ the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` include
 and a compiled program keeps `--unstable-no-legacy-abort`. `2.9.7-denext.22` (the build denext
 pins today) type-checks with the native TypeScript 7 compiler, shipped in the CLI zip and pinned
 like the binary, and runs npm packages more as Node.js does; that check doesn't resolve an absolute
-`file:` import yet, so such a project sets `DENEXT_NATIVE_CHECK=0`
+`file:` import (runtime 3.0.0-rc.1+ does), so such a project sets `DENEXT_NATIVE_CHECK=0`
 ([known limitations](/docs/limitations)). Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new release (`-denext.N` up to
 `2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). Deno's next minor

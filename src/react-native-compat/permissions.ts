@@ -416,14 +416,19 @@ function unsupported(name: string, why: string): Error {
 }
 
 /**
- * iOS's limited-library picker. Not available: use `pickImage` from `denext/mobile`.
+ * The photo picker: a thin wrapper over `pickImage` (`denext/mobile`) with `source: "photos"` (the
+ * system photo picker in the native shell, with `denext mobile add camera`; a file chooser for
+ * images on the web). As in react-native-permissions it resolves with nothing once the picker
+ * closes, a cancel included; the picture itself is not returned — call `pickImage()` from
+ * `denext/mobile` for it.
  *
- * @returns A rejected promise.
+ * @returns A promise that settles once the picker closed. It rejects when photo access is
+ * denied, or during SSR.
  */
-export function openPhotoPicker(): Promise<void> {
-  return Promise.reject(
-    unsupported("openPhotoPicker", 'Pick with `pickImage()` from "denext/mobile".'),
-  );
+export async function openPhotoPicker(): Promise<void> {
+  // Loaded on first use: the pickers stay out of a bundle that only checks permissions.
+  const { pickImage } = await import("../mobile/pickers.ts");
+  await pickImage({ source: "photos" });
 }
 
 /**

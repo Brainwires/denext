@@ -173,8 +173,10 @@ Deno.test("ensureAppDir exits(1) and prints when no routable tree exists", async
 Deno.test("SHUTDOWN_SIGNALS always traps SIGINT and is platform-appropriate", () => {
   assert(SHUTDOWN_SIGNALS.includes("SIGINT"));
   if (Deno.build.os === "windows") {
-    assert(SHUTDOWN_SIGNALS.includes("SIGBREAK"));
-    assert(!SHUTDOWN_SIGNALS.includes("SIGTERM"));
+    // Ctrl-Break, a closed console window (SIGHUP) and logoff / shutdown (SIGTERM) too.
+    for (const sig of ["SIGBREAK", "SIGHUP", "SIGTERM"]) {
+      assert(SHUTDOWN_SIGNALS.includes(sig as Deno.Signal), sig);
+    }
   } else {
     assert(SHUTDOWN_SIGNALS.includes("SIGTERM"));
     assert(!SHUTDOWN_SIGNALS.includes("SIGBREAK"));

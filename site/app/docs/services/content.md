@@ -150,8 +150,9 @@ export function onServiceError(error: unknown, context: { path: string }) {
 
 ## Shutdown and the server drain
 
-On `SIGINT` / `SIGTERM` the server stops accepting connections and waits for in-flight requests to
-finish (bounded by the drain deadline). **Then** every supervisor stops — the `services/` tree and
+On `SIGINT` / `SIGTERM` (on Windows: Ctrl-C, Ctrl-Break, or the Ctrl-C a service wrapper sends to
+stop it) the server stops accepting connections and waits for in-flight requests to finish
+(bounded by the drain deadline). **Then** every supervisor stops — the `services/` tree and
 any your code started — last-started first, each child in reverse start order: its `signal`
 aborts, its `stop()` runs, and the supervisor waits up to its `shutdownMs`. Plugin teardowns run
 after that, so a service can still use a database pool a plugin owns while it stops. A request

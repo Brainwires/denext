@@ -129,7 +129,36 @@ export function internals(c: unknown): ClassInternals {
   return (c as { __denext: ClassInternals }).__denext;
 }
 
-// Instantiation + the SSR render live in a leaf module, so the server renderer (reachable from
-// every app's client graph through the root `denext` entry) never reaches the base classes
-// above: they then ship only in the on-demand class runtime, not in every shared chunk.
-export { instantiateClass } from "./class-instance.ts";
+/**
+ * Construct a class instance and attach denext internals (the client class runtime's copy).
+ *
+ * The SSR renderer has its own in class-instance.ts, and this one must not import it: the
+ * server renderer is reachable from every app's client graph through the root `denext` entry,
+ * and the bundler places code by FILE, so a file both that graph and this on-demand runtime
+ * reach ships in a chunk every page loads, used or not. Keeping the two apart keeps the base
+ * classes above and this constructor in the class-runtime chunk.
+ *
+ * @param Ctor The class-component constructor.
+ * @param props Initial props.
+ * @param context Legacy `contextType` value, if any.
+ * @param inst The owning reconciler Instance.
+ * @returns The constructed class instance (with `__denext` internals).
+ */
+export function instantiateClass(
+  Ctor: unknown,
+  props: unknown,
+  context: unknown,
+  inst: unknown,
+): object {
+  const c = new (Ctor as Any)(props, context);
+  const own: ClassInternals = {
+    inst: inst as ReconcilerInstance,
+    pendingState: [],
+    pendingCallbacks: [],
+    forced: false,
+    mounted: false,
+  };
+  Object.defineProperty(c, "__denext", { value: own, enumerable: false, writable: true });
+  c.state ??= {};
+  return c;
+}

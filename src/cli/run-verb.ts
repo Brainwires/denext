@@ -23,7 +23,7 @@ import {
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "../build/deno-toolchain.ts";
-import { applyNativeCheckEngine } from "../build/native-check.ts";
+import { applyNativeCheckEngine } from "../ts/engine.ts";
 import { denoPathEnv } from "./deno-path.ts";
 import { resolveProject } from "../build/paths.ts";
 import {
@@ -184,20 +184,39 @@ async function injectCssRedirectsTransiently(
 let runningChild: Deno.ChildProcess | null = null;
 
 /**
- * Forward the shutdown signals this process receives to `child` (as SIGTERM on Unix; as a
- * plain termination on Windows, which has no signals), so `kill <pid>` / `docker stop` / Ctrl-C
- * reach a re-exec'd server instead of orphaning it, then resolve with the code the process
- * should exit with: the child's own, or — when the child died of a signal — `128 + signal`,
- * as a shell would report (Deno's `status.code` already carries that on Unix).
+ * What this process does with a shutdown signal while `child` runs: on Unix, relay it as
+ * SIGTERM, so `kill <pid>` / `docker stop` reach a re-exec'd server instead of orphaning it. On
+ * Windows, a console event (Ctrl-C, Ctrl-Break, a closed window, logoff, shutdown — what a service
+ * wrapper sends too) reaches every process on the console, the child included, which is already
+ * draining: killing it here would be `TerminateProcess` mid-drain. So the first one is left to the
+ * child, and only a second one stops it outright, as a second Ctrl-C ends a foreground server.
+ *
+ * @param child The re-exec child.
+ * @param os The platform (tests).
+ * @returns The signal listener.
  */
-async function forwardShutdown(child: Deno.ChildProcess): Promise<number> {
-  const forward = () => {
+export function shutdownForwarder(
+  child: Pick<Deno.ChildProcess, "kill">,
+  os: typeof Deno.build.os = Deno.build.os,
+): () => void {
+  let signals = 0;
+  return () => {
+    signals++;
     try {
-      // Windows has no signal to forward: `kill()` terminates the child outright.
-      if (Deno.build.os === "windows") child.kill();
-      else child.kill("SIGTERM");
+      if (os !== "windows") child.kill("SIGTERM");
+      else if (signals > 1) child.kill();
     } catch { /* already exited */ }
   };
+}
+
+/**
+ * Forward the shutdown signals this process receives to `child` ({@linkcode shutdownForwarder}),
+ * then resolve with the code the process should exit with: the child's own, or — when the child
+ * died of a signal — `128 + signal`, as a shell would report (Deno's `status.code` already carries
+ * that on Unix).
+ */
+async function forwardShutdown(child: Deno.ChildProcess): Promise<number> {
+  const forward = shutdownForwarder(child);
   for (const sig of SHUTDOWN_SIGNALS) {
     try {
       Deno.addSignalListener(sig, forward);
@@ -564,7 +583,7 @@ export async function runVerb(
   const command = await materializeCommand(parsed);
   if (await toolchainGate(command, ctx)) return;
   // On the toolchain now: its type checking runs natively unless the compiler is unverified or the
-  // project opts out (src/build/native-check.ts) — decided before the verb starts any Deno.
+  // project opts out (src/ts/engine.ts) — decided before the verb starts any Deno.
   const standalone = isStandaloneBinary();
   if (toolchainApplies(command, ctx.positionals[0], standalone)) {
     // A compiled executable's children run the toolchain it handed them (its marker).

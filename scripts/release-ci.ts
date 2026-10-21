@@ -1,13 +1,16 @@
-// The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs and every
-// desktop-ci.yml job passed on.
+// The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs, every
+// desktop-ci.yml job, every e2e.yml job and every desktop-window.yml job passed on.
 // A push to `development` runs only the fast jobs (integration, next-compat, coverage,
 // backend-integration and windows-tests stay on pull requests, `main` and a manual dispatch), so `deno task release`
 // asks GitHub for the ci.yml runs on HEAD and refuses unless the newest one that ran those jobs
-// has every required job green. desktop-ci.yml runs on a push only when the desktop surface
-// changed (its `paths` filter), so the release asks for its newest run on HEAD, push or dispatch,
-// and refuses unless that run finished with every job green.
-// On `development` both are dispatches: `gh workflow run ci.yml --ref development` and
-// `gh workflow run desktop-ci.yml --ref development`.
+// has every required job green. desktop-ci.yml and desktop-window.yml run on a push only when their
+// `paths` filter matches, and e2e.yml only on a dispatch, so for each of those the release asks
+// for its newest run on HEAD, push or dispatch, and refuses unless that run finished with every
+// job green (e2e.yml dispatched with `-f job=<one>` skips the rest, so it is refused: the release
+// needs a full run).
+// On `development` all four are dispatches: `gh workflow run ci.yml --ref development`,
+// `gh workflow run desktop-ci.yml --ref development`, `gh workflow run e2e.yml --ref development`
+// and `gh workflow run desktop-window.yml --ref development`.
 
 /** The ci.yml jobs a release needs green on the commit it is cut from. */
 export const RELEASE_CI_JOBS: readonly string[] = [
@@ -39,6 +42,25 @@ export const DESKTOP_CI_JOBS: readonly string[] = [
   "installers (macos-latest — .dmg mounted, .pkg installed; unsigned)",
   "scaffold + package-script drift",
   "windows on arm (windows-11-arm — desktop tests, install.ps1, Arm64 .msi)",
+];
+
+/**
+ * The e2e.yml jobs a release needs green on the commit it is cut from: real-browser hydration,
+ * HMR and the `denext ui` panels (`e2e`), the migration beds, the timer stress runs and the
+ * no-Deno install. A dispatch of one job (`-f job=e2e`) skips the others and can't vouch.
+ */
+export const E2E_JOBS: readonly string[] = ["e2e", "migration-beds", "timer-stress", "no-deno"];
+
+/**
+ * The desktop-window.yml jobs a release needs green on the commit it is cut from: a real packaged
+ * window on each OS, and the job that compares every check across them.
+ */
+export const DESKTOP_WINDOW_JOBS: readonly string[] = [
+  "window test (linux-x64)",
+  "window test (macos-arm64)",
+  "window test (macos-x64)",
+  "window test (windows-x64)",
+  "results by OS",
 ];
 
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
@@ -155,35 +177,71 @@ async function runJobs(run: CiRun, gh: GhJson): Promise<CiJob[]> {
 }
 
 /**
+ * The verdict on `workflow`'s newest run on `sha` (a push or a dispatch): it must have finished
+ * with every `required` job green and no other job failed.
+ */
+async function newestRunVerdict(
+  workflow: string,
+  required: readonly string[],
+  sha: string,
+  gh: GhJson,
+): Promise<CiVerdict> {
+  const [run] = await workflowRuns(workflow, sha, gh);
+  if (!run) return { ok: false, reason: `no ${workflow} run on ${sha}` };
+  if (run.status !== "completed") {
+    return { ok: false, reason: `${workflow} ${run.event} run on ${sha} is ${run.status}`, run };
+  }
+  const jobs = await runJobs(run, gh);
+  const others = jobs.filter((j) =>
+    !required.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
+  ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
+  const unmet = [...unmetCiJobs(jobs, required), ...others];
+  return unmet.length === 0
+    ? { ok: true, reason: `${workflow} ${run.event} run is green on ${sha}`, run }
+    : { ok: false, reason: `${workflow} ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+}
+
+/**
  * Check desktop-ci.yml on `sha`: its newest run there (a push or a dispatch) must have finished
  * with every {@linkcode DESKTOP_CI_JOBS} job green and no other job failed.
  *
  * @param sha The commit to release (HEAD).
  * @param gh How `gh` is reached (default: the GitHub CLI).
  */
-export async function desktopCiVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
-  const [run] = await workflowRuns("desktop-ci.yml", sha, gh);
-  if (!run) return { ok: false, reason: `no desktop-ci.yml run on ${sha}` };
-  if (run.status !== "completed") {
-    return { ok: false, reason: `desktop-ci.yml ${run.event} run on ${sha} is ${run.status}`, run };
-  }
-  const jobs = await runJobs(run, gh);
-  const others = jobs.filter((j) =>
-    !DESKTOP_CI_JOBS.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
-  ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
-  const unmet = [...unmetCiJobs(jobs, DESKTOP_CI_JOBS), ...others];
-  return unmet.length === 0
-    ? { ok: true, reason: `desktop-ci.yml ${run.event} run is green on ${sha}`, run }
-    : { ok: false, reason: `desktop-ci.yml ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+export function desktopCiVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
+  return newestRunVerdict("desktop-ci.yml", DESKTOP_CI_JOBS, sha, gh);
 }
 
-/** What to run to get the heavy jobs and desktop-ci onto `sha` on `branch`. */
+/**
+ * Check e2e.yml on `sha`: its newest run there must have run every {@linkcode E2E_JOBS} job, green.
+ *
+ * @param sha The commit to release (HEAD).
+ * @param gh How `gh` is reached (default: the GitHub CLI).
+ */
+export function e2eVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
+  return newestRunVerdict("e2e.yml", E2E_JOBS, sha, gh);
+}
+
+/**
+ * Check desktop-window.yml on `sha`: its newest run there (a push or a dispatch) must have finished
+ * with every {@linkcode DESKTOP_WINDOW_JOBS} job green.
+ *
+ * @param sha The commit to release (HEAD).
+ * @param gh How `gh` is reached (default: the GitHub CLI).
+ */
+export function desktopWindowVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
+  return newestRunVerdict("desktop-window.yml", DESKTOP_WINDOW_JOBS, sha, gh);
+}
+
+/** The workflows the release gates on, in the order its hint dispatches them. */
+const GATED_WORKFLOWS = ["ci.yml", "desktop-ci.yml", "e2e.yml", "desktop-window.yml"];
+
+/** What to run to get every gated workflow onto `sha` on `branch`. */
 export function releaseCiHint(branch: string): string {
   const watch = (workflow: string) =>
     `    gh run watch "$(gh run list --workflow=${workflow} --event=workflow_dispatch --limit 1 ` +
     `--json databaseId -q '.[0].databaseId')" --exit-status`;
-  return `push ${branch}, then run ci.yml and desktop-ci.yml on it and wait for both:\n` +
-    `    gh workflow run ci.yml --ref ${branch}\n` +
-    `    gh workflow run desktop-ci.yml --ref ${branch}\n` +
-    `${watch("ci.yml")}\n${watch("desktop-ci.yml")}`;
+  return `push ${branch}, then run ${GATED_WORKFLOWS.join(", ")} on it and wait for all four:\n` +
+    GATED_WORKFLOWS.map((w) => `    gh workflow run ${w} --ref ${branch}\n`).join("") +
+    GATED_WORKFLOWS.map(watch).join("\n");
 }

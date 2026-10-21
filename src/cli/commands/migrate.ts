@@ -2,7 +2,8 @@
 // (the standalone source-import rewrite half). Extracted verbatim from the 1.x
 // `cli.ts` switch arms, now reading parsed flags instead of scanning `Deno.args`.
 
-import { resolve } from "@std/path";
+import { basename, dirname, resolve } from "@std/path";
+import { pinEligibleFile } from "../../build/eligible-pins.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { type AppIconReport, type MigrateOptions, migrateProject } from "../../build/migrate.ts";
 import {
@@ -855,6 +856,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       if (!json) console.log(`\n  denext migrate  ▸  ${target}\n`);
       const desktop = options.desktop === true;
       const r = await migrateProject(target, options);
+      await pinMigratedEligible(target, r, json === true);
       if (json) {
         // Machine-readable: the result object only (no banner, no prompts). `--codemod`
         // applies with `--yes`, else reports its plan as a dry run. The Capacitor steps'
@@ -889,6 +891,24 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       );
     },
   };
+}
+
+/**
+ * Move the migrated config's `@denext/*` pins to versions Deno's dependency-age hold lets in
+ * (this CLI's own release can be too new for it), and say so; exit 1 when none is old enough.
+ */
+async function pinMigratedEligible(target: string, r: MigrateResult, json: boolean) {
+  const path = r.wrote.find((p) =>
+    dirname(p) === target && (basename(p) === "deno.json" || basename(p) === "deno.jsonc")
+  );
+  if (!path || r.denoJsonExists) return;
+  const out = await pinEligibleFile(path, target);
+  const print = json ? console.error : console.log;
+  for (const note of out.notes) print(`  ${note}\n`);
+  if (!out.ok) {
+    console.error(`denext migrate: ${out.error}`);
+    Deno.exit(1);
+  }
 }
 
 export const migrateCommand: CommandSpec = createMigrateCommand();

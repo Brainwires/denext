@@ -5,7 +5,7 @@
 // callable so the 1.0 API surface is unchanged; only the runtime value differs.
 
 import "./helpers/class-runtime.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Component, forwardRef, memo } from "../src/compat/react.ts";
 import { isForwardRef, isMemo, isValidElementType } from "../src/compat/react-is.ts";
@@ -113,30 +113,71 @@ Deno.test("memo / forwardRef render on the server (SSR)", async () => {
   assertEquals(await renderToString(h(MF as Any, { label: "q" })), "<u>q</u>");
 });
 
-Deno.test("memo() of a class component throws a guided error", async () => {
-  class Cls extends Component<Record<string, never>> {
+Deno.test("memo() of a class component renders the class, as in React (SSR + client)", async () => {
+  let renders = 0;
+  class Cls extends Component<{ n: number; tag?: string }> {
     override render() {
-      return h("span", null, "c");
+      renders++;
+      return h("span", null, `c${this.props.n}`);
     }
   }
   const MC = memo(Cls as Any);
   // SSR path.
-  await assertRejects(
-    async () => {
-      await renderToString(h(MC as Any, {}));
-    },
-    Error,
-    "memo() of a class component",
-  );
-  // Client path.
+  assertEquals(await renderToString(h(MC as Any, { n: 1 })), "<span>c1</span>");
+  // Client path: the default compare is shallow, so equal props skip the class's render.
   const { doc, container } = makeDom();
   setDocument(doc as Any);
-  assertThrows(
-    () => {
-      createRoot(container as Any).render(h(MC as Any, {}));
-      flushSync();
-    },
-    Error,
-    "memo() of a class component",
-  );
+  const root = createRoot(container as Any);
+  root.render(h(MC as Any, { n: 1 }));
+  flushSync();
+  assertEquals(container.innerHTML, "<span>c1</span>");
+  assertEquals(renders, 2); // one SSR + one client mount
+  root.render(h(MC as Any, { n: 1 }));
+  flushSync();
+  assertEquals(renders, 2, "shallow-equal props skip the class's render");
+  root.render(h(MC as Any, { n: 2 }));
+  flushSync();
+  assertEquals(container.innerHTML, "<span>c2</span>");
+  assertEquals(renders, 3, "changed props re-render the class");
+});
+
+Deno.test("memo(Class, compare) uses the custom compare", () => {
+  let renders = 0;
+  class Cls extends Component<{ n: number; tag: string }> {
+    override render() {
+      renders++;
+      return h("span", null, `${this.props.tag}${this.props.n}`);
+    }
+  }
+  // Equal when `n` matches, whatever `tag` is.
+  const MC = memo(Cls as Any, (a: Any, b: Any) => a.n === b.n);
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const root = createRoot(container as Any);
+  root.render(h(MC as Any, { n: 1, tag: "a" }));
+  flushSync();
+  assertEquals(container.innerHTML, "<span>a1</span>");
+  root.render(h(MC as Any, { n: 1, tag: "b" }));
+  flushSync();
+  assertEquals(container.innerHTML, "<span>a1</span>", "compare said equal: no re-render");
+  assertEquals(renders, 1);
+  root.render(h(MC as Any, { n: 2, tag: "b" }));
+  flushSync();
+  assertEquals(container.innerHTML, "<span>b2</span>");
+  assertEquals(renders, 2);
+  // A compare that always says "changed" re-renders even for identical props.
+  let always = 0;
+  class Always extends Component<{ n: number }> {
+    override render() {
+      always++;
+      return h("i", null, String(this.props.n));
+    }
+  }
+  const MA = memo(Always as Any, () => false);
+  const props = { n: 5 };
+  root.render(h(MA as Any, props));
+  flushSync();
+  root.render(h(MA as Any, props));
+  flushSync();
+  assertEquals(always, 2, "compare → false re-renders the class");
 });

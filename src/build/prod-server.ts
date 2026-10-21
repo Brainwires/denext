@@ -11,6 +11,7 @@ import { join } from "@std/path";
 import { applyPlugins, runPluginTeardown } from "../plugin/mod.ts";
 import { releaseDefaultCacheStore } from "../server/cache.ts";
 import { stopServices } from "../server/service-loader.ts";
+import { checkSessionSecretAtBoot } from "../server/session.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import { loadPartytownBuild, PARTYTOWN_BUILD_DIR } from "./partytown.ts";
@@ -125,6 +126,8 @@ export async function startProdServer(options: ProdServerOptions): Promise<Deno.
 
   const clientDir = join(paths.outDir, "client");
   await assertBuilt(paths, clientDir);
+  // A short SESSION_SECRET takes the instance out of rotation before the first request.
+  checkSessionSecretAtBoot();
   // `<Script strategy="worker">`: the Partytown files the build wrote, when the app turned it on.
   await loadPartytownBuild(paths.config, join(clientDir, PARTYTOWN_BUILD_DIR));
   // The server render's loader (the build's platform files and copies), which plugins render

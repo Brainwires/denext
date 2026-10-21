@@ -281,3 +281,54 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name:
+    "compileApp: the compile config carries the app's minimumDependencyAge; DENEXT_MIN_DEP_AGE is forwarded",
+  ignore: Deno.build.os === "windows", // the stand-in `deno` is a shell script
+  fn: async () => {
+    // Up to 4.5.0 `.denext/compile/deno.json` dropped the app's `minimumDependencyAge`, so a
+    // just-published @denext/denext (which the app's config excludes from the hold) was refused by
+    // `deno compile` for 24 h after every release, and the operator's DENEXT_MIN_DEP_AGE never
+    // reached it either.
+    const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compile_age_" }));
+    const before = Deno.env.get("DENEXT_MIN_DEP_AGE");
+    try {
+      const policy = { exclude: ["jsr:@denext/*"] };
+      await Deno.writeTextFile(
+        join(dir, "deno.json"),
+        JSON.stringify({ imports: {}, minimumDependencyAge: policy }),
+      );
+      await Deno.mkdir(join(dir, ".denext"), { recursive: true });
+      // A stand-in `deno` that records its arguments and the config it was handed.
+      const record = join(dir, "record.json");
+      const fake = join(dir, "fake-deno.sh");
+      await Deno.writeTextFile(
+        fake,
+        `#!/bin/sh\nout=""; prev=""\nfor a in "$@"; do\n  if [ "$prev" = "--config" ]; then cfg="$a"; fi\n` +
+          `  if [ "$prev" = "--output" ]; then out="$a"; fi\n  prev="$a"\ndone\n` +
+          `printf '%s\\n' "$@" > "${record}.args"\ncp "$cfg" "${record}"\n: > "$out"\n`,
+      );
+      await Deno.chmod(fake, 0o755);
+      const compiled = async () => {
+        await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+        return {
+          config: JSON.parse(await Deno.readTextFile(record)),
+          args: (await Deno.readTextFile(`${record}.args`)).trim().split("\n"),
+        };
+      };
+      Deno.env.delete("DENEXT_MIN_DEP_AGE");
+      const app = await compiled();
+      assertEquals(app.config.minimumDependencyAge, policy);
+      assertEquals(app.args.filter((a) => a.startsWith("--min-dep-age")), []);
+      Deno.env.set("DENEXT_MIN_DEP_AGE", "0");
+      const forced = await compiled();
+      assertEquals(forced.config.minimumDependencyAge, "0");
+      assertEquals(forced.args.filter((a) => a.startsWith("--min-dep-age")), ["--min-dep-age=0"]);
+    } finally {
+      if (before === undefined) Deno.env.delete("DENEXT_MIN_DEP_AGE");
+      else Deno.env.set("DENEXT_MIN_DEP_AGE", before);
+      await removeTempDir(dir);
+    }
+  },
+});

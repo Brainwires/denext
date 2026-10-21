@@ -8,6 +8,7 @@
 
 import { envGet } from "../runtime/env-safe.ts";
 import { cookies } from "./request-context.ts";
+import { registerHealthCheck } from "./health.ts";
 
 /** Options for {@linkcode getSession}. */
 export interface SessionOptions {
@@ -238,11 +239,11 @@ export function isWeakSecret(secret: string | readonly string[]): boolean {
 function sessionSecrets(options: SessionOptions): string[] {
   const secrets = Array.isArray(options.secret) ? options.secret : [options.secret];
   if (secrets.length === 0 || secrets.some((s) => !s)) {
-    throw new Error("getSession: `secret` must be a non-empty string (or array of them).");
+    refuseSecret("getSession: `secret` must be a non-empty string (or array of them).");
   }
   const weak = isWeakSecret(secrets);
   if (weak && isProductionEnv()) {
-    throw new Error(
+    refuseSecret(
       `denext: session secret is shorter than ${MIN_SECRET_LENGTH} chars — refusing to sign ` +
         "sessions in production with a brute-forceable secret. Set a long, random secret " +
         "(e.g. `openssl rand -base64 32`).",
@@ -256,6 +257,58 @@ function sessionSecrets(options: SessionOptions): string[] {
     );
   }
   return secrets;
+}
+
+/** Unregisters the `session` readiness check once it is down (`null` while healthy). */
+let sessionDown: (() => void) | null = null;
+
+/**
+ * Take the instance out of rotation: in production, `/_denext/health`'s `session` check reports
+ * `down` (the probe answers 503) from now on, and the cause is logged once. A deploy with a
+ * missing or brute-forceable secret then fails its load balancer's / HEALTHCHECK's probe instead
+ * of answering `ok` while every page that signs a session 500s. The secret is handed to
+ * `getSession` by the app at call time, so it cannot be checked before the first call in general;
+ * `SESSION_SECRET` itself is checked at boot ({@linkcode checkSessionSecretAtBoot}).
+ */
+function markSessionMisconfigured(message: string): void {
+  if (sessionDown || !isProductionEnv()) return;
+  sessionDown = registerHealthCheck("session", () => false);
+  console.error(
+    `${message}\n  /_denext/health now reports session: "down" (503) until the server restarts ` +
+      "with a valid secret.",
+  );
+}
+
+/** Refuse a secret: mark the instance unhealthy ({@linkcode markSessionMisconfigured}), then throw. */
+function refuseSecret(message: string): never {
+  markSessionMisconfigured(message);
+  throw new Error(message);
+}
+
+/**
+ * At production boot: a `SESSION_SECRET` that is set but shorter than 32 characters marks the
+ * instance unhealthy (`/_denext/health` → 503, `session: "down"`) and says why, before any request
+ * reaches `getSession`. An unset one is not reported: the app may sign no sessions, or read its
+ * secret elsewhere; a missing secret is caught on the first `getSession` call instead.
+ *
+ * @param env Reads an environment variable (default: the process environment).
+ */
+export function checkSessionSecretAtBoot(
+  env: (name: string) => string | undefined = envGet,
+): void {
+  const secret = env("SESSION_SECRET");
+  if (!isProductionEnv() || !secret || !isWeakSecret(secret)) return;
+  markSessionMisconfigured(
+    `denext: SESSION_SECRET is shorter than ${MIN_SECRET_LENGTH} chars — getSession() refuses ` +
+      "to sign sessions in production with it. Set a long, random secret (e.g. " +
+      "`openssl rand -base64 32`).",
+  );
+}
+
+/** Bring the `session` readiness check back up (tests). */
+export function resetSessionHealthForTesting(): void {
+  sessionDown?.();
+  sessionDown = null;
 }
 
 /** The session data carried by a valid, unexpired, correctly signed cookie — else null. */

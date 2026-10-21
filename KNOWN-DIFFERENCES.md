@@ -381,12 +381,11 @@ Where `@denext/backend` deliberately departs from Supabase. See
   and a personal OAuth login linked to it would outlive that. Okta, WorkOS, Clerk and Auth0
   Organizations enforce the same rule. Linking still works from an SSO session, so the user keeps
   the provider's tokens for API access; the linked identity only can't sign in.
-- **`/auth/v1` mail templates take GoTrue's placeholders only.** `GOTRUE_MAILER_TEMPLATES_*`
-  are fetched and rendered with `{{ .ConfirmationURL }}`, `{{ .Token }}`, `{{ .TokenHash }}`,
-  `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{ .RedirectTo }}`; a template with any
-  other Go template action (`{{ if }}`, `{{ .Data }}`) gets the built-in one instead. SMTP needs
-  TLS (implicit on 465, else STARTTLS), where GoTrue falls back to plaintext when the server
-  offers no STARTTLS.
+- **`/auth/v1` mail templates take Go's template language without `define` / `template`.**
+  `GOTRUE_MAILER_TEMPLATES_*` render as GoTrue renders them (fields, `.Data`, `if` / `with` /
+  `range`, variables, pipes and the builtin functions); one that defines or calls a named template,
+  or calls `js`, `slice` or `call`, gets the built-in one instead. SMTP needs TLS (implicit on 465,
+  else STARTTLS), where GoTrue falls back to plaintext when the server offers no STARTTLS.
 - **`/auth/v1` `logout?scope=global` also ends denextAuth cookie sessions.** GoTrue's global
   logout ends the user's token sessions; denext ends their cookie sessions too (stateless ones
   through `sessionsValidAfter`), and `scope=others` ends every cookie session while keeping the
@@ -522,12 +521,22 @@ from TypeScript 7.0's compiler rather than `tsc` 6:
   printed `"light" | "dark"`, so a "use one of" suggestion lists them in that order.
 - TypeScript 7.0.2 rejects a regular expression character-class range bounded by a literal
   (unescaped) character above U+07FF with TS1516; write the escape (`\uD7FF`) instead.
+- An unresolved bare import reads `Cannot find module 'zod' or its corresponding type
+  declarations` (TS2307) without Deno's `deno add` hint; the explanation names the package to add
+  either way.
+- `import x = require("m")` in an ES module is an error (TS1202), which the in-process checker let
+  through.
+- In a `tsconfig.json`, an option TypeScript 7 removed (`baseUrl`, `"moduleResolution": "node"`,
+  `"target": "es5"`, …) stops the whole check (TS5102 / TS5108) on runtimes before `3.0.0-rc.2`,
+  which adapts them; the in-process checker reports `baseUrl` as deprecated (TS5101).
 - The check writes a generated `tsconfig.json` and the dependency types it needs into the project's
   `.deno/` (with its own `.gitignore`).
 - A graph the stock project model can't express yet (sloppy imports, `--ext`, `text` / `bytes`
   imports, `@deno-types` / `X-TypeScript-Types` redirects, CommonJS modules, code blocks checked
-  with `--doc`, a Vitest or Jest config's aliases, a custom JSR registry) is checked by the
-  in-process TypeScript 6.0.3, as before. `DENEXT_NATIVE_CHECK=0` selects it for everything.
+  with `--doc` before runtime 3.0.0-rc.1, a Vitest or Jest config's aliases, a custom JSR registry, a worker's graph,
+  declaration emit) is checked by the in-process TypeScript 6.0.3, as before; before runtime
+  `3.0.0-rc.2` so is a graph whose `jsxImportSource` runtime comes through the import map under
+  `denext test` / `run --check`. `DENEXT_NATIVE_CHECK=0` selects it for everything.
 
 ## Security posture — safe defaults
 

@@ -322,12 +322,24 @@ Deno.test("the secrets follow the features: auth, backend, storage", () => {
   assert(names({ storage: true }).includes("MINIO_ROOT_PASSWORD"));
 });
 
-Deno.test("the Dockerfile runs on denext's toolchain only when Postgres / the backend needs it", () => {
-  const plain = renderDockerfile({ mode: "server", denoTag: "2.9.7" });
-  assert(!plain.includes("toolchain"), "a plain app keeps the stock runtime");
-  const pg = renderDockerfile({ mode: "server", denoTag: "2.9.7", postgres: true });
-  assertStringIncludes(pg, "jsr:@denext/denext/cli toolchain path");
-  assertStringIncludes(pg, "ENV PATH=/deno-dir/toolchain-bin:$PATH");
+Deno.test("every Dockerfile serves on denext's toolchain, linked before its CMD", () => {
+  // Up to 4.5.0 only a Postgres / backend image did: a plain app's `start` ran on the image's
+  // stock Deno, so Deno.SQL (postgresClient(), the Prisma adapter) was missing in production.
+  for (
+    const options of [
+      { mode: "server", denoTag: "2.9.7" },
+      { mode: "server", denoTag: "2.9.7", postgres: true },
+      { mode: "static", denoTag: "2.9.7" },
+    ] as const
+  ) {
+    const file = renderDockerfile(options);
+    // `toolchain path` installs the pinned build SHA-256-verified (the build already did).
+    assertStringIncludes(file, "jsr:@denext/denext/cli toolchain path");
+    const path = file.indexOf("ENV PATH=/deno-dir/toolchain-bin:$PATH");
+    assert(path > 0, file);
+    assert(path < file.indexOf("\nCMD "), "linked before the server starts");
+    assert(path < file.indexOf("HEALTHCHECK"), "the probe runs on it too");
+  }
 });
 
 Deno.test("dockerPlan: the stack adds .env.example, --dev adds compose.dev.yml", async () => {
@@ -654,4 +666,28 @@ Deno.test("stack defaults: the app is not the superuser, per-IP limits on, presi
   assertEquals(web.S3_PUBLIC_ENDPOINT, "${S3_PUBLIC_ENDPOINT:-http://localhost:9000}");
   const dev = parse(renderComposeDev(FULL, 3000)) as { services: Record<string, unknown> };
   assertEquals(dev.services.minio, undefined, "published once, by the production file");
+});
+
+Deno.test("a Gleam app's image installs CA certificates before its build fetches Gleam packages", async () => {
+  // The Gleam compiler fetches packages over TLS and denoland/deno ships no CA bundle: up to 4.5.0
+  // the build failed ("HTTP error … builder error") until ca-certificates was installed by hand.
+  const dir = await Deno.makeTempDir({ prefix: "denext_docker_gleam_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'import { gleam } from "denext/gleam";\nexport default { plugins: [gleam()] };\n',
+    );
+    const { options } = await resolveDocker(dir, { denoTag: "2.9.7" });
+    for (const mode of ["server", "static"] as const) {
+      const file = renderDockerfile({ ...options, mode });
+      const certs = file.indexOf("apt-get install -y --no-install-recommends ca-certificates");
+      assert(certs > 0, file);
+      assert(certs < file.indexOf("USER deno"), "installed as root, before the build");
+    }
+    const plain = renderDockerfile({ mode: "server", denoTag: "2.9.7" });
+    assert(!plain.includes("ca-certificates"), "only when the app compiles Gleam");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

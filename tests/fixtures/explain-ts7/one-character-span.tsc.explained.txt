@@ -1,0 +1,19 @@
+TS2322: Type mismatch at `v`
+  at main.ts:1:14
+
+  > 1 | export const v: number = "x";
+                     ^
+    2 | 
+
+  `v` is `string` here, but its type expects `number`.
+
+  Fix: Make `v` a `number`, or widen its declared type.
+
+  Original (deno check):
+  │ TS2322 [ERROR]: Type 'string' is not assignable to type 'number'.
+  │ export const v: number = "x";
+  │              ^
+  │     at file:///app/main.ts:1:14
+
+error: Type checking failed.
+

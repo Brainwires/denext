@@ -548,6 +548,32 @@ function looksLikeSvg(bytes: Uint8Array): boolean {
   return head.includes("<svg");
 }
 
+/** ASCII codes of `text`. */
+const ascii = (text: string): number[] => [...text].map((c) => c.charCodeAt(0));
+
+/**
+ * Raster image signatures, each a list of `[offset, bytes]` parts that must all match: PNG, JPEG,
+ * GIF, WebP, AVIF / HEIF (an ISO-BMFF `ftyp` box), BMP, TIFF (both byte orders) and ICO.
+ */
+const IMAGE_SIGNATURES: ReadonlyArray<ReadonlyArray<readonly [number, readonly number[]]>> = [
+  [[0, [0x89, 0x50, 0x4e, 0x47]]],
+  [[0, [0xff, 0xd8, 0xff]]],
+  [[0, ascii("GIF8")]],
+  [[0, ascii("RIFF")], [8, ascii("WEBP")]],
+  [[4, ascii("ftyp")]],
+  [[0, ascii("BM")]],
+  [[0, [0x49, 0x49, 0x2a, 0x00]]],
+  [[0, [0x4d, 0x4d, 0x00, 0x2a]]],
+  [[0, [0x00, 0x00, 0x01, 0x00]]],
+];
+
+/** Whether `bytes` open with one of {@linkcode IMAGE_SIGNATURES}. */
+function hasImageSignature(bytes: Uint8Array): boolean {
+  return IMAGE_SIGNATURES.some((parts) =>
+    parts.every(([offset, sig]) => sig.every((b, i) => bytes[offset + i] === b))
+  );
+}
+
 /**
  * Handle a `/_denext/image` optimization request: validate the `url`/`w`/`q` params
  * against the configured allowlists (SSRF-safe fetch, local/remote patterns), decode
@@ -675,6 +701,13 @@ async function loadAndEncode(
 ): Promise<Uint8Array | Response> {
   const bytes = await loadSource(src, opts);
   if (!bytes) return new Response("image not found", { status: 404 });
+  if (!looksLikeSvg(bytes) && !hasImageSignature(bytes)) {
+    // A stylesheet, a script, a text file: no decoder takes it. One line, no stack — the
+    // endpoint is public, and a failure here used to log the decoder's whole trace per request.
+    // Next.js's answer for the same request.
+    console.warn(`denext: image optimizer: ${JSON.stringify(src)} is not an image (400)`);
+    return new Response("The requested resource isn't a valid image.", { status: 400 });
+  }
   return await decodeResizeEncode(
     bytes,
     (sw, sh) => ({

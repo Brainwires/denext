@@ -4,7 +4,14 @@
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { join, resolve } from "@std/path";
-import { checkFloor, flooredFiles, main, parseLcov, pct } from "../scripts/coverage-floor.ts";
+import {
+  checkFloor,
+  FLOORED_FULL,
+  flooredFiles,
+  main,
+  parseLcov,
+  pct,
+} from "../scripts/coverage-floor.ts";
 
 /** The fixture project root, absolute on this OS (`D:\\p` on Windows). */
 const ROOT = resolve("/p");
@@ -143,6 +150,55 @@ Deno.test("main: exit 1 naming the files under the floor, 0 when all pass, --rep
     assertStringIncludes(errs.join("\n"), "usage: coverage-floor.ts");
   } finally {
     [console.error, console.log] = prev;
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("flooredFiles --full: the whole-suite floor adds the 4.x files raised past 50% lines", async () => {
+  assertEquals(FLOORED_FULL.map((f) => f.dir), ["src/cli", "packages/tanstack-start/src"]);
+  const root = await Deno.makeTempDir();
+  try {
+    for (
+      const f of [
+        "src/desktop/a.ts",
+        "src/cli/cli-cache.ts",
+        "src/cli/run-verb.ts",
+        "packages/tanstack-start/src/use-server.ts",
+        "packages/tanstack-start/src/toolchain.ts",
+      ]
+    ) {
+      await Deno.mkdir(join(root, f, ".."), { recursive: true });
+      await Deno.writeTextFile(join(root, f), "");
+    }
+    // The desktop run (coverage:desktop) loads only the desktop suites: it keeps its own set.
+    assertEquals(await flooredFiles(root), ["src/desktop/a.ts"]);
+    assertEquals(await flooredFiles(root, true), [
+      "packages/tanstack-start/src/use-server.ts",
+      "src/cli/cli-cache.ts",
+      "src/desktop/a.ts",
+    ]);
+    // `--full` holds them to the floor: one no test loaded fails the run.
+    const file = join(root, "lcov.info");
+    const abs = (f: string) => resolve(root, f);
+    await Deno.writeTextFile(
+      file,
+      ["src/desktop/a.ts", "src/cli/cli-cache.ts"].map((f) =>
+        `SF:${abs(f)}\nDA:1,1\nend_of_record\n`
+      )
+        .join(""),
+    );
+    const errs: string[] = [];
+    const prev = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a.join(" "));
+    try {
+      assertEquals(await main([file], root), 0);
+      assertEquals(await main([file, "--full"], root), 1);
+    } finally {
+      console.error = prev;
+    }
+    assertStringIncludes(errs.join("\n"), "packages/tanstack-start/src/use-server.ts");
+    assertStringIncludes(errs.join("\n"), "never loaded by a test");
+  } finally {
     await Deno.remove(root, { recursive: true });
   }
 });

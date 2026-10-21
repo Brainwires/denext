@@ -8,11 +8,13 @@
 //   deno task release 2.0.0-rc.5 --confirm  # skip the prompt (authorized/agent use)
 //   deno task release 2.0.0-rc.5 --dry      # preview every step; write/commit nothing
 //   deno task release 2.0.0-rc.5 --full-gate  # run the whole local suite at step 5
+//   deno task release 2.0.0-rc.5 --confirm --resume-from corpus  # finish a stopped release
 //
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
 //      coverage, backend-integration — a push to `development` skips them; dispatch ci.yml) is
-//      green, and so is the newest desktop-ci.yml run on HEAD (every job), else ABORT
+//      green, and so are the newest desktop-ci.yml, e2e.yml and desktop-window.yml runs on HEAD
+//      (every job), else ABORT
 //      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
@@ -36,6 +38,12 @@
 //      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
 //      v<version> and push branch + tag
 //
+// A release that stopped in step 6 (JSR slow to list the corpus — the wait polls for the exact
+// version with backoff for up to 3 hours —, a failed push, a closed terminal) resumes where it
+// stopped: run the same command again. It sees the release commit on HEAD and the tags already
+// made, and runs only the remaining steps (scripts/lib/release-publish.ts): `corpus` (publish and
+// wait for @denext/docs-corpus), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
+//
 // After tagging, every release gets a `development → main` PR so main catches up to the
 // tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
 // command to run. The docs-site DEPLOY stays separate on purpose (it targets a server):
@@ -45,14 +53,32 @@
 import { exists, walk } from "@std/fs";
 import { join, relative } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
-import { desktopCiVerdict, releaseCiHint, releaseCiVerdict } from "./release-ci.ts";
+import {
+  desktopCiVerdict,
+  desktopWindowVerdict,
+  e2eVerdict,
+  releaseCiHint,
+  releaseCiVerdict,
+} from "./release-ci.ts";
 import {
   CORPUS_PACKAGE,
   corpusConflictMessage,
   type CorpusRelease,
   corpusReleaseState,
 } from "./lib/docs-corpus-package.ts";
-import { jsrHasVersion, type MemberPin, memberPin, missingPins } from "./lib/jsr-pins.ts";
+import { jsrHasVersion, missingPins } from "./lib/jsr-pins.ts";
+import {
+  detectResume,
+  pinRefusal,
+  publishFrom,
+  type PublishStep,
+  realPublishDeps,
+  ReleaseAbort,
+  releaseSubject,
+  resumeFromArg,
+} from "./lib/release-publish.ts";
+
+export { pinRefusal };
 
 /**
  * Regenerate the `examples/effect` migrate golden against the just-bumped framework
@@ -388,10 +414,13 @@ function unreleasedEntries(text: string, marker: string): number {
 }
 
 async function main(): Promise<void> {
-  const { version, dry, confirmed, fullGate } = parseReleaseArgs();
+  const { version, dry, confirmed, fullGate, resumeFrom } = parseReleaseArgs();
   const branch = await capture("git", "rev-parse", "--abbrev-ref", "HEAD");
   const tag = `v${version}`;
   if (dry) return await dryRun(version, tag, branch);
+  const target = { version, tag, branch };
+  const resume = resumeFrom ?? await detectResume(target, realPublishDeps(REPO_ROOT));
+  if (resume) return await resumeRelease(target, resume, confirmed);
   await checkPreconditions(tag, branch);
   await checkCi(branch, false);
   console.log(`\n=== Releasing denext ${version} ===\n`);
@@ -442,17 +471,69 @@ function parseReleaseArgs(): {
   dry: boolean;
   confirmed: boolean;
   fullGate: boolean;
+  resumeFrom: PublishStep | undefined;
 } {
   const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
-  const version = Deno.args.find((a) => !a.startsWith("--"));
-  if (!version) die("usage: deno task release <version> [--confirm] [--dry] [--full-gate]");
+  const version = Deno.args.find((a, i) =>
+    !a.startsWith("--") && Deno.args[i - 1] !== "--resume-from"
+  );
+  if (!version) {
+    die(
+      "usage: deno task release <version> [--confirm] [--dry] [--full-gate] " +
+        "[--resume-from <step>]",
+    );
+  }
   if (!VERSION_RE.test(version!)) die(`"${version}" is not a valid semver (e.g. 2.0.0-rc.5)`);
+  let resumeFrom: PublishStep | undefined;
+  try {
+    resumeFrom = resumeFromArg(Deno.args);
+  } catch (err) {
+    die((err as Error).message);
+  }
   return {
     version: version!,
     dry: flags.has("--dry"),
     confirmed: flags.has("--confirm"),
     fullGate: flags.has("--full-gate"),
+    resumeFrom,
   };
+}
+
+/**
+ * Finish a release that stopped in step 6: from `step`, with a clean tree and the release commit
+ * on HEAD (`commit` makes it from the prepared tree instead).
+ */
+async function resumeRelease(
+  target: { version: string; tag: string; branch: string },
+  step: PublishStep,
+  confirmed: boolean,
+): Promise<void> {
+  console.log(`\n=== Resuming the release of denext ${target.version} at step "${step}" ===\n`);
+  if (step === "commit") {
+    if (!await confirmRelease(target.tag, target.branch, confirmed)) return;
+    return await publish(target.version, target.tag, target.branch);
+  }
+  if (await capture("git", "status", "--porcelain")) {
+    die("working tree is not clean — a resumed release publishes the release commit as made.");
+  }
+  const subject = await capture("git", "log", "-1", "--format=%s");
+  if (subject !== releaseSubject(target.version)) {
+    die(`HEAD is "${subject}", not the release commit "${releaseSubject(target.version)}".`);
+  }
+  await publishSteps(target, step);
+}
+
+/** Run the publish steps from `step`, turning a stop into the abort message. */
+async function publishSteps(
+  target: { version: string; tag: string; branch: string },
+  step: PublishStep,
+): Promise<void> {
+  try {
+    await publishFrom(target, step, realPublishDeps(REPO_ROOT));
+  } catch (err) {
+    if (err instanceof ReleaseAbort) die(err.message);
+    throw err;
+  }
 }
 
 /** Preconditions (a real run only — --dry previews regardless of tree state). */
@@ -478,13 +559,14 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
 
 /**
  * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage, backend-integration)
- * and every desktop-ci.yml job passed on HEAD (scripts/release-ci.ts). A real run aborts
+ * and every desktop-ci.yml, e2e.yml and desktop-window.yml job passed on HEAD
+ * (scripts/release-ci.ts). A real run aborts
  * otherwise; `--dry` reports and goes on.
  */
 async function checkCi(branch: string, dry: boolean): Promise<void> {
   const sha = await capture("git", "rev-parse", "HEAD");
   const verdicts = await Promise.all(
-    [releaseCiVerdict, desktopCiVerdict].map((check) =>
+    [releaseCiVerdict, desktopCiVerdict, e2eVerdict, desktopWindowVerdict].map((check) =>
       check(sha).catch((err: Error) => ({
         ok: false,
         reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,
@@ -672,83 +754,18 @@ async function checkCorpus(
 }
 
 /**
- * The refusal for a release tag while `missing` members (pinned by it, absent from JSR) are
- * unpublished, or null when every pin resolves.
- */
-export function pinRefusal(missing: readonly MemberPin[], tag: string): string | null {
-  if (missing.length === 0) return null;
-  const list = missing.map((p) => `  ${p.name}@${p.version} — push the tag ${p.tag}`).join("\n");
-  return `refusing to tag ${tag}: it would pin package versions JSR does not have yet:\n${list}\n` +
-    "Publish them first (publish.yml), wait until jsr.io lists them, then release again.";
-}
-
-/** How long step 6 waits for JSR to list a docs-corpus version it pushed (the publish runs the gate). */
-const JSR_WAIT_MS = 45 * 60_000;
-
-/** Poll JSR until it lists `pin` or {@linkcode JSR_WAIT_MS} passes. */
-async function waitForJsr(pin: MemberPin): Promise<boolean> {
-  const deadline = Date.now() + JSR_WAIT_MS;
-  while (Date.now() < deadline) {
-    if ((await missingPins().catch(() => [pin])).every((p) => p.name !== pin.name)) return true;
-    console.log(`   waiting for jsr.io to list ${pin.name}@${pin.version}…`);
-    await new Promise((resolve) => setTimeout(resolve, 30_000));
-  }
-  return false;
-}
-
-/**
- * Step 6: commit; publish `@denext/docs-corpus` <version> first unless JSR has it with this corpus
- * (a resumed release); refuse the tag while any pinned member is not on JSR; then tag and push.
- * Each command that fails aborts.
+ * Step 6: the release commit, then the resumable publish steps (scripts/lib/release-publish.ts):
+ * publish `@denext/docs-corpus` <version> unless JSR has it with this corpus, refuse the tag
+ * while any pinned member is not on JSR, then tag, push, and hand over the PR. A stop names the
+ * command that resumes it.
  */
 async function publish(version: string, tag: string, branch: string): Promise<void> {
   console.log("\n6. Committing, tagging, and pushing…");
   await runSteps([
     [["git", "add", "-A"], "git add failed"],
-    [["git", "commit", "-m", `release: denext ${version}`], "git commit failed"],
+    [["git", "commit", "-m", releaseSubject(version)], "git commit failed"],
   ]);
-  if ((await checkCorpus(version)).state === "missing") {
-    const corpus = await memberPin("docs-corpus");
-    console.log(
-      `   ${corpus.name}@${corpus.version} is not on JSR: publishing it first (${corpus.tag})`,
-    );
-    await runSteps([
-      [
-        ["git", "tag", "-a", corpus.tag, "-m", `${corpus.name} ${corpus.version}`],
-        "git tag failed",
-      ],
-      [["git", "push", "origin", branch], "git push (branch) failed"],
-      [["git", "push", "origin", corpus.tag], `git push (${corpus.tag}) failed`],
-    ]);
-    if (!await waitForJsr(corpus)) {
-      die(
-        `${corpus.tag} is pushed but jsr.io does not list ${corpus.name}@${corpus.version} yet ` +
-          `(check publish.yml's run). The release commit is pushed; once JSR lists it:\n` +
-          `  git tag -a ${tag} -m "denext ${version}" && git push origin ${tag}`,
-      );
-    }
-    // Listed is not enough: what JSR serves must be this tree's corpus (checkCorpus aborts on
-    // another source hash), or v<version> would pin a corpus nobody checked.
-    await checkCorpus(version);
-  }
-  const refusal = pinRefusal(await missingPins(), tag);
-  if (refusal) {
-    die(`${refusal}\n(the release commit is made; tag it by hand once they are published)`);
-  }
-  await runSteps([
-    [["git", "tag", "-a", tag, "-m", `denext ${version}`], "git tag failed"],
-    [["git", "push", "origin", branch], "git push (branch) failed"],
-    [["git", "push", "origin", tag], "git push (tag) failed"],
-  ]);
-  console.log(
-    `\n✓ Released ${version}. The ${tag} tag fires the JSR publish workflow ` +
-      "(it re-runs the gate, then publishes).\n" +
-      "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
-      `    gh pr create --base main --head ${branch}\n` +
-      "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
-      "  Docs deploy is separate: run `deno task docs:build`, then rsync site/out/ " +
-      "to your docs host.",
-  );
+  await publishSteps({ version, tag, branch }, "corpus");
 }
 
 if (import.meta.main) await main();

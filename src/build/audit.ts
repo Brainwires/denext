@@ -111,13 +111,13 @@ async function scanRuntimeNpm(
 }
 
 /**
- * A conservative baseline permission set for serving a denext app: net
- * (serve), read (route modules, config, static assets), write (the on-disk SQLite
- * page cache under `.denext`), and env (`.env` + `PUBLIC_*`). A starting point to
- * tighten, not a guarantee.
+ * A conservative baseline permission set for serving a denext app — the one `denext create`'s
+ * `start` task has: net (serve), read (route modules, config, static assets), env (`.env` +
+ * `PUBLIC_*`), and write scoped to `.denext` (the on-disk SQLite page cache, job history). A
+ * starting point to tighten, not a guarantee.
  */
 function derivePermissions(): string[] {
-  return ["--allow-net", "--allow-read", "--allow-write", "--allow-env"];
+  return ["--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext"];
 }
 
 /** Audit the project at `dir`: inventory deps, prove zero-npm runtime, derive perms. */
