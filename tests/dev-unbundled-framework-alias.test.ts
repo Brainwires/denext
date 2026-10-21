@@ -8,6 +8,7 @@ import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { resolveFirstParty } from "../src/build/dev-unbundled/resolve.ts";
 import { createUnbundledState, norm } from "../src/build/dev-unbundled/state.ts";
+import { canonicalPath } from "../src/build/canonical-path.ts";
 
 // The denext checkout, as a URL: an import map's targets are URLs (a Windows `C:\…` path would
 // read as one with scheme "c").
@@ -63,8 +64,8 @@ Deno.test("dev aliases: a framework checkout and a project named through symlink
     await Deno.writeTextFile(join(app, "src/main.tsx"), "export {};\n");
     await Deno.writeTextFile(join(app, "src/util.ts"), "export const u = 1;\n");
     try {
-      await Deno.symlink(fromFileUrl(FW), join(dir, "fw"), { type: "dir" });
-      await Deno.symlink(app, join(dir, "link"), { type: "dir" });
+      await Deno.symlink(fromFileUrl(FW), join(dir, "fw"), { type: "junction" });
+      await Deno.symlink(app, join(dir, "link"), { type: "junction" });
     } catch (err) {
       console.warn(`skipped: this host can't create a directory symlink (${err})`);
       return;
@@ -87,7 +88,9 @@ Deno.test("dev aliases: a framework checkout and a project named through symlink
     const main = join(project, "src/main.tsx");
     assertEquals(await resolveFirstParty(st, "denext/devtools", main), null);
     assertEquals(await resolveFirstParty(st, "denext", main), null);
-    assert((await resolveFirstParty(st, "~/util", main))?.endsWith("/src/util.ts"));
+    const util = await resolveFirstParty(st, "~/util", main);
+    assert(util !== null, "the app's own alias resolves");
+    assertEquals(canonicalPath(util), canonicalPath(join(app, "src/util.ts")));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

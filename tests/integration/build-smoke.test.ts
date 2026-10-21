@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { build } from "../../src/build/build.ts";
 
 const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
@@ -499,13 +499,13 @@ async function sharedChunkSizes(clientDir: string): Promise<string[]> {
 
 /**
  * A temp dir with a symlink `link` → `target`, or `null` (with the reason logged) on a host that
- * can't create one: Windows needs Developer Mode or the symlink privilege.
+ * can't create one. On Windows it is a junction (a symlink needs Developer Mode or a privilege).
  */
 async function tempSymlink(target: string): Promise<{ dir: string; link: string } | null> {
   const dir = await Deno.makeTempDir({ prefix: "denext-build-symlink-" });
   const link = join(dir, "link");
   try {
-    await Deno.symlink(target, link, { type: "dir" });
+    await Deno.symlink(target, link, { type: "junction" });
     return { dir, link };
   } catch (err) {
     await Deno.remove(dir, { recursive: true });
@@ -550,7 +550,8 @@ Deno.test("build smoke: an app that maps denext through a symlink installs no un
     delete config.lint;
     delete config.tasks;
     for (const [k, v] of Object.entries(config.imports as Record<string, string>)) {
-      config.imports[k] = join(made.link, v.replace(/^\.\.\/\.\.\//, ""));
+      // A URL, as an import map takes it (a Windows `C:\\…` path is not one).
+      config.imports[k] = toFileUrl(join(made.link, v.replace(/^\.\.\/\.\.\//, ""))).href;
     }
     await Deno.writeTextFile(join(app, "deno.json"), JSON.stringify(config));
     const clientDir = join((await build(app)).outDir, "client");

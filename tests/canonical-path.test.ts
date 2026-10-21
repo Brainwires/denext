@@ -11,13 +11,13 @@ const REPO = dirname(fromFileUrl(new URL("../deno.json", import.meta.url)));
 
 /**
  * A fresh temp dir holding a symlink `link` to `target`, or `null` when this host can't create
- * one (Windows without Developer Mode or the symlink privilege): the test then logs why it skips.
+ * one: the test then logs why it skips. On Windows it is a junction, which needs no privilege.
  */
 async function symlinkTo(target: string): Promise<{ dir: string; link: string } | null> {
   const dir = await Deno.makeTempDir({ prefix: "denext-symlink-" });
   const link = join(dir, "link");
   try {
-    await Deno.symlink(target, link, { type: "dir" });
+    await Deno.symlink(target, link, { type: "junction" });
   } catch (err) {
     await Deno.remove(dir, { recursive: true });
     console.warn(`skipped: this host can't create a directory symlink (${err})`);
@@ -75,7 +75,7 @@ Deno.test("localModulesOutside: a project reached through a symlink keeps its ow
     let link: string;
     try {
       link = join(root, "link");
-      await Deno.symlink(app, link, { type: "dir" });
+      await Deno.symlink(app, link, { type: "junction" });
     } catch (err) {
       console.warn(`skipped: this host can't create a directory symlink (${err})`);
       return;
