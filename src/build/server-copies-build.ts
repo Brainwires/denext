@@ -84,3 +84,20 @@ export async function buildServerCopies(
   }
   return manifest;
 }
+
+/**
+ * The server copies of a build with no App Router (a Pages Router app: `@denext/pages-router`
+ * renders `pages/` through the production server's loader), recorded so `denext start` and a
+ * compiled app serve the web target's platform files, `"use cache"` and inline `"use server"`
+ * functions without compiling at startup. The stylesheet imports stay as written (no `css`
+ * record): the server render keeps resolving them through the CSS import map, as before.
+ *
+ * @param paths The project paths.
+ * @returns The record for `manifest.json`.
+ */
+export async function buildRouterlessServerCopies(
+  paths: ProjectPaths,
+): Promise<ServerCopiesManifest> {
+  const { css: _css, ...copies } = (await buildServerCopies(paths, false))!;
+  return copies;
+}

@@ -29,7 +29,6 @@ import { basename, dirname, join, relative, resolve, toFileUrl } from "@std/path
 import { walk } from "@std/fs";
 import type { CompileConfig } from "../server/config.ts";
 import {
-  frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
   minDepAgeArgs,
@@ -438,14 +437,18 @@ export const BUILD_ONLY_MODULES: readonly string[] = [
 /**
  * {@linkcode BUILD_ONLY_MODULES}, each mapped to ./build-only-stub.ts (their exports, the build
  * ones refusing): the binary then embeds none of the build tooling behind them (esbuild, swc,
- * lightningcss, sass, `@mdx-js/mdx`). Keys and values are the running framework's URLs; an app on
- * another copy of denext keeps the real modules (a larger binary, nothing broken).
+ * lightningcss, sass, `@mdx-js/mdx`). Keys and values are the running framework's URLs: a local
+ * checkout's `file:` URLs, or, for the CLI an app pins from JSR (`jsr:@denext/denext@<range>/cli`),
+ * the version's `https://jsr.io/@denext/denext/<version>/…` URLs, which Deno's import map applies
+ * to the package's own relative imports too. An app on another copy of denext keeps the real
+ * modules (a larger binary, nothing broken).
  *
+ * @param root The framework root URL (default: the running framework's, {@linkcode frameworkRootUrl}).
  * @returns Module URL → the stub's URL.
  */
-export function buildOnlyStubs(): Record<string, string> {
-  const stub = frameworkFileUrl("src/build/build-only-stub.ts");
-  return Object.fromEntries(BUILD_ONLY_MODULES.map((m) => [frameworkFileUrl(m), stub]));
+export function buildOnlyStubs(root: string = frameworkRootUrl()): Record<string, string> {
+  const stub = new URL("src/build/build-only-stub.ts", root).href;
+  return Object.fromEntries(BUILD_ONLY_MODULES.map((m) => [new URL(m, root).href, stub]));
 }
 
 /**

@@ -20,7 +20,9 @@ and this project adheres to
   `edgeFunctionSource`, the next-compat build, `denext/bundle`, `denext/build/css`) are stand-ins
   in the binary that throw if called: a plugin's build step only runs at `denext build`. A
   compiled App Router app refuses a build that recorded no server copies or client boundary (one
-  made by an older denext), naming the fix, instead of compiling them at startup.
+  made by an older denext), naming the fix, instead of compiling them at startup. The same holds
+  for an app that imports denext from JSR (checked against a JSR-installed Pages Router app:
+  135 MB with the stand-ins, 175 MB without).
 
 ### Fixed
 
@@ -36,6 +38,13 @@ and this project adheres to
   standalone entry reached `src/build/spa.ts`, the bundler, the CSS pipeline, the next-compat
   build and the swc codegen through the production server, the CLI's shared helpers and the plugin
   kit, and `deno compile` embedded all of it with its npm dependencies.
+- **A Pages Router app keeps its platform files, `"use cache"` and inline `"use server"` in a
+  `denext build --compile` binary.** Its build now records the server render's copies in
+  `.denext/manifest.json`, as an App Router build does, so `denext start` and the binary load
+  `pages/` through them with no startup compile. A compiled Pages Router app used to render the
+  plain file instead of `Button.web.tsx`, run `"use cache"` functions uncached and leave inline
+  `"use server"` functions unregistered, without a word; one built by an older denext is now
+  refused, naming the fix.
 
 - **Performance: a streamed page no longer compiles a regular expression per request.** Each
   render's Suspense boundary tokens carry a fresh nonce, and since 4.4.0 the server matched them

@@ -14,7 +14,11 @@ import {
   assertThrows,
 } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
-import { BUILD_ONLY_MODULES, buildOnlyStubs } from "../src/build/compile-app.ts";
+import {
+  BUILD_ONLY_MODULES,
+  buildOnlyStubs,
+  relativeCssRedirects,
+} from "../src/build/compile-app.ts";
 import * as stub from "../src/build/build-only-stub.ts";
 import { requireStartupCompile, resolveFlightBoundary } from "../src/build/prod-server/manifest.ts";
 import { prodLoader } from "../src/build/prod-server/app.ts";
@@ -149,6 +153,21 @@ Deno.test("buildOnlyStubs maps every build-only module to the stub, by the frame
   for (const value of Object.values(stubs)) assertEquals(value, target);
 });
 
+Deno.test("buildOnlyStubs keys a JSR-installed framework by its jsr.io URLs, kept absolute", () => {
+  // `denext build --compile` from the CLI an app pins (`jsr:@denext/denext@^4.6.0/cli`) runs
+  // under https://jsr.io/@denext/denext/<version>/; the binary's graph names the same modules.
+  const root = "https://jsr.io/@denext/denext/4.7.0/";
+  const stubs = buildOnlyStubs(root);
+  assertEquals(
+    stubs[`${root}src/build/plugin-kit-build.ts`],
+    `${root}src/build/build-only-stub.ts`,
+  );
+  assertEquals(Object.keys(stubs).length, BUILD_ONLY_MODULES.length);
+  // The compile config keeps remote entries as they are (only local files become relative).
+  const config = toFileUrl(join(Deno.cwd(), ".denext", "compile", "deno.json")).href;
+  assertEquals(relativeCssRedirects(stubs, config), stubs);
+});
+
 Deno.test("the stub has every run-time export of each module it stands in for", async () => {
   const names = new Set(Object.keys(stub));
   for (const path of BUILD_ONLY_MODULES) {
@@ -221,9 +240,10 @@ Deno.test("prodLoader / resolveFlightBoundary: no startup compiler, no record â†
     );
     assertEquals(none.flightRoutes.size, 0);
     assertEquals(none.boundary.client.size + none.boundary.server.size, 0);
-    // A Pages Router app (no `app/`) records no copies: its pages load as they are.
+    // A Pages Router app (no `app/`) is refused the same way: its build records the copies too.
     await Deno.remove(join(dir, "app"), { recursive: true });
-    assertEquals(typeof await prodLoader(await resolveProject(dir), NO_BUILD), "function");
+    const pagesApp = await resolveProject(dir);
+    await assertRejects(() => prodLoader(pagesApp, NO_BUILD), Error, "records no server copies");
     // Recorded copies need no compiler.
     const recorded: BuildInfo = {
       ...NO_BUILD,

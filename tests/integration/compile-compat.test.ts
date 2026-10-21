@@ -2,7 +2,9 @@
 // (next-compat: `react` / `next/*` imports through `compatibilityMode`) and a Pages Router app
 // (`@denext/pages-router`). Each fixture is built and compiled, its project directory DELETED,
 // and the binary run from another directory: its pages (server-rendered, with their client
-// bundles), its API routes and its static assets must all come from what it embedded.
+// bundles), its API routes and its static assets must all come from what it embedded. The Pages
+// Router app also uses what its server render loads through the build's server copies: a
+// platform file (`.web.tsx`), `"use cache"` and an inline `"use server"` function.
 //
 // Heavy (two builds and two `deno compile`s, ~300 MB each): run it where there is room.
 
@@ -75,7 +77,33 @@ const PAGES_ROUTER: Record<string, string> = {
     },
   }),
   "denext.config.ts": `import { pagesRouter } from "@denext/pages-router";
-export default { plugins: [pagesRouter()] };
+export default { plugins: [pagesRouter()], cacheComponents: true };
+`,
+  "components/variant.tsx": "export function Variant() { return <p>plain variant</p>; }\n",
+  "components/variant.web.tsx": "export function Variant() { return <p>web variant</p>; }\n",
+  "lib/stamp.ts": `export async function stamp(): Promise<string> {
+  "use cache";
+  return crypto.randomUUID();
+}
+`,
+  "lib/actions.ts": `export async function act(): Promise<number> {
+  "use server";
+  return 1;
+}
+`,
+  "pages/cached.tsx": `import { stamp } from "../lib/stamp.ts";
+export async function getServerSideProps() {
+  return { props: { stamp: await stamp() } };
+}
+export default function Cached({ stamp }: { stamp: string }) {
+  return <p>stamp[{stamp}]</p>;
+}
+`,
+  "pages/api/action.ts": `import { act } from "../../lib/actions.ts";
+// deno-lint-ignore no-explicit-any
+export default function handler(_req: any, res: any) {
+  res.status(200).json({ reference: typeof (act as any).denextActionId });
+}
 `,
   "styles/globals.css": ".shell { color: rgb(1, 2, 3); }\n",
   "pages/_app.tsx": `import "../styles/globals.css";
@@ -86,11 +114,13 @@ export default function App({ Component, pageProps }: { Component: any; pageProp
 `,
   "pages/index.tsx": `import { useState } from "@denext/denext";
 import { Link } from "@denext/pages-router/link";
+import { Variant } from "../components/variant.tsx";
 export default function Home() {
   const [n, setN] = useState(0);
   return (
     <main>
       <h1>pages home</h1>
+      <Variant />
       <button type="button" onClick={() => setN(n + 1)}>Clicked {n}</button>
       <Link href="/blog/hello">Post</Link>
     </main>
@@ -292,8 +322,19 @@ Deno.test({
       assertStringIncludes(home.text, "pages home");
       assertStringIncludes(home.text, "pages shell");
       assertStringIncludes(home.text, "Clicked 0");
+      assertStringIncludes(home.text, "web variant", "the server render takes the .web file");
       const assets = await assertAssetsLoad(app, home.text);
       assert(assets.length > 0, "the page loads its client bundle");
+      // `"use cache"`: the second render reuses the first one's value.
+      const stamps: (string | undefined)[] = [];
+      for (let i = 0; i < 2; i++) {
+        const res = await app.get("/cached");
+        assertEquals(res.status, 200);
+        stamps.push(/stamp\[(?:<!-- -->)?([\w-]+)/.exec(res.text)?.[1]);
+      }
+      assert(stamps[0] !== undefined && stamps[0] === stamps[1], `cached: ${stamps}`);
+      // The inline `"use server"` function is a registered server reference.
+      assertEquals(JSON.parse((await app.get("/api/action")).text), { reference: "string" });
       const post = await app.get("/blog/hello");
       assertEquals(post.status, 200);
       assertStringIncludes(post.text, "post hello from gssp");

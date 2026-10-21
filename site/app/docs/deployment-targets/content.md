@@ -382,9 +382,12 @@ its first request.
 - the build verbs: `dev`, `build` and `export` stay on the `denext` CLI.
 
 A `next-compat` (drop-in) app and a Pages Router (`@denext/pages-router`) app compile like any
-other: their pages, API routes and static assets are served from the binary. A module served
-without a server copy (a Pages Router page) imports its stylesheet through the compile's import
-map, whose stylesheet entries are relative to the embedded config.
+other: their pages, API routes and static assets are served from the binary. A Pages Router
+build records its server copies as an App Router build does, so its pages take the web target's
+platform files (`.web.tsx`), and `"use cache"` and inline `"use server"` functions work in the
+binary as under `denext start`. A module served without a server copy (a Pages Router page)
+imports its stylesheet through the compile's import map, whose stylesheet entries are relative to
+the embedded config.
 
 A minimal app's binary is about 135 MB (macOS x86_64): about 118 MB is the toolchain's `denort`
 runtime, and about 16 MB is embedded — your app, the build output, `public/` and the production
@@ -393,7 +396,9 @@ holds none of the build pipeline: no esbuild, swc or lightningcss, and none of t
 tooling (`sass`, `@mdx-js/mdx`, Babel, Prettier, …). Your own packages and your plugins' run-time
 code are embedded as you import them. A plugin's build-step functions (`bundleRoutes`,
 `buildAppCss`, `compileMdxSource`, `remixCodegen`, the next-compat build) are stand-ins inside
-the binary that throw if called; a build step only runs at `denext build`.
+the binary that throw if called; a build step only runs at `denext build`. This holds for an app
+on denext from JSR too: `denext task build --compile` runs the CLI the app pins, whose framework
+URLs (`https://jsr.io/@denext/denext/<version>/…`) are the ones the binary's graph names.
 
 The **`denext` executable** is a separate thing: the CLI itself, a
 `deno compile`d front end. It never builds or serves an app in its own

@@ -40,7 +40,7 @@ import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/midd
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import { createNextCompatServerLoader } from "../next-compat-loader.ts";
-import { dirExists, type ProjectPaths } from "../paths.ts";
+import type { ProjectPaths } from "../paths.ts";
 import { precompiledServerLoader } from "../server-copies.ts";
 import type { AssetResolvers } from "./assets.ts";
 import {
@@ -80,10 +80,8 @@ export async function prodLoader(
   // (./server-copies.ts): use them, with no walk and no write (a read-only `.denext` works).
   const precompiled = precompiledServerLoader(defaultLoader, paths, info.serverCopies);
   if (precompiled) return precompiled;
-  // An older build, or a project moved since it was built: compile at startup. A Pages Router
-  // app (no `app/`) has no App Router build to record copies; with no compiler (a compiled app)
-  // its pages load as they are.
-  if (!compile && !(await dirExists(paths.appDir))) return defaultLoader;
+  // An older build, or a project moved since it was built: compile at startup (a compiled app
+  // has no compiler and refuses; its build — App Router or Pages Router — always records them).
   return await requireStartupCompile(compile, "server copies").loader(paths, defaultLoader);
 }
 
