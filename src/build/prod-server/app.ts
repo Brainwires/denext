@@ -38,6 +38,7 @@ import { liveOriginAllowed } from "../../server/origin-check.ts";
 import { resolveCors } from "../../server/cors.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
+import { memoizeLoader } from "../../server/default-loader.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import { createNextCompatServerLoader } from "../next-compat-loader.ts";
 import type { ProjectPaths } from "../paths.ts";
@@ -57,7 +58,9 @@ import {
  * wraps it so `"use cache"` directives compile into server-side caching — clearing any
  * transformed copies from a previous run first (copy names key on source URL, not
  * content, so a stale copy could otherwise shadow edited source after a restart without
- * a rebuild).
+ * a rebuild). A production build's files never change while the server runs, so the loader
+ * answers a path it has loaded with the same promise (`memoizeLoader`): a request's page and
+ * layouts cost a map lookup, not a path-to-URL resolution and an `import()` each.
  *
  * @param paths The project paths.
  * @param info The build manifest.
@@ -69,6 +72,15 @@ export async function prodLoader(
   paths: ProjectPaths,
   info: BuildInfo,
   compile?: StartupCompile,
+): Promise<ModuleLoader> {
+  return memoizeLoader(await renderLoader(paths, info, compile));
+}
+
+/** {@linkcode prodLoader} before memoization: the copies, compat redirects or startup compile. */
+async function renderLoader(
+  paths: ProjectPaths,
+  info: BuildInfo,
+  compile: StartupCompile | undefined,
 ): Promise<ModuleLoader> {
   // A compat bundle already carries the `"use cache"` transform (applied at bundle time, so
   // the module stays inside the react→denext bundle); the runtime rewrite is for native apps.

@@ -14,7 +14,7 @@ import {
   type RedirectRule,
   type RewriteRule,
 } from "./config.ts";
-import { withHeaders } from "./middleware.ts";
+import { mergeHeaders, withHeaders } from "./middleware.ts";
 import { applyOutgoing } from "./response-headers.ts";
 
 /** The config-driven URL rules (denext.config redirects/rewrites/headers), compiled. */
@@ -131,6 +131,34 @@ function withInjectedHeaders(state: RequestState, res: Response): Response {
 export function finalize(state: RequestState, res: Response): Response {
   return applyOutgoing(
     withInjectedHeaders(state, res),
+    state.ctx.outgoingHeaders,
+    state.ctx.responseStatus,
+  );
+}
+
+/**
+ * {@linkcode finalize} of `new Response(body, { status, headers })`, with the injected headers
+ * merged into `headers` before the response is made rather than into a copy of it afterwards:
+ * the same response, constructed once. (A copy costs a second `Headers` and `Response`, and the
+ * runtime prepares each response's native header block as it is constructed.)
+ *
+ * @param state The request state.
+ * @param body The response body.
+ * @param status The response status.
+ * @param headers The response's own headers.
+ * @returns The finalized response.
+ */
+export function finalizeNew(
+  state: RequestState,
+  body: BodyInit | null,
+  status: number,
+  headers: HeadersInit,
+): Response {
+  const own = state.injectedHeaders
+    ? mergeHeaders(new Headers(headers), state.injectedHeaders)
+    : headers;
+  return applyOutgoing(
+    new Response(body, { status, headers: own }),
     state.ctx.outgoingHeaders,
     state.ctx.responseStatus,
   );

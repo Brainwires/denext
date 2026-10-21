@@ -119,6 +119,26 @@ and this project adheres to
   binary from an older build refuses, saying to rebuild it). `denext start` also stops rebuilding
   them on every start.
 
+- **A finished request is no longer kept alive by the server renderer.** The streaming renderers
+  installed their hook dispatcher in the process-wide slot and left it there after the render, so
+  the last streamed page's renderer, and through it that request's render state and its `Request`
+  (cookies and headers included), stayed reachable until the next render replaced it. A renderer
+  now takes its dispatcher out when its shell, or a streamed boundary, finishes. A regression test
+  serves a request mix through `examples/hello` and checks that no finished request or response
+  survives a garbage collection.
+- **Performance: less work per page request in production.** `denext start` (and a compiled app)
+  loads each route module once: its loader answers a path it has loaded with the same promise
+  instead of resolving the path to a URL and going through `import()` on every request (a load
+  that failed is retried). The page's public-env island reads only the `NEXT_PUBLIC_*` /
+  `DENEXT_PUBLIC_*` names the build recorded, one `Deno.env.get` each and none for an app that
+  references none, instead of copying the whole environment with `Deno.env.toObject()` on every
+  render; the values are still read live, and a `--allow-env` scoped to those names now fills the
+  island. An HTML page response is built once with the header rules' and middleware's headers
+  merged in, instead of built and then copied with them added. On `examples/hello` (production
+  `denext start`, 60,000 requests at concurrency 32) this serves about 25% more requests per
+  second. Memory measured over the same runs did not grow with the request count before or after
+  (the live heap after a full collection stays at about 39 MB from 5,000 to 60,000 requests).
+
 ### Security
 
 - **`denext build --compile` resolves dependencies as the app's lockfile locks them.** The

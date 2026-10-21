@@ -679,10 +679,15 @@ export function createMiddlewareRunner(
   return composeMiddleware(toEntries(exp, file), mod.config);
 }
 
-/** Merge extra headers into a response (returning a new Response if needed). */
-export function withHeaders(response: Response, extra?: Headers): Response {
-  if (!extra) return response;
-  const headers = new Headers(response.headers);
+/**
+ * Merge `extra` into `headers` in place, as {@linkcode withHeaders} merges them into a response:
+ * every Set-Cookie is appended, every other header replaces the one `headers` has.
+ *
+ * @param headers The headers to add to.
+ * @param extra The headers to merge in.
+ * @returns `headers`.
+ */
+export function mergeHeaders(headers: Headers, extra: Headers): Headers {
   // Preserve multiple Set-Cookie entries — a plain set() would collapse them to
   // the last one (and wipe the response's own cookies).
   for (const cookie of extra.getSetCookie()) headers.append("set-cookie", cookie);
@@ -690,6 +695,13 @@ export function withHeaders(response: Response, extra?: Headers): Response {
     if (k === "set-cookie") continue;
     headers.set(k, v);
   }
+  return headers;
+}
+
+/** Merge extra headers into a response (returning a new Response if needed). */
+export function withHeaders(response: Response, extra?: Headers): Response {
+  if (!extra) return response;
+  const headers = mergeHeaders(new Headers(response.headers), extra);
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
