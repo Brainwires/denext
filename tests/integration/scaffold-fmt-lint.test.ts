@@ -10,6 +10,7 @@ import {
   type ScaffoldOptions,
   scaffoldProject,
 } from "../../src/build/scaffold.ts";
+import { isToolchainBuild, toolchainDeno } from "../../scripts/test-run.ts";
 
 /** The feature switches `denext create` offers. */
 const FEATURES = [
@@ -43,9 +44,36 @@ function combos(): { name: string; opts: Omit<ScaffoldOptions, "dir"> }[] {
   return out;
 }
 
+/**
+ * The Deno the children run on: denext's toolchain (what users get from `denext lint`), because
+ * stock Deno 2.9.6/2.9.7 can crash on shutdown (exit 139, use-after-free; denoland/deno#37025)
+ * after a JS lint plugin ran, about 2% of runs. Stock (`DENEXT_DENO=stock`, or a toolchain that
+ * can't be had) is the fallback, with a retry on exit 139 only.
+ */
+const DENO = await toolchainDeno().catch((err) => {
+  console.error(`scaffold-fmt-lint: toolchain unavailable, using stock Deno: ${err}`);
+  return null;
+}) ?? Deno.execPath();
+
+/** Whether the children run on a stock Deno (no toolchain), the only build with the crash. */
+const STOCK_FALLBACK = DENO === Deno.execPath() && !isToolchainBuild(Deno.version.deno);
+
 /** Run `deno <args>` in `cwd`; the combined output when it fails. */
 async function deno(args: string[], cwd: string): Promise<{ ok: boolean; output: string }> {
-  const r = await new Deno.Command(Deno.execPath(), {
+  let result = await denoOnce(args, cwd);
+  // Only stock Deno's known shutdown crash is retried; a toolchain crash is a real failure.
+  for (let i = 0; i < 2 && STOCK_FALLBACK && result.code === 139; i++) {
+    result = await denoOnce(args, cwd);
+  }
+  return result;
+}
+
+/** One `deno <args>` run in `cwd`. */
+async function denoOnce(
+  args: string[],
+  cwd: string,
+): Promise<{ ok: boolean; output: string; code: number }> {
+  const r = await new Deno.Command(DENO, {
     args,
     cwd,
     stdout: "piped",
@@ -56,7 +84,11 @@ async function deno(args: string[], cwd: string): Promise<{ ok: boolean; output:
   // The exit code and signal too: a run killed from outside (a loaded CI host, a timeout) prints
   // nothing of its own, and the failure should say so rather than look like a lint finding.
   const status = `[exit ${r.code}${r.signal ? `, signal ${r.signal}` : ""}]`;
-  return { ok: r.success, output: `${text.decode(r.stdout)}${text.decode(r.stderr)}\n${status}` };
+  return {
+    ok: r.success,
+    code: r.code,
+    output: `${text.decode(r.stdout)}${text.decode(r.stderr)}\n${status}`,
+  };
 }
 
 /** Point the scaffold's lint plugin at this checkout's copy (the scaffold pins the JSR one). */
