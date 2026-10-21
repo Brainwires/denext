@@ -21,6 +21,12 @@
 // is unavailable fails it. Outside CI (`CI` unset) that pass runs with `--no-check`: one
 // `DENO_DIR` holds one type-check cache, which each Deno version wipes when the other opened it.
 //
+// The parallel and serial passes run on the toolchain too whenever it resolves (the running Deno
+// when it is one, else the pinned build, downloaded and verified on first use), so the suite runs
+// on the Deno users run: its type-checker (native TypeScript 7 from runtime 3.0.0-rc.2), its
+// `Deno.SQL` and its fixes. Only `DENEXT_DENO=stock` — or, outside a coverage run, a toolchain
+// that can't be had (offline on first use) — runs them on the running Deno, with a note.
+//
 // With `--coverage=<dir>` (the coverage gates) every pass runs on the toolchain and adds
 // `--coverage-raw-data-only`, so the profiles accumulate in `<dir>` and `deno coverage <dir>` on
 // the toolchain (`scripts/toolchain-deno.ts`) merges them: from 2.9.7-denext.17 its
@@ -241,9 +247,19 @@ async function runVitestPass(args: string[], bin: string | null): Promise<boolea
   return await deno(args, bin);
 }
 
-/** The toolchain for `need`ed passes: a path, null (`DENEXT_DENO=stock`), or false (failed). */
-async function toolchainFor(need: boolean): Promise<string | null | false> {
-  if (!need) return null;
+/**
+ * The Deno the parallel and serial passes run on: the toolchain whenever one resolved, else the
+ * running Deno (`DENEXT_DENO=stock`, or a toolchain that could not be had).
+ *
+ * @param toolchain What {@linkcode toolchainFor} resolved: a path, null (stock) or false (failed).
+ * @param running The running Deno (`Deno.execPath()`).
+ */
+export function stockPassDeno(toolchain: string | null | false, running: string): string {
+  return typeof toolchain === "string" ? toolchain : running;
+}
+
+/** The toolchain: a path, null (`DENEXT_DENO=stock`), or false (it could not be had). */
+async function toolchainFor(): Promise<string | null | false> {
   try {
     return await toolchainDeno();
   } catch (err) {
@@ -255,12 +271,16 @@ async function toolchainFor(need: boolean): Promise<string | null | false> {
 if (import.meta.main) {
   const ci = (Deno.env.get("CI") ?? "") !== "";
   const passes = testPasses(Deno.args, SERIAL_TESTS, await findVitestFiles(), ci);
-  // With coverage every pass runs on the toolchain, whose `deno coverage` merges them.
+  // Every pass runs on the toolchain when it resolves; with coverage it must (its `deno coverage`
+  // merges the passes' profiles).
   const coverage = wantsCoverage(splitArgs(Deno.args).flags);
-  const toolchain = await toolchainFor(coverage || passes.vitest !== null);
-  // Without coverage an unavailable toolchain fails the Vitest pass alone.
+  const toolchain = await toolchainFor();
   if (toolchain === false && coverage) Deno.exit(1);
-  const stock = coverage && typeof toolchain === "string" ? toolchain : Deno.execPath();
+  // Without coverage an unavailable toolchain fails the Vitest pass alone.
+  if (toolchain === false) {
+    console.error(`test-run: the stock test files run on ${Deno.execPath()}.`);
+  }
+  const stock = stockPassDeno(toolchain, Deno.execPath());
   const parallel = passes.parallel ? await deno(passes.parallel, stock) : true;
   const serial = passes.serial ? await deno(passes.serial, stock) : true;
   const vitest = !passes.vitest ||

@@ -22,6 +22,7 @@ import {
 import {
   findVitestFiles,
   isToolchainBuild,
+  stockPassDeno,
   testPasses,
   wantsCoverage,
 } from "../scripts/test-run.ts";
@@ -300,4 +301,15 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
   assert(isToolchainBuild("3.0.0-rc.1+ci.42"));
   assert(!isToolchainBuild("2.9.6"));
   assert(!isToolchainBuild("2.9.7"));
+});
+
+Deno.test("test-run: the stock test files run on the toolchain whenever it resolved", () => {
+  // Not only under coverage: the suite runs on the Deno users run (ci.yml's check job included).
+  assertEquals(
+    stockPassDeno("/cache/denext-deno/3.0.0-rc.2/deno", "/usr/bin/deno"),
+    "/cache/denext-deno/3.0.0-rc.2/deno",
+  );
+  // `DENEXT_DENO=stock` (null) and a toolchain that could not be had (false): the running Deno.
+  assertEquals(stockPassDeno(null, "/usr/bin/deno"), "/usr/bin/deno");
+  assertEquals(stockPassDeno(false, "/usr/bin/deno"), "/usr/bin/deno");
 });

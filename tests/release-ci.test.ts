@@ -62,6 +62,7 @@ Deno.test("release CI gate: the jobs a release needs, and what is unmet", () => 
     "ios-export-router",
     "windows-resolve",
     "windows-tests",
+    "macos-tests",
   ]);
   assertEquals(unmetCiJobs(jobs("success")), []);
   assertEquals(
@@ -293,6 +294,11 @@ Deno.test("release CI gate: the hint dispatches every gated workflow, e2e with e
     assertStringIncludes(hint, `gh workflow run ${w} --ref development`);
   }
   assert(!hint.includes("-f job="), "e2e.yml runs every job (job=all, the default)");
+});
+
+Deno.test("release CI gate: every required job is a job of ci.yml", async () => {
+  const ci = await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url));
+  for (const job of RELEASE_CI_JOBS) assertStringIncludes(ci, `\n  ${job}:\n`, job);
 });
 
 Deno.test("e2e + desktop window gates: every required job is named in its workflow", async () => {
