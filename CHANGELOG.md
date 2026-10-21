@@ -171,6 +171,13 @@ and this project adheres to
   gives up when no chunk arrives for 15 s or the whole body takes longer than 60 s, and stops at
   once when the request is aborted, answering `408` (`timeout` from the bridge).
 
+- **`denext stack restore` can no longer fill the disk with a full backup.** A full backup was
+  extracted under a 1 TiB cap, so a crafted archive (a decompression bomb) could expand until the
+  disk was full. The cap is now the free space where the backup is extracted, less a margin (a
+  tenth of it, at least 1 GiB); a backup that expands further is refused before the database is
+  touched, saying how large it may be and why. The new `--max-size <size>` (`20G`, `512M`, bytes)
+  lowers the cap, and stands in for the measurement where free space can't be read (else 16 GiB).
+
 ## [4.6.0] - 2026-10-21
 
 ### Added

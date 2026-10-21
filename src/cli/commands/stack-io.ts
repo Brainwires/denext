@@ -46,6 +46,8 @@ export interface StackIo {
   fetch?(url: string, init?: RequestInit): Promise<Response>;
   /** Wait `ms` between `health --watch` rounds. */
   sleep?(ms: number): Promise<void>;
+  /** Bytes free on the filesystem holding `dir`, or `undefined` when it can't be told. */
+  freeBytes?(dir: string): Promise<number | undefined>;
 }
 
 /**
@@ -306,3 +308,43 @@ export const terminalIo: Pick<
   fetch: (url, init) => fetch(url, init),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
+
+/**
+ * The bytes `df -Pk` reports available: the fourth field of its last line (1024-byte blocks).
+ *
+ * @param text `df -Pk <dir>`'s output.
+ * @returns The bytes, or `undefined` when the output has no such field.
+ */
+export function parseDfAvailable(text: string): number | undefined {
+  const last = text.trim().split("\n").at(-1)?.trim().split(/\s+/) ?? [];
+  const blocks = last.length >= 4 ? Number(last.at(-3)) : NaN;
+  return Number.isSafeInteger(blocks) && blocks >= 0 && last[0] !== "Filesystem"
+    ? blocks * 1024
+    : undefined;
+}
+
+/**
+ * Bytes free on the host filesystem holding `dir`: `df -Pk` on macOS / Linux, the drive's free
+ * space through PowerShell on Windows.
+ *
+ * @param dir A directory on the filesystem to measure.
+ * @returns The bytes, or `undefined` when the tool is missing or says nothing usable.
+ */
+export async function hostFreeBytes(dir: string): Promise<number | undefined> {
+  const windows = Deno.build.os === "windows";
+  const drive = windows ? /^([A-Za-z]):/.exec(dir)?.[1] : undefined;
+  if (windows && !drive) return undefined;
+  const [cmd, args] = windows
+    ? ["powershell", ["-NoProfile", "-Command", `(Get-PSDrive -Name ${drive}).Free`]]
+    : ["df", ["-Pk", dir]];
+  try {
+    const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "null" }).output();
+    if (!out.success) return undefined;
+    const text = new TextDecoder().decode(out.stdout);
+    if (!windows) return parseDfAvailable(text);
+    const free = Number(text.trim());
+    return Number.isSafeInteger(free) && free >= 0 ? free : undefined;
+  } catch {
+    return undefined;
+  }
+}

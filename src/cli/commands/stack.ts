@@ -24,6 +24,7 @@ import { healthAction, logsAction } from "./stack-health.ts";
 import {
   composeArgs,
   exists,
+  hostFreeBytes,
   NO_DOCKER,
   type PsRow,
   psRows,
@@ -69,6 +70,7 @@ const defaultIo: StackIo = {
   generate: (ctx, dir) => runDocker(ctx, dir, "", {}),
   log: (line) => console.log(line),
   error: (line) => console.error(line),
+  freeBytes: hostFreeBytes,
 };
 
 /** The value `.env.example`'s `# Generate:` hint asks for, or `undefined` when it can't make one. */
@@ -349,7 +351,9 @@ export const stackCommand: CommandSpec = {
     "  backup   [file] The database (pg_dump custom format, default under .denext/backups/);",
     "           --full: one .tar.gz with roles, extensions, the dump, settings, storage and a",
     "           MANIFEST.txt of the restore order",
-    "  restore  <file> A dump or a full backup (detected); a database with tables needs --yes",
+    "  restore  <file> A dump or a full backup (detected); a database with tables needs --yes.",
+    "           A full backup expands to at most --max-size (default: the free space where it",
+    "           is extracted, minus a margin)",
     "",
     "passwd and roll edit .env in place, then --restart recreates the affected containers,",
     "--no-restart leaves them, and with neither a terminal is asked (else the command printed).",
@@ -422,6 +426,13 @@ export const stackCommand: CommandSpec = {
       help: "roll --include-secret / restore: go ahead without asking",
     },
     { name: "full", type: "boolean", help: "backup: roles, settings, extensions and storage too" },
+    {
+      name: "max-size",
+      type: "string",
+      valueName: "<size>",
+      help: "restore: the most a full backup may expand to, e.g. 20G (default: the free space " +
+        "where it is extracted, minus a margin)",
+    },
     {
       name: "storage-dir",
       type: "string",

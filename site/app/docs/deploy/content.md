@@ -297,7 +297,7 @@ denext stack logs [service] [--service s] [--level warn] [--since 30m] [--until 
 denext stack passwd --postgres [--dashboard] [--generate]
 denext stack roll [--include-secret] [--keep-old | --drop-old]
 denext stack backup [file] [--full]
-denext stack restore <file> [--yes]
+denext stack restore <file> [--yes] [--max-size <size>]
 ```
 
 **Health.** `health` lists every service with its compose health check (a one-shot such as
@@ -371,8 +371,12 @@ already has some). It then stops the app, runs `pg_restore --clean --if-exists` 
 transaction (the full backup's steps in its manifest's order), and starts the app again. A full
 backup is extracted and checked before anything is touched: an entry with an absolute path or
 `..`, a link that leaves the backup, a hard link or a device is refused, and restore runs only
-the steps it knows, from the files the manifest names. The roles' passwords are not in a backup,
-so the restoring stack keeps the ones in its own `.env`.
+the steps it knows, from the files the manifest names. Its extraction is capped at the free space
+of the disk it is extracted to (the system temp directory; set `TMPDIR` to use another), less a
+margin of a tenth of it and at least 1 GiB, so a backup that expands further (a decompression bomb
+included) is refused before it fills the disk. `--max-size <size>` (`20G`, `512M`, a byte count)
+lowers the cap; when the free space can't be measured it is the cap, else 16 GiB. The roles'
+passwords are not in a backup, so the restoring stack keeps the ones in its own `.env`.
 
 ### The dashboard
 
