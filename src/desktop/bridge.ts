@@ -54,7 +54,7 @@ import {
   type DesktopMainThreadFn,
   validateStandard,
 } from "./extension.ts";
-import { readCapped } from "../utils/read-capped.ts";
+import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
 const RPC_PATH = "/_denext/desktop/rpc";
@@ -205,6 +205,13 @@ function gateEvents(
   return null;
 }
 
+/** The refusal for a body {@link readCapped} did not return: over the cap (413) or too slow (408). */
+function unreadBody(raw: null | typeof BODY_TIMED_OUT): Response {
+  return raw === BODY_TIMED_OUT
+    ? fail(408, "timeout", "the request body did not arrive in time")
+    : fail(413, "too_large", `the request is over ${MAX_RPC_BODY_BYTES} bytes`);
+}
+
 /** Read the RPC body: enforce the size cap, parse JSON, check the `{ cap, method, args }` shape. */
 async function readRpcCall(
   request: Request,
@@ -214,9 +221,7 @@ async function readRpcCall(
     return fail(413, "too_large", `the request is over ${MAX_RPC_BODY_BYTES} bytes`);
   }
   const raw = await readCapped(request, MAX_RPC_BODY_BYTES);
-  if (raw === null) {
-    return fail(413, "too_large", `the request is over ${MAX_RPC_BODY_BYTES} bytes`);
-  }
+  if (typeof raw !== "string") return unreadBody(raw);
   let body: { cap?: unknown; method?: unknown; args?: unknown };
   try {
     body = JSON.parse(raw);

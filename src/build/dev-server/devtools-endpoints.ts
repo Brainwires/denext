@@ -37,7 +37,7 @@ import {
 import { parseSnapshot } from "./devtools-snapshot.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
 import { sseSend } from "../sse.ts";
-import { readCapped } from "../../utils/read-capped.ts";
+import { readCapped, TIMED_OUT } from "../../utils/read-capped.ts";
 
 /** Both payloads are live snapshots — never let a proxy or the browser keep one. */
 const NO_STORE = { "cache-control": "no-store" };
@@ -155,14 +155,15 @@ function storeSnapshot(st: DevInspectState, snapshot: InspectSnapshot): void {
  * `POST /_denext/dev-inspect` — the in-page DevTools sink: record this page's latest
  * component tree so the MCP bridge can read it out-of-process.
  *
- * POST + exactly `application/json` only (405/415 otherwise), body capped at 256 KB (413),
- * and a body that does not parse as a snapshot is DROPPED with a 204 — a dev page must
+ * POST + exactly `application/json` only (405/415 otherwise), body capped at 256 KB (413) and
+ * bounded in time (408 when it stalls or trickles past its deadline), and a body that does not
+ * parse as a snapshot is DROPPED with a 204 — a dev page must
  * never be taught to log server errors by posting junk. What IS stored is rebuilt field by
  * field by {@link parseSnapshot}, never the posted object.
  *
  * @param st The dev-server state (its {@link DevInspectState.devInspect} LRU is written).
  * @param request The POST request.
- * @returns 204 on accept-or-drop, 415/413 when the request itself is refused.
+ * @returns 204 on accept-or-drop, 415/413/408 when the request itself is refused.
  */
 export async function devInspectSink(st: DevInspectState, request: Request): Promise<Response> {
   if (mediaType(request.headers.get("content-type")) !== "application/json") {
@@ -175,6 +176,9 @@ export async function devInspectSink(st: DevInspectState, request: Request): Pro
   const body = await readCapped(request, MAX_SNAPSHOT_BYTES);
   if (body === null) {
     return new Response("snapshot too large", { status: 413, headers: NO_STORE });
+  }
+  if (body === TIMED_OUT) {
+    return new Response("snapshot timed out", { status: 408, headers: NO_STORE });
   }
   const snapshot = parseSnapshot(body);
   if (snapshot) {

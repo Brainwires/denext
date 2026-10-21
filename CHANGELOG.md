@@ -165,6 +165,12 @@ and this project adheres to
   `x-cloud-trace-context`) is unaffected. Batch items and in-process calls during a render still
   inherit only their parent's fixed header allowlist.
 
+- **The Deno Desktop bridge and the dev server's DevTools sink no longer wait forever on a body.**
+  Both read a page's small JSON body under a size cap but with no deadline, so a body that
+  stopped sending, or trickled a byte at a time under the cap, held the handler open. The read now
+  gives up when no chunk arrives for 15 s or the whole body takes longer than 60 s, and stops at
+  once when the request is aborted, answering `408` (`timeout` from the bridge).
+
 ## [4.6.0] - 2026-10-21
 
 ### Added
