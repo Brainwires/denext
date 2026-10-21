@@ -19,6 +19,16 @@ and this project adheres to
 
 ### Changed
 
+- **denext pins runtime `3.0.0-rc.2`** (from `2.9.7-denext.22`; the Deno toolchain and the Deno
+  Desktop runtime move together). What waited on `3.0.0-rc.1` now works on the pinned build:
+  `denext/prisma-adapter` (`Deno.SQL` result column types), Linux window blur and native USB
+  security keys in `appCapabilities()`, the native TypeScript 7 check resolving absolute `file:`
+  imports and checking `--doc` code blocks and `deno bundle --check`. `3.0.0-rc.2` adds:
+  - the rustls / rustls-webpki / webpki-roots security advisories, fixed;
+  - `--max-memory` / `--max-cpu-time` / `--max-time` on the CLI;
+  - `--allow-net-connect` / `--allow-net-listen`;
+  - a native check that keeps its generated project across edits, checks an import-map JSX
+    runtime natively and adapts a `tsconfig.json`'s TypeScript-7-removed options.
 - **The editor's Deno language server runs TypeScript 7 by default.** `denext create` / `init`
   and `denext migrate` write `"deno.unstable": ["tsgo-lsp"]` into `.vscode/settings.json`, and
   `denext upgrade` adds it to existing settings that turn the Deno LSP on and set no

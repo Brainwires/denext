@@ -128,7 +128,13 @@ Deno.test("the checked-in pin: a schema-1 table whose entries carry url + sha256
     assertEquals(Object.keys(DENO_TOOLCHAIN.targets), [], "a placeholder pins no targets");
     return;
   }
-  assert(/^\d+\.\d+\.\d+-denext\.\d+$/.test(DENO_TOOLCHAIN.version), DENO_TOOLCHAIN.version);
+  // `<deno>-denext.N` up to 2.9.7-denext.22, the fork's own `3.0.0-rc.N` from then on.
+  assert(
+    /^(\d+\.\d+\.\d+-denext\.\d+|\d+\.\d+\.\d+-rc\.\d+|\d+\.\d+\.\d+)$/.test(
+      DENO_TOOLCHAIN.version,
+    ),
+    DENO_TOOLCHAIN.version,
+  );
   for (const [target, a] of Object.entries(DENO_TOOLCHAIN.targets)) {
     assert(/^(darwin|linux|windows)-(x86_64|aarch64)$/.test(target), target);
     assert(/^https:\/\//.test(a.url), `${target}: an https url`);

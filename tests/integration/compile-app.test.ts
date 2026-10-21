@@ -17,6 +17,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
+import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
@@ -372,7 +373,7 @@ Deno.test({
             const runtime = JSON.parse((await app.get("/api/runtime")).text);
             if (ON_TOOLCHAIN) {
               assertEquals(runtime.sql, "function", JSON.stringify(runtime));
-              assert(/-denext\.\d+$/.test(runtime.deno), runtime.deno);
+              assert(isDenextDenoVersion(runtime.deno), runtime.deno);
             }
             // A handle nothing closes holds the process after the drain: the in-flight request
             // still finishes, and the process exits at the drain deadline anyway (on Windows after

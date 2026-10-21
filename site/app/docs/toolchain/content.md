@@ -535,13 +535,14 @@ each release also ships its own `denort` per platform (the standalone runtime `d
 builds onto), pinned and verified beside the CLI, so a binary from `denext build --compile` (or
 the toolchain's own `deno compile`) carries the same patches, `Deno.SQL` included.
 `2.9.7-denext.21` adds Windows on Arm (`aarch64-pc-windows-msvc`) builds of the CLI and `denort`,
-and a compiled program keeps `--unstable-no-legacy-abort`. `2.9.7-denext.22` (the build denext
-pins today) type-checks with the native TypeScript 7 compiler, shipped in the CLI zip and pinned
+and a compiled program keeps `--unstable-no-legacy-abort`. `2.9.7-denext.22` type-checks with the native TypeScript 7 compiler, shipped in the CLI zip and pinned
 like the binary, and runs npm packages more as Node.js does; that check doesn't resolve an absolute
 `file:` import (runtime 3.0.0-rc.1+ does), so such a project sets `DENEXT_NATIVE_CHECK=0`
 ([known limitations](/docs/limitations)). Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new release (`-denext.N` up to
-`2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). Deno's next minor
+`2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). `3.0.0-rc.2` (the build denext pins today) adds
+`--max-memory` / `--max-cpu-time` / `--max-time` and `--allow-net-connect` /
+`--allow-net-listen`, and takes the rustls / rustls-webpki / webpki-roots security fixes. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
 **Support across denext releases.** The patches are carried forward from release to release. Each
