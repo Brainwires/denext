@@ -124,6 +124,12 @@ and this project adheres to
   snapshot write still in flight could land after the final one, leaving an older snapshot (or
   its temporary file) behind. A concurrent call now waits for the stop in progress, and the
   snapshot writes run one at a time, in order.
+
+- **A project named through a symlinked path builds its stylesheet imports.** `denext export
+  <dir>` (and the other module verbs) with `<dir>` reached through a symlink, such as a macOS temp
+  directory (`/var` → `/private/var`), failed with "Expected a JavaScript or TypeScript module, but
+  identified a Css module": the CSS import map named each stylesheet by the walk's path, while the
+  re-exec'd process imported it by its real path. The map now redirects both spellings.
 - **A SPA `client:interaction` island no longer loses the click that mounts it.** The press
   (pointerdown, touchstart or keydown) imported the component and mounted it as soon as its chunk
   arrived. A cached chunk often arrives before the button is released, and then the component

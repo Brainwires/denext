@@ -4,6 +4,7 @@ import {
   buildAppCss,
   concatCss,
   cssFailureReason,
+  cssFileSpellings,
   discoverCssFiles,
   extractRouteCss,
   generateCssAssets,
@@ -233,7 +234,8 @@ Deno.test("discoverCssFiles served from a primed whole-app crawl stays scoped to
 });
 
 Deno.test("generateCssAssets writes shims + import map + extracted css", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_css_assets_" });
+  // Its real path: under a symlinked temp dir (macOS) the map also names the real spelling.
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_css_assets_" }));
   const shimDir = join(dir, "shims");
   await Deno.mkdir(shimDir);
   try {
@@ -401,4 +403,31 @@ Deno.test("buildAppCss emits a config redirecting css + returns per-route extrac
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test({
+  name: "generateCssAssets: a stylesheet reached through a symlink is redirected by both spellings",
+  // Creating a symlink needs a privilege on Windows; the case is macOS's `/var` temp dirs.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_css_link_" }));
+    try {
+      const real = join(root, "real");
+      await Deno.mkdir(join(real, "shims"), { recursive: true });
+      await Deno.symlink(real, join(root, "link"));
+      const viaLink = join(root, "link", "g.css");
+      await Deno.writeTextFile(viaLink, ".hero { padding: 0 }\n");
+      assertEquals(await cssFileSpellings(viaLink), [viaLink, join(real, "g.css")]);
+      assertEquals(await cssFileSpellings(join(real, "g.css")), [join(real, "g.css")]);
+      assertEquals(await cssFileSpellings(join(root, "gone.css")), [join(root, "gone.css")]);
+
+      const assets = await generateCssAssets([viaLink], join(real, "shims"), { minify: true });
+      // A process whose cwd is the project imports the real path (getcwd resolves symlinks).
+      const shim = assets.importMap[toFileUrl(viaLink).href];
+      assert(shim, "the walk's spelling is redirected");
+      assertEquals(assets.importMap[toFileUrl(join(real, "g.css")).href], shim);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
 });
