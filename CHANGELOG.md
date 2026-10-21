@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-10-21
+
 ### Added
 
 - **The toolchain installs and verifies `deno lsp`'s TypeScript 7 language server.** The CLI
@@ -17557,7 +17559,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.5.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.6.0...development
+[4.6.0]: https://jsr.io/@denext/denext@4.6.0
 [4.5.2]: https://jsr.io/@denext/denext@4.5.2
 [4.5.1]: https://jsr.io/@denext/denext@4.5.1
 [4.5.0]: https://jsr.io/@denext/denext@4.5.0

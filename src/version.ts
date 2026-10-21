@@ -4,4 +4,4 @@
 // checks that the two agree.
 
 /** The denext framework version (the same value as `VERSION` from `denext`). */
-export const VERSION = "4.5.2";
+export const VERSION = "4.6.0";
