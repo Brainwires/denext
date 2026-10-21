@@ -7,7 +7,7 @@
 // define-api.test.ts and define-action.test.ts, unchanged.
 
 import { assert, assertEquals } from "@std/assert";
-import { defineApi } from "../src/server/define-api.ts";
+import { type ApiErrGuard, defineApi } from "../src/server/define-api.ts";
 import { handleApi } from "../src/server/api.ts";
 import { asyncProps } from "../src/runtime/async-props.ts";
 import {
@@ -105,6 +105,19 @@ Deno.test("defineApi: an undeclared err() code is a compile error", () => {
   defineApi({ response: idSchema, errors: { conflict: 409 } }, () => err("typo"));
   // A declared code type-checks (with or without details).
   defineApi({ errors: { conflict: 409 } }, () => err("conflict", { data: { at: 1 } }));
+});
+
+Deno.test("defineApi: a handler returning `any` type-checks (no misleading err() guard)", () => {
+  // deno-lint-ignore no-explicit-any
+  const untyped = (): any => JSON.parse('{"id":1}');
+  // An `any` result can't be told apart from an err(), so the guard must accept it.
+  defineApi({ errors: { conflict: 409 } }, () => untyped());
+  defineApi({}, async () => await Promise.resolve(untyped()));
+  defineApi({ response: idSchema, errors: { conflict: 409 } }, () => untyped());
+  // deno-lint-ignore no-explicit-any
+  expectType<Equal<ApiErrGuard<{ errors: { conflict: 409 } }, any>, unknown>>(true);
+  // deno-lint-ignore no-explicit-any
+  expectType<Equal<ApiErrGuard<{ errors: { conflict: 409 } }, Promise<any>>, unknown>>(true);
 });
 
 const fd = (fields: Record<string, string>) => {

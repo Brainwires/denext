@@ -84,6 +84,9 @@ and this project adheres to
 
 ### Fixed
 
+- **A `defineApi` handler whose result is `any` type-checks.** A handler returning an untyped
+  value (`JSON.parse(...)`, `await res.json()`) was reported as returning an `err()` with an
+  undeclared code, a misleading compile error. The `err()` code check now accepts an `any` result.
 - **A SPA `client:interaction` island no longer loses the click that mounts it.** The press
   (pointerdown, touchstart or keydown) imported the component and mounted it as soon as its chunk
   arrived. A cached chunk often arrives before the button is released, and then the component
