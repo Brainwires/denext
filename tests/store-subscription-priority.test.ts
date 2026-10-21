@@ -7,7 +7,8 @@
 import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import { startTransition, useSyncExternalStore } from "../src/runtime/hooks.ts";
+import { startTransition } from "../src/runtime/hooks/transition.ts";
+import { useSyncExternalStore } from "../src/runtime/hooks/use-sync-external-store.ts";
 import { ErrorBoundary } from "../src/runtime/error-boundary.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";

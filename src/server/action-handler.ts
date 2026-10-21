@@ -19,7 +19,8 @@
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { verifyOrigin } from "./origin-check.ts";
 import { corsCredentialless, type CorsPolicy } from "./cors.ts";
-import { prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { WIRE_ENC } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import {
   isForbidden,

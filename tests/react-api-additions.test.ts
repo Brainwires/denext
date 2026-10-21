@@ -112,7 +112,7 @@ Deno.test("useState supports the no-arg form (React parity)", () => {
 });
 
 Deno.test("useOptimistic single-arg form: the action is the next optimistic value", async () => {
-  const { useOptimistic } = await import("../src/runtime/hooks.ts");
+  const { useOptimistic } = await import("../src/runtime/hooks/transition.ts");
   const { doc, container } = makeDom();
   setDocument(doc as Any);
   let apply = (_v: string) => {};

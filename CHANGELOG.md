@@ -23,6 +23,21 @@ and this project adheres to
   made by an older denext), naming the fix, instead of compiling them at startup. The same holds
   for an app that imports denext from JSR (checked against a JSR-installed Pages Router app:
   135 MB with the stand-ins, 175 MB without).
+  made by an older denext), naming the fix, instead of compiling them at startup.
+- **Smaller client startup: a hook, a transition or a Server Action call the app never makes is no
+  longer compiled into its startup chunks.** The client hook dispatcher keeps only the hooks every
+  app reaches; `useReducer`, `useId`, `useSyncExternalStore`, `useDeferredValue`, `useMemoCache`,
+  `useInsertionEffect` and `useEffectEvent` each live in a module of their own that only a call
+  to the hook brings in, and so does the transition engine behind `startTransition` /
+  `useTransition` / `useOptimistic`. A Server Action's browser dispatch (the POST, the argument
+  encoding) is an on-demand chunk loaded by the first action reference a page creates, and the
+  wire encoder is a file of its own, so a Flight page with no action carries neither. Measured
+  startup bytes (raw): examples/hello's shared chunks 64,894 → 63,378, examples/islands
+  68,980 → 65,447, examples/actions 69,481 → 65,654, examples/live 77,365 → 75,781, examples/spa
+  61,441 → 59,930. The client budget drops from 67,000 to 65,000 B, and the build-smoke test fails
+  if any of these runtimes reappears in a startup graph that doesn't use it. Behaviour is
+  unchanged. The `"use server"` stubs the build generates now import `clientActionStub` from the
+  internal `denext/action-stub` entry instead of `denext/client-runtime`.
 
 ### Fixed
 

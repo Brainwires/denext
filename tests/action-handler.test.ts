@@ -5,7 +5,8 @@
 // paths the audit found untested despite superficially looking covered.
 
 import { assert, assertEquals } from "@std/assert";
-import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
+import { actionEndpoint } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { redirect as redirectSignal, RedirectType } from "../src/runtime/error-boundary.ts";

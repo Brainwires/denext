@@ -7,7 +7,8 @@
  * @module
  */
 
-import { useContext, useEffect, useReducer, useState } from "../runtime/hooks.ts";
+import { useContext, useEffect, useState } from "../runtime/hooks.ts";
+import { useReducer } from "../runtime/hooks/use-reducer.ts";
 import { navigationContexts, type StackNavigatorApi, type TabScope } from "./context.ts";
 import type { ScreenOptions } from "./types.ts";
 

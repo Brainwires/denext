@@ -15,7 +15,8 @@
  * @module
  */
 
-import { useEffect, useId } from "../runtime/hooks.ts";
+import { useEffect } from "../runtime/hooks.ts";
+import { useId } from "../runtime/hooks/use-id.ts";
 import { holdAwake } from "../mobile/keep-awake.ts";
 import { type Subscription, subscription } from "./internal/common.ts";
 

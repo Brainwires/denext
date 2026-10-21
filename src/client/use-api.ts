@@ -26,7 +26,9 @@
 // doesn't use Live bundles none of it.
 
 import { isPostpone } from "../runtime/postpone.ts";
-import { useEffect, useId, useSyncExternalStore } from "../runtime/hooks.ts";
+import { useEffect } from "../runtime/hooks.ts";
+import { useId } from "../runtime/hooks/use-id.ts";
+import { useSyncExternalStore } from "../runtime/hooks/use-sync-external-store.ts";
 import { use } from "../runtime/suspense.ts";
 import { adoptedSignal, recordSignal } from "../runtime/signal-state.ts";
 import {
@@ -41,7 +43,8 @@ import {
   type RequestOf,
   type ResponseOf,
 } from "../runtime/api-client.ts";
-import { decodeWire, prepareWire, stableKey } from "../runtime/wire-codec.ts";
+import { decodeWire } from "../runtime/wire-codec.ts";
+import { prepareWire, stableKey } from "../runtime/wire-encode.ts";
 
 /** Options for {@link useApi}. */
 export interface UseApiOptions {

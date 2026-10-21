@@ -3,14 +3,8 @@
 // depth and node count, and leaves plain JSON untouched (identity, no `tagged` flag).
 
 import { assert, assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
-import {
-  decodeTagged,
-  decodeWire,
-  encodeWire,
-  NOT_TAGGED,
-  stableKey,
-  WireCodecError,
-} from "../src/runtime/wire-codec.ts";
+import { decodeTagged, decodeWire, NOT_TAGGED, WireCodecError } from "../src/runtime/wire-codec.ts";
+import { encodeWire, stableKey } from "../src/runtime/wire-encode.ts";
 
 /** Encode → JSON.parse → decode, the way every wire uses it. */
 function roundTrip(value: unknown): { out: unknown; tagged: boolean } {

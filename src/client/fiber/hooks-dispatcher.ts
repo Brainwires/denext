@@ -1,6 +1,14 @@
-// The client hook dispatcher: the per-render hook cells behind useState/useReducer/
-// useEffect/…/useSyncExternalStore, installed by renderComponent for the duration
-// of one component render.
+// The client hook dispatcher: the per-render hook cells behind useState/useEffect/useMemo/…,
+// installed by renderComponent for the duration of one component render.
+//
+// Only the hooks every app reaches live on the dispatcher object. useReducer, useId,
+// useSyncExternalStore, useDeferredValue, useMemoCache and useInsertionEffect each live in their
+// own module under ./hooks/, imported by the public hook (src/runtime/hooks/) — so an app that
+// never calls one ships none of its code: an object keeps every method it is given, a module's
+// unused function is dropped. Those modules build on the {@linkcode ClientHookHost} members of
+// this dispatcher, which the public hook hands them; they import nothing of the reconciler, so a
+// lazily loaded chunk that calls one of those hooks reaches no reconciler file (one that did would
+// split the startup chunks along that edge — see plans' "bundler places code by FILE").
 
 import { devHydrationActive } from "./fiber-utils.ts";
 import { ERR_MORE_HOOKS, reconcilerError } from "./errors.ts";
@@ -12,15 +20,10 @@ import {
   scheduleUpdate,
   scheduleUpdateLane,
 } from "./scheduler.ts";
+import { HK_EFFECT, HK_LAYOUT, HK_MEMO, HK_REF, HK_STATE } from "./hook-kinds.ts";
 
-import { nextId } from "../../jsx/tree-id.ts";
 import type { DependencyList } from "../../compat/react-types.ts";
-import {
-  type Context,
-  depsChanged,
-  type Dispatcher,
-  MEMO_CACHE_SENTINEL,
-} from "../../runtime/hooks.ts";
+import { type Context, depsChanged, type Dispatcher } from "../../runtime/hooks.ts";
 import {
   type CommitEffect,
   type Fiber,
@@ -66,22 +69,6 @@ export function resetHookCursor(): void {
   if (x !== undefined && x.debugValues !== undefined) x.debugValues = undefined;
 }
 
-// Hook kinds — a per-cell tag consumed by the dev Fast Refresh signature guard (see
-// renderComponent) and by the render-phase re-render (which keeps memo cells). Distinct
-// constant per hook so a same-count reorder across an edit is detected, not just a
-// changed count.
-const HK_STATE = 1;
-const HK_REDUCER = 2;
-const HK_EFFECT = 3;
-export const HK_MEMO = 4;
-const HK_REF = 5;
-const HK_ID = 6;
-const HK_STORE = 7;
-const HK_MEMOCACHE = 8;
-const HK_DEFERRED = 9;
-const HK_LAYOUT = 10;
-const HK_INSERTION = 11;
-
 /**
  * Set for the StrictMode second render pass: hook cells are re-read, no NEW effect entries
  * are queued (the first pass's entries — which carry the StrictMode setup→cleanup→setup —
@@ -98,6 +85,12 @@ export function setRefreshSwapRender(on: boolean): void {
   refreshSwapRender = on;
 }
 
+/**
+ * The rendering component's next hook cell, tagged with its hook `kind`.
+ *
+ * @param kind The hook kind (one of hook-kinds.ts's `HK_*` constants).
+ * @returns The cell (created on the component's first render).
+ */
 function getHook(kind: number): HookCell {
   const inst = currentFiber!;
   const hooks = inst.hooks!;
@@ -216,82 +209,6 @@ function scheduleEffect(
 }
 
 /**
- * Whether a store's snapshot differs from the last-rendered one. A `getSnapshot` that
- * THROWS here (e.g. a store read that asserts on a value transiently absent mid-notify,
- * as @effect/atom does) is treated as "changed" — exactly as React's
- * `checkIfSnapshotChanged` does — so the throw is NOT allowed to escape the store's
- * notify callback (where it is uncatchable and tears the tree down). Forcing a
- * re-render instead lets the throw (if it still occurs) surface during render, where an
- * error boundary can catch it; usually the store has settled by then and it does not.
- */
-function snapshotChanged(cell: HookCell, getSnapshot: () => unknown): boolean {
-  try {
-    return !Object.is(getSnapshot(), cell.value);
-  } catch {
-    return true;
-  }
-}
-
-/** `depsChanged(prev, [subscribe])` without allocating the one-element array every render. */
-function subscribeChanged(prev: DependencyList | undefined, subscribe: unknown): boolean {
-  return prev === undefined || prev.length !== 1 || !Object.is(prev[0], subscribe);
-}
-
-/**
- * The commit-phase entry that subscribes a `useSyncExternalStore` cell. Subscribe (and
- * re-subscribe on Offscreen reconnect) via one thunk so a hidden store subscription is
- * torn down and rebuilt like any other effect. Two-pass commit entry: the prior
- * subscription is torn down in the cleanup pass (before any setup), and this render's
- * subscribe runs in the setup pass.
- *
- * The subscription is marked satisfied (`cell.deps`) ONLY once it actually commits — NOT
- * during render. A render can be abandoned before commit (a transition interrupted by a
- * sync update, or superseded by a re-render while a subtree mounts). Because the hook
- * cell is shared across the fiber's two buffers, setting `cell.deps` at render time
- * would let the abandoned render mark the (stable) subscribe as already-scheduled, so
- * the committed re-render sees depsChanged=false and never subscribes — the store then
- * never notifies that consumer (Base UI's dialog popup/viewport, which re-render as
- * their contents mount, vs a leaf backdrop that commits its first render cleanly).
- * Setting it in the commit means an abandoned render leaves `cell.deps` untouched so
- * the committed one re-queues.
- *
- * After subscribing the snapshot is re-checked: a store mutation landing between this
- * render's snapshot read and the subscribe would otherwise be missed (React re-checks
- * here too). This also drives the post-hydration sync from the server snapshot to the
- * live client value (H3b).
- */
-function storeSubscriptionEffect(
-  cell: HookCell,
-  subscribe: (onChange: () => void) => () => void,
-  changed: () => boolean,
-): CommitEffect {
-  // Always SYNC, never the transition lane, even when the store's notify fires inside a
-  // startTransition — React's `forceStoreRerender` does the same (see scheduleStoreUpdate).
-  // Splitting one store mutation's subscribers across lanes tears the tree.
-  const notify = () => {
-    if (changed()) scheduleStoreUpdate(cell.owner!);
-  };
-  const mount = () => {
-    cell.cleanup = subscribe(notify);
-  };
-  const entry: CommitEffect = (() => {
-    cell.reconnect = mount;
-    cell.deps = [subscribe];
-    // Inside a hidden <Activity>: subscribe on reveal, not now (see `parking`).
-    if (parking) {
-      cell.disconnected = true;
-      return;
-    }
-    mount();
-    notify();
-  }) as CommitEffect;
-  entry.cleanup = () => {
-    if (typeof cell.cleanup === "function") cell.cleanup();
-  };
-  return entry;
-}
-
-/**
  * The cell for a stateful hook (useState/useReducer), initialised by the caller on its first
  * render (`inited`), re-pointed at the live fiber every render so its setter keeps targeting
  * the live buffer across the double-buffer swap.
@@ -328,17 +245,54 @@ function stateSetter(cell: HookCell): (v: unknown) => void {
   return (v) => commitCellUpdate(cell, typeof v === "function" ? v(cell.value) : v);
 }
 
-/** useReducer's dispatch for `cell` (created once per cell); applies the latest reducer. */
-function reducerDispatch(cell: HookCell): (action: unknown) => void {
-  return (action) => commitCellUpdate(cell, cell.reducer!(cell.value, action));
+/**
+ * What the per-hook client modules (./hooks/) build on: members of the client dispatcher, handed to
+ * them by the public hook, so they import nothing of the reconciler. Short names: a property name
+ * survives minification, and these ship in every app.
+ */
+export interface ClientHookHost extends Dispatcher {
+  /** The rendering component's next hook cell, tagged with `kind` (hook-kinds.ts). */
+  cell(kind: number): HookCell;
+  /** The component fiber rendering now. */
+  fiber(): Fiber;
+  /** Re-point a stateful hook's cell at the live fiber for this render (useState's). */
+  stateCell(cell: HookCell): HookCell;
+  /** Commit a stateful hook's next value and schedule its owner (useState's). */
+  commitCell(cell: HookCell, next: unknown): void;
+  /** Queue an insertion effect for `cell` (outside the Offscreen connect/disconnect cycle). */
+  insertion(cell: HookCell, effect: () => (() => void) | void, deps?: DependencyList): void;
+  /** Whether this render is on the transition lane. */
+  inTransition(): boolean;
+  /** Schedule `fiber` on the transition lane. */
+  deferUpdate(fiber: Fiber): void;
+  /** Whether the reconciler is hydrating server HTML. */
+  hydrating(): boolean;
+  /** Whether the commit is parking a hidden `<Activity>` subtree's effects (see `parking`). */
+  parking(): boolean;
+  /** Schedule an external-store subscriber at sync priority. */
+  storeUpdate(fiber: Fiber): void;
+  /** Queue a commit-phase entry on `fiber`'s passive effects and flag it effect-bearing. */
+  passive(fiber: Fiber, entry: CommitEffect): void;
 }
 
-/** A store subscription's snapshot check, against `getSnapshot` as of this subscribe. */
-function storeChangeCheck(cell: HookCell, getSnapshot: () => unknown): () => boolean {
-  return () => snapshotChanged(cell, getSnapshot);
-}
+export const clientDispatcher: ClientHookHost = {
+  cell: getHook,
+  fiber: () => currentFiber!,
+  stateCell,
+  commitCell: commitCellUpdate,
+  insertion: (cell, effect, deps) =>
+    scheduleEffect(currentFiber!, "insertionEffects", cell, effect, deps, false),
+  inTransition: () => (renderLanes & TransitionLane) !== NoLane,
+  deferUpdate: (fiber) => scheduleUpdateLane(fiber, TransitionLane),
+  hydrating: () => isHydrating,
+  parking: () => parking,
+  storeUpdate: scheduleStoreUpdate,
+  passive: (fiber, entry) => {
+    (fiber.passiveEffects ??= []).push(entry);
+    // This push bypasses scheduleEffect, so flag the effect-bearing fiber here too.
+    fiber.flags |= HasEffect;
+  },
 
-export const clientDispatcher: Dispatcher = {
   useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
     const hook = getHook(HK_STATE);
     if (!hook.inited) {
@@ -347,16 +301,6 @@ export const clientDispatcher: Dispatcher = {
     const cell = stateCell(hook);
     cell.updater ??= stateSetter(cell);
     return [cell.value as S, cell.updater as (v: S | ((p: S) => S)) => void];
-  },
-
-  useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-    const hook = getHook(HK_REDUCER);
-    if (!hook.inited) hook.value = init ? init(initialArg) : initialArg;
-    const cell = stateCell(hook);
-    cell.reducer = reducer as (s: unknown, a: unknown) => unknown; // always use the latest reducer
-    // Stable dispatch identity (React guarantee), created once; uses the latest reducer.
-    cell.updater ??= reducerDispatch(cell);
-    return [cell.value as S, cell.updater as (a: A) => void];
   },
 
   useEffect(effect, deps?: DependencyList) {
@@ -403,98 +347,12 @@ export const clientDispatcher: Dispatcher = {
     return context._defaultValue;
   },
 
-  useId(): string {
-    const cell = getHook(HK_ID);
-    if (!cell.inited) {
-      // Derived from the fiber's tree position (set at its first render), so it
-      // matches the server render / hole / island regardless of streaming order.
-      cell.value = nextId(currentFiber!.idScope!);
-      cell.inited = true;
-    }
-    return cell.value as string;
-  },
-
-  useSyncExternalStore<T>(
-    subscribe: (onChange: () => void) => () => void,
-    getSnapshot: () => T,
-    getServerSnapshot?: () => T,
-  ): T {
-    const inst = currentFiber!;
-    const cell = getHook(HK_STORE);
-    // The subscription's notify closure is created ONCE (only when `subscribe` changes —
-    // a stable store keeps the same subscribe, so the closure never re-runs). It must
-    // therefore NOT capture `inst`: after a double-buffer swap the render-time fiber is
-    // the STALE buffer, and `scheduleUpdate` on it can no-op (its `.return` chain /
-    // rootHandleOf is stale). Track the live fiber on the cell each render — exactly as
-    // useState/useReducer do (see stateCell) — and read it at notify time so the update
-    // always targets the current buffer.
-    cell.owner = inst;
-    // During hydration the client render must reproduce the server HTML, which was
-    // built from getServerSnapshot — read it here too, or a store whose server and
-    // client snapshots differ (matchMedia, cookie-seeded theme, Redux/Zustand SSR
-    // state) causes a content flip / mismatch (H3). After hydration the subscription
-    // effect reconciles to the live client snapshot.
-    const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
-    cell.value = value;
-    if (subscribeChanged(cell.deps, subscribe)) {
-      (inst.passiveEffects ??= []).push(
-        storeSubscriptionEffect(cell, subscribe, storeChangeCheck(cell, getSnapshot)),
-      );
-      // This push bypasses scheduleEffect, so flag the effect-bearing fiber here too.
-      inst.flags |= HasEffect;
-    }
-    return value;
-  },
-
-  useMemoCache(size: number): unknown[] {
-    const cell = getHook(HK_MEMOCACHE);
-    if (!cell.inited) {
-      cell.value = new Array(size).fill(MEMO_CACHE_SENTINEL);
-      cell.inited = true;
-    }
-    return cell.value as unknown[];
-  },
-
-  useDeferredValue<T>(value: T, initialValue?: T): T {
-    const inst = currentFiber!;
-    const cell = getHook(HK_DEFERRED);
-    if (!cell.inited) {
-      cell.inited = true;
-      // First render: show initialValue (if given and different) and schedule a
-      // transition to catch up to the real value; otherwise show value.
-      if (initialValue !== undefined && !Object.is(initialValue, value)) {
-        cell.value = initialValue;
-        scheduleUpdateLane(inst, TransitionLane);
-        return initialValue;
-      }
-      cell.value = value;
-      return value;
-    }
-    // A transition render accepts the latest value; an urgent render where the
-    // value changed returns the previous value and schedules the catch-up
-    // transition (so the deferred update is time-sliced, not blocking).
-    if ((renderLanes & TransitionLane) !== NoLane) {
-      cell.value = value;
-      return value;
-    }
-    if (!Object.is(value, cell.value)) {
-      scheduleUpdateLane(inst, TransitionLane);
-      return cell.value as T;
-    }
-    return cell.value as T;
-  },
-
   // denext commits effects synchronously. useLayoutEffect runs in the post-mutation
-  // layout phase; useInsertionEffect runs in its own pre-mutation phase (before any
-  // DOM mutation), so CSS-in-JS style insertion precedes layout reads — matching React.
+  // layout phase (useInsertionEffect, ./hooks/use-insertion-effect.ts, in its own
+  // pre-mutation phase before it).
   useLayoutEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     scheduleEffect(inst, "pendingEffects", getHook(HK_LAYOUT), effect, deps);
-  },
-  useInsertionEffect(effect, deps?: DependencyList) {
-    const inst = currentFiber!;
-    // Insertion effects sit outside the Offscreen connect/disconnect cycle.
-    scheduleEffect(inst, "insertionEffects", getHook(HK_INSERTION), effect, deps, false);
   },
 };
 

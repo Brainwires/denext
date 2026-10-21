@@ -725,7 +725,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean, usesLiveView = false) {
   const clientImport =
-    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setActionCallLoader, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -1018,6 +1018,9 @@ registry.ensure = (flight) => {
   return Promise.all(jobs).then(() => undefined);
 };
 ${enableRefresh}${liveRegister}
+// A Server Action reference in a payload calls through the on-demand action-call chunk (the
+// dispatch and the wire encoder), loaded by the first reference a page revives.
+setActionCallLoader(() => import("denext/action-call"));
 // Register the soft-nav Flight parser so a client navigation to another Flight
 // route reconstructs its tree through this app-wide registry (no bundle re-run) —
 // loading that route's island chunks first.
@@ -1350,6 +1353,11 @@ export async function prepareConfig(
     // Isomorphic `client:*` islands: the route entry's install and the island rewrite's
     // stand-in import it, only for an app that writes a directive.
     "denext/iso-island": frameworkFileUrl("src/iso-island.ts"),
+    // Server Actions in the browser: the generated `"use server"` stubs import `denext/action-stub`
+    // and the Flight entry loads `denext/action-call` on demand, each its own entry so the wire
+    // encoder they carry never sits in a startup chunk of an app that makes no call.
+    "denext/action-stub": frameworkFileUrl("src/action-stub.ts"),
+    "denext/action-call": frameworkFileUrl("src/action-call.ts"),
     // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
     // and the dev inspector from `denext/devtools`; an app's own import map need not
     // (and usually does not) list those subpaths, so resolve them against the framework.

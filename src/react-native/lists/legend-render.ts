@@ -24,8 +24,8 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "../../runtime/hooks.ts";
+import { useSyncExternalStore } from "../../runtime/hooks/use-sync-external-store.ts";
 import type { VirtualListScrollEvent } from "../../client/virtual/types.ts";
 
 // ---- waitForInitialLayout --------------------------------------------------------------------

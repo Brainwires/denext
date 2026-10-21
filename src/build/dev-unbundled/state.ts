@@ -52,6 +52,9 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_spa-island": "src/spa-island.ts",
   // Isomorphic `client:*` islands: the route entry's install and the island rewrite's import.
   "denext_iso-island": "src/iso-island.ts",
+  // Server Actions: the generated `"use server"` stubs' import and the Flight entry's on-demand call.
+  "denext_action-stub": "src/action-stub.ts",
+  "denext_action-call": "src/action-call.ts",
   // A Deno Desktop window's page APIs, imported from "use client" modules (`denext desktop dev`
   // serves the page through this dev server): the bridge client, the window, the app chrome and
   // the Clerk bridge. Missing, the page's module graph 404s and it never hydrates.
@@ -79,6 +82,8 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/mvu": "mvu.js",
   "denext/spa-island": "spa-island.js",
   "denext/iso-island": "iso-island.js",
+  "denext/action-stub": "action-stub.js",
+  "denext/action-call": "action-call.js",
 };
 
 const WINDOWS = Deno.build.os === "windows";

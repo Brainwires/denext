@@ -1282,13 +1282,13 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   CVE-2025-67779.
 - **Inert JSON decode** — the only decode of client input is `JSON.parse` with
   no reviver; a payload shaped like a `react.server.reference` is inert data,
-  never resolved/invoked. — `src/runtime/server-action.ts:432-441`. CVE-2025-55182 /
+  never resolved/invoked. — `src/runtime/server-action.ts:389-395`. CVE-2025-55182 /
   CVE-2025-66478 (RSC RCE, CVSS 10.0).
 - **Prototype-pollution resistance** — a `__proto__` key does not pollute
   `Object.prototype` (native `JSON.parse` + denext never deep-merges the
   payload). — verified `tests/nextjs-cve-parity.test.ts:543-549`.
 - **Deep-nesting DoS bounded** — a ~200k-deep payload throws in `JSON.parse`, is
-  caught, returns fast. — `src/runtime/server-action.ts:434-437`.
+  caught, returns fast. — `src/runtime/server-action.ts:392`.
 
 ### 1.3 SSRF-safe image optimizer & `safeFetch` **[default]**
 
@@ -1553,8 +1553,8 @@ default").
   path with a 5 ms frame budget, yield via `MessageChannel`, and are preempted
   by urgent updates (abandon + restart); tree built off-DOM, committed
   atomically. Default sync lane still runs to completion. —
-  `src/client/fiber/scheduler.ts:188-191, 212-218, 263-265, 340-355, 397`;
-  `src/client/fiber/work-loop.ts:151-164, 198`; `src/runtime/hooks.ts:380, 393`. (Canonical description:
+  `src/client/fiber/scheduler.ts:218, 263-266, 350-376, 397, 432`;
+  `src/client/fiber/work-loop.ts:151-164, 198`; `src/runtime/hooks/transition.ts:38, 102, 119`. (Canonical description:
   [the concurrency model](https://denext.dev/docs/architecture#concurrency-fiber-based-time-sliced-and-interruptible).)
 - **Auto-memo compiler / `useMemoCache`** **[opt-in]** — a
   React-Compiler-style pass lifts JSX elements into `memoValue(...)` for stable
@@ -1649,7 +1649,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`useErrorBoundary`** — imperative `captureError`/`reset` on the nearest
   boundary (async errors, timers). React makes you install
   `react-error-boundary`; denext ships it in-core, SSR-inert. —
-  `src/runtime/hooks.ts:476, 493, 528`.
+  `src/runtime/hooks.ts:320, 326, 381`.
 - **`isServer` / `serverOnly` / `clientOnly`** — replaces the `server-only` +
   `client-only` npm packages Next docs tell you to install; first-class in-core
   with a runtime `isServer()`, and `serverOnly()`/`clientOnly()` **throw when
@@ -1666,8 +1666,8 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   replacement. — `src/runtime/public-env.ts:16, 34, 103`.
 - **`useMemoCache`** — the React-Compiler cache primitive exposed as a _public_
   hook (React's is an unstable internal), with `compiler-runtime` as a public
-  entrypoint. — `src/runtime/hooks.ts:310, 106`;
-  `src/runtime/compiler-runtime.ts:13, 34`.
+  entrypoint. — `src/runtime/hooks/use-memo-cache.ts:22`, `src/runtime/hooks.ts:111`;
+  `src/runtime/compiler-runtime.ts:14, 35`.
 - **`useEffectEvent` shipped stable** — still experimental in React proper. —
   `mod.ts` hook block, `src/runtime/hooks.ts`.
 - **Browser-platform hooks React/Next don't ship** — `useWakeLock` (Screen Wake

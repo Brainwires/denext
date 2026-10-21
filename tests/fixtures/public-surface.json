@@ -4856,6 +4856,7 @@
     "useMemoCache:function"
   ],
   "denext/client-runtime": [
+    "ActionCallModule:interface",
     "ClientRegistry:typeAlias",
     "ComponentDevMeta:interface",
     "HookDevMeta:interface",
@@ -4863,7 +4864,6 @@
     "Qrl:interface",
     "ShellSupportOptions:interface",
     "capturedScope:function",
-    "clientActionStub:function",
     "enableFastRefresh:function",
     "enablePerModuleRefresh:function",
     "ensureFlightModules:function",
@@ -4880,6 +4880,7 @@
     "readStreamedFlight:function",
     "registerComponentMeta:function",
     "registerFamily:function",
+    "setActionCallLoader:function",
     "setFlightParser:function",
     "setResumabilityReboot:function",
     "startClient:function",

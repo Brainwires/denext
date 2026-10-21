@@ -20,8 +20,8 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
-  useReducer,
 } from "../../runtime/hooks.ts";
+import { useReducer } from "../../runtime/hooks/use-reducer.ts";
 import { Suspense } from "../../runtime/suspense.ts";
 import { ErrorBoundary as DenextErrorBoundary } from "../../runtime/error-boundary.ts";
 import { lazy as denextLazy } from "../../runtime/dynamic.ts";

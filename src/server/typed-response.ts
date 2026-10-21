@@ -22,7 +22,8 @@
 // The phantom carrier is a `readonly` optional field that never exists at runtime — it
 // only marks the variance of `T`, so structural typing can recover it.
 
-import { encodeWire, WIRE_HEADER } from "../runtime/wire-codec.ts";
+import { WIRE_HEADER } from "../runtime/wire-codec.ts";
+import { encodeWire } from "../runtime/wire-encode.ts";
 
 /**
  * A `Response` that remembers the type of the JSON body it carries. Structurally a plain

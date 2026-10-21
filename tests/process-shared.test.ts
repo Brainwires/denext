@@ -10,6 +10,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { processShared } from "../src/runtime/process-shared.ts";
 import * as liveView from "../src/runtime/live-view.ts";
 import * as actions from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import * as channels from "../src/runtime/channel.ts";
 import * as taint from "../src/runtime/taint.ts";
 import * as clientRefs from "../src/runtime/client-reference.ts";
@@ -45,7 +46,7 @@ Deno.test("defineLiveView: a view defined in one copy mounts through another", a
 Deno.test("server actions: registered in one copy, dispatched from another", async () => {
   const copy = await secondCopy<typeof actions>("../src/runtime/server-action.ts");
   const id = unique("save");
-  actions.serverAction(id, (n: number) => n * 2);
+  serverAction(id, (n: number) => n * 2);
   assertEquals(await copy.getServerAction(id)?.(21), 42, "the handler");
   actions.liveReadable({ denextActionId: id });
   assert(copy.isLiveReadable(id), "liveReadable");

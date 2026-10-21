@@ -26,6 +26,12 @@ export type EffectCleanup = void | (() => void);
  * The set of hook implementations backing the public hook functions. A
  * dispatcher is installed for the duration of a render (SSR or client) and each
  * public hook simply delegates to the currently installed dispatcher.
+ *
+ * The optional hooks (`useReducer`, `useId`, `useSyncExternalStore`, `useInsertionEffect`,
+ * `useMemoCache`, `useDeferredValue`) are implemented by the server dispatcher and left off the
+ * client fiber dispatcher: there each one lives in its own module, which its public hook
+ * (src/runtime/hooks/) calls when the installed dispatcher has no such method — so a client bundle
+ * carries a hook's code only when the app calls the hook.
  */
 export interface Dispatcher {
   /** Create a state cell initialized to `initial` (or its return value if lazy). */
@@ -35,7 +41,7 @@ export interface Dispatcher {
    * React's lazy initializer: when `init` is given, the initial state is
    * `init(initialArg)`.
    */
-  useReducer<S, A, I = S>(
+  useReducer?<S, A, I = S>(
     reducer: (state: S, action: A) => S,
     initialArg: I,
     init?: (arg: I) => S,
@@ -49,9 +55,9 @@ export interface Dispatcher {
   /** Read the current value of a context created with `createContext`. */
   useContext<T>(context: Context<T>): T;
   /** Return a unique, stable id that matches between server render and hydration. */
-  useId(): string;
+  useId?(): string;
   /** Subscribe to an external store, re-rendering when its snapshot changes. */
-  useSyncExternalStore<T>(
+  useSyncExternalStore?<T>(
     subscribe: (onChange: () => void) => () => void,
     getSnapshot: () => T,
     getServerSnapshot?: () => T,
@@ -59,18 +65,17 @@ export interface Dispatcher {
   /** Like {@link useEffect}, but runs synchronously after DOM mutations (client). */
   useLayoutEffect(effect: () => EffectCleanup, deps?: DependencyList): void;
   /** Like {@link useLayoutEffect}, but for pre-layout style injection (CSS-in-JS). */
-  useInsertionEffect(effect: () => EffectCleanup, deps?: DependencyList): void;
+  useInsertionEffect?(effect: () => EffectCleanup, deps?: DependencyList): void;
   /**
    * Return a stable, per-component array of `size` cache slots (the auto-memo
    * compiler's target). Slots start as {@link MEMO_CACHE_SENTINEL}; generated code
    * fills and reuses them across renders to keep values referentially stable.
    */
-  useMemoCache(size: number): unknown[];
+  useMemoCache?(size: number): unknown[];
   /**
-   * Return a deferred copy of `value` (render-phase). Optional: only the client
-   * fiber dispatcher implements true deferral (via priority lanes); SSR renderers
-   * omit it and the public {@link useDeferredValue} wrapper returns the value
-   * directly.
+   * Return a deferred copy of `value` (render-phase). The server dispatcher returns
+   * `initialValue ?? value`; the client's true deferral (via priority lanes) is its own
+   * module (see above).
    */
   useDeferredValue?<T>(value: T, initialValue?: T): T;
   /**
@@ -103,7 +108,9 @@ export interface Dispatcher {
  * Compiler output tests each slot against inline, so code the React Compiler emitted
  * runs on denext's `useMemoCache` (as its `c` from `react/compiler-runtime`) unchanged.
  */
-export const MEMO_CACHE_SENTINEL: unique symbol = Symbol.for("react.memo_cache_sentinel");
+export const MEMO_CACHE_SENTINEL: unique symbol = /* @__PURE__ */ Symbol.for(
+  "react.memo_cache_sentinel",
+);
 
 /** A mutable ref object or a callback ref, as accepted by `ref`/`useImperativeHandle`. */
 export type Ref<T> = { current: T | null } | ((value: T | null) => void) | null | undefined;
@@ -156,7 +163,13 @@ export function rendering(): boolean {
   return ((globalThis as DispatcherHolder)[DISPATCHER_KEY] ?? null) !== null;
 }
 
-function dispatcher(): Dispatcher {
+/**
+ * The dispatcher installed for the component rendering now.
+ *
+ * @returns The active dispatcher.
+ * @throws When no component is rendering (a hook called outside a render).
+ */
+export function activeDispatcher(): Dispatcher {
   const current = (globalThis as DispatcherHolder)[DISPATCHER_KEY] ?? null;
   if (!current) {
     throw new Error(
@@ -174,29 +187,17 @@ export function useState<S>(
   initial?: S | (() => S),
 ): [S | undefined, StateUpdater<S | undefined>] {
   // React allows the no-arg form (`useState<S>()`), yielding `S | undefined`.
-  return dispatcher().useState(initial as S) as [S | undefined, StateUpdater<S | undefined>];
-}
-
-/**
- * Manage component state with a reducer, returning the state and a dispatch.
- * With a lazy `init`, the initial state is `init(initialArg)` (React parity).
- */
-export function useReducer<S, A, I = S>(
-  reducer: (state: S, action: A) => S,
-  initialArg: I,
-  init?: (arg: I) => S,
-): [S, (action: A) => void] {
-  return dispatcher().useReducer(reducer, initialArg, init);
+  return activeDispatcher().useState(initial as S) as [S | undefined, StateUpdater<S | undefined>];
 }
 
 /** Run a side effect after render, re-running whenever `deps` change. */
 export function useEffect(effect: () => EffectCleanup, deps?: DependencyList): void {
-  return dispatcher().useEffect(effect, deps);
+  return activeDispatcher().useEffect(effect, deps);
 }
 
 /** Memoize `factory`'s result, recomputing only when `deps` change. */
 export function useMemo<T>(factory: () => T, deps?: DependencyList): T {
-  return dispatcher().useMemo(factory, deps);
+  return activeDispatcher().useMemo(factory, deps);
 }
 
 /** Return a memoized version of `fn` that only changes when `deps` change. */
@@ -204,7 +205,7 @@ export function useCallback<T extends (...args: never[]) => unknown>(
   fn: T,
   deps?: DependencyList,
 ): T {
-  const d = dispatcher();
+  const d = activeDispatcher();
   return d.useCallback ? d.useCallback(fn, deps) : memoizedCallback(d, fn, deps);
 }
 
@@ -225,73 +226,12 @@ export function useRef<T>(initial: T | null): { current: T | null };
 export function useRef<T = undefined>(): { current: T | undefined };
 /** Implementation signature. */
 export function useRef<T>(initial?: T): { current: T | undefined } {
-  return dispatcher().useRef(initial);
-}
-
-/** React 19.2's error for calling an Effect Event while a component renders. */
-const EFFECT_EVENT_IN_RENDER =
-  "A function wrapped in useEffectEvent can't be called during rendering.";
-
-/**
- * Return a callback that always sees the latest committed props/state — React 19.2's
- * `useEffectEvent`. Use it for the "event" part of an Effect that should not itself be a
- * dependency (so the Effect doesn't re-run when the handler's closure changes).
- *
- * As in React, the handler it forwards to is swapped in when the render commits (before any
- * layout or passive effect runs), not while rendering, so a render that never commits leaves
- * the previous one in place; and calling it during a render throws. Its identity is stable
- * (React's is not guaranteed to be — don't list it as an Effect dependency either way).
- *
- * @param handler The event handler; its latest committed version is invoked.
- * @returns A function forwarding to the latest committed `handler`.
- */
-export function useEffectEvent<A extends unknown[], R>(
-  handler: (...args: A) => R,
-): (...args: A) => R {
-  const ref = useRef(handler);
-  useInsertionEffect(() => {
-    ref.current = handler; // commit-time swap (React updates Effect Events before effects)
-  });
-  const renderer = dispatcher();
-  return useMemo(() => (...args: A) => {
-    // The renderer's dispatcher is installed only while one of its components renders.
-    if ((globalThis as DispatcherHolder)[DISPATCHER_KEY] === renderer) {
-      throw new Error(EFFECT_EVENT_IN_RENDER);
-    }
-    return ref.current(...args);
-  }, []);
+  return activeDispatcher().useRef(initial);
 }
 
 /** Read the current value of `context` from the nearest enclosing provider. */
 export function useContext<T>(context: Context<T>): T {
-  return dispatcher().useContext(context);
-}
-
-/**
- * Return a unique, stable id string. The value is deterministic across the
- * server render and client hydration (ids are assigned in render order), so it
- * is safe to use for `id`/`htmlFor`/`aria-*` attributes without a mismatch.
- */
-export function useId(): string {
-  return dispatcher().useId();
-}
-
-/**
- * Subscribe to an external (non-React) store and re-render when it changes.
- * `subscribe` registers a change listener and returns an unsubscribe function;
- * `getSnapshot` reads the current value; `getServerSnapshot` (optional) provides
- * the value used during server rendering.
- */
-export function useSyncExternalStore<T>(
-  subscribe: (onChange: () => void) => () => void,
-  getSnapshot: () => T,
-  getServerSnapshot?: () => T,
-): T {
-  return dispatcher().useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    getServerSnapshot,
-  );
+  return activeDispatcher().useContext(context);
 }
 
 /**
@@ -303,37 +243,7 @@ export function useLayoutEffect(
   effect: () => EffectCleanup,
   deps?: DependencyList,
 ): void {
-  return dispatcher().useLayoutEffect(effect, deps);
-}
-
-/**
- * Run `effect` synchronously at commit in its own pre-mutation phase — before any
- * DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion,
- * styled-components) and animation libraries (motion) to inject styles before the DOM
- * is read. It must NOT read layout or use refs. A no-op during server rendering.
- *
- * @param effect The insertion effect; may return a cleanup.
- * @param deps Dependency array controlling when it re-runs.
- */
-export function useInsertionEffect(
-  effect: () => EffectCleanup,
-  deps?: DependencyList,
-): void {
-  return dispatcher().useInsertionEffect(effect, deps);
-}
-
-/**
- * Return a stable, per-component array of `size` cache slots. This is the
- * primitive the build-time auto-memo compiler emits into: generated code reads
- * and writes these slots to memoize expensive expressions and keep JSX/props
- * referentially stable so the reconciler can bail out of unchanged subtrees. You
- * can use it by hand too, but it is intended for generated code.
- *
- * Slots are initialized to {@link MEMO_CACHE_SENTINEL}; treat a slot still equal
- * to the sentinel as "not yet computed".
- */
-export function useMemoCache(size: number): unknown[] {
-  return dispatcher().useMemoCache(size);
+  return activeDispatcher().useLayoutEffect(effect, deps);
 }
 
 /**
@@ -348,7 +258,7 @@ export function useMemoCache(size: number): unknown[] {
  * @param format Optional formatter, applied lazily by the inspector only.
  */
 export function useDebugValue<T>(value: T, format?: (value: T) => unknown): void {
-  // Read the slot directly rather than through dispatcher(): like React's, a stray call
+  // Read the slot directly rather than through activeDispatcher(): like React's, a stray call
   // outside a render stays a silent no-op instead of throwing.
   (globalThis as DispatcherHolder)[DISPATCHER_KEY]?.useDebugValue?.(
     value,
@@ -364,106 +274,6 @@ export function useDebugValue<T>(value: T, format?: (value: T) => unknown): void
  */
 export function currentOwnerStack(): string | null {
   return (globalThis as DispatcherHolder)[DISPATCHER_KEY]?.captureOwnerStack?.() ?? null;
-}
-
-/**
- * Return a deferred copy of `value` that lags behind during rapid updates, letting
- * urgent renders finish first. On the client this is a true **render-phase**
- * deferral (React-accurate): during an urgent render the hook returns the previous
- * value and schedules a low-priority transition to catch up, so the deferred
- * update is time-sliced and interruptible and the value never trails by an extra
- * commit. The optional `initialValue` (React 19) is returned on the first render,
- * with a transition scheduled to reach `value`. On the server (no lane scheduler)
- * it returns `initialValue ?? value`.
- *
- * @param value The value to defer.
- * @param initialValue Optional value to show on the first render before deferral.
- */
-export function useDeferredValue<T>(value: T, initialValue?: T): T {
-  const d = dispatcher();
-  if (d.useDeferredValue) return d.useDeferredValue(value, initialValue);
-  return initialValue !== undefined ? initialValue : value;
-}
-
-/**
- * Run `callback` as a low-priority "transition": the callback runs synchronously
- * (like React), but any state updates it triggers are scheduled at transition
- * priority — flushed after the reconciler yields to the browser, so urgent updates
- * and paint/input happen first. On the server (no scheduler installed) it just runs
- * the callback. The transition render is time-sliced and interruptible: a
- * higher-priority (sync) update abandons the in-flight transition and restarts it
- * (see the Async transitions guide: /docs/rendering#async-transitions).
- *
- * An **async** callback (`startTransition(async () => { await x; setState() })`) is
- * supported: the transition stays active across the `await`, so updates scheduled
- * after it still land at transition priority. By default denext entangles by a time
- * window while the returned promise is pending; enable `asyncContext` in
- * `denext.config.ts` to scope by transition identity instead, so an unrelated urgent
- * update in that window keeps its priority (see the Async transitions guide /
- * KNOWN-LIMITATIONS).
- */
-export function startTransition(callback: () => void): void {
-  if (transitionScheduler) transitionScheduler(callback, () => {});
-  else callback();
-}
-
-/**
- * Return `[isPending, startTransition]`. `isPending` stays true from the moment the
- * transition starts until its low-priority updates have been flushed — so a pending
- * indicator can paint (and the browser can handle input) before the transition's
- * work runs. For an async callback it is held until the returned promise settles and
- * the resulting flush lands. Falls back to a synchronous run when no client scheduler
- * is installed.
- */
-export function useTransition(): [boolean, (callback: () => void) => void] {
-  const [isPending, setPending] = useState(false);
-  const start = useCallback((callback: () => void) => {
-    if (transitionScheduler) {
-      setPending(() => true);
-      transitionScheduler(callback, () => setPending(() => false));
-    } else {
-      callback();
-    }
-  }, []);
-  return [isPending, start];
-}
-
-/**
- * Show an optimistic value while an async update is in flight. Returns
- * `[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an
- * optimistic change over the current `state`. The optimistic value resets to `state`
- * when `state` itself changes AND when the transition/action it was applied in settles
- * (React semantics — a failed action reverts too). `addOptimistic` keeps one identity.
- */
-export function useOptimistic<S, A = S>(
-  state: S,
-  updateFn?: (current: S, action: A) => S,
-): [S, (action: A) => void] {
-  const store = useRef<{ base: S; value: S }>({ base: state, value: state });
-  // Reset the optimistic value whenever the underlying state changes.
-  if (!Object.is(store.current.base, state)) {
-    store.current = { base: state, value: state };
-  }
-  const [, force] = useState(0);
-  const updater = useRef(updateFn);
-  updater.current = updateFn;
-  const addOptimistic = useCallback((action: A) => {
-    // React's single-arg form has no reducer: the action IS the next optimistic value.
-    const fn = updater.current;
-    store.current.value = fn ? fn(store.current.value, action) : (action as unknown as S);
-    force((n) => n + 1);
-    // React discards the optimistic value when the transition/action that applied it
-    // settles — success OR failure — whether or not `state` changed. Outside a transition
-    // (React warns) it persists until the base `state` changes.
-    const revert = () => {
-      if (Object.is(store.current.value, store.current.base)) return;
-      store.current.value = store.current.base;
-      force((n) => n + 1);
-    };
-    if (transitionSettledHook) transitionSettledHook(revert);
-    else queueMicrotask(revert);
-  }, []);
-  return [store.current.value, addOptimistic];
 }
 
 /**
@@ -519,29 +329,47 @@ const INERT_BOUNDARY: ErrorBoundaryController = {
 };
 
 /**
- * Low-priority (transition) scheduler, installed by the client reconciler. Runs
- * `cb` marking any state updates it triggers as transition updates (flushed after
- * the browser yields, so urgent updates + paint happen first), then fires
- * `onComplete` once that transition flush lands. Null on the server (SSR is
- * one-shot), where transitions just run synchronously.
+ * The client scheduler's transition controls, which the transition engine (hooks/transition.ts)
+ * drives. The scheduler installs them when it loads; without them (no reconciler loaded) a
+ * transition's callback simply runs.
  */
-let transitionScheduler:
-  | ((cb: () => void, onComplete: () => void) => void)
-  | null = null;
-
-/** Internal: runs `cb` once the transition currently in flight has settled (microtask if none). */
-let transitionSettledHook: ((cb: () => void) => void) | null = null;
-
-/** Internal: install the client scheduler's "current transition settled" registration. */
-export function setTransitionSettledHook(fn: ((cb: () => void) => void) | null): void {
-  transitionSettledHook = fn;
+export interface TransitionHost {
+  /** Enter a synchronous transition callback: updates it schedules take the transition lane. */
+  begin(): void;
+  /** Leave it. */
+  end(): void;
+  /** The AsyncContext transition scope (`asyncContext` builds), else `null`. */
+  scope(): { run<T>(value: object, fn: () => T): T } | null;
+  /** An async transition started; returns the dev watchdog's disarm, if any. */
+  beginAsync(): (() => void) | undefined;
+  /** An async transition settled. */
+  endAsync(): void;
+  /** Whether a transition (sync or async) is in progress. */
+  active(): boolean;
+  /** Whether a transition flush is scheduled or rendering. */
+  inFlight(): boolean;
+  /** Whether any transition work is pending: in flight, or queued on a root. */
+  pending(): boolean;
+  /** Schedule a transition flush. */
+  flush(): void;
+  /** Run `cb` when the transition work in flight has been flushed. */
+  whenFlushed(cb: () => void): void;
 }
 
-/** Internal: install the client's low-priority transition scheduler. */
-export function setTransitionScheduler(
-  fn: ((cb: () => void, onComplete: () => void) => void) | null,
-): void {
-  transitionScheduler = fn;
+let transitionHost: TransitionHost | null = null;
+
+/** Internal: the client scheduler installs its transition controls. */
+export function setTransitionHost(host: TransitionHost | null): void {
+  transitionHost = host;
+}
+
+/**
+ * The installed transition controls.
+ *
+ * @returns The scheduler's {@linkcode TransitionHost}, or `null` when no reconciler is loaded.
+ */
+export function getTransitionHost(): TransitionHost | null {
+  return transitionHost;
 }
 
 /**

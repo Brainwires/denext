@@ -46,7 +46,7 @@ export function generateServerStub(moduleId: string, exports: readonly string[])
       ? `export default clientActionStub(${JSON.stringify(actionIdFor(moduleId, "default"))});`
       : `export const ${name} = clientActionStub(${JSON.stringify(actionIdFor(moduleId, name))});`
   );
-  return `import { clientActionStub } from "denext/client-runtime";\n${lines.join("\n")}\n`;
+  return `import { clientActionStub } from "denext/action-stub";\n${lines.join("\n")}\n`;
 }
 
 /** The project root as written and as its real path (they differ under a symlink or `/var`). */

@@ -224,6 +224,15 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * 68,936 B). Each gate is asserted in {@link assertGatedRuntimeAbsent} and, for the Flight
  * startup graph, {@link assertFlightStartupLean}; `bundle-features` proves each one still ships
  * when the app uses it.
+ * Re-based 67 → 65 KB (65,000 B) on 2026-10-21 after round 2 of that audit cut 1,516 B with no
+ * change in behaviour (measured 63,378 B, 1,622 B under the new budget): the optional hooks
+ * (`useReducer`, `useId`, `useSyncExternalStore`, `useDeferredValue`, `useMemoCache`,
+ * `useInsertionEffect`, `useEffectEvent`) left the client dispatcher object for modules of their
+ * own, which reach the reconciler only through the dispatcher's host members, and the transition
+ * engine left the scheduler for the transition hooks' module, which drives it through the
+ * scheduler's `TransitionHost`. The Server Action dispatch and the wire encoder left every Flight
+ * app's startup graph too (examples/islands: 68,980 → 65,447 B in all). Each gate is asserted in
+ * {@link assertGatedRuntimeAbsent} and {@link assertFlightStartupLean}.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -240,7 +249,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
 }
 
 /** The shared-chunk budget for examples/hello, in raw bytes (its history is in the comment above). */
-const SHARED_BUDGET = 67_000;
+const SHARED_BUDGET = 65_000;
 
 /** The over-budget message: how far over, how to reproduce it, and the two ways out. */
 function budgetMessage(total: number): string {
@@ -315,6 +324,27 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["observeUsing", "Fragment-ref runtime (fragment-instance.ts)"],
     // Hydrating react-dom/server's `<!--$!-->` boundaries ships with the compat react-dom modules.
     ['"$!"', "client-rendered boundary hydration (suspense-hydration.ts)"],
+    // The optional hooks left the client dispatcher object for their own modules (an object keeps
+    // every method; a module's unused function is dropped). A method of that name on the
+    // dispatcher again would carry its code into every app.
+    ["useReducer", "client dispatcher's useReducer method (client/fiber/hooks/use-reducer.ts)"],
+    ["useId", "client dispatcher's useId method (client/fiber/hooks/use-id.ts)"],
+    [
+      "useSyncExternalStore",
+      "client dispatcher's useSyncExternalStore method (client/fiber/hooks/use-sync-external-store.ts)",
+    ],
+    [
+      "useDeferredValue",
+      "client dispatcher's useDeferredValue method (client/fiber/hooks/use-deferred-value.ts)",
+    ],
+    [
+      "useMemoCache",
+      "client dispatcher's useMemoCache method (client/fiber/hooks/use-memo-cache.ts)",
+    ],
+    [
+      "useInsertionEffect",
+      "client dispatcher's useInsertionEffect method (client/fiber/hooks/use-insertion-effect.ts)",
+    ],
     // The feature runtimes below ship only when the app uses the feature; each one's positive
     // half is FEATURE_MARKERS, asserted against the bundle-features fixture.
     ...FEATURE_MARKERS.map(({ marker, what }): [string, string] => [marker, what]),
@@ -351,7 +381,7 @@ const FEATURE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
   { marker: "data-dnx-hydrated", what: "lazy island boot (lazy-boot.ts)" },
   { marker: "qrl handler failed", what: "resumable event dispatcher (qrl-dispatch.ts)" },
   // A Server Action call from the browser.
-  { marker: "x-denext-action", what: "Server Action dispatch (server-action.ts)" },
+  { marker: "x-denext-action", what: "Server Action dispatch (client/action-dispatch.ts)" },
   // Model–View–Update: `denext/mvu`.
   { marker: "too many pending effects", what: "MVU runtime (runtime/mvu.ts)" },
   // The wire codec (Flight values, actions, Live): Flight and Live apps only.
@@ -360,6 +390,30 @@ const FEATURE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
   { marker: "channel-unsubscribe", what: "Live client (live-client.ts)" },
   // The Flight client (payload parser + soft navigation).
   { marker: "__denext_flight", what: "Flight client runtime" },
+  // The wire encoder: its own file (wire-encode.ts), so a page that only decodes never carries it.
+  { marker: "value too deep", what: "wire encoder (wire-encode.ts)" },
+  // The hooks whose client implementation is its own module (src/client/fiber/hooks/), each
+  // marked by its call into the dispatcher's host members (a property name survives minification;
+  // the host object itself, in every app, defines them without a call).
+  { marker: ".reducer(", what: "useReducer (client/fiber/hooks/use-reducer.ts)" },
+  { marker: ".fiber().idScope", what: "useId (client/fiber/hooks/use-id.ts)" },
+  {
+    marker: ".storeUpdate(",
+    what: "useSyncExternalStore (client/fiber/hooks/use-sync-external-store.ts)",
+  },
+  { marker: ".deferUpdate(", what: "useDeferredValue (client/fiber/hooks/use-deferred-value.ts)" },
+  {
+    marker: ".insertion(",
+    what: "useInsertionEffect (client/fiber/hooks/use-insertion-effect.ts)",
+  },
+  {
+    marker: "react.memo_cache_sentinel",
+    what: "useMemoCache (client/fiber/hooks/use-memo-cache.ts)",
+  },
+  { marker: "useEffectEvent can't", what: "useEffectEvent (runtime/hooks/use-effect-event.ts)" },
+  // The transition engine (startTransition / useTransition / useOptimistic) and useActionState.
+  { marker: ".beginAsync(", what: "transition engine (runtime/hooks/transition.ts)" },
+  { marker: ".denextPermalink=", what: "useActionState (runtime/actions.ts)" },
 ];
 
 Deno.test("build smoke: examples/hello emits a client entry, a code-split island chunk, and a shared chunk", async () => {
@@ -470,6 +524,13 @@ async function assertFlightStartupLean(clientDir: string): Promise<void> {
     ["componentDidMount", "class-component runtime (it belongs to the class-runtime-* chunk)"],
     ["display:contents", "isomorphic island runtime"],
     ["globalThis.FormData", "form-action submit runtime (it belongs to the form-action-* chunk)"],
+    // A Server Action reference's call: the on-demand action-call / action-dispatch chunks.
+    ["x-denext-action", "Server Action dispatch (it belongs to the action-dispatch-* chunk)"],
+    ["value too deep", "wire encoder (only the on-demand action-call chunk uses it here)"],
+    // The split-out hooks and the transition engine: examples/islands' startup calls none.
+    ...FEATURE_MARKERS.filter(({ marker }) => HOOK_MARKERS.has(marker)).map((
+      { marker, what },
+    ): [string, string] => [marker, what]),
   ];
   for (const [marker, what] of absent) {
     assert(
@@ -478,6 +539,19 @@ async function assertFlightStartupLean(clientDir: string): Promise<void> {
     );
   }
 }
+
+/** The FEATURE_MARKERS of the split-out hooks and the transition engine. */
+const HOOK_MARKERS: ReadonlySet<string> = new Set([
+  ".reducer(",
+  ".fiber().idScope",
+  ".storeUpdate(",
+  ".deferUpdate(",
+  ".insertion(",
+  "react.memo_cache_sentinel",
+  "useEffectEvent can't",
+  ".beginAsync(",
+  ".denextPermalink=",
+]);
 
 const FEATURES_FIXTURE = fromFileUrl(
   new URL("../fixtures/bundle-features", import.meta.url),
@@ -497,6 +571,18 @@ Deno.test("build smoke: an app that uses each gated feature ships its runtime", 
       assert(all.includes(marker), `the ${what} is missing ("${marker}") from an app that uses it`);
     });
   }
+  // The Flight page has Server Actions (an island imports one, another is handed one as a prop),
+  // yet its startup graph carries no dispatch: the action-call chunk loads on the first reference.
+  // (The wire encoder is in this page's startup: its Live client sends codec frames.)
+  await t.step("Server Action dispatch loads on demand on a Flight page with actions", async () => {
+    const startup = await startupGraph(clientDir, ["__denext_flight__.js"]);
+    assert(!startup.includes("x-denext-action"), "the Flight startup graph carries the dispatch");
+    const files = await fileNames(clientDir);
+    assert(
+      files.some((f) => f.startsWith("action-call-")),
+      `expected an action-call-*.js chunk; got: ${files.join(", ")}`,
+    );
+  });
   // The page names a class component, so the build's preload hint installs the class runtime
   // in the route's startup graph instead of loading it on demand.
   await t.step("class-component runtime, eager when the app names a class", async () => {

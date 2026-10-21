@@ -14,7 +14,7 @@ import { useApi } from "../src/client/use-api.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
-import { stableKey } from "../src/runtime/wire-codec.ts";
+import { stableKey } from "../src/runtime/wire-encode.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
 function Hello() {

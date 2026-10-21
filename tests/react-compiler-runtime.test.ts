@@ -16,7 +16,7 @@ import { bundleSpaInto } from "../src/build/spa/bundle.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { useMemoCache } from "../src/runtime/hooks.ts";
+import { useMemoCache } from "../src/runtime/hooks/use-memo-cache.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
 const ROOT = new URL("../", import.meta.url);

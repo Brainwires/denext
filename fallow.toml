@@ -194,6 +194,10 @@ entry = [
   # Isomorphic `client:*` islands: the route entry and the island rewrite import it by URL
   # (`denext/iso-island`, src/build/iso-islands.ts), never app code.
   "src/iso-island.ts",
+  # Server Actions in the browser: the generated `"use server"` stubs import `denext/action-stub`
+  # and the generated Flight entry loads `denext/action-call`, both by URL (src/build/bundle.ts).
+  "src/action-stub.ts",
+  "src/action-call.ts",
   # The next-compat stand-ins a LIBRARY reaches through `next/router` / `next/compat/router`:
   # prebuilt runtime entries (`runtimeEntryPoints` in src/build/next-compat.ts), loaded by URL.
   "src/compat/next/router.ts",

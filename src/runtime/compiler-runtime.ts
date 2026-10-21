@@ -8,7 +8,8 @@
  * @module
  */
 
-import { MEMO_CACHE_SENTINEL, useMemoCache } from "./hooks.ts";
+import { MEMO_CACHE_SENTINEL } from "./hooks.ts";
+import { useMemoCache } from "./hooks/use-memo-cache.ts";
 
 export { MEMO_CACHE_SENTINEL, useMemoCache };
 

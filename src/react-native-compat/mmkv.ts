@@ -30,14 +30,8 @@
  * @module
  */
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "../runtime/hooks.ts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "../runtime/hooks.ts";
+import { useSyncExternalStore } from "../runtime/hooks/use-sync-external-store.ts";
 import { type KeyValueStore, openKeyValueStore } from "../mobile/kv-store.ts";
 
 /** 3.x's process mode (accepted and ignored). */

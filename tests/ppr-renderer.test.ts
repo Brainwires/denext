@@ -14,9 +14,9 @@ import {
 } from "../src/jsx/render-to-ppr.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { renderShell } from "../src/jsx/render-to-stream.ts";
-import { serverAction } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { streamPprDocument } from "../src/server/document.ts";
-import { useId } from "../src/runtime/hooks.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
 import { withPrerender } from "../src/runtime/prerender.ts";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { withCacheScope } from "../src/server/cache.ts";

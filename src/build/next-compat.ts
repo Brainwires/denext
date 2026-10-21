@@ -407,6 +407,10 @@ function reactNativeRuntimeEntries(u: EntryUrl): Record<string, string> {
     "spa-island": u("src/spa-island.ts"),
     // Isomorphic `client:*` islands (see iso-islands.ts).
     "iso-island": u("src/iso-island.ts"),
+    // Server Actions: the generated `"use server"` stubs' import and the Flight entry's on-demand
+    // call (see bundle.ts).
+    "action-stub": u("src/action-stub.ts"),
+    "action-call": u("src/action-call.ts"),
     // React Native mode's community-package stand-ins (see react-native-aliases.ts).
     ...communityRuntimeEntries(u),
   };
@@ -926,6 +930,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/spa-island": "spa-island.js",
   // Isomorphic `client:*` islands (see iso-islands.ts).
   "denext/iso-island": "iso-island.js",
+  "denext/action-stub": "action-stub.js",
+  "denext/action-call": "action-call.js",
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };

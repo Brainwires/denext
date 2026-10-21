@@ -614,7 +614,8 @@ export type {
 } from "./deno-kv.ts";
 
 // Server Actions — runtime registration + secure same-origin dispatch.
-export { isServerAction, serverAction } from "../runtime/server-action.ts";
+export { isServerAction } from "../runtime/server-action.ts";
+export { serverAction } from "../runtime/action-stub.ts";
 export type { ServerActionRef } from "../runtime/server-action.ts";
 export type { ActionHandlerOptions } from "./action-handler.ts";
 // Typed Server Actions: define an action with a validated, typed input + typed result.

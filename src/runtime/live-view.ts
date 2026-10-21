@@ -31,7 +31,8 @@ import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import type { StandardSchemaV1 } from "./define-action.ts";
 import type { EventBinding, EventPayload, MsgSource, MvuProgram, Send } from "./mvu.ts";
-import { prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { WIRE_ENC } from "./wire-codec.ts";
+import { prepareWire } from "./wire-encode.ts";
 import { LiveViewIsland } from "../client/live-view-island.ts";
 import { processShared } from "./process-shared.ts";
 

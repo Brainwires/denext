@@ -20,7 +20,8 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeType } from "../jsx/types.ts";
 import { createContext } from "../runtime/context.ts";
-import { useContext, useSyncExternalStore } from "../runtime/hooks.ts";
+import { useContext } from "../runtime/hooks.ts";
+import { useSyncExternalStore } from "../runtime/hooks/use-sync-external-store.ts";
 import { fontScaleNow, getFontScale, onFontScaleChange } from "../mobile/accessibility.ts";
 
 /** Listeners of the factor (the scaled `Text`s). */

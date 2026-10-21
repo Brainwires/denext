@@ -28,7 +28,8 @@
  */
 
 import { liveViewSecret } from "../runtime/live-view.ts";
-import { decodeWire, prepareWire } from "../runtime/wire-codec.ts";
+import { decodeWire } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import { fromBase64Url, toBase64Url } from "./session.ts";
 
 /**

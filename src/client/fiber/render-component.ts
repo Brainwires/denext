@@ -8,13 +8,13 @@ import {
   clientDispatcher,
   currentFiber,
   enterComponentRender,
-  HK_MEMO,
   hookIndex,
   renderPhaseUpdateScheduled,
   resetHookCursor,
   setRefreshSwapRender,
   setSuppressEffectQueue,
 } from "./hooks-dispatcher.ts";
+import { HK_MEMO } from "./hook-kinds.ts";
 
 import type { VNode } from "../../jsx/types.ts";
 import { enterScope, ID_PATH_PROP, rootScope } from "../../jsx/tree-id.ts";

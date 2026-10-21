@@ -11,7 +11,7 @@ import { makeDom } from "./helpers/dom.ts";
 import { setApiInvalidationSource, useApi } from "../src/client/use-api.ts";
 import { type ApiClient, ApiClientError, type ApiSchema } from "../src/runtime/api-client.ts";
 import { setAdoptedSignalState } from "../src/runtime/signal-state.ts";
-import { stableKey } from "../src/runtime/wire-codec.ts";
+import { stableKey } from "../src/runtime/wire-encode.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 
 type Any = any;

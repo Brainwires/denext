@@ -11,7 +11,8 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
-import { useEffect, useReducer, useRef } from "../runtime/hooks.ts";
+import { useEffect, useRef } from "../runtime/hooks.ts";
+import { useReducer } from "../runtime/hooks/use-reducer.ts";
 import { type TabDefinition, tabFor, tabPressHandler, TabsView, useTabScopes } from "./tabs.ts";
 import type { HistorySource } from "./history-source.ts";
 import type { NavigationThemeProps } from "./theme.ts";

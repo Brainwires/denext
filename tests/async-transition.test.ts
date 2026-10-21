@@ -8,7 +8,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { useState, useTransition } from "../mod.ts";
-import { startTransition } from "../src/runtime/hooks.ts";
+import { startTransition } from "../src/runtime/hooks/transition.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
