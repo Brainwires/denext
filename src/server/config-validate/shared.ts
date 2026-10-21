@@ -55,3 +55,49 @@ export function validateOptionalPath(field: string, value: unknown, fail: Fail):
     fail(field, "must be a non-empty path relative to the project root");
   }
 }
+
+/**
+ * The problem with one network permission entry (`--allow-net`'s host syntax: `host`,
+ * `host:port`, a bare `:port`, an IP, `[IPv6]`, `*.example.com`, `unix:<path>`, or `"*"`), else
+ * `null`. Deno refuses a URL there, and a comma would split it into two entries.
+ *
+ * @param entry The entry.
+ * @returns The message, or `null`.
+ */
+function netHostError(entry: string): string | null {
+  if (entry === "" || /[\s,]/.test(entry)) {
+    return `has ${JSON.stringify(entry)}: an entry is one host, without spaces or commas`;
+  }
+  if (entry.includes("://")) {
+    return `has ${JSON.stringify(entry)}: a host (api.example.com, :3000), not a URL`;
+  }
+  return null;
+}
+
+/**
+ * An object of permission kinds to value lists (`compile.permissions`,
+ * `desktop.extraPermissions`): each key one of `kinds` holding a list `isList` accepts, and each
+ * entry of a `netConnect` / `netListen` list a host (see {@linkcode netHostError}).
+ *
+ * @param field The config path, for the messages.
+ * @param permissions The object.
+ * @param kinds The kinds it takes.
+ * @param isList Whether a value is an acceptable list.
+ * @param fail The failure reporter.
+ */
+export function validatePermissionLists(
+  field: string,
+  permissions: Record<string, unknown>,
+  kinds: readonly string[],
+  isList: (v: unknown) => boolean,
+  fail: Fail,
+): void {
+  for (const [k, v] of Object.entries(permissions)) {
+    if (!kinds.includes(k) || !isList(v)) {
+      fail(`${field}.${k}`, `must be an array of strings (kinds: ${kinds.join(", ")})`);
+    }
+    if (k !== "netConnect" && k !== "netListen") continue;
+    const error = (v as string[]).map(netHostError).find((e) => e !== null);
+    if (error) fail(`${field}.${k}`, error);
+  }
+}

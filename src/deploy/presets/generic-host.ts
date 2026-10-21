@@ -11,6 +11,7 @@ import { basename } from "@std/path";
 import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { appName, header } from "./shared.ts";
+import { splitNetFlag, toolchainNetSplit } from "../../build/net-permissions.ts";
 
 /** Options for {@linkcode genericHost}. */
 export interface GenericHostPresetOptions {
@@ -131,9 +132,31 @@ function execStart(manifest: DeployManifest, o: Resolved): string {
   if (manifest.compile) {
     return [`${o.directory}/${basename(manifest.compile.output)}`, ...loopback].join(" ");
   }
-  const [first, ...rest] = manifest.server.command;
-  const binds = rest.some((w) => /^--(host|hostname)(=|$)/.test(w));
+  const [first, ...words] = manifest.server.command;
+  const binds = words.some((w) => /^--(host|hostname)(=|$)/.test(w));
+  const rest = first === "deno" && o.deno === `${o.directory}/${TOOLCHAIN_LINK}`
+    ? toolchainNet(words, manifest, binds ? null : o.port)
+    : words;
   return [first === "deno" ? o.deno : first, ...rest, ...(binds ? [] : loopback)].join(" ");
+}
+
+/**
+ * The start command's words on denext's Deno toolchain (`build.sh` links it): where it splits the
+ * network grant by direction, the unscoped `--allow-net` becomes `--allow-net-connect` (the app's
+ * `compile.permissions.netConnect`, else unscoped) and `--allow-net-listen` (its `netListen`, else
+ * the unit's loopback port), so nothing else in the server can open a listener. A command that
+ * binds a host of its own (`port` null) keeps listen unscoped unless `netListen` names one.
+ */
+function toolchainNet(
+  words: readonly string[],
+  manifest: DeployManifest,
+  port: number | null,
+): readonly string[] {
+  const net = manifest.permissions.net;
+  if (!net || !toolchainNetSplit()) return words;
+  const scoped = (values: readonly string[]) => values.includes("*") ? undefined : values;
+  const listen = scoped(net.listen) ?? (port === null ? undefined : [`127.0.0.1:${port}`]);
+  return splitNetFlag(words, listen, scoped(net.connect));
 }
 
 /**

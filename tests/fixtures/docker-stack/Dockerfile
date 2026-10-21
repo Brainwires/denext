@@ -48,4 +48,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
 ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]
 STOPSIGNAL SIGTERM
 # The `start` task's own command, run directly (not through `deno task`).
-CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]
+# Its --allow-net is split by direction (the toolchain's Deno has it): the server may listen
+# only on port 3000 (0.0.0.0, 127.0.0.1, localhost) and connect anywhere, so no dependency
+# can open a listener of its own. A new port needs its --allow-net-listen changed too.
+CMD ["deno", "run", "--allow-net-connect", "--allow-net-listen=:3000", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]

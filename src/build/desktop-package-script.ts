@@ -12,7 +12,7 @@ import {
 } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
-import { desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
+import { desktopNetSplit, desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
 import {
   type DesktopInstallerPlan,
   desktopInstallerPlan,
@@ -544,7 +544,12 @@ export async function desktopBundleCommand(
     "deno",
     "desktop",
     "--no-prompt",
-    ...await desktopPackageFlags(entryUrl, os),
+    // The split network grant only on the pinned runtime (a non-empty runtime env), 3.0.0-rc.2+.
+    ...await desktopPackageFlags(
+      entryUrl,
+      os,
+      Boolean(runtimeEnv.DENORT_DESKTOP_BIN) && desktopNetSplit(),
+    ),
     ...denoFlags,
     // The pinned runtime's own flags (`--unstable-no-legacy-abort`).
     ...desktopRuntimeDenoFlags(runtimeEnv, denoFlags),

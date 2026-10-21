@@ -40,6 +40,7 @@ import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
+import { NET_SPLIT_RELEASE, netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
 import {
   type CompileSignDeps,
   type CompileSignResult,
@@ -78,6 +79,8 @@ export interface CompileAppOptions {
   sign?: boolean;
   /** Seams for the signing step (tests). */
   signDeps?: CompileSignDeps;
+  /** Where a warning goes (default: stderr). */
+  warn?: (message: string) => void;
 }
 
 /** What {@linkcode compileApp} produced. */
@@ -247,10 +250,20 @@ async function buildDirEntries(
  * the working directory at run time) with `compile.permissions` unioned in per kind, or
  * `--allow-all` when the app opts in with `permissions: "all"`.
  *
+ * The network grant: with `netSplit` (the binary runs on denext's Deno from 3.0.0-rc.2, which
+ * splits `--allow-net` by direction) and `compile.permissions.netConnect` / `netListen` set, the
+ * directional pair (`--allow-net-connect[=<hosts>]`, `--allow-net-listen[=<addrs>]`, an unset
+ * direction unscoped); otherwise the unscoped `--allow-net` (the port is the binary's `--port` /
+ * `$PORT`, chosen at run time, so nothing narrower is baked unasked).
+ *
  * @param compile The project's `compile` config.
+ * @param options `netSplit`: the runtime has the direction-split network flags.
  * @returns The flags, ready for `deno compile`.
  */
-export function compileBuildFlags(compile: CompileConfig | undefined): string[] {
+export function compileBuildFlags(
+  compile: CompileConfig | undefined,
+  options: { readonly netSplit?: boolean } = {},
+): string[] {
   const extra = compile?.permissions;
   if (extra === "all") return ["--allow-all"];
   const flag = (kind: string, values: readonly string[]): string[] => {
@@ -259,7 +272,9 @@ export function compileBuildFlags(compile: CompileConfig | undefined): string[] 
     return set.has("*") ? [`--allow-${kind}`] : [`--allow-${kind}=${[...set].sort().join(",")}`];
   };
   return [
-    "--allow-net",
+    ...(options.netSplit && wantsNetSplit(compile)
+      ? netSplitFlags(extra?.netConnect, extra?.netListen)
+      : ["--allow-net"]),
     "--allow-env",
     "--allow-read",
     ...flag("write", [".denext", ...(extra?.write ?? [])]),
@@ -267,6 +282,45 @@ export function compileBuildFlags(compile: CompileConfig | undefined): string[] 
     ...flag("run", extra?.run ?? []),
     ...flag("ffi", extra?.ffi ?? []),
   ];
+}
+
+/**
+ * Whether `compile.permissions` scopes the network by direction (`netConnect` or `netListen`).
+ *
+ * @param compile The project's `compile` config.
+ * @returns Whether either directional list is set.
+ */
+export function wantsNetSplit(compile: CompileConfig | undefined): boolean {
+  const p = compile?.permissions;
+  return typeof p === "object" && (p.netConnect !== undefined || p.netListen !== undefined);
+}
+
+/**
+ * {@linkcode compileBuildFlags} for a compile onto `ownDenort` (the toolchain's own `denort`, or
+ * `deno compile`'s choice): the split network flags need both the compiling CLI and the binary's
+ * runtime to know them, so only the toolchain compiling onto its own denort, 3.0.0-rc.2 or later,
+ * bakes them. A `netConnect` / `netListen` it cannot bake warns.
+ *
+ * @param compile The project's `compile` config.
+ * @param ownDenort Whether the binary runs on the toolchain's own `denort`.
+ * @param warn Where the warning goes (default: stderr).
+ * @param version The toolchain version this process runs on (default: detected).
+ * @returns The flags.
+ */
+export function compilePermissionFlags(
+  compile: CompileConfig | undefined,
+  ownDenort: boolean,
+  warn: (message: string) => void = (m) => console.error(m),
+  version: string | undefined = toolchainVersion(),
+): string[] {
+  const netSplit = ownDenort && supportsNetSplit(version);
+  if (!netSplit && wantsNetSplit(compile)) {
+    warn(
+      `  ⚠ compile.permissions.netConnect / netListen need denext's Deno ${NET_SPLIT_RELEASE} or ` +
+        "later (its own denort for this target); baking the unscoped --allow-net instead.",
+    );
+  }
+  return compileBuildFlags(compile, { netSplit });
 }
 
 /** The executable's default name: deno.json's `name` (without its scope), else the dir's. */
@@ -589,7 +643,9 @@ export async function compileApp(
   const config = await writeCompileConfig(paths, dir);
   const { included, skipped } = await embeddedPaths(paths, compile);
   const excluded = await excludedPaths(paths, included, output);
-  const permissions = compileBuildFlags(compile);
+  // Only for the toolchain compile ({@linkcode onToolchain}): an explicit `deno` keeps its own.
+  const denort = options.deno ? undefined : await denortBinary(options.target);
+  const permissions = compilePermissionFlags(compile, denort !== undefined, options.warn);
   await Deno.mkdir(dirname(output), { recursive: true });
   const deno = options.deno ?? denoExecutable();
   const args = [
@@ -608,8 +664,6 @@ export async function compileApp(
     output,
     entry,
   ];
-  // Only for the toolchain compile ({@linkcode onToolchain}): an explicit `deno` keeps its own.
-  const denort = options.deno ? undefined : await denortBinary(options.target);
   const { code } = await new Deno.Command(deno, {
     args,
     cwd: paths.projectDir,

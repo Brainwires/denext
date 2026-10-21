@@ -8,6 +8,33 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **The network grant split by direction where denext bakes least-privilege flags.** denext's
+  Deno from `3.0.0-rc.2` splits `--allow-net` into `--allow-net-connect` (outbound) and
+  `--allow-net-listen` (listeners), so a server can listen only where it serves while connecting
+  where it needs, and a compromised dependency can no longer open a listener of its own. On that
+  runtime:
+  - `denext generate docker` (and the `docker()` / `fly()` deploy adapters) turn the `start`
+    command's `--allow-net` into `--allow-net-connect --allow-net-listen=:<port>`, and the static
+    image's file server gets `--allow-net-listen=0.0.0.0:<port>` with no outbound access;
+  - the `genericHost()` systemd unit runs `--allow-net-listen=127.0.0.1:<port>` on the toolchain it
+    links (a `deno` you name keeps `--allow-net`);
+  - the desktop packaging scripts and `desktop run` / `dev` bake `--allow-net-connect` (loopback,
+    a non-loopback `spa.proxy` target, the update hosts, `dev --lan`'s dev server) and
+    `--allow-net-listen` (loopback only);
+  - `compile.permissions.netConnect` / `netListen` bake the pair into a `build --compile` binary
+    (its port is chosen at run time, so nothing narrower is baked unasked);
+    `desktop.extraPermissions` and a sidecar's `permissions` take `netConnect` / `netListen` too,
+    while `net` keeps granting both directions;
+  - the deploy manifest's `permissions.net` (`DeployNetPermissions`: `{ connect, listen }`) carries
+    the split for third-party adapters, `desktopBuildFlags(config, os, { netSplit })`
+    (`DesktopBuildFlagOptions`) bakes it from a packaging script, and a re-exec child keeps its
+    parent's directional grants.
+
+  Stock Deno, `DENEXT_DENO=stock`, `DENEXT_DESKTOP_RUNTIME=stock` and older runtimes keep the
+  single `--allow-net` (the two models can't be mixed on one command line).
+
 ### Changed
 
 - **A `denext build --compile` binary embeds only the production server's code.** Its module

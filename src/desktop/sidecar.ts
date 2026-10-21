@@ -24,8 +24,12 @@ export interface SidecarPermissions {
   readonly read?: readonly string[];
   /** `--allow-write` paths; any entry bakes a broad `--allow-write`. */
   readonly write?: readonly string[];
-  /** `--allow-net` hosts (the loopback baseline is always there). */
+  /** `--allow-net` hosts (the loopback baseline is always there); both directions. */
   readonly net?: readonly string[];
+  /** Outbound hosts only (`--allow-net-connect` under the pinned runtime, 3.0.0-rc.2+). */
+  readonly netConnect?: readonly string[];
+  /** Listen addresses only (`--allow-net-listen` under the pinned runtime, 3.0.0-rc.2+). */
+  readonly netListen?: readonly string[];
   /** `--allow-run` programs; `["*"]` is unscoped. */
   readonly run?: readonly string[];
   /** `--allow-ffi` libraries; `["*"]` is unscoped (what a Node-API addon needs). */
@@ -325,7 +329,17 @@ const DEFINITION_KEYS = new Set([
 ]);
 
 /** The permission kinds {@linkcode SidecarPermissions} takes. */
-const PERMISSION_KINDS = ["read", "write", "net", "run", "ffi", "env", "sys"];
+const PERMISSION_KINDS = [
+  "read",
+  "write",
+  "net",
+  "netConnect",
+  "netListen",
+  "run",
+  "ffi",
+  "env",
+  "sys",
+];
 
 /** `value` is a plain object (not an array, not null). */
 function isObject(value: unknown): value is Record<string, unknown> {

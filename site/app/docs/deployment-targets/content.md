@@ -298,6 +298,39 @@ export default {
 `permissions: "all"` bakes `--allow-all`, and only when you ask for it. `denext build --compile`
 prints the flags it baked.
 
+**Scoping the network by direction.** denext's Deno (3.0.0-rc.2 and later) splits `--allow-net`
+into `--allow-net-connect` (outbound: `fetch`, WebSocket, database clients) and
+`--allow-net-listen` (`Deno.serve`, `Deno.listen`, `node:net` servers). Name either direction in
+`compile.permissions` and the binary bakes the pair instead of `--allow-net`; an unset direction
+stays unscoped:
+
+```ts
+export default {
+  compile: {
+    permissions: {
+      netListen: [":3000"], // the port the binary is deployed with (0.0.0.0, 127.0.0.1, localhost)
+      netConnect: ["db.internal:5432", "api.example.com"], // or leave it unset: any host
+    },
+  },
+};
+```
+
+The binary takes its port from `--port` / `$PORT` at run time, so denext does not narrow listen
+unasked: list the port you deploy with, and a listener anywhere else (another port, a dependency's
+own server) is refused. The split needs the toolchain compiling onto its own `denort`; on stock Deno
+(`DENEXT_DENO=stock`), or for a target the toolchain has no `denort` for, the binary keeps
+`--allow-net` and the build warns.
+
+The generated deploy files scope listen for you, because they know the port: `denext generate
+docker` (and the `docker()` / `fly()` adapters) turn the `start` command's `--allow-net` into
+`--allow-net-connect --allow-net-listen=:<port>`, the static image's file server gets
+`--allow-net-listen` for its port and no outbound access, and `genericHost()`'s systemd unit runs
+`--allow-net-listen=127.0.0.1:<port>` (with `compile.permissions`' directions when you set them).
+All of them run on denext's toolchain; a `start` task with `-A`, a scoped `--allow-net=<hosts>` or a
+directional flag of its own is left as written. The deploy manifest carries the split as
+`permissions.net` (`{ connect, listen }`, `["*"]` for an unscoped direction) for third-party
+adapters.
+
 ### Signing the binary
 
 ```sh

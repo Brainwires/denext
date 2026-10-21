@@ -418,8 +418,11 @@ builds, then `deno compile`s the app (server modules, `pages/`, `.denext/`, `pub
 `./app job <name>` and `./app db migrate` run jobs and migrations. Stylesheet imports work with no
 import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
-`--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
-`--allow-all`). The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
+`--allow-*` plus `compile.permissions: { write, run, ffi, sys, netConnect, netListen }` (`"all"`
+opts in to `--allow-all`; `netConnect` / `netListen` bake `--allow-net` split by direction,
+`--allow-net-connect` / `--allow-net-listen`, on denext's Deno 3.0.0-rc.2+). Generated deploy files
+(`generate docker`, `genericHost()`) and desktop packaging on the pinned runtime split it too: the
+server listens only on its port or loopback. The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
 `Deno.SQL` works in the binary. `--sign` (or `compile.sign`) code-signs it: macOS with `codesign`
 (Hardened Runtime + V8's `allow-jit` entitlement) as `DENEXT_CODESIGN_IDENTITY`, then `notarytool`
 with `DENEXT_NOTARY_PROFILE` or an API key (`DENEXT_NOTARY_KEY` / `_KEY_ID` / `_ISSUER`); Windows

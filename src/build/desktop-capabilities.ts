@@ -16,6 +16,8 @@ import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
+import { desktopNetSplit } from "./desktop-runtime.ts";
+import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 
@@ -38,8 +40,12 @@ export interface DesktopPermissionSet {
   readonly read?: readonly string[];
   /** `--allow-write`: paths. */
   readonly write?: readonly string[];
-  /** `--allow-net`: hosts. */
+  /** `--allow-net`: hosts, both directions. */
   readonly net?: readonly string[];
+  /** Outbound hosts only (`--allow-net-connect` where the runtime splits the network grant). */
+  readonly netConnect?: readonly string[];
+  /** Listen addresses only (`--allow-net-listen` where the runtime splits the network grant). */
+  readonly netListen?: readonly string[];
   /** `--allow-env`: variables. */
   readonly env?: readonly string[];
   /** `--allow-sys`: system-information APIs. */
@@ -400,6 +406,22 @@ function enabledCapabilityKeys(capabilities: unknown): string[] {
     .map(([key]) => key);
 }
 
+/**
+ * The listen addresses every packaged desktop binary gets where the runtime splits the network
+ * grant: `runDesktop` and a sidecar's `port: "auto"` bind loopback, on a port chosen at launch.
+ */
+const DESKTOP_LISTEN_BASELINE = ["127.0.0.1", "localhost"] as const;
+
+/** Options for {@linkcode desktopBuildFlags}. */
+export interface DesktopBuildFlagOptions {
+  /**
+   * The runtime has the direction-split network flags (denext's pinned Deno Desktop runtime and
+   * toolchain, 3.0.0-rc.2 or later; see `desktopNetSplit`): bake `--allow-net-connect` +
+   * `--allow-net-listen` instead of `--allow-net`. Default `false` (the stock runtime's flags).
+   */
+  readonly netSplit?: boolean;
+}
+
 /** The relevant slice of `denext.config.ts` for flag derivation. */
 interface DesktopFlagConfig {
   readonly desktop?: {
@@ -569,13 +591,16 @@ function sidecarNeeds(d: SidecarDefinition): Array<[string, readonly string[]]> 
   return needs;
 }
 
+/** The kinds a permission set merges: the flag kinds plus the two network directions. */
+const MERGED_KINDS = [...PERMISSION_KINDS, "netConnect", "netListen"] as const;
+
 /** Two permission sets as one (each kind's values unioned). */
 function mergePermissionSets(
   a: DesktopPermissionSet,
   b: DesktopPermissionSet,
 ): DesktopPermissionSet {
   const out: Record<string, string[]> = {};
-  for (const kind of PERMISSION_KINDS) {
+  for (const kind of MERGED_KINDS) {
     const values = [...new Set([...(a[kind] ?? []), ...(b[kind] ?? [])])];
     if (values.length > 0) out[kind] = values;
   }
@@ -597,7 +622,11 @@ function mergePermissionSets(
  * - a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only
  *   the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts
  *   (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and
- *   `desktop.update.ui` adds the broad `--allow-write` its overlay needs;
+ *   `desktop.update.ui` adds the broad `--allow-write` its overlay needs. With `netSplit` (the
+ *   pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead:
+ *   `--allow-net-connect` takes those outbound hosts, loopback and `extraPermissions.netConnect`,
+ *   `--allow-net-listen` only loopback and `extraPermissions.netListen` (any port: the app's server
+ *   picks one at launch), and `extraPermissions.net` / a sidecar's `net` go to both;
  * - `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's
  *   feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED
  *   in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.
@@ -607,9 +636,14 @@ function mergePermissionSets(
  *
  * @param config The project config (`denext.config.ts` default export), or `undefined` — baseline only.
  * @param os The target OS.
+ * @param options `netSplit`: bake the network grant by direction.
  * @returns The flags, ready to splice into the `deno desktop` argv (never `-A`).
  */
-export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
+export function desktopBuildFlags(
+  config: unknown,
+  os: DesktopOs,
+  options: DesktopBuildFlagOptions = {},
+): string[] {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   // `desktop.extraPermissions` and what the sidecars need, baked the same way.
   const extra = mergePermissionSets(
@@ -618,11 +652,21 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
 
-  // net: baseline loopback + a non-loopback spa.proxy host + extraPermissions.net, as ONE flag.
-  const net = new Set<string>(["127.0.0.1", "localhost", ...(extra.net ?? [])]);
+  // net: baseline loopback + a non-loopback spa.proxy host + the update hosts (all outbound) +
+  // extraPermissions' net (both ways), netConnect and netListen.
+  const connect = new Set<string>([
+    ...DESKTOP_LISTEN_BASELINE,
+    ...(extra.net ?? []),
+    ...(extra.netConnect ?? []),
+  ]);
   const proxyHost = proxyNetHost(cfg.spa?.proxy);
-  if (proxyHost) net.add(proxyHost);
-  for (const host of updateNetHosts(cfg.desktop?.update)) net.add(host);
+  if (proxyHost) connect.add(proxyHost);
+  for (const host of updateNetHosts(cfg.desktop?.update)) connect.add(host);
+  const listen = new Set<string>([
+    ...DESKTOP_LISTEN_BASELINE,
+    ...(extra.net ?? []),
+    ...(extra.netListen ?? []),
+  ]);
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
   // Deep links: the pinned runtime lets the app claim a declared scheme back from another handler
@@ -642,8 +686,11 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
       : [];
 
   return [
-    // `"*"` (a sidecar or `extraPermissions` that talks to any host) is the unscoped flag.
-    net.has("*") ? "--allow-net" : `--allow-net=${[...net].sort().join(",")}`,
+    // `"*"` (a sidecar or `extraPermissions` that talks to any host) is the unscoped flag. The
+    // stock runtime knows only `--allow-net`, both directions in ONE flag (Deno keeps the last).
+    ...(options.netSplit
+      ? netSplitFlags([...connect], [...listen])
+      : listFlag("net", new Set([...connect, ...listen]))),
     "--allow-read",
     "--allow-env",
     ...(needsWrite ? ["--allow-write"] : []),
@@ -659,13 +706,21 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
  * is `../denext.config.ts`) and derive the least-privilege flags for `os` via {@linkcode
  * desktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The
  * config is imported dynamically at run time from a caller-supplied URL, so it is never part of
- * this module's own dependency graph (nor a build-time import of user code).
+ * this module's own dependency graph (nor a build-time import of user code). The network grant is
+ * split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or
+ * later ({@linkcode desktopNetSplit}); `DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a
+ * stock `deno` keep `--allow-net`.
  *
  * @param entryUrl The packaging script's `import.meta.url`.
  * @param os The target OS.
+ * @param netSplit Override the detection (default {@linkcode desktopNetSplit}).
  * @returns The `--allow-*` flags, ready to splice into the `deno desktop` argv.
  */
-export async function desktopPackageFlags(entryUrl: string, os: DesktopOs): Promise<string[]> {
+export async function desktopPackageFlags(
+  entryUrl: string,
+  os: DesktopOs,
+  netSplit: boolean = desktopNetSplit(),
+): Promise<string[]> {
   let config: unknown;
   try {
     const mod = await import(new URL("../denext.config.ts", entryUrl).href);
@@ -673,7 +728,7 @@ export async function desktopPackageFlags(entryUrl: string, os: DesktopOs): Prom
   } catch {
     // no denext.config.ts (or it exports no config) → baseline only
   }
-  return desktopBuildFlags(config, os);
+  return desktopBuildFlags(config, os, { netSplit });
 }
 
 /** The `desktop.capabilities.extensions` module paths from a config object (each a project-relative

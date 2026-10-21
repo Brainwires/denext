@@ -25,7 +25,7 @@ Environment=DENEXT_LOG=json
 # per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
 Environment=DENEXT_TRUST_PROXY=1
 EnvironmentFile=-/etc/shop/env
-ExecStart=/srv/shop/.deno/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start . --host 127.0.0.1
+ExecStart=/srv/shop/.deno/bin/deno run --allow-net-connect --allow-net-listen=127.0.0.1:3000 --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start . --host 127.0.0.1
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM

@@ -654,7 +654,10 @@ every `--platform` target included.
   `services/`, `functions/`, `migrations/`, `supabase/migrations/` and the root
   config, middleware and instrumentation modules; never `.env` files or SQLite
   databases), and `permissions` adds `--allow-*` beyond the least-privilege
-  baseline (`"all"` bakes `--allow-all`). `sign` (`true`, or `{ entitlements?,
+  baseline (`write`, `run`, `ffi`, `sys`; `"all"` bakes `--allow-all`). Its `netConnect` /
+  `netListen` (host lists in `--allow-net` syntax, `":3000"` for a port) bake the network grant
+  split by direction (`--allow-net-connect` / `--allow-net-listen`) on denext's Deno 3.0.0-rc.2 and
+  later, an unset direction unscoped; elsewhere the binary keeps `--allow-net` with a warning. `sign` (`true`, or `{ entitlements?,
   notarize?, timestampUrl? }`) code-signs the binary with the `DENEXT_*` credentials in the
   environment, and only warns when they are missing. See
   [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile)

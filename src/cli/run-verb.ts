@@ -82,7 +82,38 @@ async function childPermissionFlags(): Promise<string[]> {
       }
     } catch { /* permission name unknown to this Deno version */ }
   }
-  return flags;
+  return [...flags, ...await directionalNetFlags(flags.includes("--allow-net"))];
+}
+
+/**
+ * The parent's direction-split network grants (denext's Deno from 3.0.0-rc.2: `--allow-net-connect`
+ * / `--allow-net-listen`, `--deny-net-connect` / `--deny-net-listen`), each one held unscoped, for
+ * a re-exec child. Only when the parent runs in that model: there `net` reads `prompt`, and the two
+ * models may not be mixed on one command line. Elsewhere (`--allow-net`, `--deny-net`, a Deno
+ * without the split) none.
+ *
+ * @param legacyGranted Whether the parent holds the legacy `net` grant.
+ * @param query The permission query (a test seam).
+ * @returns The flags.
+ */
+export async function directionalNetFlags(
+  legacyGranted: boolean,
+  query: (name: string) => Promise<Deno.PermissionState> = (name) =>
+    Deno.permissions.query({ name } as unknown as Deno.PermissionDescriptor).then((s) => s.state),
+): Promise<string[]> {
+  if (legacyGranted) return [];
+  try {
+    if (await query("net") !== "prompt") return [];
+    const flags: string[] = [];
+    for (const direction of ["connect", "listen"]) {
+      const state = await query(`net-${direction}`);
+      if (state === "granted") flags.push(`--allow-net-${direction}`);
+      else if (state === "denied") flags.push(`--deny-net-${direction}`);
+    }
+    return flags;
+  } catch {
+    return []; // a Deno without the split refuses the directional names
+  }
 }
 
 /**
@@ -298,7 +329,10 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
  */
 async function toolchainPermissionFlags(): Promise<string[]> {
   const flags = await childPermissionFlags();
-  if (flags.length === 7) return ["-A"];
+  // Every coarse grant: the seven legacy kinds (a directional net flag is no part of `-A`).
+  if (flags.filter((f) => !f.startsWith("--allow-net-") && !f.startsWith("--deny-")).length === 7) {
+    return ["-A"];
+  }
   const names: Deno.PermissionName[] = ["read", "write", "net", "env", "run", "sys", "ffi"];
   for (const name of names) {
     const state = await Deno.permissions.query({ name }).then((s) => s.state, () => "prompt");

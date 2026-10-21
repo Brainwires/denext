@@ -208,6 +208,15 @@ async function serverCommand(projectDir: string, flags: string[]): Promise<strin
   return ["deno", "run", ...flags, ...detection.cli, "start", "."];
 }
 
+/** `DeployPermissions.net` from `compile.permissions` (`null` under `"all"`). */
+function deployNet(compile: DenextConfig["compile"]): DeployManifest["permissions"]["net"] {
+  const p = compile?.permissions;
+  if (p === "all") return null;
+  const list = (values: readonly string[] | undefined) =>
+    !values || values.length === 0 || values.includes("*") ? ["*"] : [...new Set(values)].sort();
+  return { connect: list(p?.netConnect), listen: list(p?.netListen) };
+}
+
 /** Which app shape this is. */
 async function modeOf(paths: ProjectPaths): Promise<DeployManifest["mode"]> {
   if (paths.config?.mode === "spa") return "spa";
@@ -281,7 +290,11 @@ export async function collectDeployManifest(
       source: rel(paths.projectDir, m.path),
     })),
     env: await collectEnv(paths.projectDir),
-    permissions: { flags, allowAll: flags.includes("--allow-all") },
+    permissions: {
+      flags,
+      allowAll: flags.includes("--allow-all"),
+      net: deployNet(config.compile),
+    },
     images: imagesOf(config, mode),
     cache: cacheOf(config),
     compile: options.compile ?? null,

@@ -189,7 +189,15 @@
       "--allow-read",
       "--allow-write=.denext,data"
     ],
-    "allowAll": false
+    "allowAll": false,
+    "net": {
+      "connect": [
+        "*"
+      ],
+      "listen": [
+        "*"
+      ]
+    }
   },
   "images": {
     "optimizer": true,

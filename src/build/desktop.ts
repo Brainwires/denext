@@ -143,6 +143,7 @@ export {
 // (in place of `-A`), derived from the project's `desktop.capabilities`.
 export {
   DESKTOP_BASELINE_FLAGS,
+  type DesktopBuildFlagOptions,
   desktopBuildFlags,
   desktopIncludeArgs,
   desktopNpmArgs,

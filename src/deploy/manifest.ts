@@ -119,10 +119,29 @@ export interface DeployEnvVar {
 
 /** The Deno permissions the production server runs with. */
 export interface DeployPermissions {
-  /** The `--allow-*` flags (the least-privilege `start` set plus `compile.permissions`). */
+  /**
+   * The `--allow-*` flags (the least-privilege `start` set plus `compile.permissions`), for any
+   * Deno: the network grant is the one `--allow-net`.
+   */
   flags: string[];
   /** Whether the app opted into `--allow-all` (`compile.permissions: "all"`). */
   allowAll: boolean;
+  /**
+   * The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno from
+   * 3.0.0-rc.2: `--allow-net-connect` / `--allow-net-listen`). `["*"]` is a direction left
+   * unscoped. `listen` is `["*"]` unless `compile.permissions.netListen` names addresses: an
+   * adapter that knows the port it serves on scopes it there (`:<port>`, or `<host>:<port>`),
+   * so nothing else in the process can open a listener. `null` under `allowAll`.
+   */
+  net: DeployNetPermissions | null;
+}
+
+/** {@linkcode DeployPermissions.net}: the outbound hosts and the listen addresses. */
+export interface DeployNetPermissions {
+  /** `--allow-net-connect` hosts (`["*"]`: unscoped). */
+  connect: string[];
+  /** `--allow-net-listen` addresses (`["*"]`: unscoped, for the adapter to scope to its port). */
+  listen: string[];
 }
 
 /** The built-in image optimizer. */
