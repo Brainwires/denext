@@ -337,3 +337,78 @@ Deno.test("client: a read with a body, or an empty forwardHeaders config, goes a
     // (A GET with a body is refused by `fetch` itself; what matters is that it never batched.)
     assertEquals(seen.filter((r) => new URL(r.url).pathname === API_BATCH_PATH), []);
   }));
+
+Deno.test("api batch protocol: platform proxy, identity and method-override headers are never forwardable", () => {
+  // What a hosting platform, CDN or auth proxy sets (or strips) on the OUTER request: a
+  // client-chosen per-item value would reach a handler without passing that proxy.
+  const refused = [
+    "fly-client-ip",
+    "fly-forwarded-proto",
+    "x-vercel-forwarded-for",
+    "x-vercel-ip-country",
+    "x-vercel-proxy-signature",
+    "x-now-route-matches",
+    "x-amzn-oidc-identity",
+    "x-amzn-trace-id",
+    "x-amz-security-token",
+    "cloudfront-viewer-address",
+    "x-http-method-override",
+    "x-http-method",
+    "x-method-override",
+    "x-envoy-external-address",
+    "x-azure-clientip",
+    "x-azure-fdid",
+    "x-arr-clientcert",
+    "x-ms-client-principal",
+    "x-ms-client-principal-id",
+    "x-ms-token-aad-access-token",
+    "x-appengine-user-email",
+    "x-appengine-cron",
+    "x-goog-iap-jwt-assertion",
+    "x-goog-authenticated-user-email",
+    "x-serverless-authorization",
+    "x-cloudtasks-queuename",
+    "x-endpoint-api-userinfo",
+    "x-apigateway-api-userinfo",
+    "x-nf-client-connection-ip",
+    "x-bb-ip",
+    "akamai-origin-hop",
+    "true-client-ip",
+    "x-real-ip",
+    "x-client-ip",
+    "client-ip",
+    "fastly-client-ip",
+    "cdn-loop",
+    "x-forwarded",
+    "x-originating-ip",
+    "x-remote-ip",
+    "x-remote-addr",
+    "x-remote-user",
+    "remote-user",
+    "remote-groups",
+    "x-auth-request-email",
+    "x-pomerium-jwt-assertion",
+    "x-ssl-client-cert",
+    "ssl-client-cert",
+    "x-client-cert",
+    "x-client-verify",
+    "x-middleware-subrequest",
+    "x-nextjs-data",
+    "x-invoke-path",
+    "x-scheme",
+    "x-url-scheme",
+    "front-end-https",
+    "apikey",
+  ];
+  const allowed = refused.filter((name) => isForwardableBatchHeader(name));
+  assertEquals(allowed, [], `forwardable but must not be: ${allowed.join(", ")}`);
+  // A config listing one fails validation instead of silently dropping it.
+  assertThrows(
+    () => validateDenextConfig({ apiBatch: { forwardHeaders: ["fly-client-ip"] } } as never),
+    Error,
+    "apiBatch.forwardHeaders",
+  );
+  // Trace context is not identity- or trust-bearing: still forwardable when an app lists it.
+  assert(isForwardableBatchHeader("x-cloud-trace-context"));
+  assert(isForwardableBatchHeader("traceparent"));
+});

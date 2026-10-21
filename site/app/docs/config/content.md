@@ -309,7 +309,8 @@ itself (it reads neither the config keys nor the env vars for them).
   `false` answers `404`), `mutations` (default `true`: POST/PUT/PATCH/DELETE items run
   one at a time in call order; `false` refuses them), `forwardHeaders` (default none: request
   headers such as `["x-tenant"]` a batched call may carry, each item its own value; never a
-  credential, framing or proxy header), `maxItems` (default 20, at most 100), `maxBodyBytes`
+  credential, framing, method-override or proxy header — nothing a CDN, hosting platform or
+  auth proxy sets, such as `fly-client-ip`, `x-vercel-*`, `x-amzn-*` or `x-envoy-*`), `maxItems` (default 20, at most 100), `maxBodyBytes`
   (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
   4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
   [Typed API](/docs/typed-api).

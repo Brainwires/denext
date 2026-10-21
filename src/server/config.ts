@@ -727,9 +727,12 @@ export interface ApiBatchConfig {
    * one only when it lists the same name (`createApiClient({ batch: { forwardHeaders } })`);
    * a call with any other custom header goes as its own request. A header reaches only its own
    * item's handler, never another item's, and never comes from the batch request itself. Names
-   * are lower-cased; a credential (`cookie`, `authorization`), framing or hop-by-hop header,
-   * `origin` / `referer` / `host`, a proxy-set header (`forwarded`, `x-forwarded-*`,
-   * `x-real-ip`, `cf-*`, …), `x-denext-*`, `sec-*` and the app's `rateLimitHeader` are refused.
+   * are lower-cased; a credential (`cookie`, `authorization`, `apikey`), framing or hop-by-hop
+   * header, `origin` / `referer` / `host`, a method override (`x-http-method-override`), a
+   * header a proxy, CDN, hosting platform or auth proxy sets (`forwarded`, `x-forwarded-*`,
+   * `x-real-ip`, `cf-*`, `fly-*`, `x-vercel-*`, `x-amzn-*`, `x-envoy-*`, `x-azure-*`,
+   * `x-appengine-*`, `x-goog-*`, `x-ms-client-principal*`, `x-auth-request-*`, …), Next's
+   * internal `x-middleware-*`, `x-denext-*`, `sec-*` and the app's `rateLimitHeader` are refused.
    * Each value is one line of at most 1024 characters; anything else fails the whole batch.
    */
   forwardHeaders?: string[];

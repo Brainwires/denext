@@ -149,6 +149,22 @@ and this project adheres to
   the declared one and the bucket's `mime` list, and the first bytes against that type, moves them
   to the key.
 
+- **A batched API call can no longer forward a header a hosting platform or proxy vouches for.**
+  `apiBatch.forwardHeaders` refused credentials, framing headers and the common proxy headers,
+  but accepted names that platforms, CDNs and auth proxies set on the outer request: `fly-*`,
+  `x-vercel-*`, `x-amzn-*` / `x-amz-*` (including an ALB's OIDC identity), `cloudfront-*`,
+  `x-envoy-*`, `x-azure-*`, `x-arr-*`, App Service's `x-ms-client-principal*` / `x-ms-token-*`,
+  `x-appengine-*`, `x-goog-*` (IAP), `x-cloudtasks-*`, `x-nf-*`, `akamai-*`, `x-auth-request-*` /
+  `remote-*` / `x-pomerium-*` (auth proxies), TLS client-certificate headers (`x-ssl-*`,
+  `ssl-*`, `x-client-cert`, `x-client-verify`), scheme overrides (`x-scheme`, `x-url-scheme`,
+  `front-end-https`), Next.js's internal `x-middleware-*` / `x-nextjs-*` / `x-invoke-*`, a
+  gateway's `apikey`, and the method overrides `x-http-method-override` / `x-http-method` /
+  `x-method-override`. An app that listed one would let a client set it per item, reaching the
+  handler without passing the proxy. They are now refused: config validation names the header,
+  and the client never batches a call carrying one. Trace context (`traceparent`,
+  `x-cloud-trace-context`) is unaffected. Batch items and in-process calls during a render still
+  inherit only their parent's fixed header allowlist.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added
