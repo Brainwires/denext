@@ -62,6 +62,11 @@ Deno.test({
   async fn(t) {
     const bin = await compiledCli();
     const tmp = await Deno.makeTempDir({ prefix: "denext_binary_smoke_" });
+    // `create` / `migrate` pin the newest denext Deno's dependency-age hold lets in: this
+    // version, or (before its tag publishes it) the newest published one.
+    const published = await publishedDenext();
+    const pinned = (spec: string) =>
+      [VERSION, published].some((v) => spec === `jsr:@denext/denext@^${v}`);
     try {
       await t.step("--version", async () => {
         const r = await runCli(bin, ["--version"], tmp);
@@ -84,9 +89,9 @@ Deno.test({
         const { imports } = JSON.parse(await Deno.readTextFile(join(next, "deno.json"))) as {
           imports: Record<string, string>;
         };
-        assertEquals(imports.denext, `jsr:@denext/denext@^${VERSION}`);
+        assert(pinned(imports.denext), imports.denext);
         // The `next/*` aliases come from the framework's own deno.json `exports`.
-        assertEquals(imports["next/link"], `jsr:@denext/denext@^${VERSION}/next/link`);
+        assertEquals(imports["next/link"], `${imports.denext}/next/link`);
       });
 
       await t.step("the MCP server knows its version and serves the guide", async () => {
@@ -125,8 +130,10 @@ Deno.test({
       await t.step("create", async () => {
         const r = await runCli(bin, ["create", "app", "--yes"], tmp);
         assertEquals(r.code, 0, show(r));
-        const config = await Deno.readTextFile(join(app, "deno.json"));
-        assertStringIncludes(config, `jsr:@denext/denext@^${VERSION}`);
+        const { imports } = JSON.parse(await Deno.readTextFile(join(app, "deno.json"))) as {
+          imports: Record<string, string>;
+        };
+        assert(pinned(imports.denext), imports.denext);
       });
 
       await t.step("generate", async () => {
@@ -140,7 +147,6 @@ Deno.test({
         assertStringIncludes(r.out, "/about");
       });
 
-      const published = await publishedDenext();
       await t.step({
         name: "patch denext targets the published copy the app runs",
         // The pristine file comes from this version on JSR: not there before its tag.
