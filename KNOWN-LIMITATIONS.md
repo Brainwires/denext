@@ -219,7 +219,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `sessionsValidAfter` need its two optional extension methods (`getUserExtension` /
   `updateUserExtension`, an extension table); without them those fields are dropped with a
   warning and `revokeAllSessions()` can't end its database sessions. Password hashes are not
-  stored through it, and database sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
+  stored through it, and database sessions don't slide. Its session rows keep no sign-in time,
+  sign-in methods or pending second factor, so `denextAuth` refuses MFA (an adapter with the
+  factor store, or `mfa.required: "always"`) over them at startup; use the JWT strategy or a
+  denext `sessionStore` with MFA. With an adapter, a Credentials `authorize()` must return a user of the
   adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
 - **NextAuth.js v4:** `next-auth/middleware` reads the JWT strategy's token only, as v4 does, so
   with `session: { strategy: "database" }` every gated request is sent to sign in. A Pages API

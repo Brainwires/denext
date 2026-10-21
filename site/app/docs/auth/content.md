@@ -2434,6 +2434,13 @@ const adapter = {
 };
 ```
 
+An Auth.js adapter's `Session` rows hold the user and the expiry only, with no sign-in time,
+sign-in methods or pending second factor. So `denextAuth` refuses to start when MFA could run over
+them (`session: { strategy: "database" }` through the adapter, with an adapter that has the MFA
+factor store or `mfa.required: "always"`), rather than read a half-signed-in session back as a
+complete one. Pair MFA with the JWT strategy or a denext `sessionStore` (`sqliteSessionStore()`,
+`postgresSessionStore()`, …) instead.
+
 denext keeps its own defaults where they are stricter, and nothing is relaxed for parity:
 
 - **CSRF.** Every state-changing POST (`signin`, `signout`, the credentials callback, `session`

@@ -192,6 +192,14 @@ and this project adheres to
   and the security page say so and show the restrictive `aal2` policy that keeps a table behind
   the second factor.
 
+- **MFA can no longer run over an Auth.js adapter's database sessions.** Those session rows keep
+  the user and the expiry only (no sign-in time, sign-in methods or pending second factor), so a
+  session still owing its second factor would have read back as complete. Nothing routed MFA
+  through them so far (the bridged adapter has no factor store), but an app that added one, or set
+  `mfa.required: "always"`, with `session: { strategy: "database" }` over the bridge would have
+  been open. `denextAuth` now refuses that configuration at startup, naming the fix: the JWT
+  strategy or a denext `sessionStore`.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added

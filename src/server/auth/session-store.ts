@@ -50,6 +50,34 @@ export interface SessionStore {
   close?(): void | Promise<void>;
 }
 
+/** The stores {@linkcode markWithoutAuthLevel} marked. */
+const withoutAuthLevel = new WeakSet<SessionStore>();
+
+/**
+ * Mark `store` as one that keeps only who a session is and when it expires — not its sign-in
+ * time (`authTime`), its methods (`amr`) or whether it still owes a second factor
+ * (`mfaPending`), so a pending session would read back as a complete one. `denextAuth` refuses
+ * to run MFA over such a store. The Auth.js adapter bridge's session rows are one.
+ *
+ * @param store The store.
+ * @returns The same store.
+ */
+export function markWithoutAuthLevel<T extends SessionStore>(store: T): T {
+  withoutAuthLevel.add(store);
+  return store;
+}
+
+/**
+ * Whether `store` round-trips a session's `authTime`, `amr` and `mfaPending` (every store but
+ * one {@linkcode markWithoutAuthLevel} marked).
+ *
+ * @param store The store.
+ * @returns `false` for a store that drops them.
+ */
+export function keepsAuthLevel(store: SessionStore): boolean {
+  return !withoutAuthLevel.has(store);
+}
+
 /** Options for {@linkcode inMemorySessionStore}. */
 export interface InMemorySessionStoreOptions {
   /** Max live sessions before the oldest are evicted (FIFO). Default 10000. */

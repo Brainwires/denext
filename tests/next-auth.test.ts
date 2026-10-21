@@ -3,7 +3,7 @@
 // bridge. Security: every state-changing POST needs BOTH the same-origin check and the CSRF
 // token, and a `redirect` callback can't send the browser off-origin.
 
-import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertNotEquals, assertRejects, assertThrows } from "@std/assert";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "../src/compat/next-auth/index.ts";
 import Credentials from "../src/compat/next-auth/providers/credentials.ts";
 import GitHub from "../src/compat/next-auth/providers/github.ts";
@@ -22,7 +22,14 @@ import {
   type AuthJsUserExtension,
   fromAuthJsAdapter,
 } from "../src/compat/next-auth/adapter.ts";
-import { auth as denextAuth, requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
+import {
+  auth as denextAuth,
+  denextAuth as configureAuth,
+  requireAuth,
+  revokeAllSessions,
+} from "../src/server/auth/mod.ts";
+import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { credentials } from "../src/server/auth/providers.ts";
 import type { OAuthProvider } from "../src/server/auth/types.ts";
 import { type CallInit, inRequest, Jar, ORIGIN, request } from "./helpers/next-auth-harness.ts";
 import { isRedirect } from "../src/runtime/error-boundary.ts";
@@ -1086,4 +1093,36 @@ Deno.test("next-auth: with an extension table, revokeAllSessions and a ban end d
   const until = Math.floor(Date.now() / 1000) + 3600;
   adapter.extensions.set("u1", { ...adapter.extensions.get("u1"), bannedUntil: until });
   assertEquals(await readSession(), null, "a ban ends the session");
+});
+
+Deno.test("next-auth adapter bridge: MFA is refused over its database sessions (no authTime / amr / pending state)", () => {
+  // The bridge's session rows hold only the user and the expiry: a session still owing its
+  // second factor would read back as a complete one. Any MFA over them is a config error.
+  const memory = inMemoryAuthAdapter(); // the MFA factor store and backup codes
+  const bridged = fromAuthJsAdapter(memoryAdapter(), {
+    credentialsProviders: new Set(["credentials"]),
+    warn: () => {},
+  });
+  assert(bridged.sessions, "the bridge stores database sessions");
+  const base = {
+    secret: "bridge-mfa-secret-at-least-32-characters!",
+    canonicalOrigin: ORIGIN,
+    providers: [credentials({ authorize: () => null })],
+  };
+  const withMfa = { ...memory, ...bridged };
+  for (
+    const config of [
+      { ...base, adapter: withMfa, session: { strategy: "database" as const } },
+      {
+        ...base,
+        adapter: withMfa,
+        session: { strategy: "database" as const },
+        mfa: { required: "always" as const },
+      },
+      // The bridge's store named explicitly, beside an adapter that has the factor store.
+      { ...base, adapter: memory, sessionStore: bridged.sessions },
+    ]
+  ) {
+    assertThrows(() => configureAuth(config), Error, "Auth.js adapter");
+  }
 });

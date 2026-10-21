@@ -29,7 +29,7 @@ import type {
 import { decodeCbor } from "../../server/auth/cbor.ts";
 import { type CacheStore, getCacheStore } from "../../server/cache.ts";
 import { base64UrlDecode } from "../../server/auth/oauth.ts";
-import type { SessionStore } from "../../server/auth/session-store.ts";
+import { markWithoutAuthLevel, type SessionStore } from "../../server/auth/session-store.ts";
 import type { AuthSession } from "../../server/auth/types.ts";
 
 import type { Awaitable } from "./types.ts";
@@ -570,7 +570,9 @@ function sessionStore(
 ): SessionStore | undefined {
   const { createSession, getSessionAndUser, deleteSession, updateSession } = adapter;
   if (!createSession || !getSessionAndUser || !deleteSession) return undefined;
-  return {
+  // A row holds the user and the expiry only: no `authTime`, `amr` or `mfaPending`, so
+  // `denextAuth` refuses MFA over it rather than read a pending session back as complete.
+  return markWithoutAuthLevel({
     async create(id, session) {
       await createSession.call(adapter, {
         sessionToken: id,
@@ -608,7 +610,7 @@ function sessionStore(
           `of user ${JSON.stringify(userId)} were not ended — they expire on their own.`,
       );
     },
-  };
+  });
 }
 
 /** Options for {@linkcode fromAuthJsAdapter}. */
