@@ -178,9 +178,9 @@ export interface NextAuthConfig {
     /** How often an active session is extended, in seconds (default 24 hours). */
     updateAge?: number;
     /**
-     * denext-only: the absolute ceiling in seconds, counted from the sign-in, that no extension
-     * passes, on either strategy (default 30 days, or `maxAge` when longer). Auth.js has no
-     * such cap.
+     * denext-only, opt-in: an absolute ceiling in seconds, counted from the sign-in, that no
+     * extension passes, on either strategy (at least `maxAge`). Unset, there is none, as in
+     * Auth.js: an active session keeps sliding by `updateAge`.
      */
     maxLifetime?: number;
   };
