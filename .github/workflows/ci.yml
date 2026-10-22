@@ -383,6 +383,18 @@ jobs:
           set -o pipefail
           deno task test:coverage 2>&1 | tee "$RUNNER_TEMP/coverage.txt"
 
+      # The lcov report the per-file floors read, kept so a baseline can be raised from a CI run
+      # without re-running the suite locally: `gh run download <run> -n coverage-lcov -D coverage`,
+      # then `deno task coverage:ratchet:update` (scripts/coverage-ratchet.ts).
+      - name: Upload the lcov report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: The backend-integration suites ran under coverage (none ignored)
         run: |
           # The files the backend-integration job runs: under coverage, none of their tests may be
