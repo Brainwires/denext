@@ -57,7 +57,13 @@ import { runtimeAttestationArgs } from "../src/build/desktop-runtime.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 import { extractArchive } from "../src/build/safe-extract.ts";
 import { tsgoTreeSha256 } from "../src/build/deno-toolchain.ts";
-import { denoReleaseVersion, isDenextDenoVersion } from "../src/build/deno-version.ts";
+import {
+  compareDenoVersions,
+  denextVersionLine,
+  FIRST_MARKER_RUNTIME,
+  isDenextReleaseVersion,
+  pinnedDenoReleaseVersion,
+} from "../src/build/deno-version.ts";
 
 const REPO = "Brainwires/deno";
 const OUT = fromFileUrl(new URL("../src/build/desktop-runtime-pin.json", import.meta.url));
@@ -164,8 +170,26 @@ function fail(message: string): never {
  * release, so any `deno` goes with it. Never a CI build (`+ci.N`).
  */
 function runtimeVersionOk(version: string, deno: string): boolean {
-  return !version.includes("+") && isDenextDenoVersion(version) &&
-    denoReleaseVersion(version, deno) === deno;
+  return !version.includes("+") && isDenextReleaseVersion(version) &&
+    pinnedDenoReleaseVersion(version, deno) === deno;
+}
+
+/**
+ * From {@linkcode FIRST_MARKER_RUNTIME} the release's CLI carries denext's identity marker
+ * (`Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`), which is
+ * how denext tells it from upstream Deno of the same version, and the manifest's `cli.identity`
+ * records it. A release that should carry it and does not is refused: pinned, denext would not
+ * recognise its own toolchain.
+ */
+function checkCliIdentity(version: string, cli: Loose): void {
+  if (compareDenoVersions(version, FIRST_MARKER_RUNTIME) < 0) return;
+  const id = cli?.identity;
+  if (id?.buildDenext !== version || id?.versionLine !== denextVersionLine(version)) {
+    fail(
+      `cli.identity is ${JSON.stringify(id ?? null)}; a ${FIRST_MARKER_RUNTIME}+ release must ` +
+        `record { buildDenext: "${version}", versionLine: "${denextVersionLine(version)}" }`,
+    );
+  }
 }
 
 /** The manifest's version + Deno version, after checking it is this tag's runtime manifest. */
@@ -416,6 +440,7 @@ export function toolchainPinFromRelease(
     if (denort) fail("the manifest has a denort section but no cli section");
     return null;
   }
+  checkCliIdentity(version, m.cli);
   return {
     schema: 1,
     version,

@@ -10,23 +10,44 @@
 // the split instead, so a server may listen only on its own port while connecting where it needs:
 // a compromised dependency can no longer open a listener of its own.
 
-import { compareDenoVersions, isDenextDenoVersion } from "./deno-version.ts";
+import {
+  compareDenoVersions,
+  type DenoIdentity,
+  isDenextDenoVersion,
+  isDenextReleaseVersion,
+} from "./deno-version.ts";
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
 
 /** The first release of denext's Deno with `--allow-net-connect` / `--allow-net-listen`. */
 export const NET_SPLIT_RELEASE = "3.0.0-rc.2";
 
 /**
- * Whether `version` is a build of denext's own Deno (a toolchain or a Deno Desktop runtime) that
- * has the direction-split network flags ({@linkcode NET_SPLIT_RELEASE} or later). Stock Deno, an
- * older denext build, or an unknown version (`undefined`) has not.
+ * Whether a release of denext's own Deno (a toolchain or a Deno Desktop runtime) named by a pin, a
+ * release manifest or denext's own toolchain marker (`DENEXT_TOOLCHAIN_ACTIVE`) has the
+ * direction-split network flags ({@linkcode NET_SPLIT_RELEASE} or later). An older release or an
+ * unknown version (`undefined`) has not. A running Deno's own version goes through
+ * {@linkcode denoSupportsNetSplit}, which tells upstream Deno of the same number apart.
  *
- * @param version A `Deno.version.deno`, `deno --version` or runtime pin version.
+ * @param version A runtime or toolchain pin's version, or the toolchain marker.
  * @returns Whether the split flags may be passed.
  */
 export function supportsNetSplit(version: string | undefined): boolean {
-  return version !== undefined && isDenextDenoVersion(version) &&
+  return version !== undefined && isDenextReleaseVersion(version) &&
     compareDenoVersions(version, NET_SPLIT_RELEASE) >= 0;
+}
+
+/**
+ * Whether a running Deno parses the direction-split network flags: denext's own Deno (by its
+ * identity marker, or a pre-marker build's version; src/build/deno-version.ts) of
+ * {@linkcode NET_SPLIT_RELEASE} or later. Stock Deno — upstream's `3.0.0-rc.N` included — has not.
+ *
+ * @param identity What the Deno says about itself (`currentDenoIdentity()`, or a child's parsed
+ *   `deno --version`).
+ * @returns Whether the split flags may be passed to it.
+ */
+export function denoSupportsNetSplit(identity: DenoIdentity): boolean {
+  return isDenextDenoVersion(identity) &&
+    compareDenoVersions(identity.deno, NET_SPLIT_RELEASE) >= 0;
 }
 
 /**

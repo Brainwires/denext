@@ -927,7 +927,10 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
     );
   }
   if (s.mode !== "pinned") return out;
-  if (s.deno.found === null || denoReleaseVersion(s.deno.found) !== s.deno.required) {
+  const found = s.deno.found === null
+    ? null
+    : { deno: s.deno.found, ...(s.deno.denext ? { denext: s.deno.denext } : {}) };
+  if (found === null || denoReleaseVersion(found) !== s.deno.required) {
     add(
       "error",
       `the runtime ${s.version} needs Deno ${s.deno.required} exactly (stock, or denext's ` +

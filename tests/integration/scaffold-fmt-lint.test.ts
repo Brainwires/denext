@@ -71,7 +71,7 @@ const DENO = await toolchainDeno().catch((err) => {
 }) ?? Deno.execPath();
 
 /** Whether the children run on a stock Deno (no toolchain), the only build with the crash. */
-const STOCK_FALLBACK = DENO === Deno.execPath() && !isToolchainBuild(Deno.version.deno);
+const STOCK_FALLBACK = DENO === Deno.execPath() && !isToolchainBuild();
 
 /** Run `deno <args>` in `cwd`; the combined output when it fails. */
 async function deno(args: string[], cwd: string): Promise<{ ok: boolean; output: string }> {

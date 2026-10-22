@@ -44,7 +44,11 @@ import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative } from "@std/path";
 import { SERIAL_TESTS } from "../tests/serial-tests.ts";
 import { resolveDenoToolchain, TOOLCHAIN_ENV } from "../src/build/deno-toolchain.ts";
-import { isDenextDenoVersion } from "../src/build/deno-version.ts";
+import {
+  currentDenoIdentity,
+  type DenoIdentity,
+  isDenextDenoVersion,
+} from "../src/build/deno-version.ts";
 import { TEST_VALUE_FLAGS } from "../src/cli/commands/test-passes.ts";
 
 /** The file-name suffix of a test file that runs on denext's Deno toolchain (Vitest's API). */
@@ -207,11 +211,15 @@ export async function findVitestFiles(root: string = ROOT): Promise<string[]> {
 }
 
 /**
- * Whether `version` (`Deno.version.deno`) is a denext toolchain build (`3.0.0-rc.1`, or
- * `2.9.7-denext.17` before the fork took its own version).
+ * Whether a Deno is a denext toolchain build: its `Deno.build.denext` marker (3.0.0-rc.3 on), or a
+ * pre-marker build's version (the pinned `3.0.0-rc.N`, or `2.9.7-denext.17` before the fork took
+ * its own version). Upstream Deno of the same number is not.
+ *
+ * @param identity What the Deno says about itself (default: this process's).
+ * @returns Whether it is the toolchain.
  */
-export function isToolchainBuild(version: string): boolean {
-  return isDenextDenoVersion(version);
+export function isToolchainBuild(identity: DenoIdentity = currentDenoIdentity()): boolean {
+  return isDenextDenoVersion(identity);
 }
 
 /**
@@ -219,7 +227,7 @@ export function isToolchainBuild(version: string): boolean {
  * `DENEXT_DENO=stock` opted out. Throws when the toolchain is otherwise unavailable.
  */
 export async function toolchainDeno(): Promise<string | null> {
-  if (isToolchainBuild(Deno.version.deno)) return Deno.execPath();
+  if (isToolchainBuild()) return Deno.execPath();
   const choice = await resolveDenoToolchain();
   if (choice.kind === "toolchain") {
     if (choice.warning) console.error(choice.warning);

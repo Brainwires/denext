@@ -299,11 +299,12 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
       `${f}: a Vitest file runs in its own pass, never the serial one`,
     );
   }
-  assert(isToolchainBuild("2.9.7-denext.17"));
-  assert(isToolchainBuild("3.0.0-rc.1"));
-  assert(isToolchainBuild("3.0.0-rc.1+ci.42"));
-  assert(!isToolchainBuild("2.9.6"));
-  assert(!isToolchainBuild("2.9.7"));
+  assert(isToolchainBuild({ deno: "2.9.7-denext.17" }));
+  assert(isToolchainBuild({ deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" }), "the identity marker");
+  assert(isToolchainBuild({ deno: "3.0.0-rc.3+ci.42", denext: "3.0.0-rc.3+ci.42" }));
+  assert(!isToolchainBuild({ deno: "3.0.0-rc.3" }), "upstream Deno of the same number");
+  assert(!isToolchainBuild({ deno: "2.9.6" }));
+  assert(!isToolchainBuild({ deno: "2.9.7" }));
 });
 
 Deno.test("test-run: tempRootEnv points every platform's temp-dir variable at the root", () => {

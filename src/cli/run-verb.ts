@@ -23,6 +23,7 @@ import {
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "../build/deno-toolchain.ts";
+import { currentDenoIdentity } from "../build/deno-version.ts";
 import { applyNativeCheckEngine } from "../ts/engine.ts";
 import { denoPathEnv } from "./deno-path.ts";
 import { resolveProject } from "../build/paths.ts";
@@ -306,7 +307,7 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
         [
           "-A",
           ...toolchainRuntimeFlags(
-            childToolchainMarker((n) => Deno.env.get(n), Deno.version.deno),
+            childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
           ),
           ...pinnedConfigArgs(dir),
           ...cliNpmModeArgs(dir),
@@ -377,10 +378,12 @@ function gateDir(command: CommandSpec, ctx: CommandContext): string {
  */
 function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   const standalone = isStandaloneBinary();
+  const { denext } = currentDenoIdentity();
   return maybeReexecToolchain(toolchainApplies(command, ctx.positionals[0], standalone), {
     env: (name) => Deno.env.get(name),
     setEnv: (name, value) => Deno.env.set(name, value),
     denoVersion: Deno.version.deno,
+    ...(denext ? { denext } : {}),
     pinnedVersion: pinnedToolchainVersion(),
     standalone: () => standalone,
     resolve: () => resolveDenoToolchain(),
@@ -440,7 +443,7 @@ async function reexecWithConfig(
       // sloppy-imports so the re-exec'd process can load Next.js app route modules
       // that use extensionless imports at runtime (permissive fallback).
       "--unstable-sloppy-imports",
-      ...toolchainRuntimeFlags(childToolchainMarker((n) => Deno.env.get(n), Deno.version.deno)),
+      ...toolchainRuntimeFlags(childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity())),
       ...await childPermissionFlags(),
       // Deno's minimum-dependency-age policy applies to the child too and the parent can't
       // read the value it was started with: forward `DENEXT_MIN_DEP_AGE` (see minDepAgeArgs),
@@ -621,10 +624,10 @@ export async function runVerb(
   // project opts out (src/ts/engine.ts) — decided before the verb starts any Deno.
   const standalone = isStandaloneBinary();
   if (toolchainApplies(command, ctx.positionals[0], standalone)) {
-    // A compiled executable's children run the toolchain it handed them (its marker).
-    const running = standalone
-      ? Deno.env.get("DENEXT_TOOLCHAIN_ACTIVE") ?? Deno.version.deno
-      : Deno.version.deno;
+    // A compiled executable's children run the toolchain it handed them (its marker, which only
+    // denext sets, to the toolchain it resolved).
+    const handed = standalone ? Deno.env.get("DENEXT_TOOLCHAIN_ACTIVE") : undefined;
+    const running = handed ? { deno: handed, denext: handed } : currentDenoIdentity();
     await applyNativeCheckEngine({ running }).catch(() => {});
   }
   if (await moduleGate(command, ctx)) return;

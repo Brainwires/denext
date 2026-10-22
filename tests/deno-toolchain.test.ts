@@ -598,24 +598,32 @@ Deno.test("denoToolchainStatus: each cache state, the opt-outs, and whether this
   const f = await fixture(await zipped());
   const opts = { pin: f.pin, target: TARGET, os: "linux", cacheRoot: f.root };
   try {
-    const missing = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.6" });
+    const missing = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: "2.9.6" },
+    });
     assertEquals([missing.state, missing.ok, missing.active], ["missing", true, false]);
     assertStringIncludes(missing.detail, `toolchain ${VERSION} for ${TARGET}`);
     assertStringIncludes(missing.detail, "running on deno 2.9.6");
     const rt = await ensure(f);
-    const cached = await denoToolchainStatus({ ...opts, env: envOf({}), running: VERSION });
+    const cached = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: VERSION },
+    });
     assertEquals([cached.state, cached.path, cached.active], ["cached", rt.deno, true]);
     assertStringIncludes(cached.detail, "running on it");
     const marked = await denoToolchainStatus({
       ...opts,
       env: envOf({ DENEXT_TOOLCHAIN_ACTIVE: VERSION }),
-      running: "2.9.7",
+      running: { deno: "2.9.7" },
     });
     assertFalse(marked.active, "a marker on a Deno of another version is not the toolchain");
     const older = await denoToolchainStatus({
       ...opts,
       env: envOf({}),
-      running: "2.9.7-denext.14",
+      running: { deno: "2.9.7-denext.14" },
     });
     assertFalse(older.active, "an older -denext.N build (a stale link) is not the toolchain");
     // A same-size rewrite keeps the mtime check honest only with --verify.
@@ -651,19 +659,27 @@ Deno.test("denoToolchainStatus: a compiled executable names the Deno its command
   const opts = { pin: f.pin, target: TARGET, os: "linux", cacheRoot: f.root, standalone: true };
   try {
     // The executable's embedded Deno (2.9.7 here) runs only the CLI; every child runs the toolchain.
-    const missing = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.7" });
+    const missing = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: "2.9.7" },
+    });
     assertStringIncludes(missing.detail, "downloaded on the first denext command");
     assertStringIncludes(missing.detail, "denext runs every command on it");
     assertStringIncludes(missing.detail, "embeds deno 2.9.7 for itself only");
     assertFalse(missing.detail.includes("running on deno"), missing.detail);
     await ensure(f);
-    const cached = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.7" });
+    const cached = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: "2.9.7" },
+    });
     assertEquals(cached.state, "cached");
     assertStringIncludes(cached.detail, "denext runs every command on it");
     const stock = await denoToolchainStatus({
       ...opts,
       env: envOf({ DENEXT_DENO: "stock" }),
-      running: "2.9.7",
+      running: { deno: "2.9.7" },
     });
     assertStringIncludes(stock.detail, "commands run on the `deno` on PATH");
   } finally {
@@ -852,10 +868,18 @@ Deno.test("a pin under the fork's own version (3.0.0-rc.1): parsed, downloaded, 
     const stamp = JSON.parse(await Deno.readTextFile(join(f.root, OWN, TARGET, TOOLCHAIN_STAMP)));
     assertEquals(stamp.version, OWN);
     const opts = { pin, target: TARGET, os: "linux", cacheRoot: f.root, env: envOf({}) };
-    const on = await denoToolchainStatus({ ...opts, running: OWN });
+    const on = await denoToolchainStatus({ ...opts, running: { deno: OWN } });
     assertEquals([on.state, on.active], ["cached", true]);
     // A run on the last old-scheme toolchain (a stale link) is not this pin.
-    assertFalse((await denoToolchainStatus({ ...opts, running: "2.9.7-denext.22" })).active);
+    assertFalse(
+      (await denoToolchainStatus({ ...opts, running: { deno: "2.9.7-denext.22" } })).active,
+    );
+    // From 3.0.0-rc.3 the pin is recognised by the identity marker: upstream Deno of the pinned
+    // version (no Deno.build.denext) is not the toolchain.
+    const marked = { ...opts, pin: { ...pin, version: "3.0.0-rc.3" } };
+    const withMarker = { deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" };
+    assert((await denoToolchainStatus({ ...marked, running: withMarker })).active);
+    assertFalse((await denoToolchainStatus({ ...marked, running: { deno: "3.0.0-rc.3" } })).active);
     const choice = await resolveDenoToolchain({
       pin,
       target: TARGET,
@@ -876,7 +900,8 @@ Deno.test("a pin under the fork's own version (3.0.0-rc.1): parsed, downloaded, 
 Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.0-rc.N)", async () => {
   const root = await Deno.makeTempDir();
   try {
-    for (const found of ["3.0.0-rc.1", "3.0.0-rc.1+ci.42"]) {
+    const marked = (v: string) => ({ deno: v, denext: v });
+    for (const found of [marked("3.0.0-rc.3"), marked("3.0.0-rc.3+ci.42"), marked("3.0.0")]) {
       const status = await desktopRuntimeStatus({
         projectDir: root,
         target: "x86_64-unknown-linux-gnu",
@@ -885,7 +910,21 @@ Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.
         env: () => undefined,
         denoVersion: () => Promise.resolve(found),
       });
-      assert(status.ok, `${found}: ${status.detail}`);
+      assert(status.ok, `${found.deno}: ${status.detail}`);
+      assertEquals(status.deno.denext, found.denext);
+    }
+    // Upstream Deno's 3.0.0-rc.N / 3.0.0 (no identity line) is not the runtime's Deno 2.9.7.
+    for (const found of ["3.0.0-rc.3", "3.0.0-rc.4", "3.0.0"]) {
+      const status = await desktopRuntimeStatus({
+        projectDir: root,
+        target: "x86_64-unknown-linux-gnu",
+        backend: "webview",
+        cacheRoot: root,
+        env: () => undefined,
+        denoVersion: () => Promise.resolve(found),
+      });
+      assertFalse(status.ok, found);
+      assertStringIncludes(status.detail, `deno ${found} ✗`);
     }
   } finally {
     await Deno.remove(root, { recursive: true });
