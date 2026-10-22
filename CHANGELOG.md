@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-10-22
+
 ### Added
 
 - **The network grant split by direction where denext bakes least-privilege flags.** denext's
@@ -32,9 +34,8 @@ and this project adheres to
     the split for third-party adapters, `desktopBuildFlags(config, os, { netSplit })`
     (`DesktopBuildFlagOptions`) bakes it from a packaging script, and a re-exec child keeps its
     parent's directional grants.
-
-  Stock Deno, `DENEXT_DENO=stock`, `DENEXT_DESKTOP_RUNTIME=stock` and older runtimes keep the
-  single `--allow-net` (the two models can't be mixed on one command line).
+    Stock Deno, `DENEXT_DENO=stock`, `DENEXT_DESKTOP_RUNTIME=stock` and older runtimes keep the
+    single `--allow-net` (the two models can't be mixed on one command line).
 - **Auth.js database sessions slide.** Through the next-auth compat's adapter bridge, a database
   session older than `session.updateAge` (Auth.js's default 24 hours) now has its row's `expires`
   moved to a full `maxAge` from now on a read that can answer with a cookie, as Auth.js does. The
@@ -67,17 +68,14 @@ and this project adheres to
     default, and `classComponents: false` drops the reconciler's class paths as well
     (`examples/hello`'s shared chunks: 63,378 → 62,954 B; `examples/islands` with
     `classComponents: false`: 117,575 → 115,501 B in all).
-
-  A stock Deno (`DENEXT_DENO=stock`, or a `DENO_BIN` without the flag) keeps the seeded entry and
-  the runtime gate, unchanged.
-
+    A stock Deno (`DENEXT_DENO=stock`, or a `DENO_BIN` without the flag) keeps the seeded entry and
+    the runtime gate, unchanged.
 - **The repository's test suites run on denext's Deno toolchain.** `deno task test` / `test:unit`
   / `test:integration` (`scripts/test-run.ts`) run every pass on the toolchain whenever it
   resolves, not only under coverage, and CI's type-check and unit / integration jobs run on it
   (stock Deno stays for `deno fmt`, `deno lint`, the doc lint and publishing). A new `macos-tests`
   CI job runs the unit suite on macOS arm64, with a real ad-hoc `codesign` of a compiled binary,
   and a release now needs it green.
-
 - **A `denext build --compile` binary embeds only the production server's code.** Its module
   graph no longer reaches the build pipeline, so a minimal app's binary drops from about 214 MB
   to about 135 MB (macOS x86_64): the 47 MB of npm build tooling (Prettier, Babel, `sass`, `zod`,
@@ -124,7 +122,6 @@ and this project adheres to
   snapshot write still in flight could land after the final one, leaving an older snapshot (or
   its temporary file) behind. A concurrent call now waits for the stop in progress, and the
   snapshot writes run one at a time, in order.
-
 - **A project named through a symlinked path builds its stylesheet imports.** `denext export
   <dir>` (and the other module verbs) with `<dir>` reached through a symlink, such as a macOS temp
   directory (`/var` → `/private/var`), failed with "Expected a JavaScript or TypeScript module, but
@@ -184,7 +181,6 @@ and this project adheres to
   plain file instead of `Button.web.tsx`, run `"use cache"` functions uncached and leave inline
   `"use server"` functions unregistered, without a word; one built by an older denext is now
   refused, naming the fix.
-
 - **Performance: a streamed page no longer compiles a regular expression per request.** Each
   render's Suspense boundary tokens carry a fresh nonce, and since 4.4.0 the server matched them
   with a `RegExp` built from that nonce, so every page with a boundary (a `dynamic()` island, a
@@ -198,7 +194,6 @@ and this project adheres to
   `.denext/pages-compat/` and records them, and `denext start` and the binary load that record (a
   binary from an older build refuses, saying to rebuild it). `denext start` also stops rebuilding
   them on every start.
-
 - **A finished request is no longer kept alive by the server renderer.** The streaming renderers
   installed their hook dispatcher in the process-wide slot and left it there after the render, so
   the last streamed page's renderer, and through it that request's render state and its `Request`
@@ -241,7 +236,6 @@ and this project adheres to
   (`resolveNextMdx`) no longer warns "could not recover MDX plugins … Requires write access" on
   every such start: the recovery is a build-time step, skipped quietly where the process may not
   write beside `next.config`.
-
 - **`denext build --compile` resolves dependencies as the app's lockfile locks them.** The
   compile resolves with its own config under `.denext/compile/`, which had no lockfile: the
   binary embedded whatever the app's ranges resolved to that day, possibly a newer, unvetted
@@ -252,7 +246,6 @@ and this project adheres to
   age rule holds. What the compile resolves that the lock lacks is recorded in the app's
   `deno.lock`; a frozen lock (`"lock": { "frozen": true }`) refuses it instead and the binary is
   removed. An `.npmrc` is never embedded in a binary.
-
 - **`@denext/backend` storage: the store itself refuses a presigned multipart part of the wrong
   size, and abandoned uploads are swept without waiting for a new one.** A client upload planned
   as multipart (the sign route's `upload` op above the multipart threshold, through `uploadFile`)
@@ -267,7 +260,6 @@ and this project adheres to
   checks the stored size against the bucket's cap and the declared size, the stored type against
   the declared one and the bucket's `mime` list, and the first bytes against that type, moves them
   to the key.
-
 - **A batched API call can no longer forward a header a hosting platform or proxy vouches for.**
   `apiBatch.forwardHeaders` refused credentials, framing headers and the common proxy headers,
   but accepted names that platforms, CDNs and auth proxies set on the outer request: `fly-*`,
@@ -283,26 +275,22 @@ and this project adheres to
   and the client never batches a call carrying one. Trace context (`traceparent`,
   `x-cloud-trace-context`) is unaffected. Batch items and in-process calls during a render still
   inherit only their parent's fixed header allowlist.
-
 - **The Deno Desktop bridge and the dev server's DevTools sink no longer wait forever on a body.**
   Both read a page's small JSON body under a size cap but with no deadline, so a body that
   stopped sending, or trickled a byte at a time under the cap, held the handler open. The read now
   gives up when no chunk arrives for 15 s or the whole body takes longer than 60 s, and stops at
   once when the request is aborted, answering `408` (`timeout` from the bridge).
-
 - **`denext stack restore` can no longer fill the disk with a full backup.** A full backup was
   extracted under a 1 TiB cap, so a crafted archive (a decompression bomb) could expand until the
   disk was full. The cap is now the free space where the backup is extracted, less a margin (a
   tenth of it, at least 1 GiB); a backup that expands further is refused before the database is
   touched, saying how large it may be and why. The new `--max-size <size>` (`20G`, `512M`, bytes)
   lowers the cap, and stands in for the measurement where free space can't be read (else 16 GiB).
-
 - **`denext stack restore` says plainly that a backup must be trusted.** Its SQL runs as the
   database superuser (`psql` for a full backup's roles, extensions and settings, `pg_restore` for
   the dump), so a crafted backup can run shell commands in the `db` container. The command's help
   and the [Operating the stack](https://denext.dev/docs/deploy#operating-the-stack) guide now say
   to restore only a backup you trust; the archive checks protect the host, not the database.
-
 - **Docs: an `aal1` access token is `authenticated` under row-level security.** With
   `@denext/backend`, the token of a user who owes a second factor runs `db()`, auto-REST,
   Realtime and Storage queries as that user, as on Supabase, while `auth()` reads it as signed out.
@@ -310,7 +298,6 @@ and this project adheres to
   [MFA and row-level security](https://denext.dev/docs/backend#mfa-and-row-level-security) section
   and the security page say so and show the restrictive `aal2` policy that keeps a table behind
   the second factor.
-
 - **MFA can no longer run over an Auth.js adapter's database sessions.** Those session rows keep
   the user and the expiry only (no sign-in time, sign-in methods or pending second factor), so a
   session still owing its second factor would have read back as complete. Nothing routed MFA
@@ -17870,7 +17857,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.6.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.0...development
+[4.7.0]: https://jsr.io/@denext/denext@4.7.0
 [4.6.0]: https://jsr.io/@denext/denext@4.6.0
 [4.5.2]: https://jsr.io/@denext/denext@4.5.2
 [4.5.1]: https://jsr.io/@denext/denext@4.5.1
