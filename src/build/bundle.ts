@@ -21,6 +21,7 @@ import {
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { holdRequestDeadline } from "../server/request-context.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
 import { findInlineServerActions, inlineServerActionError } from "./inline-server-action.ts";
 import {
@@ -1692,16 +1693,11 @@ function entryChunkClosure(entryFile: string, files: Map<string, string>): strin
 }
 
 /**
- * The project directory (the config's), realpath'd so it compares and displays against the
+ * The project directory (the config's), canonical so it compares and displays against the
  * realpath'd source-map paths (macOS `/var` vs `/private/var`, a symlinked checkout).
  */
-async function realProjectDir(configPath: string): Promise<string> {
-  const dir = dirname(configPath);
-  try {
-    return await Deno.realPath(dir);
-  } catch {
-    return dir;
-  }
+function realProjectDir(configPath: string): string {
+  return canonicalPath(dirname(configPath));
 }
 
 /**
@@ -1720,11 +1716,16 @@ interface BundleResolution {
   configPath: string;
 }
 
-/** Each shipped path of a rewritten copy → the app module it stands in for (real paths). */
+/**
+ * Each shipped path of a rewritten copy → the app module it stands in for, both canonical: the
+ * copies live in the bundle's temp dir, which `$TMPDIR` can name through a symlink (macOS
+ * `/var` → `/private/var`), while the source maps' paths are real, so as given a copy never
+ * matched and was neither named as its original nor scanned as an app module.
+ */
 function copyOriginals(client: ClientImports): Map<string, string> {
   const out = new Map<string, string>();
   for (const [copy, original] of Object.entries(client.originals)) {
-    out.set(fromFileUrl(copy), fromFileUrl(original));
+    out.set(canonicalPath(fromFileUrl(copy)), canonicalPath(fromFileUrl(original)));
   }
   return out;
 }
@@ -1815,7 +1816,7 @@ async function assertNoServerOnlyLeaks(
   opts: BundleOptions,
   resolution: BundleResolution,
 ): Promise<void> {
-  const projectDir = await realProjectDir(opts.configPath);
+  const projectDir = realProjectDir(opts.configPath);
   const originals = copyOriginals(resolution.client);
   const shippedBy: Array<{ label: string; entry: string; sources: Set<string> }> = [];
   for (const { source, file, path } of entries) {
