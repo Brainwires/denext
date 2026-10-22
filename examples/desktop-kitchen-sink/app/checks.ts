@@ -1836,15 +1836,27 @@ async function saveThroughDialog(
   return `${saved.text ?? ""}`;
 }
 
-/** Click a link the client router leaves alone (`rel="external"`, or a `download` attribute). */
-function clickLink(href: string, download?: string): void {
+/** Click an `<a download>` link (the client router leaves one alone). */
+function clickDownload(href: string, download: string): void {
   const a = document.createElement("a");
   a.href = href;
-  if (download === undefined) a.rel = "external";
-  else a.download = download;
+  a.download = download;
   document.body.append(a);
   a.click();
   a.remove();
+}
+
+/**
+ * Load `href` in a hidden same-origin frame: an attachment response there is a download, and the
+ * page itself never navigates (a top-level navigation would cancel the page's own requests, the
+ * harness's included, while the engine decides the response is a download).
+ */
+function loadInFrame(href: string): HTMLIFrameElement {
+  const frame = document.createElement("iframe");
+  frame.style.display = "none";
+  frame.src = href;
+  document.body.append(frame);
+  return frame;
 }
 
 const downloadChecks: Check[] = [
@@ -1910,7 +1922,7 @@ const downloadChecks: Check[] = [
       let url = "";
       const text = await saveThroughDialog(setup, "blob", BLOB_NAME, () => {
         url = URL.createObjectURL(new Blob([BLOB_TEXT], { type: "text/plain" }));
-        clickLink(url, BLOB_NAME);
+        clickDownload(url, BLOB_NAME);
       });
       URL.revokeObjectURL(url);
       eq(text, BLOB_TEXT, `${BLOB_NAME}'s content`);
@@ -1920,11 +1932,25 @@ const downloadChecks: Check[] = [
   [
     "downloads: a Content-Disposition: attachment response lands where the save dialog puts it",
     async ({ setup }) => {
-      const text = await saveThroughDialog(setup, "attachment", ATTACHMENT_NAME, () => {
-        clickLink(ATTACHMENT_PATH);
-      });
-      eq(text, ATTACHMENT_TEXT, `${ATTACHMENT_NAME}'s content`);
-      return `${ATTACHMENT_NAME}, ${text.length} bytes`;
+      let frame: HTMLIFrameElement | undefined;
+      try {
+        const text = await saveThroughDialog(setup, "attachment", ATTACHMENT_NAME, () => {
+          frame = loadInFrame(ATTACHMENT_PATH);
+        });
+        eq(text, ATTACHMENT_TEXT, `${ATTACHMENT_NAME}'s content`);
+        return `${ATTACHMENT_NAME}, ${text.length} bytes`;
+      } catch (err) {
+        // Say so when the engine showed the attachment instead of downloading it.
+        const shown = frame?.contentDocument?.body?.textContent ?? "";
+        if (
+          err instanceof Error && !(err instanceof Skip) && shown.includes(ATTACHMENT_TEXT.trim())
+        ) {
+          throw new Error(`${err.message}; the frame displayed the attachment instead`);
+        }
+        throw err;
+      } finally {
+        frame?.remove();
+      }
     },
   ],
 ];
