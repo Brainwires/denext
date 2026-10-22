@@ -165,6 +165,19 @@ and this project adheres to
 
 ### Security
 
+- **A migrated Next.js App Router app's `start` task no longer runs with every permission.**
+  `denext migrate` wrote `start` as `deno run -A …` for an App Router app: its next-compat build
+  recorded nothing about stylesheets, so `denext start` rebuilt them, wrote CSS redirects into the
+  app's `deno.json` and re-ran itself under a CSS import map, a second `deno` that needs an
+  unscoped `--allow-run` (as good as every permission). The compat server bundle already pointed
+  every stylesheet import at its shim; the build now records that in `manifest.json`
+  (`compatCss`), so `start` serves a next-compat build with no re-exec and no write outside
+  `.denext`, and `migrate` writes the least-privilege `start` a SPA or Expo migration gets
+  (`--allow-net --allow-read --allow-env --allow-write=.denext`). Re-run `denext migrate` (or edit
+  the task) and rebuild to pick it up; a build from an older denext keeps the re-exec. A Pages
+  Router or Prisma app, and the Remix, React Router, Fresh and TanStack Start migrations, keep
+  `-A`.
+
 - **`denext build --compile` resolves dependencies as the app's lockfile locks them.** The
   compile resolves with its own config under `.denext/compile/`, which had no lockfile: the
   binary embedded whatever the app's ranges resolved to that day, possibly a newer, unvetted

@@ -4,7 +4,7 @@
     "dev": "deno run -A --node-modules-dir=none jsr:@denext/denext@^4.6.0/cli dev .",
     "build": "deno run -A --node-modules-dir=none jsr:@denext/denext@^4.6.0/cli build .",
     "export": "deno run -A --node-modules-dir=none jsr:@denext/denext@^4.6.0/cli export .",
-    "start": "deno run -A --node-modules-dir=none jsr:@denext/denext@^4.6.0/cli start ."
+    "start": "deno run --node-modules-dir=none --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.6.0/cli start ."
   },
   "nodeModulesDir": "auto",
   "unstable": [

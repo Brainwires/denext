@@ -90,10 +90,14 @@ Each line: what to set → where it is documented. Config keys go in
   `denext toolchain path` prints, or what `denext deploy prepare` writes): on another Deno the
   least-privilege `start` stops and says so, since `Deno.SQL` / `postgresClient()` would be
   missing. → [Toolchain](/docs/toolchain)
-- Know what your `start` is granted. `denext create` and a migrated SPA or Expo app write the
-  least-privilege set above. A migrated App Router app's `start` keeps `-A`: its build serves
-  stylesheets through an import map `start` applies by re-running itself, which takes an
-  unscoped `--allow-run` (as good as every permission) and a write to the app's `deno.json`.
+- Know what your `start` is granted. `denext create` and a migrated Next.js App Router, SPA or
+  Expo app write the least-privilege set above: the build's server code imports each stylesheet
+  through its shim, so `start` spawns nothing and writes only `.denext`. A migrated Pages Router
+  or Prisma app (and a Remix, React Router, Fresh or TanStack Start migration) keeps `-A`: a
+  Pages Router build serves stylesheets through an import map `start` applies by re-running
+  itself, which takes an unscoped `--allow-run` (as good as every permission) and a write to the
+  app's `deno.json`, and a Prisma app's database lives outside `.denext`. A build made by an
+  older denext re-runs itself too: rebuild before you drop `-A`.
 - Back up `.denext/*.db` and any app database (`auth.db` from
   `sqliteAuthAdapter`, `.denext/sessions.db` from `sqliteSessionStore`, your own
   `app.db`) like any SQLite file: copy the `-wal`/`-shm` siblings too, or use
