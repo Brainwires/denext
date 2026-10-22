@@ -24,6 +24,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/cli-analyze-coverage.test.ts",
   "tests/cli-dashboard.test.ts",
   "tests/clerk-example.test.ts",
+  "tests/cli-plugin-add-remove.test.ts",
   // Sets DENEXT_STATE_DIR and clears the standalone variables around `runStandalone`.
   "tests/compile-app.test.ts",
   "tests/cli-desktop-coverage.test.ts",
@@ -73,6 +74,7 @@ export const SERIAL_TESTS: readonly string[] = [
   // store reads when it starts): a parallel test starting a store would see the other value.
   "tests/postgres-boot-integration.test.ts",
   "tests/postgres-boot.test.ts",
+  "tests/profile-android.test.ts",
   "tests/public-env.test.ts",
   "tests/react-native-uniwind-css.test.ts",
   // Sets the variables a migrated load context reads (`process.env.*`) and runs it.

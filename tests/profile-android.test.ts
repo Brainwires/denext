@@ -23,7 +23,9 @@ import {
   remotePage,
 } from "../src/profile/android.ts";
 import { profileReportLines } from "../src/profile/report.ts";
-import { capacitorAppId } from "../src/cli/commands/profile.ts";
+import { join } from "@std/path";
+import { capacitorAppId, profileCommand } from "../src/cli/commands/profile.ts";
+import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
 interface Step {
   method: string;
@@ -342,4 +344,139 @@ Deno.test("adbRunner: runs the binary; a missing one says how to get adb", async
     Error,
     "platform-tools",
   );
+});
+
+// --- the `denext profile` verb (src/cli/commands/profile.ts) ---------------------------------
+
+/**
+ * An `adb` on disk ($ADB) answering with the recorded output, `forward tcp:0` naming `port`: the
+ * verb runs adb as a process, not through the injected runner the pipeline tests use.
+ */
+async function adbScript(dir: string, port: number): Promise<string> {
+  const out = (name: string, text: string) => Deno.writeTextFileSync(join(dir, name), text);
+  out("devices.txt", FIXTURE.adb.devices);
+  out("unix.txt", FIXTURE.adb.procNetUnix);
+  out("pidof.txt", FIXTURE.adb.pidof["dev.example.app"]);
+  const script = join(dir, "adb");
+  await Deno.writeTextFile(
+    script,
+    `#!/bin/sh
+[ "$1" = "-s" ] && shift 2
+case "$1 $2" in
+  "devices "*) cat "${dir}/devices.txt" ;;
+  "shell cat") cat "${dir}/unix.txt" ;;
+  "shell pidof") [ "$3" = "dev.example.app" ] && cat "${dir}/pidof.txt" || exit 1 ;;
+  "forward tcp:0") echo ${port} ;;
+  "forward --remove") ;;
+  *) echo "unknown: $*" >&2; exit 1 ;;
+esac
+`,
+  );
+  await Deno.chmod(script, 0o755);
+  return script;
+}
+
+/** Run `denext profile` in `dir` with `flags`, Deno.exit stubbed; the output and exit codes. */
+async function profileVerb(
+  dir: string,
+  flags: Record<string, string | number | boolean>,
+  json = false,
+) {
+  const cap = capture();
+  const exit = stubExit();
+  let error: unknown;
+  try {
+    await profileCommand.run(makeCtx({ flags, global: { cwd: dir, json } }));
+  } catch (e) {
+    if (!String(e).includes("__exit__")) error = e;
+  } finally {
+    exit.restore();
+    cap.restore();
+  }
+  return { out: cap.logs.join("\n"), err: cap.errs.join("\n"), exits: exit.calls, error };
+}
+
+Deno.test({
+  name:
+    "denext profile --android: the verb end to end — report, --out, --write-budget, --compare, a budget gate",
+  ignore: Deno.build.os === "windows", // the stand-in adb is a shell script
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_profile_cli_" });
+    const prevAdb = Deno.env.get("ADB");
+    try {
+      // No --package: the Capacitor config's appId names the app.
+      await Deno.writeTextFile(
+        join(dir, "capacitor.config.json"),
+        JSON.stringify({ appId: "dev.example.app", appName: "Example", webDir: "out" }),
+      );
+      const out = join(dir, "run.json");
+      const budget = join(dir, "budget.json");
+      const once = async (
+        flags: Record<string, string | number | boolean>,
+        json = false,
+      ) => {
+        const devtools = fakeDevtools(FIXTURE.sessions.startup);
+        Deno.env.set("ADB", await adbScript(dir, devtools.port));
+        try {
+          const r = await profileVerb(dir, { android: true, route: "/settings", ...flags }, json);
+          await devtools.socketClosed;
+          assertEquals(devtools.problems, []);
+          return r;
+        } finally {
+          await devtools.close();
+        }
+      };
+
+      const first = await once({ out, "write-budget": budget });
+      assertEquals(first.error, undefined);
+      assertEquals(first.exits, []);
+      assertStringIncludes(first.out, `denext profile  ▸  ${dir}  /settings`);
+      for (const line of profileReportLines(JSON.parse(await Deno.readTextFile(out)))) {
+        assertStringIncludes(first.out, line);
+      }
+      assertStringIncludes(first.out, `Saved the run → ${out}`);
+      assertStringIncludes(first.out, `Wrote baseline budget → ${budget}`);
+      assert(typeof JSON.parse(await Deno.readTextFile(budget)).maxHeapGrowthBytes === "number");
+
+      // --json with --compare: the run and the comparison against the saved one.
+      const second = await once({ compare: out }, true);
+      assertEquals(second.error, undefined);
+      const doc = JSON.parse(second.out);
+      assertEquals(doc.result.route, "/settings");
+      assert(doc.comparison, "a comparison against the saved run");
+
+      // A budget the run breaks exits 1 after the report.
+      const strict = join(dir, "strict.json");
+      await Deno.writeTextFile(strict, JSON.stringify({ maxHeapGrowthBytes: -1e15 }));
+      const gated = await once({ budget: strict });
+      assertEquals(gated.error, undefined);
+      assertEquals(gated.exits, [1]);
+    } finally {
+      if (prevAdb === undefined) Deno.env.delete("ADB");
+      else Deno.env.set("ADB", prevAdb);
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test("denext profile: unreadable --interact / --budget / --compare files and --android --minify are refused", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_profile_flags_" });
+  try {
+    await Deno.writeTextFile(join(dir, "broken.json"), "{ not json");
+    await Deno.writeTextFile(join(dir, "other.json"), JSON.stringify({ hello: "world" }));
+    const cases: [Record<string, string | boolean>, string][] = [
+      [{ interact: join(dir, "missing.js") }, "--interact script not found"],
+      [{ budget: join(dir, "broken.json") }, "could not read --budget"],
+      [{ compare: join(dir, "broken.json") }, "could not read --compare"],
+      [{ compare: join(dir, "other.json") }, "is not a saved `denext profile` run"],
+      [{ android: true, minify: true }, "--minify does not apply to --android"],
+    ];
+    for (const [flags, message] of cases) {
+      const r = await profileVerb(dir, flags);
+      assert(r.error instanceof Error, `${message}: no error`);
+      assertStringIncludes(r.error.message, message);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
