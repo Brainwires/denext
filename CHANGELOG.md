@@ -73,6 +73,18 @@ and this project adheres to
   soft-navigation commit, the Server Action dispatch: 18.7 KB raw that no page loads and
   `denext build` does not write). It now reports the first load and everything loadable, on both
   sides: denext 52.7 KB / 19.5 KB gzip first load against React 19's 218.9 KB / 68.7 KB.
+- **CI and the release gate.** `deno task test:coverage` also holds every module under `src/cli`,
+  `src/server`, `src/compat` and `packages/` to the coverage `scripts/coverage-baseline.json`
+  records for it, a ratchet that only goes up (`scripts/coverage-ratchet.ts`; the lcov report now
+  takes every plugin package and is kept as the `coverage-lcov` artifact), and the Kotlin
+  client-emitter goldens compile in the coverage job. `deno task release` also waits for
+  native-plugins.yml's Android and iOS builds on HEAD. publish.yml runs the aarch64 Linux and both
+  macOS binaries on their own runners before it creates a release, and desktop-ci.yml runs
+  `install.sh` on macOS too. The kitchen sink's window test covers page downloads: `downloadToFile`
+  (a whole file, and one aborted mid-transfer that leaves nothing behind), an `<a download>` blob
+  export and a `Content-Disposition: attachment` response, each through the save dialog (the
+  attachment on WebView2 and CEF: the WebKit webview does not download one from the app's
+  custom-scheme origin yet).
 - **Smaller client startup: the blur-placeholder clearing and the form-action seam ship only to an
   app that uses them.** Where `deno bundle` takes `--define` (denext's Deno toolchain), a native
   App Router or SPA build scans the app's own sources and defines two gates off when nothing names
@@ -186,19 +198,6 @@ and this project adheres to
   browser's picker off the shell.
 
 ### Changed
-
-- **CI and the release gate.** `deno task test:coverage` also holds every module under `src/cli`,
-  `src/server`, `src/compat` and `packages/` to the coverage `scripts/coverage-baseline.json`
-  records for it, a ratchet that only goes up (`scripts/coverage-ratchet.ts`; the lcov report now
-  takes every plugin package and is kept as the `coverage-lcov` artifact), and the Kotlin
-  client-emitter goldens compile in the coverage job. `deno task release` also waits for
-  native-plugins.yml's Android and iOS builds on HEAD. publish.yml runs the aarch64 Linux and both
-  macOS binaries on their own runners before it creates a release, and desktop-ci.yml runs
-  `install.sh` on macOS too. The kitchen sink's window test covers page downloads: `downloadToFile`
-  (a whole file, and one aborted mid-transfer that leaves nothing behind), an `<a download>` blob
-  export and a `Content-Disposition: attachment` response, each through the save dialog (the
-  attachment on WebView2 and CEF: the WebKit webview does not download one from the app's
-  custom-scheme origin yet).
 
 - **The native App Router build defines its build constants with `deno bundle --define`.** Where
   the running Deno's `deno bundle` takes `--define` (denext's Deno toolchain from runtime
