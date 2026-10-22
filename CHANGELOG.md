@@ -24,6 +24,35 @@ and this project adheres to
 
 ### Changed
 
+- **denext pins runtime `3.0.0-rc.3`** (from `3.0.0-rc.2`; the Deno toolchain and the Deno
+  Desktop runtime move together), the first with the identity marker, so denext now recognises its
+  toolchain by `Deno.build.denext` / the `deno --version` line rather than by its version.
+  `3.0.0-rc.3` also brings:
+  - TypeScript 7 as the language server's own default: `deno lsp` runs it with no editor setting
+    (or an empty `deno.unstable` list), so the `"deno.unstable": ["tsgo-lsp"]` entry denext writes
+    is needed only on earlier runtimes; `DENO_UNSTABLE_TSGO_LSP=0`, or a `deno.unstable` list
+    naming other features, keeps TypeScript 6. It writes only `.deno/`, never the project's root
+    `tsconfig.json`;
+  - a `node --watch` / `deno run --watch` child that keeps its parent's IPC channel across
+    restarts (Unix);
+  - on Windows, a `file:` link on another drive that keeps its import map, so a project and its
+    `file:` imports no longer need to share a drive on the toolchain (the known limitation and CI's
+    `TEMP` / `TMP` workaround go; stock Deno 2.9 still has it);
+  - `createIpcHandle` reporting a failed handle's errno, and an npm `bin` named `..` skipped;
+  - `deno check -- <files>` checking those files, and the native check's TS2307 for an
+    unresolvable import carrying Deno's `deno add` hint.
+- **denext recognises its own Deno by an identity marker, not its version.** Upstream Deno releases
+  a `3.0.0` too, so `3.0.0-rc.N` no longer says whose runtime a Deno is. From runtime `3.0.0-rc.3`
+  denext's Deno carries `Deno.build.denext` (its version) and a last `denext <version> (Brainwires)`
+  line in `deno --version`, and denext keys every runtime check on them: the toolchain re-exec,
+  `denext toolchain status` and `denext doctor`, `denext test`'s Vitest pass, the native type check,
+  the `denoland/deno` tag of `generate docker` and the `setup-deno` version of `generate ci`, the
+  desktop runtime's Deno check and `denext desktop doctor`, and the direction-split network flags.
+  Upstream Deno's `3.0.0-rc.N` / `3.0.0` is stock Deno whatever its number. A runtime from before the
+  marker is recognised by its version only: `2.9.7-denext.N`, or exactly the pinned toolchain while
+  the pin predates the marker (`3.0.0-rc.2` and earlier); an unpinned, markerless `3.0.0-rc.1` no
+  longer counts. `deno task desktop:pin-runtime` refuses a `3.0.0-rc.3`+ release whose manifest does
+  not record the marker (`cli.identity`).
 - **Smaller client bundles: code an app never calls no longer ships through a module-level side
   effect.** `useAsyncEffect` (its `wrap` helper was assigned to the function at module level), the
   client location read and `Link`'s status context in navigation, and the layout-segment and
@@ -158,18 +187,6 @@ and this project adheres to
 
 ### Changed
 
-- **denext recognises its own Deno by an identity marker, not its version.** Upstream Deno releases
-  a `3.0.0` too, so `3.0.0-rc.N` no longer says whose runtime a Deno is. From runtime `3.0.0-rc.3`
-  denext's Deno carries `Deno.build.denext` (its version) and a last `denext <version> (Brainwires)`
-  line in `deno --version`, and denext keys every runtime check on them: the toolchain re-exec,
-  `denext toolchain status` and `denext doctor`, `denext test`'s Vitest pass, the native type check,
-  the `denoland/deno` tag of `generate docker` and the `setup-deno` version of `generate ci`, the
-  desktop runtime's Deno check and `denext desktop doctor`, and the direction-split network flags.
-  Upstream Deno's `3.0.0-rc.N` / `3.0.0` is stock Deno whatever its number. A runtime from before the
-  marker is recognised by its version only: `2.9.7-denext.N`, or exactly the pinned toolchain while
-  the pin predates the marker (the current `3.0.0-rc.2`); an unpinned, markerless `3.0.0-rc.1` no
-  longer counts. `deno task desktop:pin-runtime` refuses a `3.0.0-rc.3`+ release whose manifest does
-  not record the marker (`cli.identity`).
 - **The native App Router build defines its build constants with `deno bundle --define`.** Where
   the running Deno's `deno bundle` takes `--define` (denext's Deno toolchain from runtime
   `3.0.0-rc.1`; a probe of `deno bundle --help`, run once per build, so an upstream release with

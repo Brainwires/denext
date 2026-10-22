@@ -384,7 +384,10 @@ The toolchain installs it beside `deno` under the same rule as the compiler (its
 whole directory must hash to the pin's `tsgoLsp` entry, else it is refused and never installed),
 and `denext toolchain status` prints a `typescript lsp` line for it.
 
-It is the default editor backend in every project denext sets up:
+It is the default editor backend. From runtime `3.0.0-rc.3` (the pinned build) it is the runtime's
+own default: its `deno lsp` runs TypeScript 7 with no setting at all, or with an empty
+`deno.unstable` list (what editors send by default). denext still writes the entry, which earlier
+runtimes need:
 
 - `denext create` / `init` and `denext migrate` write `"deno.unstable": ["tsgo-lsp"]` into
   `.vscode/settings.json` beside `"deno.enable": true`;
@@ -396,11 +399,11 @@ It is the default editor backend in every project denext sets up:
 A `deno.unstable` the project already sets, an empty list included, is never changed. To keep the
 TypeScript 6 service:
 
-| Where              | How                                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------------------------------------- |
-| One project        | `"deno.unstable": []` in `.vscode/settings.json` (or remove `"tsgo-lsp"` from your list)                   |
-| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade`              |
-| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way) |
+| Where              | How                                                                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way)                                    |
+| One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"` (before `3.0.0-rc.3`, an empty list too)     |
+| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade` (on `3.0.0-rc.3` this alone keeps TypeScript 7) |
 
 The editor runs whichever `deno` it finds, so point it at the toolchain: `denext toolchain link`
 puts it on `PATH`, or set the Deno extension's `deno.path` to what `denext toolchain path` prints.
@@ -475,9 +478,10 @@ and Arm64 (`desktop-ci`). What works:
 
 Not on Windows: `denext fastlane` and iOS builds (both need macOS).
 
-One limitation: Deno 2.9 resolves a `deno.json` `file:` target on another drive as
-`file:///C:/D:/…`, so a project whose `deno.json` points at files on a different drive fails to
-resolve them. Keep the project and its `file:` targets on one drive.
+A `deno.json` `file:` target on another drive (an app on `C:` importing a checkout on `D:`, as
+`migrate --denext-local-path` writes) resolves on the toolchain from runtime `3.0.0-rc.3`. Stock
+Deno 2.9 still resolves it as `file:///C:/D:/…`, so under `DENEXT_DENO=stock` keep the project and
+its `file:` targets on one drive.
 
 ## Supply-chain hold
 
@@ -564,9 +568,13 @@ like the binary, and runs npm packages more as Node.js does; that check doesn't 
 `file:` import (runtime 3.0.0-rc.1+ does), so such a project sets `DENEXT_NATIVE_CHECK=0`
 ([known limitations](/docs/limitations)). Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new release (`-denext.N` up to
-`2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). `3.0.0-rc.2` (the build denext pins today) adds
+`2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). `3.0.0-rc.2` adds
 `--max-memory` / `--max-cpu-time` / `--max-time` and `--allow-net-connect` /
-`--allow-net-listen`, and takes the rustls / rustls-webpki / webpki-roots security fixes. Deno's next minor
+`--allow-net-listen`, and takes the rustls / rustls-webpki / webpki-roots security fixes.
+`3.0.0-rc.3` (the build denext pins today) adds the identity marker above, makes TypeScript 7 the
+language server's own default, keeps a `--watch` child's IPC channel across restarts, resolves a
+`file:` link on another Windows drive, checks the files after `deno check --`, and gives the native
+check's TS2307 Deno's `deno add` hint. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
 **Support across denext releases.** The patches are carried forward from release to release. Each

@@ -350,7 +350,7 @@ const { url, options } = postgresConnection(Deno.env.get("DATABASE_URL")!, undef
 const adapter = new PrismaDenoSql(new Deno.SQL(url, { ...options, max: 20 }));
 ```
 
-**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins 3.0.0-rc.2). The adapter reads
+**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins 3.0.0-rc.3). The adapter reads
 each result column's type from `Deno.SQL`'s `result.columns`, which earlier
 runtimes do not report; on one of them it throws a clear error. `denext dev`,
 `build`, `start` and `test` run on the toolchain runtime; `denoSqlHasColumns()`

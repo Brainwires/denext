@@ -472,9 +472,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-rc.2
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-rc.2-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: cd02c389e25c00c19f7803ac979447e0378fe527b4ac30db09f8cccfedddc2dc
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-rc.3
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-rc.3-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 53eaaa90fb1316434595347e5d35d326e4520bdbbd3a6f15ad0ca223707fbdc0
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -666,21 +666,12 @@ jobs:
         # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
         run: deno run -A scripts/ci/toolchain-on-path.ts
 
-      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: Deno
-      # 2.9 resolves a config's `file:` targets on another drive as `file:///C:/D:/…` (and loses
-      # the framework's own import map for its modules there), so a temp app on C: that imports
-      # this checkout on D: fails in Deno, not in denext. runner.temp has no 8.3 short names.
       - name: Unit tests
-        env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
         run: deno task test:unit
 
       - name: Integration tests
         if: ${{ !cancelled() }}
         env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
           DENEXT_TEST_COMPILED_CLI: "1"
           DENEXT_TEST_REMOTE_CLI: "1"
         run: deno task test:integration

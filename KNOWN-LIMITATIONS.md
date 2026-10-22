@@ -69,16 +69,16 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   first online run (in the background) or by `denext toolchain install`. A verb used offline
   before either has happened fails to load. The compiled binary embeds every verb.
 - **The TypeScript 7 language server (the editor default) does less than the TypeScript 6
-  service.** `"deno.unstable": ["tsgo-lsp"]`, which `create`, `migrate` and `upgrade` write into
-  `.vscode/settings.json`, runs the dated 7.1 nightly the toolchain pins. Against the in-process
+  service.** The pinned runtime's `deno lsp` runs the dated 7.1 nightly the toolchain pins by
+  default (earlier runtimes through the `"deno.unstable": ["tsgo-lsp"]` that `create`, `migrate`
+  and `upgrade` write into `.vscode/settings.json`). Against the in-process
   TypeScript 6 service it:
   - resolves only what `deno sync-types` expresses as `paths` and `.deno/` files, with the same
     gaps as the native check (no sloppy imports, `@deno-types` / `X-TypeScript-Types`, per-member
     `jsxImportSource`), types `jsr:` packages from `npm.jsr.io` whatever `JSR_URL` says, and sees
     a dependency added by editing an import only after the next `deno cache`;
-  - writes a root `tsconfig.json` (or adds `"./.deno/tsconfig.json"` to an existing one's
-    `extends`) and `.deno/` into the project; `DENO_TSGO_LSP_SYNC_TYPES=0` stops that, at the cost
-    of the import map's types;
+  - writes `.deno/` (ignored by its own `.gitignore`) into the project;
+    `DENO_TSGO_LSP_SYNC_TYPES=0` stops that, at the cost of the import map's types;
   - picks Deno's lib types per project, not per file (a worker module gets the window's types),
     and has no Vitest / Jest types for `*.vitest.ts`;
   - answers nothing inside remote documents (`deno:/https/…`), and a definition in a dependency
@@ -91,14 +91,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
     non-strict defaults;
   - runs as one extra process (about 100–250 MB) beside `deno lsp`.
 
-  Each has the same way out: `"deno.unstable": []` in `.vscode/settings.json` keeps TypeScript 6
-  for that project, `DENEXT_TSGO_LSP=0` stops `create` / `migrate` / `upgrade` writing the entry,
-  and `DENO_UNSTABLE_TSGO_LSP=0` in the language server's environment overrides the setting.
-- **On Windows, keep a project and its `file:` imports on one drive.** Deno 2.9 resolves a
-  `deno.json` whose `file:` targets sit on another drive as `file:///C:/D:/…`, so an app on `C:`
-  that imports a checkout on `D:` (as `migrate --denext-local-path` writes) fails to load, in
-  Deno rather than in denext. Put both on the same drive (CI's `windows-tests` job points
-  `TEMP` / `TMP` at the checkout's drive for this reason).
+  Each has the same way out: `DENO_UNSTABLE_TSGO_LSP=0` in the language server's environment
+  keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
+  `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
+  project.
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
