@@ -666,6 +666,32 @@ Remove-DenextPath $bin
   },
 );
 
+Deno.test("install.ps1: toolchain link / unlink run with DENEXT_INSTALL set to the install root", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  // cmd.exe stands in for denext.exe and prints the DENEXT_INSTALL it was handed.
+  const out = await withInstallerFunctions(
+    "",
+    `
+$cmd = Join-Path $env:SystemRoot 'System32\\cmd.exe'
+$env:DENEXT_INSTALL = $null
+"code=$(Invoke-DenextAt 'C:\\custom\\denext' $cmd @('/d', '/c', 'echo seen=%DENEXT_INSTALL%'))"
+"after=$([string]::IsNullOrEmpty($env:DENEXT_INSTALL))"
+$env:DENEXT_INSTALL = 'C:\\mine'
+"code2=$(Invoke-DenextAt 'C:\\other' $cmd @('/d', '/c', 'echo seen2=%DENEXT_INSTALL%'))"
+"after2=$env:DENEXT_INSTALL"
+`,
+  );
+  const lines = Object.fromEntries(
+    out.trim().split("\n").map((l) => l.trim().split(/=(.*)/s, 2)),
+  );
+  assertEquals(lines.seen, "C:\\custom\\denext", out);
+  assertEquals(lines.code, "0");
+  assertEquals(lines.after, "True", "an unset DENEXT_INSTALL stays unset in the caller's session");
+  assertEquals(lines.seen2, "C:\\other", out);
+  assertEquals(lines.after2, "C:\\mine", "a set one is restored");
+});
+
 Deno.test("install.ps1: -NoModifyPath / -ModifyPath / DENEXT_MODIFY_PATH / DENEXT_NO_PATH", {
   ignore: NOT_WINDOWS,
 }, async () => {

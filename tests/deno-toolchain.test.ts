@@ -633,6 +633,44 @@ Deno.test("denoToolchainStatus: a compiled executable names the Deno its command
   }
 });
 
+Deno.test("link / unlink use $DENEXT_INSTALL/bin, the custom-prefix install's bin", async () => {
+  const home = await Deno.makeTempDir();
+  const root = join(home, "cache", "denext-deno");
+  const bin = join(root, VERSION, TARGET, "deno");
+  await Deno.mkdir(join(root, VERSION, TARGET), { recursive: true });
+  await Deno.writeTextFile(bin, BINARY);
+  const prefix = join(home, "opt", "denext");
+  const env = envOf({ HOME: home, DENEXT_INSTALL: prefix });
+  try {
+    for (const os of Deno.build.os === "windows" ? ["windows"] : ["windows", "linux"]) {
+      const made = await linkDenoToolchain(bin, { env, os, cacheRoot: root });
+      const name = os === "windows" ? "deno.cmd" : "deno";
+      assertEquals(made.link, join(prefix, "bin", name));
+      assertStringIncludes(made.pathLine, join(prefix, "bin"));
+      assertEquals(
+        await Deno.lstat(join(home, ".denext")).catch(() => null),
+        null,
+        "not ~/.denext",
+      );
+      const pin = { schema: 1 as const, version: "9.9.9-denext.2", targets: {} };
+      assertStringIncludes(
+        (await staleToolchainLink({ env, os, cacheRoot: root, pin })) ?? "",
+        join(prefix, "bin", name),
+      );
+      assertEquals(await unlinkDenoToolchain({ env, os, cacheRoot: root }), made.link);
+    }
+    // An empty DENEXT_INSTALL is unset, as `${DENEXT_INSTALL:-…}` reads it in install.sh.
+    const fallback = await linkDenoToolchain(bin, {
+      env: envOf({ HOME: home, DENEXT_INSTALL: "" }),
+      os: "windows",
+      cacheRoot: root,
+    });
+    assertEquals(fallback.link, join(home, ".denext", "bin", "deno.cmd"));
+  } finally {
+    await Deno.remove(home, { recursive: true });
+  }
+});
+
 Deno.test("link / unlink touch only what link created", async () => {
   const home = await Deno.makeTempDir();
   const root = join(home, "cache", "denext-deno");

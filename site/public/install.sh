@@ -190,6 +190,10 @@ main() {
   parse_args "$@"
   INSTALL_DIR="${DENEXT_INSTALL:-$HOME/.denext}"
   BIN_DIR="$INSTALL_DIR/bin"
+  # `toolchain link` / `unlink` put `deno` in $DENEXT_INSTALL/bin: name the directory this run
+  # resolved, so the link lands beside the binary in the bin/ that goes on PATH.
+  DENEXT_INSTALL="$INSTALL_DIR"
+  export DENEXT_INSTALL
   if [ "$UNINSTALL" = "1" ]; then
     uninstall
     return 0

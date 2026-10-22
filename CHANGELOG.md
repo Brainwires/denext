@@ -84,6 +84,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext toolchain link` honours `DENEXT_INSTALL`.** The link always went to `~/.denext/bin`,
+  so a custom-prefix install (`DENEXT_INSTALL=/opt/denext`) got its `deno` outside the `bin/` the
+  installer put on PATH. `toolchain link` / `unlink` now use `$DENEXT_INSTALL/bin` when it is set,
+  and `install.sh` / `install.ps1` hand the directory they installed into to both (on Windows also
+  when `DENEXT_INSTALL` is unset and a `HOME` variable from Git for Windows or MSYS names another
+  home).
 - **A `defineApi` handler whose result is `any` type-checks.** A handler returning an untyped
   value (`JSON.parse(...)`, `await res.json()`) was reported as returning an `err()` with an
   undeclared code, a misleading compile error. The `err()` code check now accepts an `any` result.
