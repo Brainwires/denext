@@ -161,7 +161,7 @@ const stampOf = async (w: World) =>
 const decide = (w: World, env: Record<string, string> = {}, running = VERSION) =>
   nativeCheckDecision({
     env: (k) => env[k],
-    running,
+    running: { deno: running },
     pin: w.pin,
     target: TARGET,
     tsgo: () => status(w),
@@ -200,11 +200,11 @@ Deno.test("a pinned typescript-check/ is installed beside deno, stamped, reporte
       target: TARGET,
       os: "linux",
       cacheRoot: w.root,
-      running: VERSION,
+      running: { deno: VERSION },
       standalone: false,
     });
     assertEquals(full.tsgo.state, "ok");
-    assert(runtimeSupportsNativeCheck(w.pin, TARGET, VERSION));
+    assert(runtimeSupportsNativeCheck(w.pin, TARGET, { deno: VERSION }));
     assertEquals(await decide(w), { engine: null, supported: true });
   } finally {
     await w.close();
@@ -262,7 +262,7 @@ Deno.test("the engine decision: the user's DENO_CHECK_ENGINE wins, DENEXT_NATIVE
   try {
     await install(none);
     assertEquals((await status(none)).state, "none");
-    assert(!runtimeSupportsNativeCheck(none.pin, TARGET, VERSION));
+    assert(!runtimeSupportsNativeCheck(none.pin, TARGET, { deno: VERSION }));
     assertEquals(await decide(none), { engine: null, supported: false });
     // not installed yet: the runtime would refuse to check, so the in-process checker runs
     assertEquals((await decide(w)).engine, "tsc");
@@ -284,7 +284,7 @@ Deno.test("the engine decision: the user's DENO_CHECK_ENGINE wins, DENEXT_NATIVE
     const warned: string[] = [];
     await applyNativeCheckEngine({
       env: (k) => ({ DENEXT_NATIVE_CHECK: "0" } as Record<string, string>)[k],
-      running: VERSION,
+      running: { deno: VERSION },
       pin: w.pin,
       target: TARGET,
       tsgo: () => status(w),
@@ -324,7 +324,7 @@ Deno.test("a pinned typescript-lsp/ (the tsgo language server) is installed besi
       target: TARGET,
       os: "linux",
       cacheRoot: w.root,
-      running: VERSION,
+      running: { deno: VERSION },
       standalone: false,
     });
     assertEquals([full.tsgo.state, full.tsgoLsp.state], ["ok", "ok"]);

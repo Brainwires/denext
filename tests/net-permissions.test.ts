@@ -6,6 +6,7 @@
 
 import { assert, assertEquals, assertFalse, assertThrows } from "@std/assert";
 import {
+  denoSupportsNetSplit,
   NET_SPLIT_RELEASE,
   netSplitFlags,
   splitNetFlag,
@@ -19,6 +20,7 @@ import {
 } from "../src/build/compile-app.ts";
 import { desktopBuildFlags } from "../src/build/desktop-capabilities.ts";
 import { desktopNetSplit, desktopNetSplitFor } from "../src/build/desktop-runtime.ts";
+import type { DenoIdentity } from "../src/build/deno-version.ts";
 import { withNetHosts } from "../src/build/desktop-launch.ts";
 import { renderDockerfile } from "../src/build/docker-template.ts";
 import { directionalNetFlags } from "../src/cli/run-verb.ts";
@@ -26,17 +28,32 @@ import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { sidecarListError } from "../src/desktop/sidecar.ts";
 
-Deno.test("supportsNetSplit: denext's Deno from 3.0.0-rc.2 only", () => {
+Deno.test("supportsNetSplit: a pinned release of denext's Deno from 3.0.0-rc.2 only", () => {
   assertEquals(NET_SPLIT_RELEASE, "3.0.0-rc.2");
-  for (const v of ["3.0.0-rc.2", "3.0.0-rc.3", "3.0.0-rc.10", "3.0.0-rc.2+ci.7"]) {
+  // A pin's version is denext's Deno by where it came from, so its own 3.x versions all count.
+  for (const v of ["3.0.0-rc.2", "3.0.0-rc.3", "3.0.0-rc.10", "3.0.0-rc.2+ci.7", "3.1.0"]) {
     assert(supportsNetSplit(v), v);
   }
-  // Stock Deno, an older fork build, the first own-version rc, nothing known.
-  for (const v of ["2.9.7", "2.9.7-denext.22", "3.0.0-rc.1", "3.1.0", "garbage", undefined]) {
+  // A version no release of denext's Deno has, an older fork build, the first own-version rc,
+  // nothing known.
+  for (const v of ["2.9.7", "2.9.7-denext.22", "3.0.0-rc.1", "garbage", undefined]) {
     assertFalse(supportsNetSplit(v), String(v));
   }
   assert(toolchainNetSplit("3.0.0-rc.2"));
   assertFalse(toolchainNetSplit("2.9.7-denext.22"));
+});
+
+Deno.test("denoSupportsNetSplit: a running Deno, told from upstream by its identity marker", () => {
+  const marked = (v: string) => ({ deno: v, denext: v });
+  for (const v of ["3.0.0-rc.2", "3.0.0-rc.3", "3.0.0", "3.1.0"]) {
+    assert(denoSupportsNetSplit(marked(v)), v);
+  }
+  // Upstream Deno's 3.0.0-rc.N / 3.0.0 has no marker and no split flags.
+  for (const v of ["3.0.0-rc.3", "3.0.0-rc.10", "3.0.0", "2.9.7"]) {
+    assertFalse(denoSupportsNetSplit({ deno: v }), v);
+  }
+  assertFalse(denoSupportsNetSplit(marked("3.0.0-rc.1")), "before the split");
+  assertFalse(denoSupportsNetSplit({ deno: "2.9.7-denext.22" }), "before the split");
 });
 
 Deno.test("netSplitFlags / splitNetFlag: the bare --allow-net becomes the pair, nothing else", () => {
@@ -187,12 +204,14 @@ Deno.test("withNetHosts: `desktop dev --lan` hosts join --allow-net-connect unde
 Deno.test("desktopNetSplit: the pinned runtime and a Deno that parses the flags", () => {
   const env = (vars: Record<string, string>) => (k: string) => vars[k];
   const pin = { version: "3.0.0-rc.2" };
-  assert(desktopNetSplit(env({}), "3.0.0-rc.2", pin));
-  assert(desktopNetSplit(env({ DENEXT_DESKTOP_RUNTIME: "pinned" }), "3.0.0-rc.2", pin));
-  assertFalse(desktopNetSplit(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-rc.2", pin));
-  assertFalse(desktopNetSplit(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/rt" }), "3.0.0-rc.2", pin));
-  assertFalse(desktopNetSplit(env({}), "2.9.7", pin), "a stock deno compiles");
-  assertFalse(desktopNetSplit(env({}), "3.0.0-rc.2", { version: "2.9.7-denext.22" }));
+  const rc = { deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" };
+  assert(desktopNetSplit(env({}), rc, pin));
+  assert(desktopNetSplit(env({ DENEXT_DESKTOP_RUNTIME: "pinned" }), rc, pin));
+  assertFalse(desktopNetSplit(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), rc, pin));
+  assertFalse(desktopNetSplit(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/rt" }), rc, pin));
+  assertFalse(desktopNetSplit(env({}), { deno: "2.9.7" }, pin), "a stock deno compiles");
+  assertFalse(desktopNetSplit(env({}), { deno: "3.0.0-rc.3" }, pin), "upstream Deno's 3.0.0-rc.3");
+  assertFalse(desktopNetSplit(env({}), rc, { version: "2.9.7-denext.22" }));
 });
 
 Deno.test("desktopNetSplitFor: the `deno` a packaging script spawns, not the script's own Deno", async () => {
@@ -200,16 +219,26 @@ Deno.test("desktopNetSplitFor: the `deno` a packaging script spawns, not the scr
   // deciding from the script's own Deno baked flags the spawned `deno desktop` refused.
   const env = (vars: Record<string, string>) => (k: string) => vars[k];
   const probed: string[] = [];
-  const version = (v: string) => (deno: string) => {
+  const version = (v: string | DenoIdentity) => (deno: string) => {
     probed.push(deno);
     return Promise.resolve(v);
   };
   assertFalse(await desktopNetSplitFor("deno", env({}), version("2.9.7")));
-  assert(await desktopNetSplitFor("deno", env({}), version("3.0.0-rc.2")));
+  assert(
+    await desktopNetSplitFor(
+      "deno",
+      env({}),
+      version({ deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" }),
+    ),
+  );
+  assertFalse(
+    await desktopNetSplitFor("deno", env({}), version("3.0.0-rc.3")),
+    "upstream Deno's 3.0.0-rc.3: no identity line",
+  );
   assertFalse(
     await desktopNetSplitFor("deno", env({}), () => Promise.reject(new Error("not found"))),
   );
-  assertEquals(probed, ["deno", "deno"]);
+  assertEquals(probed, ["deno", "deno", "deno"]);
   // The stock runtime asks nothing of `deno`.
   assertFalse(
     await desktopNetSplitFor(
@@ -218,7 +247,7 @@ Deno.test("desktopNetSplitFor: the `deno` a packaging script spawns, not the scr
       version("3.0.0-rc.2"),
     ),
   );
-  assertEquals(probed.length, 2);
+  assertEquals(probed.length, 3);
 });
 
 Deno.test("renderDockerfile: the server listens only on its port; the static server only listens", () => {

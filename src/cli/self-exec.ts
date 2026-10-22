@@ -4,7 +4,7 @@
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
-import { isDenextDenoVersion } from "../build/deno-version.ts";
+import { type DenoIdentity, isDenextDenoVersion } from "../build/deno-version.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
@@ -651,20 +651,21 @@ export function toolchainRuntimeFlags(marker: string | undefined): string[] {
 /**
  * The toolchain a CLI child spawned with `denoExecutable()` runs, for
  * {@linkcode toolchainRuntimeFlags}: the `DENEXT_TOOLCHAIN_ACTIVE` marker, else this process's own
- * Deno when it is a toolchain build (`3.0.0-rc.N`, or `2.9.7-denext.N` before the fork took its
- * own version) and no `DENO_BIN` points elsewhere.
+ * Deno's version when it is a toolchain build (its `Deno.build.denext` marker, or a pre-marker
+ * `3.0.0-rc.N` / `2.9.7-denext.N` build; src/build/deno-version.ts) and no `DENO_BIN` points
+ * elsewhere.
  *
  * @param env Reads an environment variable.
- * @param denoVersion This process's `Deno.version.deno`.
+ * @param identity This process's Deno (`currentDenoIdentity()`).
  * @returns The marker, or `undefined` (not the toolchain, or not known to be).
  */
 export function childToolchainMarker(
   env: (name: string) => string | undefined,
-  denoVersion: string,
+  identity: DenoIdentity,
 ): string | undefined {
   const marker = env(TOOLCHAIN_ACTIVE_ENV);
   if (marker) return marker;
-  return !env("DENO_BIN") && isDenextDenoVersion(denoVersion) ? denoVersion : undefined;
+  return !env("DENO_BIN") && isDenextDenoVersion(identity) ? identity.deno : undefined;
 }
 
 /**
@@ -765,6 +766,11 @@ export interface ReexecToolchainDeps {
   readonly setEnv: (name: string, value: string) => void;
   /** This process's `Deno.version.deno`. */
   readonly denoVersion: string;
+  /**
+   * This process's `Deno.build.denext`, the identity marker of denext's Deno (absent on stock Deno
+   * and on the toolchain builds from before it).
+   */
+  readonly denext?: string;
   /** The pinned toolchain version (`null` when this denext version pins none). */
   readonly pinnedVersion: string | null;
   /** Whether this process is a compiled binary. */
@@ -849,13 +855,19 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
 }
 
 /**
- * Whether this `deno run` process already runs on the toolchain: the marker names its own Deno
- * version, or its Deno is the pinned build. A `DENEXT_DENO=<path>` child (marker `path`) counts.
+ * Whether this `deno run` process already runs on the toolchain: it is denext's Deno (its
+ * `Deno.build.denext` marker, or a pre-marker build's version; src/build/deno-version.ts) and the
+ * toolchain marker names its own version, or its version is the pinned build's. A
+ * `DENEXT_DENO=<path>` child (marker `path`) counts. Upstream Deno of the pinned number does not.
  */
 function onToolchainNow(deps: ReexecToolchainDeps): boolean {
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
-  return marker === "path" || marker === deps.denoVersion ||
-    (deps.pinnedVersion !== null && deps.denoVersion === deps.pinnedVersion);
+  if (marker === "path") return true;
+  const identity = deps.denext
+    ? { deno: deps.denoVersion, denext: deps.denext }
+    : { deno: deps.denoVersion };
+  if (!isDenextDenoVersion(identity, deps.pinnedVersion)) return false;
+  return marker === deps.denoVersion || deps.denoVersion === deps.pinnedVersion;
 }
 
 /**

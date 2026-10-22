@@ -36,8 +36,13 @@ import {
   sweepLeftovers,
 } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
-import { denoReleaseVersion } from "./deno-version.ts";
-import { NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
+import {
+  currentDenoIdentity,
+  type DenoIdentity,
+  denoReleaseVersion,
+  parseDenoVersionOutput,
+} from "./deno-version.ts";
+import { denoSupportsNetSplit, NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 
 /** A runtime backend (`deno desktop --backend`). */
@@ -755,17 +760,27 @@ async function installAtomically(
 // ---------------------------------------------------------------------------------------------
 // Resolving the env for one `deno desktop` invocation.
 
-/** The `deno --version` of `deno` (e.g. `2.9.7`). */
-async function denoCliVersion(deno: string): Promise<string> {
+/**
+ * What `deno --version` of `deno` says: its version (e.g. `2.9.7`) and, on denext's Deno from
+ * 3.0.0-rc.3, its `denext <version> (Brainwires)` identity line (src/build/deno-version.ts).
+ */
+async function denoCliVersion(deno: string): Promise<DenoIdentity> {
   let out;
   try {
     out = await capture(deno, ["--version"]);
   } catch (err) {
     throw new Error(`denext: could not run \`${deno} --version\`: ${errText(err)}`);
   }
-  const m = /^deno (\d+\.\d+\.\d+\S*)/m.exec(out.text);
-  if (!m) throw new Error(`denext: could not read the Deno version from \`${deno} --version\``);
-  return m[1];
+  const identity = parseDenoVersionOutput(out.text);
+  if (!identity) {
+    throw new Error(`denext: could not read the Deno version from \`${deno} --version\``);
+  }
+  return identity;
+}
+
+/** A `denoVersion` seam's answer as an identity: a bare version is a Deno with no marker line. */
+function asIdentity(found: string | DenoIdentity): DenoIdentity {
+  return typeof found === "string" ? { deno: found } : found;
 }
 
 /** The message for a `deno` that doesn't match the runtime's Deno version. */
@@ -799,7 +814,8 @@ export interface DesktopRuntimeEnvOptions {
   readonly cacheRoot?: string;
   readonly fetch?: typeof fetch;
   readonly run?: RuntimeCommandRunner;
-  readonly denoVersion?: (deno: string) => Promise<string>;
+  /** What `deno --version` says (a bare version: one with no `denext … (Brainwires)` line). */
+  readonly denoVersion?: (deno: string) => Promise<string | DenoIdentity>;
   readonly log?: (line: string) => void;
   readonly hostOs?: string;
   /**
@@ -1093,10 +1109,10 @@ export async function resolveDesktopRuntimeEnv(
     return { mode: "local", env: local };
   }
   const deno = options.deno ?? "deno";
-  const found = await (options.denoVersion ?? denoCliVersion)(deno);
+  const found = asIdentity(await (options.denoVersion ?? denoCliVersion)(deno));
   if (denoReleaseVersion(found) !== pin.deno) {
-    if (options.onDenoMismatch === "stock") return stockForMismatch(found, pin, deno, log);
-    throw new Error(denoVersionMismatchMessage(found, pin, deno));
+    if (options.onDenoMismatch === "stock") return stockForMismatch(found.deno, pin, deno, log);
+    throw new Error(denoVersionMismatchMessage(found.deno, pin, deno));
   }
   const backend = options.backend ?? await projectDesktopBackend(options.projectDir);
   const rt = await ensureDesktopRuntime({
@@ -1146,18 +1162,19 @@ export function desktopRuntimeDenoFlags(
  * which may be another one ({@linkcode desktopNetSplitFor}).
  *
  * @param env Reads an environment variable.
- * @param denoVersion The building Deno's version (default: this process's).
+ * @param deno The building Deno (default: this process's; denext's Deno by its identity marker,
+ *   so upstream Deno of the same version never gets the flags).
  * @param pin The runtime pin.
  * @returns Whether to bake the split flags.
  */
 export function desktopNetSplit(
   env: EnvGet = processEnv,
-  denoVersion: string = Deno.version.deno,
+  deno: DenoIdentity = currentDenoIdentity(),
   pin: Pick<DesktopRuntimePin, "version"> = DESKTOP_RUNTIME_PIN,
 ): boolean {
   const mode = (env(RUNTIME_ENV) ?? "").trim().toLowerCase();
   if (mode === "stock" || env(RUNTIME_DIR_ENV)) return false;
-  return supportsNetSplit(pin.version) && supportsNetSplit(denoVersion);
+  return supportsNetSplit(pin.version) && denoSupportsNetSplit(deno);
 }
 
 /**
@@ -1174,11 +1191,12 @@ export function desktopNetSplit(
 export async function desktopNetSplitFor(
   deno: string = "deno",
   env: EnvGet = processEnv,
-  version: (deno: string) => Promise<string> = denoCliVersion,
+  version: (deno: string) => Promise<string | DenoIdentity> = denoCliVersion,
 ): Promise<boolean> {
   // The env and the pin first (with a Deno that has the split), so a stock runtime spawns nothing.
-  if (!desktopNetSplit(env, NET_SPLIT_RELEASE)) return false;
-  return desktopNetSplit(env, await version(deno).catch(() => ""));
+  const split = { deno: NET_SPLIT_RELEASE, denext: NET_SPLIT_RELEASE };
+  if (!desktopNetSplit(env, split)) return false;
+  return desktopNetSplit(env, asIdentity(await version(deno).catch(() => "")));
 }
 
 /**
@@ -1210,7 +1228,15 @@ export interface DesktopRuntimeStatus {
   readonly backend: DesktopRuntimeBackend | null;
   /** `cached` = present + verified; `missing` = downloads on first use; `invalid` = re-downloads. */
   readonly cache: "cached" | "missing" | "invalid" | "unpinned" | "n/a";
-  readonly deno: { readonly found: string | null; readonly required: string };
+  /**
+   * The `deno` that runs `deno desktop`: its version, the version it needs, and its identity
+   * marker (`denext`, the `denext <version> (Brainwires)` line) when it is denext's Deno toolchain.
+   */
+  readonly deno: {
+    readonly found: string | null;
+    readonly required: string;
+    readonly denext?: string;
+  };
   /** Whether nothing needs fixing (a missing cache is fine: it downloads). */
   readonly ok: boolean;
   /** One line for a report. */
@@ -1226,6 +1252,33 @@ const CACHE_TEXT: Record<CacheState, string> = {
   unpinned: `no pinned build for this host (set ${RUNTIME_ENV}=stock)`,
   "n/a": "",
 };
+
+/**
+ * The `deno` half of {@linkcode desktopRuntimeStatus}: whether the `deno` found (`null`: none) is
+ * the runtime's Deno release — stock, or denext's toolchain told by its identity marker — and its
+ * report text.
+ */
+function denoStatus(
+  identity: DenoIdentity | null,
+  pin: DesktopRuntimePin,
+): { ok: boolean; text: string; status: DesktopRuntimeStatus["deno"] } {
+  const wrong = (found: string) =>
+    `deno ${found} ✗ — needs ${pin.deno}: deno upgrade --version ${pin.deno}`;
+  if (identity === null) {
+    return { ok: false, text: wrong("not found"), status: { found: null, required: pin.deno } };
+  }
+  const status = { found: identity.deno, required: pin.deno, ...markerOf(identity) };
+  if (denoReleaseVersion(identity) !== pin.deno) {
+    return { ok: false, text: wrong(identity.deno), status };
+  }
+  const whose = identity.denext === undefined ? "" : " (denext's Deno)";
+  return { ok: true, text: `deno ${identity.deno}${whose} ✓`, status };
+}
+
+/** An identity's marker as a status field (`{}` when it has none). */
+function markerOf(identity: DenoIdentity): { denext?: string } {
+  return identity.denext === undefined ? {} : { denext: identity.denext };
+}
 
 /** The status under an override (`stock` / a local dir), or `null` for the pinned runtime. */
 function overrideStatus(
@@ -1280,8 +1333,11 @@ export async function desktopRuntimeStatus(
   const base = { version: pin.version, target, deno: { found: null, required: pin.deno } };
   const override = overrideStatus(options.env ?? processEnv, base);
   if (override) return override;
-  const found = await (options.denoVersion ?? denoCliVersion)(options.deno ?? "deno")
-    .catch(() => null);
+  const deno = denoStatus(
+    await (options.denoVersion ?? denoCliVersion)(options.deno ?? "deno")
+      .then(asIdentity, () => null),
+    pin,
+  );
   let backend: DesktopRuntimeBackend | null = null;
   let cache: CacheState = "unpinned";
   let problem: string | null = null;
@@ -1291,22 +1347,18 @@ export async function desktopRuntimeStatus(
   } catch (err) {
     problem = errText(err);
   }
-  const denoOk = found !== null && denoReleaseVersion(found) === pin.deno;
-  const denoText = denoOk
-    ? `deno ${found} ✓`
-    : `deno ${found ?? "not found"} ✗ — needs ${pin.deno}: deno upgrade --version ${pin.deno}`;
   const parts = [
     `runtime ${pin.version} for ${target}/${backend ?? "?"}`,
     CACHE_TEXT[cache],
-    denoText,
+    deno.text,
   ];
   return {
     ...base,
-    deno: { found, required: pin.deno },
+    deno: deno.status,
     mode: "pinned",
     backend,
     cache,
-    ok: denoOk && problem === null && (cache === "cached" || cache === "missing"),
+    ok: deno.ok && problem === null && (cache === "cached" || cache === "missing"),
     detail: [...parts, ...(problem ? [problem] : [])].join("; "),
   };
 }

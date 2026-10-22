@@ -150,6 +150,45 @@ Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-e
   }
 });
 
+Deno.test("maybeReexecToolchain: upstream Deno of the pinned version is not the toolchain", async () => {
+  // Upstream Deno releases a 3.0.0-rc.N / 3.0.0 too: from 3.0.0-rc.3 the toolchain says it is
+  // denext's with Deno.build.denext, and a Deno without it re-execs onto the pin.
+  const pinned: DenoToolchainChoice = {
+    kind: "toolchain",
+    deno: "/cache/deno",
+    version: "3.0.0-rc.3",
+  };
+  for (
+    const over of [
+      { denoVersion: "3.0.0-rc.3" },
+      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-rc.3" }, denoVersion: "3.0.0-rc.3" },
+    ]
+  ) {
+    const { d, seen } = deps(pinned, { pinnedVersion: "3.0.0-rc.3", ...over });
+    assert(await maybeReexecToolchain(true, d), JSON.stringify(over));
+    assertEquals(seen.spawned, [["/cache/deno", "3.0.0-rc.3"]]);
+  }
+  // The toolchain itself, by its marker: no re-exec.
+  for (
+    const over of [
+      { denoVersion: "3.0.0-rc.3", denext: "3.0.0-rc.3" },
+      {
+        vars: { DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-rc.3" },
+        denoVersion: "3.0.0-rc.3",
+        denext: "3.0.0-rc.3",
+      },
+    ]
+  ) {
+    const { d, seen } = deps(pinned, { pinnedVersion: "3.0.0-rc.3", ...over });
+    assertEquals(await maybeReexecToolchain(true, d), false);
+    assertEquals([seen.resolved, seen.spawned.length], [0, 0]);
+  }
+  // The pinned pre-marker 3.0.0-rc.2 is recognised by its version (the fallback).
+  const { d, seen } = deps(TOOLCHAIN, { pinnedVersion: "3.0.0-rc.2", denoVersion: "3.0.0-rc.2" });
+  assertEquals(await maybeReexecToolchain(true, d), false);
+  assertEquals(seen.resolved, 0);
+});
+
 Deno.test("maybeReexecToolchain: an opt-out continues in-process; a toolchain that can't be had refuses", async () => {
   const silent = deps({ kind: "stock", reason: "DENEXT_DENO=stock" });
   assertEquals(await maybeReexecToolchain(true, silent.d), false);

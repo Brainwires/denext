@@ -246,7 +246,7 @@ Deno.test("windows install: deno.exe + esbuild.exe from a Windows-made zip, stam
     const opts = { env: envFrom({}), pin: s.pin, target: WIN, os: "windows", cacheRoot: s.cache };
     const esb = await toolchainEsbuild({ ...opts, verify: true });
     assertEquals([esb.state, esb.path], ["ok", join(installDir(s), "esbuild.exe")]);
-    const status = await denoToolchainStatus({ ...opts, verify: true, running: PINNED });
+    const status = await denoToolchainStatus({ ...opts, verify: true, running: { deno: PINNED } });
     assertEquals([status.state, status.path, status.active], ["cached", rt.deno, true]);
   } finally {
     await s.dispose();

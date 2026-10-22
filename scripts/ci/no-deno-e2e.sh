@@ -45,12 +45,14 @@ denext create my-app --yes
 cd my-app
 mkdir -p tests
 cat > tests/smoke.test.ts <<'TS'
-// denext's Deno (src/build/deno-version.ts isDenextDenoVersion): `2.9.7-denext.N` up to
-// 2.9.7-denext.22, the fork's own `3.0.0-rc.N` from 3.0.0-rc.1 on.
-const DENEXT_DENO = /^(\d+\.\d+\.\d+-denext\.\d+|3\.0\.0-rc\.\d+)(\+[0-9A-Za-z.-]+)?$/;
+// denext's Deno (src/build/deno-version.ts isDenextDenoVersion): its identity marker,
+// Deno.build.denext (3.0.0-rc.3 on); before it, only the version says so (`2.9.7-denext.N`, the
+// pinned pre-marker `3.0.0-rc.1` / `3.0.0-rc.2`). Upstream Deno's 3.0.0-rc.N has no marker.
+const PRE_MARKER = /^(\d+\.\d+\.\d+-denext\.\d+|3\.0\.0-rc\.[12])$/;
 Deno.test("the app's tests run on denext's toolchain", () => {
   const v = Deno.version.deno;
-  if (!DENEXT_DENO.test(v)) throw new Error(`stock deno ${v}`);
+  const marker = (Deno.build as { denext?: unknown }).denext;
+  if (typeof marker !== "string" && !PRE_MARKER.test(v)) throw new Error(`stock deno ${v}`);
   // Only the toolchain has the built-in Postgres client.
   if (typeof (Deno as unknown as { SQL?: unknown }).SQL !== "function") throw new Error(`no Deno.SQL on ${v}`);
 });
@@ -97,8 +99,14 @@ echo "ok: refused with the fix"
 
 echo "--- the installer's default links deno to the toolchain"
 DENEXT_ARTIFACTS="$ART" sh "$ART/install.sh"
-# denext's Deno: 3.0.0-rc.N on (its own version), 2.9.7-denext.N before (src/build/deno-version.ts).
-deno --version | head -1 | grep -Eq -- '^deno ([0-9]+\.[0-9]+\.[0-9]+-denext\.[0-9]+|3\.0\.0-rc\.[0-9]+)([+ ]|$)' ||
-  fail "deno is not the toolchain"
+# denext's Deno (src/build/deno-version.ts): the `denext <version> (Brainwires)` line of
+# `deno --version` (3.0.0-rc.3 on), else a pre-marker build's version (2.9.7-denext.N, the pinned
+# 3.0.0-rc.1 / rc.2). Upstream Deno's 3.0.0-rc.N prints no such line.
+deno --version > /tmp/no-deno-version.txt
+if ! grep -Eq '^denext [^ ]+ \(Brainwires\)$' /tmp/no-deno-version.txt; then
+  head -1 /tmp/no-deno-version.txt |
+    grep -Eq -- '^deno ([0-9]+\.[0-9]+\.[0-9]+-denext\.[0-9]+|3\.0\.0-rc\.[12]) ' ||
+    { cat /tmp/no-deno-version.txt; fail "deno is not the toolchain"; }
+fi
 deno task build
 echo "no-deno e2e: ALL OK"

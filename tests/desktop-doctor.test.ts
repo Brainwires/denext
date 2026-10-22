@@ -328,16 +328,25 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
     pin: pin(45),
   });
   assertEquals(checksOf(toolchain).filter((c) => c === "error:runtime"), []);
-  // ...and so is the toolchain under its own version (3.0.0-rc.N), built from the pin's Deno.
+  // ...and so is the toolchain under its own version (3.0.0-rc.N), built from the pin's Deno: by
+  // its identity marker (3.0.0-rc.3 on) ...
   const own = await runDesktopDoctor({
     ...linux,
     runtimeStatus: () =>
       Promise.resolve(
-        status({ deno: { found: "3.0.0-rc.1", required: "2.9.7" } }),
+        status({ deno: { found: "3.0.0-rc.3", required: "2.9.7", denext: "3.0.0-rc.3" } }),
       ),
     pin: pin(45),
   });
   assertEquals(checksOf(own).filter((c) => c === "error:runtime"), []);
+  // ... but upstream Deno's 3.0.0-rc.3 (no marker) is a mismatch.
+  const upstream = await runDesktopDoctor({
+    ...linux,
+    runtimeStatus: () =>
+      Promise.resolve(status({ deno: { found: "3.0.0-rc.3", required: "2.9.7" } })),
+    pin: pin(45),
+  });
+  assertEquals(checksOf(upstream).filter((c) => c === "error:runtime"), ["error:runtime"]);
   // Off Linux the pre-probe pin is not a finding (the facts only matter there).
   const mac = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status()),
@@ -653,9 +662,10 @@ Deno.test("desktop doctor CLI: without a seam the runtime status is read from th
     // The unpinned backend is an error; a `deno` other than the pin's exact version (CI's unit job
     // runs a newer one) adds its own runtime error, so this test reads the deno it ran under —
     // denext's Deno toolchain (`2.9.7-denext.N`) is that release.
-    const found = report.runtime.status.deno.found;
+    const { found, denext } = report.runtime.status.deno;
     const denoMatches = found !== null &&
-      denoReleaseVersion(found) === report.runtime.status.deno.required;
+      denoReleaseVersion({ deno: found, ...(denext ? { denext } : {}) }) ===
+        report.runtime.status.deno.required;
     assertEquals(
       report.findings.map((f) => `${f.level}:${f.check}`),
       denoMatches ? ["error:runtime"] : ["error:runtime", "error:runtime"],

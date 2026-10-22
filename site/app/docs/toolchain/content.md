@@ -526,6 +526,28 @@ far): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
 toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
 stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
 
+<a id="identity"></a>**Telling denext's Deno from upstream Deno.** Upstream Deno releases a
+`3.0.0` too, so a version such as `3.0.0-rc.3` does not say whose runtime it is. From `3.0.0-rc.3`
+denext's Deno carries an identity marker: `Deno.build.denext` (its version, a string; absent on
+upstream Deno) and a last line in `deno --version`:
+
+```
+deno 3.0.0-rc.3 (stable, release, aarch64-apple-darwin)
+v8 14.9.1
+typescript 6.0.3
+denext 3.0.0-rc.3 (Brainwires)
+```
+
+denext recognises its toolchain and the `deno` a desktop build runs by that marker (in its own
+process by `Deno.build.denext`, for another binary by the `--version` line): whether a command
+already runs on the toolchain, `denext toolchain status`, `denext doctor`, the native type check,
+the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.7
+exactly" check and the direction-split network flags. An upstream `3.0.0-rc.N` or `3.0.0` is stock
+Deno whatever its number. A build from before the marker is recognised by its version only:
+`2.9.7-denext.N`, or exactly the pinned toolchain while the pin predates the marker (`3.0.0-rc.2`
+and earlier). A runtime release from `3.0.0-rc.3` must record the marker in its manifest
+(`cli.identity`), or `deno task desktop:pin-runtime` refuses it.
+
 **Tracking Deno.** The toolchain is Deno's latest release (2.9.7) plus denext's patches — `Deno.SQL`,
 Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
 published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we

@@ -4,7 +4,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { generateArtifact } from "../src/build/generate.ts";
-import { denoReleaseVersion } from "../src/build/deno-version.ts";
+import { currentDenoIdentity, denoReleaseVersion } from "../src/build/deno-version.ts";
 
 async function project(srcLayout = false): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_gen_" });
@@ -205,7 +205,7 @@ Deno.test("generate docker writes root Dockerfile + compose + .dockerignore (ser
     assert(dockerfile.includes("RUN deno task build"), dockerfile);
     assert(dockerfile.includes(`CMD ["deno", "task", "start"]`), dockerfile);
     assert(
-      dockerfile.includes(`FROM denoland/deno:${denoReleaseVersion(Deno.version.deno)}`),
+      dockerfile.includes(`FROM denoland/deno:${denoReleaseVersion(currentDenoIdentity())}`),
       dockerfile,
     );
     const compose = await Deno.readTextFile(join(dir, "docker-compose.yml"));

@@ -23,10 +23,17 @@ Deno.test("toolchainRuntimeFlags: the toolchain child opts in to Deno.serve's ne
   // Which toolchain a CLI child runs: the marker, else this process's own toolchain build.
   const env = (vars: Record<string, string>) => (name: string) => vars[name];
   const marker = "DENEXT_TOOLCHAIN_ACTIVE";
-  assertEquals(childToolchainMarker(env({ [marker]: "path" }), "2.9.6"), "path");
-  assertEquals(childToolchainMarker(env({}), "2.9.7-denext.17"), "2.9.7-denext.17");
-  assertEquals(childToolchainMarker(env({ DENO_BIN: "/x/deno" }), "2.9.7-denext.17"), undefined);
-  assertEquals(childToolchainMarker(env({}), "2.9.6"), undefined);
+  assertEquals(childToolchainMarker(env({ [marker]: "path" }), { deno: "2.9.6" }), "path");
+  assertEquals(childToolchainMarker(env({}), { deno: "2.9.7-denext.17" }), "2.9.7-denext.17");
+  assertEquals(
+    childToolchainMarker(env({ DENO_BIN: "/x/deno" }), { deno: "2.9.7-denext.17" }),
+    undefined,
+  );
+  assertEquals(childToolchainMarker(env({}), { deno: "2.9.6" }), undefined);
+  // From 3.0.0-rc.3 the identity marker says it; upstream Deno of the same version is not it.
+  const rc3 = { deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" };
+  assertEquals(childToolchainMarker(env({}), rc3), "3.0.0-rc.3");
+  assertEquals(childToolchainMarker(env({}), { deno: "3.0.0-rc.3" }), undefined);
 });
 
 Deno.test({

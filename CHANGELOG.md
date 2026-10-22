@@ -55,6 +55,18 @@ and this project adheres to
 
 ### Changed
 
+- **denext recognises its own Deno by an identity marker, not its version.** Upstream Deno releases
+  a `3.0.0` too, so `3.0.0-rc.N` no longer says whose runtime a Deno is. From runtime `3.0.0-rc.3`
+  denext's Deno carries `Deno.build.denext` (its version) and a last `denext <version> (Brainwires)`
+  line in `deno --version`, and denext keys every runtime check on them: the toolchain re-exec,
+  `denext toolchain status` and `denext doctor`, `denext test`'s Vitest pass, the native type check,
+  the `denoland/deno` tag of `generate docker` and the `setup-deno` version of `generate ci`, the
+  desktop runtime's Deno check and `denext desktop doctor`, and the direction-split network flags.
+  Upstream Deno's `3.0.0-rc.N` / `3.0.0` is stock Deno whatever its number. A runtime from before the
+  marker is recognised by its version only: `2.9.7-denext.N`, or exactly the pinned toolchain while
+  the pin predates the marker (the current `3.0.0-rc.2`); an unpinned, markerless `3.0.0-rc.1` no
+  longer counts. `deno task desktop:pin-runtime` refuses a `3.0.0-rc.3`+ release whose manifest does
+  not record the marker (`cli.identity`).
 - **The native App Router build defines its build constants with `deno bundle --define`.** Where
   the running Deno's `deno bundle` takes `--define` (denext's Deno toolchain from runtime
   `3.0.0-rc.1`; a probe of `deno bundle --help`, run once per build, so an upstream release with

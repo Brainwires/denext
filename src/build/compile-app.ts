@@ -44,6 +44,7 @@ import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
 import { NET_SPLIT_RELEASE, netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
+import { currentDenoIdentity } from "./deno-version.ts";
 import {
   type CompileSignDeps,
   type CompileSignResult,
@@ -350,7 +351,7 @@ function toolchainVersion(): string | undefined {
       return undefined;
     }
   };
-  const marker = childToolchainMarker(env, Deno.version.deno);
+  const marker = childToolchainMarker(env, currentDenoIdentity());
   return marker !== undefined && marker !== "path" ? marker : undefined;
 }
 
