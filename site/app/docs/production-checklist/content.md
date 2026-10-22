@@ -92,7 +92,13 @@ Each line: what to set → where it is documented. Config keys go in
   missing. → [Toolchain](/docs/toolchain)
 - Know what your `start` is granted. `denext create` and a migrated Next.js App Router, SPA or
   Expo app write the least-privilege set above: the build's server code imports each stylesheet
-  through its shim, so `start` spawns nothing and writes only `.denext`. A migrated Pages Router
+  through its shim, so `start` spawns nothing and writes only `.denext`. A migrated Next.js App
+  Router app also gets the read-only system information Node's `os` module reads
+  (`--allow-sys=hostname,osRelease,osUptime,loadavg,cpus,systemMemoryInfo,homedir,uid,gid,username`),
+  which loggers and SDKs call; not `networkInterfaces`. When a dependency needs a permission the
+  task does not grant (a spawn, a write elsewhere, another `sys` kind), the server prints once
+  which permission was refused and the flag to add to the `start` task (in a `build --compile`
+  binary, the `compile.permissions` entry to rebuild with); `-A` remains the blunt fallback. A migrated Pages Router
   or Prisma app (and a Remix, React Router, Fresh or TanStack Start migration) keeps `-A`: a
   Pages Router build serves stylesheets through an import map `start` applies by re-running
   itself, which takes an unscoped `--allow-run` (as good as every permission) and a write to the

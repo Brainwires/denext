@@ -104,6 +104,14 @@ Deno.test("migrate: a Next.js App Router app's start task is least-privilege", a
   const tasks = await migratedTasks(NEXT_DEPS);
   assert(tasks.start.startsWith(LEAST_PRIVILEGE_START), tasks.start);
   assert(!/\s-A\s|--allow-run|--allow-all/.test(tasks.start), tasks.start);
+  // Its server runs npm code: the read-only system information Node's `os` reads, scoped.
+  assert(
+    tasks.start.includes(
+      " --allow-sys=hostname,osRelease,osUptime,loadavg,cpus,systemMemoryInfo,homedir,uid,gid," +
+        "username ",
+    ),
+    tasks.start,
+  );
   // The build verbs still need every permission (they spawn esbuild, Tailwind and the toolchain).
   for (const t of ["dev", "build", "export"]) {
     assert(tasks[t].startsWith("deno run -A --node-modules-dir=none "), tasks[t]);
