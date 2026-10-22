@@ -45,6 +45,22 @@ render the SAME real npm React libraries — recharts (a **class-component**
 library, via denext's `classComponents` opt-in), react-hook-form, Radix dialog,
 lucide — so the comparison holds on a real app, not a toy.
 
+### The three builds compared in Layer 1
+
+- **denext (native)** — `examples/hello`.
+- **Next app on denext (migrated)** — the unmodified `bench/fixtures/next-hello` app, copied to
+  `bench/.migrated/` (git-ignored, rebuilt each run), run through `denext migrate`, its
+  `jsr:@denext/denext` imports pointed at this checkout, then built and served by denext.
+- **Next.js** — `bench/fixtures/next-hello` built and served by `next start`.
+
+`next-hello` mirrors `examples/hello` route for route (same pages, same client boundaries, same
+`ssr:false` island). One known difference: the native home also runs a `useAsyncEffect` demo, a
+denext-only API the Next fixture cannot mirror, so the native home is a few hundred bytes heavier
+than a strict mirror. Pins: next 16.4.2, react/react-dom 19.3.1 (`bench/package.json`). Run the
+harness under the toolchain Deno (`denext toolchain path`), since the bundle `--define` folding
+only applies there. On a loaded machine, `bench/run.ts --layers=1,real --no-wait` reports bytes
+only (sizes are deterministic).
+
 ### Why these choices are fair
 
 - **Same behavior, not same source.** denext ships its own React-equivalent, so

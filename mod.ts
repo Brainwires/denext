@@ -30,7 +30,7 @@
  *   escaping, and a continuously-run suite of exploit probes mirrored from real
  *   Next.js CVEs (it has fixed classes Next.js itself only patched later).
  * - **Tiny by default** — denext's own small React-equivalent means a first page
- *   load of ~20 KB gzip (vs ~137 KB for a comparable Next.js app — ~7× smaller;
+ *   load of ~26 KB gzip (vs ~139 KB for a comparable Next.js 16.4 app — ~5.4× smaller;
  *   see `bench/REPORT.md`), one shared runtime chunk cached across navigations, and
  *   **zero JavaScript** for routes with no interactivity.
  * - **Deno-native** — `deno bundle` builds, Deno's built-in SQLite (`sqliteCacheStore`) for a shared ISR cache, and

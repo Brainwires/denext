@@ -45,6 +45,13 @@ and this project adheres to
   builds); a native `deno bundle` build now attributes each chunk's bytes to its modules from the
   bundle's source maps.
 
+### Docs
+
+- **Bundle-size claims re-measured** (2026-10-22, toolchain 3.0.0-rc.2, Next.js 16.4.2 + React 19.3.1):
+  `examples/hello` shared runtime 24.2 KB gz against 138.8 KB (about 5.7x, was "19.6 KB against 136.9 KB,
+  7x"; the runtime grew between September's measurement and now), library-heavy app 1.7-3.4x, and
+  `bench/` gains a "Next app migrated onto denext" column and raw sizes.
+
 ### Fixed
 
 - **A Deno workspace member app can use its sibling packages everywhere.** A package another

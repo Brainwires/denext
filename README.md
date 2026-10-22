@@ -28,8 +28,8 @@ developers already know. That compatibility means your existing `npm:` and `jsr:
 they are (Radix, Base UI, shadcn/ui, TanStack Router, recharts, react-hook-form, …): there is no new
 ecosystem to wait for. [Bring your existing app](#bring-your-existing-app).
 
-**Lightweight.** A **19.6 KB** shared client runtime against 136.9 KB for the same routes on
-Next.js, **0 KB** of JavaScript on a page with no interactivity, and SSR on par or faster.
+**Lightweight.** A **24.2 KB** (gzipped) shared client runtime against 138.8 KB for the same routes on
+Next.js 16.4, **0 KB** of JavaScript on a page with no interactivity, and SSR on par or faster.
 [Small and fast](#small-and-fast).
 
 **One install, no toolchain to assemble.** `curl … | sh`, then `denext create`: every other tool a
@@ -166,7 +166,7 @@ packaged for the web, the desktop and a phone).
 
 **The web.** The App Router with Server Components, streaming and Suspense, Server Actions,
 parallel and intercepting routes, middleware, metadata, images, fonts and i18n. Pages with no
-interactivity ship **0 KB of JavaScript**; interactive routes ship a shared ~20 KB runtime. Choose
+interactivity ship **0 KB of JavaScript**; interactive routes ship a shared ~24 KB (gzipped) runtime. Choose
 per route between server rendering, a static export, Partial Prerendering with Cache Components,
 Astro-style islands and Qwik-style resumability. A strict Content-Security-Policy is on by default.
 → [Routing](https://denext.dev/docs/routing) ·
@@ -360,19 +360,22 @@ npm package or for denext itself. The honest edges are kept in one place: [Known
 ## Small and fast
 
 denext ships its own React core instead of React + ReactDOM + a framework runtime, so a browser
-downloads about **7× less JavaScript** than for the same app on Next.js, and a static page downloads
-none. Measured on `examples/hello` (production, gzipped, Next.js 16.3 + React 19.2 on the same
-routes):
+downloads about **5.7× less JavaScript** than for the same app on Next.js, and a static page
+downloads none. Measured on `examples/hello` (production build, JavaScript a headless Chromium
+fetches, gzipped with one compressor; Next.js 16.4.2 + React 19.3.1 on the same routes,
+2026-10-22). The "migrated" column is the Next.js app itself, unmodified, run through
+`denext migrate` and served by denext:
 
-| What a browser downloads | denext      | Next.js     |
-| ------------------------ | ----------- | ----------- |
-| Shared client runtime    | **19.6 KB** | 136.9 KB    |
-| First load of `/`        | **20.8 KB** | 137.3 KB    |
-| Each later navigation    | **~1 KB**   | route chunk |
+| What a browser downloads | denext (native)           | Next app on denext (migrated) | Next.js 16.4.2          |
+| ------------------------ | ------------------------- | ----------------------------- | ----------------------- |
+| Shared client runtime    | **24.2 KB** (63.6 KB raw) | 27.1 KB (69.3 KB raw)         | 138.8 KB (459.1 KB raw) |
+| First load of `/`        | **25.6 KB** (66.1 KB raw) | 32.5 KB (80.1 KB raw)         | 139.2 KB (459.5 KB raw) |
+| Each later navigation    | **0.7–1.4 KB** gz         | 0 KB (static) – 5.4 KB (`/`)  | 0–0.3 KB                |
 
-Hydration and SSR throughput run on par or faster, and on a library-heavy app (recharts,
-react-hook-form, Radix) the routes ship roughly half or less. Every number is reproducible with
-`bench/run.ts`; the methodology and the full results are in [`bench/REPORT.md`](./bench/REPORT.md).
+On a library-heavy app (recharts, react-hook-form, Radix) the routes ship 1.7–3.4× less (gzip).
+Hydration and SSR throughput were last timed on 2026-09-04 (on par or faster); the byte figures
+above were re-measured on 2026-10-22. Every number is reproducible with `bench/run.ts`; the
+methodology and the full results are in [`bench/REPORT.md`](./bench/REPORT.md).
 
 The framework's runtime carries **no npm dependencies** — CI-enforced — so `npm audit`-class
 advisories have nothing to land on and an SBOM for a denext app is essentially the app. Build-time

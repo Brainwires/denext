@@ -8,7 +8,7 @@ denext's promise is the **React/Next.js surface**: imports resolve, public APIs
 exist, and they behave correctly for correct usage. _Underneath_ that surface,
 denext is its own engine — its own fiber reconciler, an async-only SSR renderer,
 its own Flight boundary and cache. That is not incidental; it is **where the wins
-come from** (~7× smaller output, 0 KB JS on a static route, resumability, live
+come from** (~5.7× smaller output, 0 KB JS on a static route, resumability, live
 components — see [MISSION.md](https://github.com/Brainwires/denext/blob/main/MISSION.md)).
 
 These internal differences are **deliberate design choices, invisible to correct

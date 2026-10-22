@@ -572,9 +572,9 @@ spa: { desktop: { icon: "./assets/app-icon.png" } }`}
       </p>
       <Code lang="text">
         {`                              raw      gzip
-  denext (own React-equiv)   38.6 KB   13.3 KB
-  React 19 + ReactDOM 19    190.2 KB   60.1 KB
-  denext is smaller by          4.9×      4.5×`}
+  denext (own React-equiv)   93.0 KB   35.6 KB
+  React 19 + ReactDOM 19    218.9 KB   68.7 KB
+  denext is smaller by          2.4×      1.9×`}
       </Code>
       <p>
         Reproduce it with <code>deno run -A bench.ts</code> in the <code>examples/spa</code>{" "}
