@@ -13,7 +13,9 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
-import { actionEndpoint, actionIdFor, encodeActionArgs } from "../../src/runtime/server-action.ts";
+import { actionEndpoint, actionIdFor } from "../../src/runtime/server-action.ts";
+import { encodeActionArgs } from "../../src/client/action-dispatch.ts";
+import { prepareWire } from "../../src/runtime/wire-encode.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
 import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
 import { removeTempDir } from "../helpers/temp.ts";
@@ -227,7 +229,7 @@ async function server(dir: string, verb: "start" | "dev") {
 
 /** Call the action the way its stub does (same-origin POST to its endpoint). */
 async function callAction(origin: string, id: string): Promise<unknown> {
-  const { body, headers } = encodeActionArgs(["hi"]);
+  const { body, headers } = encodeActionArgs(["hi"], prepareWire);
   const res = await fetch(`${origin}${actionEndpoint(id)}`, {
     method: "POST",
     headers: { ...headers, origin, "x-denext-action": "1" },

@@ -22,9 +22,13 @@ import {
 import {
   findVitestFiles,
   isToolchainBuild,
+  removeTempRoot,
+  stockPassDeno,
+  tempRootEnv,
   testPasses,
   wantsCoverage,
 } from "../scripts/test-run.ts";
+import { fromFileUrl, join } from "@std/path";
 
 Deno.test("serial tests: each file that changes process-wide state is listed, and only those", async () => {
   // Stale? `deno task regen` rewrites the list (scripts/gen-serial-tests.ts); then commit it.
@@ -300,4 +304,57 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
   assert(isToolchainBuild("3.0.0-rc.1+ci.42"));
   assert(!isToolchainBuild("2.9.6"));
   assert(!isToolchainBuild("2.9.7"));
+});
+
+Deno.test("test-run: tempRootEnv points every platform's temp-dir variable at the root", () => {
+  assertEquals(tempRootEnv("/r"), { TMPDIR: "/r", TMP: "/r", TEMP: "/r" });
+});
+
+Deno.test("test-run: removeTempRoot removes a full root and tolerates a missing one", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_tr_root_" });
+  await Deno.mkdir(join(root, "a", "b"), { recursive: true });
+  await Deno.writeTextFile(join(root, "a", "b", "f"), "x");
+  await removeTempRoot(root);
+  assertEquals(await Deno.stat(root).then(() => true, () => false), false);
+  await removeTempRoot(root); // already gone: no throw
+});
+
+Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp root", async () => {
+  // The machine's temp dir, as the run sees it: nothing may be left in it afterwards.
+  const machineTmp = await Deno.makeTempDir({ prefix: "denext_tr_machine_" });
+  const probe = join(machineTmp, "leak_probe_test.ts");
+  try {
+    await Deno.writeTextFile(
+      probe,
+      `Deno.test("leaks a temp dir", async () => {\n` +
+        `  const d = await Deno.makeTempDir({ prefix: "leaked_" });\n` +
+        `  await Deno.writeTextFile(d + "/f", "x");\n` +
+        `});\n`,
+    );
+    const script = fromFileUrl(new URL("../scripts/test-run.ts", import.meta.url));
+    const { success, stderr } = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", script, "--no-check", probe],
+      env: { ...tempRootEnv(machineTmp), DENEXT_DENO: "stock" },
+      stdout: "null",
+      stderr: "piped",
+    }).output();
+    assert(success, new TextDecoder().decode(stderr));
+    const left = [...Deno.readDirSync(machineTmp)].map((e) => e.name).filter((n) =>
+      n !== "leak_probe_test.ts"
+    );
+    assertEquals(left, [], "the run left these in the temp dir");
+  } finally {
+    await Deno.remove(machineTmp, { recursive: true });
+  }
+});
+
+Deno.test("test-run: the stock test files run on the toolchain whenever it resolved", () => {
+  // Not only under coverage: the suite runs on the Deno users run (ci.yml's check job included).
+  assertEquals(
+    stockPassDeno("/cache/denext-deno/3.0.0-rc.2/deno", "/usr/bin/deno"),
+    "/cache/denext-deno/3.0.0-rc.2/deno",
+  );
+  // `DENEXT_DENO=stock` (null) and a toolchain that could not be had (false): the running Deno.
+  assertEquals(stockPassDeno(null, "/usr/bin/deno"), "/usr/bin/deno");
+  assertEquals(stockPassDeno(false, "/usr/bin/deno"), "/usr/bin/deno");
 });

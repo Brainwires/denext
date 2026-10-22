@@ -17,7 +17,7 @@ import { createApiClient } from "../src/runtime/api-client.ts";
 import { useApi } from "../src/client/use-api.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import { generateRouteEntry } from "../src/build/bundle.ts";
-import { stableKey } from "../src/runtime/wire-codec.ts";
+import { stableKey } from "../src/runtime/wire-encode.ts";
 
 const ORIGIN = "http://localhost";
 

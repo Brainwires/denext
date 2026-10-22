@@ -15,11 +15,72 @@ import type {
   FlightProps,
   FlightValue,
 } from "../jsx/render-to-flight.ts";
-import { clientActionStub } from "../runtime/server-action.ts";
+import { actionReference, actionRefreshHandler } from "../runtime/server-action.ts";
 import { qrlStub } from "../runtime/qrl.ts";
-import { decodeTagged, NOT_TAGGED } from "../runtime/wire-codec.ts";
+import { decodeTagged, decodeWire, NOT_TAGGED } from "../runtime/wire-codec.ts";
 import { reviveSignal } from "../runtime/signal-brand.ts";
 import { ErrorBoundary } from "../runtime/error-boundary.ts";
+
+/** The `denext/action-call` module: a Server Action call with the dispatch and wire encoder. */
+export interface ActionCallModule {
+  /**
+   * Call the Server Action `id` with `args`.
+   *
+   * @param id The action id.
+   * @param args The call's arguments.
+   * @param refresh Re-renders the current route after an action that revalidated or refreshed.
+   * @param decode The wire decoder, for a codec-encoded result.
+   * @returns The action's result.
+   */
+  callAction(
+    id: string,
+    args: unknown[],
+    refresh: (() => void) | null,
+    decode: (value: unknown) => unknown,
+  ): Promise<unknown>;
+}
+
+/**
+ * Loads `denext/action-call`, registered by the generated Flight entry
+ * ({@linkcode setActionCallLoader}). The `import()` lives in the entry, not here: client-runtime
+ * re-exports this module, so every app's graph reaches it, and an `import()` here would make the
+ * call chunk an entry of every app — where its wire encoder, a file the `denext` barrel reaches,
+ * would be hoisted into the startup chunks.
+ */
+let actionCallLoader: (() => Promise<ActionCallModule>) | null = null;
+
+/**
+ * Register how a Flight page loads its Server Action calls (the generated Flight entry passes
+ * `() => import("denext/action-call")`).
+ *
+ * @param load Imports the action-call module.
+ */
+export function setActionCallLoader(load: () => Promise<ActionCallModule>): void {
+  actionCallLoader = load;
+}
+
+/** The action-call module, loading it on first use. */
+function loadActionCall(): Promise<ActionCallModule> {
+  if (actionCallLoader === null) {
+    return Promise.reject(new Error("denext: no Server Action loader is installed"));
+  }
+  return actionCallLoader();
+}
+
+/** One Server Action call from a Flight-revived reference. */
+function callFlightAction(id: string, args: unknown[]): Promise<unknown> {
+  return loadActionCall().then((m) => m.callAction(id, args, actionRefreshHandler(), decodeWire));
+}
+
+/**
+ * A Server Action reference revived from a Flight payload (`{$:"a"}`). The first one a page
+ * creates starts loading the action-call chunk, so the call itself does not wait on it; a page
+ * with no action never loads it.
+ */
+function flightActionReference(id: string): unknown {
+  void loadActionCall().catch(() => {}); // warm; a call reports a missing loader itself
+  return actionReference(id, callFlightAction);
+}
 
 /** Maps client-reference ids (`clientId#export`) to client component functions. */
 export type ClientRegistry = Map<string, Component> & {
@@ -157,7 +218,7 @@ function parseTagged(value: Record<string, unknown>, registry: ClientRegistry): 
   // A streamed navigation's deferred value: its promise (flight-nav-stream.ts), kept as is.
   if (typeof value.then === "function") return value;
   const tag = value.$;
-  if (tag === "a") return clientActionStub(value.i as string);
+  if (tag === "a") return flightActionReference(value.i as string);
   if (tag === "e") return qrlStub(value.i as string);
   if (tag === "ch") return { denextChannelId: value.i as string };
   // A signal prop (Flight only — never on the HTTP / Live wires, whose payloads a client sends).

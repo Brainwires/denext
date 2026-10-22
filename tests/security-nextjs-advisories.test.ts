@@ -28,7 +28,8 @@ import { fetchRemoteImage, optimizeImage } from "../src/server/image-optimizer.t
 import { makePinnedFetch, type Resolver, type Transport } from "../src/server/safe-fetch.ts";
 import { serveMetadataFile } from "../src/server/metadata-files.ts";
 import { decodeWire, WireCodecError } from "../src/runtime/wire-codec.ts";
-import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
+import { actionEndpoint } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { devOriginAllowed } from "../src/build/dev-server.ts";
 import { createPagesHandler } from "../packages/pages-router/src/handler.ts";

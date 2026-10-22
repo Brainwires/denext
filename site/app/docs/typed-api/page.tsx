@@ -201,8 +201,10 @@ try {
           own copy of the header reaches no item. The items keep the batch request's{" "}
           <code>cookie</code> and <code>authorization</code>{" "}
           (neither can be forwarded, nor can framing headers, <code>origin</code>
-          /<code>referer</code>/<code>host</code>, proxy-set headers such as{" "}
-          <code>x-forwarded-*</code>, or the app&apos;s <code>rateLimitHeader</code>
+          /<code>referer</code>/<code>host</code>, method overrides, headers a proxy, CDN, hosting
+          platform or auth proxy sets such as <code>x-forwarded-*</code>,{" "}
+          <code>fly-client-ip</code>, <code>x-vercel-*</code> or{" "}
+          <code>x-amzn-*</code>, or the app&apos;s <code>rateLimitHeader</code>
           ), and a value with a line break, a control character or over 1024 characters fails the
           whole batch.
         </li>

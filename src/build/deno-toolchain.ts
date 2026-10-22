@@ -1683,8 +1683,14 @@ export interface DenoToolchainLinkOptions {
   readonly cacheRoot?: string;
 }
 
-/** Where the link goes: `~/.denext/bin`. */
+/**
+ * Where the link goes: the `bin/` of the install directory, `$DENEXT_INSTALL` (as the installers
+ * read it) or `~/.denext` — so a custom-prefix install's `deno` lands beside its `denext`, in the
+ * directory the installer put on PATH.
+ */
 function denoToolchainLinkDir(env: EnvGet = processEnv): string {
+  const install = env("DENEXT_INSTALL");
+  if (install) return join(install, "bin");
   const home = env("HOME") ?? env("USERPROFILE");
   if (!home) throw new Error("denext: neither HOME nor USERPROFILE is set");
   return join(home, ".denext", "bin");
@@ -1713,8 +1719,9 @@ function pathLine(dir: string, os: string): string {
 }
 
 /**
- * Point `~/.denext/bin/deno` (Windows: `deno.cmd`) at the toolchain binary `deno`. Replaces only
- * a link it made itself; anything else at that path is refused.
+ * Point `~/.denext/bin/deno` (Windows: `deno.cmd`; `$DENEXT_INSTALL/bin` when that is set) at
+ * the toolchain binary `deno`. Replaces only a link it made itself; anything else at that path is
+ * refused.
  *
  * @param deno The toolchain binary.
  * @param options Seams.

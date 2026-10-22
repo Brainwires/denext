@@ -75,10 +75,21 @@ Deno.test({
     await t.step("client:interaction mounts on the first click on its placeholder", async () => {
       assertEquals(await page.evaluate(exists("panel")), false);
       await page.evaluate(`window.scrollTo(0, 0)`);
-      // A real (trusted) click: pointerdown, mousedown, focus, pointerup, mouseup, click.
+      // A real (trusted) click at a human pace: pointerdown, mousedown, focus, then — after the
+      // component's chunk has had time to load — pointerup, mouseup, click. The mount waits for
+      // the release, so the click lands on the placeholder and is replayed.
       const open = await page.$('[data-testid="open"]');
       assert(open);
-      await open.click();
+      const box = JSON.parse(
+        await page.evaluate(
+          `JSON.stringify(document.querySelector('[data-testid="open"]').getBoundingClientRect())`,
+        ) as string,
+      ) as { x: number; y: number; width: number; height: number };
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await new Promise((r) => setTimeout(r, 300));
+      assertEquals(await page.evaluate(exists("panel")), false, "held: not mounted mid-press");
+      await page.mouse.up();
       await pollFor(page, exists("panel"));
       assertEquals(await page.evaluate(exists("open")), false, "the placeholder is gone");
     });

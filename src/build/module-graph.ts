@@ -22,6 +22,7 @@ import {
 } from "@std/path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Directive, readDirective } from "./directives.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { clientIdFor, serverModuleIdFor, shortHash } from "./boundary-ids.ts";
 import {
   missingVariantMessage,
@@ -31,24 +32,17 @@ import {
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
 
-// The boundary ids live in a leaf module the server runtime imports without this crawler.
+// The boundary ids and the manifest's shape live in leaf modules the server runtime imports
+// without this crawler.
 export { clientIdFor, shortHash };
-
-/** A discovered boundary module: its file URL and (optionally) its export names. */
-export interface BoundaryRef {
-  /** The module's `file://` URL. */
-  url: string;
-  /** Exported symbol names, when resolved (empty if not extracted). */
-  exports: string[];
-}
-
-/** The client/server module split discovered across an app's import graph. */
-export interface BoundaryManifest {
-  /** `"use client"` modules keyed by a stable client id (`c_<hash>`). */
-  client: Map<string, BoundaryRef>;
-  /** `"use server"` modules keyed by a stable module id (`<hash>`). */
-  server: Map<string, BoundaryRef>;
-}
+import {
+  type BoundaryManifest,
+  type BoundaryRef,
+  deserializeBoundary,
+  serializeBoundary,
+} from "./boundary-manifest.ts";
+export { deserializeBoundary, serializeBoundary };
+export type { BoundaryManifest, BoundaryRef };
 
 /** `dir` with exactly one trailing platform separator, for a prefix test on local paths. */
 function dirPrefix(dir: string): string {
@@ -129,41 +123,6 @@ export async function assertPlatformFilesResolve(
     const spec = "./" + relative(projectDir, path).replaceAll("\\", "/");
     throw new Error(missingVariantMessage(spec, variants, resolution));
   }
-}
-
-/** {@link BoundaryManifest} as the build manifest stores it: ids → project-relative paths. */
-export interface SerializedBoundary {
-  client: Record<string, { path: string; exports: string[] }>;
-  server: Record<string, { path: string; exports: string[] }>;
-}
-
-/**
- * Serialize a boundary manifest for `manifest.json` (module URLs → paths relative to
- * `projectDir`, so a deployed build is portable), and rebuild it at server startup — which
- * saves the prod server the import-graph crawl the build already did (30 s on a large app).
- */
-export function serializeBoundary(b: BoundaryManifest, projectDir: string): SerializedBoundary {
-  const rel = (m: Map<string, BoundaryRef>) =>
-    Object.fromEntries(
-      [...m].map(([id, ref]) => [id, {
-        // `/`-separated so a manifest built on Windows reads the same everywhere.
-        path: relative(projectDir, fromFileUrl(ref.url)).split(SEPARATOR).join("/"),
-        exports: ref.exports,
-      }]),
-    );
-  return { client: rel(b.client), server: rel(b.server) };
-}
-
-/** Inverse of {@link serializeBoundary}. */
-export function deserializeBoundary(sb: SerializedBoundary, projectDir: string): BoundaryManifest {
-  const abs = (r: Record<string, { path: string; exports: string[] }>) =>
-    new Map(
-      Object.entries(r).map(([id, ref]) => [id, {
-        url: toFileUrl(resolve(projectDir, ref.path)).href,
-        exports: ref.exports,
-      }]),
-    );
-  return { client: abs(sb.client), server: abs(sb.server) };
 }
 
 /** Options for {@linkcode crawlLocalModules}. */
@@ -751,7 +710,11 @@ async function appLocalModules(entryFiles: string[]): Promise<string[]> {
   try {
     fwSrc = await Deno.realPath(fwSrc);
   } catch { /* framework src not on disk */ }
-  return await crawlLocalModules(entryFiles, { exclude: (p) => isUnderFrameworkSrc(p, fwSrc) });
+  // The crawl's own paths need the same canonical spelling: an import map can name the checkout
+  // through a symlink, and its modules then arrive under that spelling (see canonical-path.ts).
+  return await crawlLocalModules(entryFiles, {
+    exclude: (p) => isUnderFrameworkSrc(p, fwSrc) || isUnderFrameworkSrc(canonicalPath(p), fwSrc),
+  });
 }
 
 /**
@@ -906,13 +869,24 @@ export async function localModulesOutside(
   routes: RouteEntrySource[],
 ): Promise<string[]> {
   const entries = [...new Set(routes.flatMap(routeEntryFiles))];
+  let local: string[];
   try {
-    const local = await crawlLocalModules(entries);
-    const root = dirPrefix(projectDir);
-    return local.filter((f) => !f.startsWith(root) && !isFrameworkSource(f));
-  } catch {
+    local = await crawlLocalModules(entries);
+  } catch (err) {
+    // Fail closed, and say so: the scans then read the project directory alone, so a feature
+    // used ONLY from a sibling package is missed (its runtime is not preinstalled). Including
+    // every crawlable file instead would turn every gated runtime on for every app.
+    console.warn(
+      `denext: could not crawl the routes' import graph for the build-time feature scans ` +
+        `(${err instanceof Error ? err.message : String(err)}); scanning ${projectDir} only.`,
+    );
     return [];
   }
+  // Compare canonical spellings: the crawl reports Deno's resolved (real) paths for imports and
+  // the caller's spelling for the roots, so a project behind a symlink would otherwise put its
+  // own files, and the framework's, "outside" the project (see canonical-path.ts).
+  const root = dirPrefix(canonicalPath(projectDir));
+  return local.filter((f) => !canonicalPath(f).startsWith(root) && !isFrameworkSource(f));
 }
 
 /**
@@ -929,10 +903,22 @@ export async function localModulesOutside(
 export function isFrameworkSource(path: string): boolean {
   const fw = frameworkRoot();
   if (!isAbsolute(fw)) return false; // a remote framework root has no local modules
-  const root = dirPrefix(fw);
-  if (!path.startsWith(root)) return false;
-  const rel = path.slice(root.length).split(SEPARATOR).join("/");
+  // Canonical on both sides: an import map may name the checkout through a symlink while the
+  // framework's own URL is the real path, or the other way round (see canonical-path.ts).
+  const root = canonicalFrameworkPrefix(fw);
+  const real = canonicalPath(path);
+  if (!real.startsWith(root)) return false;
+  const rel = real.slice(root.length).split(SEPARATOR).join("/");
   return rel.startsWith("src/") || rel.startsWith("packages/") || !rel.includes("/");
+}
+
+/** The last framework root {@linkcode isFrameworkSource} canonicalised, and its prefix. */
+let frameworkPrefix: { fw: string; prefix: string } | undefined;
+
+/** `fw`'s canonical directory prefix, memoised (the crawl asks once per module). */
+function canonicalFrameworkPrefix(fw: string): string {
+  if (frameworkPrefix?.fw !== fw) frameworkPrefix = { fw, prefix: dirPrefix(canonicalPath(fw)) };
+  return frameworkPrefix.prefix;
 }
 
 export function routeEntryFiles(r: RouteEntrySource): string[] {

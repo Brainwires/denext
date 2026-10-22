@@ -6,18 +6,16 @@ import type { ModuleLoader } from "../../server/types.ts";
 import { timed } from "../../runtime/timing.ts";
 import { boundaryRefLoader, compatModuleMapFromManifest } from "../next-compat-loader.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
-import type { RouteManifest } from "../../router/manifest.ts";
+import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import {
   type BoundaryManifest,
-  computeBoundaryRoutes,
   deserializeBoundary,
   type SerializedBoundary,
-} from "../module-graph.ts";
+} from "../boundary-manifest.ts";
 import { type ProjectPaths, routeId } from "../paths.ts";
-import { appBoundaryManifest } from "../pipeline-shared.ts";
 import { parseServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
 import { setBuildServerActionsKey } from "../../server/action-bound.ts";
 
@@ -95,6 +93,43 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
   return info;
 }
 
+/**
+ * What the production server compiles at startup when the build did not record it — an older
+ * build, or one whose server copies import a moved project by absolute path. `denext start`
+ * passes ./startup-compile.ts; a compiled app (`denext build --compile`) passes none, so its
+ * binary embeds neither the import-graph crawler nor the compiler: its build always records them.
+ */
+export interface StartupCompile {
+  /** The routes that reach a client island (the build's `boundaryRoutes`). */
+  boundaryRoutes(appDir: string, pages: PageRoute[]): Promise<Set<string>>;
+  /** The app's client/server boundary (the build's `boundary`). */
+  boundaryManifest(appDir: string, pages: PageRoute[]): Promise<BoundaryManifest>;
+  /** The server render's loader over copies compiled now (the build's `serverCopies`). */
+  loader(paths: ProjectPaths, base: ModuleLoader): Promise<ModuleLoader>;
+}
+
+/**
+ * `compile`, or the error a server without a startup compiler (a compiled app) throws for a
+ * build that did not record `what`.
+ *
+ * @param compile The startup compiler, if any.
+ * @param what What the build's `manifest.json` lacks.
+ * @returns The startup compiler.
+ */
+export function requireStartupCompile(
+  compile: StartupCompile | undefined,
+  what: string,
+): StartupCompile {
+  if (compile) return compile;
+  throw new Error(
+    `The build in this app records no ${what}: it was made by an older denext, or for a project ` +
+      "at another path. Rebuild it with this version (`denext build --compile`).",
+  );
+}
+
+/** A boundary with no islands and no actions. */
+const EMPTY_BOUNDARY = (): BoundaryManifest => ({ client: new Map(), server: new Map() });
+
 /** The Flight boundary computed once at startup. */
 export interface FlightBoundary {
   /** Routes that reach a client island. */
@@ -122,22 +157,31 @@ export interface FlightBoundary {
  * @param manifest The scanned routes.
  * @param info The build manifest.
  * @param load The server render's module loader.
+ * @param compile The startup compiler for a build that recorded no boundary (none in a compiled
+ *   app).
  */
 export async function resolveFlightBoundary(
   paths: ProjectPaths,
   manifest: RouteManifest,
   info: BuildInfo,
   load: ModuleLoader,
+  compile?: StartupCompile,
 ): Promise<FlightBoundary> {
   // The build already crawled the import graph; reuse its answer when the manifest has it
-  // (a large app's crawl is 30 s of startup), else compute it (no/old build manifest).
-  const flightRoutes = info.boundary?.routes ?? await timed(
+  // (a large app's crawl is 30 s of startup), else compute it (no/old build manifest). With no
+  // pages (a Pages Router app's empty `app/`) there is nothing to crawl.
+  const recorded = info.boundary ??
+    (manifest.pages.length === 0
+      ? { routes: new Set<string>(), manifest: EMPTY_BOUNDARY() }
+      : null);
+  const pages = manifest.pages;
+  const flightRoutes = recorded?.routes ?? await timed(
     "computeBoundaryRoutes",
-    () => computeBoundaryRoutes(paths.appDir, manifest.pages),
+    () => requireStartupCompile(compile, "client boundary").boundaryRoutes(paths.appDir, pages),
   );
-  const boundary = info.boundary?.manifest ?? await timed(
+  const boundary = recorded?.manifest ?? await timed(
     "appBoundaryManifest",
-    () => appBoundaryManifest(paths.appDir, manifest.pages),
+    () => requireStartupCompile(compile, "client boundary").boundaryManifest(paths.appDir, pages),
   );
   // Tag through the render's loader: its copies, and in compat mode each ref's module inside
   // the single keyed server bundle (the whole app's islands cost one module load, not one

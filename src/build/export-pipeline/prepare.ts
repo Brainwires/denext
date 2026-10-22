@@ -15,7 +15,8 @@ import { installCacheLifeProfiles } from "../../server/cache.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { dirExists, setupPlugins } from "../pipeline-shared.ts";
+import { setupPlugins } from "../pipeline-shared.ts";
+import { dirExists } from "../paths.ts";
 import { exportSpa } from "../spa.ts";
 import {
   assertPlatformFilesResolve,

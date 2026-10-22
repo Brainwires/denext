@@ -5,14 +5,9 @@
 // that call POSTs to the secure server-action endpoint, and the form also
 // carries the endpoint URL in its SSR markup for progressive enhancement.
 
-import {
-  startTransition,
-  useCallback,
-  useContext,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "./hooks.ts";
+import { useCallback, useContext, useRef, useState } from "./hooks.ts";
+import { startTransition } from "./hooks/transition.ts";
+import { useSyncExternalStore } from "./hooks/use-sync-external-store.ts";
 import { FormStatusContext } from "./form-status.ts";
 
 /** Status of the enclosing form's action, as returned by {@link useFormStatus}. */

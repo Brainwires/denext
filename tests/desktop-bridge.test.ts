@@ -267,6 +267,22 @@ Deno.test("body: a streamed body with no content-length is cut off at the cap", 
   assertEquals((await call(bridge, ok)).status, 200);
 });
 
+Deno.test("body: a body that never finishes is refused as timeout, not waited on", async () => {
+  const bridge = createDesktopBridge([echoCapability]);
+  const base = rpc(undefined);
+  // The request is already aborted, so the time-bounded read stops at once.
+  const req = new Request(base.url, {
+    method: "POST",
+    headers: base.headers,
+    body: new ReadableStream<Uint8Array>({
+      start: (c) => c.enqueue(new TextEncoder().encode('{"cap":')),
+    }),
+    signal: AbortSignal.abort(),
+  });
+  const { status, env } = await call(bridge, req);
+  assertEquals([status, env.error?.code], [408, "timeout"]);
+});
+
 Deno.test("registry: a duplicate capability name is rejected at construction", () => {
   assertThrows(
     () => createDesktopBridge([echoCapability, { name: "echo", methods: {} }]),

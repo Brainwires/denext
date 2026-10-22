@@ -4,17 +4,20 @@ import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
   actionEndpoint,
   actionIdFor,
-  clientActionStub,
   decodeActionArgs,
-  encodeActionArgs,
   forgetTaggedServers,
   getServerAction,
   isServerAction,
-  serverAction,
   setActionRefreshHandler,
   tagServerExports,
   tagServerModules,
 } from "../src/runtime/server-action.ts";
+import { encodeActionArgs as encodeWith } from "../src/client/action-dispatch.ts";
+import { clientActionStub, serverAction } from "../src/runtime/action-stub.ts";
+import { prepareWire } from "../src/runtime/wire-encode.ts";
+
+/** The client's argument encoding, with the wire encoder the stubs hand it. */
+const encodeActionArgs = (args: unknown[]) => encodeWith(args, prepareWire);
 import { handleAction } from "../src/server/action-handler.ts";
 import { decodeWire } from "../src/runtime/wire-codec.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";

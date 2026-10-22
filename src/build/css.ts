@@ -421,10 +421,31 @@ export async function generateCssAssets(
       : `export default {};\n`;
     const shimPath = join(shimDir, `css_${i}.js`);
     await Deno.writeTextFile(shimPath, shimBody);
-    importMap[toFileUrl(file).href] = toFileUrl(shimPath).href;
+    for (const spelling of await cssFileSpellings(file)) {
+      importMap[toFileUrl(spelling).href] = toFileUrl(shimPath).href;
+    }
   }));
 
   return { importMap, css, classMaps };
+}
+
+/**
+ * The paths a module graph may name the stylesheet at `file` by: `file` itself and, when a symlink
+ * lies on the way (macOS's `/var` → `/private/var` temp directories, a symlinked checkout), its
+ * real path. A process whose working directory is the project sees the real path (`getcwd`
+ * resolves symlinks), so its imports name that spelling while the walk found the other; the
+ * import map redirects both to the shim.
+ *
+ * @param file An absolute stylesheet path.
+ * @returns `file`, then its real path when that differs.
+ */
+export async function cssFileSpellings(file: string): Promise<string[]> {
+  try {
+    const real = await Deno.realPath(file);
+    return real === file ? [file] : [file, real];
+  } catch {
+    return [file]; // gone or unreadable: the walk's spelling alone
+  }
 }
 
 /** Concatenate transformed CSS in a stable (path-sorted) order. */

@@ -2,7 +2,7 @@
 import { djb2 } from "./djb2.ts";
 import { detachedFromRequest } from "./root-context-bridge.ts";
 import { isChannel, registerChannelIfLoaded } from "./channel-brand.ts";
-import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { decodeWire, WIRE_ENC } from "./wire-codec.ts";
 import type { ResolvedRestart } from "./restart.ts";
 import { processShared } from "./process-shared.ts";
 //
@@ -63,33 +63,8 @@ const shared = /* @__PURE__ */ processShared("serverActionState", () => ({
 }));
 
 /**
- * Define a server action. Give it a **stable, explicit id** (unique per app) so
- * the client stub and the server handler agree across the boundary.
- *
- * On the server the returned function runs `handler` directly and registers it
- * for RPC dispatch. In the browser it returns a stub that POSTs the arguments to
- * the action endpoint and resolves with the JSON result.
- *
- * The handler runs with the request's async context, so it may read
- * `cookies()`/`headers()`, call `revalidatePath`/`revalidateTag`, or `redirect()`.
- * It **must** authorize and validate its own input — registration alone exposes
- * it to any same-origin caller.
- *
- * @param id A stable, app-unique identifier for this action.
- * @param handler The server-side implementation.
- * @returns A {@link ServerActionRef} usable as a `<form action>` or called directly.
- */
-export function serverAction<A extends unknown[], R>(
-  id: string,
-  handler: (...args: A) => R | Promise<R>,
-): ServerActionRef<A, R> {
-  if (typeof document !== "undefined") return clientActionStub<A, R>(id);
-  return registerServerReference(id, handler);
-}
-
-/**
  * Register a handler as a server reference under `id` and return a callable ref
- * tagged with that id. The building block behind {@link serverAction} and the
+ * tagged with that id. The building block behind `serverAction` (action-stub.ts) and the
  * auto-registration of `"use server"` module exports.
  *
  * @param id The stable server-reference id.
@@ -193,15 +168,21 @@ export function tagServerExports(
 }
 
 /**
- * Build a browser dispatch stub for a server-reference id. Used by the Flight
- * client to rehydrate a `{$:"a"}` reference into a callable that POSTs to the
- * action endpoint. The returned function is tagged with `denextActionId` so it
- * round-trips (e.g. when re-serialized as a `<form action>`).
+ * A browser reference to the Server Action `id`: a callable that hands each call to `call`,
+ * tagged with `denextActionId` so it round-trips (e.g. when re-serialized as a `<form action>`).
+ * The two stubs build on it — the Flight client's (src/client/flight-client.ts) and the generic
+ * `clientActionStub` (action-stub.ts) — each with its own on-demand dispatch, so neither puts the
+ * dispatch or the wire encoder in a page's startup chunks.
  *
  * @param id The server-reference / action id.
+ * @param call Performs the call (loads the dispatch, POSTs, resolves with the result).
+ * @returns The reference.
  */
-export function clientActionStub<A extends unknown[], R>(id: string): ServerActionRef<A, R> {
-  const ref = (...args: A) => dispatchFromClient(id, args) as Promise<R>;
+export function actionReference<A extends unknown[], R>(
+  id: string,
+  call: (id: string, args: unknown[]) => Promise<unknown>,
+): ServerActionRef<A, R> {
+  const ref = (...args: A) => call(id, args) as Promise<R>;
   return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
 }
 
@@ -355,7 +336,10 @@ export function isServerAction(
   );
 }
 
-/** Reserved FormData field carrying non-FormData args alongside a FormData arg. */
+/**
+ * Reserved FormData field carrying non-FormData args alongside a FormData arg (the client's
+ * encoder, src/client/action-dispatch.ts, writes the same name).
+ */
 const META_FIELD = "__denext_meta";
 
 // ---- Client dispatch -------------------------------------------------------
@@ -365,97 +349,28 @@ const META_FIELD = "__denext_meta";
 // reflects the server's new state (Next.js read-your-writes / refresh semantics).
 // The handler is registered by the client runtime at boot (`startClient` →
 // `setActionRefreshHandler`) — a seam so this isomorphic module never links client
-// navigation into the server graph. Left null on the server / before boot.
+// navigation into the server graph. Left null on the server / before boot. Handed to the
+// dispatch with each call.
 let onActionRefresh: (() => void) | null = null;
 
 /**
  * Register the post-action refresh handler. Called once by the client runtime at
  * boot with a closure that re-renders the current route. When a server action
- * reports `refresh`/`updatedTags`, {@link dispatchFromClient} invokes it so the
+ * reports `refresh`/`updatedTags`, the client dispatch invokes it so the
  * client reflects the mutation without a full page reload.
  */
 export function setActionRefreshHandler(refresh: () => void): void {
   onActionRefresh = refresh;
 }
 
-async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown> {
-  const { body, headers } = encodeActionArgs(args);
-  headers["x-denext-action"] = "1";
-  const res = await fetch(actionEndpoint(id), {
-    method: "POST",
-    headers,
-    body,
-    // Never attach credentials cross-origin; same-origin cookies still flow.
-    credentials: "same-origin",
-  });
-  const data = (await res.json().catch(() => ({}))) as {
-    result?: unknown;
-    enc?: number;
-    redirect?: string;
-    replace?: boolean;
-    error?: string;
-    refresh?: true;
-    updatedTags?: string[];
-  };
-  if (data.redirect) {
-    // A `replace`-type redirect swaps the current history entry (no back-stack entry);
-    // otherwise push a new one. Both are full navigations from a Server Action.
-    if (typeof location !== "undefined") {
-      if (data.replace) location.replace(data.redirect);
-      else location.href = data.redirect;
-    }
-    return undefined;
-  }
-  if (!res.ok || data.error) {
-    throw new Error(data.error ?? `server action failed (${res.status})`);
-  }
-  // Read-your-writes: if the action revalidated tags or asked for a refresh,
-  // re-render the current route so the client reflects the new server state.
-  if ((data.refresh || (data.updatedTags && data.updatedTags.length > 0)) && onActionRefresh) {
-    onActionRefresh();
-  }
-  // A result the server flagged `enc` carries wire-codec tags (Date/Map/Set/BigInt/…).
-  return data.enc === WIRE_ENC ? decodeWire(data.result) : data.result;
-}
-
 /**
- * Encode action arguments for transport. When one argument is a `FormData`, the
- * request is multipart (the form fields ride along) and the other arguments are
- * JSON-encoded in a reserved meta field; otherwise the arguments are sent as
- * JSON. Exported for the server decoder to mirror.
+ * The post-action refresh handler {@linkcode setActionRefreshHandler} registered, handed to the
+ * client dispatch with each call.
+ *
+ * @returns The handler, or `null` (the server, or before the client booted).
  */
-export function encodeActionArgs(
-  args: unknown[],
-): { body: BodyInit; headers: Record<string, string> } {
-  const hasFormData = typeof FormData !== "undefined";
-  let fdIndex = -1;
-  if (hasFormData) {
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] instanceof FormData) {
-        fdIndex = i;
-        break;
-      }
-    }
-  }
-  if (fdIndex === -1) {
-    return {
-      body: JSON.stringify(wireEnvelope("args", args)),
-      headers: { "content-type": "application/json" },
-    };
-  }
-  const fd = args[fdIndex] as FormData;
-  const others = args.map((a, i) => (i === fdIndex ? null : a));
-  fd.append(META_FIELD, JSON.stringify({ fdIndex, ...wireEnvelope("others", others) }));
-  return { body: fd, headers: {} };
-}
-
-/**
- * `{ [field]: value }` through the wire codec, plus `enc: 1` only when a tag was needed — so
- * a plain-JSON argument list is byte-identical to before and the decoder skips the walk.
- */
-function wireEnvelope(field: string, value: unknown): Record<string, unknown> {
-  const p = prepareWire(value);
-  return p.tagged ? { [field]: p.value, enc: WIRE_ENC } : { [field]: p.value };
+export function actionRefreshHandler(): (() => void) | null {
+  return onActionRefresh;
 }
 
 /** Un-envelope a codec-flagged field (`enc: 1`); a plain field is returned as-is. */
@@ -464,7 +379,8 @@ function decodeEnvelope(env: { enc?: unknown }, value: unknown): unknown {
 }
 
 /**
- * Decode action arguments from a request body (mirror of {@link encodeActionArgs}).
+ * Decode action arguments from a request body (mirror of the client's `encodeActionArgs`,
+ * src/client/action-dispatch.ts).
  * A native (no-JS) form post with no meta field yields a single `FormData` arg.
  *
  * @param request The incoming action request.

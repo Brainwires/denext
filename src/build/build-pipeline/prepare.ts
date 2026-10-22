@@ -23,10 +23,12 @@ import {
 } from "../bundle.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { dirExists, setupPlugins } from "../pipeline-shared.ts";
+import { setupPlugins } from "../pipeline-shared.ts";
+import { dirExists } from "../paths.ts";
 import { buildSpa } from "../spa.ts";
 import { type BuildContext, type BuildResult, log } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
+import { buildRouterlessServerCopies } from "../server-copies-build.ts";
 
 /**
  * Plugin build steps (e.g. a Pages Router bundling its own client entries). The files they
@@ -57,7 +59,9 @@ function pluginPrepareSteps(paths: ProjectPaths): Promise<void> {
  * The builds that bypass the App Router pipeline, or null when the app has an `app/`
  * tree: SPA mode ("React but not Next") bundles the single client entry and emits an HTML
  * shell; an app with no `app/` dir (Pages Router) has nothing to scan/bundle — the
- * `@denext/pages-router` plugin owns that build, so only plugin setup + build steps run.
+ * `@denext/pages-router` plugin owns that build, so only plugin setup + build steps run, and the
+ * manifest records the server render's copies (platform files, `"use cache"`, inline
+ * `"use server"`), which `denext start` and a compiled app load the pages through.
  */
 export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildResult | null> {
   if (paths.config?.mode === "spa") {
@@ -69,6 +73,11 @@ export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildR
   await setupPlugins(paths, "build");
   await pluginPrepareSteps(paths);
   await pluginBuildSteps(paths);
+  const serverCopies = await buildRouterlessServerCopies(paths);
+  await Deno.writeTextFile(
+    join(paths.outDir, "manifest.json"),
+    `${JSON.stringify({ serverCopies }, null, 2)}\n`,
+  );
   return { routes: [], outDir: paths.outDir };
 }
 

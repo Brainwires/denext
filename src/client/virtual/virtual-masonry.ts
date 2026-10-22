@@ -11,13 +11,8 @@
 
 import { h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild } from "../../jsx/types.ts";
-import {
-  type Ref,
-  useImperativeHandle,
-  useLayoutEffect,
-  useReducer,
-  useRef,
-} from "../../runtime/hooks.ts";
+import { type Ref, useImperativeHandle, useLayoutEffect, useRef } from "../../runtime/hooks.ts";
+import { useReducer } from "../../runtime/hooks/use-reducer.ts";
 import { EdgeTracker } from "./edges.ts";
 import { MasonryLayout } from "./masonry.ts";
 import { defaultKey, px, slot } from "./shared.ts";

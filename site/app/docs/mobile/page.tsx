@@ -657,6 +657,18 @@ denext mobile add haptics share network secure-store`}
           <code>minSdkVersion</code> to 26, which the scanner needs.
         </li>
         <li>
+          <code>pickContact()</code>{" "}
+          (<code>contacts</code>): one contact from the system picker (its <code>id</code>,{" "}
+          <code>name</code>, <code>emails</code> and{" "}
+          <code>phoneNumbers</code>), with no contacts permission asked; <code>null</code>{" "}
+          when cancelled. On the web it is the browser&apos;s Contact Picker API where it has one
+          (Chrome on Android, from a click), with no <code>id</code>; elsewhere it rejects with code
+          {" "}
+          <code>unsupported</code>, and <code>contactPickerSupported()</code>{" "}
+          says which. react-native-permissions&apos; <code>openContactPicker</code>{" "}
+          and expo-contacts&apos; <code>presentContactPickerAsync</code> open it too.
+        </li>
+        <li>
           <code>setQuickActions([...])</code> / <code>onQuickAction</code> /{" "}
           <code>useQuickAction</code>{" "}
           (<code>quick-actions</code>): home-screen shortcuts on a long press of the app icon, the

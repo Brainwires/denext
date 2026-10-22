@@ -12,6 +12,7 @@
 // regenerates it) and the API reference (`deno task docs:api`, which CI does not diff).
 
 import { fromFileUrl, join, relative } from "@std/path";
+import { linkedLockFiles } from "./sync-example-locks.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -112,6 +113,13 @@ export const STEPS: readonly RegenStep[] = [
     name: "the desktop scaffold's package scripts → examples/{native,rn-desktop}/scripts/",
     run: writePackageScripts,
     outputs: PACKAGE_SCRIPT_EXAMPLES.flatMap((e) => PACKAGE_SCRIPTS.map((s) => `${e}/${s}`)),
+    phase: 1,
+  },
+  {
+    // Reads the root deno.lock, which no step writes.
+    name: "deno task sync:example-locks",
+    script: ["scripts/sync-example-locks.ts"],
+    outputs: linkedLockFiles(),
     phase: 1,
   },
   {

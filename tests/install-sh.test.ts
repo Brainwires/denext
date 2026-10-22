@@ -67,6 +67,8 @@ if [ -n "$out" ]; then cp "$STUB_DIR/$name" "$out"; else cat "$STUB_DIR/$name"; 
 const DENEXT_STUB = `#!/bin/sh
 [ "$1" = "--version" ] && { echo "denext \${STUB_VERSION:-9.9.9} (binary)"; exit 0; }
 echo "$*" >> "$DENEXT_STUB_LOG"
+# Where \`toolchain link\` / \`unlink\` would put \`deno\`: the install dir they were handed.
+case "$1 $2" in "toolchain link" | "toolchain unlink") echo "$DENEXT_INSTALL" >> "$DENEXT_STUB_LOG.install" ;; esac
 # A release before 4.0 has no \`toolchain\` verb.
 case "\${STUB_VERSION:-}" in 3.*) [ "$1" = "toolchain" ] && {
   echo "denext: unknown command \"toolchain\"" >&2; exit 1; } ;; esac
@@ -237,6 +239,32 @@ Deno.test("install.sh: a good checksum installs the binary", { ignore: NO_SH }, 
     // No `deno` on this PATH: the toolchain is installed and linked as `deno`.
     assertEquals(run.calls, ["toolchain install", "toolchain link"]);
     assertEquals(run.stderr, "");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: toolchain link / unlink get the install dir it resolved", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  const handed = `${r.log}.denext.install`;
+  const read = async () => (await Deno.readTextFile(handed)).split("\n").filter(Boolean);
+  try {
+    // No DENEXT_INSTALL (empty reads as unset): the default ~/.denext, named to the binary.
+    const run = await r.run({ DENEXT_INSTALL: "" });
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.calls, ["toolchain install", "toolchain link"]);
+    const home = join(r.dir, ".denext");
+    assertEquals(await read(), [home]);
+    assert((await Deno.stat(join(home, "bin", "denext"))).isFile);
+    const gone = await r.run({ DENEXT_INSTALL: "" }, [], ["--uninstall"]);
+    assertEquals(gone.calls, ["toolchain unlink"]);
+    assertEquals(await read(), [home, home]);
+    // A custom prefix is passed through as is.
+    await Deno.remove(handed);
+    assertEquals((await r.run()).code, 0);
+    assertEquals(await read(), [r.install]);
   } finally {
     await r.remove();
   }

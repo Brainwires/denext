@@ -40,6 +40,7 @@ export type {
   DeployImages,
   DeployJob,
   DeployManifest,
+  DeployNetPermissions,
   DeployPermissions,
   DeployRoute,
   DeployRouteKind,

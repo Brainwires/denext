@@ -1,7 +1,7 @@
 // Resolve the conventional paths and config for a denext project directory.
 
 import { basename, join, relative, toFileUrl } from "@std/path";
-import { frameworkFileUrl } from "./bundle.ts";
+import { frameworkFileUrl } from "./framework-root.ts";
 import { CONFIG_FILES } from "./config-files.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { type DenextConfig, featureFlags } from "../server/config.ts";
@@ -221,6 +221,15 @@ async function importConfigFile(path: string, name: string): Promise<DenextConfi
 
 /** The config file names probed, in order (Next.js also accepts `.mjs`/`.mts`). */
 export { CONFIG_FILES };
+
+/** Whether `path` is an existing directory. */
+export async function dirExists(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
 
 /** Load `denext.config.{ts,mts,js,mjs}` (named exports, a default object, or a factory). */
 async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null> {

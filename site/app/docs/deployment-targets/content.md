@@ -254,6 +254,17 @@ beside it. It embeds:
 - any paths you list in `compile.include` (data files the app reads at run
   time, or a module that only a computed `import()` reaches).
 
+**Dependencies resolve as your lockfile locks them.** The compile runs with its own config
+(`.denext/compile/deno.json`), so it carries your project's lock and dependency-age rule into it:
+it copies your `deno.lock` (or the file your `lock` setting names) beside that config, and Deno
+resolves every locked specifier to the locked version and checks each package against the locked
+integrity, as `denext build` does. A package that fails the integrity check fails the compile. What
+the compile resolves that your lock does not list yet (the framework's standalone entry, say) is
+recorded in your `deno.lock`; with `"lock": { "frozen": true }` the compile refuses instead,
+listing the entries, and removes the binary. Your `minimumDependencyAge` and your `.npmrc` (its
+`min-release-age` and registries) apply to the compile too; the `.npmrc` copy is never embedded.
+With `"lock": false`, or no lockfile yet, the compile resolves without one, as your build does.
+
 Stylesheet imports work without the CSS import map. Every module that reaches
 a stylesheet is served through its build-time server copy, which imports the
 stylesheet's JS shim instead of the `.css` file. Those copies are relocatable:
@@ -270,7 +281,7 @@ startup. It also sets the production signal (`DENEXT_ENV` / `NODE_ENV`). Each
 verb (`start`, `job`, `db`) loads the production tier of the `.env` files in
 the **working directory**.
 
-**Nothing secret is baked in.** `.env*` files, SQLite databases, database dumps
+**Nothing secret is baked in.** `.env*` files, `.npmrc` files, SQLite databases, database dumps
 (`denext stack backup`'s) and `@denext/backend`'s dev key file are never embedded,
 even from `compile.include`, and the environment is read at run time. What the binary writes goes
 to the working directory:
@@ -297,6 +308,40 @@ export default {
 
 `permissions: "all"` bakes `--allow-all`, and only when you ask for it. `denext build --compile`
 prints the flags it baked.
+
+**Scoping the network by direction.** denext's Deno (3.0.0-rc.2 and later) splits `--allow-net`
+into `--allow-net-connect` (outbound: `fetch`, WebSocket, database clients) and
+`--allow-net-listen` (`Deno.serve`, `Deno.listen`, `node:net` servers). Name either direction in
+`compile.permissions` and the binary bakes the pair instead of `--allow-net`; an unset direction
+stays unscoped:
+
+```ts
+export default {
+  compile: {
+    permissions: {
+      netListen: [":3000"], // the port the binary is deployed with (0.0.0.0, 127.0.0.1, localhost)
+      netConnect: ["db.internal:5432", "api.example.com"], // or leave it unset: any host
+    },
+  },
+};
+```
+
+The binary takes its port from `--port` / `$PORT` at run time, so denext does not narrow listen
+unasked: list the port you deploy with, and a listener anywhere else (another port, a dependency's
+own server) is refused. The split needs the toolchain compiling onto its own `denort`; on stock Deno
+(`DENEXT_DENO=stock`), or for a target the toolchain has no `denort` for, the binary keeps
+`--allow-net` and the build warns.
+
+The generated deploy files scope listen for you, because they know the port: `denext generate
+docker` (and the `docker()` / `fly()` adapters) turn the `start` command's `--allow-net` into
+`--allow-net-connect --allow-net-listen=:<port>,[::]:<port>` (`0.0.0.0`, `[::]`, `127.0.0.1` and
+`localhost` on that port), the static image's file server gets
+`--allow-net-listen` for its port and no outbound access, and `genericHost()`'s systemd unit runs
+`--allow-net-listen=127.0.0.1:<port>` (with `compile.permissions`' directions when you set them).
+All of them run on denext's toolchain; a `start` task with `-A`, a scoped `--allow-net=<hosts>` or a
+directional flag of its own is left as written. The deploy manifest carries the split as
+`permissions.net` (`{ connect, listen }`, `["*"]` for an unscoped direction) for third-party
+adapters.
 
 ### Signing the binary
 
@@ -382,10 +427,26 @@ its first request.
 - the build verbs: `dev`, `build` and `export` stay on the `denext` CLI.
 
 A `next-compat` (drop-in) app and a Pages Router (`@denext/pages-router`) app compile like any
-other: their pages, API routes and static assets are served from the binary. A module served
-without a server copy (a Pages Router page) imports its stylesheet through the compile's import
-map, whose stylesheet entries are relative to the embedded config. The binary is about 200 MB: the runtime plus the framework's and
-your packages' module graph.
+other: their pages, API routes and static assets are served from the binary. A Pages Router
+build records its server copies as an App Router build does, so its pages take the web target's
+platform files (`.web.tsx`), and `"use cache"` and inline `"use server"` functions work in the
+binary as under `denext start`. A module served without a server copy (a Pages Router page)
+imports its stylesheet through the compile's import map, whose stylesheet entries are relative to
+the embedded config. A Pages Router app on npm React (the plugin's compat path) renders its pages
+through the compat server bundles its build made and recorded (`.denext/pages-compat/`), which
+`denext start` loads too instead of rebuilding them at startup; a binary from a build without
+that record refuses to start and says to rebuild it.
+
+A minimal app's binary is about 135 MB (macOS x86_64): about 118 MB is the toolchain's `denort`
+runtime, and about 16 MB is embedded — your app, the build output, `public/` and the production
+server's part of the framework. The binary embeds the module graph of what it runs, and that graph
+holds none of the build pipeline: no esbuild, swc or lightningcss, and none of the build's npm
+tooling (`sass`, `@mdx-js/mdx`, Babel, Prettier, …). Your own packages and your plugins' run-time
+code are embedded as you import them. A plugin's build-step functions (`bundleRoutes`,
+`buildAppCss`, `compileMdxSource`, `remixCodegen`, the next-compat build) are stand-ins inside
+the binary that throw if called; a build step only runs at `denext build`. This holds for an app
+on denext from JSR too: `denext task build --compile` runs the CLI the app pins, whose framework
+URLs (`https://jsr.io/@denext/denext/<version>/…`) are the ones the binary's graph names.
 
 The **`denext` executable** is a separate thing: the CLI itself, a
 `deno compile`d front end. It never builds or serves an app in its own

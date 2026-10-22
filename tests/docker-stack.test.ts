@@ -448,7 +448,12 @@ Deno.test("shutdown: the server is tini's direct child, so docker stop's SIGTERM
       },
     }),
   });
-  const file = renderDockerfile({ mode: "server", denoTag: "2.9.7", ...resolveStack(d) });
+  const file = renderDockerfile({
+    mode: "server",
+    denoTag: "2.9.7",
+    netSplit: false,
+    ...resolveStack(d),
+  });
   assertStringIncludes(
     file,
     'CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]',

@@ -14,6 +14,7 @@ import { startSpaDevServer } from "../src/build/spa/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { runBounded } from "./helpers/bounded-command.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -171,24 +172,34 @@ function appRouter(compat: boolean): Record<string, string> {
   };
 }
 
+/** How long one CLI export may take (seconds on a healthy runner) before its tree is killed. */
+const EXPORT_DEADLINE_MS = 300_000;
+
 /**
- * `denext export --platform` through the CLI: a native App Router server render imports the
- * stylesheet, which the CLI's re-exec resolves to its shim (this process's import map cannot).
+ * `denext export --platform` through the CLI, bounded: a native App Router server render imports
+ * the stylesheet, which the CLI's re-exec resolves to its shim (this process's import map
+ * cannot). The next-compat export runs here too, in a process of its own: in this test process it
+ * once stalled for over an hour on Windows (CI run 39641395822), where nothing could stop it.
+ * Past the deadline the export's whole tree is killed and the test fails with what it printed.
  */
-async function cliExport(dir: string, platform: Platform): Promise<string> {
-  const config = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
-  await Deno.writeTextFile(
-    join(dir, "deno.json"),
-    JSON.stringify({ ...config, nodeModulesDir: "manual" }),
+async function cliExport(dir: string, platform: Platform, compat: boolean): Promise<string> {
+  if (!compat) {
+    const config = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ ...config, nodeModulesDir: "manual" }),
+    );
+  }
+  const r = await runBounded(
+    Deno.execPath(),
+    ["run", "-A", abs("cli.ts"), "export", "--platform", platform, dir],
+    { cwd: dir, timeoutMs: EXPORT_DEADLINE_MS },
   );
-  const out = await new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", abs("cli.ts"), "export", "--platform", platform, dir],
-    cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
-  assert(out.success, log);
+  assert(
+    !r.timedOut,
+    `the ${platform} export did not finish in ${EXPORT_DEADLINE_MS} ms:\n${r.output}`,
+  );
+  assert(r.success, r.output);
   return join(dir, "out");
 }
 
@@ -198,9 +209,7 @@ for (const compat of [false, true]) {
     Deno.test(`${path} App Router export --platform ${platform}: the route CSS is the ${want} file's`, async () => {
       const dir = await project(appRouter(compat));
       try {
-        const out = compat
-          ? (await staticExport(dir, { platform })).outDir
-          : await cliExport(dir, platform);
+        const out = await cliExport(dir, platform, compat);
         assertSheet(await allCss(join(out, "_denext")), want, `${platform} export`);
       } finally {
         await removeTempDir(dir);

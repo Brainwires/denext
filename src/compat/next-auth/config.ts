@@ -8,7 +8,8 @@
  *   `sendVerificationRequest`;
  * - `session.strategy` `"jwt"` → denext's signed cookie with the token sealed inside,
  *   `"database"` → `session.strategy: "database"` over the adapter's sessions; `maxAge`,
- *   `updateAge` (default 24 hours) as they are;
+ *   `updateAge` (default 24 hours) as they are — an active session slides as Auth.js's does,
+ *   with no absolute cap unless the app sets the denext-only `session.maxLifetime`;
  * - `adapter` → {@link fromAuthJsAdapter};
  * - `callbacks.signIn` → `callbacks.signIn`; `callbacks.jwt` → run at sign-in from denext's
  *   `callbacks.session` hook and on every read; `callbacks.session` / `redirect` /
@@ -53,6 +54,11 @@ import type {
 const DEFAULT_MAX_AGE = 30 * 24 * 60 * 60;
 /** Auth.js's default `updateAge`: 24 hours. */
 const DEFAULT_UPDATE_AGE = 24 * 60 * 60;
+/**
+ * The absolute ceiling when the app sets none: 100 years, i.e. none, as in Auth.js (an active
+ * session slides by `updateAge` indefinitely). A finite number keeps every expiry finite.
+ */
+const UNCAPPED_LIFETIME = 100 * 365 * 24 * 60 * 60;
 /** The endpoint prefix a Next app mounts the handlers on. */
 const DEFAULT_BASE_PATH = "/api/auth";
 
@@ -167,13 +173,17 @@ function sessionSettings(config: NextAuthConfig): {
   strategy: "jwt" | "database";
   session: NonNullable<AuthConfig["session"]>;
 } {
-  const strategy = config.session?.strategy ?? (config.adapter ? "database" : "jwt");
+  const own = config.session ?? {};
+  const strategy = own.strategy ?? (config.adapter ? "database" : "jwt");
+  const maxAge = own.maxAge ?? DEFAULT_MAX_AGE;
   return {
     strategy,
     session: {
       strategy: strategy === "jwt" ? "cookie" : "database",
-      maxAge: config.session?.maxAge ?? DEFAULT_MAX_AGE,
-      updateAge: config.session?.updateAge ?? DEFAULT_UPDATE_AGE,
+      maxAge,
+      updateAge: own.updateAge ?? DEFAULT_UPDATE_AGE,
+      // denext-only opt-in cap; Auth.js has none, so neither does an app that sets none.
+      maxLifetime: own.maxLifetime ?? Math.max(UNCAPPED_LIFETIME, maxAge),
     },
   };
 }

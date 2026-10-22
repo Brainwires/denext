@@ -228,6 +228,20 @@ Deno.test({
     const tooBig = await postSnapshot(handle, huge);
     assertEquals(tooBig.status, 413);
 
+    // A body that never finishes is bounded in time: its read stops (here at once, the
+    // request already aborted) with a 408 instead of pinning the handler.
+    const held = await handle(
+      new Request(`http://localhost${DEV_INSPECT_PATH}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "sec-fetch-site": "same-origin" },
+        body: new ReadableStream<Uint8Array>({
+          start: (c) => c.enqueue(new TextEncoder().encode("{")),
+        }),
+        signal: AbortSignal.abort(),
+      }),
+    );
+    assertEquals(held.status, 408);
+
     assertEquals(st.devInspect.size, 0, "a refused request stores nothing");
   } finally {
     await Deno.remove(dir, { recursive: true });

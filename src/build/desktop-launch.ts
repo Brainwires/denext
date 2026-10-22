@@ -31,7 +31,7 @@ import {
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
-import { desktopRuntimeDenoFlags } from "./desktop-runtime.ts";
+import { desktopNetSplit, desktopRuntimeDenoFlags } from "./desktop-runtime.ts";
 
 /** The file name of the generated `desktop dev` entry (written into the project's `.denext/`). */
 export const DESKTOP_DEV_ENTRY_FILE = "desktop-dev-entry.ts";
@@ -50,7 +50,7 @@ export interface DesktopLaunchBuildInput {
   readonly iconArgs: readonly string[];
   /** Embed the static export (`run`); `dev` proxies to the dev server and does not need it. */
   readonly includeOut: boolean;
-  /** Hosts to add to `--allow-net` (`dev --lan`: the dev server's LAN address). */
+  /** Hosts to add to `--allow-net` (`--allow-net-connect` under the split grant; `dev --lan`: the dev server's LAN address). */
   readonly netHosts?: readonly string[];
   /** The `--output` path (see {@linkcode desktopLaunchOutput}). */
   readonly output: string;
@@ -67,12 +67,15 @@ export interface DesktopLaunchBuildInput {
  * @returns The flags.
  */
 export function withNetHosts(flags: readonly string[], hosts: readonly string[]): string[] {
-  if (hosts.length === 0 || flags.includes("--allow-net")) return [...flags];
-  const at = flags.findIndex((f) => f.startsWith("--allow-net="));
-  const current = at === -1 ? [] : flags[at].slice("--allow-net=".length).split(",");
-  const flag = `--allow-net=${
-    [...new Set([...current, ...hosts])].filter(Boolean).sort().join(",")
-  }`;
+  // Under the split network grant the hosts are outbound (the window's server reaches the dev
+  // server): they join `--allow-net-connect`.
+  const kind = flags.some((f) => /^--allow-net-(connect|listen)(=|$)/.test(f))
+    ? "--allow-net-connect"
+    : "--allow-net";
+  if (hosts.length === 0 || flags.includes(kind)) return [...flags];
+  const at = flags.findIndex((f) => f.startsWith(`${kind}=`));
+  const current = at === -1 ? [] : flags[at].slice(kind.length + 1).split(",");
+  const flag = `${kind}=${[...new Set([...current, ...hosts])].filter(Boolean).sort().join(",")}`;
   if (at === -1) return [...flags, flag];
   return flags.map((f, i) => i === at ? flag : f);
 }
@@ -257,6 +260,8 @@ export interface DesktopLaunchPlanInput {
   readonly dev: boolean;
   /** Hosts to add to `--allow-net` (`dev --lan`). */
   readonly netHosts?: readonly string[];
+  /** Whether this build may bake the split network grant (default {@linkcode desktopNetSplit}). */
+  readonly netSplit?: () => boolean;
   /** The scratch directory ({@linkcode desktopLaunchScratchDir}). */
   readonly scratch: string;
 }
@@ -287,7 +292,11 @@ export async function desktopLaunchBuildPlan(
     desktopLaunchName(await desktopAppName(scriptUrl)),
   );
   const args = desktopLaunchBuildArgs({
-    permissionFlags: desktopBuildFlags(input.config, input.os),
+    permissionFlags: desktopBuildFlags(input.config, input.os, {
+      // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
+      netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
+        (input.netSplit ?? desktopNetSplit)(),
+    }),
     denoFlags: input.denoFlags,
     runtimeFlags: desktopRuntimeDenoFlags(input.runtimeEnv ?? {}, input.denoFlags),
     extraArgs: [

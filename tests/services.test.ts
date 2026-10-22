@@ -162,6 +162,78 @@ Deno.test("bootServices: a root `services` supervisor, a status snapshot, a heal
   }
 });
 
+Deno.test("stopServices: a call made while a stop is in progress waits for it, final snapshot included", async () => {
+  const dir = await fixture({ "services/a.ts": HOLDING() });
+  const outDir = join(dir, ".denext");
+  const snapshotPath = join(outDir, SERVICES_SNAPSHOT);
+  const read = async () => JSON.parse(await Deno.readTextFile(snapshotPath)) as ServicesSnapshot;
+  try {
+    assert(await bootServices(dir, { outDir }));
+    await until(async () => {
+      try {
+        return (await read()).supervisors[0]?.state === "running";
+      } catch {
+        return false;
+      }
+    });
+    // The server's drain stops the tree; a caller that stops it too (a test's cleanup, a signal
+    // handler) must not return before that stop has written its last file.
+    const draining = stopServices();
+    await stopServices();
+    assertEquals((await read()).supervisors, [], "the final snapshot is on disk");
+    assertEquals(
+      [...Deno.readDirSync(outDir)].map((e) => e.name),
+      [SERVICES_SNAPSHOT],
+      "no temporary file left behind",
+    );
+    await draining;
+  } finally {
+    await stopServices();
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test("the status snapshot: a debounced write still in flight finishes before the final one", async () => {
+  const dir = await fixture({ "services/a.ts": HOLDING() });
+  const outDir = join(dir, ".denext");
+  const snapshotPath = join(outDir, SERVICES_SNAPSHOT);
+  const write = Deno.writeTextFile;
+  let held: (() => void) | undefined;
+  let inFlight!: () => void;
+  const reached = new Promise<void>((r) => inFlight = r);
+  try {
+    // Hold the first debounced write before it creates its temporary file.
+    Deno.writeTextFile = (async (
+      path: string | URL,
+      data: string | ReadableStream<string>,
+      options?: Deno.WriteFileOptions,
+    ) => {
+      if (String(path).endsWith(".tmp") && !held) {
+        await new Promise<void>((r) => {
+          held = r;
+          inFlight();
+        });
+      }
+      await write(path, data, options);
+    }) as typeof Deno.writeTextFile;
+    assert(await bootServices(dir, { outDir }));
+    await reached;
+    const stopping = stopServices();
+    await new Promise((r) => setTimeout(r, 50)); // the final write would race ahead here
+    held!();
+    await stopping;
+    await new Promise((r) => setTimeout(r, 50)); // a write the stop did not wait for lands here
+    const last = JSON.parse(await Deno.readTextFile(snapshotPath)) as ServicesSnapshot;
+    assertEquals(last.supervisors, [], "the final snapshot is the last one written");
+    assertEquals([...Deno.readDirSync(outDir)].map((e) => e.name), [SERVICES_SNAPSHOT]);
+  } finally {
+    Deno.writeTextFile = write;
+    held?.();
+    await stopServices();
+    await removeTempDir(dir);
+  }
+});
+
 Deno.test("bootServices: a tree that gives up fails the health check and calls onServiceError", async () => {
   const dir = await fixture({
     "services/crashy.ts": `import { defineService } from "${SUPERVISE}";\n` +

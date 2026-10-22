@@ -14,15 +14,19 @@ import {
 } from "../src/cli/commands/stack-env.ts";
 import {
   hiddenKey,
+  hostFreeBytes,
+  parseDfAvailable,
   type PipeOptions,
   type PsRow,
   type StackIo,
 } from "../src/cli/commands/stack-io.ts";
-import { runStack } from "../src/cli/commands/stack.ts";
+import { runStack, stackCommand } from "../src/cli/commands/stack.ts";
 import {
   backupKind,
   parseManifest,
+  parseSize,
   RESTORE_STEPS,
+  restoreCap,
   storageSource,
 } from "../src/cli/commands/stack-backup.ts";
 import {
@@ -82,6 +86,7 @@ function fakeIo(options: {
   confirm?: boolean;
   secrets?: string[];
   fetch?: (url: string) => Promise<Response>;
+  freeBytes?: number;
 } = {}) {
   const calls: string[][] = [];
   const pipes: PipeCall[] = [];
@@ -133,6 +138,7 @@ function fakeIo(options: {
     fetch: options.fetch ??
       (() => Promise.resolve(Response.json({ status: "ok", checks: { database: "ok" } }))),
     sleep: () => Promise.reject(new Error("stop watching")),
+    freeBytes: () => Promise.resolve(options.freeBytes),
   };
   return { io, calls, pipes, lines, errors, questions };
 }
@@ -674,6 +680,126 @@ Deno.test("stack restore: a backup with a traversal, an absolute path or an esca
     );
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("stack restore: a full backup that would expand past the free disk (less a margin) or --max-size is refused before the database is touched", async () => {
+  const root = await project();
+  const manifest = "denext stack backup (full)\n\nRestore order:\n1. database.dump\n";
+  const GIB = 1024 ** 3;
+  try {
+    // 4 KiB of dump: tiny, but past what a disk 1 GiB + 1 KiB from full may take.
+    await Deno.writeFile(
+      join(root, "big.tar.gz"),
+      await tarGz([{ name: "b/MANIFEST.txt", data: manifest }, {
+        name: "b/database.dump",
+        data: "x".repeat(4096),
+      }]),
+    );
+    const full = fakeIo({ pipe: dbPipe(), freeBytes: GIB + 1024 });
+    assertEquals(await runStack(ctx(root, ["restore", "big.tar.gz"]), full.io), 1);
+    assertMatch(full.errors[0], /expands past 1\.0 KiB \(.*free.*margin\).*--max-size/);
+    assert(!full.pipes.some((p) => p.args.join(" ").includes("pg_restore")), "no restore ran");
+    assert(!full.calls.some((c) => c.includes("stop")), "the app was never stopped");
+
+    // --max-size lowers the cap below what the disk allows.
+    const capped = fakeIo({ pipe: dbPipe(), freeBytes: 100 * GIB });
+    assertEquals(
+      await runStack(ctx(root, ["restore", "big.tar.gz"], { "max-size": "2k" }), capped.io),
+      1,
+    );
+    assertMatch(capped.errors[0], /expands past 2\.0 KiB \(--max-size\)/);
+
+    // A disk with no room beyond the margin refuses before extracting anything.
+    const tight = fakeIo({ pipe: dbPipe(), freeBytes: GIB / 2 });
+    assertEquals(await runStack(ctx(root, ["restore", "big.tar.gz"]), tight.io), 1);
+    assertMatch(tight.errors[0], /only 512\.0 MiB is free.*keeps 1\.0 GiB free/);
+
+    // With room (or a generous --max-size) the same backup restores.
+    const roomy = fakeIo({ pipe: dbPipe(), freeBytes: 100 * GIB, docker: () => ({ code: 0 }) });
+    assertEquals(
+      await runStack(ctx(root, ["restore", "big.tar.gz"], { "max-size": "1G" }), roomy.io),
+      0,
+    );
+    assert(roomy.pipes.some((p) => p.args.join(" ").includes("pg_restore")));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("restoreCap / parseSize / parseDfAvailable: the cap's sources and the size syntax", async () => {
+  const GIB = 1024 ** 3;
+  const c = (flags: Flags = {}) => ctx("/x", ["restore"], flags);
+  const io = (free: number | undefined) => fakeIo({ freeBytes: free }).io;
+  // Free space less a tenth of it (at least 1 GiB).
+  assertEquals((await restoreCap(c(), io(100 * GIB), "/tmp")).bytes, 90 * GIB);
+  assertEquals((await restoreCap(c(), io(5 * GIB), "/tmp")).bytes, 4 * GIB);
+  // --max-size only ever lowers it; unmeasurable free space falls back to it, else 16 GiB.
+  assertEquals(await restoreCap(c({ "max-size": "1G" }), io(100 * GIB), "/tmp"), {
+    bytes: GIB,
+    why: "--max-size",
+  });
+  assertEquals((await restoreCap(c({ "max-size": "1T" }), io(100 * GIB), "/tmp")).bytes, 90 * GIB);
+  assertEquals((await restoreCap(c({ "max-size": "3G" }), io(undefined), "/tmp")).bytes, 3 * GIB);
+  assertEquals((await restoreCap(c(), io(undefined), "/tmp")).bytes, 16 * GIB);
+  await assertRejects(() => restoreCap(c(), io(GIB), "/tmp"), Error, "is free");
+  await assertRejects(
+    () => restoreCap(c({ "max-size": "lots" }), io(GIB * 9), "/t"),
+    Error,
+    "lots",
+  );
+
+  assertEquals(parseSize("1048576"), 1048576);
+  assertEquals(parseSize("512M"), 512 * 1024 ** 2);
+  assertEquals(parseSize("20GiB"), 20 * GIB);
+  assertEquals(parseSize("1.5t"), 1.5 * 1024 * GIB);
+  assertEquals(parseSize(" 2kb "), 2048);
+  for (const bad of ["", "0", "-1G", "1X", "G", "1e9"]) {
+    assertThrows(() => parseSize(bad), Error, "is not a size");
+  }
+
+  const df = "Filesystem 1024-blocks      Used Available Capacity Mounted on\n" +
+    "/dev/disk1s1 244277768 218000000   1500000   100% /System/Volumes/Data\n";
+  assertEquals(parseDfAvailable(df), 1500000 * 1024);
+  // A long device name wraps onto its own line under POSIX df.
+  assertEquals(
+    parseDfAvailable(
+      "Filesystem 1024-blocks Used Available Capacity Mounted on\n" +
+        "/dev/mapper/very-long-name\n  1000 500 400 55% /\n",
+    ),
+    400 * 1024,
+  );
+  assertEquals(
+    parseDfAvailable("Filesystem 1024-blocks Used Available Capacity Mounted on\n"),
+    undefined,
+  );
+  assertEquals(parseDfAvailable(""), undefined);
+});
+
+Deno.test("stack restore: the help and the guide say a backup must be trusted (its SQL runs as the superuser)", async () => {
+  const usage = stackCommand.usage!.replace(/\s+/g, " ");
+  assertMatch(usage, /Restore only a backup you trust: its SQL runs as the database superuser/);
+  const guide = (await Deno.readTextFile(
+    new URL("../site/app/docs/deploy/content.md", import.meta.url),
+  )).replace(/\s+/g, " ");
+  assertMatch(guide, /Restore only a backup you trust.*runs as the database superuser/);
+  assert(!/backup is untrusted input/i.test(guide));
+});
+
+Deno.test("hostFreeBytes: the host's free space where a path lives; undefined when it can't tell", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const free = await hostFreeBytes(dir);
+    if (Deno.build.os === "windows") {
+      // The drive's free space (a missing directory on it too); no drive letter, no answer.
+      assert(free === undefined || free > 0);
+      assertEquals(await hostFreeBytes("\\\\server\\share"), undefined);
+    } else {
+      assert(free !== undefined && free > 0, String(free));
+      assertEquals(await hostFreeBytes(join(dir, "missing", "dir")), undefined);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
 

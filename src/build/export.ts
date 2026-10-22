@@ -30,6 +30,7 @@ import { exportWithoutAppRouter, finishExport, prepareExport } from "./export-pi
 import { copyPublic, renderAllPages, writeGlobalErrorPage } from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { resolveProject } from "./paths.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { preparePartytown } from "./partytown.ts";
 import { join } from "@std/path";
 import { writeMobileExportExtras } from "./mobile-export-extras.ts";
@@ -85,6 +86,7 @@ export async function staticExport(
   projectDir: string,
   options: StaticExportOptions = {},
 ): Promise<StaticExportResult> {
+  projectDir = canonicalPath(projectDir); // the real path, as in build() (see canonical-path.ts)
   const paths = await resolveProject(projectDir);
   // Static export ships no `/_denext/image` server, so `<Image>` must render plain `<img>`
   // with the raw `src` (Next forces `unoptimized` for `output: export` the same way). A

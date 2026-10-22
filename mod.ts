@@ -247,26 +247,24 @@ export { googleFont, googleFontUrl } from "./src/runtime/font-google.ts";
 export type { GoogleFontOptions } from "./src/runtime/font-google.ts";
 
 export {
-  startTransition,
   useCallback,
   useContext,
   useDebugValue,
-  useDeferredValue,
   useEffect,
-  useEffectEvent,
   useErrorBoundary,
-  useId,
   useImperativeHandle,
-  useInsertionEffect,
   useLayoutEffect,
   useMemo,
-  useOptimistic,
-  useReducer,
   useRef,
   useState,
-  useSyncExternalStore,
-  useTransition,
 } from "./src/runtime/hooks.ts";
+export { startTransition, useOptimistic, useTransition } from "./src/runtime/hooks/transition.ts";
+export { useDeferredValue } from "./src/runtime/hooks/use-deferred-value.ts";
+export { useEffectEvent } from "./src/runtime/hooks/use-effect-event.ts";
+export { useId } from "./src/runtime/hooks/use-id.ts";
+export { useInsertionEffect } from "./src/runtime/hooks/use-insertion-effect.ts";
+export { useReducer } from "./src/runtime/hooks/use-reducer.ts";
+export { useSyncExternalStore } from "./src/runtime/hooks/use-sync-external-store.ts";
 export { memo } from "./src/runtime/memo.ts";
 // React's element/ref/Children core, on the root barrel so new code never needs `denext/react`.
 export {
@@ -448,7 +446,8 @@ export type { FormStatus } from "./src/runtime/actions.ts";
 export { idleActionState } from "./src/runtime/define-action.ts";
 export type { ActionResult, TypedAction } from "./src/runtime/define-action.ts";
 
-export { liveReadable, serverAction } from "./src/runtime/server-action.ts";
+export { liveReadable } from "./src/runtime/server-action.ts";
+export { serverAction } from "./src/runtime/action-stub.ts";
 export type { ServerActionRef } from "./src/runtime/server-action.ts";
 
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
@@ -491,4 +490,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "4.6.0";
+export const VERSION = "4.7.0";

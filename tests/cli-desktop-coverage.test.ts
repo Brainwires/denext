@@ -32,7 +32,8 @@ async function exists(path: string): Promise<boolean> {
 }
 
 async function tempDir(prefix: string): Promise<string> {
-  const dir = await Deno.makeTempDir({ prefix });
+  // Real path: a build names the project by its real path (macOS `/var` -> `/private/var`).
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix }));
   await Deno.writeTextFile(join(dir, "deno.json"), "{}");
   return dir;
 }

@@ -237,15 +237,24 @@ bytes before anything is stored. On S3 the bytes go to the store directly, so co
 what arrived: the size against the cap and the declared length, the stored content type, and the
 first bytes against the declared type. An object that fails is deleted.
 
-**An S3 upload that is never completed** has been checked by nobody: a client can `PUT` to its
-presigned URL and skip the completion call. Such bytes can still only be served with the type the
-URL pinned, and every presigned `GET` the plugin signs carries `response-content-type` (the stored
-type) and `response-content-disposition`: `inline` only for raster images, audio, video, PDF and
-plain text, `attachment` for everything else — the same rule the plugin's own object route
-applies — so an HTML or SVG file downloads instead of rendering. Record the keys
-`uploadFile` / completion returned (in your own table) and sign download URLs only for those, and
-give the S3 bucket a lifecycle rule that removes what was never recorded, plus one that aborts
-incomplete multipart uploads after a day (`AbortIncompleteMultipartUpload`).
+**An upload that is never completed** is never an object. Every signed upload URL (a presigned
+`PUT`, presigned multipart parts, the fs driver's signed `PUT`) points at a staging place
+(`.denext-staging/<bucket>/<version>`), not at the key, and no object row exists until the
+completion has checked the staged bytes and moved them to the key. A client that `PUT`s to the URL
+and skips the completion call leaves bytes that nothing serves, signs, lists or reports. The
+store enforces what it can before then: a presigned `PUT` signs `content-type`, and with a `size`
+its exact `content-length`, and every presigned multipart part signs its own exact length, so S3
+refuses a body of any other size or type. Without a `size` a single `PUT` is not length-pinned
+(S3 has no length range for a presigned `PUT`), so oversized bytes can reach the staging place,
+where the completion refuses them. Each signed upload is tracked with an expiry (the URL's lifetime
+plus an hour's grace); once that passes, its staged bytes, or its incomplete multipart upload, are
+swept the next time an upload is signed, completed or aborted. A store lifecycle rule on the
+`.denext-staging/` prefix (expire after a day or two, and `AbortIncompleteMultipartUpload` after a
+day) frees them even if no upload ever happens again. Every presigned `GET` the plugin signs also
+carries `response-content-type` (the stored type) and `response-content-disposition`: `inline`
+only for raster images, audio, video, PDF and plain text, `attachment` for everything else — the
+same rule the plugin's own object route applies — so an HTML or SVG file downloads instead of
+rendering.
 
 ### Image transforms
 
@@ -667,6 +676,25 @@ a `begin` inside it is a savepoint. A thrown error rolls back the transaction an
 `{ "role": "anon" }`. Add your own with
 `backend({ postgres: { rls: { claims: (session) => ({ tenant: … }) } } })` and read them as
 `auth.jwt() ->> 'tenant'`; `sub`, `role` and `email` cannot be overridden.
+
+### MFA and row-level security
+
+Row-level security trusts an access token's own claims, as Supabase does. A user who has enrolled
+a second factor but signed in with only a password holds an `aal1` token until they verify it,
+and under RLS that token is `authenticated` like any other: `db()`, auto-REST, Realtime and
+Storage's `rls: true` all run its queries as the user. This differs from [`auth()`](/docs/auth),
+which reads such a token as `null` (it owes a factor, so `requireSession` and Server Actions
+refuse it). A table that must stay behind the second factor needs a policy that checks for it;
+Supabase's pattern is a restrictive policy:
+
+```sql
+create policy "second factor required" on notes
+  as restrictive to authenticated
+  using ((select auth.jwt() ->> 'aal') = 'aal2');
+```
+
+A denext session (the cookie) is never `aal1` while it owes a factor: it is pending, and RLS sees it
+as signed out (`anon`) until the factor is verified.
 
 ### Setup: the roles and `auth.*`
 

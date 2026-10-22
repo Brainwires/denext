@@ -31,7 +31,8 @@ import {
   isUnauthorized,
   toClientError,
 } from "../runtime/error-boundary.ts";
-import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
 import {

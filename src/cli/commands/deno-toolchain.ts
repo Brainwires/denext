@@ -216,7 +216,8 @@ export const toolchainCommand: CommandSpec = {
     "  denext toolchain install --with fastlane   …and the managed fastlane (Ruby + gems)\n" +
     "  denext toolchain status       Pinned versions (Deno, Gleam, fastlane), cache state (--json)\n" +
     "  denext toolchain path         Print the binary's path (installs it first)\n" +
-    "  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n" +
+    "  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in;\n" +
+    "                                $DENEXT_INSTALL/bin when that is set)\n" +
     "  denext toolchain unlink       Remove that link (only what link created)\n" +
     "  denext toolchain uninstall <version>   Remove a cached version (its Deno toolchain and\n" +
     "                                Deno Desktop runtime); the pinned one only with --force\n" +

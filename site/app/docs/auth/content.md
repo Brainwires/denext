@@ -1527,7 +1527,7 @@ same factors as denext's cookie sign-in, so a factor enrolled either way is enfo
   a factor is a session `auth()` reads as `null` (it fails closed, like a pending cookie), so
   `requireSession` and Server Actions refuse it. Row-level security reads the token's own
   claims (`auth.jwt() ->> 'aal'`), as on Supabase: a policy that needs the second factor checks
-  for `aal2`.
+  for `aal2` ([MFA and row-level security](/docs/backend#mfa-and-row-level-security)).
 - **Adding a factor needs the one already held.** Once a user holds a verified factor, an
   `aal1` session can't enroll another, verify a new one or register a passkey through
   `/auth/v1` (`403 insufficient_aal`), and a pending cookie session can't enroll or confirm a
@@ -2434,6 +2434,27 @@ const adapter = {
 };
 ```
 
+Database sessions slide as Auth.js's do: once a session is older than `session.updateAge`
+(default 24 hours), a read that can answer with a cookie (`/api/auth/session`, a route handler,
+middleware, a Server Action) moves its row's `expires` to a full `maxAge` from now, keeping the
+token. As in Auth.js there is no absolute cap: an active session keeps sliding, and only an
+idle one expires. `session.maxLifetime` (denext-only, opt-in, at least `maxAge`) sets one, on
+either strategy, counted from the sign-in: the row keeps no sign-in time, so the signed session
+cookie carries it. A session cookie an earlier denext issued has no sign-in time and ends at its
+row's current expiry.
+
+The built-in sign-in page shows a WebAuthn provider (`Passkey`) as a "Sign in with Passkey"
+button that runs the passkey sign-in in the page, as `next-auth/webauthn`'s `signIn("passkey")`
+does; the page's own Content-Security-Policy allows that one script by its hash. Without
+WebAuthn in the browser (or with JavaScript off) the button stays hidden.
+
+An Auth.js adapter's `Session` rows hold the user and the expiry only, with no sign-in time,
+sign-in methods or pending second factor. So `denextAuth` refuses to start when MFA could run over
+them (`session: { strategy: "database" }` through the adapter, with an adapter that has the MFA
+factor store or `mfa.required: "always"`), rather than read a half-signed-in session back as a
+complete one. Pair MFA with the JWT strategy or a denext `sessionStore` (`sqliteSessionStore()`,
+`postgresSessionStore()`, …) instead.
+
 denext keeps its own defaults where they are stricter, and nothing is relaxed for parity:
 
 - **CSRF.** Every state-changing POST (`signin`, `signout`, the credentials callback, `session`
@@ -2449,8 +2470,9 @@ denext keeps its own defaults where they are stricter, and nothing is relaxed fo
 - **Cookies.** The session is `__Host-denext_auth` (`Secure`, `httpOnly`, `SameSite=Lax`), with
   no `cookies` override. Over plain http on a loopback host, or outside production, the names
   drop the `__Host-` prefix, which a browser refuses there (as `denextAuth`'s do; see
-  [Base path and cookies](#base-path-and-cookies)), much as Auth.js drops `__Secure-`. A session also ends 30 days after sign-in at the latest
-  (`session.maxLifetime`), however often it slides.
+  [Base path and cookies](#base-path-and-cookies)), much as Auth.js drops `__Secure-`. A session ends a set time after sign-in, however often it
+  slides, only when the app sets the denext-only `session.maxLifetime` (Auth.js has no such cap,
+  and neither does an app that sets none).
 - **Email links** open a confirmation page by default; `Resend({ confirm: false })` signs in on
   the GET, as Auth.js does.
 

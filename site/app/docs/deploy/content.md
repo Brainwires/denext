@@ -165,7 +165,10 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
 ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]
 STOPSIGNAL SIGTERM
 # The `start` task's own command, run directly (not through `deno task`).
-CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]
+# Its --allow-net is split by direction (the toolchain's Deno has it): the server may listen
+# only on port 3000 (0.0.0.0, [::], 127.0.0.1, localhost) and connect anywhere, so no
+# dependency can open a listener of its own. A new port needs --allow-net-listen changed too.
+CMD ["deno", "run", "--allow-net-connect", "--allow-net-listen=:3000,[::]:3000", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]
 ```
 
 `denext build` / `denext export` set `DENEXT_PHASE=build` while they run: a `RUN deno task build`
@@ -294,7 +297,7 @@ denext stack logs [service] [--service s] [--level warn] [--since 30m] [--until 
 denext stack passwd --postgres [--dashboard] [--generate]
 denext stack roll [--include-secret] [--keep-old | --drop-old]
 denext stack backup [file] [--full]
-denext stack restore <file> [--yes]
+denext stack restore <file> [--yes] [--max-size <size>]
 ```
 
 **Health.** `health` lists every service with its compose health check (a one-shot such as
@@ -362,14 +365,22 @@ a `MANIFEST.txt` that records the restore order. Every Postgres tool runs inside
 `db` container, so the machine needs no Postgres client. Backups are written 0600 and never
 overwrite an existing file.
 
-**Restore.** `restore <file>` recognizes a dump or a full backup by its first bytes. It refuses
+**Restore.** Restore only a backup you trust, such as one your own stack wrote: its SQL runs as
+the database superuser (`psql` for the roles, extensions and settings, `pg_restore` for the dump),
+so a crafted backup can run shell commands inside the `db` container (`\!`, `COPY … TO PROGRAM`)
+and change any role or setting. The checks below protect the machine running `restore`, not the
+database. `restore <file>` recognizes a dump or a full backup by its first bytes. It refuses
 a database that already has tables unless you pass `--yes` (a stack that ran its migrations
 already has some). It then stops the app, runs `pg_restore --clean --if-exists` in one
 transaction (the full backup's steps in its manifest's order), and starts the app again. A full
 backup is extracted and checked before anything is touched: an entry with an absolute path or
 `..`, a link that leaves the backup, a hard link or a device is refused, and restore runs only
-the steps it knows, from the files the manifest names. The roles' passwords are not in a backup,
-so the restoring stack keeps the ones in its own `.env`.
+the steps it knows, from the files the manifest names. Its extraction is capped at the free space
+of the disk it is extracted to (the system temp directory; set `TMPDIR` to use another), less a
+margin of a tenth of it and at least 1 GiB, so a backup that expands further (a decompression bomb
+included) is refused before it fills the disk. `--max-size <size>` (`20G`, `512M`, a byte count)
+lowers the cap; when the free space can't be measured it is the cap, else 16 GiB. The roles'
+passwords are not in a backup, so the restoring stack keeps the ones in its own `.env`.
 
 ### The dashboard
 

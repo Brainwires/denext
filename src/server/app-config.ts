@@ -17,6 +17,7 @@ import type { HeaderRule, HstsConfig, RedirectRule, RewriteRule } from "./config
 import type { PageCache } from "./cache.ts";
 import type { CspSetting } from "./csp.ts";
 import type { OnRequestError, RequestErrorContext } from "./instrumentation.ts";
+import { reportPermissionRefusal } from "./permission-hint.ts";
 
 /** Per-request telemetry passed to {@link AppConfig.onRequest}. */
 export interface RequestLogInfo {
@@ -420,7 +421,8 @@ export function originOptions(
 /**
  * Invoke the configured `onRequestError` hook defensively: a throw from
  * instrumentation is logged, never propagated (it must not mask the original
- * error or take down the response).
+ * error or take down the response). A permission refusal also prints, once, the
+ * `start` task flag that grants it (./permission-hint.ts).
  */
 export async function reportRequestError(
   config: AppConfig,
@@ -434,6 +436,8 @@ export async function reportRequestError(
     renderType?: RequestErrorContext["renderType"];
   } = {},
 ): Promise<void> {
+  // A permission the `start` task doesn't grant: say once which flag grants it.
+  reportPermissionRefusal(error);
   if (!config.onRequestError) return;
   try {
     // Next passes a plain `{ path, method, headers }` object (not a `Request`), so

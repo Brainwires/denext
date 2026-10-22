@@ -53,6 +53,24 @@ async function totpAt(secret: string, step: number): Promise<string> {
 
 const nowStep = (): number => Math.floor(Date.now() / 30_000);
 
+// Every test runs on a pinned clock, 15 s into one 30 s step: a code computed for a step must
+// verify against the step it was computed from. On the wall clock the step could roll over in
+// between, putting an edge-of-window code (the enrollment's `- 2`, with a ±2 window) outside it.
+const PINNED_MS = Math.floor(Date.now() / 30_000) * 30_000 + 15_000;
+
+/** `Deno.test` with `Date.now` pinned to {@linkcode PINNED_MS} for the test's duration. */
+function test(name: string, fn: () => Promise<void>): void {
+  Deno.test(name, async () => {
+    const realNow = Date.now;
+    Date.now = () => PINNED_MS;
+    try {
+      await fn();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+}
+
 function freshSession(userId: string, email: string): AuthSession {
   const now = Math.floor(Date.now() / 1000);
   return {
@@ -137,7 +155,7 @@ async function population(adapter: AuthAdapter) {
   };
 }
 
-Deno.test("dry run: counts every stale factor (a legacy record included) and writes nothing", async () => {
+test("dry run: counts every stale factor (a legacy record included) and writes nothing", async () => {
   const adapter = inMemoryAuthAdapter();
   const p = await population(adapter);
   const before = await storedSecrets(adapter, p.retired.id);
@@ -155,7 +173,7 @@ Deno.test("dry run: counts every stale factor (a legacy record included) and wri
   assertEquals((await adapter.getMfa!(p.legacy.id))?.secret, p.legacySecret, "record untouched");
 });
 
-Deno.test("a run re-seals every stale factor; afterwards the retired secret can go", async () => {
+test("a run re-seals every stale factor; afterwards the retired secret can go", async () => {
   const adapter = inMemoryAuthAdapter();
   const p = await population(adapter);
   const rotated = configFor(adapter, [KEY_B, KEY_A]);
@@ -198,7 +216,7 @@ Deno.test("a run re-seals every stale factor; afterwards the retired secret can 
   );
 });
 
-Deno.test("idempotent: a second run re-seals nothing and changes no row", async () => {
+test("idempotent: a second run re-seals nothing and changes no row", async () => {
   const adapter = inMemoryAuthAdapter();
   const p = await population(adapter);
   const rotated = configFor(adapter, [KEY_B, KEY_A]);
@@ -210,7 +228,7 @@ Deno.test("idempotent: a second run re-seals nothing and changes no row", async 
   assertEquals(await storedSecrets(adapter, p.retired.id), after, "no fresh nonce, no write");
 });
 
-Deno.test("resumable: a run interrupted mid-way keeps its writes, and the next one finishes", async () => {
+test("resumable: a run interrupted mid-way keeps its writes, and the next one finishes", async () => {
   const inner = inMemoryAuthAdapter();
   const p = await population(inner);
   let writes = 0;
@@ -231,7 +249,7 @@ Deno.test("resumable: a run interrupted mid-way keeps its writes, and the next o
   assert(p.retired.id);
 });
 
-Deno.test("paging: users beyond one page are covered", async () => {
+test("paging: users beyond one page are covered", async () => {
   const adapter = inMemoryAuthAdapter();
   const underA = configFor(adapter, KEY_A);
   for (let i = 0; i < 5; i++) {
@@ -242,7 +260,7 @@ Deno.test("paging: users beyond one page are covered", async () => {
   assertEquals([report.users, report.resealed, report.remaining], [5, 5, 0]);
 });
 
-Deno.test("sqliteAuthAdapter: the re-sealed row is written through updateMfaFactor", async () => {
+test("sqliteAuthAdapter: the re-sealed row is written through updateMfaFactor", async () => {
   const path = `${makeTempDirUntilExit("denext-reseal-")}/auth.db`;
   const adapter = sqliteAuthAdapter({ path });
   try {
@@ -261,7 +279,7 @@ Deno.test("sqliteAuthAdapter: the re-sealed row is written through updateMfaFact
   }
 });
 
-Deno.test("an adapter without listUsers is refused with a clear error", async () => {
+test("an adapter without listUsers is refused with a clear error", async () => {
   const { listUsers: _drop, ...adapter } = inMemoryAuthAdapter();
   await assertRejects(
     () => resealTotpFactors(configFor(adapter as AuthAdapter, [KEY_B, KEY_A])),
@@ -299,7 +317,7 @@ function cliContext(
   } as CommandContext;
 }
 
-Deno.test("denext auth reseal --dry-run prints counts, never a secret", async () => {
+test("denext auth reseal --dry-run prints counts, never a secret", async () => {
   const adapter = inMemoryAuthAdapter();
   const p = await population(adapter);
   const io = ioCapture();
@@ -317,7 +335,7 @@ Deno.test("denext auth reseal --dry-run prints counts, never a secret", async ()
   assertEquals(io.codes, []);
 });
 
-Deno.test("denext auth reseal --json reports the run; a bad action exits 2", async () => {
+test("denext auth reseal --json reports the run; a bad action exits 2", async () => {
   const adapter = inMemoryAuthAdapter();
   await population(adapter);
   const io = ioCapture();

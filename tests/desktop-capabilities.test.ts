@@ -357,13 +357,38 @@ Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missi
       join(withCfg, "denext.config.ts"),
       "export default { desktop: { capabilities: { device: true, shell: true } } };\n",
     );
+    // The stock runtime's flags (the split network grant is its own test).
     assertEquals(
-      await desktopPackageFlags(`file://${join(bare, "scripts", "package-macos.ts")}`, "darwin"),
+      await desktopPackageFlags(
+        `file://${join(bare, "scripts", "package-macos.ts")}`,
+        "darwin",
+        false,
+      ),
       [...DESKTOP_BASELINE_FLAGS],
     );
     assertEquals(
-      await desktopPackageFlags(`file://${join(withCfg, "scripts", "package-macos.ts")}`, "darwin"),
+      await desktopPackageFlags(
+        `file://${join(withCfg, "scripts", "package-macos.ts")}`,
+        "darwin",
+        false,
+      ),
       [...DESKTOP_BASELINE_FLAGS, "--allow-sys=osRelease", "--allow-run=open,osascript"],
+    );
+    // On the pinned runtime (3.0.0-rc.2+) the network grant is split by direction.
+    assertEquals(
+      await desktopPackageFlags(
+        `file://${join(withCfg, "scripts", "package-macos.ts")}`,
+        "darwin",
+        true,
+      ),
+      [
+        "--allow-net-connect=127.0.0.1,localhost",
+        "--allow-net-listen=127.0.0.1,localhost",
+        "--allow-read",
+        "--allow-env",
+        "--allow-sys=osRelease",
+        "--allow-run=open,osascript",
+      ],
     );
   } finally {
     await Deno.remove(bare, { recursive: true });

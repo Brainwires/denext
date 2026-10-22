@@ -246,6 +246,142 @@ Deno.test("s3 storage: content that contradicts its type is deleted at completio
   }
 });
 
+Deno.test("s3 storage: the store refuses a presigned part of any size but the planned one", async () => {
+  const fake = new FakeS3();
+  fake.verify = { region: "us-east-1", credentials: CREDENTIALS };
+  const app = await backendApp({
+    buckets,
+    driver: driver(fake),
+    multipartThreshold: 1024,
+    partSize: 1,
+  });
+  try {
+    const size = 5 * 1024 * 1024 + 300; // two parts: the 5 MiB minimum, then 300 bytes
+    const planned = await withFetch(app, fake, () =>
+      fetch(`${ORIGIN}/_denext/storage/sign`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          op: "upload",
+          bucket: "media",
+          key: "parts.bin",
+          contentType: "application/octet-stream",
+          size,
+        }),
+      }));
+    const { multipart } = await planned.json();
+    const [first, last] = multipart.parts;
+    const put = async (url: string, bytes: number) => {
+      const res = await fake.fetch(url, { method: "PUT", body: new Uint8Array(bytes) });
+      await res.body?.cancel();
+      return res.status;
+    };
+    // The last part was planned at 300 bytes: S3 refuses 5 MiB through its URL (the signed
+    // `content-length` no longer matches), so an upload cannot outgrow its plan at the store.
+    assertEquals(await put(last.url, 5 * 1024 * 1024), 403);
+    assertEquals(await put(last.url, 301), 403);
+    assertEquals(await put(first.url, multipart.partSize + 1), 403);
+    assertEquals(await put(first.url, multipart.partSize), 200);
+    assertEquals(await put(last.url, 300), 200);
+
+    // The browser client sends exactly the planned parts: it passes the same check.
+    const file = new Blob([new Uint8Array(size)], { type: "application/octet-stream" });
+    const stored = await withFetch(app, fake, () => uploadFile("media", file, { key: "ok.bin" }));
+    assertEquals(stored.size, size);
+    assertEquals(fake.objects.get("media/ok.bin")?.body.byteLength, size);
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("s3 storage: a never-completed upload is never an object, and a completion sweeps it", async () => {
+  const fake = new FakeS3();
+  fake.verify = { region: "us-east-1", credentials: CREDENTIALS };
+  const small = { mime: ["text/plain"], maxBytes: 8, authorize: () => true };
+  const app = await backendApp({ buckets: { small }, driver: driver(fake) });
+  const staged = () => [...fake.objects.keys()].filter((k) => k.startsWith(".denext-staging/"));
+  try {
+    const bucket = storage.bucket("small", { service: true });
+    // No size declared, so the PUT is not length-pinned: the store takes 64 bytes into the
+    // staging place, past the bucket's 8-byte cap. The client never calls the completion.
+    const left = await bucket.createSignedUploadUrl("never.txt", { contentType: "text/plain" });
+    const put = await fake.fetch(left.url, {
+      method: "PUT",
+      headers: left.headers,
+      body: "x".repeat(64),
+    });
+    assertEquals(put.status, 200);
+    assertEquals(staged().length, 1);
+    // Nothing checked it, so nothing serves, signs, lists or reports it.
+    assertEquals(await bucket.download("never.txt"), null);
+    assertEquals(await bucket.head("never.txt"), null);
+    assertEquals(await bucket.exists("never.txt"), false);
+    assertEquals((await bucket.list()).objects, []);
+    assertEquals(await bucket.createSignedUrls(["never.txt"]), [null]);
+    // A download URL for the key reaches nothing: the bytes are not at the key.
+    const get = await fake.fetch(await bucket.createSignedUrl("never.txt"));
+    assertEquals(get.status, 404);
+    await get.body?.cancel();
+    // Completing it now is refused (over the cap) and drops the staged bytes.
+    const err = await assertRejects(
+      () =>
+        withFetch(app, fake, async () => {
+          const res = await fetch(`${ORIGIN}/_denext/storage/sign`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ op: "complete", token: left.token }),
+          });
+          if (!res.ok) throw new Error((await res.json()).error.code);
+        }),
+      Error,
+    );
+    assertEquals(err.message, "too_large");
+    assertEquals(staged(), []);
+
+    // Abandoned: a second upload is signed and sent, the first's window then passes, and the
+    // second's COMPLETION (no new upload was signed) frees what the first left behind.
+    const abandoned = await bucket.createSignedUploadUrl("gone.txt", { contentType: "text/plain" });
+    await (await fake.fetch(abandoned.url, {
+      method: "PUT",
+      headers: abandoned.headers,
+      body: "left",
+    })).body?.cancel();
+    const [leftKey] = staged();
+    const next = await bucket.createSignedUploadUrl("ok.txt", {
+      contentType: "text/plain",
+      size: 2,
+    });
+    await (await fake.fetch(next.url, { method: "PUT", headers: next.headers, body: "ok" })).body
+      ?.cancel();
+    const rt = runtime();
+    const id = signedUploadId(leftKey.split("/").at(-1)!);
+    const row = (await rt.meta.getResumable(id))!;
+    await rt.meta.deleteResumable(id); // past its completion window
+    await rt.meta.createResumable({ ...row, expires_at: Date.now() - 1 });
+    const done = await withFetch(app, fake, () =>
+      fetch(`${ORIGIN}/_denext/storage/sign`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ op: "complete", token: next.token }),
+      }));
+    assertEquals(done.status, 200, await done.clone().text());
+    await done.body?.cancel();
+    for (
+      let i = 0;
+      i < 200 && (fake.objects.has(leftKey) || await rt.meta.getResumable(id) !== null);
+      i++
+    ) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assertEquals(fake.objects.has(leftKey), false, "the completion swept the abandoned upload");
+    assertEquals(await rt.meta.getResumable(id), null);
+    assertEquals(await bucket.exists("gone.txt"), false);
+    assertEquals(new TextDecoder().decode(fake.objects.get("small/ok.txt")?.body), "ok");
+  } finally {
+    await app.close();
+  }
+});
+
 Deno.test("s3 storage: large files go multipart from the client (parts, ETags, abort on failure)", async () => {
   const fake = new FakeS3();
   const app = await backendApp({
@@ -574,6 +710,57 @@ Deno.test("s3: publicEndpoint signs browser URLs for the public host; server cal
   }
 });
 
+Deno.test("s3: a driver without uploadPart sends TUS parts to length-pinned presigned URLs", async () => {
+  const fake = new FakeS3();
+  fake.verify = { region: "us-east-1", credentials: CREDENTIALS };
+  const d = driver(fake);
+  delete d.direct!.uploadPart;
+  const app = await backendApp({
+    driver: d,
+    buckets: { docs: { mime: ["text/plain"], authorize: () => true, maxBytes: 64 << 20 } },
+  });
+  const tus = { "tus-resumable": "1.0.0" };
+  try {
+    const size = 6 * 1024 * 1024 + 10;
+    const created = await app.call("/storage/v1/upload/resumable", {
+      method: "POST",
+      headers: {
+        ...tus,
+        "upload-length": String(size),
+        "upload-metadata": `bucketName ${btoa("docs")},objectName ${btoa("p.txt")},contentType ${
+          btoa("text/plain")
+        }`,
+      },
+    });
+    assertEquals(created.status, 201, await created.clone().text());
+    await created.body?.cancel();
+    // The server PUTs each part itself, through the global fetch: route the store to the fake.
+    const res = await withFetch(app, fake, () =>
+      app.call(created.headers.get("location")!, {
+        method: "PATCH",
+        headers: {
+          ...tus,
+          "upload-offset": "0",
+          "content-type": "application/offset+octet-stream",
+        },
+        body: new Uint8Array(size).fill(97),
+      }));
+    assertEquals(res.status, 204, await res.clone().text());
+    await res.body?.cancel();
+    const parts = fake.calls.filter((c) => c.method === "PUT" && c.url.includes("partNumber"));
+    assert(parts.length >= 1);
+    for (const part of parts) {
+      assertStringIncludes(
+        new URL(part.url).searchParams.get("X-Amz-SignedHeaders")!,
+        "content-length",
+      );
+    }
+    assertEquals((await storage.bucket("docs", { service: true }).info("p.txt"))?.size, size);
+  } finally {
+    await app.close();
+  }
+});
+
 Deno.test("s3: TUS uploads become multipart parts, with a tail between short PATCHes", async () => {
   const fake = new FakeS3();
   const app = await backendApp({
@@ -635,6 +822,35 @@ Deno.test("s3: TUS uploads become multipart parts, with a tail between short PAT
     });
     assertEquals(png.status, 415, await png.text());
     assertEquals(await storage.bucket("docs", { service: true }).exists("x.png"), false);
+    // A TUS upload completes on the server, so its checks cannot be skipped: a length over the
+    // bucket's cap is refused at creation, and bytes past the declared length at the PATCH.
+    const over = await app.call(base, {
+      method: "POST",
+      headers: {
+        ...tus,
+        "upload-length": String((64 << 20) + 1),
+        "upload-metadata": meta("over.txt", "text/plain"),
+      },
+    });
+    assertEquals(over.status, 413, await over.text());
+    const short = await app.call(base, {
+      method: "POST",
+      headers: { ...tus, "upload-length": "4", "upload-metadata": meta("lie.txt", "text/plain") },
+    });
+    assertEquals(short.status, 201, await short.clone().text());
+    await short.body?.cancel();
+    const lie = await app.call(short.headers.get("location")!, {
+      method: "PATCH",
+      headers: {
+        ...tus,
+        "upload-offset": "0",
+        "content-type": "application/offset+octet-stream",
+      },
+      body: "more than four",
+    });
+    assert(lie.status >= 400, `a PATCH past the length is refused (${lie.status})`);
+    await lie.body?.cancel();
+    assertEquals(await storage.bucket("docs", { service: true }).exists("lie.txt"), false);
   } finally {
     await app.close();
   }

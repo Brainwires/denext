@@ -46,7 +46,7 @@ import {
   type MvuHost,
   resolveMsg,
 } from "../runtime/mvu.ts";
-import { prepareWire } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import { tapChannelAuthorized } from "./channel-subscriber.ts";
 import { inRootContext } from "./root-context.ts";
 import { type LiveViewStore, openViewSnapshot, sealViewSnapshot } from "./live-view-store.ts";

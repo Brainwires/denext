@@ -5,7 +5,7 @@ import type { DenextConfig } from "../config.ts";
 import { VERB_NAME } from "../../cli/command.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../../cli/deno-verbs.ts";
 import { validateRemovedExperimental } from "./keys.ts";
-import { type Fail, isPlainObject } from "./shared.ts";
+import { type Fail, isPlainObject, validatePermissionLists } from "./shared.ts";
 
 /** `tailwind.input`/`output` are required non-empty path strings. */
 function validateTailwind(tailwind: unknown, fail: Fail): void {
@@ -132,7 +132,7 @@ export function validateNestedRequired(config: DenextConfig, fail: Fail): void {
 }
 
 /** The permission kinds `compile.permissions` takes. */
-const COMPILE_PERMISSION_KINDS = ["write", "run", "ffi", "sys"];
+const COMPILE_PERMISSION_KINDS = ["write", "run", "ffi", "sys", "netConnect", "netListen"];
 
 /** Whether `p` is a project-relative path: not absolute, no `..` segment. */
 function insideProject(p: string): boolean {
@@ -163,14 +163,13 @@ function validateCompilePermissions(permissions: unknown, fail: Fail): void {
   if (typeof permissions !== "object" || permissions === null || Array.isArray(permissions)) {
     return fail("compile.permissions", 'must be "all" or an object of permission kinds');
   }
-  for (const [k, v] of Object.entries(permissions as Record<string, unknown>)) {
-    if (!COMPILE_PERMISSION_KINDS.includes(k) || !isPermissionList(v)) {
-      fail(
-        `compile.permissions.${k}`,
-        `must be an array of strings (kinds: ${COMPILE_PERMISSION_KINDS.join(", ")})`,
-      );
-    }
-  }
+  validatePermissionLists(
+    "compile.permissions",
+    permissions as Record<string, unknown>,
+    COMPILE_PERMISSION_KINDS,
+    isPermissionList,
+    fail,
+  );
 }
 
 /** `compile.sign`'s keys, each with its check and the message for a bad value. */

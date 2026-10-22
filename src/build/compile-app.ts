@@ -20,8 +20,11 @@
 // The compile still resolves the CSS import map, so the original modules' graph resolves.
 //
 // Never embedded, wherever they are (`compile.include` too): `.env*` files, SQLite databases,
-// database dumps and the backend's dev key file (the binary reads its environment and writes its
-// state in the working directory at run time). The `--allow-*` baked in are the Docker image's
+// database dumps, `.npmrc` files and the backend's dev key file (the binary reads its environment
+// and writes its state in the working directory at run time).
+//
+// The compile resolves the app's dependencies as its lockfile locks them, under its
+// dependency-age rule (./compile-lock.ts). The `--allow-*` baked in are the Docker image's
 // least-privilege set plus `compile.permissions` ({@linkcode compileBuildFlags}); `--allow-all`
 // only when the app opts in.
 
@@ -40,12 +43,19 @@ import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
+import { NET_SPLIT_RELEASE, netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
 import {
   type CompileSignDeps,
   type CompileSignResult,
   signCompiledBinary,
 } from "./compile-sign.ts";
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
+import {
+  carryNpmrc,
+  type CompileLock,
+  seedCompileLock,
+  settleCompileLock,
+} from "./compile-lock.ts";
 import {
   denortTargetKey,
   type DenoToolchainPin,
@@ -78,6 +88,8 @@ export interface CompileAppOptions {
   sign?: boolean;
   /** Seams for the signing step (tests). */
   signDeps?: CompileSignDeps;
+  /** Where a warning goes (default: stderr). */
+  warn?: (message: string) => void;
 }
 
 /** What {@linkcode compileApp} produced. */
@@ -147,6 +159,7 @@ const BUILD_OUTPUTS: ReadonlySet<string> = new Set([
   "emitted",
   "pages-client",
   "pages-static",
+  "pages-compat",
   // Generated modules an app imports (`import "../.denext/content.ts"`, the Lustre kits).
   "api.ts",
   "routes.ts",
@@ -209,13 +222,14 @@ const BUILD_DIR_EXCLUDES = [
 /**
  * A file that must never be embedded: an env file (secrets), a SQLite database or its journal
  * (data, and it may hold sessions), a database dump (`denext stack backup`'s `.dump` and full
- * `.tar.gz` backups), the backend's dev key file (its secret and signing keys), or a lock.
+ * `.tar.gz` backups), the backend's dev key file (its secret and signing keys), an `.npmrc` (it
+ * may hold registry tokens), or a lock.
  */
 export function neverEmbedded(name: string): boolean {
   return /^\.env(\..+)?$/.test(name) ||
     /\.(db|sqlite|sqlite3)(-wal|-shm|-journal)?$/i.test(name) ||
     /\.dump$/i.test(name) || /^stack-.*\.tar\.gz$/i.test(name) ||
-    name === "backend-keys.json" ||
+    name === "backend-keys.json" || name === ".npmrc" ||
     name.startsWith(".denext-lock");
 }
 
@@ -247,10 +261,20 @@ async function buildDirEntries(
  * the working directory at run time) with `compile.permissions` unioned in per kind, or
  * `--allow-all` when the app opts in with `permissions: "all"`.
  *
+ * The network grant: with `netSplit` (the binary runs on denext's Deno from 3.0.0-rc.2, which
+ * splits `--allow-net` by direction) and `compile.permissions.netConnect` / `netListen` set, the
+ * directional pair (`--allow-net-connect[=<hosts>]`, `--allow-net-listen[=<addrs>]`, an unset
+ * direction unscoped); otherwise the unscoped `--allow-net` (the port is the binary's `--port` /
+ * `$PORT`, chosen at run time, so nothing narrower is baked unasked).
+ *
  * @param compile The project's `compile` config.
+ * @param options `netSplit`: the runtime has the direction-split network flags.
  * @returns The flags, ready for `deno compile`.
  */
-export function compileBuildFlags(compile: CompileConfig | undefined): string[] {
+export function compileBuildFlags(
+  compile: CompileConfig | undefined,
+  options: { readonly netSplit?: boolean } = {},
+): string[] {
   const extra = compile?.permissions;
   if (extra === "all") return ["--allow-all"];
   const flag = (kind: string, values: readonly string[]): string[] => {
@@ -259,7 +283,9 @@ export function compileBuildFlags(compile: CompileConfig | undefined): string[] 
     return set.has("*") ? [`--allow-${kind}`] : [`--allow-${kind}=${[...set].sort().join(",")}`];
   };
   return [
-    "--allow-net",
+    ...(options.netSplit && wantsNetSplit(compile)
+      ? netSplitFlags(extra?.netConnect, extra?.netListen)
+      : ["--allow-net"]),
     "--allow-env",
     "--allow-read",
     ...flag("write", [".denext", ...(extra?.write ?? [])]),
@@ -267,6 +293,45 @@ export function compileBuildFlags(compile: CompileConfig | undefined): string[] 
     ...flag("run", extra?.run ?? []),
     ...flag("ffi", extra?.ffi ?? []),
   ];
+}
+
+/**
+ * Whether `compile.permissions` scopes the network by direction (`netConnect` or `netListen`).
+ *
+ * @param compile The project's `compile` config.
+ * @returns Whether either directional list is set.
+ */
+export function wantsNetSplit(compile: CompileConfig | undefined): boolean {
+  const p = compile?.permissions;
+  return typeof p === "object" && (p.netConnect !== undefined || p.netListen !== undefined);
+}
+
+/**
+ * {@linkcode compileBuildFlags} for a compile onto `ownDenort` (the toolchain's own `denort`, or
+ * `deno compile`'s choice): the split network flags need both the compiling CLI and the binary's
+ * runtime to know them, so only the toolchain compiling onto its own denort, 3.0.0-rc.2 or later,
+ * bakes them. A `netConnect` / `netListen` it cannot bake warns.
+ *
+ * @param compile The project's `compile` config.
+ * @param ownDenort Whether the binary runs on the toolchain's own `denort`.
+ * @param warn Where the warning goes (default: stderr).
+ * @param version The toolchain version this process runs on (default: detected).
+ * @returns The flags.
+ */
+export function compilePermissionFlags(
+  compile: CompileConfig | undefined,
+  ownDenort: boolean,
+  warn: (message: string) => void = (m) => console.error(m),
+  version: string | undefined = toolchainVersion(),
+): string[] {
+  const netSplit = ownDenort && supportsNetSplit(version);
+  if (!netSplit && wantsNetSplit(compile)) {
+    warn(
+      `  ⚠ compile.permissions.netConnect / netListen need denext's Deno ${NET_SPLIT_RELEASE} or ` +
+        "later (its own denort for this target); baking the unscoped --allow-net instead.",
+    );
+  }
+  return compileBuildFlags(compile, { netSplit });
 }
 
 /** The executable's default name: deno.json's `name` (without its scope), else the dir's. */
@@ -380,10 +445,21 @@ function entrySource(entryUrl: string, projectUrl: string): string {
  * The deno config the compile resolves with: the app's import map (plus the framework's, for a
  * local checkout, and the build's CSS import map, so the original modules' stylesheet imports
  * resolve to their shims), every local target made relative to the written config so the binary
- * resolves it to the embedded copy.
+ * resolves it to the embedded copy; the app's lockfile and `.npmrc` beside it (./compile-lock.ts).
  */
-async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<string> {
+async function writeCompileConfig(
+  paths: ProjectPaths,
+  dir: string,
+  entryUrl: string,
+): Promise<{ file: string; lock: CompileLock }> {
   const appCfg = await readConfig(paths.configPath);
+  const lock = await seedCompileLock(
+    paths.configPath,
+    appCfg.lock,
+    dir,
+    standaloneSpecifier(entryUrl),
+  );
+  await carryNpmrc(paths.projectDir, dir);
   const local = frameworkRootUrl().startsWith("file:");
   const css = await readConfig(join(paths.outDir, "css-config.json"));
   const cssRedirects = Object.fromEntries(
@@ -401,18 +477,69 @@ async function writeCompileConfig(paths: ProjectPaths, dir: string): Promise<str
   const mapped = Object.fromEntries(
     Object.entries(map.imports ?? {}).filter(([key]) => !(key in cssRedirects)),
   );
+  const configUrl = toFileUrl(file).href;
   const config: Record<string, unknown> = {
     compilerOptions,
     ...map,
-    imports: { ...mapped, ...relativeCssRedirects(cssRedirects, toFileUrl(file).href) },
+    imports: {
+      ...mapped,
+      ...relativeCssRedirects(cssRedirects, configUrl),
+      ...relativeCssRedirects(buildOnlyStubs(), configUrl),
+    },
+    ...resolutionSettings(appCfg, lock),
   };
-  const nmd = appCfg.nodeModulesDir;
-  if (nmd && nmd !== "none" && nmd !== false) config.nodeModulesDir = nmd;
-  // The app's dependency-age hold (a scaffold's excludes `jsr:@denext/*`), or the operator's
-  // DENEXT_MIN_DEP_AGE: dropped, `deno compile` refused a just-published @denext/denext for a day.
-  Object.assign(config, minDepAgeConfig(appCfg.minimumDependencyAge));
   await Deno.writeTextFile(file, `${JSON.stringify(config, null, 2)}\n`);
-  return file;
+  return { file, lock };
+}
+
+/**
+ * The compile config's resolution settings from the app's: the lock copied beside it (or none, as
+ * the app has none), a non-`none` `nodeModulesDir`, and the dependency-age hold.
+ */
+function resolutionSettings(
+  appCfg: { nodeModulesDir?: unknown; minimumDependencyAge?: unknown },
+  lock: CompileLock,
+): Record<string, unknown> {
+  const nmd = appCfg.nodeModulesDir;
+  return {
+    lock: lock.path ? "./deno.lock" : false,
+    ...(nmd && nmd !== "none" ? { nodeModulesDir: nmd } : {}),
+    // The app's dependency-age hold (a scaffold's excludes `jsr:@denext/*`), or the operator's
+    // DENEXT_MIN_DEP_AGE: dropped, `deno compile` refused a just-published @denext/denext for a
+    // day.
+    ...minDepAgeConfig(appCfg.minimumDependencyAge),
+  };
+}
+
+/**
+ * The framework's build-only modules a server's graph may still reach, by framework path: the
+ * plugin kit's build-step primitives (the Remix codegen included) and the public build entrypoints (`denext/build/next-compat`,
+ * `denext/bundle`, `denext/build/css`), which a plugin's runtime code imports but only calls from
+ * a build step.
+ */
+export const BUILD_ONLY_MODULES: readonly string[] = [
+  "src/build/plugin-kit-build.ts",
+  "src/build/remix-codegen.ts",
+  "src/build/next-compat-public.ts",
+  "src/build/plugin-bundle.ts",
+  "src/build/plugin-css.ts",
+];
+
+/**
+ * {@linkcode BUILD_ONLY_MODULES}, each mapped to ./build-only-stub.ts (their exports, the build
+ * ones refusing): the binary then embeds none of the build tooling behind them (esbuild, swc,
+ * lightningcss, sass, `@mdx-js/mdx`). Keys and values are the running framework's URLs: a local
+ * checkout's `file:` URLs, or, for the CLI an app pins from JSR (`jsr:@denext/denext@<range>/cli`),
+ * the version's `https://jsr.io/@denext/denext/<version>/…` URLs, which Deno's import map applies
+ * to the package's own relative imports too. An app on another copy of denext keeps the real
+ * modules (a larger binary, nothing broken).
+ *
+ * @param root The framework root URL (default: the running framework's, {@linkcode frameworkRootUrl}).
+ * @returns Module URL → the stub's URL.
+ */
+export function buildOnlyStubs(root: string = frameworkRootUrl()): Record<string, string> {
+  const stub = new URL("src/build/build-only-stub.ts", root).href;
+  return Object.fromEntries(BUILD_ONLY_MODULES.map((m) => [new URL(m, root).href, stub]));
 }
 
 /**
@@ -491,6 +618,35 @@ async function excludedPaths(
   return [...out].sort();
 }
 
+/**
+ * Run `deno compile`, then settle its lockfile against the app's (./compile-lock.ts): a frozen
+ * lock that refuses what the compile resolved leaves no binary behind.
+ */
+async function runDenoCompile(
+  deno: string,
+  args: string[],
+  cwd: string,
+  denort: string | undefined,
+  lock: CompileLock,
+  output: string,
+): Promise<void> {
+  const { code } = await new Deno.Command(deno, {
+    args,
+    cwd,
+    ...(denort ? { env: { DENORT_BIN: denort } } : {}),
+    stdin: "null",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).output();
+  if (code !== 0) throw new Error(`deno compile failed (exit ${code})`);
+  try {
+    await settleCompileLock(lock);
+  } catch (err) {
+    await Deno.remove(output).catch(() => {});
+    throw err;
+  }
+}
+
 /** `--sign` / `compile.sign` over the written binary (./compile-sign.ts). */
 function signOutput(
   output: string,
@@ -550,10 +706,12 @@ export async function compileApp(
   const entry = join(dir, "main.ts");
   const entryUrl = toFileUrl(entry).href;
   await Deno.writeTextFile(entry, entrySource(entryUrl, toFileUrl(paths.projectDir + "/").href));
-  const config = await writeCompileConfig(paths, dir);
+  const { file: config, lock } = await writeCompileConfig(paths, dir, entryUrl);
   const { included, skipped } = await embeddedPaths(paths, compile);
   const excluded = await excludedPaths(paths, included, output);
-  const permissions = compileBuildFlags(compile);
+  // Only for the toolchain compile ({@linkcode onToolchain}): an explicit `deno` keeps its own.
+  const denort = options.deno ? undefined : await denortBinary(options.target);
+  const permissions = compilePermissionFlags(compile, denort !== undefined, options.warn);
   await Deno.mkdir(dirname(output), { recursive: true });
   const deno = options.deno ?? denoExecutable();
   const args = [
@@ -572,17 +730,7 @@ export async function compileApp(
     output,
     entry,
   ];
-  // Only for the toolchain compile ({@linkcode onToolchain}): an explicit `deno` keeps its own.
-  const denort = options.deno ? undefined : await denortBinary(options.target);
-  const { code } = await new Deno.Command(deno, {
-    args,
-    cwd: paths.projectDir,
-    ...(denort ? { env: { DENORT_BIN: denort } } : {}),
-    stdin: "null",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
-  if (code !== 0) throw new Error(`deno compile failed (exit ${code})`);
+  await runDenoCompile(deno, args, paths.projectDir, denort, lock, output);
   const signing = await signOutput(output, paths.projectDir, compile, permissions, options);
   return { output, permissions, signing, skipped };
 }

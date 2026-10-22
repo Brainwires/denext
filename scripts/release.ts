@@ -27,7 +27,7 @@
 //       denext X.Y.Z pins exactly @denext/docs-corpus X.Y.Z, never another version
 //   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
 //   3c. deno task badge:fallow — refresh the fallow health-score badge
-//   4. deno cache mod.ts   — refresh deno.lock
+//   4. deno cache mod.ts   — refresh deno.lock; sync:example-locks — the examples' links
 //   5. the gate (ABORTS the release if it fails): step 0 already proved CI's `check` job (fmt +
 //      lint + the full suite) green on HEAD, so only the release's own changes are re-checked —
 //      fmt, lint and RELEASE_DELTA_TESTS. publish.yml runs the same delta gate on the tagged
@@ -682,14 +682,26 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   if (await run("deno", "task", "badge:fallow") !== 0) {
     die("badge:fallow failed — release aborted (changes left in tree).");
   }
-  console.log("\n4. Refreshing deno.lock (deno cache mod.ts)…");
-  await run("deno", "cache", "mod.ts");
+  await refreshLocks();
   await runReleaseGate(fullGate);
   // What the publish job will do after the tag — fail HERE instead (rc.6's slow-type incident).
   console.log("\n6. Doc lint + publish dry-run…");
   if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
   if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
     die("publish dry-run failed — release aborted BEFORE tagging.");
+  }
+}
+
+/**
+ * Step 4: refresh deno.lock, then the examples' locks, which link every workspace member at its
+ * version — derived from the refreshed root lock, so building an example after the release
+ * rewrites nothing.
+ */
+async function refreshLocks(): Promise<void> {
+  console.log("\n4. Refreshing deno.lock (deno cache mod.ts) and the example locks' links…");
+  await run("deno", "cache", "mod.ts");
+  if (await run("deno", "task", "sync:example-locks") !== 0) {
+    die("sync:example-locks failed — release aborted (changes left in tree).");
   }
 }
 

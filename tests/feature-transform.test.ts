@@ -9,7 +9,11 @@ import { clientTransforms } from "../src/build/build-pipeline/transforms.ts";
 import { computeBoundaryRoutes, resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
-import { bundleSourceFiles } from "../src/build/bundle.ts";
+import {
+  __setBundleDefineForTests,
+  bundleSourceFiles,
+  bundleSupportsDefine,
+} from "../src/build/bundle.ts";
 import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
 import { staticExport } from "../src/build/export.ts";
@@ -84,8 +88,9 @@ Deno.test("a module without the import is returned verbatim", async () => {
 
 // End-to-end: the native path (compileFeatureModules → import-map redirect → `deno bundle`).
 // An OFF flag must remove the gated branch AND the module it alone imports; an ON flag keeps it.
-// Shells out to `deno bundle`, so give it room.
-async function bundleWithFold(flag: boolean): Promise<string> {
+// Shells out to `deno bundle`, so give it room. `define`: the `deno bundle --define` path (the
+// toolchain) or the seeded fallback (stock Deno).
+async function bundleWithFold(flag: boolean, define: boolean): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_feature_" });
   const root = new URL("../", import.meta.url).href; // repo root
   const modPath = join(dir, "mod.ts");
@@ -113,9 +118,14 @@ async function bundleWithFold(flag: boolean): Promise<string> {
     // not dead-code removal of an uncalled export, decides whether the gated branch survives.
     const entry =
       `import { run } from "${modUrl}";\n(globalThis as Record<string, unknown>).run = run;\n`;
-    const out = await bundleSourceFiles(entry, { configPath: join(dir, "deno.json") });
+    __setBundleDefineForTests(define);
+    const out = await bundleSourceFiles(entry, {
+      configPath: join(dir, "deno.json"),
+      features: { FLAG: flag },
+    });
     return [...out.files.values()].join("\n");
   } finally {
+    __setBundleDefineForTests(undefined);
     await Deno.remove(dir, { recursive: true });
   }
 }
@@ -263,15 +273,22 @@ for (const spaIslands of [false, true]) {
   });
 }
 
-Deno.test("e2e: an OFF flag DCEs the gated branch + its import from deno bundle", async () => {
-  const all = await bundleWithFold(false);
-  assert(!all.includes("GATED_MARKER_TOKEN"), "gated code must be eliminated when the flag is off");
-});
+// Both native paths: `deno bundle --define` when this Deno has it, and the seeded fallback.
+for (const define of await bundleSupportsDefine() ? [false, true] : [false]) {
+  const path = define ? "--define" : "seeded fallback";
+  Deno.test(`e2e (${path}): an OFF flag DCEs the gated branch + its import from deno bundle`, async () => {
+    const all = await bundleWithFold(false, define);
+    assert(
+      !all.includes("GATED_MARKER_TOKEN"),
+      "gated code must be eliminated when the flag is off",
+    );
+  });
 
-Deno.test("e2e: an ON flag keeps the gated branch in deno bundle", async () => {
-  const all = await bundleWithFold(true);
-  assertStringIncludes(all, "GATED_MARKER_TOKEN");
-});
+  Deno.test(`e2e (${path}): an ON flag keeps the gated branch in deno bundle`, async () => {
+    const all = await bundleWithFold(true, define);
+    assertStringIncludes(all, "GATED_MARKER_TOKEN");
+  });
+}
 
 // The SPA compat (esbuild) production build folds `feature()` in the app's plain `.ts` / `.mts` /
 // `.js` / `.mjs` modules too, not only its `.tsx` / `.jsx` components: an OFF flag's branch (and

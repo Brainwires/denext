@@ -1,0 +1,126 @@
+// The browser half of a Server Action call: encode the arguments, POST them to the action
+// endpoint, and handle the reply (a redirect, an error, a refresh, a codec-encoded result).
+//
+// On demand only: the generic stub (src/runtime/action-stub.ts) imports it when a page creates
+// its first action reference, and a Flight page's action call (action-call.ts) through the
+// entry's loader, so a page with no Server Action never loads it. It imports nothing: the bundler
+// places code by FILE, so an on-demand chunk that used a module the startup graph reaches would
+// pull that module's code into the startup chunks (or split them). What it needs — the refresh
+// handler, the wire decoder and encoder — its caller hands it with each call.
+
+/** The wire encoder's pre-stringify half (wire-encode.ts's `prepareWire`). */
+type Prepare = (value: unknown) => { value: unknown; tagged: boolean };
+
+/** The reserved URL prefix actions are dispatched under (server-action.ts's `ACTION_PREFIX`). */
+const ACTION_PREFIX = "/_denext/action/";
+
+/** The `enc` envelope value of a codec-encoded field (wire-codec.ts's `WIRE_ENC`). */
+const WIRE_ENC = 1;
+
+/** Reserved FormData field carrying non-FormData args (server-action.ts's decoder reads it). */
+const META_FIELD = "__denext_meta";
+
+/** The JSON an action endpoint replies with. */
+interface ActionReply {
+  result?: unknown;
+  enc?: number;
+  redirect?: string;
+  replace?: boolean;
+  error?: string;
+  refresh?: true;
+  updatedTags?: string[];
+}
+
+/**
+ * Call the Server Action `id` with `args` from the browser.
+ *
+ * @param id The action id.
+ * @param args The call's arguments (a `FormData` among them rides as multipart).
+ * @param refresh Re-renders the current route; run when the action revalidated or refreshed.
+ * @param decode The wire decoder, for a result the server flagged `enc`.
+ * @param prepare The wire encoder, for the arguments.
+ * @returns The action's result (`undefined` after a redirect).
+ * @throws When the endpoint answers with an error.
+ */
+export async function dispatchAction(
+  id: string,
+  args: unknown[],
+  refresh: (() => void) | null,
+  decode: (value: unknown) => unknown,
+  prepare: Prepare,
+): Promise<unknown> {
+  const { body, headers } = encodeActionArgs(args, prepare);
+  headers["x-denext-action"] = "1";
+  const res = await fetch(ACTION_PREFIX + encodeURIComponent(id), {
+    method: "POST",
+    headers,
+    body,
+    // Never attach credentials cross-origin; same-origin cookies still flow.
+    credentials: "same-origin",
+  });
+  const data = (await res.json().catch(() => ({}))) as ActionReply;
+  if (data.redirect) {
+    // A `replace`-type redirect swaps the current history entry (no back-stack entry);
+    // otherwise push a new one. Both are full navigations from a Server Action.
+    if (typeof location !== "undefined") {
+      if (data.replace) location.replace(data.redirect);
+      else location.href = data.redirect;
+    }
+    return undefined;
+  }
+  if (!res.ok || data.error) {
+    throw new Error(data.error ?? `server action failed (${res.status})`);
+  }
+  // Read-your-writes: if the action revalidated tags or asked for a refresh,
+  // re-render the current route so the client reflects the new server state.
+  if ((data.refresh || (data.updatedTags && data.updatedTags.length > 0)) && refresh) {
+    refresh();
+  }
+  // A result the server flagged `enc` carries wire-codec tags (Date/Map/Set/BigInt/…).
+  return data.enc === WIRE_ENC ? decode(data.result) : data.result;
+}
+
+/**
+ * Encode action arguments for transport. When one argument is a `FormData`, the
+ * request is multipart (the form fields ride along) and the other arguments are
+ * JSON-encoded in a reserved meta field; otherwise the arguments are sent as
+ * JSON. The server's `decodeActionArgs` (src/runtime/server-action.ts) mirrors it.
+ *
+ * @param args The call's arguments.
+ * @param prepare The wire encoder (wire-encode.ts's `prepareWire`).
+ * @returns The request body and its headers.
+ */
+export function encodeActionArgs(
+  args: unknown[],
+  prepare: Prepare,
+): { body: BodyInit; headers: Record<string, string> } {
+  const hasFormData = typeof FormData !== "undefined";
+  let fdIndex = -1;
+  if (hasFormData) {
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] instanceof FormData) {
+        fdIndex = i;
+        break;
+      }
+    }
+  }
+  if (fdIndex === -1) {
+    return {
+      body: JSON.stringify(wireEnvelope("args", args, prepare)),
+      headers: { "content-type": "application/json" },
+    };
+  }
+  const fd = args[fdIndex] as FormData;
+  const others = args.map((a, i) => (i === fdIndex ? null : a));
+  fd.append(META_FIELD, JSON.stringify({ fdIndex, ...wireEnvelope("others", others, prepare) }));
+  return { body: fd, headers: {} };
+}
+
+/**
+ * `{ [field]: value }` through the wire codec, plus `enc: 1` only when a tag was needed — so
+ * a plain-JSON argument list is byte-identical to before and the decoder skips the walk.
+ */
+function wireEnvelope(field: string, value: unknown, prepare: Prepare): Record<string, unknown> {
+  const p = prepare(value);
+  return p.tagged ? { [field]: p.value, enc: WIRE_ENC } : { [field]: p.value };
+}

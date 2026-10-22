@@ -14,14 +14,8 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
-import {
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useReducer,
-  useRef,
-  useState,
-} from "../runtime/hooks.ts";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useReducer } from "../runtime/hooks/use-reducer.ts";
 import { Activity } from "../runtime/react-extras.ts";
 import { type BackProgressEvent, onBackProgress, useBackHandler } from "../mobile/back-handler.ts";
 import { nativePlatform } from "../mobile/bridge.ts";

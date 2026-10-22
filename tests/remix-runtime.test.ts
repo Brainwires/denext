@@ -41,7 +41,7 @@ import {
   unstable_parseMultipartFormData,
 } from "../src/compat/remix/server.ts";
 import { isRedirect } from "../src/runtime/error-boundary.ts";
-import { serverAction } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { registerServerMatch } from "../src/compat/remix/matches-server.ts";
 import {
   FROM_HEADER,

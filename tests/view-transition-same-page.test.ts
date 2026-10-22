@@ -16,13 +16,10 @@ import "./helpers/activity-runtime.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Activity, DNX_VT_ATTR, ViewTransition } from "../src/runtime/react-extras.ts";
 import { Fragment } from "../src/jsx/jsx-runtime.ts";
-import {
-  startTransition,
-  useDeferredValue,
-  useState,
-  useSyncExternalStore,
-  useTransition,
-} from "../src/runtime/hooks.ts";
+import { useState } from "../src/runtime/hooks.ts";
+import { startTransition, useTransition } from "../src/runtime/hooks/transition.ts";
+import { useDeferredValue } from "../src/runtime/hooks/use-deferred-value.ts";
+import { useSyncExternalStore } from "../src/runtime/hooks/use-sync-external-store.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import { addTransitionType } from "../src/client/fiber/view-transition-support.ts";
 import {

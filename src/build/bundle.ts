@@ -8,6 +8,8 @@
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
+import { frameworkFileUrl, frameworkRootUrl } from "./framework-root.ts";
+export { frameworkFileUrl, frameworkRootUrl };
 import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
 import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
@@ -19,6 +21,7 @@ import {
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { holdRequestDeadline } from "../server/request-context.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
 import { findInlineServerActions, inlineServerActionError } from "./inline-server-action.ts";
 import {
@@ -31,23 +34,6 @@ import { carryLinks } from "./config-links.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
 import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
 import { VERSION } from "../version.ts";
-
-/**
- * The framework root as a URL, in whatever scheme the framework itself runs under:
- * `file://…` from a local checkout, `https://jsr.io/@denext/denext/<ver>/` when a consumer
- * runs the CLI straight from JSR (`deno run -A jsr:@denext/denext/cli …`). Always ends with a
- * slash. This is the scheme-agnostic base — prefer it (+ {@link frameworkFileUrl} /
- * {@link readFrameworkText}) over {@link frameworkRoot}, whose filesystem path only exists for
- * a local checkout.
- */
-export function frameworkRootUrl(): string {
-  return new URL("../../", import.meta.url).href;
-}
-
-/** The URL of a file/module under the framework root, in the framework's own scheme. */
-export function frameworkFileUrl(relative: string): string {
-  return new URL(relative, frameworkRootUrl()).href;
-}
 
 /**
  * Read a text file under the framework root: `Deno.readTextFile` for a local checkout,
@@ -215,6 +201,78 @@ async function probeBundleSupport(): Promise<void> {
         `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a newer deno binary.`,
     );
   }
+}
+
+let defineSupport: Promise<boolean> | undefined;
+
+/**
+ * Whether the resolved `deno`'s `deno bundle` takes `--define` (esbuild's `define`: replace a
+ * global identifier with a constant expression). denext's Deno toolchain has it; a stock Deno 2.x
+ * does not, and an upstream release that adds the same flag is picked up for free. A feature
+ * probe, not a version match: it runs `deno bundle --help` once per process (memoized) and looks
+ * for the flag. Never throws: any failure reads `false`, which keeps the seeded fallback
+ * (`DENEXT_DENO=stock`, `DENO_BIN` pointing at an older deno).
+ *
+ * @returns `true` when `deno bundle --define KEY=VALUE` is available.
+ */
+export function bundleSupportsDefine(): Promise<boolean> {
+  return defineSupport ??= probeBundleDefine();
+}
+
+/** {@linkcode bundleSupportsDefine}'s probe: `deno bundle --help` lists `--define`. */
+async function probeBundleDefine(): Promise<boolean> {
+  try {
+    const out = await new Deno.Command(denoExecutable(), {
+      args: ["bundle", "--help"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return out.success && /--define\b/.test(new TextDecoder().decode(out.stdout));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Test seam: force {@linkcode bundleSupportsDefine}'s answer (`undefined` re-probes), so one
+ * process can exercise both the `--define` path and the seeded fallback.
+ *
+ * @param supported The answer to return, or `undefined` to clear the override and re-probe.
+ */
+export function __setBundleDefineForTests(supported: boolean | undefined): void {
+  defineSupport = supported === undefined ? undefined : Promise.resolve(supported);
+}
+
+/**
+ * The `define` that gates the class-component runtime (see src/runtime/class-flag.ts): a
+ * literal `true` / `false` for the bare `__DENEXT_CLASS_COMPONENTS__` reads, so an off build
+ * drops the class runtime and an on build drops the flag's `globalThis` default. Shared by the
+ * compat esbuild bundles and the native `deno bundle --define` path.
+ *
+ * @param classComponents Whether class components are compiled in.
+ * @returns The `define` entry.
+ */
+export function classDefine(classComponents?: boolean): Record<string, string> {
+  return { __DENEXT_CLASS_COMPONENTS__: JSON.stringify(!!classComponents) };
+}
+
+/**
+ * The `--define`s of a native client bundle: the class-component gate (on unless
+ * `classRuntime` is `"off"`) and, when `features` is given, the `denext/feature` flag map
+ * (the value the esbuild paths define, so an un-folded `feature()` call reads the configured
+ * flag). Used only when {@linkcode bundleSupportsDefine}; otherwise the Flight entry seeds the
+ * flags ({@linkcode featureSeedBlock}) and the class gate reads its runtime default (on).
+ *
+ * @param opts The bundle's class-runtime mode and feature flags.
+ * @returns The define map, `name → constant source text`.
+ */
+export function nativeBundleDefines(
+  opts: Pick<BundleOptions, "classRuntime" | "features">,
+): Record<string, string> {
+  return {
+    ...classDefine(opts.classRuntime !== "off"),
+    ...(opts.features ? { __DENEXT_FEATURES__: JSON.stringify(opts.features) } : {}),
+  };
 }
 
 /**
@@ -740,7 +798,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean, usesLiveView = false) {
   const clientImport =
-    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setActionCallLoader, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -873,14 +931,15 @@ function viewTransitionSupportBlock(
 }
 
 /**
- * Seed the `denext/feature` flag map on the CLIENT for the native App Router path. The
- * compat/SPA esbuild paths inline `__DENEXT_FEATURES__` via `define`, but `deno bundle` has
- * no `define`, and the fold only reaches component (`.tsx`/`.jsx`) modules — so a `feature()`
- * call in a plain `.ts` util (or via a namespace import) would otherwise read the empty
- * `globalThis` default and disagree with the (seeded) server render. Seeding here makes the
- * fold a pure DCE optimization: any un-folded call still returns the configured value. Emitted
- * at the top of the entry, before any island module executes. Empty map → nothing emitted (the
- * runtime default `{}` already reads every flag as `false`).
+ * Seed the `denext/feature` flag map on the CLIENT for the native App Router path when the
+ * running `deno bundle` has no `--define` (stock Deno; see {@linkcode bundleSupportsDefine}).
+ * With `--define`, the bundler inlines `__DENEXT_FEATURES__` as the esbuild paths do and this
+ * seed is not emitted. A `feature()` call the fold leaves (a non-literal argument, a namespace
+ * import) would otherwise read the empty `globalThis` default and disagree with the (seeded)
+ * server render. Seeding here makes the fold a pure DCE optimization: any un-folded call still
+ * returns the configured value. Emitted at the top of the entry, before any island module
+ * executes. Empty map → nothing emitted (the runtime default `{}` already reads every flag as
+ * `false`).
  */
 function featureSeedBlock(features: Record<string, boolean>): string {
   if (Object.keys(features).length === 0) return "";
@@ -1033,6 +1092,9 @@ registry.ensure = (flight) => {
   return Promise.all(jobs).then(() => undefined);
 };
 ${enableRefresh}${liveRegister}
+// A Server Action reference in a payload calls through the on-demand action-call chunk (the
+// dispatch and the wire encoder), loaded by the first reference a page revives.
+setActionCallLoader(() => import("denext/action-call"));
 // Register the soft-nav Flight parser so a client navigation to another Flight
 // route reconstructs its tree through this app-wide registry (no bundle re-run) —
 // loading that route's island chunks first.
@@ -1134,10 +1196,11 @@ export interface BundleOptions {
    */
   usesSingletons?: boolean;
   /**
-   * Compile-time feature flags (`features`) to seed on the CLIENT for the native
-   * `deno bundle` path (which has no esbuild `define`). Baked into the flight entry so an
-   * un-folded `feature()` call reads the configured value instead of the empty default. Only
-   * the native flight bundler passes this; compat/SPA seed via `define` instead. Defaults `{}`.
+   * Compile-time feature flags (`features`) for the CLIENT on the native `deno bundle` path,
+   * so an un-folded `feature()` call reads the configured value instead of the empty default.
+   * Passed to `deno bundle --define __DENEXT_FEATURES__=…` when the running Deno supports it
+   * ({@linkcode bundleSupportsDefine}); otherwise the Flight entry seeds them. Only the native
+   * App Router bundlers pass this; compat and SPA builds handle the flags themselves. Unset: none.
    */
   features?: Record<string, boolean>;
   /**
@@ -1158,10 +1221,12 @@ export { generateServerStub } from "./client-imports.ts";
  * @param opts Bundle config + minify flag.
  * @returns The bundled Flight entry (entry file + any dynamic-import chunks).
  */
-export function bundleFlightEntry(
+export async function bundleFlightEntry(
   boundary: BoundaryManifest,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
+  // With `deno bundle --define` the flags are defined (bundleSourceFiles); seed them only without.
+  const seeded = await bundleSupportsDefine() ? {} : opts.features ?? {};
   return bundleSourceFiles(
     generateFlightEntry(
       boundary,
@@ -1172,7 +1237,7 @@ export function bundleFlightEntry(
       opts.classRuntime ?? "lazy",
       opts.usesActivity ?? false,
       opts.usesViewTransition ?? false,
-      opts.features ?? {},
+      seeded,
       opts.usesSingletons ?? true,
       opts.usesLiveView ?? true,
     ),
@@ -1184,6 +1249,8 @@ export function bundleFlightEntry(
       redirects: opts.redirects,
       rewritten: opts.rewritten,
       server: opts.server ?? boundary.server,
+      classRuntime: opts.classRuntime,
+      features: opts.features,
     },
   );
 }
@@ -1365,6 +1432,11 @@ export async function prepareConfig(
     // Isomorphic `client:*` islands: the route entry's install and the island rewrite's
     // stand-in import it, only for an app that writes a directive.
     "denext/iso-island": frameworkFileUrl("src/iso-island.ts"),
+    // Server Actions in the browser: the generated `"use server"` stubs import `denext/action-stub`
+    // and the Flight entry loads `denext/action-call` on demand, each its own entry so the wire
+    // encoder they carry never sits in a startup chunk of an app that makes no call.
+    "denext/action-stub": frameworkFileUrl("src/action-stub.ts"),
+    "denext/action-call": frameworkFileUrl("src/action-call.ts"),
     // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
     // and the dev inspector from `denext/devtools`; an app's own import map need not
     // (and usually does not) list those subpaths, so resolve them against the framework.
@@ -1535,6 +1607,7 @@ async function runDenoBundle(
   outDir: string,
   minify: boolean | undefined,
   sourcemap: boolean | undefined,
+  define: Record<string, string> = {},
 ): Promise<DenoBundleRun> {
   const args = [
     "bundle",
@@ -1559,6 +1632,8 @@ async function runDenoBundle(
   // the JS) is still produced and read for its `sources`: the exact module list that
   // survived tree-shaking, which the server-only leak check needs.
   args.push(sourcemap ? "--sourcemap=inline" : "--sourcemap=external");
+  // esbuild `define` source text, one flag per entry (no shell: no quoting).
+  for (const [name, value] of Object.entries(define)) args.push("--define", `${name}=${value}`);
   args.push(...entryPaths);
 
   const { code, stderr } = await new Deno.Command(denoExecutable(), {
@@ -1699,16 +1774,11 @@ function entryChunkClosure(entryFile: string, files: Map<string, string>): strin
 }
 
 /**
- * The project directory (the config's), realpath'd so it compares and displays against the
+ * The project directory (the config's), canonical so it compares and displays against the
  * realpath'd source-map paths (macOS `/var` vs `/private/var`, a symlinked checkout).
  */
-async function realProjectDir(configPath: string): Promise<string> {
-  const dir = dirname(configPath);
-  try {
-    return await Deno.realPath(dir);
-  } catch {
-    return dir;
-  }
+function realProjectDir(configPath: string): string {
+  return canonicalPath(dirname(configPath));
 }
 
 /**
@@ -1727,11 +1797,16 @@ interface BundleResolution {
   configPath: string;
 }
 
-/** Each shipped path of a rewritten copy → the app module it stands in for (real paths). */
+/**
+ * Each shipped path of a rewritten copy → the app module it stands in for, both canonical: the
+ * copies live in the bundle's temp dir, which `$TMPDIR` can name through a symlink (macOS
+ * `/var` → `/private/var`), while the source maps' paths are real, so as given a copy never
+ * matched and was neither named as its original nor scanned as an app module.
+ */
 function copyOriginals(client: ClientImports): Map<string, string> {
   const out = new Map<string, string>();
   for (const [copy, original] of Object.entries(client.originals)) {
-    out.set(fromFileUrl(copy), fromFileUrl(original));
+    out.set(canonicalPath(fromFileUrl(copy)), canonicalPath(fromFileUrl(original)));
   }
   return out;
 }
@@ -1822,7 +1897,7 @@ async function assertNoServerOnlyLeaks(
   opts: BundleOptions,
   resolution: BundleResolution,
 ): Promise<void> {
-  const projectDir = await realProjectDir(opts.configPath);
+  const projectDir = realProjectDir(opts.configPath);
   const originals = copyOriginals(resolution.client);
   const shippedBy: Array<{ label: string; entry: string; sources: Set<string> }> = [];
   for (const { source, file, path } of entries) {
@@ -1873,6 +1948,11 @@ async function bundleResolution(tmpDir: string, opts: BundleOptions): Promise<Bu
   return { client, configPath };
 }
 
+/** The `--define`s for a native bundle: {@linkcode nativeBundleDefines}, when Deno takes them. */
+async function bundleDefines(opts: BundleOptions): Promise<Record<string, string>> {
+  return await bundleSupportsDefine() ? nativeBundleDefines(opts) : {};
+}
+
 /**
  * A fresh `deno bundle` workspace (after checking the toolchain supports it): a temp dir with
  * an empty `src/` for the entry sources and the `out/` path the bundle writes to. The caller
@@ -1906,6 +1986,7 @@ export async function bundleSourceFiles(
       outDir,
       opts.minify,
       opts.dev,
+      await bundleDefines(opts),
     );
     const { files } = run;
     const entry = "entry.js";
@@ -1981,6 +2062,7 @@ async function bundleRoutesNow(
       outDir,
       opts.minify,
       opts.dev,
+      await bundleDefines(opts),
     );
     const { files } = run;
 

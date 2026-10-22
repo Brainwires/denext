@@ -1739,6 +1739,23 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>desktopRuntimeDenoFlags</code> builds without <code>--unstable-no-legacy-abort</code>.
       </Callout>
       <Callout kind="note">
+        <strong>The network grant by direction.</strong>{" "}
+        On the pinned runtime (3.0.0-rc.2 and later, built by denext&apos;s toolchain) the packaging
+        scripts and <code>desktop run</code> / <code>dev</code> bake{" "}
+        <code>--allow-net-connect</code> and <code>--allow-net-listen</code> in place of one{" "}
+        <code>--allow-net</code>: the app listens only on loopback (
+        <code>127.0.0.1</code>,{" "}
+        <code>localhost</code>, on the port it picks at launch) and connects to loopback plus the
+        hosts it needs (a non-loopback <code>spa.proxy</code> target, the update hosts,{" "}
+        <code>dev --lan</code>&apos;s dev server). A dependency can no longer open a listener of its
+        own. <code>desktop.extraPermissions.net</code> (and a sidecar&apos;s{" "}
+        <code>permissions.net</code>) still grants both directions; <code>netConnect</code> /{" "}
+        <code>netListen</code> grant one. <code>DENEXT_DESKTOP_RUNTIME=stock</code>, a local{" "}
+        <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build or a stock <code>deno</code> keep the single
+        {" "}
+        <code>--allow-net</code>, with the directional hosts folded into it.
+      </Callout>
+      <Callout kind="note">
         <strong>What is verified.</strong>{" "}
         The bridge is tested end to end against the real runtime (the wire, and a headless Chromium
         page: token, origin, preflight, frames, event replay, fallback), and every capability runs

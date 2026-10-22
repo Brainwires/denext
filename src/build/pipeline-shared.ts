@@ -41,15 +41,6 @@ import { CLIENT_PREFIX } from "./prod-server/assets.ts";
 import type { AssetOptions } from "./next-compat.ts";
 import { reactNativeCompatOptions } from "./react-native-app-router.ts";
 
-/** Whether `path` is an existing directory. */
-export async function dirExists(path: string): Promise<boolean> {
-  try {
-    return (await Deno.stat(path)).isDirectory;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Run plugin setup (route-synthesizer plugins must register before the route scan). A plugin's
  * server render (a Pages Router page prerendered at build) loads the app's modules through the

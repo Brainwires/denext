@@ -422,8 +422,11 @@ builds, then `deno compile`s the app (server modules, `pages/`, `.denext/`, `pub
 `./app job <name>` and `./app db migrate` run jobs and migrations. Stylesheet imports work with no
 import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
-`--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
-`--allow-all`). The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
+`--allow-*` plus `compile.permissions: { write, run, ffi, sys, netConnect, netListen }` (`"all"`
+opts in to `--allow-all`; `netConnect` / `netListen` bake `--allow-net` split by direction,
+`--allow-net-connect` / `--allow-net-listen`, on denext's Deno 3.0.0-rc.2+). Generated deploy files
+(`generate docker`, `genericHost()`) and desktop packaging on the pinned runtime split it too: the
+server listens only on its port or loopback. The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
 `Deno.SQL` works in the binary. `--sign` (or `compile.sign`) code-signs it: macOS with `codesign`
 (Hardened Runtime + V8's `allow-jit` entitlement) as `DENEXT_CODESIGN_IDENTITY`, then `notarytool`
 with `DENEXT_NOTARY_PROFILE` or an API key (`DENEXT_NOTARY_KEY` / `_KEY_ID` / `_ISSUER`); Windows
@@ -466,7 +469,7 @@ WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fall
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
-videos)/`pickDocument`/`scanBarcode` (`null` when cancelled), `setQuickActions`/`useQuickAction`
+videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
 app's own `@sqlite.org/sqlite-wasm` on OPFS on the web; `encryptionKey` / `PRAGMA key` is SQLCipher
 in the shell and refused on the web; syncing it with a server or PowerSync:
@@ -1461,7 +1464,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.
 - `class Snapshot` — A frozen capture of every variable's current value. run re-enters the captured context for the duration of a callback; wrap binds a function to the context that was current when it was wrapped.
-- `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
+- `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. Without the client scheduler it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
 - `type StateUpdater<S> = (value: S | parenthesized) => void` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
 - `interface StreamOptions` — Options for renderToReadableStream.
 - `StrictMode(props: object): VNode` — React.StrictMode — a development aid that double-invokes renders and mount effects beneath it to surface impurities and missing cleanup. A transparent Fragment in production and during server rendering (no markup, no double-invoke).
@@ -1561,7 +1564,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.6.0` — The denext framework version.
+- `VERSION: 4.7.0` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1619,7 +1622,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined` — The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints.
 - `interface ApiDispatchOptions` — Per-dispatch options the pipeline passes to handleApi.
 - `type ApiErr<D> = Err<ApiErrorCodes<D>, ApiErrorInit | undefined>` — A failure a handler may RETURN instead of calling fail(): err(code, init?) from denext/result, with code one of the endpoint's declared errors.
-- `type ApiErrGuard<D, R> = conditional` — unknown when every err(...) a handler returns uses a declared code; otherwise a type the handler can't satisfy, whose one key names the offending code — so return err("typo") is a compile error even on an endpoint without a response schema.
+- `type ApiErrGuard<D, R> = conditional` — unknown when every err(...) a handler returns uses a declared code; otherwise a type the handler can't satisfy, whose one key names the offending code — so return err("typo") is a compile error even on an endpoint without a response schema. A handler whose result is any (an untyped JSON.parse / res.json()) can't be told apart from an err(), so it is accepted rather than reported as an undeclared code.
 - `class ApiError` — A typed API failure: an HTTP status, a machine-readable code, and optional data / fieldErrors / headers. Throw it from a route handler (plain or defineApi) or from defineApi middleware; the dispatch seam turns it into the JSON error envelope and the client rebuilds it as an ApiClientError with the same fields.
 - `interface ApiErrorBody` — The JSON body of a failed API response.
 - `type ApiErrorCodes<D> = conditional` — The error codes an endpoint declares (keyof def.errors).
@@ -2583,7 +2586,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `signInWithPasskey(options?: PasskeySignInOptions): Promise<PasskeySignInResult>` — Sign in with a passkey — or, while the session owes a second factor, complete it with one: {basePath}/passkey/authenticate/options, the browser's get ceremony (the authenticator offers its passkeys for this site), then {basePath}/passkey/authenticate. On success it navigates to callbackUrl unless redirect: false.
 - `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.
-- `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
+- `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. Without the client scheduler it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
 - `type StateUpdater<S> = (value: S | parenthesized) => void` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
 - `Suspense(props: SuspenseProps): VNode` — A Suspense boundary. Renders fallback until its children stop suspending.
 - `SuspenseList(props: SuspenseListProps): VNode` — React.SuspenseList — coordinates the reveal order of sibling <Suspense> boundaries. With revealOrder="forwards" a boundary stays in its fallback until every boundary before it has revealed ("backwards" reverses; "together" holds all until the last resolves). tail="collapsed" shows only the next boundary's fallback, "hidden" shows none.
@@ -2801,7 +2804,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopAppSyncReport` — What syncDesktopAppConfig did.
 - `desktopAppVersion(root: string): Promise<string | undefined>` — The project's app version: deno.json version, else package.json version (undefined: neither). The installers, the executable's version resource and denext desktop publish-update all go by it.
 - `interface DesktopBridge` — The runtime bridge: a request handler for its two paths, and an event emitter.
-- `desktopBuildFlags(config: unknown, os: DesktopOs): string[]` — The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.
+- `interface DesktopBuildFlagOptions` — Options for desktopBuildFlags.
+- `desktopBuildFlags(config: unknown, os: DesktopOs, options?: DesktopBuildFlagOptions): string[]` — The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs. With netSplit (the pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead: --allow-net-connect takes those outbound hosts, loopback and extraPermissions.netConnect, --allow-net-listen only loopback and extraPermissions.netListen (any port: the app's server picks one at launch), and extraPermissions.net / a sidecar's net go to both; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.
 - `interface DesktopBundleOptions` — What buildDesktopBundle builds.
 - `interface DesktopCapability` — A desktop capability: a name (its address on the bridge — an extension's name is its cap name), a set of methods, and the event names it may DesktopCapCtx.emit. Built-ins live in ./caps; user extensions are authored with defineDesktopExtension.
 - `interface DesktopCapabilityMethod<I, O>` — One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process.
@@ -2831,7 +2835,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopPackageArches(arch: string): Array<x86_64 | arm64>` — The bundle arches a Linux / Windows run builds: both for both, the machine's own for host.
 - `interface DesktopPackageArgs` — A package script's parsed command line.
 - `interface DesktopPackageArgSpec` — What parseDesktopPackageArgs accepts.
-- `desktopPackageFlags(entryUrl: string, os: DesktopOs): Promise<string[]>` — The deno desktop --allow-* flags for a scaffolded packaging script: read the project's denext.config.ts (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code).
+- `desktopPackageFlags(entryUrl: string, os: DesktopOs, netSplit?: boolean): Promise<string[]>` — The deno desktop --allow-* flags for a scaffolded packaging script: read the project's denext.config.ts (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code). The network grant is split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or later, read from the deno on PATH the script builds with (desktopNetSplitFor); DENEXT_DESKTOP_RUNTIME=stock, a local runtime build or a stock deno keep --allow-net.
 - `desktopPackageMeta(entryUrl: string, fallbackName: string): Promise<DesktopPackageMeta>` — packageMetaFrom for the project whose scripts/ holds entryUrl.
 - `interface DesktopPackageMeta` — What every installer says about the app.
 - `interface DesktopPageGlobals` — What the injected globalThis.__denext carries besides the desktop marker and the token (see injectDesktopGlobal).
@@ -3130,6 +3134,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `completeAuthSession(): boolean` — Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page.
 - `completeFlexibleUpdate(): Promise<void>` — Android: install a downloaded flexible update, restarting the app. A no-op elsewhere.
 - `configurePurchases(config: PurchasesConfig): Promise<void>` — Configure RevenueCat once, early (a root layout's effect), before any other purchases call.
+- `interface ContactPickerError` — The Error a pickContact promise rejects with for the code above.
+- `type ContactPickerErrorCode = unsupported` — The code on a pickContact rejection: unsupported (no picker here: no plugin in the shell, and no Contact Picker API in the browser).
+- `contactPickerSupported(): boolean` — Whether pickContact has a picker here: the contacts plugin in the shell, or the browser's Contact Picker API.
 - `interface ContextMenuElement` — The slice of an element a bound menu uses (real DOM and the test DOM both satisfy it).
 - `interface ContextMenuItem` — One entry in a showContextMenu menu.
 - `type ContextMenuItems = typeOperator | parenthesized` — The items of a bound menu, or a function that builds them when the menu opens.
@@ -3327,8 +3334,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PermissionHandle` — What usePermission returns.
 - `type PermissionName = camera | photos | microphone | location | location-background | notifications | contacts | calendar | biometrics` — A permission checkPermission knows.
 - `type PermissionState = granted | denied | prompt | prompt-with-rationale | limited | blocked` — A permission's status, the same on every platform:
+- `pickContact(): Promise<PickedContact | null>` — Let the user pick one contact with the system picker. It needs no contacts permission: the user hands over just the contact they choose.
 - `pickDocument(options?: PickDocumentOptions): Promise<PickedDocument | null>` — Pick a document (any file, or the types given) with the system document picker.
 - `interface PickDocumentOptions` — Options for pickDocument.
+- `interface PickedContact` — A contact from pickContact.
 - `interface PickedDirectory` — A picked file or folder as a FileDirectory: { picked: handle }. For a picked folder the path is relative to it ("" for the folder itself); for a picked file the path is "". Supported in a Deno Desktop window (the fs capability) and in browsers with the File System Access API; inside the iOS/Android shell it rejects with code "unavailable".
 - `interface PickedDocument` — A file from pickDocument.
 - `interface PickedFolder` — A folder pickFolder returned.
@@ -3811,6 +3820,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DeployImages` — The built-in image optimizer.
 - `interface DeployJob` — A job under jobs/.
 - `interface DeployManifest` — The deploy manifest denext build writes to .denext/deploy-manifest.json.
+- `interface DeployNetPermissions` — DeployPermissions.net: the outbound hosts and the listen addresses.
 - `interface DeployPermissions` — The Deno permissions the production server runs with.
 - `interface DeployRoute` — One route of the app, classified for a host.
 - `type DeployRouteKind = static | isr | dynamic | route-handler | middleware` — How a route is served, as a host needs to know it: - "static" — rendered once (at build or on the first request) and the same for everyone: denext export writes it, and a CDN may cache it until the next deploy. - "isr" — cached and re-rendered in the background every DeployRoute.revalidate seconds (export const revalidate = N): needs the server. - "dynamic" — rendered per request (dynamic = "force-dynamic", a request API such as cookies(), or a dynamic segment with no generateStaticParams): needs the server. - "route-handler" — a route.ts (or a metadata route such as sitemap.ts): needs the server. - "middleware" — the root middleware.ts / proxy.ts: runs before every matched request.
@@ -4463,7 +4473,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
 - `type PhoneNumber = object` — A legacy phone number.
-- `presentContactPickerAsync(): Promise<ExistingContact | null>` — Let the user pick a contact with the system picker.
+- `presentContactPickerAsync(): Promise<ExistingContact | null>` — Let the user pick a contact with the system picker. Off the shell, where the browser has the Contact Picker API (Chrome on Android), its picker (pickContact from denext/mobile): the contact then has no id (""), and only its name, emails and phone numbers. Expo's web build has no picker; elsewhere it rejects with ERR_UNAVAILABLE, as Expo's does.
 - `presentFormAsync(contactId?: string | null, contact?: LegacyContact | null, formOptions?: FormOptions): Promise<void>` — Show the system contact form: an existing contact (editable unless allowsEditing is false), or a new one prefilled from contact.
 - `type Relationship = object` — A legacy relationship (not read here).
 - `removeAllContactsChangeListeners(): void` — Remove every listener addContactsChangeListener added.
@@ -4521,7 +4531,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
 - `type PhoneNumber = object` — A legacy phone number.
-- `presentContactPickerAsync(): Promise<ExistingContact | null>` — Let the user pick a contact with the system picker.
+- `presentContactPickerAsync(): Promise<ExistingContact | null>` — Let the user pick a contact with the system picker. Off the shell, where the browser has the Contact Picker API (Chrome on Android), its picker (pickContact from denext/mobile): the contact then has no id (""), and only its name, emails and phone numbers. Expo's web build has no picker; elsewhere it rejects with ERR_UNAVAILABLE, as Expo's does.
 - `presentFormAsync(contactId?: string | null, contact?: LegacyContact | null, formOptions?: FormOptions): Promise<void>` — Show the system contact form: an existing contact (editable unless allowsEditing is false), or a new one prefilled from contact.
 - `type Relationship = object` — A legacy relationship (not read here).
 - `removeContactAsync(contactId: string): Promise<void>` — Delete a contact.

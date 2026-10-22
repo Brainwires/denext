@@ -24,6 +24,7 @@ import {
   type UnbundledState,
   versionOf,
 } from "./state.ts";
+import { canonicalPath } from "../canonical-path.ts";
 import { inNodeModules } from "../path-segments.ts";
 import {
   type ImportAliases,
@@ -118,8 +119,17 @@ export async function firstPartyResolver(
   return (spec) => resolveWith(aliases, spec, importerAbs, probe, st.opts.projectDir);
 }
 
-/** The framework checkout's root (a path ending in a separator; a URL when it runs remotely). */
-const FRAMEWORK_ROOT = frameworkRoot();
+/**
+ * The framework checkout's root, canonical and ending in a separator (a URL when it runs
+ * remotely). Canonical so an alias naming the checkout through a symlink still reads as the
+ * framework (see canonical-path.ts).
+ */
+const FRAMEWORK_ROOT = canonicalDirPrefix(frameworkRoot());
+
+/** `dir`'s canonical spelling plus a trailing separator; a URL is returned as it is. */
+function canonicalDirPrefix(dir: string): string {
+  return dir.includes("://") ? dir : canonicalPath(dir) + SEPARATOR;
+}
 
 /** {@link resolveFirstParty} against an already loaded alias table. */
 function resolveWith(
@@ -143,8 +153,9 @@ function resolveWith(
     const exact = aliases.some(([key]) => key === spec);
     const url = resolveImportAlias(spec, aliases) ?? resolveImportAlias(spec + "/", aliases);
     const path = url?.startsWith("file:") ? fromFileUrl(url).replace(/[\\/]$/, "") : null;
-    const inProject = path?.startsWith(resolve(projectDir) + SEPARATOR);
-    if (path && (inProject || (!exact && !path.startsWith(FRAMEWORK_ROOT)))) hit = probe(path);
+    const real = path ? canonicalPath(path) : null;
+    const inProject = real?.startsWith(canonicalDirPrefix(projectDir));
+    if (path && (inProject || (!exact && !real!.startsWith(FRAMEWORK_ROOT)))) hit = probe(path);
   }
   return hit ? norm(hit) : null;
 }

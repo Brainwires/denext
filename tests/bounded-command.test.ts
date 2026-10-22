@@ -1,0 +1,59 @@
+// tests/helpers/bounded-command.ts: a subprocess with a deadline. At the deadline the whole tree
+// is killed, a grandchild holding the inherited pipes included, and the call returns with what
+// the child printed — where `Deno.Command#output()` would wait for those pipes to close.
+
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import { runBounded } from "./helpers/bounded-command.ts";
+import { removeTempDir } from "./helpers/temp.ts";
+
+/**
+ * A script that spawns a grandchild (inheriting stdout) that ticks `beat` forever, says so once
+ * the first tick is on disk, then waits forever itself.
+ */
+function hangingTree(beat: string): string {
+  const grandchild = `while (true) { Deno.writeTextFileSync(${JSON.stringify(beat)}, ` +
+    `String(Date.now())); await new Promise((r) => setTimeout(r, 50)); }`;
+  return `new Deno.Command(Deno.execPath(), { args: ["eval", ${JSON.stringify(grandchild)}], ` +
+    `stdout: "inherit", stderr: "inherit" }).spawn();\n` +
+    `while (true) { try { Deno.statSync(${JSON.stringify(beat)}); break; } catch { ` +
+    `await new Promise((r) => setTimeout(r, 50)); } }\n` +
+    `console.log("phase: waiting on the grandchild");\n` +
+    `await new Promise(() => setInterval(() => {}, 1000));\n`;
+}
+
+/** Long enough for two Deno processes to start on a loaded machine. */
+const DEADLINE_MS = 30_000;
+
+Deno.test("runBounded: a child that finishes in time reports its exit and output", async () => {
+  const r = await runBounded(Deno.execPath(), ["eval", "console.log('hi'); Deno.exit(3)"], {
+    timeoutMs: 60_000,
+  });
+  assertEquals([r.success, r.timedOut], [false, false]);
+  assertStringIncludes(r.output, "hi");
+});
+
+Deno.test("runBounded: at the deadline the whole tree is killed and the output so far returned", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_bounded_" });
+  const beat = join(dir, "beat");
+  const script = join(dir, "tree.ts");
+  await Deno.writeTextFile(script, hangingTree(beat));
+  try {
+    const t0 = Date.now();
+    const r = await runBounded(Deno.execPath(), ["run", "-A", script], { timeoutMs: DEADLINE_MS });
+    assert(r.timedOut, "the deadline passed");
+    assertEquals(r.success, false);
+    assertStringIncludes(r.output, "phase: waiting on the grandchild", "the tree was running");
+    assert(
+      Date.now() - t0 < DEADLINE_MS + 15_000,
+      `returned ${Date.now() - t0} ms after the start`,
+    );
+    // The grandchild is gone: its heartbeat stops.
+    await new Promise((r) => setTimeout(r, 500));
+    const first = await Deno.readTextFile(beat);
+    await new Promise((r) => setTimeout(r, 500));
+    assertEquals(await Deno.readTextFile(beat), first, "the grandchild still runs");
+  } finally {
+    await removeTempDir(dir);
+  }
+});

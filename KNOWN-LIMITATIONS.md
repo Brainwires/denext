@@ -213,13 +213,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   in-memory cache store (the default on Deno Deploy, or `cache: { store: "memory" }`) a ceremony
   must finish on the instance that began it. The counter update is a read-then-write (Auth.js's port has no
   compare-and-swap), and removing a passkey needs a denext-only `deleteAuthenticator` method. The
-  built-in sign-in page lists no passkey button.
+  built-in sign-in page's passkey button signs in only (no registration, as above).
 - **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs
   users, accounts, verification tokens and database sessions. Roles, bans and
   `sessionsValidAfter` need its two optional extension methods (`getUserExtension` /
   `updateUserExtension`, an extension table); without them those fields are dropped with a
   warning and `revokeAllSessions()` can't end its database sessions. Password hashes are not
-  stored through it, and database sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
+  stored through it. Its database sessions slide only with a session cookie that carries the
+  sign-in time (one an earlier denext issued ends at its row's expiry). Its session rows keep no sign-in time,
+  sign-in methods or pending second factor, so `denextAuth` refuses MFA (an adapter with the
+  factor store, or `mfa.required: "always"`) over them at startup; use the JWT strategy or a
+  denext `sessionStore` with MFA. With an adapter, a Credentials `authorize()` must return a user of the
   adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
 - **NextAuth.js v4:** `next-auth/middleware` reads the JWT strategy's token only, as v4 does, so
   with `session: { strategy: "database" }` every gated request is sent to sign in. A Pages API
@@ -254,10 +258,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   are capped per identity and per instance; behind a reverse proxy without
   `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
 - **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
-  TypeScript decides, with no `storage` schema to join against). An S3 upload
-  whose client skips the completion call was checked by nobody: record the keys completion
-  returned, and give the bucket lifecycle rules for unrecorded objects and incomplete multipart
-  uploads. Image transforms take PNG, JPEG, GIF, WebP and AVIF sources up to 25 MiB (an AVIF
+  TypeScript decides, with no `storage` schema to join against). A signed upload without a
+  `size` is not length-pinned at the store (S3 has no length range for a presigned `PUT`), so
+  oversized bytes can reach the staging place until the completion refuses them or the sweep
+  frees them; the sweep runs only when an upload is signed, completed or aborted, so give the S3
+  bucket a lifecycle rule on `.denext-staging/` for an app whose uploads can stop for good. Image
+  transforms take PNG, JPEG, GIF, WebP and AVIF sources up to 25 MiB (an AVIF
   only when it declares its size: a still image, not a bare image sequence), at the configured
   `images` sizes and qualities only.
 

@@ -28,7 +28,8 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
 import { envGet } from "../runtime/env-safe.ts";
-import { decodeWire, prepareWire } from "../runtime/wire-codec.ts";
+import { decodeWire } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import {
   registerServerReference,
   type ServerActionRef,

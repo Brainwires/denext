@@ -492,3 +492,43 @@ Deno.test("deploy runner: adapter resolution and a missing deploy step", async (
     await Deno.remove(paths.projectDir, { recursive: true });
   }
 });
+
+Deno.test("deploy preset generic-host: the toolchain's unit listens only on its port (split --allow-net)", async () => {
+  // Up to 4.6.0 the unit's server ran with the unscoped --allow-net: any dependency could open a
+  // listener. The toolchain (3.0.0-rc.2+) splits the grant by direction.
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0]) => {
+      const { ctx, files } = recordingContext(m, paths.projectDir);
+      await genericHost(options).prepare(ctx);
+      return /^ExecStart=(.*)$/m.exec(files.get("output/shop.service") ?? "")?.[1] ?? "";
+    };
+    const port = await unit(manifest, { name: "shop", domain: "shop.example.com", port: 8080 });
+    assertStringIncludes(port, " --allow-net-connect --allow-net-listen=127.0.0.1:8080 ");
+    assert(!/--allow-net( |=)/.test(port), port);
+    // compile.permissions' directions win (the manifest carries them).
+    const scoped = await unit(
+      {
+        ...manifest,
+        permissions: { ...manifest.permissions, net: { connect: ["db:5432"], listen: [":9000"] } },
+      },
+      { name: "shop", domain: "shop.example.com" },
+    );
+    assertStringIncludes(scoped, " --allow-net-connect=db:5432 --allow-net-listen=:9000 ");
+    // A Deno of the operator's choosing may be stock: the unscoped --allow-net stays.
+    const own = await unit(manifest, {
+      name: "shop",
+      domain: "shop.example.com",
+      deno: "/usr/local/bin/deno",
+    });
+    assertStringIncludes(own, "/usr/local/bin/deno run --allow-net --allow-read ");
+    // So does a manifest from a build before the field, or one under compile.permissions: "all".
+    const old = await unit(
+      { ...manifest, permissions: { ...manifest.permissions, net: null } },
+      { name: "shop", domain: "shop.example.com" },
+    );
+    assertStringIncludes(old, " run --allow-net --allow-read ");
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});

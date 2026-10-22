@@ -51,7 +51,7 @@ import {
 } from "./native.ts";
 import { currentContext, headers } from "../request-context.ts";
 import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
-import type { SessionStore } from "./session-store.ts";
+import { keepsAuthLevel, type SessionStore } from "./session-store.ts";
 import { endUserSessions, readAuthSession, refreshLiveSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
@@ -165,6 +165,7 @@ function validateConfig(config: AuthConfig): void {
         "and backup codes (getMfa, setMfa, consumeBackupCode).",
     );
   }
+  assertMfaStoreKeepsAuthLevel(options);
   if (!config.canonicalOrigin) requireCanonicalOriginInProd();
   if (config.dangerouslyAllowInsecureProviders) {
     console.warn(
@@ -172,6 +173,24 @@ function validateConfig(config: AuthConfig): void {
         "are permitted. Never enable this in production.",
     );
   }
+}
+
+/**
+ * MFA needs a session store that keeps a session's `authTime`, `amr` and `mfaPending`: over one
+ * that drops them (the Auth.js adapter bridge's session rows) a session still owing its second
+ * factor would read back as complete. Refuse the pairing — whenever MFA can run (the adapter
+ * has the factor store, or `mfa.required: "always"`) — instead of signing anyone in past it.
+ */
+function assertMfaStoreKeepsAuthLevel(options: ResolvedAuthOptions): void {
+  const store = options.sessionStore;
+  if (!store || keepsAuthLevel(store)) return;
+  if (!hasMfaAdapter(options) && options.mfa.required !== "always") return;
+  throw new Error(
+    "denextAuth: MFA can't run over the Auth.js adapter's database sessions — its session rows " +
+      "keep no sign-in time, methods or pending second factor, so a half-signed-in session would " +
+      'read back as complete. Use `session.strategy: "jwt"`, or a denext `sessionStore` ' +
+      "(sqliteSessionStore(), postgresSessionStore(), …), with MFA.",
+  );
 }
 
 /** At least one provider, unique ids, and non-empty OAuth credentials. */

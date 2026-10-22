@@ -3,7 +3,7 @@
 // bridge. Security: every state-changing POST needs BOTH the same-origin check and the CSRF
 // token, and a `redirect` callback can't send the browser off-origin.
 
-import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertNotEquals, assertRejects, assertThrows } from "@std/assert";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "../src/compat/next-auth/index.ts";
 import Credentials from "../src/compat/next-auth/providers/credentials.ts";
 import GitHub from "../src/compat/next-auth/providers/github.ts";
@@ -22,7 +22,14 @@ import {
   type AuthJsUserExtension,
   fromAuthJsAdapter,
 } from "../src/compat/next-auth/adapter.ts";
-import { auth as denextAuth, requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
+import {
+  auth as denextAuth,
+  denextAuth as configureAuth,
+  requireAuth,
+  revokeAllSessions,
+} from "../src/server/auth/mod.ts";
+import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { credentials } from "../src/server/auth/providers.ts";
 import type { OAuthProvider } from "../src/server/auth/types.ts";
 import { type CallInit, inRequest, Jar, ORIGIN, request } from "./helpers/next-auth-harness.ts";
 import { isRedirect } from "../src/runtime/error-boundary.ts";
@@ -1086,4 +1093,122 @@ Deno.test("next-auth: with an extension table, revokeAllSessions and a ban end d
   const until = Math.floor(Date.now() / 1000) + 3600;
   adapter.extensions.set("u1", { ...adapter.extensions.get("u1"), bannedUntil: until });
   assertEquals(await readSession(), null, "a ban ends the session");
+});
+
+Deno.test("next-auth adapter bridge: MFA is refused over its database sessions (no authTime / amr / pending state)", () => {
+  // The bridge's session rows hold only the user and the expiry: a session still owing its
+  // second factor would read back as a complete one. Any MFA over them is a config error.
+  const memory = inMemoryAuthAdapter(); // the MFA factor store and backup codes
+  const bridged = fromAuthJsAdapter(memoryAdapter(), {
+    credentialsProviders: new Set(["credentials"]),
+    warn: () => {},
+  });
+  assert(bridged.sessions, "the bridge stores database sessions");
+  const base = {
+    secret: "bridge-mfa-secret-at-least-32-characters!",
+    canonicalOrigin: ORIGIN,
+    providers: [credentials({ authorize: () => null })],
+  };
+  const withMfa = { ...memory, ...bridged };
+  for (
+    const config of [
+      { ...base, adapter: withMfa, session: { strategy: "database" as const } },
+      {
+        ...base,
+        adapter: withMfa,
+        session: { strategy: "database" as const },
+        mfa: { required: "always" as const },
+      },
+      // The bridge's store named explicitly, beside an adapter that has the factor store.
+      { ...base, adapter: memory, sessionStore: bridged.sessions },
+    ]
+  ) {
+    assertThrows(() => configureAuth(config), Error, "Auth.js adapter");
+  }
+});
+
+Deno.test("next-auth: database sessions slide by updateAge, as Auth.js's do, up to an opt-in session.maxLifetime", async () => {
+  const sessions = new Map<string, { sessionToken: string; userId: string; expires: Date }>();
+  const adapter = memoryAdapter(sessions);
+  adapter.createUser({
+    id: "u1",
+    email: "ada@example.com",
+    emailVerified: null,
+    name: "Ada",
+    image: null,
+  });
+  const a = app({
+    adapter,
+    session: { strategy: "database", maxAge: 3600, updateAge: 60, maxLifetime: 7200 },
+  });
+  const realNow = Date.now;
+  const signedIn = realNow();
+  const expiresOf = () => [...sessions.values()][0].expires.getTime();
+  const readSession = async () => await (await a.call("/api/auth/session")).json();
+  try {
+    Date.now = () => signedIn;
+    await signInWithPassword(a);
+    assertEquals(sessions.size, 1);
+    const first = expiresOf();
+    assert(Math.abs(first - (signedIn + 3600_000)) < 1000, "the row lasts maxAge");
+
+    // Younger than updateAge: the row is left alone.
+    Date.now = () => signedIn + 30_000;
+    assertEquals((await readSession())?.user.email, "ada@example.com");
+    assertEquals(expiresOf(), first, "not stale yet");
+
+    // Past updateAge: the row's expiry moves to a full maxAge from now (Auth.js's
+    // `sessionUpdateTime`), keeping the same token.
+    Date.now = () => signedIn + 120_000;
+    const token = [...sessions.keys()][0];
+    assertEquals((await readSession())?.user.email, "ada@example.com");
+    assertEquals([...sessions.keys()], [token], "the same session row");
+    assert(Math.abs(expiresOf() - (signedIn + 120_000 + 3600_000)) < 1000, "slid by a maxAge");
+
+    // Near the ceiling a slide stops at sign-in + maxLifetime, not a full maxAge on.
+    Date.now = () => signedIn + 3_700_000;
+    const near = await readSession();
+    assertEquals(near?.user.email, "ada@example.com");
+    assert(Math.abs(expiresOf() - (signedIn + 7200_000)) < 1000, "capped at maxLifetime");
+    assert(Math.abs(new Date(near.expires).getTime() - (signedIn + 7200_000)) < 1000);
+
+    // Past the ceiling the session is over, however recently it slid.
+    Date.now = () => signedIn + 7201_000;
+    assertEquals(await readSession(), null, "ended at the ceiling");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+Deno.test("next-auth: with Auth.js's defaults an active database session keeps sliding past 30 days (no absolute cap)", async () => {
+  const sessions = new Map<string, { sessionToken: string; userId: string; expires: Date }>();
+  const adapter = memoryAdapter(sessions);
+  adapter.createUser({
+    id: "u1",
+    email: "ada@example.com",
+    emailVerified: null,
+    name: "Ada",
+    image: null,
+  });
+  const a = app({ adapter, session: { strategy: "database" } }); // maxAge 30 days, updateAge 1 day
+  const DAY = 86_400_000;
+  const realNow = Date.now;
+  const signedIn = realNow();
+  const expiresOf = () => [...sessions.values()][0].expires.getTime();
+  const readSession = async () => await (await a.call("/api/auth/session")).json();
+  try {
+    Date.now = () => signedIn;
+    await signInWithPassword(a);
+    // Active every 20 days: each read past updateAge moves the row a full 30 days on.
+    for (const day of [20, 40, 60, 80]) {
+      Date.now = () => signedIn + day * DAY;
+      assertEquals((await readSession())?.user.email, "ada@example.com", `day ${day}`);
+      assert(Math.abs(expiresOf() - (signedIn + (day + 30) * DAY)) < 1000, `slid on day ${day}`);
+    }
+    // Idle past maxAge, it ends, as in Auth.js.
+    Date.now = () => signedIn + 111 * DAY;
+    assertEquals(await readSession(), null, "an idle session expires");
+  } finally {
+    Date.now = realNow;
+  }
 });

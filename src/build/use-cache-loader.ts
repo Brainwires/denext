@@ -24,8 +24,9 @@
 // URL — and its instance — from one generation to the next.
 
 import { djb2 } from "../runtime/djb2.ts";
-import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { extname, fromFileUrl, join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
+import { projectSpelling, toUrl } from "./precompiled-loader.ts";
 import {
   absolutizeSpecifiers,
   applyEdits,
@@ -152,8 +153,13 @@ export class DevCopies {
     }
     while (kept.length > 2) {
       const old = kept.shift()!;
+      const writing = this.#written.get(old);
       this.#written.delete(old);
-      Deno.remove(old).catch(() => {});
+      // After its write settles: a copy dropped while still being written would otherwise be
+      // removed first (nothing there yet) and then written, left on disk for the session.
+      const remove = () => Deno.remove(old).catch(() => {});
+      if (writing) writing.then(remove, remove);
+      else remove();
     }
     return done;
   }
@@ -172,11 +178,6 @@ function contentHash(text: string): string {
   let h = 5381;
   for (let i = text.length - 1; i >= 0; i--) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
   return djb2(text) + "_" + h.toString(36);
-}
-
-/** Normalize a file path or `file:` URL to a `file:` URL string. */
-function toUrl(filePath: string): string {
-  return filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
 }
 
 /** True if `fileUrl` is a `file:` URL located under `rootDir`. */
@@ -562,43 +563,4 @@ export function createUseCacheLoaders(
     }
     return base(eff);
   });
-}
-
-/**
- * A module URL spelled through the project root: a crawl names modules by their real path (a
- * boundary ref under macOS's `/private/var` for a project in `/var`), while redirects and copies
- * are keyed by the root as given.
- */
-function projectSpelling(projectDir: string): (url: string) => string {
-  const root = toFileUrl(resolve(projectDir)).href + "/";
-  let real: string | null = null;
-  try {
-    real = toFileUrl(Deno.realPathSync(projectDir)).href + "/";
-  } catch { /* no project dir on disk: nothing to respell */ }
-  return (url) =>
-    real && real !== root && url.startsWith(real) ? root + url.slice(real.length) : url;
-}
-
-/**
- * A loader over copies {@linkcode compileServerCopies} wrote at build time (`denext start`):
- * each module loads its target's variant, through its copy when it has one, with no walk, no
- * compile and no write.
- *
- * @param base The underlying loader.
- * @param opts The project root, the target's redirects and the copies (file URL → copy URL).
- */
-export function createPrecompiledLoader(
-  base: ModuleLoader,
-  opts: {
-    projectDir: string;
-    redirects: Readonly<Record<string, string>>;
-    copies: Readonly<Record<string, string>>;
-  },
-): ModuleLoader {
-  const canonical = projectSpelling(opts.projectDir);
-  return (filePath: string): Promise<unknown> => {
-    const url = canonical(toUrl(filePath));
-    const target = opts.redirects[url] ?? url;
-    return base(opts.copies[target] ?? target);
-  };
 }

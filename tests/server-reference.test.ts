@@ -40,7 +40,7 @@ Deno.test("generateServerStub emits client dispatch stubs per export", () => {
     stub,
     `export default clientActionStub(${JSON.stringify(actionIdFor("acts", "default"))})`,
   );
-  assertStringIncludes(stub, `from "denext/client-runtime"`);
+  assertStringIncludes(stub, `from "denext/action-stub"`);
 });
 
 // A client component importing a "use server" function bundles with a stub; the

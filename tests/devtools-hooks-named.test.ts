@@ -16,23 +16,22 @@ import {
   useCallback,
   useContext,
   useDebugValue,
-  useDeferredValue,
   useEffect,
-  useEffectEvent,
   useErrorBoundary,
-  useId,
   useImperativeHandle,
-  useInsertionEffect,
   useLayoutEffect,
   useMemo,
-  useMemoCache,
-  useOptimistic,
-  useReducer,
   useRef,
   useState,
-  useSyncExternalStore,
-  useTransition,
 } from "../src/runtime/hooks.ts";
+import { useOptimistic, useTransition } from "../src/runtime/hooks/transition.ts";
+import { useDeferredValue } from "../src/runtime/hooks/use-deferred-value.ts";
+import { useEffectEvent } from "../src/runtime/hooks/use-effect-event.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
+import { useInsertionEffect } from "../src/runtime/hooks/use-insertion-effect.ts";
+import { useMemoCache } from "../src/runtime/hooks/use-memo-cache.ts";
+import { useReducer } from "../src/runtime/hooks/use-reducer.ts";
+import { useSyncExternalStore } from "../src/runtime/hooks/use-sync-external-store.ts";
 import { useActionState, useFormState, useFormStatus } from "../src/runtime/actions.ts";
 import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";

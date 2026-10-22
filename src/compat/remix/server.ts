@@ -24,7 +24,7 @@ import {
   RedirectError,
   RedirectType,
 } from "../../runtime/error-boundary.ts";
-import { serverAction } from "../../runtime/server-action.ts";
+import { serverAction } from "../../runtime/action-stub.ts";
 import { registerServerMatch } from "./matches-server.ts";
 import { serverRenderMatches } from "./matches-bridge.ts";
 import { setDocumentAttrsSink } from "./document.ts";

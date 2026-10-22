@@ -8,13 +8,10 @@ import {
   installLiveHub,
   uninstallLiveHub,
 } from "../src/server/live.ts";
-import {
-  liveReadable,
-  registerServerReference,
-  serverAction,
-} from "../src/runtime/server-action.ts";
+import { liveReadable, registerServerReference } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { revalidateTag } from "../src/server/cache.ts";
-import { prepareWire } from "../src/runtime/wire-codec.ts";
+import { prepareWire } from "../src/runtime/wire-encode.ts";
 import { defineSubscription } from "../src/runtime/define-subscription.ts";
 import { getSubscriptionDef, tagServerExports } from "../src/runtime/server-action.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";

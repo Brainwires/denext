@@ -13,7 +13,8 @@
  * @module
  */
 
-import { useInsertionEffect, useRef } from "../runtime/hooks.ts";
+import { useRef } from "../runtime/hooks.ts";
+import { useInsertionEffect } from "../runtime/hooks/use-insertion-effect.ts";
 
 /** An event the handlers receive (react-native-web's synthetic responder / DOM event). */
 export interface PressEvent {

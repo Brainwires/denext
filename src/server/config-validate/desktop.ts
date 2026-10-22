@@ -12,7 +12,24 @@ import {
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
-import { type Fail, isPlainObject, num, oneOf } from "./shared.ts";
+import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
+
+/** The kinds `desktop.extraPermissions` takes. */
+const EXTRA_PERMISSION_KINDS = [
+  "read",
+  "write",
+  "net",
+  "netConnect",
+  "netListen",
+  "run",
+  "ffi",
+  "env",
+  "sys",
+];
+
+/** Whether `v` is an array of strings. */
+const isStringList = (v: unknown): boolean =>
+  Array.isArray(v) && v.every((s) => typeof s === "string");
 
 /** `desktop.extraPermissions`: an object of permission kinds to string arrays. */
 function validateExtraPermissions(extra: unknown, fail: Fail): void {
@@ -21,15 +38,13 @@ function validateExtraPermissions(extra: unknown, fail: Fail): void {
     fail("desktop.extraPermissions", "must be an object of permission kinds to string arrays");
     return;
   }
-  const KINDS = ["read", "write", "net", "run", "ffi", "env", "sys"];
-  for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
-    if (!(KINDS.includes(k) && Array.isArray(v) && v.every((s) => typeof s === "string"))) {
-      fail(
-        `desktop.extraPermissions.${k}`,
-        "must be an array of strings (kinds: read, write, net, run, ffi, env, sys)",
-      );
-    }
-  }
+  validatePermissionLists(
+    "desktop.extraPermissions",
+    extra as Record<string, unknown>,
+    EXTRA_PERMISSION_KINDS,
+    isStringList,
+    fail,
+  );
 }
 
 /** `desktop.app.origin`: the runtime's origin rules, and the identifier it then requires. */

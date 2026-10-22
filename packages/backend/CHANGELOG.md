@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- **A presigned multipart part signs its exact `content-length`,** so the store refuses a part of
+  any other size, as a single presigned `PUT` with a `size` already did. The expired-upload sweep
+  also runs when an upload is completed or aborted, not only when one is signed, so a
+  never-completed upload's staged bytes are freed once its window has passed.
+
 ## 0.6.0 - 2026-10-16
 
 ### Added

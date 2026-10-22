@@ -79,6 +79,7 @@ import {
   toFileUrl,
 } from "@std/path";
 import {
+  classDefine,
   frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
@@ -99,6 +100,7 @@ import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { inNodeModules } from "./path-segments.ts";
 import { readDirective } from "./directives.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { formatServerModuleLeaks, type ServerModuleLeak } from "./server-module-guard.ts";
 import { staticExportNames } from "./module-graph.ts";
 import { inRootContext } from "../server/root-context.ts";
@@ -407,6 +409,10 @@ function reactNativeRuntimeEntries(u: EntryUrl): Record<string, string> {
     "spa-island": u("src/spa-island.ts"),
     // Isomorphic `client:*` islands (see iso-islands.ts).
     "iso-island": u("src/iso-island.ts"),
+    // Server Actions: the generated `"use server"` stubs' import and the Flight entry's on-demand
+    // call (see bundle.ts).
+    "action-stub": u("src/action-stub.ts"),
+    "action-call": u("src/action-call.ts"),
     // React Native mode's community-package stand-ins (see react-native-aliases.ts).
     ...communityRuntimeEntries(u),
   };
@@ -427,11 +433,6 @@ export interface PrebuildOptions {
    * patched framework sources are what get prebuilt (see {@link patchPlugin}).
    */
   projectDir?: string;
-}
-
-/** The esbuild `define` that gates the class-component runtime (see class-flag.ts). */
-function classDefine(classComponents?: boolean): Record<string, string> {
-  return { __DENEXT_CLASS_COMPONENTS__: JSON.stringify(!!classComponents) };
 }
 
 /**
@@ -926,6 +927,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/spa-island": "spa-island.js",
   // Isomorphic `client:*` islands (see iso-islands.ts).
   "denext/iso-island": "iso-island.js",
+  "denext/action-stub": "action-stub.js",
+  "denext/action-call": "action-call.js",
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };
@@ -2953,7 +2956,11 @@ export function serverStubPlugin(
 ): esbuild.Plugin {
   const byPath = new Map<string, { id: string; exports: readonly string[] }>();
   for (const [id, ref] of servers) {
-    if (ref.url.startsWith("file:")) byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
+    // Keyed canonical: esbuild hands `onLoad` the real path, while a boundary walked from a
+    // symlinked spelling (macOS `/var` → `/private/var`) names the module through the link.
+    if (ref.url.startsWith("file:")) {
+      byPath.set(canonicalPath(fromFileUrl(ref.url)), { id, exports: ref.exports });
+    }
   }
   return {
     name: "denext-server-stub",
@@ -2963,7 +2970,7 @@ export function serverStubPlugin(
       const unknown = new Set<string>();
       build.initialOptions.metafile = true;
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, async (args) => {
-        const s = byPath.get(args.path) ?? byPath.get(await realPathOr(args.path));
+        const s = byPath.get(canonicalPath(args.path));
         if (s) {
           return {
             contents: stubOf(s.id, s.exports),

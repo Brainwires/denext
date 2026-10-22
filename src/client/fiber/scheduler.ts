@@ -5,9 +5,9 @@
 
 import { activeRoots, rootHandleOf } from "./state.ts";
 import { componentDisplayName } from "../../runtime/react-brands.ts";
+import { setTransitionHost } from "../../runtime/hooks.ts";
 import type { RootHandle } from "./state.ts";
 import { devHydrationActive } from "./fiber-utils.ts";
-import { setTransitionScheduler, setTransitionSettledHook } from "../../runtime/hooks.ts";
 import { Variable } from "../../runtime/async-context.ts";
 import { transitionScope } from "../../runtime/async-context-mode.ts";
 import { inEventDispatch } from "../event-priority.ts";
@@ -423,97 +423,26 @@ export function runTransitionDone(): void {
   for (const d of dones) d();
 }
 
-/** True if any root still has transition-lane work pending or in flight. */
-function transitionPending(): boolean {
-  if (transitionScheduled || concurrentHandle !== null) return true;
-  for (const h of activeRoots) {
-    if ((h.pendingLanes & TransitionLane) !== NoLane) return true;
-  }
-  return false;
-}
-
-/**
- * Defer `onComplete` (e.g. useTransition's `setPending(false)`) until the current
- * transition flush lands; if nothing is pending, clear it on a microtask.
- */
-/** Callbacks waiting for the transition currently in flight to settle (useOptimistic). */
-let settledCallbacks: Array<() => void> = [];
-
-/** Run the queued settled-callbacks (after the transition's own completion callback). */
-function runSettled(): void {
-  const cbs = settledCallbacks;
-  settledCallbacks = [];
-  for (const cb of cbs) cb();
-}
-
-setTransitionSettledHook((cb) => {
-  // Inside a transition/action the optimistic value reverts when it settles. Outside one
-  // React warns and the value simply persists until the base state changes — it is NOT
-  // reverted on the next tick (that would make `addOptimistic` outside a transition a no-op).
-  if (transitionDepth > 0 || asyncTransitionDepth > 0) settledCallbacks.push(cb);
-});
-
-function scheduleTransitionComplete(onComplete: () => void): void {
-  if (transitionPending()) {
-    transitionDoneCallbacks.push(onComplete);
-    scheduleTransitionFlush();
-  } else {
-    queueMicrotask(onComplete);
-  }
-}
-
-setTransitionScheduler((cb, onComplete) => {
-  transitionDepth++;
-  let result: unknown;
-  try {
-    // In scoping mode, run the callback inside a fresh transition identity so its
-    // updates — including those after an instrumented `await` — are attributable to
-    // THIS transition (see scheduleUpdate + transitionVar). Off (null), it is just `cb()`.
-    result = transitionVar ? transitionVar.run({}, cb) : cb();
-  } catch (err) {
-    // A synchronous throw in the transition callback must still clear `isPending`
-    // — otherwise the transition wedges "pending" forever. Schedule onComplete
-    // (after any updates already queued before the throw settle), then rethrow so
-    // the error still surfaces, as React does.
-    scheduleTransitionComplete(onComplete);
-    throw err;
-  } finally {
-    transitionDepth--;
-  }
-  // Async transition: the callback returned a thenable. Hold onComplete until the
-  // promise settles AND the resulting transition flush lands. Without scoping, the
-  // in-flight window keeps ALL updates at transition priority across the await(s)
-  // (coarse — see KNOWN-LIMITATIONS); with scoping, priority is governed by identity
-  // (transitionVar, propagated across the user's awaits) and the window here only
-  // tracks the pending async work for the watchdog.
-  if (result != null && typeof (result as { then?: unknown }).then === "function") {
+// The transition engine (`startTransition` / `useTransition` / `useOptimistic`'s settle) lives
+// with those hooks in src/runtime/hooks/transition.ts, so an app that never starts a transition
+// ships none of it. It drives this scheduler through the host below, installed in the leaf slot
+// runtime/hooks.ts keeps: the hooks' module imports nothing of the reconciler, so a lazily loaded
+// chunk that starts a transition reaches no reconciler file (one that did would split the startup
+// chunks along that edge).
+setTransitionHost({
+  begin: () => void transitionDepth++,
+  end: () => void transitionDepth--,
+  scope: () => transitionVar,
+  beginAsync: () => {
     asyncTransitionDepth++;
-    // Dev-only watchdog: an async transition whose promise never settles holds
-    // `isPending` true forever (and, without scoping, keeps entangling updates).
-    // Warn (once per stuck transition) so the footgun is visible in development;
-    // never force-settle — that would mask the real never-resolving await in prod.
-    const disarm = watchdog?.();
-    const settle = () => {
-      asyncTransitionDepth--;
-      disarm?.();
-      scheduleTransitionComplete(() => {
-        onComplete();
-        runSettled();
-      });
-    };
-    (result as Promise<unknown>).then(settle, (err) => {
-      settle();
-      // The async transition has no render boundary to catch a rejection; keep it
-      // visible (unhandled) rather than swallowing it, as React does.
-      throw err;
-    });
-    return;
-  }
-  const complete = () => {
-    onComplete();
-    runSettled();
-  };
-  if (transitionScheduled || concurrentHandle !== null) {
-    transitionDoneCallbacks.push(complete);
-  } else queueMicrotask(complete);
+    // Dev-only watchdog: an async transition whose promise never settles holds `isPending` true
+    // forever (and, without scoping, keeps entangling updates); returns its disarm.
+    return watchdog?.();
+  },
+  endAsync: () => void asyncTransitionDepth--,
+  active: () => transitionDepth > 0 || asyncTransitionDepth > 0,
+  inFlight: () => transitionScheduled || concurrentHandle !== null,
+  pending: () => transitionScheduled || concurrentHandle !== null || anyRootHasLane(TransitionLane),
+  flush: scheduleTransitionFlush,
+  whenFlushed: (cb) => void transitionDoneCallbacks.push(cb),
 });

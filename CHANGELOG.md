@@ -8,6 +8,304 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-10-22
+
+### Added
+
+- **The network grant split by direction where denext bakes least-privilege flags.** denext's
+  Deno from `3.0.0-rc.2` splits `--allow-net` into `--allow-net-connect` (outbound) and
+  `--allow-net-listen` (listeners), so a server can listen only where it serves while connecting
+  where it needs, and a compromised dependency can no longer open a listener of its own. On that
+  runtime:
+  - `denext generate docker` (and the `docker()` / `fly()` deploy adapters) turn the `start`
+    command's `--allow-net` into `--allow-net-connect --allow-net-listen=:<port>,[::]:<port>` (IPv4
+    and IPv6), and the static
+    image's file server gets `--allow-net-listen=0.0.0.0:<port>` with no outbound access;
+  - the `genericHost()` systemd unit runs `--allow-net-listen=127.0.0.1:<port>` on the toolchain it
+    links (a `deno` you name keeps `--allow-net`);
+  - the desktop packaging scripts and `desktop run` / `dev` bake `--allow-net-connect` (loopback,
+    a non-loopback `spa.proxy` target, the update hosts, `dev --lan`'s dev server) and
+    `--allow-net-listen` (loopback only);
+  - `compile.permissions.netConnect` / `netListen` bake the pair into a `build --compile` binary
+    (its port is chosen at run time, so nothing narrower is baked unasked);
+    `desktop.extraPermissions` and a sidecar's `permissions` take `netConnect` / `netListen` too,
+    while `net` keeps granting both directions;
+  - the deploy manifest's `permissions.net` (`DeployNetPermissions`: `{ connect, listen }`) carries
+    the split for third-party adapters, `desktopBuildFlags(config, os, { netSplit })`
+    (`DesktopBuildFlagOptions`) bakes it from a packaging script, and a re-exec child keeps its
+    parent's directional grants.
+    Stock Deno, `DENEXT_DENO=stock`, `DENEXT_DESKTOP_RUNTIME=stock` and older runtimes keep the
+    single `--allow-net` (the two models can't be mixed on one command line).
+- **Auth.js database sessions slide.** Through the next-auth compat's adapter bridge, a database
+  session older than `session.updateAge` (Auth.js's default 24 hours) now has its row's `expires`
+  moved to a full `maxAge` from now on a read that can answer with a cookie, as Auth.js does. The
+  rows keep no sign-in time, so the signed session cookie of a store that keeps none (`{ sid, at }`)
+  carries it. As in Auth.js an active session has no absolute cap, on either strategy (a next-auth
+  JWT session was capped at 30 days from sign-in before); `NextAuthConfig`'s denext-only
+  `session.maxLifetime` opts in to one. A cookie an earlier denext issued never slides.
+- **A passkey button on next-auth's built-in sign-in page.** A WebAuthn provider (`Passkey`) shows
+  as a "Sign in with Passkey" button that runs the passkey sign-in in the page (hidden where the
+  browser has no WebAuthn); the page's own Content-Security-Policy allows that one script by its
+  hash.
+- **`pickContact()` in `denext/mobile`.** One contact from the system picker (`id`, `name`,
+  `emails`, `phoneNumbers`; `null` when cancelled) through the `contacts` capability's plugin, the
+  browser's Contact Picker API on the web where it exists, else a rejection with code
+  `unsupported` (`contactPickerSupported()` tells). react-native-permissions' `openContactPicker()`
+  opens it instead of rejecting, and expo-contacts' `presentContactPickerAsync()` uses the
+  browser's picker off the shell.
+
+### Changed
+
+- **The native App Router build defines its build constants with `deno bundle --define`.** Where
+  the running Deno's `deno bundle` takes `--define` (denext's Deno toolchain from runtime
+  `3.0.0-rc.1`; a probe of `deno bundle --help`, run once per build, so an upstream release with
+  the flag is picked up too), the route and Flight bundles get the class-component gate and the
+  `features` map as defines, as the esbuild paths do, instead of reading runtime globals:
+  - the `features` map reaches an un-folded `feature()` call through the bundler, not a
+    `globalThis.__DENEXT_FEATURES__` seed in the Flight entry, and the route bundles now read it
+    too;
+  - the `__DENEXT_CLASS_COMPONENTS__` guards fold, so every native bundle drops the flag's runtime
+    default, and `classComponents: false` drops the reconciler's class paths as well
+    (`examples/hello`'s shared chunks: 63,378 → 62,954 B; `examples/islands` with
+    `classComponents: false`: 117,575 → 115,501 B in all).
+    A stock Deno (`DENEXT_DENO=stock`, or a `DENO_BIN` without the flag) keeps the seeded entry and
+    the runtime gate, unchanged.
+- **The repository's test suites run on denext's Deno toolchain.** `deno task test` / `test:unit`
+  / `test:integration` (`scripts/test-run.ts`) run every pass on the toolchain whenever it
+  resolves, not only under coverage, and CI's type-check and unit / integration jobs run on it
+  (stock Deno stays for `deno fmt`, `deno lint`, the doc lint and publishing). A new `macos-tests`
+  CI job runs the unit suite on macOS arm64, with a real ad-hoc `codesign` of a compiled binary,
+  and a release now needs it green.
+- **A `denext build --compile` binary embeds only the production server's code.** Its module
+  graph no longer reaches the build pipeline, so a minimal app's binary drops from about 214 MB
+  to about 135 MB (macOS x86_64): the 47 MB of npm build tooling (Prettier, Babel, `sass`, `zod`,
+  the TanStack router plugin, `jiti`, `caniuse-lite`, `@mdx-js/mdx`, …) and about
+  26 MB of the framework's source and wasm (swc, lightningcss) are gone. The standalone entry runs the
+  App Router server directly (never the SPA server), and the plugin kit's build-step functions
+  (`bundleRoutes`, `buildAppCss`, `extractRouteCss`, `compileMdxSource`, `remixCodegen`,
+  `edgeFunctionSource`, the next-compat build, `denext/bundle`, `denext/build/css`) are stand-ins
+  in the binary that throw if called: a plugin's build step only runs at `denext build`. A
+  compiled App Router app refuses a build that recorded no server copies or client boundary (one
+  made by an older denext), naming the fix, instead of compiling them at startup. The same holds
+  for an app that imports denext from JSR (checked against a JSR-installed Pages Router app:
+  135 MB with the stand-ins, 175 MB without).
+  made by an older denext), naming the fix, instead of compiling them at startup.
+- **Smaller client startup: a hook, a transition or a Server Action call the app never makes is no
+  longer compiled into its startup chunks.** The client hook dispatcher keeps only the hooks every
+  app reaches; `useReducer`, `useId`, `useSyncExternalStore`, `useDeferredValue`, `useMemoCache`,
+  `useInsertionEffect` and `useEffectEvent` each live in a module of their own that only a call
+  to the hook brings in, and so does the transition engine behind `startTransition` /
+  `useTransition` / `useOptimistic`. A Server Action's browser dispatch (the POST, the argument
+  encoding) is an on-demand chunk loaded by the first action reference a page creates, and the
+  wire encoder is a file of its own, so a Flight page with no action carries neither. Measured
+  startup bytes (raw): examples/hello's shared chunks 64,894 → 63,378, examples/islands
+  68,980 → 65,447, examples/actions 69,481 → 65,654, examples/live 77,365 → 75,781, examples/spa
+  61,441 → 59,930. The client budget drops from 67,000 to 65,000 B, and the build-smoke test fails
+  if any of these runtimes reappears in a startup graph that doesn't use it. Behaviour is
+  unchanged. The `"use server"` stubs the build generates now import `clientActionStub` from the
+  internal `denext/action-stub` entry instead of `denext/client-runtime`.
+
+### Fixed
+
+- **`denext toolchain link` honours `DENEXT_INSTALL`.** The link always went to `~/.denext/bin`,
+  so a custom-prefix install (`DENEXT_INSTALL=/opt/denext`) got its `deno` outside the `bin/` the
+  installer put on PATH. `toolchain link` / `unlink` now use `$DENEXT_INSTALL/bin` when it is set,
+  and `install.sh` / `install.ps1` hand the directory they installed into to both (on Windows also
+  when `DENEXT_INSTALL` is unset and a `HOME` variable from Git for Windows or MSYS names another
+  home).
+- **A `defineApi` handler whose result is `any` type-checks.** A handler returning an untyped
+  value (`JSON.parse(...)`, `await res.json()`) was reported as returning an `err()` with an
+  undeclared code, a misleading compile error. The `err()` code check now accepts an `any` result.
+- **`stopServices()` resolves only once the services' last status snapshot is on disk.** A call
+  made while a stop was already in progress (the server's drain, then the app's own shutdown
+  code) returned at once, before that stop had written `.denext/services.json`; and a debounced
+  snapshot write still in flight could land after the final one, leaving an older snapshot (or
+  its temporary file) behind. A concurrent call now waits for the stop in progress, and the
+  snapshot writes run one at a time, in order.
+- **A project named through a symlinked path builds its stylesheet imports.** `denext export
+  <dir>` (and the other module verbs) with `<dir>` reached through a symlink, such as a macOS temp
+  directory (`/var` → `/private/var`), failed with "Expected a JavaScript or TypeScript module, but
+  identified a Css module": the CSS import map named each stylesheet by the walk's path, while the
+  re-exec'd process imported it by its real path. The map now redirects both spellings.
+- **`denext dev` no longer leaves a server copy behind when edits outpace its write.** Each edited
+  module keeps its two newest copies in `.denext/server-cache`; a copy dropped while it was still
+  being written was removed first and written afterwards, so it stayed for the session. The
+  removal now waits for the write.
+- **`denext dev` on macOS ignores the file history a new watch replays.** FSEvents delivers a
+  folder's recent writes to a new watch, so the files written just before `denext dev` started (a
+  scaffold, a checkout) arrived as edits: a "deno.json changed — restart" note, server copies of
+  untouched modules, and a new generation in the middle of the first render that could drop its
+  form actions. An event in the first two seconds for a file last written before the watch
+  started is now ignored.
+- **A SPA `client:interaction` island no longer loses the click that mounts it.** The press
+  (pointerdown, touchstart or keydown) imported the component and mounted it as soon as its chunk
+  arrived. A cached chunk often arrives before the button is released, and then the component
+  replaced the placeholder mid-press. The browser's click targeted the removed placeholder and never
+  fired, so the mounted component saw only the pointerdown. The import still starts on the press,
+  but the mount now waits for the press to end: the click that ends it (which is replayed with the
+  rest of the gesture), 100 ms after a release that brings no click, or 3 s at most.
+- **A project or framework checkout reached through a symlink builds what its real path does.**
+  Building a project under macOS's `$TMPDIR` (`/var` is a link to `/private/var`), a symlinked home
+  or workspace folder, or with an import map that names a local denext checkout through a symlink
+  compared the two spellings of each path as strings. The build-time feature scans then read the
+  framework's own source as app code and installed every on-demand runtime (the class, Activity,
+  ViewTransition, singleton and island runtimes) into apps that use none of them, and a module
+  reached under both spellings was bundled twice. The build, `denext export` and `denext dev` now
+  use the project's real path and compare canonical paths, and the scans warn, instead of failing
+  silently, when the route graph can't be crawled.
+- **The client bundles' server-code checks compare canonical paths too.** The bundlers report
+  real paths, while a project, the `"use server"` boundary or the bundle's temp dir can be named
+  through a symlink. The esbuild client bundles (Next drop-in builds, the unbundled dev server's
+  npm dependencies) then failed with "a `use server` module would ship to the browser" for an
+  action they had registered under the link's spelling; the import-map stub of a `"use server"`
+  module named through a symlink outside the project root was missed; a server-only module
+  shipped under one spelling and checked against the other was not reported; and a rewritten
+  copy in a temp dir under macOS's `/var` was neither scanned as the app module it stands in for
+  nor named as it in an error. Each check now compares canonical paths on both sides.
+- **A `ref` on a class component reaches the class instance, as in React.** `<MyClass ref={r} />`
+  now sets `r.current` to the instance (or calls `r(instance)`) at commit, after
+  `componentDidMount`; it is detached (`null`, or a callback ref's returned cleanup) before
+  `componentWillUnmount`, while a hidden `<Activity>` hides the class, and when the ref changes,
+  even when `shouldComponentUpdate` or a `PureComponent` skips the render. Hydration attaches it
+  like a mount, `memo(Class)` passes it through to the instance, and the class's own `this.props`
+  no longer carries `ref` (React 19 strips it), on the client and on the server. The ref used to
+  be dropped. The work stays in the on-demand class runtime chunk.
+- **`denext build --compile` no longer embeds the CLI's build tooling** in every binary: the
+  standalone entry reached `src/build/spa.ts`, the bundler, the CSS pipeline, the next-compat
+  build and the swc codegen through the production server, the CLI's shared helpers and the plugin
+  kit, and `deno compile` embedded all of it with its npm dependencies.
+- **A Pages Router app keeps its platform files, `"use cache"` and inline `"use server"` in a
+  `denext build --compile` binary.** Its build now records the server render's copies in
+  `.denext/manifest.json`, as an App Router build does, so `denext start` and the binary load
+  `pages/` through them with no startup compile. A compiled Pages Router app used to render the
+  plain file instead of `Button.web.tsx`, run `"use cache"` functions uncached and leave inline
+  `"use server"` functions unregistered, without a word; one built by an older denext is now
+  refused, naming the fix.
+- **Performance: a streamed page no longer compiles a regular expression per request.** Each
+  render's Suspense boundary tokens carry a fresh nonce, and since 4.4.0 the server matched them
+  with a `RegExp` built from that nonce, so every page with a boundary (a `dynamic()` island, a
+  `<Suspense>`) compiled a new pattern per request. The tokens are now found with `indexOf`, with
+  the same matches. On `examples/hello` this restores the SSR throughput lost since 4.0.0: about
+  20% more requests per second than 4.6.0, and above 4.0.0's.
+- **A compat (npm React) Pages Router app runs as a `denext build --compile` binary.**
+  `@denext/pages-router` built its compat server bundles at every production start, writing them
+  into `.denext`; a binary has no bundler and a read-only embedded `.denext`, so it crashed at
+  startup (`buildNextCompatModules is denext build tooling`). The build now makes them under
+  `.denext/pages-compat/` and records them, and `denext start` and the binary load that record (a
+  binary from an older build refuses, saying to rebuild it). `denext start` also stops rebuilding
+  them on every start.
+- **A finished request is no longer kept alive by the server renderer.** The streaming renderers
+  installed their hook dispatcher in the process-wide slot and left it there after the render, so
+  the last streamed page's renderer, and through it that request's render state and its `Request`
+  (cookies and headers included), stayed reachable until the next render replaced it. A renderer
+  now takes its dispatcher out when its shell, or a streamed boundary, finishes. A regression test
+  serves a request mix through `examples/hello` and checks that no finished request or response
+  survives a garbage collection.
+- **Performance: less work per page request in production.** `denext start` (and a compiled app)
+  loads each route module once: its loader answers a path it has loaded with the same promise
+  instead of resolving the path to a URL and going through `import()` on every request (a load
+  that failed is retried). The page's public-env island reads only the `NEXT_PUBLIC_*` /
+  `DENEXT_PUBLIC_*` names the build recorded, one `Deno.env.get` each and none for an app that
+  references none, instead of copying the whole environment with `Deno.env.toObject()` on every
+  render; the values are still read live, and a `--allow-env` scoped to those names now fills the
+  island. An HTML page response is built once with the header rules' and middleware's headers
+  merged in, instead of built and then copied with them added. On `examples/hello` (production
+  `denext start`, 60,000 requests at concurrency 32) this serves about 25% more requests per
+  second. Memory measured over the same runs did not grow with the request count before or after
+  (the live heap after a full collection stays at about 39 MB from 5,000 to 60,000 requests).
+
+### Security
+
+- **A migrated Next.js App Router app's `start` task no longer runs with every permission.**
+  `denext migrate` wrote `start` as `deno run -A …` for an App Router app: its next-compat build
+  recorded nothing about stylesheets, so `denext start` rebuilt them, wrote CSS redirects into the
+  app's `deno.json` and re-ran itself under a CSS import map, a second `deno` that needs an
+  unscoped `--allow-run` (as good as every permission). The compat server bundle already pointed
+  every stylesheet import at its shim; the build now records that in `manifest.json`
+  (`compatCss`), so `start` serves a next-compat build with no re-exec and no write outside
+  `.denext`, and `migrate` writes the least-privilege `start` a SPA or Expo migration gets
+  (`--allow-net --allow-read --allow-env --allow-write=.denext`), plus the read-only system
+  information Node's `os` module reads, which loggers and SDKs call (`--allow-sys` scoped to
+  `hostname`, `osRelease`, `osUptime`, `loadavg`, `cpus`, `systemMemoryInfo`, `homedir`, `uid`,
+  `gid` and `username`; not `networkInterfaces`). When a dependency needs more, the server says so once, on the request or the start that
+  was refused: which permission, the scoped flag to add to the `start` task (a compiled binary:
+  the `compile.permissions` entry to rebuild with), and `-A` as the blunt fallback. Re-run
+  `denext migrate` (or edit the task) and rebuild to pick it up; a build from an older denext keeps the re-exec. A Pages
+  Router or Prisma app, and the Remix, React Router, Fresh and TanStack Start migrations, keep
+  `-A`. An app whose `denext.config.ts` recovers its MDX plugins from `next.config`
+  (`resolveNextMdx`) no longer warns "could not recover MDX plugins … Requires write access" on
+  every such start: the recovery is a build-time step, skipped quietly where the process may not
+  write beside `next.config`.
+- **`denext build --compile` resolves dependencies as the app's lockfile locks them.** The
+  compile resolves with its own config under `.denext/compile/`, which had no lockfile: the
+  binary embedded whatever the app's ranges resolved to that day, possibly a newer, unvetted
+  version than the app's `deno.lock` pins, with no integrity check, and an `.npmrc`
+  `min-release-age` hold did not apply either. The compile now copies the app's lockfile (its
+  `lock` setting's path, or `deno.lock`) and `.npmrc` beside its config, so every locked package
+  resolves to the locked version and is checked against the locked integrity, and the dependency
+  age rule holds. What the compile resolves that the lock lacks is recorded in the app's
+  `deno.lock`; a frozen lock (`"lock": { "frozen": true }`) refuses it instead and the binary is
+  removed. An `.npmrc` is never embedded in a binary.
+- **`@denext/backend` storage: the store itself refuses a presigned multipart part of the wrong
+  size, and abandoned uploads are swept without waiting for a new one.** A client upload planned
+  as multipart (the sign route's `upload` op above the multipart threshold, through `uploadFile`)
+  presigned each part's `PUT` without its length, so a client could send any amount of data to a
+  part URL; only the completion caught it. Each part URL now signs the part's exact
+  `content-length` (its share of the declared size), as a single presigned `PUT` with a `size`
+  already did, so S3, R2 or MinIO refuses a part of any other size with `403`. The sweep that frees
+  a never-completed upload's staged bytes (or incomplete multipart upload) once its completion
+  window has passed ran only when a new upload was signed; it now also runs when an upload is
+  completed or aborted. A never-completed upload never had an object row and was never served,
+  signed, listed or reported: its bytes wait in the staging place, and only a completion that
+  checks the stored size against the bucket's cap and the declared size, the stored type against
+  the declared one and the bucket's `mime` list, and the first bytes against that type, moves them
+  to the key.
+- **A batched API call can no longer forward a header a hosting platform or proxy vouches for.**
+  `apiBatch.forwardHeaders` refused credentials, framing headers and the common proxy headers,
+  but accepted names that platforms, CDNs and auth proxies set on the outer request: `fly-*`,
+  `x-vercel-*`, `x-amzn-*` / `x-amz-*` (including an ALB's OIDC identity), `cloudfront-*`,
+  `x-envoy-*`, `x-azure-*`, `x-arr-*`, App Service's `x-ms-client-principal*` / `x-ms-token-*`,
+  `x-appengine-*`, `x-goog-*` (IAP), `x-cloudtasks-*`, `x-nf-*`, `akamai-*`, `x-auth-request-*` /
+  `remote-*` / `x-pomerium-*` (auth proxies), TLS client-certificate headers (`x-ssl-*`,
+  `ssl-*`, `x-client-cert`, `x-client-verify`), scheme overrides (`x-scheme`, `x-url-scheme`,
+  `front-end-https`), Next.js's internal `x-middleware-*` / `x-nextjs-*` / `x-invoke-*`, a
+  gateway's `apikey`, and the method overrides `x-http-method-override` / `x-http-method` /
+  `x-method-override`. An app that listed one would let a client set it per item, reaching the
+  handler without passing the proxy. They are now refused: config validation names the header,
+  and the client never batches a call carrying one. Trace context (`traceparent`,
+  `x-cloud-trace-context`) is unaffected. Batch items and in-process calls during a render still
+  inherit only their parent's fixed header allowlist.
+- **The Deno Desktop bridge and the dev server's DevTools sink no longer wait forever on a body.**
+  Both read a page's small JSON body under a size cap but with no deadline, so a body that
+  stopped sending, or trickled a byte at a time under the cap, held the handler open. The read now
+  gives up when no chunk arrives for 15 s or the whole body takes longer than 60 s, and stops at
+  once when the request is aborted, answering `408` (`timeout` from the bridge).
+- **`denext stack restore` can no longer fill the disk with a full backup.** A full backup was
+  extracted under a 1 TiB cap, so a crafted archive (a decompression bomb) could expand until the
+  disk was full. The cap is now the free space where the backup is extracted, less a margin (a
+  tenth of it, at least 1 GiB); a backup that expands further is refused before the database is
+  touched, saying how large it may be and why. The new `--max-size <size>` (`20G`, `512M`, bytes)
+  lowers the cap, and stands in for the measurement where free space can't be read (else 16 GiB).
+- **`denext stack restore` says plainly that a backup must be trusted.** Its SQL runs as the
+  database superuser (`psql` for a full backup's roles, extensions and settings, `pg_restore` for
+  the dump), so a crafted backup can run shell commands in the `db` container. The command's help
+  and the [Operating the stack](https://denext.dev/docs/deploy#operating-the-stack) guide now say
+  to restore only a backup you trust; the archive checks protect the host, not the database.
+- **Docs: an `aal1` access token is `authenticated` under row-level security.** With
+  `@denext/backend`, the token of a user who owes a second factor runs `db()`, auto-REST,
+  Realtime and Storage queries as that user, as on Supabase, while `auth()` reads it as signed out.
+  The backend guide's new
+  [MFA and row-level security](https://denext.dev/docs/backend#mfa-and-row-level-security) section
+  and the security page say so and show the restrictive `aal2` policy that keeps a table behind
+  the second factor.
+- **MFA can no longer run over an Auth.js adapter's database sessions.** Those session rows keep
+  the user and the expiry only (no sign-in time, sign-in methods or pending second factor), so a
+  session still owing its second factor would have read back as complete. Nothing routed MFA
+  through them so far (the bridged adapter has no factor store), but an app that added one, or set
+  `mfa.required: "always"`, with `session: { strategy: "database" }` over the bridge would have
+  been open. `denextAuth` now refuses that configuration at startup, naming the fix: the JWT
+  strategy or a denext `sessionStore`.
+
 ## [4.6.0] - 2026-10-21
 
 ### Added
@@ -17559,7 +17857,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.6.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.0...development
+[4.7.0]: https://jsr.io/@denext/denext@4.7.0
 [4.6.0]: https://jsr.io/@denext/denext@4.6.0
 [4.5.2]: https://jsr.io/@denext/denext@4.5.2
 [4.5.1]: https://jsr.io/@denext/denext@4.5.1

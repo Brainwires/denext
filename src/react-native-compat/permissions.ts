@@ -432,12 +432,29 @@ export async function openPhotoPicker(): Promise<void> {
 }
 
 /**
- * iOS 18's limited-contacts picker. Not available.
+ * The contact picker: a thin wrapper over `pickContact` (`denext/mobile`): the system contact
+ * picker in the native shell, with `denext mobile add contacts`; the browser's Contact Picker
+ * API where it has one. As in react-native-permissions it resolves with nothing once the picker
+ * closes, a cancel included; the contact itself is not returned — call `pickContact()` from
+ * `denext/mobile` for it. (iOS 18's limited-access picker, which adds contacts to the app's
+ * limited set, is not separate here: the system picker hands over the one chosen.)
  *
- * @returns A rejected promise.
+ * @returns A promise that settles once the picker closed. It rejects where there is no picker
+ * (no plugin in the shell, no Contact Picker API in the browser), or during SSR.
  */
-export function openContactPicker(): Promise<void> {
-  return Promise.reject(unsupported("openContactPicker", "There is no contact picker plugin."));
+export async function openContactPicker(): Promise<void> {
+  // Loaded on first use, like the photo picker.
+  const { pickContact } = await import("../mobile/contact-picker.ts");
+  try {
+    await pickContact();
+  } catch (error) {
+    if ((error as { code?: unknown })?.code !== "unsupported") throw error;
+    throw unsupported(
+      "openContactPicker",
+      "It needs the Capacitor shell with `denext mobile add contacts`, or a browser with the " +
+        "Contact Picker API.",
+    );
+  }
 }
 
 /**

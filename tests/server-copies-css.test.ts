@@ -6,11 +6,11 @@
 import { assert, assertEquals } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
-  buildServerCopies,
   buildServesCss,
   parseServerCopies,
   precompiledServerLoader,
 } from "../src/build/server-copies.ts";
+import { buildServerCopies } from "../src/build/server-copies-build.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
@@ -96,7 +96,7 @@ Deno.test("parseServerCopies keeps the css flag only when it is a boolean", () =
   assertEquals(parseServerCopies(base), base);
 });
 
-Deno.test("buildServesCss: only a CSS-aware native build made for this project skips the re-exec", async () => {
+Deno.test("buildServesCss: only a CSS-aware build made for this project skips the re-exec", async () => {
   const dir = await project();
   const outDir = join(dir, ".denext");
   const copies = (extra: Record<string, unknown>) => ({
@@ -117,8 +117,16 @@ Deno.test("buildServesCss: only a CSS-aware native build made for this project s
     assertEquals(await buildServesCss(dir, outDir), true, "no stylesheet to redirect");
     await writeManifest(dir, { serverCopies: copies({}) });
     assertEquals(await buildServesCss(dir, outDir), false, "an older build");
+    // A next-compat build's server bundle points its stylesheet imports at their shims
+    // (`compatCss`); one from before that record keeps the re-exec, whatever its copies say.
     await writeManifest(dir, { nextCompat: true, serverCopies: copies({ css: true }) });
-    assertEquals(await buildServesCss(dir, outDir), false, "a next-compat build");
+    assertEquals(await buildServesCss(dir, outDir), false, "an older next-compat build");
+    await writeManifest(dir, { nextCompat: true, compatCss: true });
+    assertEquals(await buildServesCss(dir, outDir), true, "a next-compat build");
+    await writeManifest(dir, { nextCompat: true, compatCss: "yes" });
+    assertEquals(await buildServesCss(dir, outDir), false, "a malformed compatCss");
+    await writeManifest(dir, { compatCss: true });
+    assertEquals(await buildServesCss(dir, outDir), false, "compatCss without next-compat");
     await writeManifest(dir, { serverCopies: { ...copies({ css: true }), root: "file:///moved" } });
     assertEquals(await buildServesCss(dir, outDir), false, "a project moved since its build");
     await writeManifest(dir, {

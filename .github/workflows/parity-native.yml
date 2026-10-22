@@ -54,6 +54,7 @@ on:
       - "src/jsx/types.ts"
       - "src/runtime/context.ts"
       - "src/runtime/hooks.ts"
+      - "src/runtime/hooks/**"
       - "src/runtime/react-core.ts"
       - "scripts/parity/**"
       - "deno.json"

@@ -153,6 +153,11 @@ Deno.test(
         size,
       });
       const { multipart } = await planned.json();
+      // Each part's size is signed: the store refuses a part with more bytes than planned.
+      const lastPart = multipart.parts.at(-1);
+      const oversize = await fetch(lastPart.url, { method: "PUT", body: new Uint8Array(4096) });
+      assertEquals(oversize.status, 403, await oversize.clone().text());
+      await oversize.body?.cancel();
       const parts = [];
       for (const part of multipart.parts) {
         const start = (part.partNumber - 1) * multipart.partSize;

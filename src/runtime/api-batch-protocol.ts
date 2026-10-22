@@ -48,15 +48,21 @@ export const BATCH_ITEM_HEADERS = ["x-csrf-token"] as const;
 /**
  * Request headers no batch item may carry, whatever an app's `forwardHeaders` lists: framing and
  * hop-by-hop headers, the credentials every item inherits from the batch request itself
- * (`cookie`, `authorization`), what the server derives an item's trust from (`origin`, `referer`,
- * `host`, the request id), and what a reverse proxy sets or sanitizes on the OUTER request — an
- * item value would otherwise reach a handler without passing the proxy.
+ * (`cookie`, `authorization`, a gateway's `apikey`), what the server derives an item's trust
+ * from (`origin`, `referer`, `host`, the request id, a method override), and what a reverse
+ * proxy, CDN, hosting platform or auth proxy sets or sanitizes on the OUTER request — the client
+ * address, scheme, TLS client certificate and signed-in identity it vouches for. An item value
+ * would otherwise reach a handler without passing that proxy. Trace context (`traceparent`,
+ * `x-cloud-trace-context`) carries no identity or trust, so an app may still forward it.
  */
 const NEVER_FORWARDED = new Set([
   "accept",
   "accept-encoding",
   "accept-language",
+  "apikey",
   "authorization",
+  "cdn-loop",
+  "client-ip",
   "connection",
   "content-encoding",
   "content-length",
@@ -64,6 +70,7 @@ const NEVER_FORWARDED = new Set([
   "cookie",
   "expect",
   "forwarded",
+  "front-end-https",
   "host",
   "keep-alive",
   "origin",
@@ -75,23 +82,63 @@ const NEVER_FORWARDED = new Set([
   "upgrade",
   "user-agent",
   "via",
+  "x-apigateway-api-userinfo",
+  "x-bb-ip",
+  "x-client-cert",
   "x-client-ip",
+  "x-client-verify",
   "x-cluster-client-ip",
   "x-csrf-token",
+  "x-endpoint-api-userinfo",
+  "x-forwarded",
+  "x-http-method",
+  "x-http-method-override",
+  "x-method-override",
+  "x-originating-ip",
   "x-real-ip",
+  "x-remote-addr",
+  "x-remote-ip",
+  "x-remote-user",
   "x-request-id",
+  "x-scheme",
+  "x-serverless-authorization",
+  "x-url-scheme",
 ]);
 
 /** Prefixes of header families no batch item may carry (see {@link NEVER_FORWARDED}). */
 const NEVER_FORWARDED_PREFIXES = [
   "access-control-",
+  "akamai-",
   "cf-",
+  "cloudfront-",
   "fastly-",
+  "fly-",
   "proxy-",
+  "remote-",
   "sec-",
+  "ssl-",
+  "x-amz-",
+  "x-amzn-",
+  "x-appengine-",
+  "x-arr-",
+  "x-auth-request-",
+  "x-azure-",
+  "x-cloudtasks-",
   "x-denext-",
+  "x-envoy-",
   "x-forwarded-",
+  "x-goog-",
+  "x-invoke-",
+  "x-middleware-",
+  "x-ms-client-principal",
+  "x-ms-token-",
+  "x-nextjs-",
+  "x-nf-",
+  "x-now-",
   "x-original-",
+  "x-pomerium-",
+  "x-ssl-",
+  "x-vercel-",
 ];
 
 /** An HTTP header name (RFC 9110 token), lower-case. */

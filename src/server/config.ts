@@ -727,9 +727,12 @@ export interface ApiBatchConfig {
    * one only when it lists the same name (`createApiClient({ batch: { forwardHeaders } })`);
    * a call with any other custom header goes as its own request. A header reaches only its own
    * item's handler, never another item's, and never comes from the batch request itself. Names
-   * are lower-cased; a credential (`cookie`, `authorization`), framing or hop-by-hop header,
-   * `origin` / `referer` / `host`, a proxy-set header (`forwarded`, `x-forwarded-*`,
-   * `x-real-ip`, `cf-*`, …), `x-denext-*`, `sec-*` and the app's `rateLimitHeader` are refused.
+   * are lower-cased; a credential (`cookie`, `authorization`, `apikey`), framing or hop-by-hop
+   * header, `origin` / `referer` / `host`, a method override (`x-http-method-override`), a
+   * header a proxy, CDN, hosting platform or auth proxy sets (`forwarded`, `x-forwarded-*`,
+   * `x-real-ip`, `cf-*`, `fly-*`, `x-vercel-*`, `x-amzn-*`, `x-envoy-*`, `x-azure-*`,
+   * `x-appengine-*`, `x-goog-*`, `x-ms-client-principal*`, `x-auth-request-*`, …), Next's
+   * internal `x-middleware-*`, `x-denext-*`, `sec-*` and the app's `rateLimitHeader` are refused.
    * Each value is one line of at most 1024 characters; anything else fails the whole batch.
    */
   forwardHeaders?: string[];
@@ -1559,6 +1562,27 @@ export interface CompilePermissions {
   ffi?: string[];
   /** `--allow-sys` kinds (`hostname`, `osRelease`, …); `["*"]` bakes an unscoped `--allow-sys`. */
   sys?: string[];
+  /**
+   * `--allow-net-connect` hosts (outbound: `fetch`, WebSocket, database clients), with
+   * `--allow-net`'s host syntax (`api.example.com`, `db:5432`, `*.example.com`); `["*"]` is
+   * unscoped. Setting this or {@linkcode CompilePermissions.netListen} bakes the network grant
+   * split by direction instead of the baseline's unscoped `--allow-net`, under denext's Deno
+   * 3.0.0-rc.2 or later (the toolchain compiling onto its own `denort`); an unset direction is
+   * unscoped. Elsewhere the binary keeps `--allow-net`, with a warning.
+   *
+   * @itemPattern "^(?!.*://)[^\\s,]+$"
+   */
+  netConnect?: string[];
+  /**
+   * `--allow-net-listen` addresses the server may bind (`:3000` for every local interface on
+   * port 3000, `0.0.0.0:8080`, `127.0.0.1:3000`); `["*"]` is unscoped. The binary takes its port
+   * from `--port` / `$PORT` at run time, so list the port it is deployed with: a listener
+   * elsewhere (another port, a dependency's own server) is refused. See
+   * {@linkcode CompilePermissions.netConnect}.
+   *
+   * @itemPattern "^(?!.*://)[^\\s,]+$"
+   */
+  netListen?: string[];
 }
 
 /**
@@ -1570,8 +1594,28 @@ export interface DesktopExtraPermissions {
   read?: string[];
   /** `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped). */
   write?: string[];
-  /** `--allow-net` hosts, e.g. the updater's feed host. */
+  /**
+   * `--allow-net` hosts, e.g. the updater's feed host. Under denext's pinned runtime (3.0.0-rc.2 or
+   * later), which bakes the network grant split by direction, each host is granted both ways;
+   * {@linkcode DesktopExtraPermissions.netConnect} / {@linkcode DesktopExtraPermissions.netListen}
+   * grant one direction.
+   */
   net?: string[];
+  /**
+   * Outbound hosts only (`--allow-net-connect` under the pinned runtime; folded into `--allow-net`
+   * under the stock one). The loopback baseline is always there.
+   *
+   * @itemPattern "^(?!.*://)[^\\s,]+$"
+   */
+  netConnect?: string[];
+  /**
+   * Listen addresses only (`--allow-net-listen` under the pinned runtime; folded into
+   * `--allow-net` under the stock one). The baseline listens on loopback (`127.0.0.1`,
+   * `localhost`, any port).
+   *
+   * @itemPattern "^(?!.*://)[^\\s,]+$"
+   */
+  netListen?: string[];
   /** `--allow-run` programs; `["*"]` bakes an unscoped `--allow-run`. */
   run?: string[];
   /**

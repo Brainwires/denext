@@ -24,7 +24,8 @@
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { VNodeChild } from "../jsx/types.ts";
 import { setLiveRegistrar } from "../runtime/live-registry.ts";
-import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import { desktopWebSocketUrl } from "../desktop/ws-origin.ts";
 import {
   LIVE_ENDPOINT,

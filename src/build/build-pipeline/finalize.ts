@@ -1,7 +1,8 @@
 // Production build, stage 4: public-env tree-shaking, self-hosted fonts, the build
 // manifest, precompression, the atomic client swap, typed modules, and the size summary.
 
-import { buildServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
+import type { ServerCopiesManifest } from "../server-copies.ts";
+import { buildServerCopies } from "../server-copies-build.ts";
 import { walk } from "@std/fs";
 import { join } from "@std/path";
 import { resetFonts } from "../../compat/next/font/registry.ts";
@@ -133,6 +134,10 @@ function buildManifestFor(
     // rebuilds the loader from.
     nextCompat: ctx.compat,
     compatServerModules: ctx.compatServerModules,
+    // next-compat: the server bundle points every stylesheet import at its shim (esbuild's CSS
+    // shim plugin), so `denext start` needs no CSS import map, no re-exec and no `--allow-run`
+    // (`buildServesCss`). Absent from an older compat build, whose start keeps the re-exec.
+    ...(ctx.compat ? { compatCss: true } : {}),
     // The public-env vars the client bundles reference — the prod server ships only
     // these (∪ the `publicEnv` config allowlist) in each page's env island.
     publicEnvKeys,

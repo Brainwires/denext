@@ -6,7 +6,8 @@ import { createResource, setSuspenseOriginTrace, Suspense, use } from "../src/ru
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
-import { useLayoutEffect, useState, useSyncExternalStore } from "../src/runtime/hooks.ts";
+import { useLayoutEffect, useState } from "../src/runtime/hooks.ts";
+import { useSyncExternalStore } from "../src/runtime/hooks/use-sync-external-store.ts";
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;

@@ -306,7 +306,9 @@ export function Review({ diagram, diff }) {
                 to interact with). The gesture that triggered it is replayed on the mounted
                 component, as on a Flight island: its events (a press, the focus, the click) go to
                 the element at the same position in the component's DOM, so a placeholder shaped
-                like the component lets the first click land on the real button.
+                like the component lets the first click land on the real button. A press starts the
+                import at once, but the component mounts only once the press is released, so the
+                click that completes it is replayed too.
               </td>
             </tr>
           </tbody>

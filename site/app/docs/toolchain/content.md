@@ -58,7 +58,9 @@ Deno.
 The installer runs `denext toolchain install` right after installing the binary, and — only when
 no `deno` is on your PATH — `denext toolchain link`, so `deno` is the toolchain for your editor,
 git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_TOOLCHAIN=1`
-both steps). A `deno` you already have is never replaced.
+both steps). The link goes in the `bin/` of the install directory, `$DENEXT_INSTALL` when set
+(the same variable the installers read) and `~/.denext` otherwise, so a custom-prefix install's
+`deno` sits beside its `denext`. A `deno` you already have is never replaced.
 
 The CLI's entrypoint is thin: it loads only the argument parser and a generated table of every
 verb's name, flags and help, and imports a verb's own code when that verb runs, so `denext
@@ -313,7 +315,7 @@ denext toolchain install --with gleam   # …and the pinned Gleam compiler
 denext toolchain install --with fastlane   # …and the managed fastlane (portable Ruby + gems)
 denext toolchain status        # pinned versions (Deno, TypeScript, Gleam, fastlane), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
 denext toolchain path          # the binary's path (installs it first)
-denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
+denext toolchain link          # opt-in: ~/.denext/bin/deno ($DENEXT_INSTALL/bin) → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
 denext toolchain uninstall <version>   # remove a cached version: its Deno toolchain and Deno Desktop runtime
 denext toolchain uninstall --all       # every cached version but the pinned one (--force: that one too)

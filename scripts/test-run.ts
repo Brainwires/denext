@@ -21,6 +21,12 @@
 // is unavailable fails it. Outside CI (`CI` unset) that pass runs with `--no-check`: one
 // `DENO_DIR` holds one type-check cache, which each Deno version wipes when the other opened it.
 //
+// The parallel and serial passes run on the toolchain too whenever it resolves (the running Deno
+// when it is one, else the pinned build, downloaded and verified on first use), so the suite runs
+// on the Deno users run: its type-checker (native TypeScript 7 from runtime 3.0.0-rc.2), its
+// `Deno.SQL` and its fixes. Only `DENEXT_DENO=stock` — or, outside a coverage run, a toolchain
+// that can't be had (offline on first use) — runs them on the running Deno, with a note.
+//
 // With `--coverage=<dir>` (the coverage gates) every pass runs on the toolchain and adds
 // `--coverage-raw-data-only`, so the profiles accumulate in `<dir>` and `deno coverage <dir>` on
 // the toolchain (`scripts/toolchain-deno.ts`) merges them: from 2.9.7-denext.17 its
@@ -28,6 +34,11 @@
 // union of their lines. The stock files then run in one pass without `--parallel`, the serial
 // ones included (a coverage run stays deterministic). `DENEXT_DENO=stock` runs them on the
 // running Deno and skips the Vitest files, as without coverage.
+//
+// Every pass runs with `TMPDIR` / `TMP` / `TEMP` pointing at one temp root of this run's own, which
+// is removed when the run ends: the temp dirs tests (and the builds, CLIs and browsers they start)
+// make and never remove — scaffolds, build output, profiles — go with it instead of piling up
+// in the machine's temp dir. Each test still gets its own directory inside the root.
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative } from "@std/path";
@@ -221,10 +232,46 @@ export async function toolchainDeno(): Promise<string | null> {
   );
 }
 
+/**
+ * The environment that points a child's temp dir at `root`: `TMPDIR` (macOS, Linux) and
+ * `TMP` / `TEMP` (Windows).
+ *
+ * @param root The directory.
+ * @returns The variables.
+ */
+export function tempRootEnv(root: string): Record<string, string> {
+  return { TMPDIR: root, TMP: root, TEMP: root };
+}
+
+/**
+ * Remove `root`, retrying while Windows reports a file in it still open (a child that is
+ * exiting); a root that will not go is reported, never fatal.
+ *
+ * @param root The run's temp root.
+ */
+export async function removeTempRoot(root: string): Promise<void> {
+  for (let attempt = 1;; attempt++) {
+    try {
+      return await Deno.remove(root, { recursive: true });
+    } catch (err) {
+      if (err instanceof Deno.errors.NotFound) return;
+      if (attempt >= 20) {
+        console.error(`test-run: could not remove the run's temp root ${root}: ${err}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+}
+
+/** The run's temp root, set once by the main block (unset when imported by a test). */
+let runTempRoot: string | undefined;
+
 /** Run `deno` (the binary at `bin`) with `args`, inheriting the terminal; true when it succeeded. */
 async function deno(args: string[], bin: string = Deno.execPath()): Promise<boolean> {
   const { success } = await new Deno.Command(bin, {
     args,
+    env: runTempRoot ? tempRootEnv(runTempRoot) : undefined,
     stdin: "null",
     stdout: "inherit",
     stderr: "inherit",
@@ -241,9 +288,19 @@ async function runVitestPass(args: string[], bin: string | null): Promise<boolea
   return await deno(args, bin);
 }
 
-/** The toolchain for `need`ed passes: a path, null (`DENEXT_DENO=stock`), or false (failed). */
-async function toolchainFor(need: boolean): Promise<string | null | false> {
-  if (!need) return null;
+/**
+ * The Deno the parallel and serial passes run on: the toolchain whenever one resolved, else the
+ * running Deno (`DENEXT_DENO=stock`, or a toolchain that could not be had).
+ *
+ * @param toolchain What {@linkcode toolchainFor} resolved: a path, null (stock) or false (failed).
+ * @param running The running Deno (`Deno.execPath()`).
+ */
+export function stockPassDeno(toolchain: string | null | false, running: string): string {
+  return typeof toolchain === "string" ? toolchain : running;
+}
+
+/** The toolchain: a path, null (`DENEXT_DENO=stock`), or false (it could not be had). */
+async function toolchainFor(): Promise<string | null | false> {
   try {
     return await toolchainDeno();
   } catch (err) {
@@ -252,18 +309,44 @@ async function toolchainFor(need: boolean): Promise<string | null | false> {
   }
 }
 
-if (import.meta.main) {
+/** Every pass, in order; false when any failed (or the toolchain coverage needs is missing). */
+async function runPasses(): Promise<boolean> {
   const ci = (Deno.env.get("CI") ?? "") !== "";
   const passes = testPasses(Deno.args, SERIAL_TESTS, await findVitestFiles(), ci);
-  // With coverage every pass runs on the toolchain, whose `deno coverage` merges them.
+  // Every pass runs on the toolchain when it resolves; with coverage it must (its `deno coverage`
+  // merges the passes' profiles).
   const coverage = wantsCoverage(splitArgs(Deno.args).flags);
-  const toolchain = await toolchainFor(coverage || passes.vitest !== null);
+  const toolchain = await toolchainFor();
+  if (toolchain === false && coverage) return false;
   // Without coverage an unavailable toolchain fails the Vitest pass alone.
-  if (toolchain === false && coverage) Deno.exit(1);
-  const stock = coverage && typeof toolchain === "string" ? toolchain : Deno.execPath();
-  const parallel = passes.parallel ? await deno(passes.parallel, stock) : true;
-  const serial = passes.serial ? await deno(passes.serial, stock) : true;
-  const vitest = !passes.vitest ||
-    (toolchain !== false && await runVitestPass(passes.vitest, toolchain));
-  if (!parallel || !serial || !vitest) Deno.exit(1);
+  if (toolchain === false) {
+    console.error(`test-run: the stock test files run on ${Deno.execPath()}.`);
+  }
+  const stock = stockPassDeno(toolchain, Deno.execPath());
+  const parallel = await runPass(passes.parallel, stock);
+  const serial = await runPass(passes.serial, stock);
+  const vitest = await vitestPass(passes.vitest, toolchain); // every pass runs, whatever failed
+  return parallel && serial && vitest;
+}
+
+/** One stock pass (none: passed). */
+async function runPass(args: string[] | null, bin: string): Promise<boolean> {
+  return args ? await deno(args, bin) : true;
+}
+
+/** The Vitest pass (none: passed; no toolchain: failed). */
+async function vitestPass(args: string[] | null, toolchain: string | null | false) {
+  if (!args) return true;
+  return toolchain !== false && await runVitestPass(args, toolchain);
+}
+
+if (import.meta.main) {
+  runTempRoot = await Deno.makeTempDir({ prefix: "dnx-tr-" });
+  let ok = false;
+  try {
+    ok = await runPasses();
+  } finally {
+    await removeTempRoot(runTempRoot);
+  }
+  if (!ok) Deno.exit(1);
 }

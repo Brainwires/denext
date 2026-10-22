@@ -5,14 +5,8 @@
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import {
-  useContext,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from "../src/runtime/hooks.ts";
+import { useContext, useEffect, useMemo, useRef, useState } from "../src/runtime/hooks.ts";
+import { useReducer } from "../src/runtime/hooks/use-reducer.ts";
 import { createContext } from "../src/runtime/context.ts";
 import { memo } from "../src/runtime/memo.ts";
 import type { VNode } from "../src/jsx/types.ts";

@@ -5,7 +5,8 @@
 import "./helpers/class-runtime.ts";
 import { assertEquals } from "@std/assert";
 import { Component, useLayoutEffect } from "../src/compat/react.ts";
-import { useEffectEvent, useState } from "../src/runtime/hooks.ts";
+import { useState } from "../src/runtime/hooks.ts";
+import { useEffectEvent } from "../src/runtime/hooks/use-effect-event.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { makeDom } from "./helpers/dom.ts";

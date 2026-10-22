@@ -227,13 +227,17 @@ export interface DirectAccess {
   ): Promise<string>;
   /** Start a multipart upload; returns its upload id. */
   createMultipart(bucket: string, key: string, contentType: string): Promise<string>;
-  /** A presigned PUT for one part (1-based). */
+  /**
+   * A presigned PUT for one part (1-based). With `size`, the part's `content-length` is signed
+   * too, so the store itself refuses a part of any other size.
+   */
   presignPart(
     bucket: string,
     key: string,
     uploadId: string,
     partNumber: number,
     expiresIn: number,
+    size?: number,
   ): Promise<string>;
   /** Assemble the uploaded parts into the object. */
   completeMultipart(

@@ -309,7 +309,8 @@ itself (it reads neither the config keys nor the env vars for them).
   `false` answers `404`), `mutations` (default `true`: POST/PUT/PATCH/DELETE items run
   one at a time in call order; `false` refuses them), `forwardHeaders` (default none: request
   headers such as `["x-tenant"]` a batched call may carry, each item its own value; never a
-  credential, framing or proxy header), `maxItems` (default 20, at most 100), `maxBodyBytes`
+  credential, framing, method-override or proxy header — nothing a CDN, hosting platform or
+  auth proxy sets, such as `fly-client-ip`, `x-vercel-*`, `x-amzn-*` or `x-envoy-*`), `maxItems` (default 20, at most 100), `maxBodyBytes`
   (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
   4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
   [Typed API](/docs/typed-api).
@@ -375,9 +376,10 @@ export default {
   hydration when the server rendered a class, statically when the build scan
   finds `Component` in the app's own sources. `true` always imports the runtime
   statically (no round trip); `false` keeps it out entirely (zero bytes, and a
-  class throws a guided error). On the next-compat/SPA esbuild path the flag is
-  also a `define`, so `false` dead-code-eliminates the reconciler's class guards
-  from that bundle too.
+  class throws a guided error). On the next-compat/SPA esbuild path, and on the
+  native App Router path under denext's Deno toolchain (`deno bundle --define`),
+  the flag is also a `define`, so `false` dead-code-eliminates the reconciler's
+  class guards from that bundle too.
 - **`mdx`** — `MdxConfig`. MDX/CommonMark compilation options for `.mdx`/`.md`
   sources in a compat (npm-React) app. The baseline loader compiles plain MDX;
   set this to thread your own `remarkPlugins`, `rehypePlugins`, `recmaPlugins`,
@@ -654,7 +656,10 @@ every `--platform` target included.
   `services/`, `functions/`, `migrations/`, `supabase/migrations/` and the root
   config, middleware and instrumentation modules; never `.env` files or SQLite
   databases), and `permissions` adds `--allow-*` beyond the least-privilege
-  baseline (`"all"` bakes `--allow-all`). `sign` (`true`, or `{ entitlements?,
+  baseline (`write`, `run`, `ffi`, `sys`; `"all"` bakes `--allow-all`). Its `netConnect` /
+  `netListen` (host lists in `--allow-net` syntax, `":3000"` for a port) bake the network grant
+  split by direction (`--allow-net-connect` / `--allow-net-listen`) on denext's Deno 3.0.0-rc.2 and
+  later, an unset direction unscoped; elsewhere the binary keeps `--allow-net` with a warning. `sign` (`true`, or `{ entitlements?,
   notarize?, timestampUrl? }`) code-signs the binary with the `DENEXT_*` credentials in the
   environment, and only warns when they are missing. See
   [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile)

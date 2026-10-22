@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.6.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.7.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
 ## Deno toolchain
@@ -76,15 +76,11 @@ next-compat and SPA-compat builds and the unbundled dev loop's dependency pre-bu
 rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 transforms
 (`?url` assets, CSS shims, MDX, `use cache`, Node-builtin stubs, `import.meta.env`, pnpm
 `catalog:`, Prisma externals, `jsr:` loading). The native App Router path already builds with
-`deno bundle`. Deno 2.9.7 has neither hook below.
+`deno bundle`, and where `deno bundle --define` exists (denext's Deno toolchain from runtime
+`3.0.0-rc.1`; probed, so an upstream release with the flag is picked up too) it defines the
+class-component gate and the `features` map instead of seeding them; a stock Deno keeps the
+seeded fallback. No Deno has the hook below yet.
 
-- **When `deno bundle` gets `--define`** ([denoland/deno#35347](https://github.com/denoland/deno/issues/35347),
-  closed as completed, awaiting a release): add a capability probe to `probeBundleSupport`
-  (`src/build/bundle.ts`), pass the esbuild `classDefine()` map and `__DENEXT_FEATURES__`
-  verbatim, and retire `featureSeedBlock`. This folds the `__DENEXT_CLASS_COMPONENTS__` guards
-  and lets `feature()` dead-code-eliminate in plain `.ts` modules on the native path (today it
-  folds only in component modules there, and is a runtime read on the compat path). Degrade
-  cleanly on older Deno.
 - **When it gets a resolver / loader plugin API** (no committed issue yet): port
   `appResolverPlugin` / `denextRuntimePlugin` first, then the transforms one hook at a time;
   the compat e2es (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the gate.

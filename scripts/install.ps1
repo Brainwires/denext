@@ -83,7 +83,7 @@ function Install-Denext {
     # The `deno` link `toolchain link` made (only a link of its own; anything else is left).
     $installed = Join-Path $bin 'denext.exe'
     if ((Test-Path -LiteralPath $installed -PathType Leaf) -and (Test-ToolchainVerb $installed)) {
-      Invoke-Denext $installed @('toolchain', 'unlink') | Out-Null
+      Invoke-DenextAt $root $installed @('toolchain', 'unlink') | Out-Null
     }
     Remove-DenextPath $bin
     Uninstall-DenextFiles $root
@@ -159,7 +159,7 @@ function Install-Denext {
   $exe = Join-Path $bin 'denext.exe'
   Write-Host "denext: installed $(& $exe --version) to $exe"
 
-  Install-DenoToolchain $exe $target
+  Install-DenoToolchain $exe $target $root
 
   if (-not (Test-ModifyPath -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath)) {
     if (-not (Test-PathEntry $env:Path $bin)) {
@@ -296,7 +296,7 @@ function Write-DownloadProgress([long]$done, $total, [switch]$Completed) {
 # link `deno` to it. Never fatal: a failure is one warning, and the binary downloads the toolchain
 # on the first command that needs it. An existing `deno` is never replaced: the link is made only
 # when Path has none, and `toolchain link` itself refuses to overwrite a file it did not create.
-function Install-DenoToolchain([string]$exe, [string]$target) {
+function Install-DenoToolchain([string]$exe, [string]$target, [string]$root) {
   if ($env:DENEXT_NO_TOOLCHAIN -eq '1') { return }
   if (-not (Test-ToolchainVerb $exe)) {
     Write-Host ("denext: $(& $exe --version) predates denext's Deno toolchain (denext 4.0); " +
@@ -324,7 +324,7 @@ function Install-DenoToolchain([string]$exe, [string]$target) {
     return
   }
   if ($env:DENEXT_NO_DENO_LINK -eq '1') { return }
-  if ((Invoke-Denext $exe @('toolchain', 'link')) -ne 0) {
+  if ((Invoke-DenextAt $root $exe @('toolchain', 'link')) -ne 0) {
     Write-Warning 'denext: could not link `deno` to the toolchain (`denext deno ...` still runs it).'
   }
 }
@@ -352,6 +352,20 @@ function Test-ToolchainVerb([string]$exe) {
   }
   if ($version -match '^denext (\d+)\.') { return [int]$Matches[1] -ge 4 }
   return $true
+}
+
+# Invoke-Denext with DENEXT_INSTALL set to $root for that one run (and restored after, since the
+# script runs in the caller's session): `toolchain link` / `unlink` put `deno` in its bin/, beside
+# the binary in the bin/ this install put on Path, even when DENEXT_INSTALL was not set and the
+# binary would otherwise derive another home (an HOME variable set by Git for Windows or MSYS).
+function Invoke-DenextAt([string]$root, [string]$exe, [string[]]$arguments) {
+  $previous = $env:DENEXT_INSTALL
+  $env:DENEXT_INSTALL = $root
+  try {
+    return Invoke-Denext $exe $arguments
+  } finally {
+    $env:DENEXT_INSTALL = $previous
+  }
 }
 
 # Run the installed binary with $arguments, its output on the console; returns its exit code (1

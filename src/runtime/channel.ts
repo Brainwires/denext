@@ -38,7 +38,8 @@ import {
   isStandardSchema,
   type StandardSchemaV1,
 } from "./define-action.ts";
-import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { decodeWire, WIRE_ENC } from "./wire-codec.ts";
+import { prepareWire } from "./wire-encode.ts";
 import { CHANNEL_BRAND, setChannelRegistrar } from "./channel-brand.ts";
 import { processShared } from "./process-shared.ts";
 import {

@@ -14,7 +14,7 @@ import { denoExecutable } from "../build/bundle.ts";
 import { DEV_TOKEN_ENV, newDevToken, withDevTokenParam } from "../build/dev-server/dev-token.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { cliInvocation } from "../ui/proc.ts";
-import { SHUTDOWN_SIGNALS } from "./shared.ts";
+import { SHUTDOWN_SIGNALS } from "./shutdown.ts";
 
 /**
  * A `denext dev` server a verb started or attached to. Structurally identical to (and assignable
@@ -32,7 +32,7 @@ export interface DevServerHandle {
 }
 
 /** A spawned child process reduced to `{ finished, stop }`, plus a synchronous exit probe. */
-export interface SpawnedChild {
+interface SpawnedChild {
   /** Resolves when the child exits (closed, or killed). */
   readonly finished: Promise<void>;
   /** SIGTERM the child and await its exit. */
@@ -84,7 +84,7 @@ export function devChildEnv(
  * @param args The `deno` arguments (e.g. `["dev", project, …]` or `["desktop", entry]`).
  * @param opts The child's cwd, stdin disposition, and any extra env.
  */
-export function spawnDenoChild(
+function spawnDenoChild(
   args: string[],
   opts: {
     cwd: string;

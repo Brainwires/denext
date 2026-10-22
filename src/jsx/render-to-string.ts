@@ -295,6 +295,10 @@ export function createSSRDispatcher(
     },
     useLayoutEffect: countEffect,
     useInsertionEffect: countEffect,
+    // No lane scheduler on the server: the first (only) render shows `initialValue ?? value`.
+    useDeferredValue<T>(value: T, initialValue?: T): T {
+      return initialValue !== undefined ? initialValue : value;
+    },
     useMemoCache(size: number): unknown[] {
       // One-shot render: a fresh cache each time. Generated code still recomputes
       // correctly (every slot reads as the sentinel), it just never reuses across

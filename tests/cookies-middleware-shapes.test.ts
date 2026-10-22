@@ -18,7 +18,8 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
-import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
+import { actionEndpoint } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { notFound } from "../src/runtime/error-boundary.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";

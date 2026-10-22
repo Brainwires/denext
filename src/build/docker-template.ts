@@ -16,6 +16,7 @@
 
 import { isAbsolute, join, relative } from "@std/path";
 import { denoReleaseVersion } from "./deno-version.ts";
+import { splitNetFlag, toolchainNetSplit } from "./net-permissions.ts";
 import {
   DOCKER_SENTINEL,
   isStack,
@@ -44,6 +45,12 @@ export interface DockerOptions extends StackOptions {
   readonly port?: number;
   /** The `denoland/deno:` tag to pin (default: the Deno version rendering this file). */
   readonly denoTag?: string;
+  /**
+   * Bake the network grant split by direction into the server's command (listen only on the
+   * served port, connect anywhere). Default: when denext's pinned Deno toolchain, which the image
+   * runs its server on, has the split (3.0.0-rc.2 or later).
+   */
+  readonly netSplit?: boolean;
 }
 
 /** One file a Docker regeneration would produce, next to what is on disk today. */
@@ -125,6 +132,18 @@ function execForm(words: readonly string[]): string {
 }
 
 /**
+ * The `start` task's command as the image runs it, or `undefined` (none usable): on a toolchain
+ * that splits the network grant ({@linkcode DockerOptions.netSplit}), its unscoped `--allow-net`
+ * becomes `--allow-net-connect --allow-net-listen=:<port>,[::]:<port>`.
+ */
+function imageStartCommand(port: number, options: DockerOptions): readonly string[] | undefined {
+  const task = options.startCommand;
+  if (!task || !(options.netSplit ?? toolchainNetSplit())) return task;
+  // `:<port>` is 0.0.0.0, 127.0.0.1 and localhost; `[::]` is the server bound to IPv6's any.
+  return splitNetFlag(task, [`:${port}`, `[::]:${port}`]);
+}
+
+/**
  * The SSR image's `ENV PORT` + `ENTRYPOINT` + `CMD`. `denext start` reads `$PORT` (what a PaaS
  * injects), so a non-default port rides in the environment: `deno task` forwards a literal `--`
  * to the task, and `start` would then treat `--port` as passthrough and ignore it.
@@ -137,9 +156,16 @@ function execForm(words: readonly string[]): string {
  */
 function serverCmd(port: number, options: DockerOptions): string {
   const lines = [`ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]`, "STOPSIGNAL SIGTERM"];
-  const start = options.startCommand;
+  const start = imageStartCommand(port, options);
   if (start) {
     lines.push("# The `start` task's own command, run directly (not through `deno task`).");
+  }
+  if (start && start.length !== options.startCommand?.length) {
+    lines.push(
+      `# Its --allow-net is split by direction (the toolchain's Deno has it): the server may listen`,
+      `# only on port ${port} (0.0.0.0, [::], 127.0.0.1, localhost) and connect anywhere, so no`,
+      `# dependency can open a listener of its own. A new port needs --allow-net-listen changed too.`,
+    );
   }
   if (port !== DEFAULT_PORT) lines.push(`ENV PORT=${port}`);
   lines.push(`CMD ${start ? execForm(start) : `["deno", "task", "start"]`}`);
@@ -257,8 +283,35 @@ ${toolchainLayer(options)}
 EXPOSE ${port}
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
   CMD deno eval "fetch('http://127.0.0.1:${port}/').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"
-CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-sys", "jsr:@std/http/file-server", "out", "--host", "0.0.0.0", "--port", "${port}"]
+${staticCmd(port, options)}
 `;
+}
+
+/**
+ * The static image's `CMD`: Deno's std file server on the export. It only listens, so where the
+ * toolchain splits the network grant it gets `--allow-net-listen` for its port and no outbound
+ * access at all; elsewhere `--allow-net`.
+ */
+function staticCmd(port: number, options: DockerOptions): string {
+  const split = options.netSplit ?? toolchainNetSplit();
+  const net = split ? [`--allow-net-listen=0.0.0.0:${port}`] : ["--allow-net"];
+  const cmd = [
+    "deno",
+    "run",
+    ...net,
+    "--allow-read",
+    "--allow-sys",
+    "jsr:@std/http/file-server",
+    "out",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    `${port}`,
+  ];
+  const note = split
+    ? "# Listen-only: the file server may bind its port and reach nothing (no outbound access).\n"
+    : "";
+  return `${note}CMD ${execForm(cmd)}`;
 }
 
 /**

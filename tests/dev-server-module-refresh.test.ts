@@ -153,9 +153,12 @@ Deno.test("denext dev: many edits keep the server copies bounded", async () => {
       );
     }
     // The edited module and its importer (the page) keep at most their current and previous
-    // copies; the untouched component is never copied.
-    const n = await copies();
-    assert(n <= 4, `${n} server copies after ${EDITS} edits`);
+    // copies; the untouched component is never copied. A dropped copy is removed in the
+    // background once its write settles, so the bound holds once those removals land.
+    await eventually(
+      `at most 4 server copies after ${EDITS} edits`,
+      async () => (await copies()) <= 4,
+    );
   } finally {
     await dev.stop();
     await removeTempDir(dir);

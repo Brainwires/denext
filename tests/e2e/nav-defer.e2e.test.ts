@@ -29,7 +29,11 @@ async function navigateDeferred(post: boolean): Promise<void> {
     const errors = collectConsoleErrors(page);
     await page.goto(server.origin + "/", { waitUntil: "load" });
     await page.waitForFunction("!!document.querySelector('[data-testid=home]')");
-    // Hydrated: the layout's client counter responds.
+    // Hydrated (its effect has run, so a click is not lost on the server's markup): the
+    // layout's client counter responds.
+    await page.waitForFunction(
+      "!!document.querySelector('[data-testid=navcount][data-hydrated]')",
+    );
     const counter = await page.$("[data-testid=navcount]");
     assert(counter);
     await counter.click();

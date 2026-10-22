@@ -351,15 +351,16 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 2. **Run the heavy CI jobs on that commit.** A push to `development` runs only
    ci.yml's fast jobs; `integration`, `next-compat`, `coverage`,
    `backend-integration` (the `@denext/backend` suites against a real Postgres and MinIO,
-   as service containers) and `windows-tests` (the unit and integration suites on
-   Windows) run on pull requests, `main` and a manual dispatch. Dispatch it
+   as service containers), `windows-tests` (the unit and integration suites on
+   Windows) and `macos-tests` (the unit suite on macOS arm64, with a real ad-hoc `codesign`)
+   run on pull requests, `main` and a manual dispatch. Dispatch it
    and wait:
    `gh workflow run ci.yml --ref development`, then
    `gh run watch "$(gh run list --workflow=ci.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`.
    The release script checks this itself (`scripts/release-ci.ts`): it refuses
    to start unless the newest ci.yml run on HEAD that ran those jobs has
    `check`, `integration`, `next-compat`, `coverage`, `backend-integration`,
-   `ios-export-router`, `windows-resolve` and `windows-tests` green (it needs `gh`,
+   `ios-export-router`, `windows-resolve`, `windows-tests` and `macos-tests` green (it needs `gh`,
    logged in).
    It also needs the newest desktop-ci.yml run on HEAD green in every job (the
    desktop suites on all three OSes, the installers, install.ps1 / install.sh;

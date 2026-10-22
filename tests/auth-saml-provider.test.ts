@@ -352,3 +352,112 @@ Deno.test("saml(): an unsafe id, a bad domain or unparseable metadata is refused
   );
   assertThrows(() => saml({ id: "acme", metadataXml: "<nope/>" }), TypeError, "metadata");
 });
+
+// ---- signature refusals, table-driven ------------------------------------------------------------
+
+/** A Response whose signature must not be trusted, and the verifier's exact reason. */
+interface SignatureRefusal {
+  name: string;
+  /** The base64 SAMLResponse for request `requestId`, signed by the trusted `key` or not. */
+  build: (key: TestKey, requestId: string) => Promise<string>;
+  /** The code the verifier refused it with (logged; the user sees `invalid_token`). */
+  code: string;
+}
+
+const NAME_ID = "ada@acme.test";
+const unsignedAssertion = (xml: string) => xml.replace(/<ds:Signature[\s\S]*<\/ds:Signature>/, "");
+
+const SIGNATURE_REFUSALS: SignatureRefusal[] = [
+  {
+    name: "an unsigned Response",
+    build: (key, inResponseTo) =>
+      response(key, { inResponseTo, nameId: NAME_ID, tamper: unsignedAssertion }),
+    code: "unsigned",
+  },
+  {
+    name: "a Response signed by a key the metadata doesn't name",
+    build: async (_key, inResponseTo) =>
+      response(await rsaKey(), { inResponseTo, nameId: NAME_ID }),
+    code: "bad_signature",
+  },
+  {
+    name: "a Response signed by another key that embeds its own certificate in KeyInfo",
+    build: async (_key, inResponseTo) => {
+      const other = await rsaKey();
+      const t = Date.now();
+      const id = `_a${crypto.randomUUID().replaceAll("-", "")}`;
+      const xml = responseXml({
+        destination: ACS,
+        recipient: ACS,
+        audience: SP_ENTITY,
+        responseIssuer: IDP,
+        issuer: IDP,
+        responseInResponseTo: inResponseTo,
+        inResponseTo,
+        nameId: NAME_ID,
+        notBefore: iso(t - 60_000),
+        notOnOrAfter: iso(t + 300_000),
+        confirmationNotOnOrAfter: iso(t + 300_000),
+        issueInstant: iso(t - 1000),
+        sessionNotOnOrAfter: iso(t + 3600_000),
+        assertionId: id,
+        assertionSig: marker(id),
+        assertionTail: "",
+      });
+      return encode(await sign(xml, id, { key: other, keyInfoCertificate: other.certificate }));
+    },
+    code: "bad_signature",
+  },
+  {
+    name: "a wrapped assertion (an unsigned copy ahead of the signed one)",
+    build: (key, inResponseTo) =>
+      response(key, {
+        inResponseTo,
+        nameId: NAME_ID,
+        tamper: (xml) => {
+          const open = xml.indexOf("<saml:Assertion");
+          const close = xml.indexOf("</saml:Assertion>") + "</saml:Assertion>".length;
+          const evil = unsignedAssertion(xml.slice(open, close))
+            .replace(/ID="[^"]+"/, 'ID="_evil"')
+            .replace(NAME_ID, "admin@acme.test");
+          return xml.slice(0, open) + evil + xml.slice(open);
+        },
+      }),
+    code: "multiple_assertions",
+  },
+  {
+    name: "a signed assertion re-written after signing",
+    build: (key, inResponseTo) =>
+      response(key, {
+        inResponseTo,
+        nameId: NAME_ID,
+        tamper: (xml) => xml.replace(NAME_ID, "admin@acme.test"),
+      }),
+    code: "bad_signature", // the digest no longer matches the signed bytes
+  },
+];
+
+for (const row of SIGNATURE_REFUSALS) {
+  Deno.test(`saml signature refusal: ${row.name} (${row.code}) mints no session or user`, async () => {
+    const a = await app();
+    const codes: string[] = [];
+    a.config.logger = {
+      debug: () => {},
+      error: () => {},
+      warn: (_message: string, data?: unknown) =>
+        void codes.push(String((data as { code?: string } | undefined)?.code)),
+    };
+    const s = await start(a);
+    const out = await acs(a, s.tx, {
+      SAMLResponse: await row.build(a.key, s.requestId),
+      RelayState: s.relay,
+    });
+    assertEquals(out.status, 303);
+    assertEquals(new URL(out.location, ORIGIN).search, "?error=invalid_token");
+    assertEquals(out.session, undefined, "no session cookie");
+    assertEquals(codes, [row.code]);
+    assertEquals(a.failures, ["invalid_token"]);
+    assertEquals(await a.adapter.getUserByEmail(NAME_ID), undefined, "no user was created");
+    assertEquals(await a.adapter.getUserByEmail("admin@acme.test"), undefined);
+  });
+}
