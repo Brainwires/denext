@@ -229,8 +229,6 @@ and this project adheres to
   `deno.lock`; a frozen lock (`"lock": { "frozen": true }`) refuses it instead and the binary is
   removed. An `.npmrc` is never embedded in a binary.
 
-### Security
-
 - **`@denext/backend` storage: the store itself refuses a presigned multipart part of the wrong
   size, and abandoned uploads are swept without waiting for a new one.** A client upload planned
   as multipart (the sign route's `upload` op above the multipart threshold, through `uploadFile`)
