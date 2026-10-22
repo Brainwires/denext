@@ -173,8 +173,10 @@ Deno.test("ci.yml: tests and the type-check run on the toolchain; stock Deno onl
   for (const [name, job] of Object.entries(ci.jobs)) {
     const setup = job.steps.findIndex((s) => s.uses?.startsWith("denoland/setup-deno@") ?? false);
     // coverage: stock Deno starts scripts/test-run.ts, which runs every pass on the toolchain under
-    // --coverage; backend-integration installs the toolchain itself (the test above).
-    if (setup === -1 || name === "coverage") continue;
+    // --coverage; backend-integration installs the toolchain itself (the test above); cargo-audit
+    // runs only scripts/cargo-audit.ts (cargo-audit over the wasm packages' lockfiles), no project
+    // code, so it stays on the stock Deno.
+    if (setup === -1 || name === "coverage" || name === "cargo-audit") continue;
     const at = job.steps.findIndex(onPath);
     assert(at > setup, `${name}: puts the toolchain on PATH after setting up the stock Deno`);
     job.steps.forEach((s, i) => {
