@@ -29,6 +29,10 @@ Deno.test({
   try {
     await t.step("the layout island's state survives a soft nav to another page", async () => {
       await page.waitForFunction("!!document.querySelector('[data-testid=home]')");
+      // Hydrated (its effect has run): a click before then lands on the server's markup and is lost.
+      await page.waitForFunction(
+        "!!document.querySelector('[data-testid=navcount][data-hydrated]')",
+      );
       await page.evaluate("window.__noReload = true"); // a full reload would clear this
       // Advance the layout-owned counter to 2.
       const counter = await page.$("[data-testid=navcount]");
