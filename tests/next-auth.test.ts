@@ -1126,3 +1126,56 @@ Deno.test("next-auth adapter bridge: MFA is refused over its database sessions (
     assertThrows(() => configureAuth(config), Error, "Auth.js adapter");
   }
 });
+
+Deno.test("next-auth: database sessions slide by updateAge, as Auth.js's do, up to session.maxLifetime", async () => {
+  const sessions = new Map<string, { sessionToken: string; userId: string; expires: Date }>();
+  const adapter = memoryAdapter(sessions);
+  adapter.createUser({
+    id: "u1",
+    email: "ada@example.com",
+    emailVerified: null,
+    name: "Ada",
+    image: null,
+  });
+  const a = app({
+    adapter,
+    session: { strategy: "database", maxAge: 3600, updateAge: 60, maxLifetime: 7200 },
+  });
+  const realNow = Date.now;
+  const signedIn = realNow();
+  const expiresOf = () => [...sessions.values()][0].expires.getTime();
+  const readSession = async () => await (await a.call("/api/auth/session")).json();
+  try {
+    Date.now = () => signedIn;
+    await signInWithPassword(a);
+    assertEquals(sessions.size, 1);
+    const first = expiresOf();
+    assert(Math.abs(first - (signedIn + 3600_000)) < 1000, "the row lasts maxAge");
+
+    // Younger than updateAge: the row is left alone.
+    Date.now = () => signedIn + 30_000;
+    assertEquals((await readSession())?.user.email, "ada@example.com");
+    assertEquals(expiresOf(), first, "not stale yet");
+
+    // Past updateAge: the row's expiry moves to a full maxAge from now (Auth.js's
+    // `sessionUpdateTime`), keeping the same token.
+    Date.now = () => signedIn + 120_000;
+    const token = [...sessions.keys()][0];
+    assertEquals((await readSession())?.user.email, "ada@example.com");
+    assertEquals([...sessions.keys()], [token], "the same session row");
+    assert(Math.abs(expiresOf() - (signedIn + 120_000 + 3600_000)) < 1000, "slid by a maxAge");
+
+    // Near the ceiling a slide stops at sign-in + maxLifetime, not a full maxAge on.
+    Date.now = () => signedIn + 3_700_000;
+    const near = await readSession();
+    assertEquals(near?.user.email, "ada@example.com");
+    assert(Math.abs(expiresOf() - (signedIn + 7200_000)) < 1000, "capped at maxLifetime");
+    assert(Math.abs(new Date(near.expires).getTime() - (signedIn + 7200_000)) < 1000);
+
+    // Past the ceiling the session is over, however recently it slid.
+    Date.now = () => signedIn + 7201_000;
+    assertEquals(await readSession(), null, "ended at the ceiling");
+  } finally {
+    Date.now = realNow;
+  }
+});

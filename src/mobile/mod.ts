@@ -346,6 +346,13 @@ export {
 } from "./file-dialogs.ts";
 export { moveToTrash, openPath, revealInFileManager, type ShellItem } from "./shell.ts";
 export {
+  type ContactPickerError,
+  type ContactPickerErrorCode,
+  contactPickerSupported,
+  pickContact,
+  type PickedContact,
+} from "./contact-picker.ts";
+export {
   type BarcodeFormat,
   type BarcodeScanError,
   type BarcodeScanErrorCode,

@@ -177,6 +177,12 @@ export interface NextAuthConfig {
     maxAge?: number;
     /** How often an active session is extended, in seconds (default 24 hours). */
     updateAge?: number;
+    /**
+     * denext-only: the absolute ceiling in seconds, counted from the sign-in, that no extension
+     * passes, on either strategy (default 30 days, or `maxAge` when longer). Auth.js has no
+     * such cap.
+     */
+    maxLifetime?: number;
   };
   /** Token lifetime (the sealed token follows the session's otherwise). */
   jwt?: { maxAge?: number };

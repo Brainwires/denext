@@ -392,7 +392,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "No iOS 18 access button " +
       "(ContactAccessButton renders nothing). The legacy functions work from the main entry " +
       "(Expo 58's throw there). Off the shell every call rejects with ERR_UNAVAILABLE except " +
-      "the permissions (undetermined, as Expo's web build) and isAvailableAsync (false). " +
+      "the permissions (undetermined, as Expo's web build), isAvailableAsync (false) and " +
+      "presentContactPickerAsync where the browser has the Contact Picker API (its picker; " +
+      "no id, only the name, emails and phones). " +
       "expo-contacts/next is this shim too (SDK 58 points it at the main entry); " +
       "expo-contacts/legacy is its own, below.",
   },

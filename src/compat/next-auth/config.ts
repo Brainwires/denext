@@ -8,7 +8,8 @@
  *   `sendVerificationRequest`;
  * - `session.strategy` `"jwt"` → denext's signed cookie with the token sealed inside,
  *   `"database"` → `session.strategy: "database"` over the adapter's sessions; `maxAge`,
- *   `updateAge` (default 24 hours) as they are;
+ *   `updateAge` (default 24 hours) as they are — a database session slides as Auth.js's does,
+ *   capped at the denext-only `session.maxLifetime` (default 30 days) from its sign-in;
  * - `adapter` → {@link fromAuthJsAdapter};
  * - `callbacks.signIn` → `callbacks.signIn`; `callbacks.jwt` → run at sign-in from denext's
  *   `callbacks.session` hook and on every read; `callbacks.session` / `redirect` /
@@ -167,15 +168,16 @@ function sessionSettings(config: NextAuthConfig): {
   strategy: "jwt" | "database";
   session: NonNullable<AuthConfig["session"]>;
 } {
-  const strategy = config.session?.strategy ?? (config.adapter ? "database" : "jwt");
-  return {
-    strategy,
-    session: {
-      strategy: strategy === "jwt" ? "cookie" : "database",
-      maxAge: config.session?.maxAge ?? DEFAULT_MAX_AGE,
-      updateAge: config.session?.updateAge ?? DEFAULT_UPDATE_AGE,
-    },
+  const own = config.session ?? {};
+  const strategy = own.strategy ?? (config.adapter ? "database" : "jwt");
+  const session: NonNullable<AuthConfig["session"]> = {
+    strategy: strategy === "jwt" ? "cookie" : "database",
+    maxAge: own.maxAge ?? DEFAULT_MAX_AGE,
+    updateAge: own.updateAge ?? DEFAULT_UPDATE_AGE,
   };
+  // denext-only: the absolute ceiling, when the app sets one.
+  if (own.maxLifetime !== undefined) session.maxLifetime = own.maxLifetime;
+  return { strategy, session };
 }
 
 /** The pages: the app's, else the built-in ones under the base path. */
