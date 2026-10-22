@@ -61,6 +61,16 @@ and this project adheres to
   seeded the flags (without `--define`) only after its page module had run. The route entries now
   seed them with a `data:` import evaluated first.
 
+- **`import.meta.url` in a Next.js drop-in's server code names the module's own file.** The
+  compat server bundle is one file under `.denext/server/`, and every module bundled into it saw
+  that file's URL, so a route reading a file beside itself (an OG image route loading its font with
+  `fs.readFile(new URL("./Inter-SemiBold.ttf", import.meta.url))`, or `fetch()` of the same URL)
+  failed with `ENOENT` and answered 500. As in Next.js, each of the app's own modules now keeps its
+  source file's `import.meta.url`, `.filename`, `.dirname` and `.resolve`, pinned relative to the
+  bundle, so they hold under `denext start`, in a container image and in a `build --compile` binary
+  (which embeds `app/` with the files beside its routes). Pages Router and TanStack Start compat
+  bundles get the same.
+
 ### Security
 
 - **`@denext/lightningcss` 1.0.0-rc.72.1 drops `rkyv` 0.7 (RUSTSEC-2026-0235).** The wasm build
