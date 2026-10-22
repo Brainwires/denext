@@ -1127,7 +1127,7 @@ Deno.test("next-auth adapter bridge: MFA is refused over its database sessions (
   }
 });
 
-Deno.test("next-auth: database sessions slide by updateAge, as Auth.js's do, up to session.maxLifetime", async () => {
+Deno.test("next-auth: database sessions slide by updateAge, as Auth.js's do, up to an opt-in session.maxLifetime", async () => {
   const sessions = new Map<string, { sessionToken: string; userId: string; expires: Date }>();
   const adapter = memoryAdapter(sessions);
   adapter.createUser({
@@ -1175,6 +1175,39 @@ Deno.test("next-auth: database sessions slide by updateAge, as Auth.js's do, up 
     // Past the ceiling the session is over, however recently it slid.
     Date.now = () => signedIn + 7201_000;
     assertEquals(await readSession(), null, "ended at the ceiling");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+Deno.test("next-auth: with Auth.js's defaults an active database session keeps sliding past 30 days (no absolute cap)", async () => {
+  const sessions = new Map<string, { sessionToken: string; userId: string; expires: Date }>();
+  const adapter = memoryAdapter(sessions);
+  adapter.createUser({
+    id: "u1",
+    email: "ada@example.com",
+    emailVerified: null,
+    name: "Ada",
+    image: null,
+  });
+  const a = app({ adapter, session: { strategy: "database" } }); // maxAge 30 days, updateAge 1 day
+  const DAY = 86_400_000;
+  const realNow = Date.now;
+  const signedIn = realNow();
+  const expiresOf = () => [...sessions.values()][0].expires.getTime();
+  const readSession = async () => await (await a.call("/api/auth/session")).json();
+  try {
+    Date.now = () => signedIn;
+    await signInWithPassword(a);
+    // Active every 20 days: each read past updateAge moves the row a full 30 days on.
+    for (const day of [20, 40, 60, 80]) {
+      Date.now = () => signedIn + day * DAY;
+      assertEquals((await readSession())?.user.email, "ada@example.com", `day ${day}`);
+      assert(Math.abs(expiresOf() - (signedIn + (day + 30) * DAY)) < 1000, `slid on day ${day}`);
+    }
+    // Idle past maxAge, it ends, as in Auth.js.
+    Date.now = () => signedIn + 111 * DAY;
+    assertEquals(await readSession(), null, "an idle session expires");
   } finally {
     Date.now = realNow;
   }

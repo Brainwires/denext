@@ -2437,10 +2437,11 @@ const adapter = {
 Database sessions slide as Auth.js's do: once a session is older than `session.updateAge`
 (default 24 hours), a read that can answer with a cookie (`/api/auth/session`, a route handler,
 middleware, a Server Action) moves its row's `expires` to a full `maxAge` from now, keeping the
-token. The row keeps no sign-in time, so the signed session cookie carries it, and no slide
-passes the denext-only `session.maxLifetime` (default 30 days, or `maxAge` when longer) counted
-from the sign-in, where the session ends. A session cookie an earlier denext issued has no sign-in
-time and ends at its row's current expiry.
+token. As in Auth.js there is no absolute cap: an active session keeps sliding, and only an
+idle one expires. `session.maxLifetime` (denext-only, opt-in, at least `maxAge`) sets one, on
+either strategy, counted from the sign-in: the row keeps no sign-in time, so the signed session
+cookie carries it. A session cookie an earlier denext issued has no sign-in time and ends at its
+row's current expiry.
 
 The built-in sign-in page shows a WebAuthn provider (`Passkey`) as a "Sign in with Passkey"
 button that runs the passkey sign-in in the page, as `next-auth/webauthn`'s `signIn("passkey")`
@@ -2469,8 +2470,9 @@ denext keeps its own defaults where they are stricter, and nothing is relaxed fo
 - **Cookies.** The session is `__Host-denext_auth` (`Secure`, `httpOnly`, `SameSite=Lax`), with
   no `cookies` override. Over plain http on a loopback host, or outside production, the names
   drop the `__Host-` prefix, which a browser refuses there (as `denextAuth`'s do; see
-  [Base path and cookies](#base-path-and-cookies)), much as Auth.js drops `__Secure-`. A session also ends 30 days after sign-in at the latest
-  (`session.maxLifetime`), however often it slides.
+  [Base path and cookies](#base-path-and-cookies)), much as Auth.js drops `__Secure-`. A session ends a set time after sign-in, however often it
+  slides, only when the app sets the denext-only `session.maxLifetime` (Auth.js has no such cap,
+  and neither does an app that sets none).
 - **Email links** open a confirmation page by default; `Resend({ confirm: false })` signs in on
   the GET, as Auth.js does.
 

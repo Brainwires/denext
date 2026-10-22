@@ -39,8 +39,9 @@ and this project adheres to
   session older than `session.updateAge` (Auth.js's default 24 hours) now has its row's `expires`
   moved to a full `maxAge` from now on a read that can answer with a cookie, as Auth.js does. The
   rows keep no sign-in time, so the signed session cookie of a store that keeps none (`{ sid, at }`)
-  carries it, and no slide passes `session.maxLifetime` from the sign-in (`NextAuthConfig`'s
-  `session.maxLifetime`, denext-only, sets it). A cookie an earlier denext issued never slides.
+  carries it. As in Auth.js an active session has no absolute cap, on either strategy (a next-auth
+  JWT session was capped at 30 days from sign-in before); `NextAuthConfig`'s denext-only
+  `session.maxLifetime` opts in to one. A cookie an earlier denext issued never slides.
 - **A passkey button on next-auth's built-in sign-in page.** A WebAuthn provider (`Passkey`) shows
   as a "Sign in with Passkey" button that runs the passkey sign-in in the page (hidden where the
   browser has no WebAuthn); the page's own Content-Security-Policy allows that one script by its
