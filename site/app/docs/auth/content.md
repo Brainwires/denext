@@ -2434,6 +2434,19 @@ const adapter = {
 };
 ```
 
+Database sessions slide as Auth.js's do: once a session is older than `session.updateAge`
+(default 24 hours), a read that can answer with a cookie (`/api/auth/session`, a route handler,
+middleware, a Server Action) moves its row's `expires` to a full `maxAge` from now, keeping the
+token. The row keeps no sign-in time, so the signed session cookie carries it, and no slide
+passes the denext-only `session.maxLifetime` (default 30 days, or `maxAge` when longer) counted
+from the sign-in, where the session ends. A session cookie an earlier denext issued has no sign-in
+time and ends at its row's current expiry.
+
+The built-in sign-in page shows a WebAuthn provider (`Passkey`) as a "Sign in with Passkey"
+button that runs the passkey sign-in in the page, as `next-auth/webauthn`'s `signIn("passkey")`
+does; the page's own Content-Security-Policy allows that one script by its hash. Without
+WebAuthn in the browser (or with JavaScript off) the button stays hidden.
+
 An Auth.js adapter's `Session` rows hold the user and the expiry only, with no sign-in time,
 sign-in methods or pending second factor. So `denextAuth` refuses to start when MFA could run over
 them (`session: { strategy: "database" }` through the adapter, with an adapter that has the MFA

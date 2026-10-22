@@ -321,8 +321,10 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
       "LIMITED. Rationales are not shown. checkNotifications / requestNotifications report " +
       "all-on or empty settings. openSettings opens the app's own settings; openPhotoPicker " +
       "opens the photo picker (pickImage with source photos) and resolves once it closes; " +
-      "openContactPicker rejects. requestLocationAccuracy reports the current accuracy. " +
-      "canScheduleExactAlarms is true, canUseFullScreenIntent false. Each permission also needs " +
+      "openContactPicker opens the contact picker (pickContact: the contacts plugin, else the " +
+      "browser's Contact Picker API) and resolves once it closes. requestLocationAccuracy " +
+      "reports the current accuracy. canScheduleExactAlarms is true, canUseFullScreenIntent " +
+      "false. Each permission also needs " +
       "its own capability (camera, geolocation, local-notifications, contacts, ...).",
   },
 

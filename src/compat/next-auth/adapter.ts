@@ -526,10 +526,12 @@ function serially<T>(
 }
 
 /**
- * A user's session row as a denext session payload (no `authTime`: it never slides). With the
- * session `maxAge`, its sign-in time to the millisecond (`authTimeMs`): the row's expiry less
- * `maxAge`, the expiry having been written with the sign-in's milliseconds ({@link rowExpires}),
- * so "sign out everywhere" tells a sign-in in the same second, but after it, from one before.
+ * A user's session row as a denext session payload. The row keeps no sign-in time, so the
+ * session cookie carries it (`denextAuth` restores `authTime` from there on every read, which
+ * lets the row slide under `session.updateAge` up to `session.maxLifetime`). Without one (a
+ * cookie from before that), with the session `maxAge`, its sign-in time to the millisecond
+ * (`authTimeMs`): the row's expiry less `maxAge`, the expiry having been written with the
+ * sign-in's milliseconds ({@link rowExpires}) — such a session never slides, so that holds.
  */
 function sessionPayload(
   row: AuthJsAdapterSession,

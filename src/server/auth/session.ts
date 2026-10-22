@@ -27,6 +27,13 @@
  * before 2.5.0-rc.3) has no ceiling to measure, so it is never slid again and simply ends at
  * its current expiry.
  *
+ * **Stores that keep no sign-in time.** A store marked (`markWithoutAuthLevel`) as keeping
+ * only who a session is and when it expires (the Auth.js adapter bridge's session rows) can't
+ * tell a slide from a sign-in, so its cookie carries the sign-in time beside the id
+ * (`{ sid, at }`, signed like the rest): a read takes `authTime` from there, which lets such a
+ * session slide and caps it at `session.maxLifetime`. A cookie without `at` (issued before it)
+ * never slides.
+ *
  * @module
  */
 
@@ -36,18 +43,45 @@ import type { AdapterUser, AuthAdapter } from "./adapter.ts";
 import { banVerdict, type CredentialVerdict, isBanned } from "./ban.ts";
 import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
-import { sessionExpired, type SessionStore } from "./session-store.ts";
+import { keepsAuthLevel, sessionExpired, type SessionStore } from "./session-store.ts";
 import { ssoSessionAllowed } from "./sso-user.ts";
 import { recordSamlSession } from "./saml-sessions.ts";
 import type { AuthConfig, AuthSession, AuthSessionSaml, AuthUser } from "./types.ts";
 
-/** What the signed cookie carries: the payload (stateless) or a store id. */
-type CookieData = AuthSession | { sid: string };
+/**
+ * What the signed cookie carries: the payload (stateless), or a store id — with the sign-in time
+ * in epoch milliseconds (`at`) for a store that keeps none (see the module doc).
+ */
+type CookieData = AuthSession | { sid: string; at?: number };
 
 /** The signed-cookie options for this config's session cookie. */
 function sessionOptions(config: AuthConfig) {
   const options = resolveAuthOptions(config);
   return cookieSessionOptions(config, options.cookies.session, options.maxAge);
+}
+
+/**
+ * The cookie data for a store-backed session: its id, and for a store that keeps no sign-in time
+ * the session's (`at`, epoch milliseconds), so a later read can measure its ceiling.
+ */
+function storeCookie(store: SessionStore, sid: string, session: AuthSession): CookieData {
+  const at = session.authTimeMs;
+  return keepsAuthLevel(store) || at === undefined ? { sid } : { sid, at };
+}
+
+/**
+ * A stored session with the cookie's sign-in time (`at`) restored, for a store that keeps none;
+ * any other store's record is returned as it is.
+ */
+function withCookieSignIn(
+  store: SessionStore,
+  data: CookieData,
+  stored: AuthSession | undefined,
+): AuthSession | undefined {
+  if (!stored || keepsAuthLevel(store) || !("sid" in data)) return stored;
+  const at = data.at;
+  if (typeof at !== "number" || !Number.isFinite(at)) return stored;
+  return { ...stored, authTime: Math.floor(at / 1000), authTimeMs: at };
 }
 
 /** The store id in a cookie payload, or `undefined` for a stateless payload. */
@@ -102,7 +136,7 @@ async function resolveSession(
   if (!store) return "sid" in data ? null : liveSession(data, options);
   const sid = storeId(data);
   if (!sid) return null; // a stateless cookie is not honored once a store is configured
-  const stored = liveSession(await store.get(sid), options);
+  const stored = liveSession(withCookieSignIn(store, data, await store.get(sid)), options);
   return stored ? { ...stored, sessionId: sid } : null;
 }
 
@@ -381,7 +415,7 @@ export async function issueAuthSession(
   // Store-backed: a fresh random id per login (no fixation), the payload server-side.
   const sid = randomToken();
   await options.sessionStore.create(sid, payload);
-  await session.set({ sid });
+  await session.set(storeCookie(options.sessionStore, sid, payload));
   await recordSamlSession(options, payload, sid);
   return { ...payload, sessionId: sid };
 }
@@ -508,7 +542,7 @@ export async function refreshIfStale(
   // as it was read and re-issue NO cookie, so the next request reads the store again and
   // sees the revocation.
   if (!(await rewriteStored(options, sessionId, refreshed))) return session;
-  await cookie.set({ sid: sessionId });
+  await cookie.set(storeCookie(options.sessionStore, sessionId, refreshed));
   return { ...refreshed, sessionId };
 }
 
@@ -566,7 +600,7 @@ export async function replaceAuthSession(
     return true;
   }
   if (!sessionId || !(await rewriteStored(options, sessionId, payload))) return false;
-  await cookie.set({ sid: sessionId });
+  await cookie.set(storeCookie(options.sessionStore, sessionId, payload));
   return true;
 }
 

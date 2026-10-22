@@ -213,13 +213,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   in-memory cache store (the default on Deno Deploy, or `cache: { store: "memory" }`) a ceremony
   must finish on the instance that began it. The counter update is a read-then-write (Auth.js's port has no
   compare-and-swap), and removing a passkey needs a denext-only `deleteAuthenticator` method. The
-  built-in sign-in page lists no passkey button.
+  built-in sign-in page's passkey button signs in only (no registration, as above).
 - **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs
   users, accounts, verification tokens and database sessions. Roles, bans and
   `sessionsValidAfter` need its two optional extension methods (`getUserExtension` /
   `updateUserExtension`, an extension table); without them those fields are dropped with a
   warning and `revokeAllSessions()` can't end its database sessions. Password hashes are not
-  stored through it, and database sessions don't slide. Its session rows keep no sign-in time,
+  stored through it. Its database sessions slide only with a session cookie that carries the
+  sign-in time (one an earlier denext issued ends at its row's expiry). Its session rows keep no sign-in time,
   sign-in methods or pending second factor, so `denextAuth` refuses MFA (an adapter with the
   factor store, or `mfa.required: "always"`) over them at startup; use the JWT strategy or a
   denext `sessionStore` with MFA. With an adapter, a Credentials `authorize()` must return a user of the

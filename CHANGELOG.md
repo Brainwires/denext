@@ -35,6 +35,22 @@ and this project adheres to
 
   Stock Deno, `DENEXT_DENO=stock`, `DENEXT_DESKTOP_RUNTIME=stock` and older runtimes keep the
   single `--allow-net` (the two models can't be mixed on one command line).
+- **Auth.js database sessions slide.** Through the next-auth compat's adapter bridge, a database
+  session older than `session.updateAge` (Auth.js's default 24 hours) now has its row's `expires`
+  moved to a full `maxAge` from now on a read that can answer with a cookie, as Auth.js does. The
+  rows keep no sign-in time, so the signed session cookie of a store that keeps none (`{ sid, at }`)
+  carries it, and no slide passes `session.maxLifetime` from the sign-in (`NextAuthConfig`'s
+  `session.maxLifetime`, denext-only, sets it). A cookie an earlier denext issued never slides.
+- **A passkey button on next-auth's built-in sign-in page.** A WebAuthn provider (`Passkey`) shows
+  as a "Sign in with Passkey" button that runs the passkey sign-in in the page (hidden where the
+  browser has no WebAuthn); the page's own Content-Security-Policy allows that one script by its
+  hash.
+- **`pickContact()` in `denext/mobile`.** One contact from the system picker (`id`, `name`,
+  `emails`, `phoneNumbers`; `null` when cancelled) through the `contacts` capability's plugin, the
+  browser's Contact Picker API on the web where it exists, else a rejection with code
+  `unsupported` (`contactPickerSupported()` tells). react-native-permissions' `openContactPicker()`
+  opens it instead of rejecting, and expo-contacts' `presentContactPickerAsync()` uses the
+  browser's picker off the shell.
 
 ### Changed
 
