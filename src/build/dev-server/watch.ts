@@ -192,6 +192,44 @@ function outsideEdits(
     });
 }
 
+/** How long after the watchers start an event can still be a replay of a write made before. */
+const STARTUP_REPLAY_MS = 2000;
+
+/**
+ * Whether `path`'s change event is a replay of a write made before the watchers started, not an
+ * edit: macOS's FSEvents delivers the recent history of a folder to a new watch, so the files a
+ * scaffold or a checkout wrote just before `denext dev` arrived as edits — a config "changed"
+ * note, a new generation in the middle of the first render (its actions forgotten while it
+ * tagged them), copies of untouched modules. Within {@linkcode STARTUP_REPLAY_MS} of the start,
+ * an event for a file last modified before the start is dropped; later events, and one for a
+ * file that is gone, always count (an extracted archive keeps old mtimes on purpose).
+ *
+ * @param path The event's path.
+ * @param startedAt When the watchers started (epoch ms).
+ * @param now The time the event arrived (epoch ms).
+ * @param mtimeOf The file's modification time (epoch ms), or null when it can't be read.
+ * @returns Whether to drop the event.
+ */
+export function startupReplay(
+  path: string,
+  startedAt: number,
+  now: number,
+  mtimeOf: (path: string) => number | null = statMtime,
+): boolean {
+  if (now - startedAt > STARTUP_REPLAY_MS) return false;
+  const mtime = mtimeOf(path);
+  return mtime !== null && mtime < startedAt;
+}
+
+/** `path`'s modification time (epoch ms), or null when it is gone or has none. */
+function statMtime(path: string): number | null {
+  try {
+    return Deno.statSync(path).mtime?.getTime() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Split a change set into config edits (restart note) and the rest (rebuild). Config edits
  * are classified by BASENAME: Deno.watchFs may report realpath-resolved event paths (e.g.
@@ -216,12 +254,16 @@ export async function watch(st: DevState): Promise<void> {
   const configFiles = configFilesOf(st);
   const configBasenames = new Set([...configFiles].map((p) => basename(p)));
   const watched = watchedPaths(st, configFiles);
+  // Before the watches open: a file written before this instant is not an edit (startupReplay).
+  const startedAt = Date.now();
   const watcher = Deno.watchFs(watched, { recursive: true });
   let debounce: ReturnType<typeof setTimeout> | undefined;
   // Accumulate the paths changed during a debounce window so the refresh-vs-reload
   // decision sees the whole burst.
   let changed: string[] = [];
-  const queue = (paths: readonly string[]) => {
+  const queue = (events: readonly string[]) => {
+    const now = Date.now();
+    const paths = events.filter((p) => !startupReplay(p, startedAt, now));
     if (paths.length === 0) return;
     changed.push(...paths);
     if (debounce) clearTimeout(debounce);

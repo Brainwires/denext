@@ -85,6 +85,12 @@ and this project adheres to
   module keeps its two newest copies in `.denext/server-cache`; a copy dropped while it was still
   being written was removed first and written afterwards, so it stayed for the session. The
   removal now waits for the write.
+- **`denext dev` on macOS ignores the file history a new watch replays.** FSEvents delivers a
+  folder's recent writes to a new watch, so the files written just before `denext dev` started (a
+  scaffold, a checkout) arrived as edits: a "deno.json changed — restart" note, server copies of
+  untouched modules, and a new generation in the middle of the first render that could drop its
+  form actions. An event in the first two seconds for a file last written before the watch
+  started is now ignored.
 - **A SPA `client:interaction` island no longer loses the click that mounts it.** The press
   (pointerdown, touchstart or keydown) imported the component and mounted it as soon as its chunk
   arrived. A cached chunk often arrives before the button is released, and then the component
