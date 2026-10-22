@@ -1,7 +1,7 @@
 // Every `denext create` output is `deno fmt`- and `deno lint`-clean as written: a fresh project
 // passes `deno fmt --check` and `deno lint` with the config it was given (Deno's default fmt
 // options — the scaffold carries no `fmt` block), for each template and each feature, alone and
-// all together.
+// all together, and as a `--monorepo` workspace (checked from its root, every member at once).
 
 import { assert } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
@@ -10,6 +10,7 @@ import {
   type ScaffoldOptions,
   scaffoldProject,
 } from "../../src/build/scaffold.ts";
+import { scaffoldMonorepo } from "../../src/build/scaffold-monorepo.ts";
 import { isToolchainBuild, toolchainDeno } from "../../scripts/test-run.ts";
 
 /** The feature switches `denext create` offers. */
@@ -29,16 +30,30 @@ const LOCAL_LINT_PLUGIN = toFileUrl(
   join(import.meta.dirname!, "../../src/lint/denext-plugin.ts"),
 ).href;
 
-/** Each template with no features, each feature alone, every feature, and no `.vscode`. */
-function combos(): { name: string; opts: Omit<ScaffoldOptions, "dir"> }[] {
-  const out: { name: string; opts: Omit<ScaffoldOptions, "dir"> }[] = [];
+/** One matrix entry: its name, the create options, and whether it is `--monorepo`. */
+interface Combo {
+  name: string;
+  opts: Omit<ScaffoldOptions, "dir">;
+  monorepo?: boolean;
+}
+
+/**
+ * Each template with no features, each feature alone, every feature, and no `.vscode`; and each
+ * template as a monorepo, alone and with every feature.
+ */
+function combos(): Combo[] {
+  const out: Combo[] = [];
+  const all = Object.fromEntries(FEATURES.map((f) => [f, true]));
+  for (const template of SCAFFOLD_TEMPLATES) {
+    out.push({ name: `${template}+monorepo`, opts: { template }, monorepo: true });
+    out.push({ name: `${template}+monorepo+all`, opts: { template, ...all }, monorepo: true });
+  }
   for (const template of SCAFFOLD_TEMPLATES) {
     out.push({ name: `${template}`, opts: { template } });
     out.push({ name: `${template}+no-vscode`, opts: { template, vscode: false } });
     for (const feature of FEATURES) {
       out.push({ name: `${template}+${feature}`, opts: { template, [feature]: true } });
     }
-    const all = Object.fromEntries(FEATURES.map((f) => [f, true]));
     out.push({ name: `${template}+all`, opts: { template, ...all } });
   }
   return out;
@@ -99,13 +114,13 @@ async function pointLintAtCheckout(dir: string): Promise<void> {
   await Deno.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
 }
 
-for (const { name, opts } of combos()) {
+for (const { name, opts, monorepo } of combos()) {
   Deno.test(`scaffold ${name}: deno fmt --check and deno lint pass`, async () => {
     // A temp dir outside the repository, so no parent deno.json lends the project its options.
     const root = await Deno.makeTempDir({ prefix: "denext-scaffold-fmt-" });
     try {
       const dir = join(root, "my-app");
-      await scaffoldProject({ ...opts, dir });
+      await (monorepo ? scaffoldMonorepo : scaffoldProject)({ ...opts, dir });
       const fmt = await deno(["fmt", "--check"], dir);
       assert(fmt.ok, `deno fmt --check failed for ${name}:\n${fmt.output}`);
       await pointLintAtCheckout(dir);

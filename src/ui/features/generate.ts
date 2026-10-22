@@ -50,6 +50,7 @@ const KIND_LEAD: Record<GenerateKind, string> = {
   "vector-search": "migrations/<stamp>_<table>_vector_search.sql — pgvector's match_<table> recipe",
   "seed": "jobs/seed.ts — idempotent development data (denext job seed)",
   "ci": ".github/workflows/ci.yml — check + build on every push and pull request",
+  "app": "apps/<name>/ — another app in a `denext create --monorepo` workspace",
 };
 
 /** What the name field suggests for each kind. */
@@ -59,6 +60,7 @@ const NAME_HINT: Partial<Record<GenerateKind, string>> = {
   "seed": "sqlite | prisma (optional — auto-detected)",
   "vector-search": "table (optional — documents)",
   "ci": "github (optional)",
+  "app": "app folder name under apps/ (admin)",
   "loading": "route path (optional — root segment when empty)",
   "error": "route path (optional — root segment when empty)",
   "not-found": "route path (optional — root segment when empty)",

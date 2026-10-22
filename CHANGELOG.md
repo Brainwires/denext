@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext create <dir> --monorepo`** (also in the interactive picker and on `denext ui`'s Setup
+  page) scaffolds a Deno workspace: a root `deno.json` listing its members, holding the root-only
+  fields (`unstable`, `allowScripts`), the shared `compilerOptions` / `fmt` / `lint` and tasks
+  (`dev` / `build` / `start` delegate to the app, `test` and `check` cover every member); the app
+  in `apps/web` (every other create option applies to it, native shells included); and
+  `packages/ui` (`@<scope>/ui`: a `Card` and a `Button` that render in Server Components and
+  islands alike, and their stylesheet as an export) and `packages/shared` (plain TypeScript), which
+  the app imports by name. `.vscode`, `--mcp` and `--fallow` go to the root. Every config's denext
+  pin is planned together under the dependency-age hold. `denext generate app <name>` adds another
+  app to such a workspace, and `denext dev` / `build` / `doctor` run at a workspace root name its
+  apps. See https://denext.dev/docs/monorepo.
+
 ### Changed
 
 - **Smaller client startup: the blur-placeholder clearing and the form-action seam ship only to an
@@ -32,6 +46,14 @@ and this project adheres to
   bundle's source maps.
 
 ### Fixed
+
+- **A Deno workspace member app can use its sibling packages everywhere.** A package another
+  member exports by name (`@acme/ui`, `@acme/ui/styles.css`) now resolves under the configs denext
+  writes for a re-exec (the module, CSS and dev-loop configs carry the root's imports, each
+  member's exports and each member's own imports as a scope), its stylesheets get shims before any
+  import-graph crawl, the per-module dev loop serves its modules (`@fs`) instead of leaving the
+  bare specifier for the browser, `denext dev` watches it, and an edit there re-renders the server
+  and hot-updates the module.
 
 - **An un-folded `feature()` call reads the configured flag in the dev server's bundled routes,
   and at module level in a route page on a stock Deno.** The dev server's bundled route, Flight

@@ -42,6 +42,7 @@ import {
   signingReady,
 } from "../../build/code-signing.ts";
 import { hasCommand, listSigningIdentities } from "../../ui/signing.ts";
+import { workspaceRootHint } from "../../build/workspace-imports.ts";
 
 /** Whether `path` is an existing directory. */
 async function isDirectory(path: string): Promise<boolean> {
@@ -201,7 +202,11 @@ async function appOrPluginRoutesCheck(
   const check = await appDirCheck(paths.appDir);
   if (check.ok) return { check, hasAppDir: true };
   const routing = await routingPlugins(paths);
-  if (routing.length === 0) return { check, hasAppDir: false };
+  if (routing.length === 0) {
+    // A monorepo's root: say which members are the apps to run it on.
+    const hint = await workspaceRootHint(paths.projectDir);
+    return { check: hint ? { ...check, detail: hint } : check, hasAppDir: false };
+  }
   const detail = `not needed: routes come from ${routing.join(", ")}`;
   return { check: { ...check, ok: true, detail }, hasAppDir: false };
 }

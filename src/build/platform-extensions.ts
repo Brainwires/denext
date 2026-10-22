@@ -40,6 +40,7 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { basename, dirname, join, relative, resolve, SEPARATOR as SEP, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
+import { workspaceImports } from "./workspace-imports.ts";
 
 /** A build target (the type `denext/platform`'s constant has). */
 export type { Platform } from "../platform.ts";
@@ -546,6 +547,14 @@ function localAliases(imports: unknown, base: URL): Array<[string, string]> {
 export async function readImportAliases(projectDir: string): Promise<ImportAliases> {
   const aliases = await importMapAliases(projectDir);
   const keys = new Set(aliases.map(([key]) => key));
+  // The Deno workspace's member packages by name (`@acme/ui`) and the root's local entries.
+  const workspace = await workspaceImports(join(resolve(projectDir), "deno.json"));
+  for (const [key, target] of Object.entries(workspace.imports)) {
+    if (keys.has(key) || !target.startsWith("file:")) continue;
+    if (key.endsWith("/") !== target.endsWith("/")) continue;
+    aliases.push([key, target]);
+    keys.add(key);
+  }
   for (const [key, target] of await readTsPathAliases(projectDir)) {
     if (!keys.has(key)) aliases.push([key, toFileUrl(target).href]);
   }

@@ -26,7 +26,8 @@ import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { setJsonValue } from "../../build/json-edit.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
 import { generateArtifact } from "../../build/generate.ts";
-import { offlineNote, pinEligibleFile } from "../../build/eligible-pins.ts";
+import { offlineNote, pinEligibleFiles } from "../../build/eligible-pins.ts";
+import { MONOREPO_CONFIGS, scaffoldMonorepo } from "../../build/scaffold-monorepo.ts";
 import { jsrAvailable } from "../jsr.ts";
 import {
   DENEXT_UNSTABLE,
@@ -665,11 +666,17 @@ async function opScaffoldPage(ctx: UiContext): Promise<OpOutcome> {
  * (this denext's own release can be too new for it), as `denext create` does; offline, or
  * without net access to jsr.io, the pin stays and the note says Deno may hold it.
  */
-async function pinScaffolded(ctx: UiContext): Promise<{ ok: boolean; notes: readonly string[] }> {
+async function pinScaffolded(
+  ctx: UiContext,
+  monorepo = false,
+): Promise<{ ok: boolean; notes: readonly string[] }> {
   if (!await jsrAvailable(ctx, "registry")) {
     return { ok: true, notes: [offlineNote("denext ui can't reach JSR")] };
   }
-  const out = await pinEligibleFile(await uiSafeJoin(ctx.dir, "deno.json"), ctx.dir);
+  // A monorepo's configs (root, app, packages) move together.
+  const configs = monorepo ? MONOREPO_CONFIGS : ["deno.json"];
+  const paths = await Promise.all(configs.map((c) => uiSafeJoin(ctx.dir, c)));
+  const out = await pinEligibleFiles(paths, ctx.dir);
   return { ok: out.ok, notes: out.error ? [out.error] : out.notes };
 }
 
@@ -680,7 +687,7 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
   }
   const on = (key: string): boolean => form.get(`feature.${key}`) !== null;
   try {
-    const written = await scaffoldProject({
+    const options = {
       dir: ctx.dir,
       tailwind: on("tailwind"),
       srcDir: on("srcDir"),
@@ -691,8 +698,10 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
       compatibilityMode: on("compatibility"),
       fallow: on("fallow"),
       mcp: on("mcp"),
-    });
-    const held = await pinScaffolded(ctx);
+    };
+    const monorepo = on("monorepo");
+    const written = monorepo ? await scaffoldMonorepo(options) : await scaffoldProject(options);
+    const held = await pinScaffolded(ctx, monorepo);
     return {
       step: "features",
       ok: held.ok,

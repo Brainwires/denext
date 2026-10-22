@@ -45,7 +45,7 @@ function generateTarget(
 export const generateCommand: CommandSpec = {
   name: "generate",
   summary:
-    "Scaffold a route, boundary, component, API route, action, middleware, job, Edge Function, test, Docker setup, migration, vector search, seed or CI workflow",
+    "Scaffold a route, boundary, component, API route, action, middleware, job, Edge Function, test, Docker setup, migration, vector search, seed, CI workflow or monorepo app",
   aliases: ["g"],
   loadsModules: false, // pure codegen — no user-module load / re-exec needed
   usage: "  denext generate page dashboard/settings\n" +
@@ -67,7 +67,8 @@ export const generateCommand: CommandSpec = {
     "  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ jobs/migrate.ts)\n" +
     "  denext generate vector-search documents # pgvector table + match_documents (a migration)\n" +
     "  denext generate seed              # jobs/seed.ts (node:sqlite, or Prisma when detected)\n" +
-    "  denext generate ci                # .github/workflows/ci.yml (check + build)",
+    "  denext generate ci                # .github/workflows/ci.yml (check + build)\n" +
+    "  denext generate app admin         # apps/admin in a `denext create --monorepo` workspace",
   flags: [
     { name: "force", type: "boolean", help: "Overwrite files that already exist" },
     {

@@ -404,6 +404,18 @@ denext task coverage:fallow   # deno test --coverage → coverage/coverage-final
         adds Gemini CLI and Codex); it merges into config files that already list other servers.
       </p>
 
+      <h2 id="monorepo">Monorepos</h2>
+      <p>
+        <code>denext create my-shop --monorepo</code>{" "}
+        scaffolds a Deno workspace instead of a single app: the app in <code>apps/web</code>{" "}
+        (every other create option applies to it) and the packages it shares in{" "}
+        <code>packages/ui</code> and{" "}
+        <code>packages/shared</code>, which Server Components and client islands alike import by
+        name, such as <code>@my-shop/ui</code>. The root's tasks delegate to the app, and{" "}
+        <code>denext task check</code> formats, lints and tests every member. See{" "}
+        <a href="/docs/monorepo">Monorepos</a>.
+      </p>
+
       <h2>Coming from Next.js?</h2>
       <p>
         The file conventions, hooks, and <code>app/</code>{" "}

@@ -179,9 +179,9 @@ Deno.test("a forced dry run counts an existing file as written, and still writes
 Deno.test("GENERATE_KINDS is the CLI verb's kind list, in order", () => {
   const help = (generateCommand.positionals ?? []).find((p) => p.name === "kind")?.help ?? "";
   assertEquals(help, GENERATE_KINDS.join(" | "));
-  assertEquals(GENERATE_KINDS.length, 18);
+  assertEquals(GENERATE_KINDS.length, 19);
   assertEquals(GENERATE_KINDS[0], "page");
-  assertEquals(GENERATE_KINDS[GENERATE_KINDS.length - 1], "ci");
+  assertEquals(GENERATE_KINDS[GENERATE_KINDS.length - 1], "app");
 });
 
 // ---- docker flags ------------------------------------------------------------
