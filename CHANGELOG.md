@@ -205,8 +205,13 @@ and this project adheres to
   every stylesheet import at its shim; the build now records that in `manifest.json`
   (`compatCss`), so `start` serves a next-compat build with no re-exec and no write outside
   `.denext`, and `migrate` writes the least-privilege `start` a SPA or Expo migration gets
-  (`--allow-net --allow-read --allow-env --allow-write=.denext`). Re-run `denext migrate` (or edit
-  the task) and rebuild to pick it up; a build from an older denext keeps the re-exec. A Pages
+  (`--allow-net --allow-read --allow-env --allow-write=.denext`), plus the read-only system
+  information Node's `os` module reads, which loggers and SDKs call (`--allow-sys` scoped to
+  `hostname`, `osRelease`, `osUptime`, `loadavg`, `cpus`, `systemMemoryInfo`, `homedir`, `uid`,
+  `gid` and `username`; not `networkInterfaces`). When a dependency needs more, the server says so once, on the request or the start that
+  was refused: which permission, the scoped flag to add to the `start` task (a compiled binary:
+  the `compile.permissions` entry to rebuild with), and `-A` as the blunt fallback. Re-run
+  `denext migrate` (or edit the task) and rebuild to pick it up; a build from an older denext keeps the re-exec. A Pages
   Router or Prisma app, and the Remix, React Router, Fresh and TanStack Start migrations, keep
   `-A`. An app whose `denext.config.ts` recovers its MDX plugins from `next.config`
   (`resolveNextMdx`) no longer warns "could not recover MDX plugins … Requires write access" on

@@ -27,6 +27,7 @@ import { denoForwardFor, denoVerbArgs, verbatimFrom } from "./src/cli/deno-forwa
 import { DENO_VERBS, forwardedDenoVerbs, unlistedVerbHint } from "./src/cli/deno-verbs.ts";
 import { routeUnknownVerb, type VerbRoute } from "./src/cli/verb-route.ts";
 import type { LoadCommandsOptions, LoadCommandsResult } from "./src/cli/plugin-commands.ts";
+import { reportPermissionRefusal } from "./src/server/permission-hint.ts";
 
 /** The run half of the entrypoint, imported when a verb runs (src/cli/run-verb.ts). */
 type RunVerbModule = typeof import("./src/cli/run-verb.ts");
@@ -377,6 +378,8 @@ if (import.meta.main) {
   try {
     await main();
   } catch (error) {
+    // A permission the task's flags don't grant (a least-privilege `start`): say which flag.
+    reportPermissionRefusal(error);
     // Print known, expected failures cleanly (no stack trace); an unexpected error
     // still throws with its stack so real bugs stay debuggable.
     if (error instanceof Deno.errors.AddrInUse) {

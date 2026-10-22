@@ -914,7 +914,7 @@ async function writeAppRouterDenoJson(
   written: string[],
   cap?: CapacitorPlan,
   rr?: boolean,
-  start: "least-privilege" | "all" = "all",
+  start: StartPermissions = "all",
 ): Promise<boolean> {
   const denoJson = {
     tasks: appRouterTasks(R, prismaWiring, cap, start),
@@ -954,13 +954,13 @@ async function writeAppRouterDenoJson(
 
 /**
  * An App Router app's tasks: the dev/build/export/start set, Prisma's, and the Capacitor ones.
- * `start` is `"least-privilege"` for a Next.js App Router app (see {@link nextStartPermissions}).
+ * `start` is `"server"` for a Next.js App Router app (see {@link nextStartPermissions}).
  */
 function appRouterTasks(
   R: DenextResolver,
   prismaWiring: PrismaWiring | null,
   cap?: CapacitorPlan,
-  start: "least-privilege" | "all" = "all",
+  start: StartPermissions = "all",
 ): Record<string, string> {
   return {
     ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto", start),
@@ -1552,13 +1552,14 @@ async function migrateNextProject(
  * for a Pages Router app (its server render resolves stylesheets through the CSS import map
  * `start` applies by re-running itself, which needs an unscoped `--allow-run`) and for a Prisma
  * app (its SQLite database lives outside `.denext`, and the query engine may need more than the
- * least-privilege set).
+ * least-privilege set). Its server runs the app's npm dependencies, so it also gets
+ * {@link NODE_OS_SYS}.
  */
 function nextStartPermissions(
   pagesRouter: boolean,
   prismaWiring: PrismaWiring | null,
-): "least-privilege" | "all" {
-  return pagesRouter || prismaWiring ? "all" : "least-privilege";
+): StartPermissions {
+  return pagesRouter || prismaWiring ? "all" : "server";
 }
 
 /**
@@ -2859,12 +2860,36 @@ const MIGRATED_RUN = "deno run -A --node-modules-dir=none";
 /** The permissions a SPA's `start` needs: the set `denext create`'s `start` task has. */
 const LEAST_PRIVILEGE_START = "--allow-net --allow-read --allow-env --allow-write=.denext";
 
+/**
+ * The read-only system information Node's `os` module reads (`hostname()`, `cpus()`,
+ * `totalmem()` / `freemem()`, `loadavg()`, `uptime()`, `release()` / `version()`, `homedir()`,
+ * `userInfo()`), which loggers, metrics and SDKs call at import or per request: a migrated
+ * Next.js app's server runs its npm dependencies, so its `start` grants these. Not
+ * `networkInterfaces` (it lists the host's addresses) nor the priority setters.
+ */
+const NODE_OS_SYS =
+  "--allow-sys=hostname,osRelease,osUptime,loadavg,cpus,systemMemoryInfo,homedir,uid,gid,username";
+
+/**
+ * A migrated app's `start` permissions: `"least-privilege"` (a SPA's export server), `"server"`
+ * (that set plus {@link NODE_OS_SYS}, for a server that runs the app's npm code) or `"all"`
+ * (`-A`).
+ */
+type StartPermissions = "least-privilege" | "server" | "all";
+
+/** The `start` task for `start` permissions. */
+function startTask(run: string, cli: string, start: StartPermissions): string {
+  if (start === "all") return `${run} ${cli} start .`;
+  const sys = start === "server" ? ` ${NODE_OS_SYS}` : "";
+  return `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START}${sys} ${cli} start .`;
+}
+
 function spaTasks(
   desktop: boolean,
   cli: string,
   hasIcon: boolean,
   nodeModulesDir: "manual" | "auto" = "auto",
-  start: "least-privilege" | "all" = "all",
+  start: StartPermissions = "all",
 ): Record<string, string> {
   // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
   // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
@@ -2887,14 +2912,13 @@ function spaTasks(
     export: `${run} ${cli} export .`,
     // A SPA's `start` serves its export and spawns nothing, so it gets the least-privilege set
     // `denext create` writes; so does a Next.js App Router app, whose next-compat server bundle
-    // carries its stylesheet shims (`nextStartPermissions`). `-A` for the rest: a Pages Router
+    // carries its stylesheet shims (`nextStartPermissions`), plus the read-only `os` information
+    // its npm dependencies read (`NODE_OS_SYS`). `-A` for the rest: a Pages Router
     // app's `start` re-execs a child `deno` to apply the CSS shim import map
     // (`maybeReexecForCss`), which needs an unscoped `--allow-run` (equivalent to every
     // permission) and writes the app's deno.json; the Remix, React Router, Fresh and TanStack
     // Start paths keep it until their `start` is verified under the least-privilege set.
-    start: start === "least-privilege"
-      ? `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START} ${cli} start .`
-      : `${run} ${cli} start .`,
+    start: startTask(run, cli, start),
   };
   if (desktop) tasks.desktop = desktopTask(hasIcon);
   return tasks;
