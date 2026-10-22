@@ -137,7 +137,9 @@ and this project adheres to
   macOS binaries on their own runners before it creates a release, and desktop-ci.yml runs
   `install.sh` on macOS too. The kitchen sink's window test covers page downloads: `downloadToFile`
   (a whole file, and one aborted mid-transfer that leaves nothing behind), an `<a download>` blob
-  export and a `Content-Disposition: attachment` response, each through the save dialog.
+  export and a `Content-Disposition: attachment` response, each through the save dialog (the
+  attachment on WebView2 and CEF: the WebKit webview does not download one from the app's
+  custom-scheme origin yet).
 
 - **The native App Router build defines its build constants with `deno bundle --define`.** Where
   the running Deno's `deno bundle` takes `--define` (denext's Deno toolchain from runtime
