@@ -79,6 +79,7 @@ import {
   toFileUrl,
 } from "@std/path";
 import {
+  classDefine,
   frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
@@ -431,11 +432,6 @@ export interface PrebuildOptions {
    * patched framework sources are what get prebuilt (see {@link patchPlugin}).
    */
   projectDir?: string;
-}
-
-/** The esbuild `define` that gates the class-component runtime (see class-flag.ts). */
-function classDefine(classComponents?: boolean): Record<string, string> {
-  return { __DENEXT_CLASS_COMPONENTS__: JSON.stringify(!!classComponents) };
 }
 
 /**

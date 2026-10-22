@@ -38,6 +38,21 @@ and this project adheres to
 
 ### Changed
 
+- **The native App Router build defines its build constants with `deno bundle --define`.** Where
+  the running Deno's `deno bundle` takes `--define` (denext's Deno toolchain from runtime
+  `3.0.0-rc.1`; a probe of `deno bundle --help`, run once per build, so an upstream release with
+  the flag is picked up too), the route and Flight bundles get the class-component gate and the
+  `features` map as defines, as the esbuild paths do, instead of reading runtime globals:
+  - the `features` map reaches an un-folded `feature()` call through the bundler, not a
+    `globalThis.__DENEXT_FEATURES__` seed in the Flight entry, and the route bundles now read it
+    too;
+  - the `__DENEXT_CLASS_COMPONENTS__` guards fold, so every native bundle drops the flag's runtime
+    default, and `classComponents: false` drops the reconciler's class paths as well
+    (`examples/hello`'s shared chunks: 63,378 → 62,954 B; `examples/islands` with
+    `classComponents: false`: 117,575 → 115,501 B in all).
+
+  A stock Deno (`DENEXT_DENO=stock`, or a `DENO_BIN` without the flag) keeps the seeded entry and
+  the runtime gate, unchanged.
 - **A `denext build --compile` binary embeds only the production server's code.** Its module
   graph no longer reaches the build pipeline, so a minimal app's binary drops from about 214 MB
   to about 135 MB (macOS x86_64): the 47 MB of npm build tooling (Prettier, Babel, `sass`, `zod`,

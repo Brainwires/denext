@@ -265,8 +265,8 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
       ...exportClientResolution(ctx, boundary.server),
-      // Seed the feature-flag map on the native client, as the build does, so an un-folded
-      // feature() call agrees with the server render.
+      // The feature-flag map on the native client, as the build does (defined or seeded), so
+      // an un-folded feature() call agrees with the server render.
       features: featureFlags(ctx.paths.config),
       instrumentationClient: ctx.paths.instrumentationClientPath,
       usesActivity: ctx.usesActivity,

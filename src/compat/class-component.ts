@@ -319,8 +319,9 @@ export function installClassSupport(): void {
   // The flag guard lets the compat esbuild `define` fold this body to a no-op when
   // `classComponents` is off — the class runtime then becomes unreferenced and drops from
   // the prebuilt compat runtime chunk (whose entry-point exports don't otherwise
-  // tree-shake). On the native path the flag is the runtime-global `true` and the whole
-  // function tree-shakes anyway when the app doesn't use classes.
+  // tree-shake). The native path defines it too (`deno bundle --define`; without that flag it
+  // is the runtime-global `true`), and the whole function tree-shakes anyway when the app
+  // doesn't use classes.
   if (!__DENEXT_CLASS_COMPONENTS__) return;
   setClassSupport({
     handleClassError,

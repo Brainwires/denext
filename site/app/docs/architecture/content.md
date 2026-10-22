@@ -162,7 +162,8 @@ React at bundle time. A few deliberate build defaults on that path:
   React type shim. Residual library type edges are type-only, never runtime.
 - **`classComponents`** — on every build path the class runtime is an on-demand chunk
   (see [KNOWN-DIFFERENCES.md](/docs/differences)); the next-compat build additionally
-  folds the flag through an esbuild `define`, so `classComponents: false` also strips the
+  folds the flag through an esbuild `define`, as does the native App Router build on denext's
+  Deno toolchain (`deno bundle --define`), so `classComponents: false` also strips the
   reconciler's class guards from that bundle. `true` imports the runtime statically.
 - **Run `denext build`/`dev` from the project directory** — the client/server boundary
   crawl resolves `@/…` path aliases from the app's `deno.json` on the cwd.

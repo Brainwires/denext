@@ -376,9 +376,10 @@ export default {
   hydration when the server rendered a class, statically when the build scan
   finds `Component` in the app's own sources. `true` always imports the runtime
   statically (no round trip); `false` keeps it out entirely (zero bytes, and a
-  class throws a guided error). On the next-compat/SPA esbuild path the flag is
-  also a `define`, so `false` dead-code-eliminates the reconciler's class guards
-  from that bundle too.
+  class throws a guided error). On the next-compat/SPA esbuild path, and on the
+  native App Router path under denext's Deno toolchain (`deno bundle --define`),
+  the flag is also a `define`, so `false` dead-code-eliminates the reconciler's
+  class guards from that bundle too.
 - **`mdx`** — `MdxConfig`. MDX/CommonMark compilation options for `.mdx`/`.md`
   sources in a compat (npm-React) app. The baseline loader compiles plain MDX;
   set this to thread your own `remarkPlugins`, `rehypePlugins`, `recmaPlugins`,
