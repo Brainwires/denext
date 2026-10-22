@@ -214,7 +214,7 @@
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/lightningcss@1.0.0-rc.72": {},
+      "jsr:@denext/lightningcss@1.0.0-rc.72.1": {},
       "jsr:@denext/og@0.1.2": {},
       "jsr:@denext/openapi@0.7.0": {
         "dependencies": [

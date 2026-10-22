@@ -61,6 +61,25 @@ and this project adheres to
   seeded the flags (without `--define`) only after its page module had run. The route entries now
   seed them with a `data:` import evaluated first.
 
+### Security
+
+- **`@denext/lightningcss` 1.0.0-rc.72.1 drops `rkyv` 0.7 (RUSTSEC-2026-0235).** The wasm build
+  now turns off the wrapped `lightningcss` crate's default features (`bundler`, `sourcemap`),
+  which `transform` never used; `sourcemap` pulled `parcel_sourcemap`, whose unconditional `rkyv`
+  0.7.46 has insufficient archive validation (out-of-bounds reads on archives with `Rc`/`Arc`).
+  The crate, and 43 other unused transitive crates, are gone from the lockfile and the `.wasm`;
+  `transform`'s output is unchanged.
+- **The Rust-built wasm packages are audited in CI.** A `cargo-audit` job in ci.yml (and in the
+  release's required jobs) runs `cargo audit` over every `packages/*/Cargo.lock` against a freshly
+  fetched advisory database; a vulnerability or an `unsound` advisory fails it. Each package's
+  `.cargo/audit.toml` lists the advisories that cannot reach its wasm, with the reason:
+  `@denext/swc`'s `lru` 0.16 (RUSTSEC-2026-0253, needs a panic caught by `catch_unwind`, which a
+  `wasm32-unknown-unknown` build, where panics abort, never does; the fixed `lru` needs a new major
+  of every swc crate) and `@denext/photon`'s `rand` 0.7 (RUSTSEC-2026-0097, needs rand's `log`
+  feature and a custom logger; neither `log` nor the feature is in the build). `deno task
+  audit:cargo` runs the same check locally, and `deno task precheck` runs it when a package's
+  `Cargo.lock`, `Cargo.toml` or `.cargo/audit.toml` changed.
+
 ## [4.7.0] - 2026-10-22
 
 ### Added

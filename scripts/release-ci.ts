@@ -23,6 +23,7 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "windows-resolve",
   "windows-tests",
   "macos-tests",
+  "cargo-audit",
 ];
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "@denext/lightningcss",
-  "version": "1.0.0-rc.72",
+  "version": "1.0.0-rc.72.1",
   "exports": "./mod.ts",
   "denext": { "catalog": { "kind": "library" } },
   "publish": {

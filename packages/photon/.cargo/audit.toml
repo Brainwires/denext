@@ -1,0 +1,15 @@
+# `cargo audit` configuration for this package (read from `.cargo/audit.toml` in the directory
+# `cargo audit` runs in; `deno task audit:cargo` and ci.yml's `cargo-audit` job run it here).
+# Every ignore names why the advisory cannot reach the shipped wasm and what removes it.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2026-0097 (informational: unsound): `rand` 0.7.3, an aliased `&mut` in `ThreadRng`
+  # when a custom `log` logger calls `thread_rng()` during a reseed. Pulled by `imageproc` 0.23
+  # (and `rand_distr` 0.2) under `photon-rs` 0.3.3, the newest photon-rs, which pins those
+  # versions; the fix (`rand` 0.8.6) is outside their range, so no in-range update exists.
+  # Not reachable in this build: rand's `log` feature is off and no `log` crate is in the
+  # dependency graph at all (`cargo tree -i log` finds none), so there is no logger to re-enter
+  # `thread_rng()`. Remove this entry when photon-rs moves to rand >= 0.8.6.
+  "RUSTSEC-2026-0097",
+]

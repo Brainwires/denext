@@ -154,6 +154,49 @@ jobs:
         # The same command runs locally (and in `deno task precheck` when a client module changed).
         run: deno task budget
 
+  # `cargo audit` over the Rust-built wasm packages' lockfiles (packages/*/Cargo.lock: lightningcss,
+  # photon, swc), each from its package directory so its .cargo/audit.toml ignores (each with the
+  # reason the advisory cannot reach the wasm) apply. A vulnerability or an `unsound` advisory fails
+  # (scripts/cargo-audit.ts). It runs on every push, so it also runs whenever a lockfile changes, and
+  # a release needs it green: the advisory database is fetched fresh, so a new advisory against an
+  # unchanged lockfile stops the release too. cargo-audit is the release's prebuilt binary,
+  # SHA-256-pinned and cached; no Rust toolchain is installed. Seconds.
+  cargo-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_AUDIT_VERSION: "0.22.2"
+      CARGO_AUDIT_SHA256: 7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # runs scripts/cargo-audit.ts only (no project code)
+
+      - name: Cache cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cargo-audit-bin
+          key: ${{ runner.os }}-cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ env.CARGO_AUDIT_SHA256 }}
+
+      - name: Download cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          name="cargo-audit-x86_64-unknown-linux-musl-v${CARGO_AUDIT_VERSION}"
+          curl -sSfL -o "$RUNNER_TEMP/ca.tgz" \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${CARGO_AUDIT_VERSION}/${name}.tgz"
+          echo "${CARGO_AUDIT_SHA256}  $RUNNER_TEMP/ca.tgz" | sha256sum -c -
+          mkdir -p ~/.cargo-audit-bin
+          tar -xzf "$RUNNER_TEMP/ca.tgz" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/${name}/cargo-audit" ~/.cargo-audit-bin/cargo-audit
+
+      - name: cargo audit (packages/*/Cargo.lock)
+        run: CARGO_AUDIT="$HOME/.cargo-audit-bin/cargo-audit" deno task audit:cargo
+
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
   # Split out so it runs in parallel with `check` instead of extending it.

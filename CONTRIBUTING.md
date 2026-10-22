@@ -134,7 +134,7 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
 
 **What CI runs on a push.** GitHub runs at most 20 of the account's jobs at once (5 of them
 macOS), so a push runs only what it needs. A push to `development` runs ci.yml's fast jobs
-(`check`, `bundle-budget`, `ios-export-router`, `windows-resolve`) and the path-filtered
+(`check`, `bundle-budget`, `ios-export-router`, `windows-resolve`, `cargo-audit`) and the path-filtered
 workflows whose filter matches (desktop-ci.yml, desktop-window.yml, parity-native.yml,
 parity-drift.yml, native-plugins.yml). A push to a `ci/*` branch runs native-plugins.yml when a
 native template changed and nothing else; a `fix/*` or `feat/*` branch runs no workflow. To test a

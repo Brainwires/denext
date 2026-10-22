@@ -13,11 +13,14 @@
 //   4. drift tests     the consistency tests that turned CI red most often (DRIFT_TESTS)
 //   5. doc-lint        when a published module changed (`deno task doc-lint`)
 //   6. bundle budget   when a module that can reach the client bundle changed (`deno task budget`)
+//   7. cargo audit     when a wasm package's Cargo.lock / Cargo.toml / .cargo/audit.toml changed
+//                      (`deno task audit:cargo`; skipped, with a note, without cargo-audit)
 //
 // It checks the working tree, so uncommitted edits count. The full suites stay in CI.
 
 import { fromFileUrl } from "@std/path";
 import { regen } from "./regen.ts";
+import { cargoAuditAvailable, isCargoAuditInput } from "./cargo-audit.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -215,6 +218,21 @@ if (import.meta.main) {
         return Promise.resolve("no client-reachable module changed");
       }
       return deno(["task", "budget"]);
+    },
+  );
+
+  await step(
+    outcomes,
+    "cargo audit (packages/*/Cargo.lock)",
+    "deno task audit:cargo; update the crate, or document an unreachable advisory in .cargo/audit.toml",
+    async () => {
+      if (!changed.some(isCargoAuditInput)) {
+        return "no Cargo.lock / Cargo.toml / audit.toml changed";
+      }
+      if (!await cargoAuditAvailable()) {
+        return "cargo-audit not installed (cargo install cargo-audit --locked); CI's cargo-audit job runs it";
+      }
+      return deno(["task", "audit:cargo"]);
     },
   );
 
