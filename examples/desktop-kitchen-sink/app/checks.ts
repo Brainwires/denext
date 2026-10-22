@@ -1823,14 +1823,23 @@ async function saveThroughDialog(
   if (!setup.downloads.dialogs) {
     throw new Skip(`no one to answer the save dialog: ${setup.downloads.dialogSkip ?? "unknown"}`);
   }
-  // The request goes out first: the runner waits for the dialog before it presses a key.
-  const answered = kitchen.saveDialog({ id, name }, { timeoutMs: 60_000 }) as Promise<
+  // The request goes out first: the runner waits for the dialog before it presses a key. A
+  // top-level navigation that turns into a download cancels the page's requests in flight (this
+  // one too, on WebKit), so the answer is then read again with a request of its own.
+  const answered = (kitchen.saveDialog({ id, name }, { timeoutMs: 60_000 }) as Promise<
     SavedDownload
-  >;
+  >).catch(() => null);
   await sleep(300);
   const at = location.href;
   start();
-  const saved = await answered;
+  const saved = await answered ??
+    await waitFor(
+      () =>
+        (kitchen.saveDialogDone({ id }, { timeoutMs: 60_000 }) as Promise<SavedDownload>)
+          .catch(() => null),
+      "the runner's answer",
+      60_000,
+    );
   assert(saved.landed, `${name} did not land where the save dialog put it (${saved.detail})`);
   eq(location.href, at, "the page's URL after the download (it must not navigate)");
   return `${saved.text ?? ""}`;
@@ -1844,19 +1853,6 @@ function clickDownload(href: string, download: string): void {
   document.body.append(a);
   a.click();
   a.remove();
-}
-
-/**
- * Load `href` in a hidden same-origin frame: an attachment response there is a download, and the
- * page itself never navigates (a top-level navigation would cancel the page's own requests, the
- * harness's included, while the engine decides the response is a download).
- */
-function loadInFrame(href: string): HTMLIFrameElement {
-  const frame = document.createElement("iframe");
-  frame.style.display = "none";
-  frame.src = href;
-  document.body.append(frame);
-  return frame;
 }
 
 const downloadChecks: Check[] = [
@@ -1932,25 +1928,13 @@ const downloadChecks: Check[] = [
   [
     "downloads: a Content-Disposition: attachment response lands where the save dialog puts it",
     async ({ setup }) => {
-      let frame: HTMLIFrameElement | undefined;
-      try {
-        const text = await saveThroughDialog(setup, "attachment", ATTACHMENT_NAME, () => {
-          frame = loadInFrame(ATTACHMENT_PATH);
-        });
-        eq(text, ATTACHMENT_TEXT, `${ATTACHMENT_NAME}'s content`);
-        return `${ATTACHMENT_NAME}, ${text.length} bytes`;
-      } catch (err) {
-        // Say so when the engine showed the attachment instead of downloading it.
-        const shown = frame?.contentDocument?.body?.textContent ?? "";
-        if (
-          err instanceof Error && !(err instanceof Skip) && shown.includes(ATTACHMENT_TEXT.trim())
-        ) {
-          throw new Error(`${err.message}; the frame displayed the attachment instead`);
-        }
-        throw err;
-      } finally {
-        frame?.remove();
-      }
+      // A top-level navigation to the attachment, as a plain link or `location.href` makes one:
+      // the response becomes a download and the page stays where it is.
+      const text = await saveThroughDialog(setup, "attachment", ATTACHMENT_NAME, () => {
+        location.href = ATTACHMENT_PATH;
+      });
+      eq(text, ATTACHMENT_TEXT, `${ATTACHMENT_NAME}'s content`);
+      return `${ATTACHMENT_NAME}, ${text.length} bytes`;
     },
   ],
 ];
