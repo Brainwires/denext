@@ -60,8 +60,9 @@ Deno.test("ratchet scope: the CLI, the server, the compat layer and the packages
   assertEquals([...picked.keys()], ["src/cli/a.ts"]);
 });
 
-Deno.test("floors round down; the slack is one item of the file, at least one point", () => {
-  assertEquals(floors(cov([2, 3], [0, 0], [1, 4])), [66, 100, 25]);
+Deno.test("floors round down, nothing counted is 0; the slack is one item, at least one point", () => {
+  // Nothing counted records 0: a module whose functions never ran lists no branches yet.
+  assertEquals(floors(cov([2, 3], [0, 0], [1, 4])), [66, 0, 25]);
   assertEquals(slack([0, 0]), 0);
   assertEquals(slack([10, 200]), 1);
   assertEquals(slack([1, 4]), 25);
@@ -76,6 +77,8 @@ Deno.test("checkRatchet: a drop past the slack fails, a rise is reported, a new 
     "src/cli/unloaded.ts": [40, 100, 100],
     "src/cli/deleted.ts": [40, 100, 100],
     "src/cli/types-only.ts": [0, 0, 0],
+    // Recorded while no test called into it (no branches or functions counted yet).
+    "src/cli/first-tests.ts": [41, 0, 0],
   };
   const coverage = new Map<string, FileCoverage>([
     ["src/cli/held.ts", cov([80, 100])],
@@ -85,6 +88,7 @@ Deno.test("checkRatchet: a drop past the slack fails, a rise is reported, a new 
     ["src/cli/raised.ts", cov([90, 100])],
     ["src/cli/new-good.ts", cov([9, 10])],
     ["src/cli/new-bad.ts", cov([9, 10], [1, 2])],
+    ["src/cli/first-tests.ts", cov([100, 100], [9, 10], [5, 5])],
   ]);
   const results = checkRatchet(coverage, baseline, (f) => f !== "src/cli/deleted.ts");
   const by = Object.fromEntries(results.map((r) => [r.file, r]));
@@ -97,6 +101,13 @@ Deno.test("checkRatchet: a drop past the slack fails, a rise is reported, a new 
     `branches 50.0% (a new file: at least ${NEW_FILE_FLOOR}%)`,
   ]);
   assertEquals(by["src/cli/unloaded.ts"].failures, ["never loaded by a test"]);
+  // Its first real tests count branches for the first time: a rise, not a drop from 100%.
+  assertEquals(by["src/cli/first-tests.ts"].failures, []);
+  assertEquals(by["src/cli/first-tests.ts"].raised, [
+    "lines 41 → 100",
+    "branches 0 → 90",
+    "functions 0 → 100",
+  ]);
   // A deleted file, and a recorded file with nothing to cover, are no failure.
   assertEquals(by["src/cli/deleted.ts"], undefined);
   assertEquals(by["src/cli/types-only.ts"], undefined);
@@ -138,7 +149,7 @@ Deno.test("main: check, report a rise, --update, and the checked-in baseline par
     assertStringIncludes(errs.join("\n"), "src/cli/a.ts: lines 50.0% (a new file");
     assertEquals(await main([lcov, "--update"], root), 0);
     const written = await Deno.readTextFile(join(root, BASELINE_FILE));
-    assertEquals(written, '{\n  "src/cli/a.ts": [50, 100, 100]\n}\n');
+    assertEquals(written, '{\n  "src/cli/a.ts": [50, 0, 0]\n}\n');
     assertEquals(await main([lcov], root), 0);
     assertStringIncludes(logs.join("\n"), "1 files at or above their baseline");
     // Better coverage passes and is reported as raisable; --baseline reads another file.

@@ -75,9 +75,14 @@ export function ratchetedCoverage(
   return out;
 }
 
-/** A file's whole-percentage floors (rounded down, so the run that recorded them passes). */
+/**
+ * A file's whole-percentage floors (rounded down, so the run that recorded them passes). A kind
+ * with nothing counted records 0, not 100: `deno coverage` lists the branches of the functions
+ * that ran, so a module no test called into counts none yet, and its first real tests must not
+ * read as a drop.
+ */
 export function floors(cov: FileCoverage): BaselineEntry {
-  return KINDS.map((k) => Math.floor(pct(cov[k]))) as BaselineEntry;
+  return KINDS.map((k) => cov[k][1] === 0 ? 0 : Math.floor(pct(cov[k]))) as BaselineEntry;
 }
 
 /**
@@ -133,7 +138,9 @@ export function checkRatchet(
       }
       if (p + slack(cov[kind]) < floor[i]) {
         failures.push(`${kind} ${p.toFixed(1)}% (baseline ${floor[i]}%)`);
-      } else if (Math.floor(p) > floor[i]) raised.push(`${kind} ${floor[i]} → ${Math.floor(p)}`);
+      } else if (cov[kind][1] > 0 && Math.floor(p) > floor[i]) {
+        raised.push(`${kind} ${floor[i]} → ${Math.floor(p)}`);
+      }
     });
     results.push({ file, failures, raised });
   }
