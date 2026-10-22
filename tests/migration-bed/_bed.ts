@@ -103,6 +103,11 @@ export interface Bed {
   afterMigrate?: Array<string[] | TimedCommand>;
   /** The `kind` migrate must report (`"next"`, `"spa"`, `"remix"`, …). */
   kind: string;
+  /**
+   * The permissions the generated `start` task must carry: `"least-privilege"` (the set
+   * `denext create` writes, no `-A`) or `"all"` (`-A`). Unchecked when absent.
+   */
+  start?: "least-privilege" | "all";
   /** `flagged` dependencies the bed tolerates (native deps the app does not exercise). */
   allowFlagged?: string[];
   /** Routes to render-assert. */
@@ -243,6 +248,15 @@ async function runCommands(
   return true;
 }
 
+/** The migrated app's `start` task carries the permissions `want` names. */
+function assertStartPermissions(app: string, want: "least-privilege" | "all"): void {
+  const start = String(JSON.parse(Deno.readTextFileSync(join(app, "deno.json"))).tasks?.start);
+  const prefix = want === "all"
+    ? "deno run -A --node-modules-dir=none "
+    : "deno run --node-modules-dir=none --allow-net --allow-read --allow-env --allow-write=.denext ";
+  assert(start.startsWith(prefix), `start task is not ${want}: ${start}`);
+}
+
 /** Clone → install → prepare → migrate → afterMigrate → build → serve → render-assert → doctor (informational). */
 export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
   const { dir, skip } = await cloneAt(bed);
@@ -274,6 +288,7 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       );
       assertEquals(flagged, [], "migrate flagged dependencies the bed does not tolerate");
       assertEquals(report.denoJsonExists, false, "the clone must not already carry a deno.json");
+      if (bed.start) assertStartPermissions(app, bed.start);
     });
 
     if (bed.afterMigrate && !(await runCommands(bed, bed.afterMigrate, app))) return;

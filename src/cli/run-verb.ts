@@ -525,9 +525,9 @@ async function assertMayReexec(appCfg: DenoConfigView): Promise<void> {
  * Whether `denext start` serves the project in `dir` without the CSS import map, and so without
  * {@linkcode maybeReexecForCss} — which rebuilds the stylesheets (Tailwind spawns its binary) and
  * spawns a second `deno`, neither of which a least-privilege `start` (no `--allow-run`) may do. A
- * SPA's server imports none of the app's modules; a native App Router build's server copies point
- * every stylesheet import at its shim (`buildServesCss`). Anything else (a next-compat or older
- * build, a moved project) keeps the re-exec.
+ * SPA's server imports none of the app's modules; a native App Router build's server copies and a
+ * next-compat build's server bundle point every stylesheet import at its shim (`buildServesCss`).
+ * Anything else (an older build, a moved project) keeps the re-exec.
  */
 async function startServesCss(dir: string): Promise<boolean> {
   const paths = await resolveProject(dir);

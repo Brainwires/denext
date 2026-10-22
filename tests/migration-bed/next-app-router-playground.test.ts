@@ -20,6 +20,8 @@ const PLAYGROUND: Bed = {
   sha: "cd0363f3aefd4f4b50ee1b7655feefcc04695f4c",
   install: [["pnpm", "install", "--frozen-lockfile", "--ignore-scripts"]],
   kind: "next",
+  // next-compat's server bundle carries the stylesheet shims: start spawns nothing.
+  start: "least-privilege",
   routes: [
     { path: "/", contains: "Next.js Playground" },
     { path: "/layouts/electronics", contains: "Nested layouts" },

@@ -914,9 +914,10 @@ async function writeAppRouterDenoJson(
   written: string[],
   cap?: CapacitorPlan,
   rr?: boolean,
+  start: "least-privilege" | "all" = "all",
 ): Promise<boolean> {
   const denoJson = {
-    tasks: appRouterTasks(R, prismaWiring, cap),
+    tasks: appRouterTasks(R, prismaWiring, cap, start),
     // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
@@ -951,14 +952,18 @@ async function writeAppRouterDenoJson(
   return denoJsonExists;
 }
 
-/** An App Router app's tasks: the dev/build/export/start set, Prisma's, and the Capacitor ones. */
+/**
+ * An App Router app's tasks: the dev/build/export/start set, Prisma's, and the Capacitor ones.
+ * `start` is `"least-privilege"` for a Next.js App Router app (see {@link nextStartPermissions}).
+ */
 function appRouterTasks(
   R: DenextResolver,
   prismaWiring: PrismaWiring | null,
   cap?: CapacitorPlan,
+  start: "least-privilege" | "all" = "all",
 ): Record<string, string> {
   return {
-    ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto"),
+    ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto", start),
     ...prismaWiring?.tasks,
     ...cap?.tasks,
   };
@@ -1516,6 +1521,8 @@ async function migrateNextProject(
     prismaWiring,
     written,
     cap.plan,
+    false,
+    nextStartPermissions(pagesRouter, prismaWiring),
   );
   const capacitor = await writeCapacitorConfig(dir, cap.plan, written);
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
@@ -1536,6 +1543,22 @@ async function migrateNextProject(
     nextConfig: nextConfigReport(next),
     capacitor,
   };
+}
+
+/**
+ * The permissions a migrated Next.js app's `start` gets. An App Router app's next-compat build
+ * points every stylesheet import at its shim inside the server bundle (manifest `compatCss`), so
+ * its `start` spawns nothing and gets the least-privilege set `denext create` writes. `-A` stays
+ * for a Pages Router app (its server render resolves stylesheets through the CSS import map
+ * `start` applies by re-running itself, which needs an unscoped `--allow-run`) and for a Prisma
+ * app (its SQLite database lives outside `.denext`, and the query engine may need more than the
+ * least-privilege set).
+ */
+function nextStartPermissions(
+  pagesRouter: boolean,
+  prismaWiring: PrismaWiring | null,
+): "least-privilege" | "all" {
+  return pagesRouter || prismaWiring ? "all" : "least-privilege";
 }
 
 /**
@@ -2863,9 +2886,12 @@ function spaTasks(
     build: `${run} ${cli} build .`,
     export: `${run} ${cli} export .`,
     // A SPA's `start` serves its export and spawns nothing, so it gets the least-privilege set
-    // `denext create` writes. `-A` for an App Router app: its next-compat build's `start` re-execs
-    // a child `deno` to apply the CSS shim import map (`maybeReexecForCss`), which needs an
-    // unscoped `--allow-run` (equivalent to every permission) and writes the app's deno.json.
+    // `denext create` writes; so does a Next.js App Router app, whose next-compat server bundle
+    // carries its stylesheet shims (`nextStartPermissions`). `-A` for the rest: a Pages Router
+    // app's `start` re-execs a child `deno` to apply the CSS shim import map
+    // (`maybeReexecForCss`), which needs an unscoped `--allow-run` (equivalent to every
+    // permission) and writes the app's deno.json; the Remix, React Router, Fresh and TanStack
+    // Start paths keep it until their `start` is verified under the least-privilege set.
     start: start === "least-privilege"
       ? `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START} ${cli} start .`
       : `${run} ${cli} start .`,

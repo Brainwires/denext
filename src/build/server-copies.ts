@@ -67,9 +67,10 @@ export function parseServerCopies(value: unknown): ServerCopiesManifest | null {
  * Whether `denext start` can serve the build in `outDir` without the CSS import map (and so
  * without the CLI's CSS re-exec, which spawns a second `deno` and needs `--allow-run`): a native
  * App Router build whose server copies point every stylesheet import at its shim, made for this
- * project where it now is (or relocatable copies, wherever it is). False for a next-compat build, a
- * SPA, an older build, no build, or a project moved since a build whose copies are not relocatable
- * (start then compiles copies without the stylesheets).
+ * project where it now is (or relocatable copies, wherever it is), or a next-compat build whose
+ * server bundle did the same (`compatCss`). False for a SPA, an older build, no build, or a
+ * project moved since a build whose copies are not relocatable (start then compiles copies
+ * without the stylesheets).
  *
  * @param projectDir The project root.
  * @param outDir The build output dir (`.denext`).
@@ -82,8 +83,9 @@ export async function buildServesCss(projectDir: string, outDir: string): Promis
     return false;
   }
   if (!doc || typeof doc !== "object") return false;
-  const bm = doc as { nextCompat?: unknown; serverCopies?: unknown };
-  if (bm.nextCompat === true) return false;
+  const bm = doc as { nextCompat?: unknown; compatCss?: unknown; serverCopies?: unknown };
+  // The compat server bundle inlines each stylesheet's shim, wherever the project now is.
+  if (bm.nextCompat === true) return bm.compatCss === true;
   const recorded = parseServerCopies(bm.serverCopies);
   return recorded?.css !== undefined && madeFor(recorded, projectDir);
 }

@@ -25,6 +25,8 @@ const EPIC_STACK: Bed = {
   prepare: (dir) => Deno.copyFile(join(dir, ".env.example"), join(dir, ".env")),
   migrate: ["--from", "remix"],
   kind: "remix",
+  // A Remix migration's start keeps -A (not yet verified under the least-privilege set).
+  start: "all",
   afterMigrate: [
     ["$deno", "task", "prisma:setup"],
     ["npm", "run", "build:icons"],
