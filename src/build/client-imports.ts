@@ -15,7 +15,8 @@
 // catches: a client bundle that ships any `"use server"` module's source fails the build
 // (./server-module-guard.ts).
 
-import { extname, join, resolve, toFileUrl } from "@std/path";
+import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { canonicalPath } from "./canonical-path.ts";
 import { actionIdFor } from "../runtime/server-action.ts";
 import { composeRedirects } from "./platform-extensions.ts";
 import { platformImportMap } from "./platform-imports.ts";
@@ -62,13 +63,16 @@ async function projectRoots(projectDir: string | null): Promise<string[]> {
 }
 
 /**
- * Every file URL an import can reach `url` by: itself and its extensionless spelling, each under
- * the project's logical and real root (the boundary crawl reports real paths; the alias table
- * and the copies use the logical ones).
+ * Every file URL an import can reach `url` by: itself, its canonical spelling and the
+ * extensionless form of each, under the project's logical and real root (the boundary crawl
+ * reports real paths; the alias table and the copies use the logical ones). The canonical
+ * spelling covers a module named through a symlink outside the project root (macOS `/var` →
+ * `/private/var`), which Deno resolves to its real path.
  */
 function urlSpellings(url: string, roots: readonly string[]): string[] {
   const under = roots.find((r) => url.startsWith(r));
-  const bases = under ? roots.map((r) => r + url.slice(under.length)) : [url];
+  const bases = new Set(under ? roots.map((r) => r + url.slice(under.length)) : [url]);
+  bases.add(toFileUrl(canonicalPath(fromFileUrl(url))).href);
   const out: string[] = [];
   for (const base of bases) {
     out.push(base);

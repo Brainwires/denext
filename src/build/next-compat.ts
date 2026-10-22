@@ -100,6 +100,7 @@ import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { inNodeModules } from "./path-segments.ts";
 import { readDirective } from "./directives.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { formatServerModuleLeaks, type ServerModuleLeak } from "./server-module-guard.ts";
 import { staticExportNames } from "./module-graph.ts";
 import { inRootContext } from "../server/root-context.ts";
@@ -2955,7 +2956,11 @@ export function serverStubPlugin(
 ): esbuild.Plugin {
   const byPath = new Map<string, { id: string; exports: readonly string[] }>();
   for (const [id, ref] of servers) {
-    if (ref.url.startsWith("file:")) byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
+    // Keyed canonical: esbuild hands `onLoad` the real path, while a boundary walked from a
+    // symlinked spelling (macOS `/var` → `/private/var`) names the module through the link.
+    if (ref.url.startsWith("file:")) {
+      byPath.set(canonicalPath(fromFileUrl(ref.url)), { id, exports: ref.exports });
+    }
   }
   return {
     name: "denext-server-stub",
@@ -2965,7 +2970,7 @@ export function serverStubPlugin(
       const unknown = new Set<string>();
       build.initialOptions.metafile = true;
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, async (args) => {
-        const s = byPath.get(args.path) ?? byPath.get(await realPathOr(args.path));
+        const s = byPath.get(canonicalPath(args.path));
         if (s) {
           return {
             contents: stubOf(s.id, s.exports),

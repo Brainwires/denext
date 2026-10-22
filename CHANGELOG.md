@@ -132,6 +132,15 @@ and this project adheres to
   reached under both spellings was bundled twice. The build, `denext export` and `denext dev` now
   use the project's real path and compare canonical paths, and the scans warn, instead of failing
   silently, when the route graph can't be crawled.
+- **The client bundles' server-code checks compare canonical paths too.** The bundlers report
+  real paths, while a project, the `"use server"` boundary or the bundle's temp dir can be named
+  through a symlink. The esbuild client bundles (Next drop-in builds, the unbundled dev server's
+  npm dependencies) then failed with "a `use server` module would ship to the browser" for an
+  action they had registered under the link's spelling; the import-map stub of a `"use server"`
+  module named through a symlink outside the project root was missed; a server-only module
+  shipped under one spelling and checked against the other was not reported; and a rewritten
+  copy in a temp dir under macOS's `/var` was neither scanned as the app module it stands in for
+  nor named as it in an error. Each check now compares canonical paths on both sides.
 - **A `ref` on a class component reaches the class instance, as in React.** `<MyClass ref={r} />`
   now sets `r.current` to the instance (or calls `r(instance)`) at commit, after
   `componentDidMount`; it is detached (`null`, or a callback ref's returned cleanup) before
