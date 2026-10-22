@@ -1,8 +1,9 @@
 // An isomorphic (route-entry) page: it calls hooks itself, so the whole route is one client tree.
 // It uses a function-valued form action, a class component, `<Activity>`, `<ViewTransition>`,
-// MVU, a `client:visible` island, a blur-placeholder image and every split-out hook (hooks.tsx).
+// MVU, a `client:visible` island, a blur-placeholder image, a route-pattern href and every
+// split-out hook (hooks.tsx).
 
-import { Activity, Image, useState, ViewTransition } from "denext";
+import { Activity, Image, Link, useState, ViewTransition } from "denext";
 import { Component } from "react";
 import { useMvu } from "denext/mvu";
 import { Counter } from "./counter.tsx";
@@ -13,6 +14,9 @@ class Clock extends Component<{ label: string }> {
     return <p>{this.props.label}</p>;
   }
 }
+
+// A route-pattern href, filled from its params on the client (`__DENEXT_HREF_PARAMS__`).
+const post = { pathname: "/post/[id]", params: { id: "1" } };
 
 export default function Home() {
   const [saved, setSaved] = useState("");
@@ -42,6 +46,7 @@ export default function Home() {
         placeholder="blur"
         blurDataURL="data:image/png;base64,iVBORw0KGgo="
       />
+      <Link href={post}>post</Link>
       <Hooks />
     </section>
   );

@@ -24,6 +24,26 @@ and this project adheres to
 
 ### Changed
 
+- **Smaller client bundles: code an app never calls no longer ships through a module-level side
+  effect.** `useAsyncEffect` (its `wrap` helper was assigned to the function at module level), the
+  client location read and `Link`'s status context in navigation, and the layout-segment and
+  form-status contexts are now built with pure expressions, so an app that imports only
+  `createRoot` and a few hooks from `denext` drops them (examples/spa first load 58,776 →
+  57,101 B raw, 21,753 → 21,105 B gzip). `useAsyncEffect` is now a `const` typed by the new
+  `UseAsyncEffect` interface (with its `AsyncEffect`, `AsyncEffectOptions` and
+  `AsyncEffectErrorClass` types, also exported from `denext`); its call forms and
+  `useAsyncEffect.wrap` are unchanged.
+- **The route-pattern href filling ships only to an app that writes one.** Where `deno bundle`
+  takes `--define`, a native App Router or SPA build scans the app's own sources for a string or
+  template literal holding a `/[name]`, `/[...name]` or `/[[...name]]` segment, and when it finds
+  none it folds out the filling of `{ pathname: "/blog/[slug]", params }` hrefs and the
+  route-segment parser behind it (examples/hello shared chunks 62,032 → 61,463 B raw). A stock
+  Deno and a next-compat build keep it. KNOWN-LIMITATIONS lists the npm-package case.
+- **`examples/spa/bench.ts` counts what a page can load.** It reported every file `deno bundle`
+  emitted, including chunks whose only `import()` site was tree-shaken (the desktop bridge, the
+  soft-navigation commit, the Server Action dispatch: 18.7 KB raw that no page loads and
+  `denext build` does not write). It now reports the first load and everything loadable, on both
+  sides: denext 52.7 KB / 19.5 KB gzip first load against React 19's 218.9 KB / 68.7 KB.
 - **Smaller client startup: the blur-placeholder clearing and the form-action seam ship only to an
   app that uses them.** Where `deno bundle` takes `--define` (denext's Deno toolchain), a native
   App Router or SPA build scans the app's own sources and defines two gates off when nothing names

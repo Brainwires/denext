@@ -262,6 +262,50 @@ Deno.test("appUsesImageBlur: a blur placeholder or blurDataURL in code, not an i
   }
 });
 
+Deno.test("appUsesHrefParams: a route-pattern string or template literal in code, not a comment", async () => {
+  const { appUsesHrefParams } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-href-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesHrefParams(dir);
+    };
+    assertEquals(
+      await scan(`export default ({ params }) => params.slug;`),
+      false,
+      "page params",
+    );
+    assertEquals(
+      await scan(`// <Link href={{ pathname: "/blog/[slug]" }} />`),
+      false,
+      "comment",
+    );
+    assertEquals(
+      await scan(`const a = xs[i]; const b = "[x]";`),
+      false,
+      "no route segment",
+    );
+    assertEquals(
+      await scan(`<Link href={{ pathname: "/blog/[slug]", params }} />`),
+      true,
+      "JSX",
+    );
+    assertEquals(
+      await scan(`push({ pathname: '/docs/[...rest]', params })`),
+      true,
+      "catch-all",
+    );
+    assertEquals(
+      await scan("const p = `/${s}/[[...opt]]`;"),
+      true,
+      "optional, template",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("appUsesFormActions: action / formAction props and keys in code, not in a comment", async () => {
   const { appUsesFormActions } = await import("../src/build/bundle.ts");
   const dir = await Deno.makeTempDir({ prefix: "denext-scan-action-" });

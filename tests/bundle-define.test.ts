@@ -51,13 +51,18 @@ Deno.test("nativeBundleDefines: features become the __DENEXT_FEATURES__ JSON, ab
 });
 
 Deno.test("nativeBundleDefines: the build-scan gates are defined only when a scan ran", () => {
-  assertEquals(nativeBundleDefines({ usesImageBlur: false, usesFormActions: true }), {
-    __DENEXT_CLASS_COMPONENTS__: "true",
-    __DENEXT_IMAGE_BLUR__: "false",
-    __DENEXT_FORM_ACTIONS__: "true",
-  });
+  assertEquals(
+    nativeBundleDefines({ usesImageBlur: false, usesFormActions: true, usesHrefParams: false }),
+    {
+      __DENEXT_CLASS_COMPONENTS__: "true",
+      __DENEXT_IMAGE_BLUR__: "false",
+      __DENEXT_FORM_ACTIONS__: "true",
+      __DENEXT_HREF_PARAMS__: "false",
+    },
+  );
   const unscanned = nativeBundleDefines({});
   assert(!("__DENEXT_IMAGE_BLUR__" in unscanned) && !("__DENEXT_FORM_ACTIONS__" in unscanned));
+  assert(!("__DENEXT_HREF_PARAMS__" in unscanned));
 });
 
 /** Run the probe in a fresh process with `DENO_BIN` set to a fake `deno` script (POSIX only). */
@@ -308,6 +313,45 @@ for (const define of PATHS) {
         assert(!off.code.includes("data-dnx-blur"), "image-blur.ts in an app with no blur");
         assert(!off.names.some((n) => n.startsWith("form-action-")), off.names.join(", "));
         assert(!off.code.includes("__DENEXT_FORM_ACTIONS__"), "the gate folded");
+      }
+    } finally {
+      __setBundleDefineForTests(undefined);
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
+
+// The route-pattern href gate: with `--define` an app the scan found no pattern href in ships no
+// route-segment parser behind formatHref; one that writes a pattern (or a bundle no scan ran for,
+// or the seeded fallback) keeps it, and the pattern still fills from its params.
+for (const define of PATHS) {
+  Deno.test(`native bundle (${label(define)}): the route-pattern href build-scan gate`, async () => {
+    const dir = await project({});
+    __setBundleDefineForTests(define);
+    try {
+      const entry =
+        `import { formatHref } from ${JSON.stringify(`${ROOT}src/client/navigation.ts`)};\n` +
+        `(globalThis as Record<string, unknown>).x = formatHref;\n`;
+      const bundle = async (usesHrefParams?: boolean) => {
+        const out = await bundleSourceFiles(entry, {
+          configPath: join(dir, "deno.json"),
+          minify: true,
+          usesHrefParams,
+        });
+        return [...out.files.values()].join("\n");
+      };
+      const off = await bundle(false);
+      for (
+        const kept of define ? [await bundle(true), await bundle()] : [off, await bundle(true)]
+      ) {
+        assertStringIncludes(kept, '"optionalCatchAll"');
+      }
+      if (define) {
+        assert(
+          !off.includes('"optionalCatchAll"'),
+          "the segment parser in an app with no pattern",
+        );
+        assert(!off.includes("__DENEXT_HREF_PARAMS__"), "the gate folded");
       }
     } finally {
       __setBundleDefineForTests(undefined);

@@ -20,6 +20,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/build-next-config-eval.test.ts",
   "tests/build.test.ts",
   "tests/bundle-define.test.ts",
+  "tests/bundle-side-effects.test.ts",
   "tests/cache-default-store.test.ts",
   "tests/cli-analyze-coverage.test.ts",
   "tests/cli-dashboard.test.ts",

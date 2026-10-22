@@ -340,7 +340,13 @@ export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
 
 // Ergonomic utilities (denext-specific): an async-aware effect hook with AbortSignal +
 // typed error handling, and a tuple-returning try/catch that avoids `try`-block scoping.
-export { useAsyncEffect } from "./src/utils/use-async-effect.ts";
+export {
+  type AsyncEffect,
+  type AsyncEffectErrorClass,
+  type AsyncEffectOptions,
+  type UseAsyncEffect,
+  useAsyncEffect,
+} from "./src/utils/use-async-effect.ts";
 export { tryCatch } from "./src/utils/try-catch.ts";
 export type { ErrorResult, SuccessResult, TryCatchResult } from "./src/utils/try-catch.ts";
 export { choose } from "./src/utils/choose.ts";

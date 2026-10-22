@@ -90,6 +90,8 @@ export interface ExportContext {
   readonly usesImageBlur: boolean;
   /** Whether the app may write a form action (scan; the `__DENEXT_FORM_ACTIONS__` define). */
   readonly usesFormActions: boolean;
+  /** Whether the app may write a route-pattern href (scan; the `__DENEXT_HREF_PARAMS__` define). */
+  readonly usesHrefParams: boolean;
   /**
    * The `global-error.tsx` hydration bundle URL, once `bundleExportGlobalError` wrote it (unset
    * when the app has no global-error.tsx).

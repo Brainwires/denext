@@ -25,13 +25,16 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
   `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
   a server render it returns `null`.
-- **A native App Router or SPA build leaves out two runtimes the app's own sources never name**
+- **A native App Router or SPA build leaves out three runtimes the app's own sources never name**
   (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
   blur placeholders in server-only trees (kept when a source names `blurDataURL` or a
-  `placeholder` other than a plain string) and the function-valued `<form action>` /
-  `formAction` seam (kept when a source names `action` or `formAction`). npm packages are not
-  scanned, so a package that renders either by itself, with props the app never names, needs the
-  app to name it once. A next-compat (npm React) build keeps both.
+  `placeholder` other than a plain string), the function-valued `<form action>` /
+  `formAction` seam (kept when a source names `action` or `formAction`) and the filling of a
+  route-pattern href from its `params` (`{ pathname: "/blog/[slug]", params }`, kept when a
+  string or template literal in a source holds a `/[name]`, `/[...name]` or `/[[...name]]`
+  segment). npm packages are not scanned, so a package that renders either of the first two by
+  itself, with props the app never names, or builds a route pattern itself, needs the app to name
+  it once. A next-compat (npm React) build keeps all three.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 

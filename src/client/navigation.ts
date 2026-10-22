@@ -85,7 +85,9 @@ function stripBase(path: string): string {
   return path;
 }
 
-let current: LocationState = readLocation();
+// Pure: an app that never reads the location (a SPA importing only hooks from `denext`) drops the
+// read, and the base-path and hydration-data helpers behind it.
+let current: LocationState = /* @__PURE__ */ readLocation();
 
 function readLocation(): LocationState {
   if (typeof location === "undefined") return { pathname: "/", search: "" };
@@ -135,7 +137,7 @@ function serverLocation(): LocationState | null {
 // count (LRU) and a TTL so hovering/scrolling across a large site can't grow it
 // without limit or serve a long-stale prefetch. Map insertion order is the LRU.
 const PREFETCH_CACHE_MAX = 50;
-const PREFETCH_TTL_MS = 5 * 60_000; // completed entries expire after 5 minutes
+const PREFETCH_TTL_MS = 300_000; // completed entries expire after 5 minutes (a literal: droppable)
 
 interface PrefetchEntry {
   /** Prefetched body (HTML, or a Flight/iso JSON payload), "" while in flight. */
@@ -690,7 +692,9 @@ function swapDocument(parsed: Document): void {
  * applies outside any Link, matching Next.js (where `useLinkStatus` is only
  * meaningful inside a Link).
  */
-const LinkStatusContext: Context<LinkStatus> = createContext<LinkStatus>({ pending: false });
+const LinkStatusContext: Context<LinkStatus> = /* @__PURE__ */ createContext<LinkStatus>({
+  pending: false,
+});
 
 /** Props for the {@link Link} client-side navigating anchor component. */
 /**
@@ -752,7 +756,11 @@ export type HrefInput =
 
 /** Fill a route-pattern pathname (`/blog/[slug]`, `/t/[...tags]`, `/d/[[...p]]`) from a params object. */
 function fillPathname(pathname: string, params: Record<string, string | string[]>): string {
-  return fillPattern(parsePattern(pathname), params as RouteParams);
+  // Folds to `pathname` in a build whose scan found no route-pattern href (the
+  // `__DENEXT_HREF_PARAMS__` define), taking the route-segment parser with it.
+  return typeof __DENEXT_HREF_PARAMS__ === "undefined" || __DENEXT_HREF_PARAMS__
+    ? fillPattern(parsePattern(pathname), params as RouteParams)
+    : pathname;
 }
 
 /** Format a {@linkcode UrlObject}/{@linkcode TypedUrlObject} (or pass a string through). */

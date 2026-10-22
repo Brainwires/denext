@@ -24,7 +24,9 @@ export interface LayoutSegmentInfo {
  * to {@linkcode useSelectedLayoutSegments}. Provided around each layout by the
  * server renderer and the client route entry.
  */
-export const LayoutSegmentContext: Context<LayoutSegmentInfo> = createContext<LayoutSegmentInfo>({
+export const LayoutSegmentContext: Context<LayoutSegmentInfo> = /* @__PURE__ */ createContext<
+  LayoutSegmentInfo
+>({
   pathname: "/",
   depth: 0,
 });

@@ -21,6 +21,7 @@ import {
   appRendersDocumentTags,
   appUsesActivity,
   appUsesFormActions,
+  appUsesHrefParams,
   appUsesImageBlur,
   appUsesViewTransition,
   bundleSourceFiles,
@@ -447,10 +448,11 @@ async function bundleNativeSpa(
       redirects: await projectPlatformRedirects(paths.projectDir, paths.config, platform),
       rewritten: { ...fold.importMap, ...refresh?.importMap, ...islands.importMap },
       dev,
-      // The build-scan defines (`deno bundle --define`): dev keeps both runtimes.
+      // The build-scan defines (`deno bundle --define`): dev keeps every runtime.
       ...(dev ? {} : {
         usesImageBlur: await appUsesImageBlur(paths.projectDir, [entryPath]),
         usesFormActions: await appUsesFormActions(paths.projectDir, [entryPath]),
+        usesHrefParams: await appUsesHrefParams(paths.projectDir, [entryPath]),
       }),
     });
     await writeBundleOutput(clientDir, bundle, ENTRY_FILE);

@@ -18,6 +18,7 @@ import {
   appUsesActivity,
   appUsesClassComponents,
   appUsesFormActions,
+  appUsesHrefParams,
   appUsesImageBlur,
   appUsesIsoIslands,
   appUsesViewTransition,
@@ -210,9 +211,11 @@ async function runtimeFeatureScans(
   // client root layout's `<html>`/`<body>` adopt the page's own elements).
   const usesSingletons = await appRendersDocumentTags(projectDir, outside);
   // Build-scan defines (`deno bundle --define`): the boot's blur-placeholder clearing and the
-  // reconciler's function-valued form-action seam fold out of an app that never writes them.
+  // reconciler's function-valued form-action seam fold out of an app that never writes them, and
+  // so does the route-pattern href filling.
   const usesImageBlur = await appUsesImageBlur(projectDir, outside);
   const usesFormActions = await appUsesFormActions(projectDir, outside);
+  const usesHrefParams = await appUsesHrefParams(projectDir, outside);
   return {
     classRuntime,
     usesActivity,
@@ -221,6 +224,7 @@ async function runtimeFeatureScans(
     usesSingletons,
     usesImageBlur,
     usesFormActions,
+    usesHrefParams,
   };
 }
 
@@ -232,4 +236,5 @@ type RuntimeScanKey =
   | "usesIsoIslands"
   | "usesSingletons"
   | "usesImageBlur"
-  | "usesFormActions";
+  | "usesFormActions"
+  | "usesHrefParams";

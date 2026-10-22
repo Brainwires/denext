@@ -442,6 +442,8 @@ const SCAN_GATE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
   { marker: 'tagName==="IMG"', what: "blur-placeholder clearing (navigation.ts)" },
   // A function-valued `<form action>` loads the form-action chunk from the reconciler's seam.
   { marker: "./form-action-", what: "form-action seam (dom-props.ts setFormAction)" },
+  // A `{ pathname: "/blog/[slug]", params }` href is filled through the route-segment parser.
+  { marker: '"optionalCatchAll"', what: "route-pattern href filling (router/segments.ts)" },
 ];
 
 /**

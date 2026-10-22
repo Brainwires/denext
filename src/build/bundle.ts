@@ -273,13 +273,17 @@ export function classDefine(classComponents?: boolean): Record<string, string> {
  * @returns The define map, `name → constant source text`.
  */
 export function nativeBundleDefines(
-  opts: Pick<BundleOptions, "classRuntime" | "features" | "usesImageBlur" | "usesFormActions">,
+  opts: Pick<
+    BundleOptions,
+    "classRuntime" | "features" | "usesImageBlur" | "usesFormActions" | "usesHrefParams"
+  >,
 ): Record<string, string> {
   return {
     ...classDefine(opts.classRuntime !== "off"),
     ...(opts.features ? { __DENEXT_FEATURES__: JSON.stringify(opts.features) } : {}),
     ...scanGateDefine("__DENEXT_IMAGE_BLUR__", opts.usesImageBlur),
     ...scanGateDefine("__DENEXT_FORM_ACTIONS__", opts.usesFormActions),
+    ...scanGateDefine("__DENEXT_HREF_PARAMS__", opts.usesHrefParams),
   };
 }
 
@@ -778,6 +782,29 @@ export function appUsesFormActions(rootDir: string, extraFiles: string[] = []): 
 
 /** `action` / `formAction` as a JSX prop, an object key or a binding (`=` / `:`, not `==`). */
 const FORM_ACTION_USE = /\b(?:formAction|action)["']?\s*[=:](?!=)/;
+
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may navigate with a route-pattern
+ * href, `{ pathname: "/blog/[slug]", params: { slug } }` — the build-time signal that keeps the
+ * client's filling of the pattern from `params` (`__DENEXT_HREF_PARAMS__`, the route-segment
+ * parser it needs). The pattern has to be written somewhere as text, so the scan matches a string
+ * or template literal holding a `/[name]`, `/[...name]` or `/[[...name]]` segment. Comments are not
+ * code. npm packages are not scanned (as for every gate): a library that builds such a pattern
+ * itself needs the app to write the pattern once.
+ */
+export function appUsesHrefParams(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(
+    rootDir,
+    (c) => HREF_PATTERN_USE.test(withoutComments(c)),
+    extraFiles,
+  );
+}
+
+/** A string or template literal holding a dynamic route segment (`/[id]`, `/[...p]`, `/[[...p]]`). */
+const HREF_PATTERN_USE = /["'`][^"'`\n]*\/\[\[?(?:\.\.\.)?[A-Za-z_$][\w$-]*\]/;
 
 /**
  * Whether any source file under `rootDir` renders a document tag (`<html>`, `<head>`, `<body>`)
@@ -1283,6 +1310,12 @@ export interface BundleOptions {
    */
   usesFormActions?: boolean;
   /**
+   * Whether the app writes a route-pattern href (an {@linkcode appUsesHrefParams} scan). `false`
+   * defines `__DENEXT_HREF_PARAMS__` off on the `--define` path, so `Link` / `useRouter` carry no
+   * pattern filling (`{ pathname: "/blog/[slug]", params }`). Unset (no scan): kept.
+   */
+  usesHrefParams?: boolean;
+  /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
    */
@@ -1332,6 +1365,7 @@ export async function bundleFlightEntry(
       features: opts.features,
       usesImageBlur: opts.usesImageBlur,
       usesFormActions: opts.usesFormActions,
+      usesHrefParams: opts.usesHrefParams,
     },
   );
 }
