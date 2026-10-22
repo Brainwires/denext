@@ -202,6 +202,21 @@ exits, so there is never a stale lock to clear). The same applies to `denext bui
 `src/build/project-locks.ts`. Call the `*:run` tasks directly only when you know nothing
 else writes `coverage/`.
 
+**The per-file coverage ratchet.** Besides the aggregate 85% and the fixed per-file floors
+(`scripts/coverage-floor.ts`), `deno task test:coverage` holds every module under `src/cli`,
+`src/server`, `src/compat` and `packages/` to the line / branch / function coverage
+`scripts/coverage-baseline.json` records for it (`scripts/coverage-ratchet.ts`): a file may not
+drop below its numbers (by more than one line, branch or function), and a file new to the
+baseline needs 85%. The numbers only go up. When a run beats them, it lists the files; record
+them from CI's report without re-running the suite locally:
+
+```sh
+gh run download <ci.yml run id> -n coverage-lcov -D coverage
+deno task coverage:ratchet:update   # raises, adds new files, drops deleted ones; never lowers
+```
+
+Lowering a number is a hand edit of the baseline, visible in review.
+
 If a report is a **genuine false positive**, scope the suppression as narrowly
 as possible — prefer a per-line/file marker over widening config:
 
@@ -373,6 +388,11 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    desktop-window.yml run on HEAD green (`DESKTOP_WINDOW_JOBS`: a real window on
    every desktop OS). Dispatch both: `gh workflow run e2e.yml --ref development`
    and `gh workflow run desktop-window.yml --ref development`.
+   Last, it needs the newest native-plugins.yml run on HEAD green in both builds
+   (`NATIVE_PLUGINS_JOBS`: `android`, `ios`: examples/mobile built with every
+   denext native plugin). A push runs it only when a native template or
+   installer changes, so dispatch it too:
+   `gh workflow run native-plugins.yml --ref development`.
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every

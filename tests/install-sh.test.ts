@@ -523,7 +523,7 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   assertEquals(workflow.match(/softprops\/action-gh-release/g)?.length, 1);
   assertStringIncludes(workflow, "prerelease: ${{ contains(github.ref_name, '-') }}");
   assertStringIncludes(workflow, "make_latest: ${{ !contains(github.ref_name, '-') }}");
-  assertStringIncludes(workflow, "needs: binaries");
+  assertStringIncludes(workflow, "needs: [binaries, smoke]");
   assertStringIncludes(workflow, "fail_on_unmatched_files: true");
   // Every third-party action is a full commit SHA with the version it is beside it.
   const uses = workflow.split("\n").filter((l) => /^\s*-?\s*uses:/.test(l));
@@ -531,9 +531,18 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   for (const line of uses) {
     assert(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/.test(line.trim()), line);
   }
-  // The binary is executed, not merely linked, before it ships.
-  assertStringIncludes(workflow, "./denext --version");
-  assertStringIncludes(workflow, "pins no denext");
+  // The binary is executed, not merely linked, before it ships: where it is built (x86_64 Linux),
+  // and by the `smoke` job on an Arm Linux runner and a Mac (both Mac binaries) before the release.
+  assertStringIncludes(workflow, "sh scripts/ci/binary-smoke.sh ./denext");
+  assertStringIncludes(workflow, "{ os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }");
+  assertStringIncludes(
+    workflow,
+    "{ os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }",
+  );
+  assertStringIncludes(workflow, "tests/integration/cli-binary-smoke.test.ts");
+  const smoke = await Deno.readTextFile(new URL("../scripts/ci/binary-smoke.sh", import.meta.url));
+  assertStringIncludes(smoke, '"$bin" --version');
+  assertStringIncludes(smoke, "pins no denext");
 });
 
 Deno.test("install.sh: a GITHUB_TOKEN goes to the API lookup only, never shown", {

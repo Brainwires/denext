@@ -13,8 +13,8 @@
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
 //      coverage, backend-integration — a push to `development` skips them; dispatch ci.yml) is
-//      green, and so are the newest desktop-ci.yml, e2e.yml and desktop-window.yml runs on HEAD
-//      (every job), else ABORT
+//      green, and so are the newest desktop-ci.yml, e2e.yml, desktop-window.yml and
+//      native-plugins.yml runs on HEAD (every job), else ABORT
 //      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
@@ -57,6 +57,7 @@ import {
   desktopCiVerdict,
   desktopWindowVerdict,
   e2eVerdict,
+  nativePluginsVerdict,
   releaseCiHint,
   releaseCiVerdict,
 } from "./release-ci.ts";
@@ -559,14 +560,20 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
 
 /**
  * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage, backend-integration)
- * and every desktop-ci.yml, e2e.yml and desktop-window.yml job passed on HEAD
+ * and every desktop-ci.yml, e2e.yml, desktop-window.yml and native-plugins.yml job passed on HEAD
  * (scripts/release-ci.ts). A real run aborts
  * otherwise; `--dry` reports and goes on.
  */
 async function checkCi(branch: string, dry: boolean): Promise<void> {
   const sha = await capture("git", "rev-parse", "HEAD");
   const verdicts = await Promise.all(
-    [releaseCiVerdict, desktopCiVerdict, e2eVerdict, desktopWindowVerdict].map((check) =>
+    [
+      releaseCiVerdict,
+      desktopCiVerdict,
+      e2eVerdict,
+      desktopWindowVerdict,
+      nativePluginsVerdict,
+    ].map((check) =>
       check(sha).catch((err: Error) => ({
         ok: false,
         reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,

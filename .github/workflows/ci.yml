@@ -334,6 +334,9 @@ jobs:
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      # The Kotlin client-emitter goldens compile with the runner's kotlinc (tests/clients.test.ts;
+      # Go and Swift are found on PATH, Kotlin only through this variable: kotlinc is slow to start).
+      DENEXT_KOTLINC: kotlinc
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

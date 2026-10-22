@@ -11,6 +11,9 @@ import {
   desktopWindowVerdict,
   E2E_JOBS,
   e2eVerdict,
+  GATED_WORKFLOWS,
+  NATIVE_PLUGINS_JOBS,
+  nativePluginsVerdict,
   RELEASE_CI_JOBS,
   releaseCiHint,
   releaseCiVerdict,
@@ -192,10 +195,11 @@ Deno.test("desktop CI gate: every required job is named in desktop-ci.yml", asyn
   // No job may fail without failing the run: a release needs every one of them green.
   assert(!/^\s*continue-on-error:/m.test(workflow), "a desktop-ci.yml job has continue-on-error");
   for (const job of DESKTOP_CI_JOBS) {
-    // A matrix leg `<name> (<os>)` comes from `name: <name> (${{ matrix.os }})` and that os.
-    const leg = /^(.*) \(((?:windows|macos|ubuntu)-latest)\)$/.exec(job);
-    if (leg) {
-      assertStringIncludes(workflow, `name: ${leg[1]} (\${{ matrix.os }})`, job);
+    // A matrix leg `<name> (<os>[ — <note>])` comes from `name: <name> (${{ matrix.os }}[ — <note>])`
+    // and that os.
+    const leg = /^(.*) \(((?:windows|macos|ubuntu)-latest)( — [^)]*)?\)$/.exec(job);
+    if (leg && !workflow.includes(`name: ${job}\n`)) {
+      assertStringIncludes(workflow, `name: ${leg[1]} (\${{ matrix.os }}${leg[3] ?? ""})`, job);
       assertStringIncludes(workflow, leg[2], job);
     } else {
       assertStringIncludes(workflow, `name: ${job}\n`, job);
@@ -290,11 +294,67 @@ Deno.test("desktop window gate: desktop-window.yml's newest run on HEAD, every O
 });
 
 Deno.test("release CI gate: the hint dispatches every gated workflow, e2e with every job", () => {
+  assertEquals(GATED_WORKFLOWS, [
+    "ci.yml",
+    "desktop-ci.yml",
+    "e2e.yml",
+    "desktop-window.yml",
+    "native-plugins.yml",
+  ]);
   const hint = releaseCiHint("development");
-  for (const w of ["ci.yml", "desktop-ci.yml", "e2e.yml", "desktop-window.yml"]) {
+  for (const w of GATED_WORKFLOWS) {
     assertStringIncludes(hint, `gh workflow run ${w} --ref development`);
   }
+  assertStringIncludes(hint, "wait for all 5");
   assert(!hint.includes("-f job="), "e2e.yml runs every job (job=all, the default)");
+  assert(!hint.includes("-f ios="), "native-plugins.yml builds iOS too (ios=true, the default)");
+});
+
+Deno.test("native plugins gate: native-plugins.yml's newest run on HEAD, both apps green", async () => {
+  assertEquals(NATIVE_PLUGINS_JOBS, ["android", "ios"]);
+  const green = fakeGh([run(1, "push", "2026-10-06T10:00:00Z")], {
+    1: namedJobs(NATIVE_PLUGINS_JOBS, "success"),
+  });
+  const ok = await nativePluginsVerdict(SHA, green.gh);
+  assert(ok.ok, ok.reason);
+  assertEquals(green.calls[0].slice(0, 6), [
+    "run",
+    "list",
+    "--workflow",
+    "native-plugins.yml",
+    "--commit",
+    SHA,
+  ]);
+  // A dispatch with `-f ios=false` skips the iOS build: it can't vouch for a release.
+  const noIos = await nativePluginsVerdict(
+    SHA,
+    fakeGh([run(2, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+      2: namedJobs(NATIVE_PLUGINS_JOBS, "success", { ios: "skipped" }),
+    }).gh,
+  );
+  assert(!noIos.ok);
+  assertStringIncludes(noIos.reason, "ios: skipped");
+  // A newer red run outranks an older green one; none at all refuses.
+  const red = await nativePluginsVerdict(
+    SHA,
+    fakeGh(
+      [run(3, "push", "2026-10-06T10:00:00Z"), run(4, "workflow_dispatch", "2026-10-06T11:00:00Z")],
+      {
+        3: namedJobs(NATIVE_PLUGINS_JOBS, "success"),
+        4: namedJobs(NATIVE_PLUGINS_JOBS, "success", { android: "failure" }),
+      },
+    ).gh,
+  );
+  assertStringIncludes(red.reason, "android: failure");
+  const none = await nativePluginsVerdict(SHA, fakeGh([], {}).gh);
+  assert(!none.ok);
+  assertStringIncludes(none.reason, "no native-plugins.yml run");
+  // Both jobs exist in the workflow under those ids, and the dispatch builds iOS by default.
+  const workflow = await Deno.readTextFile(
+    new URL("../.github/workflows/native-plugins.yml", import.meta.url),
+  );
+  for (const job of NATIVE_PLUGINS_JOBS) assertStringIncludes(workflow, `\n  ${job}:\n`, job);
+  assertStringIncludes(workflow, "default: true");
 });
 
 Deno.test("release CI gate: every required job is a job of ci.yml", async () => {
@@ -315,10 +375,18 @@ Deno.test("e2e + desktop window gates: every required job is named in its workfl
   }
 });
 
-Deno.test("release CI gate: the release script checks all four workflows", async () => {
+Deno.test("release CI gate: the release script checks all five workflows", async () => {
   const src = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
   const check = src.slice(src.indexOf("async function checkCi("));
-  for (const v of ["releaseCiVerdict", "desktopCiVerdict", "e2eVerdict", "desktopWindowVerdict"]) {
+  for (
+    const v of [
+      "releaseCiVerdict",
+      "desktopCiVerdict",
+      "e2eVerdict",
+      "desktopWindowVerdict",
+      "nativePluginsVerdict",
+    ]
+  ) {
     assertStringIncludes(check.slice(0, check.indexOf("\n}\n")), v);
   }
 });

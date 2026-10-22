@@ -13,7 +13,9 @@ name: Native plugins
 #   ios      an unsigned Release build (xcodebuild; no certificates on the runner)
 #
 # Runs when a template or an installer changes on `development` (or on a `ci/*` branch), and on
-# manual dispatch. There is no scheduled run.
+# manual dispatch. There is no scheduled run. A release is gated on it: `deno task release` refuses
+# unless the newest run on HEAD built both apps green (scripts/release-ci.ts NATIVE_PLUGINS_JOBS),
+# so it is dispatched before a release (`gh workflow run native-plugins.yml --ref development`).
 on:
   push:
     branches: [development, "ci/**"]

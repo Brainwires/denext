@@ -1255,7 +1255,10 @@ e2e.yml run on HEAD ran every job green (`E2E_JOBS`: `e2e`, `migration-beds`, `t
 (a real packaged window on Linux, macOS arm64 / x64 and Windows; `DESKTOP_WINDOW_JOBS`) is green:
 e2e runs only on a dispatch and desktop-window only when its `paths` filter matches, so dispatch
 both (`gh workflow run e2e.yml --ref development`, `gh workflow run desktop-window.yml --ref
-development`) and wait for all four. Active `development` runs ahead of `main` by design.
+development`). Last, the newest native-plugins.yml run on HEAD must have built both apps green
+(`NATIVE_PLUGINS_JOBS`: `android`, `ios`; a push runs it only when a native template or installer
+changes, so dispatch it: `gh workflow run native-plugins.yml --ref development`). Wait for all
+five. Active `development` runs ahead of `main` by design.
 
 **`main` must always be exactly what is published.** So **cutting a version is not
 done until `development` is merged into `main`** — the release flow is: tag
