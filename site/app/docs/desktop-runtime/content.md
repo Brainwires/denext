@@ -412,6 +412,12 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **What:** a page's `<a download>`, a `Content-Disposition: attachment` response or a blob export
   opens the platform's save dialog on every backend (from `2.9.7-denext.22`), only for the app's
   own origins, with a sanitized file name and at most three save dialogs per window in 10 s.
+  **Not yet on WebKit** (WKWebView on macOS, WebKitGTK on Linux): a `Content-Disposition:
+  attachment` response from a custom-scheme app origin (`desktop.app.origin`, such as
+  `myapp://app`) opens no save dialog and is not downloaded; WebView2 and CEF download it. An
+  `<a download>` link and a blob export work on every backend. Until the runtime handles it, fetch
+  the response and save it with `saveFile` (or export it as a blob with `<a download>`), or save it
+  into the app's folders with `downloadToFile` (see KNOWN-LIMITATIONS).
 - **Why:** under the stock runtime such a download is inert or cancelled, so an app's "Export" or
   "Download" button does nothing in the window, though it works in a browser.
 - **Layer:** laufey.
