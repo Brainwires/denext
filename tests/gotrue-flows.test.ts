@@ -482,3 +482,156 @@ Deno.test("id_token grant: a Google id token signs in (and creates the user)", a
     } as Partial<AuthConfig>,
   );
 });
+
+// ---- PKCE refusals ----------------------------------------------------------------------------
+
+/**
+ * A PKCE exchange that must be refused: how the code is prepared, what `/token?grant_type=pkce`
+ * is sent, and the exact answer. Every row also proves no session family was created.
+ */
+interface PkceRefusal {
+  name: string;
+  /** Spend or age the code before the refused exchange (`skew` moves the store's clock). */
+  prepare?: (
+    app: SupabaseAuthApp,
+    code: string,
+    clock: { skew: number },
+    families: string[],
+  ) => Promise<void>;
+  /** The exchange's body, given the code. */
+  body: (code: string) => Record<string, unknown>;
+  /** Shift the process clock (the redeem's own expiry check) for the exchange, ms. */
+  processSkewMs?: number;
+  status: number;
+  error_code: string;
+}
+
+const PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const PKCE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+const exchange = (app: SupabaseAuthApp, body: Record<string, unknown>) =>
+  api(app, "/token", { query: { grant_type: "pkce" }, body });
+
+const PKCE_REFUSALS: PkceRefusal[] = [
+  {
+    name: "a wrong verifier",
+    body: (code) => ({ auth_code: code, code_verifier: "x".repeat(43) }),
+    status: 400,
+    error_code: "bad_code_verifier",
+  },
+  {
+    name: "a verifier shorter than RFC 7636 allows",
+    body: (code) => ({ auth_code: code, code_verifier: PKCE_VERIFIER.slice(0, 42) }),
+    status: 400,
+    error_code: "bad_code_verifier",
+  },
+  {
+    name: "no verifier",
+    body: (code) => ({ auth_code: code }),
+    status: 400,
+    error_code: "bad_code_verifier",
+  },
+  {
+    name: "the challenge sent back as the verifier",
+    body: (code) => ({ auth_code: code, code_verifier: PKCE_CHALLENGE }),
+    status: 400,
+    error_code: "bad_code_verifier",
+  },
+  {
+    name: "a reused code (already exchanged)",
+    prepare: async (app, code, _clock, families) => {
+      const first = await exchange(app, { auth_code: code, code_verifier: PKCE_VERIFIER });
+      assertEquals(first.status, 200, JSON.stringify(first.json));
+      assertEquals(families.length, 1, "the counting adapter sees the session a success starts");
+    },
+    body: (code) => ({ auth_code: code, code_verifier: PKCE_VERIFIER }),
+    status: 404,
+    error_code: "flow_state_not_found",
+  },
+  {
+    name: "a code spent by a wrong verifier, then the right one",
+    prepare: async (app, code) => {
+      const wrong = await exchange(app, { auth_code: code, code_verifier: "y".repeat(43) });
+      assertEquals(wrong.json.error_code, "bad_code_verifier");
+    },
+    body: (code) => ({ auth_code: code, code_verifier: PKCE_VERIFIER }),
+    status: 404,
+    error_code: "flow_state_not_found",
+  },
+  {
+    name: "an expired code the store already dropped",
+    prepare: (_app, _code, clock) => Promise.resolve(void (clock.skew = 301)),
+    body: (code) => ({ auth_code: code, code_verifier: PKCE_VERIFIER }),
+    status: 404,
+    error_code: "flow_state_not_found",
+  },
+  {
+    name: "an expired code the store still returns",
+    body: (code) => ({ auth_code: code, code_verifier: PKCE_VERIFIER }),
+    processSkewMs: 301_000,
+    status: 400,
+    error_code: "flow_state_expired",
+  },
+  {
+    name: "an unknown code",
+    body: () => ({ auth_code: crypto.randomUUID(), code_verifier: PKCE_VERIFIER }),
+    status: 404,
+    error_code: "flow_state_not_found",
+  },
+  {
+    name: "an oversized code",
+    body: (code) => ({ auth_code: code.repeat(3), code_verifier: PKCE_VERIFIER }),
+    status: 404,
+    error_code: "flow_state_not_found",
+  },
+];
+
+for (const row of PKCE_REFUSALS) {
+  Deno.test(`PKCE refusal: ${row.name} is ${row.error_code}, and no session is minted`, async () => {
+    const realNow = Date.now;
+    const clock = { skew: 0 };
+    const base = inMemoryAuthAdapter({ now: () => Math.floor(realNow() / 1000) + clock.skew });
+    const families: string[] = [];
+    const adapter = {
+      ...base,
+      createNativeSession(session: Parameters<NonNullable<typeof base.createNativeSession>>[0]) {
+        families.push(session.id);
+        return base.createNativeSession!(session);
+      },
+    };
+    const app = await supabaseAuthApp({ adapter, withClient: false });
+    try {
+      const otp = await api(app, "/otp", {
+        query: { redirect_to: `${ORIGIN}/cb` },
+        body: {
+          email: "pkce-refusal@example.com",
+          create_user: true,
+          code_challenge: PKCE_CHALLENGE,
+          code_challenge_method: "s256",
+        },
+      });
+      assertEquals(otp.status, 200, JSON.stringify(otp.json));
+      const landing = await app.fetch(app.emails.at(-1)!.url, { redirect: "manual" });
+      await landing.body?.cancel();
+      const code = new URL(landing.headers.get("location")!).searchParams.get("code");
+      assertExists(code, landing.headers.get("location") ?? "no location");
+      assertEquals(families, [], "the link itself starts no session");
+      await row.prepare?.(app, code, clock, families);
+      const before = families.length;
+      if (row.processSkewMs) Date.now = () => realNow() + row.processSkewMs!;
+      let res;
+      try {
+        res = await exchange(app, row.body(code));
+      } finally {
+        Date.now = realNow;
+      }
+      assertEquals([res.status, res.json.error_code], [row.status, row.error_code]);
+      assertEquals(res.json.access_token, undefined);
+      assertEquals(res.json.refresh_token, undefined);
+      assertEquals(res.headers.getSetCookie(), [], "no cookie is set");
+      assertEquals(families.length, before, "no session family was created");
+    } finally {
+      Date.now = realNow;
+      await app.close();
+    }
+  });
+}

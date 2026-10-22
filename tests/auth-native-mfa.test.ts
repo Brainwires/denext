@@ -88,6 +88,8 @@ interface Harness {
   events: string[];
   userId: string;
   totp: string;
+  /** The TOTP step the enrollment's confirming code claimed. */
+  enrolledStep: number;
   backupCodes: string[];
 }
 
@@ -131,13 +133,14 @@ async function setup(options: { enrolled?: boolean } = {}): Promise<Harness> {
     authTime: now(),
   };
   if (!enrolled) {
-    return { config, adapter, events, userId: user.id, totp: "", backupCodes: [] };
+    return { config, adapter, events, userId: user.id, totp: "", enrolledStep: 0, backupCodes: [] };
   }
   const enrollment = await enrollTotp(config, session);
   assert(enrollment.ok);
+  const enrolledStep = step() - 2;
   const confirmed = await confirmTotp(config, {
     user: session.user,
-    code: await totpAt(enrollment.secret, step() - 2),
+    code: await totpAt(enrollment.secret, enrolledStep),
   });
   assert(confirmed.ok);
   return {
@@ -146,6 +149,7 @@ async function setup(options: { enrolled?: boolean } = {}): Promise<Harness> {
     events,
     userId: user.id,
     totp: enrollment.secret,
+    enrolledStep,
     backupCodes: confirmed.backupCodes,
   };
 }
@@ -512,3 +516,124 @@ Deno.test("nativeSession: enrollMfa + confirmMfaEnrollment finish an enrollment-
   assertEquals(done.backupCodes.length, 2);
   assert(await session.signedIn());
 });
+
+// ---- refusals, table-driven --------------------------------------------------------------------
+
+/** A `/native/mfa` exchange that must be refused, and its exact answer. */
+interface MfaRefusal {
+  name: string;
+  /** The code to present (may finish another sign-in first, to spend a step or a code). */
+  code: (h: Harness) => Promise<string>;
+  /** Change the world after the pending answer, before the code is presented. */
+  after?: (h: Harness) => Promise<void>;
+  /** Shift the process clock for the presentation, ms. */
+  skewMs?: number;
+  status: number;
+  error: string;
+}
+
+/** Finish one whole sign-in with `code` (spending its TOTP step or backup code). */
+async function finishWith(h: Harness, code: string): Promise<void> {
+  const token = String((await pending(h)).mfa_token);
+  const res = await post(h, "/native/mfa", { mfa_token: token, code });
+  assertEquals(res.status, 200, await res.clone().text());
+}
+
+const MFA_REFUSALS: MfaRefusal[] = [
+  {
+    name: "a wrong code",
+    code: () => Promise.resolve("000000"),
+    status: 401,
+    error: "invalid_code",
+  },
+  {
+    name: "a code from outside the drift window",
+    code: (h) => totpAt(h.totp, step() - 6),
+    status: 401,
+    error: "invalid_code",
+  },
+  {
+    name: "a TOTP code replayed within its step (it already finished a sign-in)",
+    code: async (h) => {
+      const code = await totpAt(h.totp, step());
+      await finishWith(h, code);
+      return code;
+    },
+    status: 401,
+    error: "invalid_code",
+  },
+  {
+    name: "the enrollment's own code, replayed",
+    // The exact step the confirmation claimed (not `step() - 2` again: a slow run may have
+    // crossed a 30 s boundary since, and a later step is a fresh code).
+    code: (h) => totpAt(h.totp, h.enrolledStep),
+    status: 401,
+    error: "invalid_code",
+  },
+  {
+    name: "a spent backup code",
+    code: async (h) => {
+      await finishWith(h, h.backupCodes[0]);
+      return h.backupCodes[0];
+    },
+    status: 401,
+    error: "invalid_code",
+  },
+  {
+    name: "a right code on an expired mfa_token",
+    code: (h) => totpAt(h.totp, step()),
+    skewMs: 301_000,
+    status: 400,
+    error: "invalid_grant",
+  },
+  {
+    name: "a right code after the factor was removed",
+    code: (h) => totpAt(h.totp, step()),
+    after: async (h) => {
+      for (const f of await h.adapter.listMfaFactors?.(h.userId) ?? []) {
+        await h.adapter.deleteMfaFactor!(f.id);
+      }
+      await h.adapter.deleteMfa?.(h.userId);
+    },
+    // No factor left to check against: the pending sign-in ends, it isn't a wrong code.
+    status: 400,
+    error: "invalid_grant",
+  },
+];
+
+for (const row of MFA_REFUSALS) {
+  Deno.test(`native MFA refusal: ${row.name} is ${row.status} ${row.error}, no session minted`, async () => {
+    const h = await setup();
+    const code = await row.code(h);
+    const sessions: string[] = [];
+    const create = h.adapter.createNativeSession!.bind(h.adapter);
+    h.adapter.createNativeSession = (s) => {
+      sessions.push(s.id);
+      return create(s);
+    };
+    const signIns = h.events.filter((e) => e.startsWith("signIn:")).length;
+    const token = String((await pending(h)).mfa_token);
+    await row.after?.(h);
+    const realNow = Date.now;
+    if (row.skewMs) Date.now = () => realNow() + row.skewMs!;
+    let res: Response;
+    try {
+      res = await post(h, "/native/mfa", { mfa_token: token, code });
+    } finally {
+      Date.now = realNow;
+    }
+    const body = await res.json();
+    assertEquals([res.status, body.error], [row.status, row.error]);
+    assertEquals(body.access_token, undefined);
+    assertEquals(body.refresh_token, undefined);
+    assertEquals(sessions, [], "no native session was created");
+    assertEquals(h.events.filter((e) => e.startsWith("signIn:")).length, signIns, "no signIn");
+    // The presented token is spent either way: the right code can't finish it afterwards.
+    const retry = await post(h, "/native/mfa", {
+      mfa_token: token,
+      code: await totpAt(h.totp, step() + 1),
+    });
+    assertEquals([retry.status, (await retry.json()).error], [400, "invalid_grant"]);
+    assertEquals(sessions, [], "still no native session");
+  });
+}
