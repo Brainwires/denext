@@ -80,6 +80,24 @@ async function totpAt(secret: string, step: number): Promise<string> {
 
 const step = () => Math.floor(Date.now() / 30_000);
 
+// Every test runs on a pinned clock, 15 s into one 30 s step: a code computed for a step must
+// verify against the step it was computed from. On the wall clock the step could roll over in
+// between, putting an edge-of-window code (the enrollment's `- 2`, with a ±2 window) outside it.
+const PINNED_MS = Math.floor(Date.now() / 30_000) * 30_000 + 15_000;
+
+/** `Deno.test` with `Date.now` pinned to {@linkcode PINNED_MS} for the test's duration. */
+function test(name: string, fn: () => Promise<void>): void {
+  Deno.test(name, async () => {
+    const realNow = Date.now;
+    Date.now = () => PINNED_MS;
+    try {
+      await fn();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+}
+
 let jwksCounter = 0;
 
 interface Harness {
@@ -175,7 +193,7 @@ async function pending(h: Harness): Promise<Record<string, unknown>> {
   return await res.json();
 }
 
-Deno.test("an enrolled user's id_token sign-in answers a pending second factor, no tokens", async () => {
+test("an enrolled user's id_token sign-in answers a pending second factor, no tokens", async () => {
   const h = await setup();
   const body = await pending(h);
   assertEquals(body.mfa_required, true);
@@ -188,7 +206,7 @@ Deno.test("an enrolled user's id_token sign-in answers a pending second factor, 
   assertEquals(h.events, [], "no signIn before the second factor");
 });
 
-Deno.test("the mfa_token grants nothing: not a bearer, not a refresh token", async () => {
+test("the mfa_token grants nothing: not a bearer, not a refresh token", async () => {
   const h = await setup();
   const token = String((await pending(h)).mfa_token);
   assertEquals(await verifyNativeAccessToken(h.config, token), null);
@@ -206,7 +224,7 @@ Deno.test("the mfa_token grants nothing: not a bearer, not a refresh token", asy
   assertEquals(code.status, 400);
 });
 
-Deno.test("a TOTP code finishes it: native tokens, the signIn event, and the token is spent", async () => {
+test("a TOTP code finishes it: native tokens, the signIn event, and the token is spent", async () => {
   const h = await setup();
   const token = String((await pending(h)).mfa_token);
   const res = await post(h, "/native/mfa", {
@@ -229,7 +247,7 @@ Deno.test("a TOTP code finishes it: native tokens, the signIn event, and the tok
   assertEquals((await again.json()).error, "invalid_grant");
 });
 
-Deno.test("a backup code finishes it too", async () => {
+test("a backup code finishes it too", async () => {
   const h = await setup();
   const token = String((await pending(h)).mfa_token);
   const res = await post(h, "/native/mfa", { mfa_token: token, code: h.backupCodes[0] });
@@ -237,7 +255,7 @@ Deno.test("a backup code finishes it too", async () => {
   assertMatch((await res.json()).access_token, /^nat_/);
 });
 
-Deno.test("a wrong code spends the token, hands back a fresh one, and five wrong codes end it", async () => {
+test("a wrong code spends the token, hands back a fresh one, and five wrong codes end it", async () => {
   const h = await setup();
   let token = String((await pending(h)).mfa_token);
   for (let left = 4; left >= 1; left--) {
@@ -260,7 +278,7 @@ Deno.test("a wrong code spends the token, hands back a fresh one, and five wrong
   assertFalse(h.events.includes("signIn:google"));
 });
 
-Deno.test("an expired token is refused, right code or not", async () => {
+test("an expired token is refused, right code or not", async () => {
   const h = await setup();
   const token = String((await pending(h)).mfa_token);
   const code = await totpAt(h.totp, step());
@@ -274,7 +292,7 @@ Deno.test("an expired token is refused, right code or not", async () => {
   }
 });
 
-Deno.test("a user banned or deleted after the id_token never finishes the sign-in", async () => {
+test("a user banned or deleted after the id_token never finishes the sign-in", async () => {
   const h = await setup();
   const token = String((await pending(h)).mfa_token);
   await h.adapter.updateUser({ id: h.userId, bannedUntil: now() + 3600 });
@@ -294,7 +312,7 @@ Deno.test("a user banned or deleted after the id_token never finishes the sign-i
   assertEquals(gone.status, 400);
 });
 
-Deno.test("an unknown or malformed token is invalid_grant; native off falls through", async () => {
+test("an unknown or malformed token is invalid_grant; native off falls through", async () => {
   const h = await setup();
   for (const token of ["", "nmf_nope", "nat_x", "x".repeat(5000)]) {
     const res = await post(h, "/native/mfa", { mfa_token: token, code: "123456" });
@@ -309,7 +327,7 @@ Deno.test("an unknown or malformed token is invalid_grant; native off falls thro
   assert(!res || res.status === 404);
 });
 
-Deno.test("an SMS challenge for an unknown factor keeps the sign-in alive with a fresh token", async () => {
+test("an SMS challenge for an unknown factor keeps the sign-in alive with a fresh token", async () => {
   const h = await setup();
   const token = String((await pending(h)).mfa_token);
   const res = await post(h, "/native/mfa-challenge", { mfa_token: token, factor_id: "nope" });
@@ -354,7 +372,7 @@ function clientFor(h: Harness) {
   });
 }
 
-Deno.test("nativeSession: mfa_required carries the pending sign-in; completeMfa finishes it", async () => {
+test("nativeSession: mfa_required carries the pending sign-in; completeMfa finishes it", async () => {
   const h = await setup();
   const session = clientFor(h);
   const token = await idToken();
@@ -391,7 +409,7 @@ async function enrolled(h: Harness): Promise<{ secret: string; token: string }> 
   return { secret: enrollment.secret, token: enrollment.mfa_token };
 }
 
-Deno.test('"always" + no factor: the id_token sign-in answers a pending enrollment, no tokens', async () => {
+test('"always" + no factor: the id_token sign-in answers a pending enrollment, no tokens', async () => {
   const h = await setup({ enrolled: false });
   const body = await pending(h);
   assertEquals([body.mfa_required, body.mfa_enroll], [true, true]);
@@ -401,7 +419,7 @@ Deno.test('"always" + no factor: the id_token sign-in answers a pending enrollme
   assertEquals(h.events, [], "no signIn before the factor is enrolled");
 });
 
-Deno.test("enroll + confirm finishes the sign-in: tokens, amr totp, backup codes, signIn", async () => {
+test("enroll + confirm finishes the sign-in: tokens, amr totp, backup codes, signIn", async () => {
   const h = await setup({ enrolled: false });
   const { secret, token } = await enrolled(h);
   const res = await post(h, "/native/mfa-confirm", {
@@ -427,7 +445,7 @@ Deno.test("enroll + confirm finishes the sign-in: tokens, amr totp, backup codes
   assertEquals((next.factors as Array<{ type: string }>).map((f) => f.type), ["totp"]);
 });
 
-Deno.test("a wrong enrollment code costs an attempt and hands back a fresh token", async () => {
+test("a wrong enrollment code costs an attempt and hands back a fresh token", async () => {
   const h = await setup({ enrolled: false });
   const { secret, token } = await enrolled(h);
   const wrong = await post(h, "/native/mfa-confirm", { mfa_token: token, code: "000000" });
@@ -441,7 +459,7 @@ Deno.test("a wrong enrollment code costs an attempt and hands back a fresh token
   assertEquals(ok.status, 200);
 });
 
-Deno.test("enrollment is a first factor only: once one is verified, the pending token can't add one", async () => {
+test("enrollment is a first factor only: once one is verified, the pending token can't add one", async () => {
   const h = await setup({ enrolled: false });
   const body = await pending(h);
   // A factor appears meanwhile (the owner enrolled in the browser).
@@ -477,7 +495,7 @@ Deno.test("enrollment is a first factor only: once one is verified, the pending 
   assertEquals(confirm.status, 409);
 });
 
-Deno.test("an enrollment token never verifies a code, and a code-check token never enrolls", async () => {
+test("an enrollment token never verifies a code, and a code-check token never enrolls", async () => {
   const h = await setup({ enrolled: false });
   const { token } = await enrolled(h);
   const verify = await post(h, "/native/mfa", { mfa_token: token, code: "123456" });
@@ -489,7 +507,7 @@ Deno.test("an enrollment token never verifies a code, and a code-check token nev
   assertEquals((await enroll.json()).error, "invalid_grant");
 });
 
-Deno.test("a user banned after the id_token never enrolls", async () => {
+test("a user banned after the id_token never enrolls", async () => {
   const h = await setup({ enrolled: false });
   const body = await pending(h);
   await h.adapter.updateUser({ id: h.userId, bannedUntil: now() + 3600 });
@@ -497,7 +515,7 @@ Deno.test("a user banned after the id_token never enrolls", async () => {
   assertEquals(res.status, 400);
 });
 
-Deno.test("nativeSession: enrollMfa + confirmMfaEnrollment finish an enrollment-owed sign-in", async () => {
+test("nativeSession: enrollMfa + confirmMfaEnrollment finish an enrollment-owed sign-in", async () => {
   const h = await setup({ enrolled: false });
   const session = clientFor(h);
   const token = await idToken();
@@ -602,7 +620,7 @@ const MFA_REFUSALS: MfaRefusal[] = [
 ];
 
 for (const row of MFA_REFUSALS) {
-  Deno.test(`native MFA refusal: ${row.name} is ${row.status} ${row.error}, no session minted`, async () => {
+  test(`native MFA refusal: ${row.name} is ${row.status} ${row.error}, no session minted`, async () => {
     const h = await setup();
     const code = await row.code(h);
     const sessions: string[] = [];
