@@ -180,8 +180,9 @@ jobs:
         include:
           # `smoke` is whether the runner can EXECUTE the binary it built. Every leg builds on
           # ubuntu-latest (x86_64): `deno compile --target` cross-compiles and the Mach-O legs
-          # are signed with rcodesign, so no leg waits for a macOS runner. The `macos-check` job
-          # runs the released Mac binaries after the release.
+          # are signed with rcodesign, so no leg waits for a macOS runner. The `smoke` job runs
+          # the aarch64 Linux and the Mac archives on their own OS before the release; the
+          # `macos-check` job runs the released Mac downloads after it.
           - target: x86_64-apple-darwin
             os: ubuntu-latest
             smoke: false
@@ -221,31 +222,12 @@ jobs:
           deno run -A scripts/compile-cli.ts --target ${{ matrix.target }} --output "$out"
           ls -lh "$out"
 
-      # The binary has to RUN, not merely link: `--version` proves it starts and knows it is a
-      # binary (and that the tag matches the version baked into it — the two are bumped
-      # separately), `--help` proves the verb table (metadata only) loads, `completions bash`
-      # proves a verb's implementation loads on demand — it is embedded only through
-      # `--include src/cli/lazy-modules.generated.ts`; without it every verb fails while
-      # `--version` and `--help` still pass — and `build` in a directory that
-      # pins no denext proves the refusal path (a binary never builds an app in its own
-      # process) exits 1 with the message the docs quote, rather than crashing or, worse,
-      # building with the binary's own framework.
+      # The binary has to RUN, not merely link (scripts/ci/binary-smoke.sh: --version, --help, a
+      # lazily loaded verb, the unpinned-build refusal). The legs whose runner can't execute their
+      # binary are run by the `smoke` job below, on their own OS and architecture.
       - name: Smoke-test the binary
         if: matrix.smoke
-        run: |
-          set -eu
-          version="${GITHUB_REF_NAME#v}"
-          ./denext --version | tee /dev/stderr | grep -Fx "denext $version (binary)"
-          ./denext --help | grep -F "Usage" >/dev/null
-          ./denext completions bash | grep -F "_denext_complete()" >/dev/null
-          scratch="$(mktemp -d)"
-          set +e
-          out="$(cd "$scratch" && "$GITHUB_WORKSPACE/denext" build 2>&1)"
-          code=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$code" -eq 1 ] || { echo "::error::expected exit 1 from an unpinned build, got $code"; exit 1; }
-          printf '%s\n' "$out" | grep -F "pins no denext" >/dev/null
+        run: sh scripts/ci/binary-smoke.sh ./denext "${GITHUB_REF_NAME#v}"
 
       # The verbs that read framework files at run time, run by this very binary before it is
       # uploaded: `migrate --check` / `migrate` on a Next.js app, `create`, `generate`, `routes`,
@@ -362,11 +344,72 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # ONE release, created once every leg has its archive. `needs` on the matrix job means a
-  # single failed leg (fail-fast is off, so the others still finish and upload) skips this job
-  # entirely — a release is all six platforms or nothing.
-  release:
+  # The archives the build runner can't execute, run on their own OS before the release: aarch64
+  # Linux on an Arm runner, and both Mac binaries on an Apple Silicon one (x86_64 under Rosetta).
+  # The macOS leg puts a macOS runner on the release's path (one can queue for a while): the
+  # price of never shipping a Mac binary no runner has executed. Each leg runs exactly what was
+  # uploaded: the archive is checked against its .sha256 and
+  # unpacked, then binary-smoke.sh runs and (on the native architecture) the verbs that read
+  # framework files at run time (tests/integration/cli-binary-smoke.test.ts). A failure skips the
+  # release, as a failed build leg does.
+  smoke:
     needs: binaries
+    if: startsWith(github.ref_name, 'v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6"
+
+      - name: Download the archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: denext-*-{linux-gnu,apple-darwin}
+          path: dist
+          merge-multiple: true
+
+      - name: Smoke-test each binary
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          for t in ${{ matrix.targets }}; do
+            (cd dist && shasum -a 256 -c "denext-$t.tar.gz.sha256")
+            mkdir -p "bin/$t" && tar xzf "dist/denext-$t.tar.gz" -C "bin/$t"
+            case "$t" in
+              x86_64-apple-darwin)
+                # Apple Silicon runs it under Rosetta: the same Mach-O a Mac with an Intel CPU runs.
+                arch -x86_64 /usr/bin/true || { echo "::error::Rosetta is not installed"; exit 1; }
+                printf '#!/bin/sh\nexec arch -x86_64 "%s" "$@"\n' "$PWD/bin/$t/denext" > "bin/$t/run"
+                chmod +x "bin/$t/run"
+                sh scripts/ci/binary-smoke.sh "bin/$t/run" "$version"
+                ;;
+              *) sh scripts/ci/binary-smoke.sh "bin/$t/denext" "$version" ;;
+            esac
+          done
+
+      # The native-architecture binary's verbs (the first target of the leg).
+      - name: Smoke-test the binary's verbs
+        run: |
+          set -eu
+          t="$(echo "${{ matrix.targets }}" | cut -d' ' -f1)"
+          DENEXT_SMOKE_BINARY="$PWD/bin/$t/denext" deno test -A tests/integration/cli-binary-smoke.test.ts
+
+  # ONE release, created once every leg has its archive and the `smoke` legs ran them. `needs` on
+  # the matrix jobs means a single failed leg (fail-fast is off, so the others still finish and
+  # upload) skips this job entirely — a release is all six platforms or nothing.
+  release:
+    needs: [binaries, smoke]
     if: startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     permissions:
@@ -495,10 +538,10 @@ jobs:
             throw 'completions did not load'
           }
 
-  # The Mac binaries are built and signed on Linux; this runs the RELEASED ones on a Mac (the
-  # signature verifies, the arm64 one starts and knows its version). It is off the release's
-  # critical path on purpose — a macOS runner can queue for half an hour — so a failure here
-  # means the shipped Mac archives need a follow-up release.
+  # The Mac binaries are built and signed on Linux; the `smoke` job ran them before the release.
+  # This checks the RELEASED downloads on a Mac (the release's checksums, the signature verifies
+  # under `codesign --verify --strict`, the arm64 one starts and knows its version), so a failure
+  # here means the shipped Mac archives need a follow-up release.
   macos-check:
     needs: release
     if: startsWith(github.ref_name, 'v')

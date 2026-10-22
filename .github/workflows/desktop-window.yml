@@ -1,7 +1,8 @@
 # The desktop kitchen sink's window test (examples/desktop-kitchen-sink) on every desktop OS: package
 # the app with denext's pinned Deno Desktop runtime, open it in a real window and assert every check
 # the page runs (capabilities, the window API, deep links, the bridge gate, auth sessions, passkeys,
-# the Clerk bridge, and a full-app update installed, left unconfirmed and rolled back).
+# the Clerk bridge, page downloads through the save dialog and `downloadToFile` with an abort, and
+# a full-app update installed, left unconfirmed and rolled back).
 #
 # Windows also runs the Authenticode phases: "sign" packages builds signed with two throwaway
 # self-signed certificates and checks the signer of every PE file, and, because the hosted runner
@@ -115,7 +116,8 @@ jobs:
       # Linux: a display (Xvfb), a window manager, a D-Bus session with a Secret Service
       # (gnome-keyring, and libsecret, which the runtime loads for secureStore), a notification
       # server (dunst), xprop (x11-utils: the session script polls for the window manager), the XDG
-      # scheme tools, and the WebKitGTK runtime the webview backend loads.
+      # scheme tools, the WebKitGTK runtime the webview backend loads, and xdotool (the runner
+      # presses Return in a page download's save dialog).
       - name: Linux desktop session
         if: runner.os == 'Linux'
         working-directory: .
@@ -123,7 +125,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-1-0 dunst \
-            xdg-utils desktop-file-utils \
+            xdg-utils desktop-file-utils xdotool \
             libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
       - name: Window test (Linux, headless session)
         if: runner.os == 'Linux'

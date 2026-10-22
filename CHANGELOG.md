@@ -187,6 +187,17 @@ and this project adheres to
 
 ### Changed
 
+- **CI and the release gate.** `deno task test:coverage` also holds every module under `src/cli`,
+  `src/server`, `src/compat` and `packages/` to the coverage `scripts/coverage-baseline.json`
+  records for it, a ratchet that only goes up (`scripts/coverage-ratchet.ts`; the lcov report now
+  takes every plugin package and is kept as the `coverage-lcov` artifact), and the Kotlin
+  client-emitter goldens compile in the coverage job. `deno task release` also waits for
+  native-plugins.yml's Android and iOS builds on HEAD. publish.yml runs the aarch64 Linux and both
+  macOS binaries on their own runners before it creates a release, and desktop-ci.yml runs
+  `install.sh` on macOS too. The kitchen sink's window test covers page downloads: `downloadToFile`
+  (a whole file, and one aborted mid-transfer that leaves nothing behind), an `<a download>` blob
+  export and a `Content-Disposition: attachment` response, each through the save dialog.
+
 - **The native App Router build defines its build constants with `deno bundle --define`.** Where
   the running Deno's `deno bundle` takes `--define` (denext's Deno toolchain from runtime
   `3.0.0-rc.1`; a probe of `deno bundle --help`, run once per build, so an upstream release with

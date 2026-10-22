@@ -805,11 +805,17 @@ jobs:
         working-directory: examples/native
         run: ../../scripts/ci/msi-roundtrip.ps1 -PerMachine -Msi dist/old.msi -AppName "denext native" -Exe denext-native-arm64.exe -Scheme denextnative -Upgrade dist/denext-native-arm64.msi -UpgradeVersion 1.0.1
 
-  # install.sh end to end on Linux: this commit's binary (a local release, the toolchain step
-  # included), then the real latest release, which may predate the `toolchain` verb (denext < 4.0).
+  # install.sh end to end on Linux and macOS (Apple Silicon): this commit's binary (a local
+  # release, the toolchain step included), then the real latest release, which may predate the
+  # `toolchain` verb (denext < 4.0). macOS is where the installer strips the download's
+  # quarantine and writes a login shell's profile; Homebrew users get the same binary.
   install-sh:
-    name: install.sh (ubuntu-latest — this commit's build + the real latest one)
-    runs-on: ubuntu-latest
+    name: install.sh (${{ matrix.os }} — this commit's build + the real latest one)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -820,12 +826,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          asset=denext-x86_64-unknown-linux-gnu.tar.gz
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) asset=denext-x86_64-unknown-linux-gnu.tar.gz ;;
+            Darwin-arm64) asset=denext-aarch64-apple-darwin.tar.gz ;;
+            *) echo "::error::no install.sh leg for $(uname -s)-$(uname -m)"; exit 1 ;;
+          esac
           art="$RUNNER_TEMP/art"
           mkdir -p "$art"
           deno run -A scripts/compile-cli.ts --output "$RUNNER_TEMP/denext"
           tar czf "$art/$asset" -C "$RUNNER_TEMP" denext
-          (cd "$art" && sha256sum "$asset" > SHA256SUMS)
+          (cd "$art" && { sha256sum "$asset" 2>/dev/null || shasum -a 256 "$asset"; } > SHA256SUMS)
           out="$(DENEXT_ARTIFACTS="$art" DENEXT_INSTALL="$RUNNER_TEMP/denext-head" sh scripts/install.sh 2>&1)"
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -F "installing denext's Deno toolchain" >/dev/null
