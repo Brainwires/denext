@@ -10,6 +10,7 @@
 // resolve from the app's own node_modules exactly as Next runs them.
 
 import type { MdxBuildOptions } from "./next-compat.ts";
+import { isBuildPhase } from "../server/phase.ts";
 
 /** Options objects captured from `createMDX(...)` calls during a probe import. */
 const captured: Array<Record<string, unknown>> = [];
@@ -159,6 +160,26 @@ async function readNextConfigSource(
 }
 
 /**
+ * Whether this process may write the probe. A least-privilege `denext start`
+ * (`--allow-write=.denext`) may not, and needs no MDX options: the build compiled every `.mdx`
+ * page already, so the recovery is skipped there quietly. Building without the grant still says
+ * so (the MDX pages would build with the baseline plugins).
+ */
+async function mayWriteProbe(probeUrl: URL): Promise<boolean> {
+  // Granted only: a terminal would otherwise prompt for a write `start` has no use for.
+  const state = await Deno.permissions.query({ name: "write", path: probeUrl })
+    .then((s) => s.state, () => "denied");
+  if (state === "granted") return true;
+  if (isBuildPhase()) {
+    console.warn(
+      `denext: could not recover MDX plugins (no write access beside ${probeUrl.pathname}); ` +
+        "building with baseline MDX.",
+    );
+  }
+  return false;
+}
+
+/**
  * Write the rewritten config beside the original (same extension, so Deno picks the right
  * loader; same dir, so the config's relative + bare plugin imports resolve identically) and
  * import it. Importing runs the config top-to-bottom: `createMDX(opts)` (captured) and the
@@ -175,6 +196,7 @@ async function runProbe(
   const dir = new URL(".", nextConfigUrl);
   const ext = (nextConfigUrl.pathname.match(/\.[^./]+$/)?.[0]) ?? ".mjs";
   const probeUrl = new URL(`./.denext-mdx-probe-${crypto.randomUUID()}${ext}`, dir);
+  if (!(await mayWriteProbe(probeUrl))) return null;
   captured.length = 0;
   try {
     await Deno.writeTextFile(probeUrl, rewritten);

@@ -208,7 +208,10 @@ and this project adheres to
   (`--allow-net --allow-read --allow-env --allow-write=.denext`). Re-run `denext migrate` (or edit
   the task) and rebuild to pick it up; a build from an older denext keeps the re-exec. A Pages
   Router or Prisma app, and the Remix, React Router, Fresh and TanStack Start migrations, keep
-  `-A`.
+  `-A`. An app whose `denext.config.ts` recovers its MDX plugins from `next.config`
+  (`resolveNextMdx`) no longer warns "could not recover MDX plugins … Requires write access" on
+  every such start: the recovery is a build-time step, skipped quietly where the process may not
+  write beside `next.config`.
 
 - **`denext build --compile` resolves dependencies as the app's lockfile locks them.** The
   compile resolves with its own config under `.denext/compile/`, which had no lockfile: the

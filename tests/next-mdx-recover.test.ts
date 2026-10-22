@@ -135,3 +135,65 @@ Deno.test("resolveNextMdx returns undefined for a missing next.config", async ()
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/**
+ * Run resolveNextMdx in a child with read access but no write access beside the config (a
+ * least-privilege `denext start`: `--allow-write=.denext`); its result and stderr.
+ */
+async function recoverWithoutWrite(
+  dir: string,
+  env: Record<string, string> = {},
+): Promise<{ result: string; stderr: string }> {
+  const mod = new URL("../src/build/next-mdx-recover.ts", import.meta.url).href;
+  const baseUrl = toFileUrl(join(dir, "denext.config.ts")).href;
+  // `deno eval` would grant everything: run a script file under `deno run` instead.
+  const script = join(dir, ".denext", "probe-run.ts");
+  await Deno.mkdir(join(dir, ".denext"), { recursive: true });
+  await Deno.writeTextFile(
+    script,
+    `const { resolveNextMdx } = await import(${JSON.stringify(mod)});\n` +
+      `const r = await resolveNextMdx(${JSON.stringify(baseUrl)}, "./next.config.mjs");\n` +
+      `console.log(JSON.stringify(r === undefined ? "undefined" : "options"));\n`,
+  );
+  const out = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--no-prompt",
+      "--allow-read",
+      "--allow-env",
+      `--allow-write=${join(dir, ".denext")}`,
+      script,
+    ],
+    env: { NO_COLOR: "1", DENEXT_PHASE: "", ...env },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const dec = new TextDecoder();
+  assertEquals(out.code, 0, dec.decode(out.stderr));
+  return { result: JSON.parse(dec.decode(out.stdout).trim()), stderr: dec.decode(out.stderr) };
+}
+
+Deno.test("resolveNextMdx skips the probe quietly without write access beside next.config", async () => {
+  // A migrated app's least-privilege `start` evaluates denext.config.ts, whose `mdx` field runs
+  // this recovery; the build already compiled the MDX, so start skips it without a warning
+  // (up to 4.6.0 it warned "could not recover MDX plugins … Requires write access" on every start).
+  const dir = await Deno.makeTempDir({ prefix: "denext_mdxrec_ro_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      `import createMDX from "@next/mdx";\n` +
+        `export default createMDX({ options: { remarkPlugins: [() => (t) => t] } })({});\n`,
+    );
+    const serving = await recoverWithoutWrite(dir);
+    assertEquals(serving.result, "undefined");
+    assert(!serving.stderr.includes("MDX"), serving.stderr);
+    // Building without the grant still says the MDX pages get the baseline plugins.
+    const building = await recoverWithoutWrite(dir, { DENEXT_PHASE: "build" });
+    assertEquals(building.result, "undefined");
+    assert(building.stderr.includes("could not recover MDX plugins"), building.stderr);
+    const leftover = [...Deno.readDirSync(dir)].some((e) => e.name.includes("denext-mdx-probe"));
+    assert(!leftover, "no probe written");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
