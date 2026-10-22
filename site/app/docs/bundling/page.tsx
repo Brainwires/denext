@@ -39,11 +39,8 @@ denext analyze --md > bundle-report.md   # a markdown report (CI artifact)`}
       <p>
         <code>--md</code>{" "}
         prints a markdown report to stdout (pipe it to a file). It carries the per-chunk table, the
-        role subtotals and the per-island breakdown on every project, and — on the esbuild path (a
-        {" "}
-        <a href="/docs/migrating">drop-in compat</a> or <a href="/docs/spa">SPA</a>{" "}
-        app) — a per-chunk breakdown of the modules that dominate each chunk, so you can see{" "}
-        <em>which dependency</em> is fat:
+        role subtotals, the per-island breakdown and a per-chunk breakdown of the modules that
+        dominate each chunk, so you can see <em>which dependency</em> is fat:
       </p>
       <Code lang="markdown">
         {`### \`chunk-abc.js\`
@@ -53,9 +50,11 @@ denext analyze --md > bundle-report.md   # a markdown report (CI artifact)`}
 - \`app/dashboard/page.tsx\` — 0.4 KB`}
       </Code>
       <Callout kind="note">
-        The native App Router path bundles with{" "}
-        <code>deno bundle</code>, which emits no module-level metafile, so <code>--md</code>{" "}
-        stays chunk-level there. The per-module section appears for the esbuild compat/SPA path.
+        The esbuild path (a <a href="/docs/migrating">drop-in compat</a> or{" "}
+        <a href="/docs/spa">SPA</a>{" "}
+        app on npm React) reads the module sizes from esbuild's metafile. The native{" "}
+        <code>deno bundle</code> path writes none, so there <code>--md</code>{" "}
+        attributes each chunk's bytes to its modules from the bundle's source maps.
       </Callout>
 
       <h2>Feature flags (compile-time)</h2>

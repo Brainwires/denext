@@ -8,11 +8,14 @@ import { join, toFileUrl } from "@std/path";
 import {
   __setBundleDefineForTests,
   bundleFlightEntry,
+  bundleRoute,
   bundleSourceFiles,
   bundleSupportsDefine,
   nativeBundleDefines,
 } from "../src/build/bundle.ts";
 import type { BoundaryManifest } from "../src/build/module-graph.ts";
+import type { PageRoute } from "../src/router/manifest.ts";
+import { parsePattern } from "../src/router/segments.ts";
 
 const BUNDLE_URL = new URL("../src/build/bundle.ts", import.meta.url).href;
 const ROOT = new URL("../", import.meta.url).href;
@@ -45,6 +48,16 @@ Deno.test("nativeBundleDefines: features become the __DENEXT_FEATURES__ JSON, ab
   });
   assertEquals(nativeBundleDefines({ features: {} }).__DENEXT_FEATURES__, "{}");
   assert(!("__DENEXT_FEATURES__" in nativeBundleDefines({ classRuntime: "off" })));
+});
+
+Deno.test("nativeBundleDefines: the build-scan gates are defined only when a scan ran", () => {
+  assertEquals(nativeBundleDefines({ usesImageBlur: false, usesFormActions: true }), {
+    __DENEXT_CLASS_COMPONENTS__: "true",
+    __DENEXT_IMAGE_BLUR__: "false",
+    __DENEXT_FORM_ACTIONS__: "true",
+  });
+  const unscanned = nativeBundleDefines({});
+  assert(!("__DENEXT_IMAGE_BLUR__" in unscanned) && !("__DENEXT_FORM_ACTIONS__" in unscanned));
 });
 
 /** Run the probe in a fresh process with `DENO_BIN` set to a fake `deno` script (POSIX only). */
@@ -123,6 +136,7 @@ async function project(files: Record<string, string>): Promise<string> {
         "denext/feature": `${ROOT}src/feature.ts`,
         "denext/jsx-runtime": `${ROOT}src/jsx/jsx-runtime.ts`,
         "denext/client": `${ROOT}src/client/mod.ts`,
+        "denext/client-runtime": `${ROOT}src/client/client-runtime.ts`,
         "react": `${ROOT}src/compat/react.ts`,
       },
     }),
@@ -253,6 +267,120 @@ for (const define of PATHS) {
       assert(
         names.some((n) => n.startsWith("class-runtime")),
         `expected a class-runtime-*.js chunk; got: ${names.join(", ")}`,
+      );
+    } finally {
+      __setBundleDefineForTests(undefined);
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
+
+// The build-scan gates (src/globals.d.ts): with `--define` an app the scan found no use in ships
+// neither the boot's blur-placeholder clearing nor the reconciler's form-action seam, and an app
+// that uses them (or a bundle no scan ran for, or the seeded fallback) keeps both. Without the
+// seam no `form-action-*` chunk is emitted: nothing could load it.
+for (const define of PATHS) {
+  Deno.test(`native bundle (${label(define)}): the blur and form-action build-scan gates`, async () => {
+    const dir = await project({});
+    __setBundleDefineForTests(define);
+    try {
+      const entry =
+        `import { startClient } from ${JSON.stringify(`${ROOT}src/client/navigation.ts`)};\n` +
+        `import { applyProps } from ${JSON.stringify(`${ROOT}src/client/dom-props.ts`)};\n` +
+        `(globalThis as Record<string, unknown>).x = [startClient, applyProps];\n`;
+      const bundle = async (gates: { usesImageBlur?: boolean; usesFormActions?: boolean }) => {
+        const out = await bundleSourceFiles(entry, {
+          configPath: join(dir, "deno.json"),
+          minify: true,
+          ...gates,
+        });
+        return { names: [...out.files.keys()], code: [...out.files.values()].join("\n") };
+      };
+      const off = await bundle({ usesImageBlur: false, usesFormActions: false });
+      const on = await bundle({ usesImageBlur: true, usesFormActions: true });
+      const unscanned = await bundle({});
+      for (const kept of define ? [on, unscanned] : [off, on, unscanned]) {
+        assertStringIncludes(kept.code, 'tagName==="IMG"');
+        assert(kept.names.some((n) => n.startsWith("form-action-")), kept.names.join(", "));
+      }
+      if (define) {
+        assert(!off.code.includes('tagName==="IMG"'), "blur clearing in an app with no blur");
+        assert(!off.code.includes("data-dnx-blur"), "image-blur.ts in an app with no blur");
+        assert(!off.names.some((n) => n.startsWith("form-action-")), off.names.join(", "));
+        assert(!off.code.includes("__DENEXT_FORM_ACTIONS__"), "the gate folded");
+      }
+    } finally {
+      __setBundleDefineForTests(undefined);
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
+
+// The class gate off with `--define`: the class-runtime chunk's `import()` site folds away, and
+// a chunk nothing can load is not emitted.
+if (DEFINE) {
+  Deno.test("native bundle (--define): classComponents off emits no class-runtime chunk", async () => {
+    const dir = await project({});
+    __setBundleDefineForTests(true);
+    try {
+      const out = await bundleFlightEntry({ client: new Map(), server: new Map() }, {
+        configPath: join(dir, "deno.json"),
+        classRuntime: "off",
+      });
+      const names = [...out.files.keys()];
+      assert(!names.some((n) => n.startsWith("class-runtime")), names.join(", "));
+    } finally {
+      __setBundleDefineForTests(undefined);
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
+
+// A route entry imports its page statically, so a page's module-level `feature()` call runs before
+// any statement of the entry: on the seeded fallback the seed is a `data:` import placed first.
+// The dev server's route bundles pass the flags too (they once passed none).
+for (const define of PATHS) {
+  Deno.test(`native route bundle (${label(define)}): a page's module-level feature() reads the flag`, async () => {
+    const dir = await project({
+      "page.tsx": `import * as f from "denext/feature";\n` +
+        `const keys = ["FLAG", "UNSET"];\n` +
+        `(globalThis as Record<string, unknown>).__pageReads = keys.map((k) => f.feature(k));\n` +
+        `export default function Page() { return <p>page</p>; }\n`,
+    });
+    __setBundleDefineForTests(define);
+    try {
+      const route: PageRoute = {
+        kind: "page",
+        pattern: parsePattern(""),
+        routePath: "/",
+        filePath: join(dir, "page.tsx"),
+        layoutChain: [],
+        loading: null,
+        error: null,
+        notFound: null,
+        forbidden: null,
+        unauthorized: null,
+        templateChain: [],
+      };
+      const out = await bundleRoute(route, {
+        configPath: join(dir, "deno.json"),
+        features: { FLAG: true, OTHER: false },
+      });
+      const outDir = join(dir, "out");
+      await writeOut(outDir, out.files);
+      const code = `globalThis.document = { getElementById: () => null };` +
+        `await import(${JSON.stringify(toFileUrl(join(outDir, out.entry)).href)});` +
+        `console.log("READS:" + JSON.stringify(globalThis.__pageReads));`;
+      const run = await new Deno.Command(Deno.execPath(), {
+        args: ["eval", code],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stdout = new TextDecoder().decode(run.stdout);
+      assertStringIncludes(
+        stdout,
+        "READS:[true,false]",
+        `stdout: ${stdout}\nstderr: ${new TextDecoder().decode(run.stderr)}`,
       );
     } finally {
       __setBundleDefineForTests(undefined);

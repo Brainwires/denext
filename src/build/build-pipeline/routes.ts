@@ -105,6 +105,8 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
     // and the feature-flag map, as the Flight bundle gets them.
     classRuntime: ctx.classRuntime,
     features: featureFlags(paths.config),
+    usesImageBlur: ctx.usesImageBlur,
+    usesFormActions: ctx.usesFormActions,
   });
   // Write shared + island chunks under their own (content-hashed) basenames; identical
   // chunks across routes collapse to one file.
@@ -190,6 +192,8 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     // The feature-flag map on the native client (`deno bundle --define`, else seeded in the
     // entry), so an un-folded feature() call agrees with the seeded server render.
     features: featureFlags(ctx.paths.config),
+    usesImageBlur: ctx.usesImageBlur,
+    usesFormActions: ctx.usesFormActions,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);

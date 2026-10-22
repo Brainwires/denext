@@ -86,6 +86,10 @@ export interface ExportContext {
   readonly usesViewTransition: boolean;
   /** Whether the app writes a `client:*` directive (route entries install the island runtime). */
   readonly usesIsoIslands: boolean;
+  /** Whether the app may render a blur placeholder (scan; the `__DENEXT_IMAGE_BLUR__` define). */
+  readonly usesImageBlur: boolean;
+  /** Whether the app may write a form action (scan; the `__DENEXT_FORM_ACTIONS__` define). */
+  readonly usesFormActions: boolean;
   /**
    * The `global-error.tsx` hydration bundle URL, once `bundleExportGlobalError` wrote it (unset
    * when the app has no global-error.tsx).

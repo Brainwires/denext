@@ -52,7 +52,7 @@
         {
           "name": "md",
           "type": "boolean",
-          "description": "Print a markdown bundle report (per-module breakdown on the esbuild path); pipe to a file"
+          "description": "Print a markdown bundle report (with each chunk's top modules); pipe to a file"
         }
       ],
       "positionals": [

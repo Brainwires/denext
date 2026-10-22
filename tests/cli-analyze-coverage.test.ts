@@ -68,3 +68,38 @@ Deno.test("analyze --md restores DENEXT_ANALYZE afterwards", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// The native `deno bundle` path writes no esbuild metafile: `--md` attributes each chunk to its
+// modules from the bundle's source maps (sourcemap-attribution.ts), so the report still names them.
+Deno.test("analyze --md breaks native chunks down by module", async () => {
+  const dir = await minimalApp();
+  const repo = new URL("../", import.meta.url).href;
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({
+      compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+      imports: {
+        "denext": `${repo}mod.ts`,
+        "denext/": `${repo}`,
+        "denext/jsx-runtime": `${repo}src/jsx/jsx-runtime.ts`,
+        "denext/client": `${repo}src/client/mod.ts`,
+      },
+    }),
+  );
+  await Deno.writeTextFile(
+    join(dir, "app/page.tsx"),
+    `"use client";\nimport { useState } from "denext";\n` +
+      `export default function Page() {\n  const [n, setN] = useState(0);\n` +
+      `  return <button type="button" onClick={() => setN(n + 1)}>{n}</button>;\n}\n`,
+  );
+  const cap = capture();
+  try {
+    await analyzeCommand.run(makeCtx({ positionals: [dir], flags: { md: true } }));
+  } finally {
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+  const report = cap.logs.join("\n");
+  assertStringIncludes(report, "## Top modules per chunk");
+  assertStringIncludes(report, "denext/src/client/");
+});

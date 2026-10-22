@@ -8,6 +8,8 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { copy } from "@std/fs";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { build } from "../../src/build/build.ts";
+import { bundleSupportsDefine, frameworkRoot } from "../../src/build/bundle.ts";
+import { nativeAnalyzeMeta } from "../../src/build/sourcemap-attribution.ts";
 
 const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
@@ -234,6 +236,14 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * scheduler's `TransitionHost`. The Server Action dispatch and the wire encoder left every Flight
  * app's startup graph too (examples/islands: 68,980 → 65,447 B in all). Each gate is asserted in
  * {@link assertGatedRuntimeAbsent} and {@link assertFlightStartupLean}.
+ * Re-based 65 → 64.5 KB (64,500 B) on 2026-10-22 after round 3 of that audit: where `deno bundle`
+ * takes `--define` (denext's Deno toolchain), the build defines two build-scan gates off for an app
+ * whose sources never name the feature, so the boot's `next/image` blur-placeholder clearing and
+ * the reconciler's function-valued form-action seam fold out (measured 62,954 → 62,003 B). A stock
+ * Deno keeps both behind a runtime check (63,378 → 63,563 B, 937 B under the new budget; a local
+ * `deno task budget` on a stock `deno` measures that). A chunk no page can load is no longer emitted. Each gate is asserted in
+ * {@link assertGatedRuntimeAbsent} and {@link assertFlightStartupLean} (define path), and the
+ * bundle-features fixture proves both still ship when used.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -250,7 +260,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
 }
 
 /** The shared-chunk budget for examples/hello, in raw bytes (its history is in the comment above). */
-const SHARED_BUDGET = 65_000;
+const SHARED_BUDGET = 64_500;
 
 /** The over-budget message: how far over, how to reproduce it, and the two ways out. */
 function budgetMessage(total: number): string {
@@ -349,6 +359,11 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     // The feature runtimes below ship only when the app uses the feature; each one's positive
     // half is FEATURE_MARKERS, asserted against the bundle-features fixture.
     ...FEATURE_MARKERS.map(({ marker, what }): [string, string] => [marker, what]),
+    // The build-scan defines fold their runtime out only where `deno bundle` takes `--define`
+    // (denext's Deno toolchain); a stock Deno keeps it on.
+    ...(await bundleSupportsDefine() ? SCAN_GATE_MARKERS : []).map((
+      { marker, what },
+    ): [string, string] => [marker, what]),
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {
@@ -417,6 +432,32 @@ const FEATURE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
   { marker: ".denextPermalink=", what: "useActionState (runtime/actions.ts)" },
 ];
 
+/**
+ * Runtimes a build-scan `define` folds out of an app that never writes the feature (see
+ * src/globals.d.ts): absent from hello's shared chunks and the Flight startup graph when the
+ * running `deno bundle` takes `--define`, present in the bundle-features fixture on every path.
+ */
+const SCAN_GATE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
+  // The client boot clears `next/image` blur placeholders in server-only trees (navigation.ts).
+  { marker: 'tagName==="IMG"', what: "blur-placeholder clearing (navigation.ts)" },
+  // A function-valued `<form action>` loads the form-action chunk from the reconciler's seam.
+  { marker: "./form-action-", what: "form-action seam (dom-props.ts setFormAction)" },
+];
+
+/**
+ * Every emitted file a page can load: a route entry (an unhashed name) or a file another one
+ * names (`import`, `import()`, `new URL`). A chunk whose only `import()` site was tree-shaken
+ * after code splitting placed it is not written (the bundle's `pruneUnreachable`).
+ */
+async function assertNoUnloadedChunks(clientDir: string): Promise<void> {
+  const files = (await fileNames(clientDir)).filter((f) => f.endsWith(".js"));
+  let all = "";
+  for (const f of files) all += await Deno.readTextFile(join(clientDir, f));
+  for (const f of files.filter((f) => /-[A-Z0-9]{8}\.js$/.test(f))) {
+    assert(all.includes(`./${f}`), `${f} is emitted but no client file loads it`);
+  }
+}
+
 Deno.test("build smoke: examples/hello emits a client entry, a code-split island chunk, and a shared chunk", async () => {
   const result = await build(EXAMPLE);
   const clientDir = join(result.outDir, "client");
@@ -465,12 +506,19 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   await assertSharedRuntimeChunk(clientDir);
   await assertBundleBudgets(clientDir);
   await assertGatedRuntimeAbsent(clientDir);
+  await assertNoUnloadedChunks(clientDir);
 });
 
 // The other half of the Flight soft-nav gate: an app WITH Flight routes still ships the
 // soft-nav runtime (the `signalState` marker its commit reads), reached from `flight.js`.
 Deno.test("build smoke: a Flight app (examples/islands) ships the Flight soft-navigation runtime", async () => {
-  const result = await build(FLIGHT_EXAMPLE);
+  // The native path's per-module attribution (`denext analyze --md`'s), for the hoist check.
+  const prior = Deno.env.get("DENEXT_ANALYZE");
+  Deno.env.set("DENEXT_ANALYZE", "1");
+  const result = await build(FLIGHT_EXAMPLE).finally(() => {
+    if (prior === undefined) Deno.env.delete("DENEXT_ANALYZE");
+    else Deno.env.set("DENEXT_ANALYZE", prior);
+  });
   const clientDir = join(result.outDir, "client");
   let flightGraph = "";
   for await (const e of Deno.readDir(clientDir)) {
@@ -484,7 +532,57 @@ Deno.test("build smoke: a Flight app (examples/islands) ships the Flight soft-na
     "the Flight soft-nav runtime is missing from a Flight app",
   );
   await assertFlightStartupLean(clientDir);
+  await assertNoUnloadedChunks(clientDir);
+  await assertNoLazyModuleHoisted(clientDir);
 });
+
+/**
+ * Framework modules that only ever load on demand (an `import()` reaches them): in a Flight app
+ * that uses none of them up front, none may have a byte in the startup graph. The bundler places
+ * code by FILE, so a static edge from any startup module, even an unused re-export, hoists a
+ * lazily used module's code into a chunk every page loads (plans: the systemic finding). Read
+ * from the build's source maps (`denext analyze --md`'s native attribution).
+ */
+const LAZY_ONLY_MODULES: readonly string[] = [
+  "src/client/lazy-hydrate.ts", // the lazy-* chunk (client:* scheduling)
+  "src/client/lazy-boot.ts",
+  "src/client/qrl-dispatch.ts",
+  "src/client/iso-island.ts", // route entries with a client:* directive only
+  "src/compat/class-component.ts", // the class-runtime-* chunk
+  "src/compat/class-base.ts",
+  "src/class-runtime.ts",
+  "src/client/form-action.ts", // the form-action-* chunk
+  "src/client/action-call.ts", // the action-call-* / action-dispatch-* chunks
+  "src/client/action-dispatch.ts",
+  "src/runtime/wire-encode.ts",
+  "src/client/nav-document.ts", // the nav-document-* chunk (a soft navigation)
+  "src/client/flight-nav-stream.ts",
+  "src/jsx/flight-value-holes.ts",
+  "src/client/fiber/fragment-instance.ts", // the fragment-instance-* chunk
+  "src/mobile/momentum-scroll.ts", // the momentum-scroll-* chunk (iOS WebKit only)
+];
+
+/** No {@link LAZY_ONLY_MODULES} code in examples/islands' startup graph. */
+async function assertNoLazyModuleHoisted(clientDir: string): Promise<void> {
+  // Real paths: the attribution resolves each source map entry through symlinks (macOS `/var`).
+  const meta = await nativeAnalyzeMeta(
+    clientDir,
+    await Deno.realPath(FLIGHT_EXAMPLE),
+    await Deno.realPath(frameworkRoot()),
+  );
+  assert(meta, "the build recorded no per-module attribution (DENEXT_ANALYZE=1)");
+  const startup = await startupFiles(clientDir, ["__denext_flight__.js"]);
+  for (const file of startup) {
+    const inputs = meta.outputs[file]?.inputs ?? {};
+    for (const module of LAZY_ONLY_MODULES) {
+      const bytes = inputs[`denext/${module}`]?.bytesInOutput ?? 0;
+      assertEquals(bytes, 0, `${module} has ${bytes} B in the startup chunk ${file} (hoisted)`);
+    }
+  }
+  // The detector sees modules at all: the lazy chunk carries the scheduler.
+  const lazy = Object.entries(meta.outputs).find(([name]) => name.startsWith("lazy-"));
+  assert(lazy && lazy[1].inputs["denext/src/client/lazy-hydrate.ts"], "lazy-hydrate.ts attributed");
+}
 
 /** Each shared chunk's byte size, sorted (chunk names are content hashes, so they match too). */
 async function sharedChunkSizes(clientDir: string): Promise<string[]> {
@@ -573,18 +671,25 @@ function assertBelowBudget(sizes: string[]): void {
  * they import statically (a dynamic `import()` is not followed). Returns their concatenated text.
  */
 async function startupGraph(clientDir: string, entries: string[]): Promise<string> {
+  let text = "";
+  for (const file of await startupFiles(clientDir, entries)) {
+    text += await Deno.readTextFile(join(clientDir, file));
+  }
+  return text;
+}
+
+/** The names of {@linkcode startupGraph}'s files. */
+async function startupFiles(clientDir: string, entries: string[]): Promise<Set<string>> {
   const seen = new Set<string>();
   const queue = [...entries];
-  let text = "";
   while (queue.length > 0) {
     const file = queue.pop()!;
     if (seen.has(file)) continue;
     seen.add(file);
     const src = await Deno.readTextFile(join(clientDir, file));
-    text += src;
     for (const m of src.matchAll(/(?:from|import)\s*"\.\/([^"]+\.js)"/g)) queue.push(m[1]);
   }
-  return text;
+  return seen;
 }
 
 /**
@@ -612,6 +717,10 @@ async function assertFlightStartupLean(clientDir: string): Promise<void> {
     ["value too deep", "wire encoder (only the on-demand action-call chunk uses it here)"],
     // The split-out hooks and the transition engine: examples/islands' startup calls none.
     ...FEATURE_MARKERS.filter(({ marker }) => HOOK_MARKERS.has(marker)).map((
+      { marker, what },
+    ): [string, string] => [marker, what]),
+    // examples/islands renders no blur placeholder and no form action (build-scan defines).
+    ...(await bundleSupportsDefine() ? SCAN_GATE_MARKERS : []).map((
       { marker, what },
     ): [string, string] => [marker, what]),
   ];
@@ -649,7 +758,7 @@ Deno.test("build smoke: an app that uses each gated feature ships its runtime", 
   for await (const e of Deno.readDir(clientDir)) {
     if (e.isFile && e.name.endsWith(".js")) all += await Deno.readTextFile(join(clientDir, e.name));
   }
-  for (const { marker, what } of FEATURE_MARKERS) {
+  for (const { marker, what } of [...FEATURE_MARKERS, ...SCAN_GATE_MARKERS]) {
     await t.step(what, () => {
       assert(all.includes(marker), `the ${what} is missing ("${marker}") from an app that uses it`);
     });

@@ -133,6 +133,10 @@ export interface BuildContext {
   usesIsoIslands: boolean;
   /** Whether the generated entries install the host-singleton runtime (scan). */
   usesSingletons: boolean;
+  /** Whether the app may render a blur placeholder (scan; the `__DENEXT_IMAGE_BLUR__` define). */
+  usesImageBlur: boolean;
+  /** Whether the app may write a form action (scan; the `__DENEXT_FORM_ACTIONS__` define). */
+  usesFormActions: boolean;
   /** next-compat: source module (project-relative) → server bundle (outDir-relative). */
   readonly compatServerModules: Record<string, string>;
 }

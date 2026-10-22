@@ -534,7 +534,9 @@ function installNavigation(): void {
     event.preventDefault();
     navigate((anchor as HTMLAnchorElement).href);
   });
-  installBlurClearing();
+  // Off (a define the build sets from a scan for `placeholder="blur"`) in an app that renders
+  // no blur placeholder: the clearing and the image-blur helpers then fold out of the bundle.
+  if (typeof __DENEXT_IMAGE_BLUR__ === "undefined" || __DENEXT_IMAGE_BLUR__) installBlurClearing();
 
   committedHref = location.href;
   globalThis.addEventListener("popstate", (event) => {

@@ -24,3 +24,14 @@ declare const __DENEXT_FEATURES__: Record<string, boolean>;
  * entry); absent elsewhere, where the constant reads `"web"`.
  */
 declare const __DENEXT_PLATFORM__: string | undefined;
+
+/**
+ * Build-scan gates of the native `deno bundle --define` path (src/build/bundle.ts's
+ * `nativeBundleDefines`): `false` when a scan of the app's own sources found no use, so the
+ * runtime they guard folds out. A guard site reads `typeof X === "undefined" || X` — no define
+ * (dev, `deno test`, a stock Deno with no `--define`, the esbuild paths) keeps the runtime on.
+ */
+/** `next/image` blur placeholders: the boot's clearing of them in server-only trees. */
+declare const __DENEXT_IMAGE_BLUR__: boolean | undefined;
+/** Function-valued `<form action>` / `formAction`: the reconciler's submit seam. */
+declare const __DENEXT_FORM_ACTIONS__: boolean | undefined;

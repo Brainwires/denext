@@ -25,6 +25,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
   `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
   a server render it returns `null`.
+- **A native App Router or SPA build leaves out two runtimes the app's own sources never name**
+  (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
+  blur placeholders in server-only trees (kept when a source names `blurDataURL` or a
+  `placeholder` other than a plain string) and the function-valued `<form action>` /
+  `formAction` seam (kept when a source names `action` or `formAction`). npm packages are not
+  scanned, so a package that renders either by itself, with props the app never names, needs the
+  app to name it once. A next-compat (npm React) build keeps both.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 

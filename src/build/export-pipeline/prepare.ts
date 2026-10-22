@@ -9,7 +9,13 @@ import {
   runPluginPrepareSteps,
 } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
-import { appUsesActivity, appUsesIsoIslands, appUsesViewTransition } from "../bundle.ts";
+import {
+  appUsesActivity,
+  appUsesFormActions,
+  appUsesImageBlur,
+  appUsesIsoIslands,
+  appUsesViewTransition,
+} from "../bundle.ts";
 import { resolveCacheComponents, resolveCacheLifeProfiles } from "../../server/config.ts";
 import { installCacheLifeProfiles } from "../../server/cache.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -188,6 +194,8 @@ export async function prepareExport(
   const usesActivity = await appUsesActivity(paths.projectDir, outside);
   const usesViewTransition = await appUsesViewTransition(paths.projectDir, outside);
   const usesIsoIslands = await appUsesIsoIslands(paths.projectDir, outside);
+  const usesImageBlur = await appUsesImageBlur(paths.projectDir, outside);
+  const usesFormActions = await appUsesFormActions(paths.projectDir, outside);
   const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -214,6 +222,8 @@ export async function prepareExport(
     usesActivity,
     usesViewTransition,
     usesIsoIslands,
+    usesImageBlur,
+    usesFormActions,
     pages: 0,
     skipped: [],
   };

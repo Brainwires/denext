@@ -240,3 +240,43 @@ Deno.test("generateRouteEntry: the host-singleton install is on unless a scan cl
   assertStringIncludes(generateRouteEntry(route), "installSingletonSupport();");
   assert(!generateRouteEntry(route, { usesSingletons: false }).includes("installSingletonSupport"));
 });
+
+Deno.test("appUsesImageBlur: a blur placeholder or blurDataURL in code, not an input's placeholder", async () => {
+  const { appUsesImageBlur } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-blur-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesImageBlur(dir);
+    };
+    assertEquals(await scan(`<input placeholder="Search" />`), false, "a plain placeholder");
+    assertEquals(await scan(`<input placeholder = 'Name' />`), false, "spaced, single quotes");
+    assertEquals(await scan(`// <Image placeholder="blur" />\nexport {};`), false, "a comment");
+    assertEquals(await scan(`<Image placeholder="blur" />`), true, "placeholder=blur");
+    assertEquals(await scan(`h(Image, { "placeholder": "data:image/png;x" })`), true, "data: URL");
+    assertEquals(await scan(`<Image placeholder={p} />`), true, "a computed placeholder");
+    assertEquals(await scan(`const img = { blurDataURL };`), true, "blurDataURL");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("appUsesFormActions: action / formAction props and keys in code, not in a comment", async () => {
+  const { appUsesFormActions } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-action-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesFormActions(dir);
+    };
+    assertEquals(await scan(`const transaction = 1; // <form action={save}>`), false, "comment");
+    assertEquals(await scan(`if (action == null) {}`), false, "a comparison");
+    assertEquals(await scan(`<form action={save}>`), true, "a JSX prop");
+    assertEquals(await scan(`<button formAction={save} />`), true, "formAction");
+    assertEquals(await scan(`h("form", { action: save })`), true, "an h() props key");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

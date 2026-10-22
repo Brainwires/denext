@@ -8,6 +8,37 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Smaller client startup: the blur-placeholder clearing and the form-action seam ship only to an
+  app that uses them.** Where `deno bundle` takes `--define` (denext's Deno toolchain), a native
+  App Router or SPA build scans the app's own sources and defines two gates off when nothing names
+  the feature: the boot's clearing of `next/image` blur placeholders in server-only trees (kept for
+  `blurDataURL` or a `placeholder` other than a plain string) and the reconciler's
+  function-valued `<form action>` / `formAction` seam (kept when a source names `action` or
+  `formAction`). Measured startup bytes (raw): examples/hello's shared chunks 62,954 → 62,003,
+  examples/islands 65,017 → 64,066, examples/actions 65,224 → 64,923, examples/live
+  75,433 → 74,482, examples/spa 59,466 → 58,747. A stock Deno and a next-compat build keep both.
+  The client budget drops from 65,000 to 64,500 B. KNOWN-LIMITATIONS lists the npm-package case
+  the scan can't see.
+- **A chunk no page can load is no longer emitted.** Code splitting placed some chunks before
+  tree-shaking removed their only `import()` site (a native-only module, the class runtime of a
+  `classComponents: false` build, the Flight streaming readers in an app with no Flight route); a
+  native build now writes only the files its entries reach (examples/islands: 23 files,
+  117,278 B → 20 files, 101,020 B; examples/spa: 95,133 → 75,061 B).
+- **`denext analyze --md` breaks every chunk down by module on the native path too.** The report's
+  "Top modules per chunk" section came only from esbuild's metafile (compat and SPA-on-npm-React
+  builds); a native `deno bundle` build now attributes each chunk's bytes to its modules from the
+  bundle's source maps.
+
+### Fixed
+
+- **An un-folded `feature()` call reads the configured flag in the dev server's bundled routes,
+  and at module level in a route page on a stock Deno.** The dev server's bundled route, Flight
+  and global-error bundles passed no `features`, so such a call read `false`; and a route entry
+  seeded the flags (without `--define`) only after its page module had run. The route entries now
+  seed them with a `data:` import evaluated first.
+
 ## [4.7.0] - 2026-10-22
 
 ### Added

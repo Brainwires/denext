@@ -66,7 +66,16 @@ function removeFormAction(el: Element, state: HostState): void {
 function removeProp(el: Element, state: HostState, name: string, oldValue: unknown): void {
   if (isEventProp(name)) return removeListener(el, state, name);
   // Dropping a function-valued form action must remove its listener, not just the attribute.
-  if (isFormActionProp(name, oldValue)) return removeFormAction(el, state);
+  // (Each form-action site reads the build gate itself: a define folds only a bare read.)
+  if (
+    (typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__) &&
+    isFormActionProp(name, oldValue)
+  ) return removeFormAction(el, state);
+  removeValue(el, name, oldValue);
+}
+
+/** Undo a gone non-function prop: raw HTML, the style properties denext set, else the attribute. */
+function removeValue(el: Element, name: string, oldValue: unknown): void {
   // The prop is gone: drop the raw HTML so reconciled children can take over.
   if (name === "dangerouslySetInnerHTML") {
     el.innerHTML = "";
@@ -122,8 +131,12 @@ function setProp(
     return setListener(el, state, name, value as EventListener | undefined, onError);
   }
   // A form `action={fn}` (React 19 form action / useActionState dispatch): intercept
-  // submit and call the action with the form's FormData.
-  if (isFormActionProp(name, value)) {
+  // submit and call the action with the form's FormData. Off (a define the build sets from a
+  // scan of the app's sources for `action` / `formAction`) in an app that never writes one.
+  if (
+    (typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__) &&
+    isFormActionProp(name, value)
+  ) {
     return setFormAction(el, state, value as (payload: unknown) => void, onError);
   }
   // Compared by `__html` (React parity): a fresh `{ __html }` object of the same markup each

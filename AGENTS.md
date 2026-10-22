@@ -1035,7 +1035,7 @@ export function Checkout() {
 ```
 
 **Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
-`denext analyze --md` writes a markdown report (per-module on the esbuild path) to pipe into CI.
+`denext analyze --md` writes a markdown report (each chunk's top modules) to pipe into CI.
 Imports of one export from a `"sideEffects": false` dep (lucide-react, Radix) are tree-shaken
 automatically on the esbuild path. `optimizePackageImports` (Next's key, top-level) goes further:
 barrel imports of listed packages are rewritten to the defining modules, so the barrel is never
