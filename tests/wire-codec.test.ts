@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
 import { decodeTagged, decodeWire, NOT_TAGGED, WireCodecError } from "../src/runtime/wire-codec.ts";
-import { encodeWire, stableKey } from "../src/runtime/wire-encode.ts";
+import { encodeWire, prepareWire, stableKey } from "../src/runtime/wire-encode.ts";
 
 /** Encode → JSON.parse → decode, the way every wire uses it. */
 function roundTrip(value: unknown): { out: unknown; tagged: boolean } {
@@ -20,6 +20,29 @@ Deno.test("plain JSON encodes as itself, untagged, without copying", () => {
   // Copy-on-write: nothing changed, so the decoded shape equals the input and the encoder
   // returned the same JSON that JSON.stringify would (no allocation path exercised).
   assertEquals(decodeWire(JSON.parse(body)), value);
+});
+
+Deno.test("prepareWire copies only what changed, keeping key order and untouched subtrees", () => {
+  const kept = { deep: [1, 2] };
+  const plain = { a: kept, b: "x" };
+  const prepared = prepareWire(plain);
+  assertStrictEquals(prepared.value, plain, "nothing changed: the input itself");
+  assertEquals(prepared.tagged, false);
+
+  // The third entry changes: the copy carries the first two as they were, in order.
+  const when = new Date(0);
+  const value = { a: kept, b: "x", c: when, d: 4, $e: 5 };
+  const out = prepareWire(value);
+  assertEquals(out.tagged, true);
+  const copy = out.value as Record<string, unknown>;
+  assert(copy !== value, "a copy");
+  assertEquals(Object.keys(copy), ["a", "b", "c", "d", "$$e"]);
+  assertStrictEquals(copy.a, kept, "an untouched subtree keeps its identity");
+  assertEquals(copy.c, { $: "D", v: when.toISOString() });
+  assertEquals(copy.d, 4);
+  // A `$` key alone forces the copy, from the first entry on.
+  assertEquals(prepareWire({ $k: 1 }).value, { $$k: 1 });
+  assertEquals(prepareWire([kept, undefined]).value, [kept, { $: "u" }]);
 });
 
 Deno.test("Date round-trips and sets tagged", () => {

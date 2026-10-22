@@ -53,26 +53,31 @@ export function prepareWire(value: unknown): PreparedWire {
   return { value: prepare(value, 0, ctx), tagged: ctx.tagged };
 }
 
+/** A rewriter for one non-object `typeof` (`null` is handled before the table is consulted). */
+type PrimitiveRewrite = (value: never, ctx: EncodeCtx) => unknown;
+
+const same = <T>(value: T): T => value;
+const refuse = (value: unknown): never => {
+  throw new TypeError(`wire codec: cannot encode a ${typeof value}`);
+};
+
+/** The wire shape of each primitive `typeof`; an object (`"object"`) is not listed. */
+const PRIMITIVES: Record<string, PrimitiveRewrite> = {
+  string: same,
+  boolean: same,
+  number: (n: number, ctx) => prepareNumber(n, ctx),
+  undefined: (_: undefined, ctx) => tag(ctx, { $: "u" }),
+  bigint: (n: bigint, ctx) => tag(ctx, { $: "n", v: n.toString() }),
+  function: refuse,
+  symbol: refuse,
+};
+
 /** Rewrite one value into its wire shape (copy-on-write: unchanged subtrees keep their identity). */
 function prepare(value: unknown, depth: number, ctx: EncodeCtx): unknown {
   if (depth > MAX_ENCODE_DEPTH) throw new TypeError("wire codec: value too deep (cycle?)");
   if (value === null) return null;
-  switch (typeof value) {
-    case "string":
-    case "boolean":
-      return value;
-    case "number":
-      return prepareNumber(value, ctx);
-    case "undefined":
-      return tag(ctx, { $: "u" });
-    case "bigint":
-      return tag(ctx, { $: "n", v: value.toString() });
-    case "function":
-    case "symbol":
-      throw new TypeError(`wire codec: cannot encode a ${typeof value}`);
-    default:
-      return prepareObject(value as object, depth, ctx);
-  }
+  const primitive = PRIMITIVES[typeof value];
+  return primitive ? primitive(value as never, ctx) : prepareObject(value as object, depth, ctx);
 }
 
 function prepareNumber(n: number, ctx: EncodeCtx): unknown {
@@ -117,20 +122,49 @@ function prepareArray(value: unknown[], depth: number, ctx: EncodeCtx): unknown[
 
 /** A plain object: escape a leading `$` in keys, rewrite values, copy only when something changed. */
 function preparePlain(value: Record<string, unknown>, depth: number, ctx: EncodeCtx): unknown {
-  let out: Record<string, unknown> | null = null;
   const keys = Object.keys(value);
-  for (let i = 0; i < keys.length; i++) {
-    const k = keys[i];
-    const escaped = k.startsWith("$") ? "$" + k : k;
-    if (escaped !== k) ctx.tagged = true;
-    const v = prepare(value[k], depth + 1, ctx);
-    if (out === null && (v !== value[k] || escaped !== k)) {
-      out = {};
-      for (let j = 0; j < i; j++) out[keys[j]] = value[keys[j]];
-    }
-    if (out !== null) out[escaped] = v;
-  }
+  let out: Record<string, unknown> | null = null;
+  for (let i = 0; i < keys.length; i++) out = prepareEntry(value, keys, i, out, depth, ctx);
   return out ?? value;
+}
+
+/**
+ * Rewrite `value[keys[i]]` into `out`, the copy made once an entry first changes (a `$` key
+ * escaped or a value rewritten); `null` while every entry so far is unchanged.
+ */
+function prepareEntry(
+  value: Record<string, unknown>,
+  keys: string[],
+  i: number,
+  out: Record<string, unknown> | null,
+  depth: number,
+  ctx: EncodeCtx,
+): Record<string, unknown> | null {
+  const k = keys[i];
+  const escaped = escapeKey(k, ctx);
+  const v = prepare(value[k], depth + 1, ctx);
+  if (out === null && v === value[k] && escaped === k) return null;
+  out ??= copyPrefix(value, keys, i);
+  out[escaped] = v;
+  return out;
+}
+
+/** `$` + a key that starts with `$` (and flag the payload for decoding); others as they are. */
+function escapeKey(k: string, ctx: EncodeCtx): string {
+  if (!k.startsWith("$")) return k;
+  ctx.tagged = true;
+  return "$" + k;
+}
+
+/** A copy of the first `n` entries of `value`, in key order. */
+function copyPrefix(
+  value: Record<string, unknown>,
+  keys: string[],
+  n: number,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (let j = 0; j < n; j++) out[keys[j]] = value[keys[j]];
+  return out;
 }
 
 // ── Keys ─────────────────────────────────────────────────────────────────────

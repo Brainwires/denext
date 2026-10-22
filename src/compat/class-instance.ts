@@ -23,7 +23,7 @@ type Any = any;
  * @param inst The owning reconciler Instance (or null for SSR).
  * @returns The constructed class instance (with `__denext` internals).
  */
-export function instantiateClass(
+function instantiateClass(
   Ctor: unknown,
   props: unknown,
   context: unknown,

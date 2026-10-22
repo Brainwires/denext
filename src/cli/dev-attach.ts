@@ -32,7 +32,7 @@ export interface DevServerHandle {
 }
 
 /** A spawned child process reduced to `{ finished, stop }`, plus a synchronous exit probe. */
-export interface SpawnedChild {
+interface SpawnedChild {
   /** Resolves when the child exits (closed, or killed). */
   readonly finished: Promise<void>;
   /** SIGTERM the child and await its exit. */
@@ -84,7 +84,7 @@ export function devChildEnv(
  * @param args The `deno` arguments (e.g. `["dev", project, …]` or `["desktop", entry]`).
  * @param opts The child's cwd, stdin disposition, and any extra env.
  */
-export function spawnDenoChild(
+function spawnDenoChild(
   args: string[],
   opts: {
     cwd: string;
