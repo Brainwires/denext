@@ -25,11 +25,16 @@ export const ATTACHMENT_PATH = "/_kitchen/attachment.txt";
 export const ATTACHMENT_NAME = "kitchen-attachment.txt";
 export const ATTACHMENT_TEXT = "an attachment the kitchen sink's own origin served\n";
 
-/** The attachment response {@link ATTACHMENT_PATH} answers with. */
+/**
+ * The attachment response {@link ATTACHMENT_PATH} answers with: a type no engine displays, as a
+ * file download is served. (WKWebView on macOS shows a displayable type such as `text/plain`
+ * inline even with `Content-Disposition: attachment`; the runtime downloads only what it can't
+ * show there.)
+ */
 export function attachmentResponse(): Response {
   return new Response(ATTACHMENT_TEXT, {
     headers: {
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": "application/octet-stream",
       "content-disposition": `attachment; filename="${ATTACHMENT_NAME}"`,
       "cache-control": "no-store",
     },
