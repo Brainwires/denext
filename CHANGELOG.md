@@ -21,6 +21,15 @@ and this project adheres to
   pin is planned together under the dependency-age hold. `denext generate app <name>` adds another
   app to such a workspace, and `denext dev` / `build` / `doctor` run at a workspace root name its
   apps. See https://denext.dev/docs/monorepo.
+- **Static files answer multi-range requests.** A `Range` header with several ranges
+  (`bytes=0-9,20-29`) on a `public/` file or an exported asset (`denext start`, the SPA server,
+  `denext dev`, a Deno Desktop window) is a `206` `multipart/byteranges` reply (RFC 9110 §14.6),
+  each part with its own `Content-Type` and `Content-Range`, instead of the whole file.
+  Overlapping or adjacent ranges are coalesced (one result is a plain single-range `206`), an
+  unsatisfiable range beside satisfiable ones is dropped, and a header with more than 64 ranges is
+  ignored (the whole file). `If-Range` is honored: a range is served only while the `Last-Modified`
+  date it names still matches (the weak `ETag` never does, so the whole file is sent).
+  `parseRanges` (from `denext/server`) parses such a header.
 
 ### Changed
 

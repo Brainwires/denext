@@ -300,9 +300,39 @@ export function openApiDocument(
 
 // ── OpenAPI 3.1, for `@denext/openapi` ───────────────────────────────────────
 
+/**
+ * Which schema a contribution's operations belong to: the default one keeps the bare names
+ * (`rest.notes`, `rest_select_notes`); another is named by its schema too and takes the header
+ * that picks it (`Accept-Profile` for reads, `Content-Profile` for writes).
+ */
+interface Scope {
+  /** The schema. */
+  schema: string;
+  /** Whether it is the default (the first of `rest.schemas`). */
+  isDefault: boolean;
+}
+
+/** A relation or function name qualified by its schema outside the default one. */
+function scoped(scope: Scope, name: string): string {
+  return scope.isDefault ? name : `${scope.schema}.${name}`;
+}
+
 /** A component name OpenAPI accepts (`^[A-Za-z0-9._-]+$`) for a relation. */
-function componentName(name: string): string {
-  return `rest.${name.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+function componentName(scope: Scope, name: string): string {
+  return `rest.${scoped(scope, name).replace(/[^A-Za-z0-9._-]/g, "_")}`;
+}
+
+/** The required profile header of a non-default schema's operation, else nothing. */
+function profileParameters(scope: Scope, write: boolean): Json[] {
+  if (scope.isDefault) return [];
+  const name = write ? "Content-Profile" : "Accept-Profile";
+  return [{
+    name,
+    in: "header",
+    required: true,
+    description: `The schema (\`${scope.schema}\`)`,
+    schema: { type: "string", enum: [scope.schema] },
+  }];
 }
 
 /** A column or argument's JSON Schema (2020-12): its Swagger type, `null` added when nullable. */
@@ -372,17 +402,20 @@ const ERROR_RESPONSE: Json = {
 const jsonOf = (schema: Json): Json => ({ "application/json": { schema } });
 
 /** One relation's operations (3.1). */
-function tableOperations(table: RestTable, ref: string): Record<string, Json> {
+function tableOperations(table: RestTable, ref: string, scope: Scope): Record<string, Json> {
   const filters = table.columns.map((c) =>
     query(c.name, `A row filter on \`${c.name}\` (\`eq.1\`, \`in.(1,2)\`, \`is.null\`, …)`)
   );
   const row = { $ref: ref };
-  const base = { tags: [table.name], "x-denext-source": "@denext/backend rest" };
+  const label = scoped(scope, table.name);
+  const base = { tags: [label], "x-denext-source": "@denext/backend rest" };
+  const reads = profileParameters(scope, false);
+  const writes = profileParameters(scope, true);
   const get = {
     ...base,
-    operationId: `rest_select_${table.name}`,
-    summary: `Read ${table.name}`,
-    parameters: [...filters, ...READ_PARAMETERS],
+    operationId: `rest_select_${label}`,
+    summary: `Read ${label}`,
+    parameters: [...filters, ...READ_PARAMETERS, ...reads],
     responses: {
       200: { description: "OK", content: jsonOf({ type: "array", items: row }) },
       206: { description: "Partial Content (a `Range`)" },
@@ -407,12 +440,13 @@ function tableOperations(table: RestTable, ref: string): Record<string, Json> {
     get,
     post: {
       ...base,
-      operationId: `rest_insert_${table.name}`,
-      summary: `Insert into ${table.name}`,
+      operationId: `rest_insert_${label}`,
+      summary: `Insert into ${label}`,
       parameters: [
         query("select", "Columns of the returned rows"),
         query("on_conflict", "Upsert key columns"),
         prefer,
+        ...writes,
       ],
       requestBody: {
         required: true,
@@ -422,17 +456,17 @@ function tableOperations(table: RestTable, ref: string): Record<string, Json> {
     },
     patch: {
       ...base,
-      operationId: `rest_update_${table.name}`,
-      summary: `Update ${table.name}`,
-      parameters: [...filters, prefer],
+      operationId: `rest_update_${label}`,
+      summary: `Update ${label}`,
+      parameters: [...filters, prefer, ...writes],
       requestBody: { required: true, content: jsonOf(row) },
       responses: { 204: { description: "No Content" }, ...written },
     },
     delete: {
       ...base,
-      operationId: `rest_delete_${table.name}`,
-      summary: `Delete from ${table.name}`,
-      parameters: [...filters, prefer],
+      operationId: `rest_delete_${label}`,
+      summary: `Delete from ${label}`,
+      parameters: [...filters, prefer, ...writes],
       responses: { 204: { description: "No Content" }, ...written },
     },
   };
@@ -452,14 +486,15 @@ function resultSchema(fn: RestFunction): Json {
 }
 
 /** One function's operations (3.1; its first overload, as PostgREST lists one per name). */
-function functionOperations(fn: RestFunction): Record<string, Json> {
+function functionOperations(fn: RestFunction, scope: Scope): Record<string, Json> {
   const named = fn.args.filter((a) => a.name !== "");
   const properties: Json = {};
   for (const arg of named) properties[arg.name] = jsonSchemaOf(arg, false);
   const required = named.filter((a) => !a.hasDefault).map((a) => a.name);
+  const label = scoped(scope, fn.name);
   const base = {
-    tags: [`(rpc) ${fn.name}`],
-    summary: `Call ${fn.name}`,
+    tags: [`(rpc) ${label}`],
+    summary: `Call ${label}`,
     "x-denext-source": "@denext/backend rest",
     responses: fn.returns.kind === "void"
       ? { 204: { description: "No Content" }, default: ERROR_RESPONSE }
@@ -467,7 +502,8 @@ function functionOperations(fn: RestFunction): Record<string, Json> {
   };
   const post = {
     ...base,
-    operationId: `rest_rpc_${fn.name}`,
+    operationId: `rest_rpc_${label}`,
+    ...(scope.isDefault ? {} : { parameters: profileParameters(scope, true) }),
     requestBody: {
       required: required.length > 0,
       content: jsonOf({ type: "object", properties, ...(required.length ? { required } : {}) }),
@@ -476,41 +512,53 @@ function functionOperations(fn: RestFunction): Record<string, Json> {
   if (fn.volatility === "v") return { post };
   const get = {
     ...base,
-    operationId: `rest_rpc_${fn.name}_get`,
-    parameters: named.map((a) => ({
-      name: a.name,
-      in: "query",
-      required: !a.hasDefault,
-      schema: jsonSchemaOf(a, false),
-    })),
+    operationId: `rest_rpc_${label}_get`,
+    parameters: [
+      ...named.map((a) => ({
+        name: a.name,
+        in: "query",
+        required: !a.hasDefault,
+        schema: jsonSchemaOf(a, false),
+      })),
+      ...profileParameters(scope, false),
+    ],
   };
   return { get, post };
 }
 
 /**
  * The auto-REST routes as an OpenAPI 3.1 contribution for `@denext/openapi`'s document: every
- * relation and function of `schema` in `catalog` (the RLS roles' view — pass the anonymous
- * catalog so nothing only the secret key reaches is listed), under `basePath`.
+ * relation and function of each schema of `schemas` in `catalog` (the RLS roles' view — pass the
+ * anonymous catalog so nothing only the secret key reaches is listed), under `basePath`. The
+ * first schema is the default; another's operations require the `Accept-Profile` /
+ * `Content-Profile` header that selects it. One URL serves every schema, so where two schemas
+ * share a relation or function name the path describes the first of them in `schemas` order (the
+ * other stays reachable with its profile, and `GET /rest/v1` with that profile describes it).
  *
  * @param catalog The catalog to describe.
- * @param schema The schema (the default one).
+ * @param schemas The schemas served, the default first.
  * @param basePath The routes' public prefix (the app's `basePath` + `rest.basePath`).
  * @returns The paths and the row schemas they reference.
  */
 export function openApiContribution(
   catalog: RestCatalog,
-  schema: string,
+  schemas: readonly string[],
   basePath: string,
 ): { paths: Record<string, Record<string, Json>>; schemas: Record<string, Json> } {
   const paths: Record<string, Record<string, Json>> = {};
-  const schemas: Record<string, Json> = { "rest.Error": REST_ERROR };
-  for (const table of catalog.tables.get(schema)?.values() ?? []) {
-    const name = componentName(table.name);
-    schemas[name] = rowSchema(table, catalog.foreignKeys);
-    paths[`${basePath}/${table.name}`] = tableOperations(table, `#/components/schemas/${name}`);
-  }
-  for (const [name, overloads] of catalog.functions.get(schema) ?? []) {
-    paths[`${basePath}/rpc/${name}`] = functionOperations(overloads[0]);
-  }
-  return { paths, schemas };
+  const components: Record<string, Json> = { "rest.Error": REST_ERROR };
+  schemas.forEach((schema, i) => {
+    const scope: Scope = { schema, isDefault: i === 0 };
+    for (const table of catalog.tables.get(schema)?.values() ?? []) {
+      const path = `${basePath}/${table.name}`;
+      if (paths[path]) continue;
+      const name = componentName(scope, table.name);
+      components[name] = rowSchema(table, catalog.foreignKeys);
+      paths[path] = tableOperations(table, `#/components/schemas/${name}`, scope);
+    }
+    for (const [name, overloads] of catalog.functions.get(schema) ?? []) {
+      paths[`${basePath}/rpc/${name}`] ??= functionOperations(overloads[0], scope);
+    }
+  });
+  return { paths, schemas: components };
 }

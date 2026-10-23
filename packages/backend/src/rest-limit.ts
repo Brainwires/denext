@@ -9,6 +9,7 @@
 // denext is (`rateLimitLocalAddresses` / `trustForwardedHeaders` / `rateLimitHeader` change that).
 
 import {
+  activeAuthConfig,
   clientIpForLimits,
   inMemoryRateLimitStore,
   type RateLimitStore,
@@ -24,8 +25,10 @@ export interface RestRateLimitOptions {
   /** The window, in milliseconds. Default 60 000 (one minute). */
   windowMs?: number;
   /**
-   * Where the counts live. Default: a bounded in-memory store, per process — behind several
-   * replicas pass a shared one (`postgresRateLimitStore()` from `denext/server`).
+   * Where the counts live. Default: the shared store the app's `denextAuth({ rateLimit: { store }
+   * })` configures (`redisRateLimitStore()`, `postgresRateLimitStore()`,
+   * `denoKvRateLimitStore()` from `denext/server`), so every replica counts against one budget;
+   * without one, a bounded in-memory store per process.
    */
   store?: RateLimitStore;
 }
@@ -101,10 +104,26 @@ function addressBucket(): string | undefined {
   }
 }
 
+/**
+ * The shared store the app's auth config names (`denextAuth({ rateLimit: { store } })`), or
+ * `undefined` without `denextAuth()` or without a store there (its limiters then count in
+ * memory too).
+ */
+function appRateLimitStore(): RateLimitStore | undefined {
+  let config;
+  try {
+    config = activeAuthConfig();
+  } catch {
+    return undefined; // no denextAuth() in this process
+  }
+  const store = config.rateLimit === false ? undefined : config.rateLimit?.store;
+  return typeof store?.increment === "function" ? store : undefined;
+}
+
 /** Counts requests against {@link ResolvedRestRateLimit}'s budget. */
 export class RestLimiter {
   readonly #limit: ResolvedRestRateLimit;
-  readonly #store: RateLimitStore;
+  #store: RateLimitStore | undefined;
 
   /**
    * A limiter.
@@ -113,7 +132,17 @@ export class RestLimiter {
    */
   constructor(limit: ResolvedRestRateLimit) {
     this.#limit = limit;
-    this.#store = limit.store ?? inMemoryRateLimitStore({ lockoutAt: limit.max });
+    this.#store = limit.store;
+  }
+
+  /**
+   * The store the counts go to, chosen at the first request (every plugin is set up by then):
+   * the configured `store`, else the app's shared one ({@linkcode appRateLimitStore}), else a
+   * bounded in-memory store for this process.
+   */
+  get store(): RateLimitStore {
+    return this.#store ??= appRateLimitStore() ??
+      inMemoryRateLimitStore({ lockoutAt: this.#limit.max });
   }
 
   /**
@@ -146,7 +175,7 @@ export class RestLimiter {
   }
 
   async #count(key: string): Promise<void> {
-    const window = await this.#store.increment(key, this.#limit.windowMs);
+    const window = await this.store.increment(key, this.#limit.windowMs);
     if (window.count <= this.#limit.max) return;
     throw new RestRateLimited(Math.max(1, Math.ceil((window.resetAt - Date.now()) / 1000)));
   }

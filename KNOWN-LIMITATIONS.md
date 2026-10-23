@@ -256,9 +256,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `db()` and realtime throw `code: "unsupported"`.
 - **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
   filters, 256 select items and 8 levels of embedding, and runs under a 5-second
-  `statement_timeout`. The `@denext/openapi` document lists the default schema's routes only (a
-  second schema is described by `GET /rest/v1` with its `Accept-Profile`), and their request
-  budget (`rest.rateLimit`) counts per process unless it is given a shared `store`.
+  `statement_timeout`. One URL serves every schema of `rest.schemas`, so in the `@denext/openapi`
+  document a relation or function whose name two schemas share is described for the first of
+  them only (`GET /rest/v1` with the other's `Accept-Profile` describes it). The request budget
+  (`rest.rateLimit`) counts per process when neither it nor `denextAuth`'s `rateLimit` names a
+  shared `store`.
 - **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
   trigger sends only the key, so every change costs a re-read per identity and filter; many
   concurrent writers serialize on commit (the logical-replication source

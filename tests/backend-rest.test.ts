@@ -136,6 +136,7 @@ async function restApp(
   respond: Responder = () => [{ body: '[{"id":1}]', n: "1" }],
   rest: RestOptions = {},
   catalog: () => SqlRow[] = () => COLUMN_ROWS,
+  auth: AuthConfig = authConfig,
 ): Promise<RestApp> {
   const sql = fakeSqlClient();
   const seen: Seen[] = [];
@@ -166,7 +167,7 @@ async function restApp(
   const root = ROOT;
   const config = {
     plugins: [
-      denextAuth(authConfig),
+      denextAuth(auth),
       backend({ postgres: { sql, rls: { migrate: false } }, rest }),
     ],
   } as DenextConfig;
@@ -1774,6 +1775,64 @@ Deno.test("rate limits: on by default, a shared store, `false` turns them off; o
       assertEquals(res.status, 200);
       await res.body?.cancel();
     }
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("rate limits: the shared store denextAuth configures is the default; rest's own store wins", async () => {
+  const recording = () => {
+    const store = inMemoryRateLimitStore();
+    const keys: string[] = [];
+    const increment = store.increment.bind(store);
+    store.increment = (key, windowMs) => {
+      keys.push(key);
+      return increment(key, windowMs);
+    };
+    return { store, keys };
+  };
+  const status = async (res: Response) => {
+    await res.body?.cancel();
+    return res.status;
+  };
+  // Two "replicas" (two apps) over the app's one shared store count against one budget.
+  const app = recording();
+  const auth = { ...authConfig, rateLimit: { store: app.store } };
+  const first = await restApp(undefined, { rateLimit: { max: 2 } }, undefined, auth);
+  try {
+    assertEquals(await status(await first.call("/rest/v1/notes", { peer: "203.0.113.30" })), 200);
+  } finally {
+    tearDown();
+  }
+  const second = await restApp(undefined, { rateLimit: { max: 2 } }, undefined, auth);
+  try {
+    assertEquals(await status(await second.call("/rest/v1/notes", { peer: "203.0.113.30" })), 200);
+    assertEquals(
+      await status(await second.call("/rest/v1/notes", { peer: "203.0.113.30" })),
+      429,
+      "the budget spent on the other replica counts here",
+    );
+    assertEquals(app.keys, Array(3).fill("rest|ip:203.0.113.30"));
+  } finally {
+    tearDown();
+  }
+  // `rest.rateLimit.store` is used over the app's.
+  const own = recording();
+  const explicit = await restApp(undefined, { rateLimit: { store: own.store } }, undefined, auth);
+  try {
+    assertEquals(
+      await status(await explicit.call("/rest/v1/notes", { peer: "203.0.113.31" })),
+      200,
+    );
+    assertEquals([own.keys, app.keys.length], [["rest|ip:203.0.113.31"], 3]);
+  } finally {
+    tearDown();
+  }
+  // Auth with its limiters off has no store to share: counted per process.
+  const off = await restApp(undefined, {}, undefined, { ...authConfig, rateLimit: false });
+  try {
+    assertEquals(await status(await off.call("/rest/v1/notes", { peer: "203.0.113.32" })), 200);
+    assertEquals(app.keys.length, 3);
   } finally {
     tearDown();
   }
