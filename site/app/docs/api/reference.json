@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.7.1",
+          "signature": "VERSION: 4.8.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -7711,10 +7711,34 @@
         {
           "name": "EmittedAsset",
           "slug": "EmittedAsset",
+          "kind": "typeAlias",
+          "signature": "type EmittedAsset = EmittedNamedAsset | EmittedHashedAsset",
+          "doc": "A generated file a build step publishes with PluginBuildContext.emitFile: named by fileName, or by name alone for a content-hashed name.",
+          "docFull": "A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}: named by\n`fileName`, or by `name` alone for a content-hashed name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmittedHashedAsset",
+          "slug": "EmittedHashedAsset",
           "kind": "interface",
-          "signature": "interface EmittedAsset",
-          "doc": "A generated file a build step publishes with PluginBuildContext.emitFile.",
-          "docFull": "A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}.",
+          "signature": "interface EmittedHashedAsset",
+          "doc": "A generated file published under a content-hashed name, as Rollup's default assetFileNames ([name]-[hash][extname]) names it: { name: \"logo.svg\" } becomes assets/logo-<hash>.svg (in spa.assetsDir when that is set), the hash taken from source.",
+          "docFull": "A generated file published under a content-hashed name, as Rollup's default `assetFileNames`\n(`[name]-[hash][extname]`) names it: `{ name: \"logo.svg\" }` becomes `assets/logo-<hash>.svg`\n(in `spa.assetsDir` when that is set), the hash taken from `source`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmittedNamedAsset",
+          "slug": "EmittedNamedAsset",
+          "kind": "interface",
+          "signature": "interface EmittedNamedAsset",
+          "doc": "A generated file published at the fileName it gives.",
+          "docFull": "A generated file published at the `fileName` it gives.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11229,8 +11253,8 @@
           "slug": "parseRange",
           "kind": "function",
           "signature": "parseRange(header: string, size: number): object | null | undefined",
-          "doc": "One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416).",
-          "docFull": "One `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range against `size`:\n`undefined` = ignore the header (unsupported form or multiple ranges → serve the whole\nfile), `null` = unsatisfiable (416).",
+          "doc": "One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416). parseRanges reads a header with several.",
+          "docFull": "One `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range against `size`:\n`undefined` = ignore the header (unsupported form or multiple ranges → serve the whole\nfile), `null` = unsatisfiable (416). {@linkcode parseRanges} reads a header with several.",
           "params": [
             {
               "name": "header",
@@ -11242,6 +11266,27 @@
             }
           ],
           "returns": "The inclusive byte range, undefined to serve it all, or null for a 416.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "parseRanges",
+          "slug": "parseRanges",
+          "kind": "function",
+          "signature": "parseRanges(header: string, size: number): object[] | null | undefined",
+          "doc": "Every bytes= range of a Range header against size (RFC 9110 §14.1.2), sorted and with overlapping or adjacent ranges coalesced: undefined = ignore the header (a malformed or non-bytes header, or more than MAX_RANGES specs → serve the whole file), null = none satisfiable (416). An unsatisfiable spec among satisfiable ones is dropped.",
+          "docFull": "Every `bytes=` range of a `Range` header against `size` (RFC 9110 §14.1.2), sorted and with\noverlapping or adjacent ranges coalesced: `undefined` = ignore the header (a malformed or\nnon-`bytes` header, or more than {@linkcode MAX_RANGES} specs → serve the whole file),\n`null` = none satisfiable (416). An unsatisfiable spec among satisfiable ones is dropped.",
+          "params": [
+            {
+              "name": "header",
+              "doc": "The request's Range header."
+            },
+            {
+              "name": "size",
+              "doc": "The resource's size in bytes."
+            }
+          ],
+          "returns": "The inclusive byte ranges, undefined to serve it all, or null for a 416.",
           "examples": [],
           "denextOnly": true
         },
@@ -19418,16 +19463,20 @@
           "name": "createTestApp",
           "slug": "createTestApp",
           "kind": "function",
-          "signature": "createTestApp(projectDir: string): Promise<TestApp>",
+          "signature": "createTestApp(projectDir: string, options?: TestAppOptions): Promise<TestApp>",
           "doc": "Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.",
-          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Call `close()` (or\n`await using`) to run the plugins' teardowns. Each call gets its own plugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\n```",
+          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Their build steps run as\nwell, and the files they emit are served. `jobs/` is registered (`runJob` works) and\n`services/` is started, as `denext start` does ({@linkcode TestAppOptions} turns each off).\nCall `close()` (or `await using`) to stop the services and run the plugins' teardowns. Each\ncall gets its own plugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nimport { runJob } from \"@denext/denext/server\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\nawait runJob(\"cleanup\");\n```",
           "params": [
             {
               "name": "projectDir",
               "doc": "The app directory (contains app/ or pages/, optional middleware.ts)."
+            },
+            {
+              "name": "options",
+              "doc": "What to start beside the handler (all of it by default)."
             }
           ],
-          "returns": "The in-process handler, with close() for the plugin teardowns.",
+          "returns": "The in-process handler, with close() for the services, jobs and plugin teardowns.",
           "examples": [],
           "denextOnly": true
         },
@@ -19734,8 +19783,20 @@
           "slug": "TestApp",
           "kind": "interface",
           "signature": "interface TestApp",
-          "doc": "The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to run the teardowns of the app's denext.config.ts plugins. await using app = await createTestApp(dir) closes it at the end of the scope.",
-          "docFull": "The handler {@linkcode createTestApp} returns: still a plain `(Request) => Response` function\n(pass it to {@linkcode createTestClient} as before), plus `close()` to run the teardowns of the\napp's `denext.config.ts` plugins. `await using app = await createTestApp(dir)` closes it at\nthe end of the scope.",
+          "doc": "The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to stop what the app started — its services/, its jobs/ registrations, and its denext.config.ts plugins' teardowns. await using app = await createTestApp(dir) closes it at the end of the scope.",
+          "docFull": "The handler {@linkcode createTestApp} returns: still a plain `(Request) => Response` function\n(pass it to {@linkcode createTestClient} as before), plus `close()` to stop what the app\nstarted — its `services/`, its `jobs/` registrations, and its `denext.config.ts` plugins'\nteardowns. `await using app = await createTestApp(dir)` closes it at the end of the scope.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TestAppOptions",
+          "slug": "TestAppOptions",
+          "kind": "interface",
+          "signature": "interface TestAppOptions",
+          "doc": "What createTestApp starts beside the request handler. Every field defaults to true; pass false to leave that part out.",
+          "docFull": "What {@linkcode createTestApp} starts beside the request handler. Every field defaults to\n`true`; pass `false` to leave that part out.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -34901,10 +34962,34 @@
         {
           "name": "EmittedAsset",
           "slug": "EmittedAsset",
+          "kind": "typeAlias",
+          "signature": "type EmittedAsset = EmittedNamedAsset | EmittedHashedAsset",
+          "doc": "A generated file a build step publishes with PluginBuildContext.emitFile: named by fileName, or by name alone for a content-hashed name.",
+          "docFull": "A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}: named by\n`fileName`, or by `name` alone for a content-hashed name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmittedHashedAsset",
+          "slug": "EmittedHashedAsset",
           "kind": "interface",
-          "signature": "interface EmittedAsset",
-          "doc": "A generated file a build step publishes with PluginBuildContext.emitFile.",
-          "docFull": "A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}.",
+          "signature": "interface EmittedHashedAsset",
+          "doc": "A generated file published under a content-hashed name, as Rollup's default assetFileNames ([name]-[hash][extname]) names it: { name: \"logo.svg\" } becomes assets/logo-<hash>.svg (in spa.assetsDir when that is set), the hash taken from source.",
+          "docFull": "A generated file published under a content-hashed name, as Rollup's default `assetFileNames`\n(`[name]-[hash][extname]`) names it: `{ name: \"logo.svg\" }` becomes `assets/logo-<hash>.svg`\n(in `spa.assetsDir` when that is set), the hash taken from `source`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmittedNamedAsset",
+          "slug": "EmittedNamedAsset",
+          "kind": "interface",
+          "signature": "interface EmittedNamedAsset",
+          "doc": "A generated file published at the fileName it gives.",
+          "docFull": "A generated file published at the `fileName` it gives.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -35517,8 +35602,8 @@
           "slug": "ViteEmittedFile",
           "kind": "interface",
           "signature": "interface ViteEmittedFile",
-          "doc": "A Rollup emitFile argument (only type: \"asset\" with a fileName is supported).",
-          "docFull": "A Rollup `emitFile` argument (only `type: \"asset\"` with a `fileName` is supported).",
+          "doc": "A Rollup emitFile argument (only type: \"asset\", with a fileName or a name).",
+          "docFull": "A Rollup `emitFile` argument (only `type: \"asset\"`, with a `fileName` or a `name`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -35685,8 +35770,8 @@
           "slug": "ViteEmittedFile",
           "kind": "interface",
           "signature": "interface ViteEmittedFile",
-          "doc": "A Rollup emitFile argument (only type: \"asset\" with a fileName is supported).",
-          "docFull": "A Rollup `emitFile` argument (only `type: \"asset\"` with a `fileName` is supported).",
+          "doc": "A Rollup emitFile argument (only type: \"asset\", with a fileName or a name).",
+          "docFull": "A Rollup `emitFile` argument (only `type: \"asset\"`, with a `fileName` or a `name`).",
           "params": [],
           "returns": "",
           "examples": [],

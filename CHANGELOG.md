@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-10-23
+
 ### Added
 
 - **SPA `client:*` directives on member tags, and the module-level `hydrate` default.** In SPA
@@ -18049,7 +18051,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.8.0...development
+[4.8.0]: https://jsr.io/@denext/denext@4.8.0
 [4.7.1]: https://jsr.io/@denext/denext@4.7.1
 [4.7.0]: https://jsr.io/@denext/denext@4.7.0
 [4.6.0]: https://jsr.io/@denext/denext@4.6.0
