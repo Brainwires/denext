@@ -26,6 +26,7 @@
 import type { Plugin } from "./esbuild/mod.ts";
 import { walk } from "@std/fs";
 import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
+import { canonicalPath } from "./canonical-path.ts";
 import { denoExecutable } from "./deno-executable.ts";
 import { frameworkRootUrl, minDepAgeArgs } from "./bundle.ts";
 import { JSR_DENEXT_ROOT } from "./app-framework-root.ts";
@@ -716,9 +717,13 @@ export function patchPlugin(set: DenextPatchSet, frameworkRoot = frameworkRootUr
       for (const namespace of ["file", "https"]) {
         build.onLoad({ filter, namespace }, async (args) => {
           const root = namespace === "file" ? fileRoot : httpsRoot;
-          if (!root || !args.path.startsWith(root)) return undefined;
+          // A file is compared by its real path too: esbuild reports the path as it reached it,
+          // which is not always the real one (a Windows 8.3 short name such as `RUNNER~1`, a
+          // preserved symlink), while the root is the real path.
+          const path = namespace === "file" ? canonicalPath(args.path) : args.path;
+          if (!root || !path.startsWith(root)) return undefined;
           // The patch set is keyed `/`-separated; a Windows file path is not.
-          const rel = args.path.slice(root.length).split(SEPARATOR).join("/");
+          const rel = path.slice(root.length).split(SEPARATOR).join("/");
           const diff = set.get(rel);
           if (!diff) return undefined;
           const pristine = namespace === "file"

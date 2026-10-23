@@ -682,9 +682,10 @@ jobs:
         run: deno run -A scripts/ci/toolchain-on-path.ts
 
       # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: a temp
-      # app on another drive than this checkout still fails to build (denext's own cross-drive
-      # paths; the runtime's `file:` link fix from rc.3 is not enough). runner.temp has no 8.3
-      # short names.
+      # app on another drive than this checkout still fails to build. Deno's synthetic workspace
+      # import map writes a member's / linked config's `imports` relative to the root config, and a
+      # value on another drive resolves under the root's drive (`file:///C:/D:/…`), in plain Deno
+      # too (KNOWN-LIMITATIONS). runner.temp has no 8.3 short names.
       - name: Unit tests
         env:
           TEMP: ${{ runner.temp }}

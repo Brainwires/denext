@@ -97,10 +97,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
 - **On Windows, keep a project and the denext checkout it imports on one drive.** A build,
-  export or `build --compile` of an app on `C:` that imports a checkout on `D:` (as
-  `migrate --denext-local-path` writes) still fails, even though runtime 3.0.0-rc.3 fixed Deno's own
-  cross-drive `file:` link. Put both on the same drive (CI's `windows-tests` job points `TEMP` /
-  `TMP` at the checkout's drive for this reason).
+  export, `build --compile`, dev server or monorepo of an app on `C:` that imports a checkout on `D:`
+  (as `migrate --denext-local-path` writes) fails with `Import 'file:///C:/D:/…' failed`. The cause
+  is Deno's, and plain `deno run` in a workspace hits it too: Deno layers each workspace member's
+  and linked (or auto-linked) `deno.json`'s `imports` into one import map written relative to the
+  root config, and a value on another drive has no relative form, so it resolves under the root's
+  drive. Put both on the same drive until the runtime carries the fix (CI's `windows-tests` job
+  points `TEMP` / `TMP` at the checkout's drive for this reason).
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,

@@ -331,6 +331,50 @@ Deno.test("denext: edit → create writes the patch, materializes with absolutiz
   }
 });
 
+// esbuild names a file by the path it reached it through, which need not be the real one: on a
+// Windows runner the temp dir is the 8.3 short name `C:\\Users\\RUNNER~1\\…` while the framework root
+// is compared by its real path, so a patched file was loaded unpatched. Simulated here with a
+// symlink esbuild is told to preserve (Windows needs a privilege for symlinks).
+Deno.test({
+  name:
+    "denext: the bundle gets the patched source when esbuild reports another spelling of the path",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const { dir, root, fw } = await frameworkProject();
+    const opts = { frameworkRoot: root, frameworkVersion: "9.9.9", log: () => {} };
+    try {
+      const work = await editDenextFile(dir, "src/server/document.ts", opts);
+      await Deno.writeTextFile(
+        work,
+        DOCUMENT.replace("<!DOCTYPE html>", "<!DOCTYPE html><!-- patched -->"),
+      );
+      await createDenextPatch(dir, opts);
+      const alias = join(dir, "fw-alias");
+      await Deno.symlink(fw, alias);
+      const entry = join(dir, "entry.ts");
+      await Deno.writeTextFile(
+        entry,
+        `import { doc } from ${
+          JSON.stringify(join(alias, "src", "server", "document.ts"))
+        };\nconsole.log(doc({ title: "x" }));\n`,
+      );
+      const out = await esbuild.build({
+        entryPoints: [entry],
+        bundle: true,
+        write: false,
+        format: "esm",
+        preserveSymlinks: true,
+        plugins: [patchPlugin((await loadDenextPatchSet(dir))!, root)],
+        logLevel: "silent",
+      });
+      assertStringIncludes(out.outputFiles[0].text, "<!-- patched -->");
+    } finally {
+      await esbuild.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
 Deno.test("denext: create with no working copies explains what to do", async () => {
   const { dir, root } = await frameworkProject();
   try {
