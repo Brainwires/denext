@@ -65,9 +65,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
   bundle carries the runtime next to its `.exe`.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
-  -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
-  first online run (in the background) or by `denext toolchain install`. A verb used offline
-  before either has happened fails to load. The compiled binary embeds every verb.
+  -g jsr:@denext/denext/cli` caches the entrypoint (Deno's install has no post-install step); every
+  verb's modules, and the framework modules a verb loads by URL, are cached by
+  `denext toolchain install` or by the CLI's first online run (in the background). A verb used
+  offline before either has happened fails to load. The compiled binary embeds every verb.
 - **The TypeScript 7 language server (the editor default) does less than the TypeScript 6
   service.** `"deno.unstable": ["tsgo-lsp"]`, which `create`, `migrate` and `upgrade` write into
   `.vscode/settings.json`, runs the dated 7.1 nightly the toolchain pins. Against the in-process
@@ -300,10 +301,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
-- **`createTestApp` runs plugins as `denext dev` does, not as `denext start` does:** plugin
-  build steps don't run, so a route served from build output renders on demand (a Pages Router
+- **`createTestApp` sets plugins up in `dev` mode**: their build steps run and what they emit is
+  served, but a route the build itself prerenders renders on demand (a Pages Router
   `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
-  on first use). `jobs/` and `services/` are not started.
+  on first use). `jobs/` is registered without its schedules, and `services/` is supervised
+  process-wide, so two test apps with services can't run at once.
 - **The first-party Markdown renderer escapes raw HTML by default**; `markdown: { html:
   "sanitize" }` keeps what an allowlist sanitizer allows, never passing HTML through. Only the
   block containers (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when

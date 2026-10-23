@@ -11,7 +11,15 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { buildRegistry } from "../src/cli/register.ts";
 import { buildLazyRegistry } from "../src/cli/lazy-registry.ts";
 import { materializeCommand } from "../src/cli/lazy-command.ts";
-import { generate, MODULES_OUT, TABLE_OUT } from "../scripts/gen-command-table.ts";
+import {
+  computedModuleUrls,
+  ENTRY_LAZY_MODULES,
+  generate,
+  MODULES_OUT,
+  OFFLINE_OUT,
+  TABLE_OUT,
+} from "../scripts/gen-command-table.ts";
+import { CLI_MODULES_URL } from "../src/cli/cli-cache.ts";
 import { VERSION as CLI_VERSION } from "../src/version.ts";
 import { VERSION } from "../mod.ts";
 import { CLI_COMPILE_INCLUDES, compileCliArgs } from "../scripts/compile-cli.ts";
@@ -101,10 +109,52 @@ Deno.test("`denext commands` and completions load project discovery, not denext/
 });
 
 Deno.test("the committed verb table matches buildRegistry() (drift check)", async () => {
-  const { table, modules } = await generate();
+  const { table, modules, offline } = await generate();
   const stale = "is stale: run `deno task gen:command-table` and commit";
   assertEquals(await Deno.readTextFile(TABLE_OUT), table, `command-table.generated.ts ${stale}`);
   assertEquals(await Deno.readTextFile(MODULES_OUT), modules, `lazy-modules.generated.ts ${stale}`);
+  assertEquals(
+    await Deno.readTextFile(OFFLINE_OUT),
+    offline,
+    `offline-modules.generated.ts ${stale}`,
+  );
+});
+
+Deno.test("the CLI's offline cache covers every module a verb can load", async () => {
+  // What `denext toolchain install` (and a remote CLI's first-run warm-up) `deno cache`s.
+  assertEquals(CLI_MODULES_URL, toFileUrl(OFFLINE_OUT).href);
+  const real = Deno.realPathSync(ROOT);
+  const graph = new Set(
+    [...await staticGraph("src/cli/offline-modules.generated.ts")].map((url) =>
+      url.startsWith("file:") ? toFileUrl(Deno.realPathSync(fromFileUrl(url))).href : url
+    ),
+  );
+  const missing = (files: readonly string[]) =>
+    files.filter((file) => !graph.has(toFileUrl(join(real, file)).href));
+  // Every verb module the lazy table imports on demand, and the entrypoint's own lazy modules.
+  const table = await Deno.readTextFile(TABLE_OUT);
+  const verbs = [...table.matchAll(/(?:spec|factory)\("(\.\/[^"]+)"/g)].map((m) => m[1]);
+  assert(verbs.length > 30, `only ${verbs.length} verb modules in the table`);
+  const cli = (rel: string) => join("src/cli", rel);
+  assertEquals(missing([...new Set([...verbs, ...ENTRY_LAZY_MODULES])].map(cli)), [], "lazy");
+  // Every framework export: a build bundles and a server loads them by URL.
+  const { exports } = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
+    exports: Record<string, string>;
+  };
+  const exported = Object.values(exports).filter((p) => /\.(?:ts|tsx|js|mjs)$/.test(p));
+  assertEquals(missing(exported), [], "exports");
+  // Every module src/ loads through a computed URL (the desktop sidecar bundler, a worker, …).
+  const computed = await computedModuleUrls();
+  const rel = (file: string) => file.slice(ROOT.length).replace(/^[\\/]/, "");
+  assert(
+    computed.some((f) => f.endsWith("desktop-sidecar-bundle.ts")),
+    "a `new URL(CONST, import.meta.url)` module is found",
+  );
+  assert(
+    computed.some((f) => f.endsWith("client-runtime.ts")),
+    "a frameworkFileUrl module is found",
+  );
+  assertEquals(missing(computed.map(rel)), [], "computed URLs");
 });
 
 Deno.test("every lazy verb loads the registry's own spec", async () => {
