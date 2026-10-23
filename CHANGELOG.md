@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `"use client"` / `"use server"` files inside npm packages are found for a project on
+  another Windows drive than the working directory.** esbuild names such a file by its absolute
+  path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,
+  so the page reached no npm island or action module.
+- **A `denext patch` of a framework file applies when the bundler reaches the file by another
+  spelling of its path**, such as a Windows 8.3 short name (`C:\Users\RUNNER~1\…`): the file is
+  compared with the framework root by its real path, so it is no longer bundled unpatched.
+
 ## [4.7.1] - 2026-10-23
 
 ### Added

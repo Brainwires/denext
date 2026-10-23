@@ -103,14 +103,32 @@ function walkPlugin(): esbuild.Plugin {
   };
 }
 
-/** The metafile import graph as absolute path → absolute paths it imports. */
-function importGraph(meta: esbuild.Metafile, root: string): Map<string, string[]> {
+/** A Windows drive path (`C:/x`, `C:\\x`): esbuild's spelling of a file on another drive. */
+const DRIVE_PATH = /^[a-z]:[\\/]/i;
+
+/**
+ * Whether a metafile path names a plugin namespace (`ns:path`) rather than a file. esbuild writes a
+ * file relative to `absWorkingDir`, or absolute (`D:/app/x.ts`) when it is on another Windows
+ * drive, which has no relative form: that colon is the drive's, not a namespace's.
+ */
+function isNamespaced(path: string): boolean {
+  return path.includes(":") && !DRIVE_PATH.test(path);
+}
+
+/**
+ * The metafile import graph as absolute path → absolute paths it imports.
+ *
+ * @param meta The esbuild metafile.
+ * @param root The build's `absWorkingDir` (what its relative paths are relative to).
+ * @returns Each input file → the files it imports (externals and namespaced modules dropped).
+ */
+export function importGraph(meta: esbuild.Metafile, root: string): Map<string, string[]> {
   const graph = new Map<string, string[]>();
   for (const [key, input] of Object.entries(meta.inputs)) {
-    if (key.includes(":")) continue; // a plugin namespace, not a file
+    if (isNamespaced(key)) continue; // a plugin namespace, not a file
     const edges: string[] = [];
     for (const imp of input.imports) {
-      if (imp.external || imp.path.includes(":")) continue;
+      if (imp.external || isNamespaced(imp.path)) continue;
       edges.push(resolve(root, imp.path));
     }
     graph.set(resolve(root, key), edges);
