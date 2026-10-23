@@ -1763,12 +1763,12 @@ Deno.test("the checked-in toolchain pin: the runtime pin's release, every target
 
 Deno.test("the checked-in pin is the deno version denext's runtime targets", async () => {
   const { DESKTOP_RUNTIME_PIN } = await import("../src/build/desktop-runtime.ts");
-  assertEquals(DESKTOP_RUNTIME_PIN.deno, "2.9.7");
-  // 2.9.7-denext.N, or the fork's own version (3.0.0-rc.1 on) built from 2.9.7.
+  assertEquals(DESKTOP_RUNTIME_PIN.deno, "2.9.8");
+  // The fork's own version (3.0.0-rc.4 on) built from 2.9.8.
   assert(isDenextReleaseVersion(DESKTOP_RUNTIME_PIN.version), DESKTOP_RUNTIME_PIN.version);
   assertEquals(
     pinnedDenoReleaseVersion(DESKTOP_RUNTIME_PIN.version, DESKTOP_RUNTIME_PIN.deno),
-    "2.9.7",
+    "2.9.8",
   );
 });
 

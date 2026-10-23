@@ -328,22 +328,22 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
     pin: pin(45),
   });
   assertEquals(checksOf(toolchain).filter((c) => c === "error:runtime"), []);
-  // ...and so is the toolchain under its own version (3.0.0-rc.N), built from the pin's Deno: by
-  // its identity marker (3.0.0-rc.3 on) ...
+  // ...and so is the toolchain under its own version (3.0.0-rc.N), built from the pin's Deno (2.9.8
+  // from 3.0.0-rc.4): by its identity marker (3.0.0-rc.3 on) ...
   const own = await runDesktopDoctor({
     ...linux,
     runtimeStatus: () =>
       Promise.resolve(
-        status({ deno: { found: "3.0.0-rc.3", required: "2.9.7", denext: "3.0.0-rc.3" } }),
+        status({ deno: { found: "3.0.0-rc.4", required: "2.9.8", denext: "3.0.0-rc.4" } }),
       ),
     pin: pin(45),
   });
   assertEquals(checksOf(own).filter((c) => c === "error:runtime"), []);
-  // ... but upstream Deno's 3.0.0-rc.3 (no marker) is a mismatch.
+  // ... but upstream Deno's 3.0.0-rc.4 (no marker) is a mismatch.
   const upstream = await runDesktopDoctor({
     ...linux,
     runtimeStatus: () =>
-      Promise.resolve(status({ deno: { found: "3.0.0-rc.3", required: "2.9.7" } })),
+      Promise.resolve(status({ deno: { found: "3.0.0-rc.4", required: "2.9.8" } })),
     pin: pin(45),
   });
   assertEquals(checksOf(upstream).filter((c) => c === "error:runtime"), ["error:runtime"]);

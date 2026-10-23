@@ -510,15 +510,6 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
-- **An attachment from a custom-scheme app origin is not downloaded on WebKit.** Under the pinned
-  runtime, WKWebView (macOS) and WebKitGTK (Linux) open no save dialog for a
-  `Content-Disposition: attachment` response served from `desktop.app.origin` (such as
-  `myapp://app`), whatever its type, at the top level or in a frame, and log no refusal; WebView2
-  and CEF download it, and an `<a download>` link or a blob export works on every backend.
-  Workaround: `fetch` the response and save it with `saveFile` from `denext/mobile` (the OS save
-  dialog), or turn it into a blob and click an `<a download>` link, or save it into the app's
-  folders with `downloadToFile`. The kitchen sink's window test skips that check on WebKit until
-  the runtime is fixed.
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app

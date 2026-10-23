@@ -2140,12 +2140,11 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         response or a blob export opens the OS save dialog on every backend under denext&apos;s
         pinned runtime (from{" "}
         <code>2.9.7-denext.22</code>), only for the app&apos;s own origins, with a sanitized file
-        name and at most three save dialogs per window in 10 s. One exception for now: on WebKit
-        (WKWebView on macOS, WebKitGTK on Linux) a <code>Content-Disposition: attachment</code>{" "}
-        response from a custom-scheme app origin (<code>desktop.app.origin</code>) opens no save
-        dialog and is not downloaded; WebView2 and CEF download it, and an{" "}
-        <code>{"<a download>"}</code>{" "}
-        link or a blob export works everywhere. Under the stock runtime they stay inert; use{" "}
+        name and at most three save dialogs per window in 10 s. From <code>3.0.0-rc.4</code>{" "}
+        that includes a custom-scheme app origin (<code>desktop.app.origin</code>) on every backend:
+        WebKit (WKWebView on macOS, WebKitGTK on Linux) downloads its{" "}
+        <code>Content-Disposition: attachment</code> responses, and CEF and WebView2 its{" "}
+        <code>{"<a download>"}</code> links. Under the stock runtime they stay inert; use{" "}
         <code>saveFile</code> (or <code>downloadToFile</code>{" "}
         into the app&apos;s folders) for a save that must work everywhere (see{" "}
         <a href="/docs/desktop-runtime#page-downloads">the runtime</a>).
@@ -3126,7 +3125,7 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         build on denext&apos;s pinned Deno Desktop runtime: a prebuilt <code>libdenort</code>{" "}
         and laufey backend hosts from{" "}
         <a href="https://github.com/Brainwires/deno/releases">Brainwires/deno</a>{" "}
-        (Deno 2.9.7 plus the patches behind the stable app origin, per-app web storage, deep links
+        (Deno 2.9.8 plus the patches behind the stable app origin, per-app web storage, deep links
         and single instance). The build runs on{" "}
         <a href="/docs/toolchain">
           denext&apos;s Deno toolchain
@@ -3141,7 +3140,7 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
       </p>
       <ul>
         <li>
-          <strong>Deno 2.9.7 exactly.</strong> The runtime is built from Deno 2.9.7, and{" "}
+          <strong>Deno 2.9.8 exactly.</strong> The runtime is built from Deno 2.9.8, and{" "}
           <code>deno desktop</code> embeds it. The toolchain is built from that release (as{" "}
           <code>2.9.7-denext.N</code> or, from{" "}
           <code>3.0.0-rc.1</code>, under the fork&apos;s own version), so this holds by itself; on
@@ -3149,8 +3148,8 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
             DENEXT_DENO=stock
           </code>, or no toolchain for the host) of any other version{" "}
           <code>denext desktop package</code> fails before the build with the fix:{" "}
-          <code>deno upgrade --version 2.9.7</code> (or <code>DENO_BIN</code>{" "}
-          pointing at a 2.9.7 binary for <code>run</code> / <code>dev</code>).{" "}
+          <code>deno upgrade --version 2.9.8</code> (or <code>DENO_BIN</code>{" "}
+          pointing at a 2.9.8 binary for <code>run</code> / <code>dev</code>).{" "}
           <code>denext desktop run</code> and <code>dev</code>{" "}
           warn and open the window on the stock runtime instead. Every download error ends with the
           two ways out: <code>DENEXT_DESKTOP_RUNTIME_DIR</code> or{" "}
@@ -3183,7 +3182,7 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           <strong>Targets.</strong>{" "}
           macOS (arm64, x86_64), Linux (x86_64, arm64) and Windows (x86_64), each with the{" "}
           <code>webview</code> and <code>cef</code>{" "}
-          backends. Linux and Windows apps package from any host: Deno 2.9.7&apos;s CLI looks a
+          backends. Linux and Windows apps package from any host: Deno 2.9.8&apos;s CLI looks a
           prebuilt backend up under the host&apos;s executable name, so for a Windows app on macOS
           or Linux (or a Linux app on Windows) denext hard-links the backend&apos;s directory beside
           the verified runtime with the binary under that name (<code>

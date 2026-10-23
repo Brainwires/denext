@@ -388,7 +388,7 @@ The toolchain installs it beside `deno` under the same rule as the compiler (its
 whole directory must hash to the pin's `tsgoLsp` entry, else it is refused and never installed),
 and `denext toolchain status` prints a `typescript lsp` line for it.
 
-It is the default editor backend. From runtime `3.0.0-rc.3` (the pinned build) it is the runtime's
+It is the default editor backend. From runtime `3.0.0-rc.3` (so in the pinned build too) it is the runtime's
 own default: its `deno lsp` runs TypeScript 7 with no setting at all, or with an empty
 `deno.unstable` list (what editors send by default). denext still writes the entry, which earlier
 runtimes need:
@@ -403,11 +403,11 @@ runtimes need:
 A `deno.unstable` the project already sets, an empty list included, is never changed. To keep the
 TypeScript 6 service:
 
-| Where              | How                                                                                                                                           |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way)                                    |
-| One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"` (before `3.0.0-rc.3`, an empty list too)     |
-| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade` (on `3.0.0-rc.3` this alone keeps TypeScript 7) |
+| Where              | How                                                                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way)                                      |
+| One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"` (before `3.0.0-rc.3`, an empty list too)       |
+| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade` (from `3.0.0-rc.3` this alone keeps TypeScript 7) |
 
 The editor runs whichever `deno` it finds, so point it at the toolchain: `denext toolchain link`
 puts it on `PATH`, or set the Deno extension's `deno.path` to what `denext toolchain path` prints.
@@ -527,9 +527,9 @@ was built from plus `-denext.N`. From `3.0.0-rc.1` (then `3.0.0-rc.2`, …) the 
 version, which names no Deno release; `3.0.0` final carries Deno's planned 3.0 milestone. The two
 schemes sort in release order by semver (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.10` <
 `3.0.0`), and denext accepts both: a pin, a `Deno.version.deno` and a `DENO_BIN` are compared that
-way. The Deno release a build is made from is the pin's `deno` field (2.9.7 for every build so
-far): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
-[Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.7 exactly" check use. Releases are tagged
+way. The Deno release a build is made from is the pin's `deno` field (2.9.7 up to `3.0.0-rc.3`,
+2.9.8 from `3.0.0-rc.4`): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
+[Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.8 exactly" check use. Releases are tagged
 `denext-runtime-v<version>` on [Brainwires/deno](https://github.com/Brainwires/deno/releases). The
 toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
 stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
@@ -540,25 +540,25 @@ denext's Deno carries an identity marker: `Deno.build.denext` (its version, a st
 upstream Deno) and a last line in `deno --version`:
 
 ```
-deno 3.0.0-rc.3 (stable, release, aarch64-apple-darwin)
-v8 14.9.1
+deno 3.0.0-rc.4 (stable, release, aarch64-apple-darwin)
+v8 15.0.245.2-rusty
 typescript 6.0.3
-denext 3.0.0-rc.3 (Brainwires)
+denext 3.0.0-rc.4 (Brainwires)
 ```
 
 denext recognises its toolchain and the `deno` a desktop build runs by that marker (in its own
 process by `Deno.build.denext`, for another binary by the `--version` line): whether a command
 already runs on the toolchain, `denext toolchain status`, `denext doctor`, the native type check,
-the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.7
+the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.8
 exactly" check and the direction-split network flags. An upstream `3.0.0-rc.N` or `3.0.0` is stock
 Deno whatever its number. A build from before the marker is recognised by its version only:
 `2.9.7-denext.N`, or exactly the pinned toolchain while the pin predates the marker (`3.0.0-rc.2`
 and earlier). A runtime release from `3.0.0-rc.3` must record the marker in its manifest
 (`cli.identity`), or `deno task desktop:pin-runtime` refuses it.
 
-**Tracking Deno.** The toolchain is Deno's latest release (2.9.7) plus denext's patches — `Deno.SQL`,
+**Tracking Deno.** The toolchain is Deno's latest release (2.9.8) plus denext's patches — `Deno.SQL`,
 Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
-published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we
+published (as `2.9.7-denext.N`, then `3.0.0-rc.N`) with SHA-256 sums and build attestations. Between Deno releases we
 review what Deno's main branch has gained and take the fixes that matter: `2.9.7-denext.16` took the
 read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
 skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update, and
@@ -575,10 +575,12 @@ release is adopted by rebasing the patches onto it and cutting a new release (`-
 `2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). `3.0.0-rc.2` adds
 `--max-memory` / `--max-cpu-time` / `--max-time` and `--allow-net-connect` /
 `--allow-net-listen`, and takes the rustls / rustls-webpki / webpki-roots security fixes.
-`3.0.0-rc.3` (the build denext pins today) adds the identity marker above, makes TypeScript 7 the
+`3.0.0-rc.3` adds the identity marker above, makes TypeScript 7 the
 language server's own default, keeps a `--watch` child's IPC channel across restarts, resolves a
 `file:` link on another Windows drive, checks the files after `deno check --`, and gives the native
-check's TS2307 Deno's `deno add` hint. Deno's next minor
+check's TS2307 Deno's `deno add` hint. `3.0.0-rc.4` (the build denext pins today) is built from
+Deno 2.9.8 (X.509 v1 TLS certificates handled as OpenSSL does, safer npm symlinking, zsh
+completions, `mock.reset()`, the distrusted eMudhra CAs removed). Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
 **Support across denext releases.** The patches are carried forward from release to release. Each

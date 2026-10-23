@@ -177,7 +177,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task test:window        # package, launch and assert every check (exits 1 on a failure)\ndenext task drive start        # launch the last build in drive mode (the manual checks, scripted)\ndenext task test:lan-dev       # `desktop dev --lan`: the proxied page keeps its bridge (secureStore)",
+      "run": "denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.8)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task test:window        # package, launch and assert every check (exits 1 on a failure)\ndenext task drive start        # launch the last build in drive mode (the manual checks, scripted)\ndenext task test:lan-dev       # `desktop dev --lan`: the proxied page keeps its bridge (secureStore)",
       "runFrom": "example"
     },
     {

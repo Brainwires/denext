@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **denext pins runtime `3.0.0-rc.4`** (from `3.0.0-rc.3`; the Deno toolchain and the Deno
+  Desktop runtime move together). It is built from Deno 2.9.8, so the stock Deno the desktop
+  runtime packages with, the `setup-deno` version and the `denoland/deno` image tag denext
+  generates are now 2.9.8 (`deno upgrade --version 2.9.8` for `denext desktop package`).
+  `3.0.0-rc.4` brings:
+  - Deno 2.9.8: X.509 v1 TLS certificates handled as OpenSSL does, safer npm symlinking, zsh
+    completions, `mock.reset()`, and the distrusted eMudhra CAs removed;
+  - page downloads from a custom-scheme app origin (`desktop.app.origin`) on every backend: WebKit
+    (WKWebView on macOS, WebKitGTK on Linux) now downloads a `Content-Disposition: attachment`
+    response, and CEF and WebView2 an `<a download>` link to the app's scheme, each through the
+    platform's save dialog (KNOWN-LIMITATIONS drops the WebKit entry, and the kitchen sink's window
+    test now runs the attachment check on every backend);
+  - rustls-webpki 0.103.16 in the desktop runtime;
+  - a build with Rust 1.99.1.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added

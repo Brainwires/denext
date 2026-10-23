@@ -7,7 +7,7 @@ lead: denext ships Deno Desktop at Electron parity today on a prebuilt runtime f
 A denext desktop app is a [Deno Desktop](https://deno.com) app. Stock Deno Desktop already gives
 you a native window around your app with no bundled Chromium. denext goes further, to Electron
 parity, by shipping a prebuilt **Deno Desktop runtime** built from two public forks:
-[Brainwires/deno](https://github.com/Brainwires/deno) (Deno 2.9.7 plus the desktop patches) and
+[Brainwires/deno](https://github.com/Brainwires/deno) (Deno 2.9.8 plus the desktop patches) and
 [Brainwires/laufey](https://github.com/Brainwires/laufey) (the native window hosts Deno Desktop
 uses). You don't install anything for it: `denext desktop` and the packaging scripts fetch it,
 verify it and use it.
@@ -90,7 +90,7 @@ Three layers carry the changes below:
 - **laufey**: the native hosts (WKWebView, WebView2, WebKitGTK, CEF) and their C ABI. Built from
   `denext/integration` on [Brainwires/laufey](https://github.com/Brainwires/laufey).
 - **Deno runtime**: `libdenort` and the `Deno.desktop` APIs on top of laufey. Built from
-  `denext/v2.9.7` on [Brainwires/deno](https://github.com/Brainwires/deno).
+  `development-denext` on [Brainwires/deno](https://github.com/Brainwires/deno).
 - **denext**: the pin, the launcher and packager, and the `denext/desktop` and `denext/mobile`
   APIs your app calls.
 
@@ -412,12 +412,10 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **What:** a page's `<a download>`, a `Content-Disposition: attachment` response or a blob export
   opens the platform's save dialog on every backend (from `2.9.7-denext.22`), only for the app's
   own origins, with a sanitized file name and at most three save dialogs per window in 10 s.
-  **Not yet on WebKit** (WKWebView on macOS, WebKitGTK on Linux): a `Content-Disposition:
-  attachment` response from a custom-scheme app origin (`desktop.app.origin`, such as
-  `myapp://app`) opens no save dialog and is not downloaded; WebView2 and CEF download it. An
-  `<a download>` link and a blob export work on every backend. Until the runtime handles it, fetch
-  the response and save it with `saveFile` (or export it as a blob with `<a download>`), or save it
-  into the app's folders with `downloadToFile` (see KNOWN-LIMITATIONS).
+  From `3.0.0-rc.4` that includes a custom-scheme app origin (`desktop.app.origin`, such as
+  `myapp://app`) on every backend: WebKit (WKWebView on macOS, WebKitGTK on Linux) downloads its
+  `Content-Disposition: attachment` responses, and CEF and WebView2 its `<a download>` links;
+  before, each of those opened no save dialog.
 - **Why:** under the stock runtime such a download is inert or cancelled, so an app's "Export" or
   "Download" button does nothing in the window, though it works in a browser.
 - **Layer:** laufey.
@@ -736,13 +734,13 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   release's `manifest.json` (`cli`) and `SHA256SUMS` and attested like the runtime archives. Its
   `deno --version` and `Deno.version.deno` are the release (`2.9.7-denext.15`, or from
   `3.0.0-rc.1` the fork's own version); where a check needs a Deno release, denext uses the one
-  the build is made from (`2.9.7`, the pin's `deno`). It is the binary
+  the build is made from (`2.9.8`, the pin's `deno`). It is the binary
   [denext's Deno toolchain](/docs/toolchain) pins, and its `deno upgrade` is off from
   `3.0.0-rc.1` (it would replace the build with stock Deno).
 - **Why:** the CLI-side features (Vitest / Jest compatibility in `deno test`, `Deno.SQL` in
   `deno run`) exist only in this build; the stock CLI does not have them.
 - **Layer:** the Deno CLI, a separate download from the runtime archives. `deno desktop` with it
-  packages against the same release's runtime archive as the stock 2.9.7 CLI does.
+  packages against the same release's runtime archive as the stock 2.9.8 CLI does.
 - **Upstream:** planned for the features that would help everyone.
 
 ### Vitest and Jest under `deno test`
@@ -787,13 +785,13 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 ## Runtime releases
 
 Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`;
-currently `3.0.0-rc.3`).
+currently `3.0.0-rc.4`).
 
 **Naming.** Up to `2.9.7-denext.22` a release was named after the Deno release it was built from
 plus `-denext.<n>`. The next release is `3.0.0-rc.1`, then `3.0.0-rc.2` and so on: the fork's own
 version, tagged `denext-runtime-v3.0.0-rc.1`, with its archives named after it
 (`deno-desktop-runtime-3.0.0-rc.1-<target>-<backend>.tar.gz`). `3.0.0` final carries Deno's planned
-3.0 milestone. The Deno release a runtime is built from stays in the pin's `deno` field (2.9.7), and
+3.0 milestone. The Deno release a runtime is built from stays in the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and
 that is still the stock `deno desktop` it packages with. Semver orders the two schemes in release
 order (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0`), which is how denext compares runtime versions.
 Upstream Deno releases a `3.0.0` too, so from `3.0.0-rc.3` denext tells its own Deno from upstream's
@@ -828,6 +826,7 @@ by an identity marker rather than the version: `Deno.build.denext` and a
 | `3.0.0-rc.1`      | The fork's own version (`3.0.0-rc.N`; the archives are named after it). `Deno.SQL` reports result column types (what `denext/prisma-adapter` needs), Linux reports window blur and signs in with USB security keys natively, the native TypeScript 7 check resolves absolute `file:` imports and also checks `--doc` code blocks and `deno bundle --check`, `deno bundle --define`, CEF 150.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `3.0.0-rc.2`      | `--max-memory`, `--max-cpu-time` and `--max-time`; `--allow-net-connect` / `--allow-net-listen`; the native TypeScript 7 check keeps its generated project across edits, checks an import-map JSX runtime natively and adapts a `tsconfig.json`'s removed options. Security: the rustls, rustls-webpki and webpki-roots advisories fixed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `3.0.0-rc.3`      | An identity marker: `deno --version` ends with a `denext 3.0.0-rc.3 (Brainwires)` line and `Deno.build.denext` holds the version (the release manifest records both under `cli.identity`), which is how denext tells its runtime from upstream Deno of the same number. TypeScript 7 is the language server's own default (`deno lsp` runs tsgo unless `deno.unstable` lists features without `tsgo-lsp`, or `DENO_UNSTABLE_TSGO_LSP=0`), and it no longer writes or rewrites a project's root `tsconfig.json`. A `node --watch` / `deno run --watch` child keeps its parent's IPC channel across restarts (Unix). On Windows a `file:` link on another drive keeps its import map. `createIpcHandle` reports a failed handle's errno, and an npm `bin` named `..` is skipped. `deno check -- <files>` checks those files, and the native check's TS2307 for an unresolvable import carries Deno's `deno add` hint. laufey `ef41855`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `3.0.0-rc.4`      | Built from Deno 2.9.8 (X.509 v1 TLS certificates handled as OpenSSL does, safer npm symlinking, zsh completions, `mock.reset()`, the distrusted eMudhra CAs removed). Page downloads from a custom-scheme app origin on every backend: WebKit (macOS, Linux) downloads a `Content-Disposition: attachment` response, and CEF and WebView2 an `<a download>` link to the app's scheme. rustls-webpki 0.103.16 in the desktop runtime; built with Rust 1.99.1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
 executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages
@@ -903,12 +902,12 @@ The Deno cache is `DENO_DIR` when it is set, otherwise the default Deno itself u
 (`~/Library/Caches/deno`, `%LOCALAPPDATA%\deno`, `$XDG_CACHE_HOME/deno` or `~/.cache/deno`). The
 backend comes from `desktop.backend` in `deno.json` (`webview` by default, or `cef`).
 
-**Deno 2.9.7 exactly.** `deno desktop` embeds the runtime, so the runtime and the CLI must be the
+**Deno 2.9.8 exactly.** `deno desktop` embeds the runtime, so the runtime and the CLI must be the
 same Deno version. Packaging with any other version stops before the build with the fix:
-`deno upgrade --version 2.9.7`. `denext desktop run` and `dev` instead warn and build the window
-on the stock runtime (point `DENO_BIN` at a 2.9.7 binary to keep the pinned one).
+`deno upgrade --version 2.9.8`. `denext desktop run` and `dev` instead warn and build the window
+on the stock runtime (point `DENO_BIN` at a 2.9.8 binary to keep the pinned one).
 
-**Cross-OS packaging.** 2.9.7's CLI looks a `LAUFEY_DEV_DIR` backend up under the host's
+**Cross-OS packaging.** 2.9.8's CLI looks a `LAUFEY_DEV_DIR` backend up under the host's
 executable name (`laufey_webview.exe` on Windows, `laufey_webview` elsewhere), then copies the
 backend's directory into the app and renames the binary to the app's launcher. For a Windows app
 packaged on macOS or Linux, or a Linux app on Windows, denext offers the backend under the host's
@@ -952,7 +951,7 @@ CEF app out as:
   libcef.dll, ...
 ```
 
-The stock 2.9.7 CLI names the runtime `<App>.dll` and leaves `laufey.dll` in place, so denext's
+The stock 2.9.8 CLI names the runtime `<App>.dll` and leaves `laufey.dll` in place, so denext's
 package script and `denext desktop run` / `dev` move the two and stamp the executable's resources
 (TypeScript, so it works from any host) whenever `laufey.dll` is in the bundle; a bundle that
 already has `<App>.runtime.dll` is used as it is. The signing step signs every PE file, both
@@ -1017,7 +1016,7 @@ upstream version.
 - **Public source.** Both forks are public, and each runtime release names the exact Deno and
   laufey commits it was built from.
 - **Reproducible CI.** The release workflow
-  ([`.github/workflows/denext_runtime.yml`](https://github.com/Brainwires/deno/blob/denext/v2.9.7/.github/workflows/denext_runtime.yml)
+  ([`.github/workflows/denext_runtime.yml`](https://github.com/Brainwires/deno/blob/development-denext/.github/workflows/denext_runtime.yml)
   in the Deno fork) builds every target on its own runner, checks architectures and dynamic
   dependencies, and packages and launches a small app with the stock `deno desktop` on both
   backends before anything is published. The fork's `DENEXT.md` describes how to reproduce a

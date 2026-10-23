@@ -627,7 +627,7 @@ export async function buildDesktopBundle(
 /**
  * The Windows CEF bundle layout behind CEF's bootstrap. A runtime whose laufey runs web content
  * in Chromium's sandbox on Windows ships CEF's `bootstrap.exe` as laufey's CEF executable and the
- * CEF host as `laufey.dll` beside it. The stock `deno desktop` (2.9.7) names the executable
+ * CEF host as `laufey.dll` beside it. The stock `deno desktop` (2.9.8) names the executable
  * `<App>.exe` and writes the runtime to `<App>.dll`, but the bootstrap loads its client, the
  * host, as `<App>.dll`, and the host loads the runtime as `<App>.runtime.dll`. So this moves
  * `<App>.dll` to `<App>.runtime.dll` and `laufey.dll` to `<App>.dll`, and gives `<App>.exe` the
