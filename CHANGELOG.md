@@ -35,9 +35,8 @@ and this project adheres to
     `tsconfig.json`;
   - a `node --watch` / `deno run --watch` child that keeps its parent's IPC channel across
     restarts (Unix);
-  - on Windows, a `file:` link on another drive that keeps its import map, so a project and its
-    `file:` imports no longer need to share a drive on the toolchain (the known limitation and CI's
-    `TEMP` / `TMP` workaround go; stock Deno 2.9 still has it);
+  - on Windows, a `file:` link on another drive keeps its import map (denext's own build path still
+    needs a project and its local denext checkout on one drive; see KNOWN-LIMITATIONS);
   - `createIpcHandle` reporting a failed handle's errno, and an npm `bin` named `..` skipped;
   - `deno check -- <files>` checking those files, and the native check's TS2307 for an
     unresolvable import carrying Deno's `deno add` hint.

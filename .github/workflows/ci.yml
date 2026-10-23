@@ -681,12 +681,21 @@ jobs:
         # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
         run: deno run -A scripts/ci/toolchain-on-path.ts
 
+      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: a temp
+      # app on another drive than this checkout still fails to build (denext's own cross-drive
+      # paths; the runtime's `file:` link fix from rc.3 is not enough). runner.temp has no 8.3
+      # short names.
       - name: Unit tests
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: deno task test:unit
 
       - name: Integration tests
         if: ${{ !cancelled() }}
         env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
           DENEXT_TEST_COMPILED_CLI: "1"
           DENEXT_TEST_REMOTE_CLI: "1"
         run: deno task test:integration
