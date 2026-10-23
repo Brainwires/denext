@@ -11,6 +11,8 @@
 // child exits, which removes the one stall this harness is known to cause (the Windows pipe
 // inheritance described in `tests/helpers/bounded-build.ts`).
 
+import { exitedOutput as readExited } from "../../src/build/exited-output.ts";
+
 /** The default deadline: minutes past the slowest healthy runner's time for one test (several builds). */
 const TEST_DEADLINE_MS = 600_000;
 
@@ -40,40 +42,14 @@ function track<T>(what: string, p: Promise<T>): Promise<T> {
 /** How long `output()` reads a pipe after the child has exited (see {@linkcode exitedOutput}). */
 const DRAIN_AFTER_EXIT_MS = 10_000;
 
-/** Read `stream` to its end, or until `graceMs` after `exited` resolves. */
-async function readPipe(
-  stream: ReadableStream<Uint8Array>,
-  exited: Promise<unknown>,
-  graceMs: number,
-): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  const all = (async () => {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      chunks.push(value);
-    }
-  })().catch(() => {});
-  let grace: ReturnType<typeof setTimeout> | undefined;
-  const late = exited.then(() => new Promise<void>((r) => grace = setTimeout(r, graceMs)));
-  await Promise.race([all, late]);
-  clearTimeout(grace);
-  await reader.cancel().catch(() => {});
-  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-  let at = 0;
-  for (const c of chunks) out.set(c, (at += c.length) - c.length);
-  return out;
-}
-
 /**
  * `new Deno.Command(cmd, options).output()`, except that the pipes are read for at most
- * `graceMs` once the child has exited. On Windows a process another thread of this process
- * spawned meanwhile can hold an inherited copy of the child's stdout write end for as long as it
- * lives (an esbuild service lives as long as the process), and `output()` would wait for it. What
- * the child wrote is in the pipe by the time it exits.
+ * `graceMs` once the child has exited (`src/build/exited-output.ts`): on Windows a process
+ * another thread of this process spawned meanwhile can hold an inherited copy of the child's
+ * stdout write end for as long as it lives (an esbuild service lives as long as the process), and
+ * `output()` would wait for it.
  */
-async function exitedOutput(
+function exitedOutput(
   Original: typeof Deno.Command,
   cmd: string | URL,
   options: Deno.CommandOptions = {},
@@ -83,19 +59,7 @@ async function exitedOutput(
   const stderr = options.stderr ?? "piped";
   const child = new Original(cmd, { ...options, stdin: options.stdin ?? "null", stdout, stderr })
     .spawn();
-  const [status, out, err] = await Promise.all([
-    child.status,
-    stdout === "piped" ? readPipe(child.stdout, child.status, graceMs) : null,
-    stderr === "piped" ? readPipe(child.stderr, child.status, graceMs) : null,
-  ]);
-  const piped = (name: string, bytes: Uint8Array | null) => () => {
-    if (bytes === null) throw new TypeError(`${name} is not piped`);
-    return bytes;
-  };
-  return Object.defineProperties({ ...status } as Deno.CommandOutput, {
-    stdout: { get: piped("stdout", out), enumerable: true },
-    stderr: { get: piped("stderr", err), enumerable: true },
-  });
+  return readExited(child, { stdout: stdout === "piped", stderr: stderr === "piped" }, graceMs);
 }
 
 let tracking = false;

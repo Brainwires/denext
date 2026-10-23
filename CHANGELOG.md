@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`createTestApp` and the boundary crawl no longer hang on Windows beside another spawn.** The
+  `deno info` graph crawl (an App Router `createTestApp`, `probeApp`, `denext build` / `dev`) read
+  its output until the pipes closed. On Windows a process another thread of the same process
+  spawned at that moment (an esbuild service in a parallel `deno test` file, a server, a sidecar)
+  inherits those pipes and kept them open for its whole life, so the crawl, and a
+  `deno test --parallel` run, waited forever. It now reads until `deno info` exits, at most a few
+  seconds past it; a grandchild it leaves behind on any OS no longer holds it either.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added
