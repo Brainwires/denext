@@ -20,6 +20,7 @@ import {
 } from "../../build/scaffold-monorepo.ts";
 import { applyUpgrade } from "../../build/upgrade.ts";
 import { multiSelect } from "../../build/multi-select.ts";
+import { applyJailExceptions } from "../../build/jail-scripts.ts";
 
 /** One scaffold-time feature toggle: the option it sets, its flag, and its label. */
 export interface ScaffoldFeature {
@@ -141,6 +142,9 @@ async function runCreate(
   const { written, notes: held } = await scaffoldEligible(options, mode, monorepo);
   for (const p of written) console.log(`   + ${p}`);
   for (const note of held) console.log(`\n  ${note}`);
+  // `init` scaffolds next to an existing package.json: its dependencies may need exceptions.
+  const [jail, ...jailMore] = (await applyJailExceptions(dir)).lines;
+  if (jail) console.log(`\n  ${[jail, ...jailMore.map((l) => `    ${l}`)].join("\n")}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
   const notes = [...featureNotes(on), ...(template === "lustre" ? [LUSTRE_NOTE] : [])];
   console.log(

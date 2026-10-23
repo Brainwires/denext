@@ -17,6 +17,7 @@ import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
 import { mfs } from "./migrate-io.ts";
+import { applyJailExceptions, type JailReport } from "./jail-scripts.ts";
 import {
   type MappedViteEmitter,
   readViteConfig,
@@ -522,6 +523,12 @@ export interface MigrateResult {
   capacitor?: CapacitorMigrateInfo;
   /** Why `--enable-capacitor` was not applied (a Pages Router or Remix-family app). */
   capacitorSkipped?: string;
+  /**
+   * Present when a dependency's install script needs a lifecycle-script jail exception
+   * (src/build/jail-exceptions.ts): whether the jail is on for the project, and the
+   * `supplyChain.jailScripts.packages` entries written into deno.json (or left to the user).
+   */
+  jailScripts?: JailReport;
 }
 
 /** How the app's `next.config.*` translated into `denext.config.ts`. */
@@ -1445,7 +1452,9 @@ export async function migrateProject(
   options: MigrateOptions = {},
 ): Promise<MigrateResult> {
   checkCapacitorFlags(options);
-  const r = await migrateAnyProject(dir, options);
+  const migrated = await migrateAnyProject(dir, options);
+  const jail = await applyJailExceptions(dir, { fs: mfs, edit: !migrated.denoJsonExists });
+  const r = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
   if (!options.capacitor || r.capacitor) return r;
   return { ...r, capacitorSkipped: capacitorSkipReason(r) };
 }

@@ -1156,7 +1156,12 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   packages as Node.js does (hoisted `node_modules`, Node's export conditions, extensionless and
   `tsconfig` `paths` imports, git / tarball dependencies, the project's own lifecycle scripts);
   everywhere it runs a CommonJS `.js` file as CommonJS and serves `better-sqlite3` over the built-in
-  SQLite: https://denext.dev/docs/toolchain.
+  SQLite: https://denext.dev/docs/toolchain. A dependency's approved lifecycle script runs jailed
+  (no network, writes only under `node_modules`; on by default from runtime 3.0.0-rc.5):
+  `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
+  packages (puppeteer, sharp, Prisma's engines, electron, …) need and `denext doctor` flags a
+  missing one; never turn the jail off for them:
+  https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's

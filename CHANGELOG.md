@@ -8,6 +8,24 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Ready for the lifecycle-script jail.** denext's Deno runs a dependency's approved install
+  script jailed (a scrubbed environment, a scratch `HOME`, writes only under `node_modules`, no
+  network), on request up to runtime `3.0.0-rc.4` and by default from `3.0.0-rc.5`. denext now
+  carries a reviewed list of the packages whose scripts need more (puppeteer, Playwright's browser
+  packages, Cypress, Electron, Prisma's engines and client, sharp, better-sqlite3, sqlite3, canvas,
+  keytar, node-pty, re2, node-sass, `@sentry/cli`, chromedriver, ffmpeg-static,
+  `@tensorflow/tfjs-node`, msw, lefthook, simple-git-hooks), each with the narrowest
+  `supplyChain.jailScripts.packages` exception (`net`, the environment variables it reads, the
+  project directories it writes). `denext migrate`, `create` / `init` and `add` write the missing
+  ones into deno.json when the jail is on for the project (comments kept; migrate lists them for
+  review, and prints the JSON when it keeps a hand-authored deno.json), and only say which will be
+  needed while the jail is off. `denext doctor` flags a listed dependency with no exception, and
+  `denext doctor --install-log <file>` explains an install's failed scripts as jail failures with
+  the exception to add. denext never turns the jail off for you. See
+  https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
+
 ## [4.7.1] - 2026-10-23
 
 ### Added

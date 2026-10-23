@@ -851,6 +851,12 @@
           "name": "report",
           "type": "boolean",
           "description": "Print a markdown health report (checks, every route's conformance, the last build's client bundle by chunk); with --json, the same data as JSON"
+        },
+        {
+          "name": "install-log",
+          "type": "string",
+          "valueName": "<file>",
+          "description": "Explain the dependencies' lifecycle scripts that failed in this captured install output (`denext install 2>&1 | tee install.log`) as lifecycle-script jail failures"
         }
       ],
       "positionals": [
