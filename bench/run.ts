@@ -121,7 +121,9 @@ function argMaxLoad(): number {
 async function waitForIdle(maxLoad: number): Promise<void> {
   if (Deno.args.includes("--no-wait")) return;
   const deadline = Date.now() + 30 * 60_000;
-  while (!machineIdle(maxLoad, deadline)) await new Promise((r) => setTimeout(r, 10_000));
+  while (!machineIdle(maxLoad, deadline)) {
+    await new Promise((r) => setTimeout(r, 10_000));
+  }
 }
 
 /** One poll: idle → true; over the deadline → throw; otherwise log and report false. */
@@ -153,6 +155,10 @@ let browser: BrowserData | undefined;
 let layer1Md = "", layer3Md = "";
 if (layers.has("1") || layers.has("3")) {
   prov.next = await nextVersion();
+  prov.react = JSON.parse(
+    await Deno.readTextFile(join(BENCH, "node_modules/react/package.json")),
+  ).version;
+  if (!layers.has("3")) Deno.env.set("BENCH_SKIP_TIMING", "1");
   browser = await runJson(DENO, [
     "run",
     "-A",
@@ -209,7 +215,21 @@ if (layers.has("real")) {
 }
 
 // ── Assemble ─────────────────────────────────────────────────────────────────
-const summary = browser ? [summarySection(browser, realApp)] : [];
+if (!layers.has("2") || !layers.has("3")) {
+  sections.push([
+    `## Layers not re-run in this report`,
+    ``,
+    `${
+      ["2 (SSR throughput)", "3 (client runtime)"].filter((_, i) => !layers.has(String(i + 2)))
+        .join(" and ")
+    } ${
+      layers.has("2") || layers.has("3") ? "was" : "were"
+    } not run here: timings are only valid on a quiet machine (1-minute load < 2) and this`,
+    `run was bytes-only. The last full timing run is in \`bench/results/\` (2026-09-04, Next.js 16.3.0).`,
+    ``,
+  ].join("\n"));
+}
+const summary = browser ? [summarySection(browser, realApp, layers.has("3"))] : [];
 const report = [headerSection(prov), ...summary, ...sections].join("\n");
 
 const resultsDir = join(BENCH, "results");

@@ -248,12 +248,12 @@ const PILLARS: Pillar[] = [
     id: "lightweight",
     title: "Lightweight by design",
     intro:
-      "denext brings its own small React 19-compatible core instead of React + ReactDOM + a framework runtime, so it does more and still ships less. Measured on examples/hello against Next.js 16.3 + React 19.2 (bench/REPORT.md):",
+      "denext brings its own small React 19-compatible core instead of React + ReactDOM + a framework runtime, so it does more and still ships less. Measured on examples/hello against Next.js 16.4.2 + React 19.3.1, gzipped (bench/REPORT.md):",
     cards: [
       {
-        title: "19.6 KB shared runtime",
+        title: "23.9 KB shared runtime",
         body:
-          "About 7× less JavaScript than the same app on Next.js (136.9 KB), and each later navigation costs about 1 KB. On a library-heavy app (recharts, react-hook-form, Radix) routes ship 1.8–4.9× less.",
+          "About 5.8× less JavaScript than the same app on Next.js 16.4.2 (138.8 KB, both gzipped), and each later navigation costs about 1 KB. On a library-heavy app (recharts, react-hook-form, Radix) routes ship 1.7–3.4× less.",
       },
       {
         title: "0 KB on a static page",

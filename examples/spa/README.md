@@ -58,7 +58,8 @@ denext desktop run          # wraps out/ in a native window (see examples/native
 Because denext ships its **own** small React-equivalent instead of React +
 ReactDOM, the client download is a fraction of the size. Benchmarked on **this
 example's app**, the same code bundled with the same bundler (`deno bundle`,
-minified), gzipped. "First load" is the entry and every chunk it imports
+minified), raw and gzipped, against React 19.3.1 + ReactDOM 19.3.1 (what `npm:react@19`
+resolves today). "First load" is the entry and every chunk it imports
 statically; "everything loadable" adds the chunks it can `import()` on demand
 (the class-component runtime, Fragment refs, the iOS scroll fix). A chunk no
 import can reach is not counted: `denext build` does not write it.

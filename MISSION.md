@@ -43,9 +43,9 @@ Four pillars, in order:
    [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md).
 
 4. **Lightweight.** denext brings its own small React 19-compatible core instead of React +
-   ReactDOM + a framework runtime. On `examples/hello` the shared client runtime is **19.6 KB**
-   gzipped against 136.9 KB for the same routes on Next.js 16.3 + React 19.2 (about 7× less); a
-   page with no interactivity ships **0 KB** of JavaScript; a library-heavy app ships 1.8–4.9×
+   ReactDOM + a framework runtime. On `examples/hello` the shared client runtime is **23.9 KB**
+   gzipped against 138.8 KB for the same routes on Next.js 16.4.2 + React 19.3.1 (about 5.8× less); a
+   page with no interactivity ships **0 KB** of JavaScript; a library-heavy app ships 1.7–3.4×
    less; SSR throughput and time to interactive are on par or faster
    ([bench/REPORT.md](./bench/REPORT.md)). The framework's runtime carries **no npm
    dependencies**, CI-enforced, so what ships is auditable end to end. First-party Rust→WASM
