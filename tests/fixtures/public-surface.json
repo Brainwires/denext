@@ -6626,6 +6626,7 @@
     "StoreContractError:class",
     "StoreFactory:typeAlias",
     "TestApp:interface",
+    "TestAppOptions:interface",
     "TestClient:interface",
     "TestClientOptions:interface",
     "TestElement:interface",
