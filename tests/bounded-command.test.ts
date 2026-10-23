@@ -61,11 +61,12 @@ Deno.test("runBounded: at the deadline the whole tree is killed and the output s
 /**
  * A script that starts a grandchild holding its stdout (writing its pid to `pidFile`), says it is
  * done, and exits at once: the pipe stays open after the exit, as when a process another thread
- * spawned inherited this child's pipe handle.
+ * spawned inherited this child's pipe handle. The grandchild is detached: on Windows Deno puts an
+ * attached child in a job object that is killed with its parent.
  */
 function exitingWithHeldPipes(pidFile: string): string {
   return `const g = new Deno.Command(Deno.execPath(), { args: ["eval", ` +
-    `"await new Promise((r) => setTimeout(r, 120000))"], stdout: "inherit", stderr: "inherit" }).spawn();\n` +
+    `"await new Promise((r) => setTimeout(r, 120000))"], stdout: "inherit", stderr: "inherit", detached: true }).spawn();\n` +
     `Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));\n` +
     `console.log("phase: done");\nDeno.exit(0);\n`;
 }

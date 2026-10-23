@@ -52,12 +52,13 @@ Deno.test("watchTests: a stalled test fails at its deadline, naming the open sub
 Deno.test("watchTests: output() returns shortly after the child exits while another process holds its stdout", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_watchdog_held_" });
   const pidFile = join(dir, "pid");
-  // The child starts a grandchild that inherits its stdout and outlives it, then exits.
+  // The child starts a grandchild that inherits its stdout and outlives it (detached: on Windows an
+  // attached one is in a job object killed with its parent), then exits.
   const script = join(dir, "exits.ts");
   await Deno.writeTextFile(
     script,
     `const g = new Deno.Command(Deno.execPath(), { args: ["eval", ` +
-      `"await new Promise((r) => setTimeout(r, 120000))"], stdout: "inherit" }).spawn();\n` +
+      `"await new Promise((r) => setTimeout(r, 120000))"], stdout: "inherit", detached: true }).spawn();\n` +
       `Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));\n` +
       `console.log("written before the exit");\nDeno.exit(3);\n`,
   );
