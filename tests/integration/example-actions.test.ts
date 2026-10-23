@@ -5,9 +5,9 @@
 // "use client" island (useActionState/useOptimistic) shipped a client bundle.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
 import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const APP = fromFileUrl(new URL("../../examples/actions", import.meta.url));
 
@@ -75,7 +75,7 @@ Deno.test({
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;
     const ctx: Ctx = { origin: started.origin, actionUrl: "" };

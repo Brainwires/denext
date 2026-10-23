@@ -22,6 +22,10 @@ import {
 } from "../src/build/module-graph.ts";
 import { compatModuleList } from "../src/build/pipeline-shared.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 /** Write `files` (path → contents) under `root`. */
 async function write(root: string, files: Record<string, string>): Promise<void> {

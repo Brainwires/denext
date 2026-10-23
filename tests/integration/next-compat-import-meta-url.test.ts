@@ -5,8 +5,8 @@
 
 import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const FONT = "not really a font, but bytes beside the route\n";
 
@@ -53,7 +53,7 @@ Deno.test({
       await Deno.mkdir(join(built, rel, ".."), { recursive: true });
       await Deno.writeTextFile(join(built, rel), src);
     }
-    await build(built);
+    await buildInChild(built);
     // The project and its `.denext` move together (a container image, a compiled binary): the
     // pins are relative to the bundle, not the build machine's absolute path.
     const dir = join(root, "moved");

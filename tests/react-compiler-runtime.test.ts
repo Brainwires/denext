@@ -18,6 +18,10 @@ import { defaultLoader } from "../src/server/mod.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { useMemoCache } from "../src/runtime/hooks/use-memo-cache.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const ROOT = new URL("../", import.meta.url);
 

@@ -11,8 +11,8 @@
 
 import { assert, assertRejects, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
-import { staticExport } from "../../src/build/export.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
+import { exportInChild } from "../helpers/bounded-build.ts";
 
 const FILES: Record<string, string> = {
   "deno.json": JSON.stringify({ nodeModulesDir: "auto", imports: {} }),
@@ -120,7 +120,7 @@ Deno.test({
   const dir = await Deno.makeTempDir({ prefix: "denext_rn_app_router_" });
   try {
     await writeFixture(dir, "{ reactNative: true }");
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));
     // The server render: react-native-web's markup, `.web.*` first, `__DEV__` defined.
     assertStringIncludes(html, 'data-rnw="RNW_VIEW"');
@@ -155,7 +155,7 @@ Deno.test({
   const dir = await Deno.makeTempDir({ prefix: "denext_rn_app_router_off_" });
   try {
     await writeFixture(dir, "{ compatibilityMode: true }");
-    await assertRejects(() => staticExport(dir));
+    await assertRejects(() => exportInChild(dir));
   } finally {
     await stopNextCompat();
     await Deno.remove(dir, { recursive: true }).catch(() => {});

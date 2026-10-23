@@ -2,9 +2,9 @@
 // Flight refs a Server Component hands its live islands — every HTTP wire, no browser.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
 import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const APP = fromFileUrl(new URL("../../examples/typed-api", import.meta.url));
 
@@ -179,7 +179,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
-  await build(APP);
+  await buildInChild(APP);
   const ac = new AbortController();
   const { origin, server } = await startProdOrigin(APP, ac.signal);
   const ctx: Ctx = { origin, html: "" };

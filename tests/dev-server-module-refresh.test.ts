@@ -9,6 +9,10 @@ import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 

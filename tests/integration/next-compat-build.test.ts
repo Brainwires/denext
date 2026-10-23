@@ -7,6 +7,10 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { buildNextCompatPages, renderNextCompatPage } from "../../src/build/next-compat-build.ts";
+import { watchTests } from "../helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 Deno.test("next-compat build: react + react-dom/server importers resolve to single React", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nc_build_" });

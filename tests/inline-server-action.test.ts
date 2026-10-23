@@ -17,10 +17,10 @@ import {
 } from "../src/build/inline-server-action.ts";
 import { generateServerStub } from "../src/build/client-imports.ts";
 import { serverStubPlugin, stopNextCompat } from "../src/build/next-compat.ts";
-import { build } from "../src/build/build.ts";
 import { ACTION_PREFIX, getServerAction, isServerAction } from "../src/runtime/server-action.ts";
 import { resolveAction } from "../src/server/action-handler.ts";
 import { sealBoundValues } from "../src/server/action-bound.ts";
+import { buildInChild } from "./helpers/bounded-build.ts";
 
 const MOD = "file:///app/page.tsx";
 
@@ -241,7 +241,7 @@ Deno.test({
       `export default function Page() { return <main><Widget /></main>; }\n`,
   });
   try {
-    const err = await assertRejects(() => build(dir), Error);
+    const err = await assertRejects(() => buildInChild(dir), Error);
     assertStringIncludes(err.message, INLINE_ACTION_IN_CLIENT_ERROR.split("\n")[0]);
     assertStringIncludes(err.message, "app/widget.tsx:3:3");
   } finally {

@@ -10,6 +10,10 @@ import { startSpaDevServer } from "../src/build/spa/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import type { DenextPlugin } from "../src/plugin/mod.ts";
 import { resetPlugins } from "../src/plugin/mod.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 /** Poll `cond` every 50 ms for at most `ms`. */
 async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {

@@ -10,8 +10,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const SOURCE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
 const APP = fromFileUrl(new URL("../../examples/.hello-prod-test", import.meta.url));
@@ -84,7 +84,7 @@ Deno.test({
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;
     const { origin } = started;

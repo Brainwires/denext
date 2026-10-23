@@ -3,8 +3,14 @@
 // at that moment (a `finally` that restores the value does not help the test that read it in
 // between). A test whose subject reads the environment or the working directory runs it here
 // instead, with its own env and cwd, and gets the result back as JSON.
+//
+// The child is bounded (`runBounded`): past its deadline its whole process tree is killed and the
+// call throws with what the child printed so far, where an unbounded wait would hold the CI job
+// until its own timeout. That also makes this the way to run a full app build or export outside
+// the test process (`tests/helpers/bounded-build.ts`).
 
 import { fromFileUrl, join, resolve } from "@std/path";
+import { runBounded } from "./bounded-command.ts";
 
 const REPO = new URL("../../", import.meta.url);
 
@@ -21,7 +27,12 @@ export interface ChildRun {
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** The child's working directory (default: this process's). */
   readonly cwd?: string;
+  /** How long the child may run before its tree is killed (default {@linkcode CHILD_DEADLINE_MS}). */
+  readonly timeoutMs?: number;
 }
+
+/** The default deadline of {@linkcode inChild}: minutes past the slowest healthy runner's time. */
+export const CHILD_DEADLINE_MS = 300_000;
 
 /** What the child returned, and what it wrote to stderr (its `console.warn` / `console.error`). */
 export interface ChildResult<T> {
@@ -55,27 +66,26 @@ export async function inChild<T = unknown>(run: ChildRun): Promise<ChildResult<T
     // Under the coverage tasks the child's coverage joins the run's (`DENEXT_CHILD_COVERAGE` names
     // the profile directory they collect into).
     const coverage = Deno.env.get("DENEXT_CHILD_COVERAGE");
-    const out = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "run",
-        "-A",
-        "--unstable-kv",
-        ...(coverage ? [`--coverage=${resolve(coverage)}`] : []),
-        "--config",
-        fromFileUrl(new URL("deno.json", REPO)),
-        main,
-      ],
-      cwd: run.cwd,
-      env,
-      clearEnv: true,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    const stdout = new TextDecoder().decode(out.stdout);
-    const stderr = new TextDecoder().decode(out.stderr);
+    const timeoutMs = run.timeoutMs ?? CHILD_DEADLINE_MS;
+    const out = await runBounded(Deno.execPath(), [
+      "run",
+      "-A",
+      "--unstable-kv",
+      ...(coverage ? [`--coverage=${resolve(coverage)}`] : []),
+      "--config",
+      fromFileUrl(new URL("deno.json", REPO)),
+      main,
+    ], { cwd: run.cwd, env, clearEnv: true, timeoutMs });
+    const { stdout, stderr } = out;
+    if (out.timedOut) {
+      throw new Error(
+        `child still running after ${timeoutMs} ms; its tree was killed. It printed:\n` +
+          `${stdout}\n${stderr}`,
+      );
+    }
     const line = stdout.split("\n").find((l) => l.startsWith(MARK));
     if (!out.success || line === undefined) {
-      throw new Error(`child failed (${out.code}):\n${stdout}\n${stderr}`);
+      throw new Error(`child failed:\n${stdout}\n${stderr}`);
     }
     return { value: JSON.parse(line.slice(MARK.length)) as T, stderr };
   } finally {

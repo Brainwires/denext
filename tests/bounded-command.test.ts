@@ -57,3 +57,38 @@ Deno.test("runBounded: at the deadline the whole tree is killed and the output s
     await removeTempDir(dir);
   }
 });
+
+/**
+ * A script that starts a grandchild holding its stdout (writing its pid to `pidFile`), says it is
+ * done, and exits at once: the pipe stays open after the exit, as when a process another thread
+ * spawned inherited this child's pipe handle.
+ */
+function exitingWithHeldPipes(pidFile: string): string {
+  return `const g = new Deno.Command(Deno.execPath(), { args: ["eval", ` +
+    `"await new Promise((r) => setTimeout(r, 120000))"], stdout: "inherit", stderr: "inherit" }).spawn();\n` +
+    `Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));\n` +
+    `console.log("phase: done");\nDeno.exit(0);\n`;
+}
+
+Deno.test("runBounded: a child that exits while another process holds its pipes returns after a short drain", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_bounded_held_" });
+  const pidFile = join(dir, "pid");
+  const script = join(dir, "exits.ts");
+  await Deno.writeTextFile(script, exitingWithHeldPipes(pidFile));
+  try {
+    const t0 = Date.now();
+    const r = await runBounded(Deno.execPath(), ["run", "-A", script], {
+      timeoutMs: 90_000,
+      drainMs: 1_000,
+    });
+    assertEquals([r.success, r.timedOut, r.pipesHeld], [true, false, true]);
+    assertStringIncludes(r.stdout, "phase: done");
+    assertEquals(r.stderr, "");
+    assert(Date.now() - t0 < 60_000, `returned ${Date.now() - t0} ms after the start`);
+  } finally {
+    try {
+      Deno.kill(Number(await Deno.readTextFile(pidFile)), "SIGKILL");
+    } catch { /* gone, or never started */ }
+    await removeTempDir(dir);
+  }
+});

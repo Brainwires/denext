@@ -6,7 +6,6 @@
 
 import { assert, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../../src/build/build.ts";
 import { serveEphemeral } from "../../src/build/prod-server.ts";
 import {
   assertNoReservedRouteIds,
@@ -15,6 +14,7 @@ import {
 } from "../../src/build/build-pipeline/context.ts";
 import { FLIGHT_BOOT_FILE } from "../../src/build/flight-boot.ts";
 import { routeId } from "../../src/build/paths.ts";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 /** A page that calls a hook itself: a whole-route client bundle, `<routeId>.js`. */
 const hookPage = (marker: string) =>
@@ -80,7 +80,7 @@ Deno.test({
   const dir = await Deno.makeTempDir({ prefix: "denext_reserved_bundles_" });
   try {
     await writeFixture(dir);
-    await build(dir);
+    await buildInChild(dir);
     const client = join(dir, ".denext", "client");
     const read = (name: string) => Deno.readTextFile(join(client, name));
     const flightRoute = await read("flight.js");

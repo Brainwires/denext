@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 /** Scaffold a throwaway app in `dir`: a deno.json aliasing `denext` to this checkout + `app/` files. */
 async function scaffoldApp(dir: string, files: Record<string, string>) {
@@ -75,7 +75,7 @@ export default function Eager() {
 }
 `,
     });
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     assertEquals(result.pages, 2);
 
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));

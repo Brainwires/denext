@@ -16,8 +16,8 @@ import {
 } from "../src/build/bundle.ts";
 import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
-import { staticExport } from "../src/build/export.ts";
 import type * as esbuild from "../src/build/esbuild/mod.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const IMPORT = `import { feature } from "denext/feature";\n`;
 
@@ -333,7 +333,7 @@ Deno.test({
       await Deno.mkdir(join(dir, name, ".."), { recursive: true });
       await Deno.writeTextFile(join(dir, name), src);
     }
-    await staticExport(dir);
+    await exportInChild(dir);
     const client = join(dir, "out", "_denext", "client");
     let all = "";
     for await (const e of Deno.readDir(client)) {
