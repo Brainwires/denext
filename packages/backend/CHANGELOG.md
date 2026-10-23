@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added
+
+- **The auto-REST routes in `@denext/openapi`'s document cover every schema of `rest.schemas`,**
+  not only the default one. Another schema's relations and functions are named with it
+  (`rest.api.things` row schemas, `rest_select_api.things` operation ids, `api.things` tags) and
+  their operations require the header that selects it (`Accept-Profile: api` on reads,
+  `Content-Profile: api` on writes). Where two schemas share a name the path describes the first
+  in `rest.schemas` order (`GET /rest/v1` with the other's `Accept-Profile` still describes it).
+  The default schema's operations are unchanged.
+
+### Changed
+
+- **The auto-REST request budget counts in the app's shared rate-limit store by default.** With
+  no `rest.rateLimit.store`, the counts go to the store `denextAuth({ rateLimit: { store } })`
+  configures (`redisRateLimitStore()`, `postgresRateLimitStore()`, `denoKvRateLimitStore()`), so
+  every replica spends one budget per client; only without one do they stay in memory per
+  process. The budget itself (who is counted, `max`, `windowMs`, the `429`) is unchanged.
+
 ### Security
 
 - **A presigned multipart part signs its exact `content-length`,** so the store refuses a part of

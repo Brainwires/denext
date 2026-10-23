@@ -91,7 +91,7 @@ type Op = Record<string, unknown> & {
 };
 
 Deno.test("openApiContribution: relations and functions as OpenAPI 3.1 operations", () => {
-  const { paths, schemas } = openApiContribution(catalog, "public", "/app/rest/v1");
+  const { paths, schemas } = openApiContribution(catalog, ["public"], "/app/rest/v1");
   assertEquals(Object.keys(paths).sort(), [
     "/app/rest/v1/notes",
     "/app/rest/v1/rpc/add",
@@ -135,6 +135,62 @@ Deno.test("openApiContribution: relations and functions as OpenAPI 3.1 operation
   });
   assert((paths["/app/rest/v1/rpc/bump"].post as Op).responses["204"], "void → 204");
   assert(schemas["rest.Error"], "PostgREST's error body");
+});
+
+Deno.test("openApiContribution: every schema of rest.schemas, the others behind their profile", () => {
+  const things: RestTable = { ...notes, schema: "api", name: "things" };
+  const shadow: RestTable = { ...notes, schema: "api", columns: [col("other", "text")] };
+  const multi: RestCatalog = {
+    ...catalog,
+    schemas: ["public", "api"],
+    tables: new Map([...catalog.tables, ["api", new Map([["things", things], ["notes", shadow]])]]),
+    functions: new Map([...catalog.functions, [
+      "api",
+      new Map([["ping", [{ ...fn("ping", "s"), schema: "api" }]], ["add", [fn("add", "v")]]]),
+    ]]),
+  };
+  const { paths, schemas } = openApiContribution(multi, ["public", "api"], "/rest/v1");
+  assertEquals(Object.keys(paths).sort(), [
+    "/rest/v1/notes",
+    "/rest/v1/rpc/add",
+    "/rest/v1/rpc/bump",
+    "/rest/v1/rpc/ping",
+    "/rest/v1/stats",
+    "/rest/v1/things",
+  ]);
+  type Param = { name: string; in: string; required?: boolean; schema?: { enum?: string[] } };
+  const params = (op: unknown) => (op as { parameters?: Param[] }).parameters ?? [];
+  const profile = (op: unknown) =>
+    params(op).filter((p) => /-Profile$/.test(p.name)).map((p) =>
+      `${p.name}=${p.schema?.enum?.join("|")}${p.required ? "!" : ""}`
+    );
+  const thing = paths["/rest/v1/things"];
+  assertEquals(profile(thing.get), ["Accept-Profile=api!"]);
+  for (const write of ["post", "patch", "delete"]) {
+    assertEquals(profile(thing[write]), ["Content-Profile=api!"], write);
+  }
+  assertEquals((thing.get as Op).operationId, "rest_select_api.things");
+  assertEquals((thing.get as Op).tags, ["api.things"]);
+  assertEquals(
+    (thing.get as Op).responses["200"].content!["application/json"].schema,
+    { type: "array", items: { $ref: "#/components/schemas/rest.api.things" } },
+  );
+  assert(schemas["rest.api.things"]);
+  // The default schema keeps its bare names and takes no profile header.
+  assertEquals(profile(paths["/rest/v1/notes"].get), []);
+  assertEquals((paths["/rest/v1/notes"].get as Op).operationId, "rest_select_notes");
+  assert(!schemas["rest.api.notes"], "a name the default schema also has is described once");
+  assertEquals(Object.keys(paths["/rest/v1/rpc/add"]).sort(), ["get", "post"], "public's add");
+  const ping = paths["/rest/v1/rpc/ping"];
+  assertEquals([profile(ping.get), profile(ping.post)], [["Accept-Profile=api!"], [
+    "Content-Profile=api!",
+  ]]);
+  assertEquals((ping.post as Op).operationId, "rest_rpc_api.ping");
+  // The public-only document is unchanged by the extra schema in the catalog.
+  assertEquals(
+    Object.keys(openApiContribution(multi, ["public"], "/rest/v1").paths).length,
+    4,
+  );
 });
 
 Deno.test("the plugin merges a registered source; sources:false and a failing source", async () => {
