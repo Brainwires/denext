@@ -5,8 +5,8 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -85,7 +85,7 @@ for (const compat of [false, true]) {
     Deno.test(`SPA ${path} export --platform ${platform} bundles ${want} only`, async () => {
       const dir = await project(spa(compat));
       try {
-        const out = (await staticExport(dir, { platform })).outDir;
+        const out = (await exportInChild(dir, { platform })).outDir;
         const { js } = await exported(out);
         const stamp = await Deno.readTextFile(join(out, "_denext", "platform.txt")).catch(() =>
           null
@@ -105,7 +105,7 @@ for (const compat of [false, true]) {
 Deno.test("SPA compat export: a module with no file for the target fails naming its variants", async () => {
   const dir = await project(spa(true, ["", ".web", ".desktop"]));
   try {
-    const err = await assertRejects(() => staticExport(dir, { platform: "android" }));
+    const err = await assertRejects(() => exportInChild(dir, { platform: "android" }));
     assertStringIncludes(
       (err as Error).message,
       "`./label` has `.ios` variant but none for android: add `label.ts` or `label.android.ts`",
@@ -130,7 +130,7 @@ for (const [platform, want] of CASES) {
   Deno.test(`next-compat App Router export --platform ${platform} renders and bundles ${want}`, async () => {
     const dir = await project(COMPAT_APP);
     try {
-      const got = await exported((await staticExport(dir, { platform })).outDir);
+      const got = await exported((await exportInChild(dir, { platform })).outDir);
       assertStringIncludes(got.html, want, "the SSR bundle picked the variant");
       assertStringIncludes(got.js, want, "the client bundle picked the variant");
       for (const other of LABELS.filter((l) => l !== want)) {
@@ -153,7 +153,7 @@ for (const [platform, want] of CASES) {
       "app/island.tsx": COMPAT_APP["app/island.tsx"].replace(`"./label"`, `"@/app/label"`),
     }, ALIAS_IMPORTS);
     try {
-      const got = await exported((await staticExport(dir, { platform })).outDir);
+      const got = await exported((await exportInChild(dir, { platform })).outDir);
       assertStringIncludes(got.html, want, "the SSR bundle picked the variant");
       assertStringIncludes(got.js, want, "the client bundle picked the variant");
       for (const other of LABELS.filter((l) => l !== want)) {
@@ -172,7 +172,7 @@ for (const [platform, want] of CASES) {
         "src/main.ts": `import { label } from "#label";\nconsole.log(label);\n`,
       }, ALIAS_IMPORTS);
       try {
-        const { js } = await exported((await staticExport(dir, { platform })).outDir);
+        const { js } = await exported((await exportInChild(dir, { platform })).outDir);
         assertStringIncludes(js, want);
         for (const other of LABELS.filter((l) => l !== want)) assert(!js.includes(other), other);
       } finally {
@@ -223,7 +223,7 @@ for (const [reactNative, option, platform, wantApp, wantPkg] of PACKAGE_CASES) {
   Deno.test(`${mode} export --platform ${platform} (platformExtensions: ${option}): app ${wantApp}, package ${wantPkg}`, async () => {
     const dir = await project(withPackage(reactNative, option));
     try {
-      const { js } = await exported((await staticExport(dir, { platform })).outDir);
+      const { js } = await exported((await exportInChild(dir, { platform })).outDir);
       assertStringIncludes(js, wantApp);
       assertStringIncludes(js, wantPkg);
       const others = [...LABELS, "PKG_PLAIN", "PKG_IOS", "PKG_WEB"];
@@ -266,7 +266,7 @@ for (const [spaMode, platform, carries] of PRELOAD_CASES) {
   Deno.test(`${spaMode ? "SPA" : "App Router"} export --platform ${platform}: desktop.preload ${carries ? "is" : "is not"} bundled`, async () => {
     const dir = await project(preloadApp(spaMode));
     try {
-      const out = (await staticExport(dir, { platform })).outDir;
+      const out = (await exportInChild(dir, { platform })).outDir;
       const preload = await Deno.readTextFile(join(out, "_denext", "desktop-preload.js")).catch(
         () => null,
       );

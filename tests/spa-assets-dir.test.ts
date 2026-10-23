@@ -10,11 +10,11 @@
 import { assert, assertEquals, assertFalse, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { Schema } from "effect";
-import { staticExport } from "../src/build/export.ts";
 import { startSpaProdServer } from "../src/build/spa.ts";
 import { collectViteManifest } from "../src/build/spa/vite-manifest.ts";
 import { spaClientPrefix } from "../src/build/spa/shared.ts";
 import { startSpaDevOnDir } from "./e2e/harness.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -131,7 +131,7 @@ for (const compat of [false, true]) {
   }, async () => {
     const dir = await spaFixture(compat, `, assetsDir: "assets", viteManifest: true, ota: true`);
     try {
-      await staticExport(dir);
+      await exportInChild(dir);
       const out = join(dir, "out");
       // Nothing is left under the default directory.
       assertFalse(await Deno.stat(join(out, "_denext", "client")).then(() => true, () => false));
@@ -195,7 +195,7 @@ Deno.test({
 }, async () => {
   const dir = await spaFixture(false, "");
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     const out = join(dir, "out");
     assert((await Deno.stat(join(out, "_denext", "client", "index.js"))).isFile);
     assertStringIncludes(
@@ -354,7 +354,7 @@ Deno.test({
   const dir = await spaFixture(false, `, assetsDir: "assets"`);
   try {
     await Deno.writeTextFile(join(dir, "public", "assets", "index.js"), PUBLIC);
-    await staticExport(dir);
+    await exportInChild(dir);
     const exported = await Deno.readTextFile(join(dir, "out", "assets", "index.js"));
     assert(exported !== PUBLIC, "export: the build's entry stays");
     assert(

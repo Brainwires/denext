@@ -81,6 +81,10 @@ import { loadBundleRef } from "../src/build/next-compat-loader.ts";
 import { stopNextCompat } from "../src/build/next-compat.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import type { PluginBuildContext, PluginContext } from "../src/plugin/mod.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

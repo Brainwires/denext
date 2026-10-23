@@ -9,7 +9,6 @@
 //      `toImportUrl`, and the MDX compiler wiring (`compileMdxSource`).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { build } from "../src/build/build.ts";
 import {
   BROWSER_CONDITIONS,
   checkEnvPoison,
@@ -21,6 +20,7 @@ import {
   toImportUrl,
 } from "../src/build/next-compat.ts";
 import { fromFileUrl } from "@std/path";
+import { buildInChild } from "./helpers/bounded-build.ts";
 
 const NEXT_COMPAT = fromFileUrl(new URL("../examples/next-compat", import.meta.url));
 
@@ -32,7 +32,7 @@ Deno.test({
   sanitizeResources: false,
   fn: async () => {
     try {
-      const result = await build(NEXT_COMPAT);
+      const result = await buildInChild(NEXT_COMPAT);
       // The build produced its output dir (the static page ships 0 KB JS, so it has
       // no client route bundle — but the whole compat bundle pipeline still ran).
       assertStringIncludes(result.outDir, ".denext");

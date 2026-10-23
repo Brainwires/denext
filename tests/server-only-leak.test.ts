@@ -6,10 +6,10 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { build } from "../src/build/build.ts";
 import { bundleRoutes } from "../src/build/bundle.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { serverOnlySignals } from "../src/build/server-only-scan.ts";
+import { buildInChild } from "./helpers/bounded-build.ts";
 
 // ── serverOnlySignals (pure) ─────────────────────────────────────────────────────
 
@@ -146,7 +146,7 @@ Deno.test({
     try {
       await writeProject(dir, LEAKY_PAGE);
       resetModuleGraphCache();
-      const err = await assertRejects(() => build(dir), Error);
+      const err = await assertRejects(() => buildInChild(dir), Error);
       assertStringIncludes(err.message, "denext: server-only code would ship to the browser");
       // The module, why, and the route that shipped it.
       assertStringIncludes(
@@ -195,7 +195,7 @@ Deno.test({
         `import "server-only";\n${DB_MODULE}`,
       );
       resetModuleGraphCache();
-      const result = await build(dir);
+      const result = await buildInChild(dir);
       // The Flight islands bundle ships the island and nothing server-only.
       const client = join(result.outDir, "client");
       let all = "";
@@ -239,7 +239,7 @@ Deno.test({
         `export const secret = () => Deno.env.get("SECRET");\n`,
       );
       resetModuleGraphCache();
-      const result = await build(dir);
+      const result = await buildInChild(dir);
       assertEquals(result.routes.length, 1);
     } finally {
       await Deno.remove(dir, { recursive: true });

@@ -18,6 +18,10 @@ import {
 import { withDenoProps } from "./helpers/deno-stub.ts";
 import { type FakeJsr, startFakeJsr } from "./helpers/fake-jsr.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const OWN = "jsr:@denext/denext@4.6.0/standalone";
 

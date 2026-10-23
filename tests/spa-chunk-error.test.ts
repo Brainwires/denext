@@ -15,7 +15,7 @@ import {
   wrapDynamicImports,
   wrapImportsInSource,
 } from "../src/build/spa/chunk-error.ts";
-import { staticExport } from "../src/build/export.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -193,7 +193,7 @@ for (const compat of [false, true]) {
   }, async () => {
     const dir = await spaFixture(compat);
     try {
-      await staticExport(dir);
+      await exportInChild(dir);
       const client = join(dir, "out", "_denext", "client");
       const entry = await Deno.readTextFile(join(client, "index.js"));
       assertStringIncludes(entry, "vite:preloadError");

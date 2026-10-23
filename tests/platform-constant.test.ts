@@ -9,13 +9,13 @@ import { join, toFileUrl } from "@std/path";
 import { compileFeatureModules, foldBuildConstants } from "../src/build/feature-transform.ts";
 import { bundleSourceFiles } from "../src/build/bundle.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
-import { staticExport } from "../src/build/export.ts";
 import { createUseCacheLoader } from "../src/build/use-cache-loader.ts";
 import { platformFoldPlugin } from "../src/build/platform-fold-plugin.ts";
 import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
 import type * as esbuild from "../src/build/esbuild/mod.ts";
 import { platform as runtimePlatform } from "../src/platform.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const IMPORT = `import { platform } from "denext/platform";\n`;
 const fold = async (src: string, target: Platform = "ios") =>
@@ -308,7 +308,7 @@ for (const compat of [false, true]) {
       "src/pick.ts": BRANCHES,
     }, compat ? { "react": new URL("../src/compat/react.ts", import.meta.url).href } : {});
     try {
-      const { outDir } = await staticExport(dir, { platform: "android" });
+      const { outDir } = await exportInChild(dir, { platform: "android" });
       const js = await exportedJs(outDir);
       assertStringIncludes(js, "ANDROID_BRANCH");
       assert(!js.includes("IOS_BRANCH"), "the ios branch shipped");
@@ -329,7 +329,7 @@ Deno.test("App Router export --platform ios: the render and the client bundle ta
       `  return <b>{platform === "ios" ? "IOS_BADGE" : "OTHER_BADGE"}{n}</b>; }\n`,
   });
   try {
-    const { outDir } = await staticExport(dir, { platform: "ios" });
+    const { outDir } = await exportInChild(dir, { platform: "ios" });
     const html = await Deno.readTextFile(join(outDir, "index.html"));
     assertStringIncludes(html, `data-p="ios"`);
     assertStringIncludes(html, "IOS_BADGE");

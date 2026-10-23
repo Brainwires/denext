@@ -9,10 +9,10 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../src/build/build.ts";
 import { stopNextCompat } from "../src/build/next-compat.ts";
 import { serveEphemeral } from "../src/build/prod-server.ts";
 import { writeActionFormFixture } from "./helpers/next-compat-action-form-fixture.ts";
+import { buildInChild } from "./helpers/bounded-build.ts";
 
 Deno.test({
   name: "next-compat: Server Action forms on a page with no client module work without JavaScript",
@@ -22,7 +22,7 @@ Deno.test({
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_ncform_" }));
   try {
     await writeActionFormFixture(dir, false, true);
-    await build(dir);
+    await buildInChild(dir);
     const manifest = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "manifest.json")));
     assert(
       "app/actions.ts" in manifest.compatServerModules,

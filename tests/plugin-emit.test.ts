@@ -16,11 +16,10 @@ import {
   runPluginBuildSteps,
 } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import { staticExport } from "../src/build/export.ts";
-import { build } from "../src/build/build.ts";
 import { startSpaProdServer } from "../src/build/spa/prod-server.ts";
 import { startProdServer } from "../src/build/prod-server.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -299,7 +298,7 @@ for (const compat of [false, true]) {
     resetPlugins();
     const dir = await spaProject(compat);
     try {
-      await staticExport(dir);
+      await exportInChild(dir);
       const licenses = JSON.parse(
         await Deno.readTextFile(join(dir, "out", "third-party-licenses.json")),
       );
@@ -310,7 +309,7 @@ for (const compat of [false, true]) {
       assertEquals(await Deno.readTextFile(join(dir, "out", "robots.txt")), "emitted");
 
       resetPlugins();
-      await build(dir);
+      await buildInChild(dir);
       assert(
         (await Deno.stat(join(dir, ".denext", "emitted", "third-party-licenses.json"))).isFile,
       );
@@ -341,7 +340,7 @@ Deno.test({
     { "app/page.tsx": `export default function Page() { return <h1>home</h1>; }\n` },
   );
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     assertEquals(
       JSON.parse(await Deno.readTextFile(join(dir, "out", "third-party-licenses.json"))),
       { modules: null },
@@ -349,7 +348,7 @@ Deno.test({
     assertEquals(await Deno.readTextFile(join(dir, "out", "robots.txt")), "emitted");
 
     resetPlugins();
-    await build(dir);
+    await buildInChild(dir);
     const [served, robots] = await fetchFrom(
       (signal, onListen) =>
         startProdServer({ projectDir: dir, port: 0, hostname: "127.0.0.1", signal, onListen }),
@@ -390,7 +389,7 @@ Deno.test({
     },
   );
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     const page = await Deno.readTextFile(join(dir, "out", "about", "index.html"));
     assert(page.includes("about page"), "the rendered page survives");
     assert(

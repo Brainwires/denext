@@ -3,9 +3,9 @@
 // width-allowlist rejection, the page's generated srcSet, and the dynamic OG image.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
 import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const APP = fromFileUrl(new URL("../../examples/image", import.meta.url));
 
@@ -67,7 +67,7 @@ Deno.test({
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;
     const { origin } = started;

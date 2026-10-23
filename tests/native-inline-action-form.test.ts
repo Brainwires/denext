@@ -9,14 +9,17 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { build } from "../src/build/build.ts";
-import { staticExport } from "../src/build/export.ts";
 import { serveEphemeral } from "../src/build/prod-server.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { actionIdFor, forgetTaggedServers } from "../src/runtime/server-action.ts";
 import { writeNativeActionFormFixture } from "./helpers/native-action-form-fixture.ts";
+import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 /** A fresh fixture project (real path: the ids hash the module URL the server loads). */
 async function fixture(options: { static?: boolean; closure?: boolean } = {}): Promise<string> {
@@ -68,7 +71,7 @@ Deno.test({
 }, async () => {
   const dir = await fixture();
   try {
-    await build(dir);
+    await buildInChild(dir);
     const server = await serveEphemeral(dir);
     try {
       const html = await (await fetch(server.origin + "/")).text();
@@ -172,7 +175,7 @@ Deno.test({
 }, async () => {
   const dir = await fixture({ static: true });
   try {
-    const { outDir } = await staticExport(dir);
+    const { outDir } = await exportInChild(dir);
     const html = await Deno.readTextFile(join(outDir, "index.html"));
     assertEquals(formAction(html, "inline"), `/_denext/action/${compatId(dir)}`);
   } finally {
@@ -189,7 +192,7 @@ Deno.test({
 }, async () => {
   const dir = await fixture({ closure: true });
   try {
-    await build(dir);
+    await buildInChild(dir);
     const server = await serveEphemeral(dir);
     try {
       const html = await (await fetch(server.origin + "/")).text();

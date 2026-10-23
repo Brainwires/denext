@@ -14,8 +14,8 @@ import {
   tanstackRouterFacts,
   viteAssetsDir,
 } from "../src/build/migrate-vite-plugins.ts";
-import { staticExport } from "../src/build/export.ts";
 import { resetPlugins } from "../src/plugin/mod.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const REPO = fromFileUrl(new URL("../", import.meta.url));
 
@@ -179,7 +179,7 @@ Deno.test({
     assert(denoJson.imports["denext/plugin-kit/vite-emitter"], "the light entry is mapped");
     assert(!denoJson.imports["denext/plugin-kit"], "the toolchain-heavy plugin-kit is not");
     // The migrated app exports the file the Vite plugin emits.
-    await staticExport(dir);
+    await exportInChild(dir);
     assertEquals(
       JSON.parse(await Deno.readTextFile(join(dir, "out", "third-party-licenses.json"))),
       { config: true },

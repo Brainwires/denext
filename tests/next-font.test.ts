@@ -13,10 +13,10 @@ import {
   setSelfHostedFonts,
 } from "../src/compat/next/font/registry.ts";
 import { selfHostFonts } from "../src/build/self-host-fonts.ts";
-import { staticExport } from "../src/build/export.ts";
 import { join } from "@std/path";
 import { walk } from "@std/fs";
 import { removeTempDir } from "./helpers/temp.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 Deno.test("localFont emits @font-face + a class, returns a handle", () => {
   resetFonts();
@@ -240,7 +240,7 @@ Deno.test("staticExport self-hosts next/font/google — no runtime Google <link>
   try {
     await writeFontApp(dir);
 
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));
     assertStringIncludes(html, "@font-face"); // inlined local face, not a Google <link>
     assertStringIncludes(html, "/_denext/fonts/");
