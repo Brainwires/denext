@@ -217,6 +217,42 @@
           "denextOnly": true
         },
         {
+          "name": "AsyncEffect",
+          "slug": "AsyncEffect",
+          "kind": "typeAlias",
+          "signature": "type AsyncEffect = (args: object) => Promise<void>",
+          "doc": "The async effect useAsyncEffect runs. It receives the effect's signal (AbortSignal, aborted on cleanup) and abort-aware sleep, setTimeout and fetch helpers.",
+          "docFull": "The async effect {@linkcode useAsyncEffect} runs. It receives the effect's `signal`\n(`AbortSignal`, aborted on cleanup) and abort-aware `sleep`, `setTimeout` and `fetch` helpers.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AsyncEffectErrorClass",
+          "slug": "AsyncEffectErrorClass",
+          "kind": "typeAlias",
+          "signature": "type AsyncEffectErrorClass = (...args: never[]) => Error",
+          "doc": "An error class useAsyncEffect can route to onError (catch: [TypeError]).",
+          "docFull": "An error class {@linkcode useAsyncEffect} can route to `onError` (`catch: [TypeError]`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AsyncEffectOptions",
+          "slug": "AsyncEffectOptions",
+          "kind": "typeAlias",
+          "signature": "type AsyncEffectOptions<C> = object",
+          "doc": "useAsyncEffect's error handling: the error classes to catch and their handler.",
+          "docFull": "{@linkcode useAsyncEffect}'s error handling: the error classes to catch and their handler.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "buildPath",
           "slug": "buildPath",
           "kind": "function",
@@ -3201,21 +3237,24 @@
         },
         {
           "name": "useAsyncEffect",
-          "slug": "useAsyncEffect",
-          "kind": "function",
-          "signature": "useAsyncEffect(effect: Effect, deps: DependencyList): void",
-          "doc": "Runs an async effect and re-runs it whenever dependencies change.",
-          "docFull": "Runs an async effect and re-runs it whenever dependencies change.\n\nIf the async effect rejects with an error whose constructor matches one of the\nconfigured `catch` types, the matching `onError` callback is invoked instead of\nsurfacing the error as a fatal render error.",
-          "params": [
-            {
-              "name": "effect",
-              "doc": "Async effect to run. Receives { signal, sleep, setTimeout, fetch }: a signal (AbortSignal) that is aborted when the effect is cleaned up, plus abort-aware sleep, setTimeout, and fetch helpers that reject on abort so the effect body stops at the next await (the rejection is swallowed by the hook)."
-            },
-            {
-              "name": "deps",
-              "doc": "Dependency list that controls when the effect re-runs."
-            }
-          ],
+          "slug": "useAsyncEffect-var",
+          "kind": "variable",
+          "signature": "useAsyncEffect: UseAsyncEffect",
+          "doc": "Runs an async effect and re-runs it whenever dependencies change, optionally routing matched errors to onError instead of the nearest error boundary (see UseAsyncEffect). Built with a pure Object.assign, so an app that never calls it ships none of it (a property assigned to a function declaration at module level is a side effect the bundler must keep).",
+          "docFull": "Runs an async effect and re-runs it whenever dependencies change, optionally routing matched\nerrors to `onError` instead of the nearest error boundary (see {@linkcode UseAsyncEffect}).\nBuilt with a pure `Object.assign`, so an app that never calls it ships none of it (a property\nassigned to a function declaration at module level is a side effect the bundler must keep).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseAsyncEffect",
+          "slug": "UseAsyncEffect-iface",
+          "kind": "interface",
+          "signature": "interface UseAsyncEffect",
+          "doc": "The useAsyncEffect hook: its two call forms, plus the UseAsyncEffect.wrap helper.",
+          "docFull": "The {@linkcode useAsyncEffect} hook: its two call forms, plus the {@linkcode UseAsyncEffect.wrap}\nhelper.",
+          "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -4262,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.7.0",
+          "signature": "VERSION: 4.7.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],

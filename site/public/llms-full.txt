@@ -1267,6 +1267,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ApiRequestOptions` — Options accepted by the untyped runtime call (the typed client narrows these).
 - `type ApiSchema = Record<string, Partial<Record<HttpMethod, ApiEndpoint>>>` — A whole app's API surface: route pattern → (method → endpoint).
 - `AsyncContext: object` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
+- `type AsyncEffect = (args: object) => Promise<void>` — The async effect useAsyncEffect runs. It receives the effect's signal (AbortSignal, aborted on cleanup) and abort-aware sleep, setTimeout and fetch helpers.
+- `type AsyncEffectErrorClass = (...args: never[]) => Error` — An error class useAsyncEffect can route to onError (catch: [TypeError]).
+- `type AsyncEffectOptions<C> = object` — useAsyncEffect's error handling: the error classes to catch and their handler.
 - `buildPath(pattern: string, params?: Record<string, string | string[]>, query?: Record<string, unknown>): string` — Substitute path params into a route pattern, appending any query params.
 - `cache<A, R>(fn: (...args: A) => R): (...args: A) => R` — React.cache — memoize a function by its arguments.
 - `interface ChangeEvent<T>` — A change event (inputs).
@@ -1497,7 +1500,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useApi<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>` — Call one of the app's own route handlers from a component, typed end to end.
 - `interface UseApiOptions` — Options for useApi.
 - `interface UseApiResult<T, E>` — What useApi returns.
-- `useAsyncEffect(effect: Effect, deps: DependencyList): void` — Runs an async effect and re-runs it whenever dependencies change.
+- `useAsyncEffect: UseAsyncEffect` — Runs an async effect and re-runs it whenever dependencies change, optionally routing matched errors to onError instead of the nearest error boundary (see UseAsyncEffect). Built with a pure Object.assign, so an app that never calls it ships none of it (a property assigned to a function declaration at module level is a side effect the bundler must keep).
+- `interface UseAsyncEffect` — The useAsyncEffect hook: its two call forms, plus the UseAsyncEffect.wrap helper.
 - `useCallback<T>(fn: T, deps?: DependencyList): T` — Return a memoized version of fn that only changes when deps change.
 - `useClickOutside<T>(ref: RefObject<T | null>, handler: (event: Event) => void, events?: typeOperator): void` — Call handler when a pointer/touch event lands outside the referenced element — the "click away to dismiss" pattern for menus, popovers, and dialogs. Listens in the capture phase so it runs before inner handlers. No-op during SSR.
 - `interface UseClipboardResult` — The result of useCopyToClipboard.
@@ -1566,7 +1570,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.7.0` — The denext framework version.
+- `VERSION: 4.7.1` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.

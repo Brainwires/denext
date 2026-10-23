@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.7.1] - 2026-10-23
+
 ### Added
 
 - **`denext create <dir> --monorepo`** (also in the interactive picker and on `denext ui`'s Setup
@@ -105,16 +107,6 @@ and this project adheres to
   builds); a native `deno bundle` build now attributes each chunk's bytes to its modules from the
   bundle's source maps.
 
-### Docs
-
-- **Bundle-size claims re-measured** (2026-10-22, toolchain 3.0.0-rc.3, Next.js 16.4.2 + React
-  19.3.1, all gzip unless marked raw): `examples/hello`'s shared runtime is 23.9 KB (63.1 KB raw)
-  against 138.8 KB (459.1 KB raw), about 5.8× (was "19.6 KB against 136.9 KB, 7×"; the runtime
-  grew between September's measurement and now), its first load of `/` 25.4 KB against 139.2 KB;
-  the library-heavy app ships 1.7–3.4× less; the `examples/spa` first load is 19.5 KB (52.7 KB
-  raw) against React 19.3.1's 68.7 KB (218.9 KB raw), about 3.5×. `bench/` gains a "Next app
-  migrated onto denext" column and raw sizes.
-
 ### Fixed
 
 - **A Deno workspace member app can use its sibling packages everywhere.** A package another
@@ -124,13 +116,11 @@ and this project adheres to
   import-graph crawl, the per-module dev loop serves its modules (`@fs`) instead of leaving the
   bare specifier for the browser, `denext dev` watches it, and an edit there re-renders the server
   and hot-updates the module.
-
 - **An un-folded `feature()` call reads the configured flag in the dev server's bundled routes,
   and at module level in a route page on a stock Deno.** The dev server's bundled route, Flight
   and global-error bundles passed no `features`, so such a call read `false`; and a route entry
   seeded the flags (without `--define`) only after its page module had run. The route entries now
   seed them with a `data:` import evaluated first.
-
 - **`import.meta.url` in a Next.js drop-in's server code names the module's own file.** The
   compat server bundle is one file under `.denext/server/`, and every module bundled into it saw
   that file's URL, so a route reading a file beside itself (an OG image route loading its font with
@@ -159,6 +149,16 @@ and this project adheres to
   feature and a custom logger; neither `log` nor the feature is in the build). `deno task
   audit:cargo` runs the same check locally, and `deno task precheck` runs it when a package's
   `Cargo.lock`, `Cargo.toml` or `.cargo/audit.toml` changed.
+
+### Docs
+
+- **Bundle-size claims re-measured** (2026-10-22, toolchain 3.0.0-rc.3, Next.js 16.4.2 + React
+  19.3.1, all gzip unless marked raw): `examples/hello`'s shared runtime is 23.9 KB (63.1 KB raw)
+  against 138.8 KB (459.1 KB raw), about 5.8× (was "19.6 KB against 136.9 KB, 7×"; the runtime
+  grew between September's measurement and now), its first load of `/` 25.4 KB against 139.2 KB;
+  the library-heavy app ships 1.7–3.4× less; the `examples/spa` first load is 19.5 KB (52.7 KB
+  raw) against React 19.3.1's 68.7 KB (218.9 KB raw), about 3.5×. `bench/` gains a "Next app
+  migrated onto denext" column and raw sizes.
 
 ## [4.7.0] - 2026-10-22
 
@@ -18009,7 +18009,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.1...development
+[4.7.1]: https://jsr.io/@denext/denext@4.7.1
 [4.7.0]: https://jsr.io/@denext/denext@4.7.0
 [4.6.0]: https://jsr.io/@denext/denext@4.6.0
 [4.5.2]: https://jsr.io/@denext/denext@4.5.2
