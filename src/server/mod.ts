@@ -55,7 +55,7 @@ export { collapseHeadTags } from "../jsx/render-to-string.ts";
 export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
-export { parseRange, serveStatic } from "./static.ts";
+export { parseRange, parseRanges, serveStatic } from "./static.ts";
 export { createOtaHandler, type OtaHandlerOptions, type OtaTarget } from "./ota-handler.ts";
 export {
   inOtaRollout,
@@ -206,6 +206,8 @@ export { scanRoutes } from "../router/manifest.ts";
 export type {
   DenextPlugin,
   EmittedAsset,
+  EmittedHashedAsset,
+  EmittedNamedAsset,
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,

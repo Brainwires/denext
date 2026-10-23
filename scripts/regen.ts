@@ -58,7 +58,11 @@ export const STEPS: readonly RegenStep[] = [
   {
     name: "deno task gen:command-table",
     script: ["scripts/gen-command-table.ts"],
-    outputs: ["src/cli/command-table.generated.ts", "src/cli/lazy-modules.generated.ts"],
+    outputs: [
+      "src/cli/command-table.generated.ts",
+      "src/cli/lazy-modules.generated.ts",
+      "src/cli/offline-modules.generated.ts",
+    ],
     phase: 1,
   },
   {

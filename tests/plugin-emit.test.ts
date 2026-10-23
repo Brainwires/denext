@@ -5,7 +5,8 @@
 // the App Router export and build (served by the App Router `denext start`) — putting the file
 // where the site serves it (ahead of a same-named `public/` file).
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
+import { isContentHashed } from "../src/server/serve-utils.ts";
 import { join } from "@std/path";
 import {
   applyPlugins,
@@ -16,11 +17,10 @@ import {
   runPluginBuildSteps,
 } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import { staticExport } from "../src/build/export.ts";
-import { build } from "../src/build/build.ts";
 import { startSpaProdServer } from "../src/build/spa/prod-server.ts";
 import { startProdServer } from "../src/build/prod-server.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -299,7 +299,7 @@ for (const compat of [false, true]) {
     resetPlugins();
     const dir = await spaProject(compat);
     try {
-      await staticExport(dir);
+      await exportInChild(dir);
       const licenses = JSON.parse(
         await Deno.readTextFile(join(dir, "out", "third-party-licenses.json")),
       );
@@ -310,7 +310,7 @@ for (const compat of [false, true]) {
       assertEquals(await Deno.readTextFile(join(dir, "out", "robots.txt")), "emitted");
 
       resetPlugins();
-      await build(dir);
+      await buildInChild(dir);
       assert(
         (await Deno.stat(join(dir, ".denext", "emitted", "third-party-licenses.json"))).isFile,
       );
@@ -341,7 +341,7 @@ Deno.test({
     { "app/page.tsx": `export default function Page() { return <h1>home</h1>; }\n` },
   );
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     assertEquals(
       JSON.parse(await Deno.readTextFile(join(dir, "out", "third-party-licenses.json"))),
       { modules: null },
@@ -349,7 +349,7 @@ Deno.test({
     assertEquals(await Deno.readTextFile(join(dir, "out", "robots.txt")), "emitted");
 
     resetPlugins();
-    await build(dir);
+    await buildInChild(dir);
     const [served, robots] = await fetchFrom(
       (signal, onListen) =>
         startProdServer({ projectDir: dir, port: 0, hostname: "127.0.0.1", signal, onListen }),
@@ -390,7 +390,7 @@ Deno.test({
     },
   );
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     const page = await Deno.readTextFile(join(dir, "out", "about", "index.html"));
     assert(page.includes("about page"), "the rendered page survives");
     assert(
@@ -478,7 +478,8 @@ Deno.test("viteEmitterPlugin: a chunk emit or a nameless asset fails the build w
   for (
     const [file, message] of [
       [{ type: "chunk", id: "./x.ts" }, 'emitted a "chunk"'],
-      [{ type: "asset", name: "logo.png", source: "x" }, "without a fileName"],
+      [{ type: "asset", source: "x" }, "without a fileName or a name"],
+      [{ type: "asset", name: "logo.png" }, "without a source"],
     ] as const
   ) {
     resetPlugins();
@@ -524,4 +525,104 @@ Deno.test("viteEmitterPlugin: the synthetic entry chunk sits where the client is
     assertEquals(seen, [expected]);
   }
   resetPlugins();
+});
+
+Deno.test("viteEmitterPlugin: an asset emitted by name gets Rollup's [name]-[hash][extname]", async () => {
+  const { viteEmitterPlugin } = await import("../src/plugin/kit.ts");
+  const { contentHash8 } = await import("../src/plugin/asset-name.ts");
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg'/>";
+  const hash = contentHash8(new TextEncoder().encode(svg));
+  const png = new Uint8Array([137, 80, 78, 71]);
+  for (
+    const [spa, dir] of [
+      [undefined, "assets"],
+      [{ entry: "./src/main.tsx", assetsDir: "assets" }, "assets"],
+      [{ entry: "./src/main.tsx", assetsDir: "static/media" }, "static/media"],
+    ] as const
+  ) {
+    resetPlugins();
+    const tmp = await Deno.makeTempDir({ prefix: "denext_vite_hashed_" });
+    try {
+      const refs: string[] = [];
+      const names: string[] = [];
+      await register(
+        viteEmitterPlugin({
+          name: "icons",
+          generateBundle() {
+            const self = this as unknown as {
+              emitFile(f: unknown): string;
+              getFileName(ref: string): string;
+            };
+            refs.push(self.emitFile({ type: "asset", name: "icons/logo.svg", source: svg }));
+            // The same name and contents again: one file (Rollup deduplicates it).
+            refs.push(self.emitFile({ type: "asset", name: "logo.svg", source: svg }));
+            refs.push(self.emitFile({ type: "asset", name: "app icon.png", source: png }));
+            refs.push(self.emitFile({ type: "asset", name: "LICENSE", source: "MIT" }));
+            names.push(...refs.map((r) => self.getFileName(r)));
+            assertThrows(() => self.getFileName("nope"), Error, "no file was emitted");
+          },
+        }),
+        tmp,
+      );
+      await runPluginBuildSteps(
+        {
+          projectRoot: tmp,
+          appDir: tmp,
+          outDir: tmp,
+          config: (spa ? { mode: "spa", spa } : {}) as DenextConfig,
+        },
+        { emitDir: join(tmp, "site") },
+      );
+      assertEquals(names[0], `${dir}/logo-${hash}.svg`);
+      assertEquals(names[1], names[0]);
+      assertMatch(names[2], new RegExp(`^${dir}/app_icon-[A-Z2-7]{8}\\.png$`));
+      assertMatch(names[3], new RegExp(`^${dir}/LICENSE-[A-Z2-7]{8}$`));
+      assertEquals(refs, names);
+      assertEquals(await Deno.readTextFile(join(tmp, "site", names[0])), svg);
+      assertEquals([...await Deno.readFile(join(tmp, "site", names[2]))], [...png]);
+      // The hash keeps the name immutable-cacheable, as a Vite build's assets are.
+      assert(isContentHashed(names[0]) && isContentHashed(names[2]));
+    } finally {
+      resetPlugins();
+      await Deno.remove(tmp, { recursive: true });
+    }
+  }
+});
+
+Deno.test("emitFile: a name-only asset is hashed, may sit in spa.assetsDir, resolves to its name", async () => {
+  resetPlugins();
+  const tmp = await Deno.makeTempDir({ prefix: "denext_emit_hashed_" });
+  try {
+    const published: string[] = [];
+    await register({
+      name: "hashed",
+      setup(ctx) {
+        ctx.addBuildStep(async (b) => {
+          published.push(await b.emitFile({ name: "font.woff2", source: "w" }));
+          published.push(await b.emitFile({ fileName: "plain.txt", source: "p" }));
+          await assertRejects(() => b.emitFile({ fileName: "assets/x.txt", source: "x" }));
+          await assertRejects(
+            () => b.emitFile({ name: "", source: "x" } as never),
+            Error,
+            "needs a fileName, or a name",
+          );
+        });
+      },
+    });
+    await runPluginBuildSteps({
+      projectRoot: tmp,
+      appDir: tmp,
+      outDir: tmp,
+      config: {
+        mode: "spa",
+        spa: { entry: "./src/main.tsx", assetsDir: "assets" },
+      } as DenextConfig,
+    }, { emitDir: join(tmp, "site") });
+    assertMatch(published[0], /^assets\/font-[A-Z2-7]{8}\.woff2$/);
+    assertEquals(published[1], "plain.txt");
+    assertEquals(await Deno.readTextFile(join(tmp, "site", published[0])), "w");
+  } finally {
+    resetPlugins();
+    await Deno.remove(tmp, { recursive: true });
+  }
 });

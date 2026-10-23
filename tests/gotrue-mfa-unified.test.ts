@@ -221,15 +221,14 @@ Deno.test("a factor verified through /auth/v1 makes denext's cookie sign-in pend
     // Enrolled but unverified: nothing owed yet.
     assertEquals(await mfaPendingFor(app.config, { id: userId }), false);
     const secret = enrolled.json.totp.secret as string;
-    assertEquals(
-      (await verifyTotp(app, token, enrolled.json.id, await totpCode(secret))).status,
-      200,
-    );
+    const code = await totpCode(secret);
+    assertEquals((await verifyTotp(app, token, enrolled.json.id, code)).status, 200);
     assertEquals(await mfaPendingFor(app.config, { id: userId }), true);
-    // A wrong code, and a replayed one, are refused.
+    // A wrong code, and a replayed one, are refused. The replay is the SAME code: a fresh one
+    // read after a 30 s step boundary (a slow password sign-in in between) is a new, valid code.
     const next = await passwordToken(app);
     assertEquals(
-      (await verifyTotp(app, next, enrolled.json.id, await totpCode(secret))).error,
+      (await verifyTotp(app, next, enrolled.json.id, code)).error,
       "mfa_verification_failed",
       "the step was already spent",
     );

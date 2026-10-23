@@ -5,6 +5,12 @@
 // killed (`taskkill /T /F` on Windows, every `pgrep -P` descendant elsewhere), the reads are
 // cancelled instead of awaited, and the result says it timed out, with what the child printed so
 // far — the phase it was stuck in.
+//
+// A child that has EXITED is not waited on past a short grace for its pipes: on Windows a process
+// spawned by another thread of the same process (`deno test --parallel` runs each test file on a
+// thread of its own) inherits whatever inheritable pipe handles exist at that moment, this child's
+// included, and keeps them open for as long as it lives. Everything the child wrote is in the pipe
+// by the time it exits, so reading stops once the pipes go quiet after the exit.
 
 /** What {@linkcode runBounded} reports. */
 export interface BoundedResult {
@@ -14,14 +20,27 @@ export interface BoundedResult {
   readonly timedOut: boolean;
   /** stdout then stderr, as far as the child got. */
   readonly output: string;
+  /** stdout alone. */
+  readonly stdout: string;
+  /** stderr alone. */
+  readonly stderr: string;
+  /**
+   * The child exited but a pipe was still open after {@linkcode BoundedOptions.drainMs}: another
+   * process holds an inherited copy of its write end (see the module comment).
+   */
+  readonly pipesHeld: boolean;
 }
 
 /** Options for {@linkcode runBounded}. */
 export interface BoundedOptions {
   readonly cwd?: string;
   readonly env?: Record<string, string>;
+  /** Start from `env` alone instead of this process's environment plus `env`. */
+  readonly clearEnv?: boolean;
   /** The deadline, in ms. */
   readonly timeoutMs: number;
+  /** How long the pipes may stay open once the child has exited (default 10 s). */
+  readonly drainMs?: number;
 }
 
 /** Kill `pid` and every descendant. */
@@ -92,6 +111,7 @@ export async function runBounded(
     args,
     cwd: options.cwd,
     env: options.env,
+    clearEnv: options.clearEnv,
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
@@ -99,23 +119,37 @@ export async function runBounded(
   const out = { text: "" };
   const err = { text: "" };
   const reads = [drain(child.stdout, out), drain(child.stderr, err)];
+  const result = (success: boolean, timedOut: boolean, pipesHeld: boolean): BoundedResult => ({
+    success,
+    timedOut,
+    pipesHeld,
+    output: out.text + err.text,
+    stdout: out.text,
+    stderr: err.text,
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<"timeout">((resolve) => {
     timer = setTimeout(() => resolve("timeout"), options.timeoutMs);
   });
-  const done = await Promise.race([
-    Promise.all([child.status, ...reads.map((r) => r.done)]).then((r) =>
-      r[0] as Deno.CommandStatus
-    ),
-    deadline,
-  ]);
+  const done = await Promise.race([child.status, deadline]);
   clearTimeout(timer);
   if (done !== "timeout") {
-    return { success: done.success, timedOut: false, output: out.text + err.text };
+    // Exited: what it wrote is in the pipes. Read it, but not past the grace: a process another
+    // thread spawned meanwhile may hold an inherited write end for as long as it lives.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.all(reads.map((r) => r.done)).then(() => true),
+      new Promise<false>((resolve) =>
+        grace = setTimeout(() => resolve(false), options.drainMs ?? 10_000)
+      ),
+    ]);
+    clearTimeout(grace);
+    if (!drained) await Promise.all(reads.map((r) => r.cancel()));
+    return result(done.success, false, !drained);
   }
   await killProcessTree(child.pid);
   // A grandchild the kill could not reach may still hold the pipes: stop reading, don't wait.
   await Promise.all(reads.map((r) => r.cancel()));
   await within(child.status, 5_000);
-  return { success: false, timedOut: true, output: out.text + err.text };
+  return result(false, true, false);
 }

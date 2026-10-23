@@ -4,11 +4,15 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../src/build/build.ts";
 import { startProdServer } from "../src/build/prod-server.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { buildInChild } from "./helpers/bounded-build.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -57,7 +61,7 @@ for (const mode of ["build + start", "dev"] as const) {
         if (mode === "dev") {
           resolveProject(dir).then((paths) => startDevServer({ paths, ...opts })).catch(reject);
         } else {
-          build(dir).then(() => startProdServer({ projectDir: dir, ...opts })).catch(reject);
+          buildInChild(dir).then(() => startProdServer({ projectDir: dir, ...opts })).catch(reject);
         }
       });
       const base = `http://127.0.0.1:${port}`;

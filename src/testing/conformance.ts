@@ -36,7 +36,10 @@ import { fillPattern, type RouteParams } from "../router/segments.ts";
 import { enumerateStaticParams } from "../server/static-params.ts";
 import { type ProjectPaths, resolveProject } from "../build/paths.ts";
 import { withBuildDirLock } from "../build/project-locks.ts";
-import { type AppPlugins, setupAppPlugins } from "../plugin/mod.ts";
+import { type AppPlugins, EMITTED_DIR, setupAppPlugins } from "../plugin/mod.ts";
+import { discoverJobs } from "../server/job-loader.ts";
+import { abortJobRuns, getJob, jobNames, registerJob, unregisterJob } from "../server/jobs.ts";
+import { bootServices, stopServices } from "../server/service-loader.ts";
 import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
@@ -46,7 +49,7 @@ import {
 import { routeNeedsHydration } from "../build/hydration.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { createMiddlewareRunner } from "../server/mod.ts";
-import { relative, resolve, toFileUrl } from "@std/path";
+import { join, relative, resolve, toFileUrl } from "@std/path";
 import { createTestClient, type TestHandler } from "./client.ts";
 import { errorDigest } from "../runtime/error-boundary.ts";
 import type { RequestErrorContext } from "../server/instrumentation.ts";
@@ -154,9 +157,25 @@ export interface BuiltTestHandler {
   manifest: RouteManifest;
   /** The App Router directory. */
   appDir: string;
-  /** Run the app's plugin teardowns (a no-op when it has no plugins). */
+  /** Stop the services, unregister the jobs and run the plugin teardowns (each only if started). */
   close(): Promise<void>;
 }
+
+/**
+ * What a test app starts beside its request handler, as `denext start` does. Each defaults to
+ * `false` here; {@linkcode createTestApp} turns all three on.
+ */
+export interface TestAppRuntime {
+  /** Run the plugins' build steps, serving what they emit (into a temporary directory). */
+  buildSteps?: boolean;
+  /** Register `jobs/**`, so `runJob(name)` runs them (no schedule fires). */
+  jobs?: boolean;
+  /** Start `services/**` under their supervisor; `close()` stops them. */
+  services?: boolean;
+}
+
+/** Undo what {@linkcode bootTestRuntime} (and the plugins) started, most recent first. */
+type Cleanup = () => Promise<void> | void;
 
 /**
  * Build the in-process handler `createTestApp` returns AND the manifest (the probe needs
@@ -167,32 +186,111 @@ export interface BuiltTestHandler {
  * plugin needs no build output): their prepare steps run once, their route synthesizers shape
  * the manifest, their request handlers claim what the App Router does not match, and `close()`
  * runs their teardowns. The registrations are this handler's own — two apps built in one
- * process never share a plugin.
+ * process never share a plugin. `runtime` adds the plugins' build steps, `jobs/` and
+ * `services/` ({@linkcode TestAppRuntime}).
  *
  * @param projectDir The app directory.
  * @param load The module loader.
  * @param onRequestError The app's `onRequestError` (the probe records render errors with it).
- * @returns The handler, the route manifest, the app directory and the plugin teardown.
+ * @param runtime What else to start with the app (nothing by default).
+ * @returns The handler, the route manifest, the app directory and the teardown.
  */
 export async function buildTestHandler(
   projectDir: string,
   load: ModuleLoader,
   onRequestError?: AppConfig["onRequestError"],
+  runtime: TestAppRuntime = {},
 ): Promise<BuiltTestHandler> {
   const paths = await resolveProject(resolve(projectDir));
   const plugins = await testAppPlugins(paths, load);
+  const cleanups: Cleanup[] = [() => plugins?.teardown()];
+  const close = async () => {
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  };
   try {
     const manifest = await scanRoutes(paths.appDir, { synthesizers: plugins?.synthesizers });
+    const emittedDir = await bootTestRuntime(paths, plugins, runtime, cleanups);
     const handler = await testAppHandler(paths, manifest, load, {
       onRequestError,
       matchExternal: plugins?.requestHandler,
+      emittedDir,
     });
-    const close = () => plugins?.teardown() ?? Promise.resolve();
     return { handler, manifest, appDir: paths.appDir, close };
   } catch (error) {
-    await plugins?.teardown();
+    await close();
     throw error;
   }
+}
+
+/**
+ * Start what `runtime` asks for — the plugins' build steps, `jobs/` and `services/` — pushing
+ * each undo onto `cleanups`.
+ *
+ * @returns The directory the build steps emitted into, when they ran.
+ */
+async function bootTestRuntime(
+  paths: ProjectPaths,
+  plugins: AppPlugins | null,
+  runtime: TestAppRuntime,
+  cleanups: Cleanup[],
+): Promise<string | undefined> {
+  const emittedDir = runtime.buildSteps && plugins?.hasBuildSteps
+    ? await runTestBuildSteps(paths, plugins, cleanups)
+    : undefined;
+  if (runtime.jobs) cleanups.push(await registerTestJobs(paths.projectDir));
+  if (runtime.services) await startTestServices(paths.projectDir, cleanups);
+  return emittedDir;
+}
+
+/** A temporary directory `close()` removes (a test never writes over a real build's output). */
+async function scratchDir(cleanups: Cleanup[]): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "denext-test-app-" });
+  cleanups.push(() => Deno.remove(dir, { recursive: true }).catch(() => {}));
+  return dir;
+}
+
+/** Run the plugins' build steps into a scratch directory; returns where they emitted. */
+async function runTestBuildSteps(
+  paths: ProjectPaths,
+  plugins: AppPlugins,
+  cleanups: Cleanup[],
+): Promise<string> {
+  const outDir = await scratchDir(cleanups);
+  const emitDir = join(outDir, EMITTED_DIR);
+  const base = { projectRoot: paths.projectDir, appDir: paths.appDir, config: paths.config ?? {} };
+  await plugins.runBuildSteps({ ...base, outDir }, { emitDir });
+  return emitDir;
+}
+
+/** Start `<projectDir>/services/**` (when there is one); the undo stops every supervisor. */
+async function startTestServices(projectDir: string, cleanups: Cleanup[]): Promise<void> {
+  if (!await isDirectory(join(projectDir, "services"))) return;
+  const outDir = await scratchDir(cleanups);
+  cleanups.push(() => stopServices());
+  await bootServices(projectDir, { outDir });
+}
+
+/** Whether `path` is a directory. */
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+/** Register `<projectDir>/jobs/**`; the undo aborts their runs and restores the registry. */
+async function registerTestJobs(projectDir: string): Promise<Cleanup> {
+  const before = new Map(jobNames().map((name) => [name, getJob(name)!]));
+  const names = await discoverJobs(join(projectDir, "jobs"));
+  return () => {
+    abortJobRuns();
+    for (const name of names) {
+      const previous = before.get(name);
+      if (previous) registerJob(name, previous);
+      else unregisterJob(name);
+    }
+  };
 }
 
 /** The project's plugins set up for one test app, their prepare steps run; `null` without any. */
@@ -219,7 +317,7 @@ async function testAppHandler(
   paths: ProjectPaths,
   manifest: RouteManifest,
   load: ModuleLoader,
-  hooks: Pick<AppConfig, "onRequestError" | "matchExternal">,
+  hooks: Pick<AppConfig, "onRequestError" | "matchExternal" | "emittedDir">,
 ): Promise<TestHandler> {
   let getMiddleware: (() => ReturnType<typeof createMiddlewareRunner>) | undefined;
   if (paths.middlewarePath) {

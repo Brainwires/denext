@@ -7,14 +7,17 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { walk } from "@std/fs";
 import { join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
-import { build } from "../src/build/build.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { startSpaDevServer } from "../src/build/spa/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 import { runBounded } from "./helpers/bounded-command.ts";
+import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -102,7 +105,7 @@ for (const compat of [false, true]) {
     Deno.test(`SPA ${path} export --platform ${platform}: the ${want} file's stylesheet only`, async () => {
       const dir = await project(spa(compat));
       try {
-        const out = (await staticExport(dir, { platform })).outDir;
+        const out = (await exportInChild(dir, { platform })).outDir;
         assertSheet(await allCss(out), want, `${platform} export`);
       } finally {
         await removeTempDir(dir);
@@ -116,7 +119,7 @@ for (const compat of [false, true]) {
       "src/main.ts": `import { look } from "#look";\nconsole.log(look);\n`,
     }, { "#look": "./src/look.ts" });
     try {
-      const out = (await staticExport(dir, { platform: "ios" })).outDir;
+      const out = (await exportInChild(dir, { platform: "ios" })).outDir;
       assertSheet(await allCss(out), "mobile", "ios export");
     } finally {
       await removeTempDir(dir);
@@ -148,7 +151,7 @@ Deno.test("SPA compat export --platform ios: a variant's font and `?url` assets 
   }
   const dir = await project(files);
   try {
-    const out = (await staticExport(dir, { platform: "ios" })).outDir;
+    const out = (await exportInChild(dir, { platform: "ios" })).outDir;
     assert((await filesWith(out, "MOBILE_FONT_BYTES")).length > 0, "the .mobile file's font");
     assert((await filesWith(out, "MOBILE_DOC_BYTES")).length > 0, "the .mobile file's ?url asset");
     assertEqualsEmpty(await filesWith(out, "PLAIN_FONT_BYTES"), "the plain file's font");
@@ -220,7 +223,7 @@ for (const compat of [false, true]) {
   Deno.test(`${path} App Router denext build: the route CSS is the .web file's`, async () => {
     const dir = await project(appRouter(compat));
     try {
-      await build(dir);
+      await buildInChild(dir);
       assertSheet(await allCss(join(dir, ".denext", "client")), "web", "build");
     } finally {
       await removeTempDir(dir);

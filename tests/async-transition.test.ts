@@ -19,6 +19,23 @@ type Any = any;
 const tick = () => new Promise((r) => setTimeout(r, 5));
 const micro = () => Promise.resolve();
 
+/**
+ * Wait until `container` renders `expected`, then assert it. A transition commit is a
+ * `setTimeout(0)` flush followed by a time-sliced concurrent render, so a fixed pair of 5 ms
+ * sleeps races it under CI load (Windows timers fire at ~15 ms granularity); polling (bounded)
+ * keeps the outcome deterministic while a real regression still fails — with the same diff —
+ * once the deadline passes.
+ */
+async function expectHtml(
+  container: { innerHTML: string },
+  expected: string,
+  message?: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (container.innerHTML !== expected && Date.now() < deadline) await tick();
+  assertEquals(container.innerHTML, expected, message);
+}
+
 Deno.test("useTransition: isPending is held across an awaited callback, then clears", async () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
@@ -71,10 +88,8 @@ Deno.test("useTransition: isPending is held across an awaited callback, then cle
   );
 
   // The transition macrotask flush lands the update and clears isPending.
-  await tick();
-  await tick();
-  assertEquals(
-    container.innerHTML,
+  await expectHtml(
+    container,
     "<div><i>-</i><span>1</span></div>",
     "the settled async transition applies the update and clears isPending",
   );
@@ -109,9 +124,7 @@ Deno.test("standalone startTransition entangles a post-await update at transitio
   // Not applied on the microtask → it's a transition, not a sync update.
   assertEquals(container.innerHTML, "<span>0</span>", "deferred to the transition flush");
 
-  await tick();
-  await tick();
-  assertEquals(container.innerHTML, "<span>1</span>", "transition flush applies the update");
+  await expectHtml(container, "<span>1</span>", "transition flush applies the update");
 });
 
 Deno.test("an urgent update still wins after an async transition settles", async () => {
@@ -140,10 +153,8 @@ Deno.test("an urgent update still wins after an async transition settles", async
 
   startAsync();
   resolveGate();
-  await tick();
-  await tick();
   // The async transition applied +10.
-  assertEquals(container.innerHTML, "<span>10</span>");
+  await expectHtml(container, "<span>10</span>");
 
   // After it settles, a plain setState is urgent again (flushes synchronously).
   urgent();

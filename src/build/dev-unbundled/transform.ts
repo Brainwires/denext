@@ -186,7 +186,7 @@ async function buildTransforms(
   }
   if (st.opts.spaIslands) {
     try {
-      const islands = await transformSpaIslands(src);
+      const islands = await transformSpaIslands(src, { importer: abs });
       if (islands.changed) src = islands.code;
     } catch (err) {
       warnTransformFailed("client:* rewrite", abs, err, "the elements mount eagerly");

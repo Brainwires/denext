@@ -65,9 +65,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
   bundle carries the runtime next to its `.exe`.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
-  -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
-  first online run (in the background) or by `denext toolchain install`. A verb used offline
-  before either has happened fails to load. The compiled binary embeds every verb.
+  -g jsr:@denext/denext/cli` caches the entrypoint (Deno's install has no post-install step); every
+  verb's modules, and the framework modules a verb loads by URL, are cached by
+  `denext toolchain install` or by the CLI's first online run (in the background). A verb used
+  offline before either has happened fails to load. The compiled binary embeds every verb.
 - **The TypeScript 7 language server (the editor default) does less than the TypeScript 6
   service.** The pinned runtime's `deno lsp` runs the dated 7.1 nightly the toolchain pins by
   default (earlier runtimes through the `"deno.unstable": ["tsgo-lsp"]` that `create`, `migrate`
@@ -122,9 +123,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   the gesture is held at its wrapper and replayed: a capture-phase listener above the island sees
   it twice. `client:only` skips SSR by definition.
 - **In SPA mode the directives defer the mount, not hydration.** There is no server HTML to keep
-  inert, so the directives defer the component's mount and split its code instead: only for a
-  component imported by name, not a member tag or a module-level `hydrate` default; a component
-  also used without a directive stays in the main bundle; `client:interaction` needs a
+  inert, so the directives defer the component's mount and split its code instead. A module-level
+  `hydrate` default is read only from a module imported by a relative path (not through an
+  import-map alias or a package), and only for an import's own component or a namespace import's
+  direct member; a component also used without a directive stays in the main bundle; `client:interaction` needs a
   `client:placeholder` to interact with, and replays the triggering gesture on the element at the
   same position in the component's DOM (its first element when the placeholder's shape differs).
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have
@@ -257,9 +259,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `db()` and realtime throw `code: "unsupported"`.
 - **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
   filters, 256 select items and 8 levels of embedding, and runs under a 5-second
-  `statement_timeout`. The `@denext/openapi` document lists the default schema's routes only (a
-  second schema is described by `GET /rest/v1` with its `Accept-Profile`), and their request
-  budget (`rest.rateLimit`) counts per process unless it is given a shared `store`.
+  `statement_timeout`. One URL serves every schema of `rest.schemas`, so in the `@denext/openapi`
+  document a relation or function whose name two schemas share is described for the first of
+  them only (`GET /rest/v1` with the other's `Accept-Profile` describes it). The request budget
+  (`rest.rateLimit`) counts per process when neither it nor `denextAuth`'s `rateLimit` names a
+  shared `store`.
 - **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
   trigger sends only the key, so every change costs a re-read per identity and filter; many
   concurrent writers serialize on commit (the logical-replication source
@@ -301,10 +305,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
-- **`createTestApp` runs plugins as `denext dev` does, not as `denext start` does:** plugin
-  build steps don't run, so a route served from build output renders on demand (a Pages Router
+- **`createTestApp` sets plugins up in `dev` mode**: their build steps run and what they emit is
+  served, but a route the build itself prerenders renders on demand (a Pages Router
   `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
-  on first use). `jobs/` and `services/` are not started.
+  on first use). `jobs/` is registered without its schedules, and `services/` is supervised
+  process-wide, so two test apps with services can't run at once.
+- **`viteEmitterPlugin` runs `generateBundle` asset emits only.** An asset by `fileName`, or by
+  `name` under Rollup's default `assets/[name]-[hash][extname]`, is published; a chunk-type
+  `emitFile` fails the build, and a plugin's own `assetFileNames` pattern, `setAssetSource` and
+  every other Vite hook are not run.
 - **The first-party Markdown renderer escapes raw HTML by default**; `markdown: { html:
   "sanitize" }` keeps what an allowlist sanitizer allows, never passing HTML through. Only the
   block containers (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when

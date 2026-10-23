@@ -4,9 +4,9 @@
 // prod PageCache.
 
 import { assert, assertEquals } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
 import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const APP = fromFileUrl(new URL("../../examples/caching", import.meta.url));
 
@@ -72,7 +72,7 @@ Deno.test({
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
 
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;

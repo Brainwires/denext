@@ -25,6 +25,7 @@ import type { CommandSpec } from "../cli/command.ts";
 import type { DeployAdapter } from "../deploy/adapter.ts";
 import type { DeployAssetGroup, DeployRoute } from "../deploy/manifest.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../cli/deno-verbs.ts";
+import { hashedAssetFileName } from "./asset-name.ts";
 import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
@@ -86,14 +87,36 @@ export interface PluginPrepareContext {
   readonly config: DenextConfig;
 }
 
-/** A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}. */
-export interface EmittedAsset {
+/**
+ * A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}: named by
+ * `fileName`, or by `name` alone for a content-hashed name.
+ */
+export type EmittedAsset = EmittedNamedAsset | EmittedHashedAsset;
+
+/** A generated file published at the `fileName` it gives. */
+export interface EmittedNamedAsset {
   /**
    * Where the file is served, relative to the site root, `/`-separated:
    * `"third-party-licenses.json"` is served at `/third-party-licenses.json`, `"meta/build.json"`
    * at `/meta/build.json`. An absolute path, a `..` segment or a backslash is refused.
    */
   readonly fileName: string;
+  /** Not used with a `fileName`. */
+  readonly name?: undefined;
+  /** The file's contents: text (written as UTF-8) or bytes. */
+  readonly source: string | Uint8Array;
+}
+
+/**
+ * A generated file published under a content-hashed name, as Rollup's default `assetFileNames`
+ * (`[name]-[hash][extname]`) names it: `{ name: "logo.svg" }` becomes `assets/logo-<hash>.svg`
+ * (in `spa.assetsDir` when that is set), the hash taken from `source`.
+ */
+export interface EmittedHashedAsset {
+  /** No `fileName`: the build names the file. */
+  readonly fileName?: undefined;
+  /** The name the hashed file name is made from (its last path segment is used). */
+  readonly name: string;
   /** The file's contents: text (written as UTF-8) or bytes. */
   readonly source: string | Uint8Array;
 }
@@ -110,8 +133,11 @@ export interface PluginBuildContext extends PluginPrepareContext {
    * publishes itself: `index.html`, denext's own output under `_denext/` (`client/`, `pages/`,
    * `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`), the `spa.assetsDir` directory and,
    * in an export, any file the build already wrote there (a rendered page, a client chunk).
+   * An asset given by `name` instead of `fileName` gets a content-hashed name
+   * ({@linkcode EmittedHashedAsset}), which may sit in the `spa.assetsDir` directory. Resolves to
+   * the file name it was published under.
    */
-  emitFile(asset: EmittedAsset): Promise<void>;
+  emitFile(asset: EmittedAsset): Promise<string>;
   /**
    * The modules bundled into the client output, as absolute paths (a module esbuild loaded from
    * a virtual namespace keeps its `namespace:path` id), when this build knows them: a SPA built
@@ -373,6 +399,13 @@ export interface AppPlugins {
   readonly requestHandler: ((request: Request) => Promise<Response | null>) | undefined;
   /** Run this app's prepare steps (each failure logged, never thrown). */
   runPrepareSteps(context: PluginPrepareContext): Promise<void>;
+  /**
+   * Run this app's build steps in registration order, as `denext build` does (a step's failure
+   * is thrown). `emitFile` publishes into `options.emitDir` (default `<outDir>/emitted`).
+   */
+  runBuildSteps(context: PluginPrepareContext, options?: RunBuildStepsOptions): Promise<void>;
+  /** Whether any of this app's plugins registered a build step. */
+  readonly hasBuildSteps: boolean;
   /** Run this app's teardowns, most recent first (each failure logged, never thrown). */
   teardown(): Promise<void>;
   /**
@@ -385,9 +418,9 @@ export interface AppPlugins {
 /**
  * Set up `base.config.plugins` for ONE app, into a registry of its own: every plugin's `setup`
  * runs (not de-duplicated against the process registries {@linkcode applyPlugins} fills), and
- * the route synthesizers, request handlers, prepare steps and teardowns it registers come back
- * on the result. Build steps, commands, deploy adapters, deploy routes and assets are accepted and ignored — they
- * belong to a build or the CLI, not to a running app.
+ * the route synthesizers, request handlers, prepare steps, build steps and teardowns it registers
+ * come back on the result. Commands, deploy adapters, deploy routes and assets are accepted and
+ * ignored — they belong to the CLI or a deploy, not to a running app.
  *
  * @param base The pipeline facts to expose to each plugin.
  * @returns The app's plugin set.
@@ -396,13 +429,14 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
   const synthesizers: RouteSynthesizer[] = [];
   const handlers: PluginRequestHandler[] = [];
   const prepares: Array<PrepareEntry> = [];
+  const builds: PluginBuildStep[] = [];
   const own: PluginTeardown[] = [];
   const servers = new Set<string>();
   const ignore = () => {};
   const sinks: PluginSinks = {
     synthesizer: (fn) => synthesizers.push(fn),
     requestHandler: (handler) => handlers.push(handler),
-    buildStep: ignore,
+    buildStep: (step) => builds.push(step),
     prepareStep: (entry) => prepares.push(entry),
     command: ignore,
     deployAdapter: ignore,
@@ -423,6 +457,10 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
     synthesizers,
     requestHandler: combineHandlers(handlers),
     runPrepareSteps: (context) => runPrepares(prepares, context),
+    runBuildSteps: (context, options = {}) => runBuildSteps(builds, context, options),
+    get hasBuildSteps() {
+      return builds.length > 0;
+    },
     teardown: () => runTeardowns(own),
     routeServers: [...servers],
   };
@@ -501,11 +539,15 @@ const inDir = (name: string, dir: string) => name === dir || name.startsWith(`${
  * would write over them). The rest of `_denext/` is open (`@denext/htmx` publishes its runtime at
  * `_denext/htmx/htmx.min.js`).
  */
-function reservedEmitPath(fileName: string, config: DenextConfig): boolean {
+function reservedEmitPath(fileName: string, config: DenextConfig, hashed = false): boolean {
   const name = fileName.toLowerCase();
   if (RESERVED_EMIT_FILES.has(name) || RESERVED_EMIT_DIRS.some((dir) => inDir(name, dir))) {
     return true;
   }
+  // A content-hashed name the build gave (Vite's `assets/[name]-[hash][extname]`) shares the
+  // `spa.assetsDir` directory with the client output, as in a Vite build: its hash keeps it off
+  // the client's own names, and `builtFiles` refuses a clash in an export.
+  if (hashed) return false;
   const assetsDir = config.spa?.assetsDir?.replace(/^\/+|\/+$/g, "").toLowerCase();
   return !!assetsDir && inDir(name, assetsDir);
 }
@@ -537,6 +579,21 @@ export async function listBuiltFiles(root: string): Promise<Set<string>> {
 }
 
 /**
+ * The file name an emitted asset is published under: its `fileName`, or the content-hashed name
+ * {@linkcode hashedAssetFileName} makes from its `name` (then `hashed`). Throws for neither.
+ */
+function emittedFileName(
+  asset: EmittedAsset,
+  config: DenextConfig,
+): { fileName: string; hashed: boolean } {
+  if (typeof asset.fileName === "string") return { fileName: asset.fileName, hashed: false };
+  if (typeof asset.name === "string" && asset.name !== "") {
+    return { fileName: hashedAssetFileName(asset.name, asset.source, config), hashed: true };
+  }
+  throw new Error("denext: emitFile needs a fileName, or a name to hash the file name from");
+}
+
+/**
  * The absolute path `fileName` is written to under `root`, refusing anything that could leave it
  * (an absolute path, a `..` segment, a backslash, an empty name) or replace the build's own
  * output ({@link reservedEmitPath}, or a file in `builtFiles`).
@@ -546,6 +603,7 @@ function emittedPath(
   fileName: string,
   config: DenextConfig,
   builtFiles?: ReadonlySet<string>,
+  hashed = false,
 ): string {
   const segments = fileName.split("/");
   if (
@@ -558,7 +616,7 @@ function emittedPath(
         "/-separated path inside the site root (no leading /, no . or .. segments, no backslash)",
     );
   }
-  if (reservedEmitPath(fileName, config)) {
+  if (reservedEmitPath(fileName, config, hashed)) {
     throw new Error(
       `denext: emitFile refused ${JSON.stringify(fileName)}: the build publishes it itself ` +
         "(the HTML shell index.html, its output under _denext/ and the spa.assetsDir client " +
@@ -577,23 +635,34 @@ function emittedPath(
  * Run every plugin-registered build step in registration order, each with an
  * {@linkcode PluginBuildContext.emitFile} that publishes into `options.emitDir`.
  */
-export async function runPluginBuildSteps(
+export function runPluginBuildSteps(
   context: PluginPrepareContext,
   options: RunBuildStepsOptions = {},
 ): Promise<void> {
-  if (buildSteps.length === 0) return;
+  return runBuildSteps(buildSteps, context, options);
+}
+
+/** Run `steps` in order, each with an `emitFile` that publishes into `options.emitDir`. */
+async function runBuildSteps(
+  steps: readonly PluginBuildStep[],
+  context: PluginPrepareContext,
+  options: RunBuildStepsOptions,
+): Promise<void> {
+  if (steps.length === 0) return;
   const emitDir = options.emitDir ?? join(context.outDir, EMITTED_DIR);
   const full: PluginBuildContext = {
     ...context,
     clientModules: options.clientModules,
-    emitFile: async ({ fileName, source }) => {
-      const dest = emittedPath(emitDir, fileName, context.config, options.builtFiles);
+    emitFile: async (asset) => {
+      const { fileName, hashed } = emittedFileName(asset, context.config);
+      const dest = emittedPath(emitDir, fileName, context.config, options.builtFiles, hashed);
       await Deno.mkdir(dirname(dest), { recursive: true });
-      if (typeof source === "string") await Deno.writeTextFile(dest, source);
-      else await Deno.writeFile(dest, source);
+      if (typeof asset.source === "string") await Deno.writeTextFile(dest, asset.source);
+      else await Deno.writeFile(dest, asset.source);
+      return fileName;
     },
   };
-  for (const step of buildSteps) await step(full);
+  for (const step of steps) await step(full);
 }
 
 /**

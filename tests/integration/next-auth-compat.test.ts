@@ -7,10 +7,10 @@
 // back by the Server Component. The real-browser hydration is tests/e2e/next-auth-compat.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
 import { serveEphemeral } from "../../src/build/prod-server.ts";
 import { DECOY_MARKER, writeNextAuthCompatFixture } from "../helpers/next-auth-compat-fixture.ts";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 /** Every client script a page references, fetched, plus the chunks they import. */
 async function clientCode(origin: string, html: string): Promise<string> {
@@ -55,7 +55,7 @@ Deno.test({
   const dir = await Deno.makeTempDir({ prefix: "denext_nextauth_compat_" });
   try {
     await writeNextAuthCompatFixture(dir);
-    await build(dir);
+    await buildInChild(dir);
     const server = await serveEphemeral(dir);
     try {
       const home = await fetch(`${server.origin}/`);

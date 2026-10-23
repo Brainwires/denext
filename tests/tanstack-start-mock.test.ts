@@ -21,6 +21,10 @@ import {
 import type { StartMocks, StartToolchain } from "../packages/tanstack-start/src/toolchain.ts";
 import { buildNextCompatClientEntries } from "../src/build/next-compat-build.ts";
 import { stopNextCompat } from "../src/build/next-compat.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 /**
  * Stand-ins for Start's mock modules with the same contract (ids, an edge's named exports over a

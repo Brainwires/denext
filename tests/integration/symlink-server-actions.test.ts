@@ -5,7 +5,7 @@
 
 import { assert, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
-import { build } from "../../src/build/build.ts";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const REPO = fromFileUrl(new URL("../..", import.meta.url));
 
@@ -104,7 +104,7 @@ Deno.test({
   const made = await linkedApp(false);
   if (!made) return;
   try {
-    const result = await build(made.link);
+    const result = await buildInChild(made.link);
     const text = await clientText(result.outDir);
     assert(text.length > 0, "the island shipped a client bundle");
     assert(!text.includes("ACTION_SECRET_7f3a"), "the action's source never ships");
@@ -121,7 +121,7 @@ Deno.test({
   const made = await linkedApp(true);
   if (!made) return;
   try {
-    const err = await assertRejects(() => build(made.link));
+    const err = await assertRejects(() => buildInChild(made.link));
     assertStringIncludes(String(err), "server-only code would ship to the browser");
     assertStringIncludes(String(err), "disk.ts");
   } finally {

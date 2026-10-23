@@ -73,15 +73,41 @@ import { buildTestHandler } from "./conformance.ts";
 
 /**
  * The handler {@linkcode createTestApp} returns: still a plain `(Request) => Response` function
- * (pass it to {@linkcode createTestClient} as before), plus `close()` to run the teardowns of the
- * app's `denext.config.ts` plugins. `await using app = await createTestApp(dir)` closes it at
- * the end of the scope.
+ * (pass it to {@linkcode createTestClient} as before), plus `close()` to stop what the app
+ * started — its `services/`, its `jobs/` registrations, and its `denext.config.ts` plugins'
+ * teardowns. `await using app = await createTestApp(dir)` closes it at the end of the scope.
  */
 export interface TestApp extends AsyncDisposable {
   /** Handle one request in process. */
   (request: Request): Response | Promise<Response>;
-  /** Run the app's plugin teardowns (a no-op without plugins; later calls do nothing). */
+  /**
+   * Stop the app's services, unregister its jobs and run its plugin teardowns (a no-op when it
+   * started none; later calls do nothing).
+   */
   close(): Promise<void>;
+}
+
+/**
+ * What {@linkcode createTestApp} starts beside the request handler. Every field defaults to
+ * `true`; pass `false` to leave that part out.
+ */
+export interface TestAppOptions {
+  /**
+   * Run the plugins' build steps (`addBuildStep`) as `denext build` does, and serve the files
+   * they emit (`emitFile`). They write into a temporary directory, removed by `close()`, never
+   * the project's `.denext/`.
+   */
+  buildSteps?: boolean;
+  /**
+   * Register every `jobs/**` module, so `runJob(name)` from `denext/server` runs it (in a test or
+   * from a route the test requests). No schedule fires; `close()` aborts the runs in flight.
+   */
+  jobs?: boolean;
+  /**
+   * Start `services/**` under their supervisor, as `denext start` does; `close()` stops them.
+   * The services' supervision is process-wide: close one test app before starting another.
+   */
+  services?: boolean;
 }
 
 /**
@@ -95,22 +121,35 @@ export interface TestApp extends AsyncDisposable {
  * The `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their
  * prepare steps once, their route synthesizers over the scanned routes, and their request
  * handlers for what the App Router does not match — so a Pages Router app
- * (`@denext/pages-router`) or a plugin-served route answers here too. Call `close()` (or
- * `await using`) to run the plugins' teardowns. Each call gets its own plugin set.
+ * (`@denext/pages-router`) or a plugin-served route answers here too. Their build steps run as
+ * well, and the files they emit are served. `jobs/` is registered (`runJob` works) and
+ * `services/` is started, as `denext start` does ({@linkcode TestAppOptions} turns each off).
+ * Call `close()` (or `await using`) to stop the services and run the plugins' teardowns. Each
+ * call gets its own plugin set.
  *
  * ```ts
  * import { createTestApp, createTestClient } from "@denext/denext/testing";
+ * import { runJob } from "@denext/denext/server";
  * await using app = await createTestApp("./");
  * const client = createTestClient(app);
+ * await runJob("cleanup");
  * ```
  *
  * @param projectDir The app directory (contains `app/` or `pages/`, optional `middleware.ts`).
- * @returns The in-process handler, with `close()` for the plugin teardowns.
+ * @param options What to start beside the handler (all of it by default).
+ * @returns The in-process handler, with `close()` for the services, jobs and plugin teardowns.
  */
-export async function createTestApp(projectDir: string): Promise<TestApp> {
+export async function createTestApp(
+  projectDir: string,
+  options: TestAppOptions = {},
+): Promise<TestApp> {
   // The production server's boundary discovery, with no build and no client bundle — the
   // JavaScript-disabled surface this handler exercises (`buildTestHandler`).
-  const { handler, close } = await buildTestHandler(projectDir, defaultLoader);
+  const { handler, close } = await buildTestHandler(projectDir, defaultLoader, undefined, {
+    buildSteps: options.buildSteps ?? true,
+    jobs: options.jobs ?? true,
+    services: options.services ?? true,
+  });
   let closed: Promise<void> | undefined;
   const closeOnce = () => (closed ??= close());
   return Object.assign((request: Request) => handler(request), {

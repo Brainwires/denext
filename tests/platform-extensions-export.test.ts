@@ -5,11 +5,12 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
-import { build } from "../src/build/build.ts";
 import { startProdServer } from "../src/build/prod-server.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
+import { runBounded } from "./helpers/bounded-command.ts";
+import { CHILD_DEADLINE_MS } from "./helpers/isolated.ts";
 
 /** Scaffold a throwaway app in `dir`: a deno.json aliasing `denext` to this checkout + files. */
 async function scaffoldApp(
@@ -69,7 +70,7 @@ async function exportFor(
 ) {
   const dir = await Deno.makeTempDir({ prefix: `denext_platform_${platform}_` });
   await scaffoldApp(dir, files, imports);
-  const result = await staticExport(dir, { platform });
+  const result = await exportInChild(dir, { platform });
   return {
     dir,
     html: await Deno.readTextFile(join(result.outDir, "index.html")),
@@ -171,14 +172,20 @@ async function cliExport(
     JSON.stringify({ ...config, nodeModulesDir: "manual" }),
   );
   const cli = new URL("../cli.ts", import.meta.url).href;
-  const out = await new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", cli, "export", "--platform", platform, dir],
+  const out = await runBounded(Deno.execPath(), [
+    "run",
+    "-A",
+    cli,
+    "export",
+    "--platform",
+    platform,
+    dir,
+  ], {
     cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
-  assert(out.success, log);
+    timeoutMs: CHILD_DEADLINE_MS,
+  });
+  assert(!out.timedOut, `the export did not finish in ${CHILD_DEADLINE_MS} ms:\n${out.output}`);
+  assert(out.success, out.output);
   const outDir = join(dir, "out");
   return {
     dir,
@@ -280,14 +287,14 @@ Deno.test("staticExport: a module with no file for the target fails naming its v
       "app/Pad.ios.tsx": `export function Pad(){ return <i>IOS</i>; }\n`,
       "app/Pad.android.tsx": `export function Pad(){ return <i>ANDROID</i>; }\n`,
     });
-    const err = await assertRejects(() => staticExport(dir, { platform: "macos" }));
+    const err = await assertRejects(() => exportInChild(dir, { platform: "macos" }));
     assertStringIncludes(
       (err as Error).message,
       "`./app/Pad.tsx` has `.android` and `.ios` variants but none for macos: add `Pad.tsx` " +
         "or `Pad.macos.tsx`",
     );
     // The targets that have one export fine.
-    const ok = await staticExport(dir, { platform: "ios" });
+    const ok = await exportInChild(dir, { platform: "ios" });
     assertStringIncludes(await Deno.readTextFile(join(ok.outDir, "index.html")), "IOS");
   } finally {
     await removeTempDir(dir);
@@ -301,7 +308,7 @@ Deno.test("staticExport: `platformExtensions: false` resolves the plain files on
       ...FLIGHT_APP,
       "denext.config.ts": `export default { platformExtensions: false };\n`,
     });
-    const result = await staticExport(dir, { platform: "ios" });
+    const result = await exportInChild(dir, { platform: "ios" });
     const got = {
       html: await Deno.readTextFile(join(result.outDir, "index.html")),
       js: await clientJs(result.outDir),
@@ -320,7 +327,7 @@ Deno.test("denext build + start: the web target's `.web` variant reaches the bun
       ...FLIGHT_APP,
       "components/Badge.web.tsx": badge("WEB_BADGE"),
     });
-    await build(dir);
+    await buildInChild(dir);
     const clientDir = join(dir, ".denext", "client");
     let js = "";
     for await (const e of Deno.readDir(clientDir)) {
@@ -364,7 +371,7 @@ Deno.test("denext build + start: start renders the build's server copies from a 
       "lib/stamp.ts": `export async function stamp() { "use cache"; return "CACHED_STAMP"; }\n`,
       "components/Badge.web.tsx": badge("WEB_BADGE"),
     });
-    await build(dir);
+    await buildInChild(dir);
     // Nothing under .denext may be written from here on.
     const walkDirs = async (p: string, mode: number) => {
       for await (const e of Deno.readDir(p)) {
@@ -425,7 +432,7 @@ Deno.test("denext build: a module reaching a variant through an alias keeps the 
       "lib/v.ts": `export const v = "PLAIN_V";\n`,
       "lib/v.web.ts": `export const v = "WEB_V";\n`,
     }, { "@/": "./", "denext/feature": `${root}src/feature.ts` });
-    await build(dir);
+    await buildInChild(dir);
     const clientDir = join(dir, ".denext", "client");
     let js = "";
     for await (const e of Deno.readDir(clientDir)) {
@@ -502,7 +509,7 @@ Deno.test("denext build: reactCompiler compiles a module imported through an ali
       "lib/v.ts": `export const v = "PLAIN_V";\n`,
       "lib/v.web.ts": `export const v = "WEB_V";\n`,
     }, { "@/": "./" });
-    await build(dir);
+    await buildInChild(dir);
     const js = await builtClientJs(dir);
     assertStringIncludes(js, "WEB_V");
     assertCompiled(js, "CARD_MARK");
@@ -587,7 +594,7 @@ Deno.test("denext build: a copied island's dynamic imports reach the variant", a
       "lib/more.ts": `export const more = "PLAIN_MORE";\n`,
       "lib/more.web.ts": `export const more = "WEB_MORE";\n`,
     }, { "@/": "./" });
-    await build(dir);
+    await buildInChild(dir);
     const clientDir = join(dir, ".denext", "client");
     let js = "";
     for await (const e of Deno.readDir(clientDir)) {
@@ -645,7 +652,7 @@ Deno.test("denext build: a client copy keeps import.meta as written", async () =
   const dir = await Deno.makeTempDir({ prefix: "denext_platform_meta_" });
   try {
     await scaffoldApp(dir, META_APP, { "@/": "./" });
-    await build(dir);
+    await buildInChild(dir);
     const clientDir = join(dir, ".denext", "client");
     let js = "";
     for await (const e of Deno.readDir(clientDir)) {

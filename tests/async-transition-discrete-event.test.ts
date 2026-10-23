@@ -18,6 +18,23 @@ type Any = any;
 const micro = () => Promise.resolve();
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
+/**
+ * Wait until `container` renders `expected`, then assert it. A transition commit is a
+ * `setTimeout(0)` flush followed by a time-sliced concurrent render, so a fixed pair of 5 ms
+ * sleeps races it under CI load (Windows timers fire at ~15 ms granularity); polling (bounded)
+ * keeps the outcome deterministic while a real regression still fails — with the same diff —
+ * once the deadline passes.
+ */
+async function expectHtml(
+  container: { innerHTML: string },
+  expected: string,
+  message?: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (container.innerHTML !== expected && Date.now() < deadline) await tick();
+  assertEquals(container.innerHTML, expected, message);
+}
+
 /** Find the nth (0-based) element of `tag` under `root`. */
 function findAll(root: FakeElement, tag: string): FakeElement[] {
   const up = tag.toUpperCase();
@@ -83,10 +100,8 @@ Deno.test("a discrete click stays urgent while an async transition is pending", 
 
   // Resolve the transition: its own post-await update lands on the transition flush.
   resolveGate();
-  await tick();
-  await tick();
-  assertEquals(
-    container.innerHTML,
+  await expectHtml(
+    container,
     "<div><button>start</button><button>1</button><span>done</span></div>",
     "the settled async transition applies its own update",
   );

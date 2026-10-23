@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../src/build/build.ts";
+import { buildInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -81,7 +81,7 @@ async function cliFromElsewhere(args: string[], dir: string): Promise<void> {
 Deno.test("build(dir) from another folder: an island reached only through an alias hydrates", async () => {
   const dir = await aliasApp();
   try {
-    await build(dir);
+    await buildInChild(dir);
     const got = await builtOutput(dir);
     assertEquals(got.staticRoutes, [], "the route is not static");
     assertStringIncludes(got.js, "COUNT_MARK", "the island is bundled");

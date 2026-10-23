@@ -1067,6 +1067,10 @@ const res = await client.submit(
 // res.status, client.cookies — a cookie jar persists the session across requests.
 ```
 
+`createTestApp` also runs the plugins' prepare and build steps (emitted files are served),
+registers `jobs/` (`runJob(name)` works) and starts `services/`; `await using app = await
+createTestApp(dir)` stops them (`{ services: false }`, `jobs` or `buildSteps` leaves one out).
+
 **Testing a component (hooks/effects/events, no browser):**
 
 ```ts
@@ -1115,7 +1119,7 @@ build step's `emitFile()` (or `viteEmitterPlugin(vitePlugin)`) publishes files a
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
 `addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets at build and export;
 its `emitFile({ fileName, source })` publishes a file at the site root like Vite's
-`this.emitFile`, and `viteEmitterPlugin(vitePlugin)` runs a Vite `generateBundle` emitter as one),
+`this.emitFile` (`{ name, source }` publishes it as `assets/[name]-[hash][extname]`), and `viteEmitterPlugin(vitePlugin)` runs a Vite `generateBundle` emitter as one),
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb); a router plugin whose pages come from its own route tree also calls
@@ -1570,7 +1574,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.7.1` — The denext framework version.
+- `VERSION: 4.8.0` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1830,7 +1834,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface EmailProvider` — A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.
 - `interface EmailProviderOptions` — Options for magicLink and emailOtp.
 - `type EmailRequestResult = object | object` — What a verification or reset request reports — never whether the address exists.
-- `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
+- `type EmittedAsset = EmittedNamedAsset | EmittedHashedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile: named by fileName, or by name alone for a content-hashed name.
+- `interface EmittedHashedAsset` — A generated file published under a content-hashed name, as Rollup's default assetFileNames ([name]-[hash][extname]) names it: { name: "logo.svg" } becomes assets/logo-<hash>.svg (in spa.assetsDir when that is set), the hash taken from source.
+- `interface EmittedNamedAsset` — A generated file published at the fileName it gives.
 - `enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>` — Start a TOTP enrollment: mint a secret, store it as an **unverified** TOTP factor, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). Earlier unverified TOTP factors are replaced. While a verified TOTP factor exists another one is added only from a session that proved a second factor recently (hasFreshFactor), and a pending session adds none while any verified factor exists; otherwise the answer is already_enrolled — a first factor alone must never add a factor next to one.
 - `type EnrollTotpResult = parenthesized | object` — The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — "already_enrolled" (a verified TOTP factor exists and this session did not just prove a second factor) or "reauth_required" (a complete session that didn't sign in recently).
 - `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message. The object form may also list the response headers the error carries (name → description, e.g. { "retry-after": "Seconds until the window resets" }) — documentation only, which @denext/openapi renders on that status's response; set the header itself with fail(code, { headers }).
@@ -2096,7 +2102,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ParsedIdpMetadata` — An IdP's metadata, read: the IdP plus what the document says about itself.
 - `parseIdpMetadata(xml: string): ParsedIdpMetadata` — Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding exactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from a URL you trust, or pin the certificate it yields.
 - `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
-- `parseRange(header: string, size: number): object | null | undefined` — One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416).
+- `parseRange(header: string, size: number): object | null | undefined` — One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416). parseRanges reads a header with several.
+- `parseRanges(header: string, size: number): object[] | null | undefined` — Every bytes= range of a Range header against size (RFC 9110 §14.1.2), sorted and with overlapping or adjacent ranges coalesced: undefined = ignore the header (a malformed or non-bytes header, or more than MAX_RANGES specs → serve the whole file), null = none satisfiable (416). An unsatisfiable spec among satisfiable ones is dropped.
 - `interface PasskeyChallengeRecord` — A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with the ceremony it belongs to.
 - `interface PasskeyRecord` — A registered passkey — a WebAuthn credential record (WebAuthn L3 §4, "credential record"): what verifying its later assertions needs. Nothing in it is secret: the public key verifies, it cannot sign.
 - `interface PasskeySummary` — A passkey as the app may show it — no key material.
@@ -2702,7 +2709,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ConformanceReport` — The full report from probeApp.
 - `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.
 - `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).
-- `createTestApp(projectDir: string): Promise<TestApp>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
+- `createTestApp(projectDir: string, options?: TestAppOptions): Promise<TestApp>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
 - `createTestClient(handler: TestHandler, options?: TestClientOptions): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
 - `fireEvent: FireEvent` — Dispatch DOM events at rendered elements (bubbling), each wrapped in act.
 - `interface FireEvent` — A dispatched-event helper: callable, plus named shortcuts. All are async.
@@ -2724,7 +2731,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>` — The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.
 - `class StoreContractError` — A contract case that failed; its message names what the store got wrong.
 - `type StoreFactory<S> = () => S | Promise<S>` — Makes a fresh, empty store for one case.
-- `interface TestApp` — The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to run the teardowns of the app's denext.config.ts plugins. await using app = await createTestApp(dir) closes it at the end of the scope.
+- `interface TestApp` — The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to stop what the app started — its services/, its jobs/ registrations, and its denext.config.ts plugins' teardowns. await using app = await createTestApp(dir) closes it at the end of the scope.
+- `interface TestAppOptions` — What createTestApp starts beside the request handler. Every field defaults to true; pass false to leave that part out.
 - `interface TestClient` — A cookie-aware, no-JS test driver over a request handler.
 - `interface TestClientOptions` — Options for createTestClient.
 - `interface TestElement` — The read-only shape of a rendered element that query helpers return.
@@ -3836,7 +3844,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DeployService` — A supervised service under services/, started with the server.
 - `interface DeployWriteOptions` — Where DeployContext.writeFile writes.
 - `edgeFunctionSource(name: string): string` — An Edge Function in Supabase's shape, for backend({ functions }) from @denext/backend: what denext generate function <name> and denext functions new <name> write.
-- `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
+- `type EmittedAsset = EmittedNamedAsset | EmittedHashedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile: named by fileName, or by name alone for a content-hashed name.
+- `interface EmittedHashedAsset` — A generated file published under a content-hashed name, as Rollup's default assetFileNames ([name]-[hash][extname]) names it: { name: "logo.svg" } becomes assets/logo-<hash>.svg (in spa.assetsDir when that is set), the hash taken from source.
+- `interface EmittedNamedAsset` — A generated file published at the fileName it gives.
 - `enableFastRefresh(): void` — Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there).
 - `extractRouteCss(routeFiles: string[], assets: AppCss): Promise<string>` — Extract the CSS a single route needs: crawl the route's source files, keep the transformed CSS for those reachable .css files (in path order), and concatenate. Returns "" when the route pulls in no CSS.
 - `fromBase64Url(s: string): Uint8Array` — Decode URL-safe base64 (no padding) back to bytes. Shared with the Remix session compat.
@@ -3880,7 +3890,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `toBase64Url(bytes: Uint8Array): string` — Encode bytes as URL-safe base64 (no padding). Shared with the Remix session compat.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
 - `verifyOrigin(request: Request, options: OriginCheckOptions): boolean` — Is this request from the app's own origin (or an explicitly allowed one)?
-- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset" with a fileName is supported).
+- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset", with a fileName or a name).
 - `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
 - `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
 - `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).
@@ -3896,7 +3906,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/plugin-kit/vite-emitter`
 
 - `type GenerateBundleHook = parenthesized | object` — A generateBundle hook: a function, or Rollup's { handler } object form.
-- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset" with a fileName is supported).
+- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset", with a fileName or a name).
 - `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
 - `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
 - `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).

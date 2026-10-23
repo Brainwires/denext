@@ -8,6 +8,48 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-10-23
+
+### Added
+
+- **SPA `client:*` directives on member tags, and the module-level `hydrate` default.** In SPA
+  mode `<UI.Chart client:visible />` (a namespace import, or a member of a default / named import)
+  now defers its mount and splits its module like a component imported by name, and a component
+  whose module (imported by a relative path) exports `const hydrate = "visible"` is deferred
+  wherever it is written without a directive, a usage-site directive still winning. Before, both
+  mounted eagerly and stayed in the main bundle.
+- **Hashed assets from plugins.** A build step's `emitFile({ name, source })` (and a Vite
+  plugin's `this.emitFile({ type: "asset", name, source })` through `viteEmitterPlugin`) publishes
+  the file under Rollup's default `assets/[name]-[hash][extname]` name (in `spa.assetsDir` when
+  set), immutable-cacheable; `emitFile` resolves to that name and the Vite context's
+  `this.getFileName(ref)` returns it. Before, an asset without a `fileName` failed the build.
+  Chunk emits are still unsupported.
+- **Static files answer multi-range requests.** A `Range` header with several ranges
+  (`bytes=0-9,20-29`) on a `public/` file or an exported asset (`denext start`, the SPA server,
+  `denext dev`, a Deno Desktop window) is a `206` `multipart/byteranges` reply (RFC 9110 §14.6),
+  each part with its own `Content-Type` and `Content-Range`, instead of the whole file.
+  Overlapping or adjacent ranges are coalesced (one result is a plain single-range `206`), an
+  unsatisfiable range beside satisfiable ones is dropped, and a header with more than 64 ranges is
+  ignored (the whole file). `If-Range` is honored: a range is served only while the `Last-Modified`
+  date it names still matches (the weak `ETag` never does, so the whole file is sent).
+  `parseRanges` (from `denext/server`) parses such a header.
+- **`createTestApp` starts what `denext start` runs**: the plugins' build steps (the files they
+  emit are served, from a temporary directory, never the project's `.denext/`), every `jobs/`
+  module (`runJob(name)` works from a test and from a route it requests; no schedule fires) and
+  the `services/` tree (`close()` stops it). A second argument turns each off:
+  `createTestApp(dir, { buildSteps: false, jobs: false, services: false })`. Prepare steps already
+  ran. See https://denext.dev/docs/testing.
+
+### Fixed
+
+- **A CLI installed from JSR works offline after `denext toolchain install`, every verb included.**
+  The cache step (and the first run's background warm-up) now caches every module a verb loads by
+  URL as well as each verb's own code: the framework's entry points a build bundles or a server
+  loads (the client runtime, the compat layers) and the helpers it runs in a child process (the
+  desktop sidecar bundler, the MDX worker). Before, `denext build` or `denext desktop` run offline
+  after the cache step could still fail to load one of them. The list is generated
+  (`src/cli/offline-modules.generated.ts`), and a test holds it to every lazily loaded module.
+
 ## [4.7.1] - 2026-10-23
 
 ### Added
@@ -18009,7 +18051,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.8.0...development
+[4.8.0]: https://jsr.io/@denext/denext@4.8.0
 [4.7.1]: https://jsr.io/@denext/denext@4.7.1
 [4.7.0]: https://jsr.io/@denext/denext@4.7.0
 [4.6.0]: https://jsr.io/@denext/denext@4.6.0

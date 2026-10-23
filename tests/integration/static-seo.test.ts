@@ -4,10 +4,10 @@ import { renderDocument } from "../../src/server/document.ts";
 import { mergeMetadata } from "../../src/server/render-page.ts";
 import { createApp } from "../../src/server/app.ts";
 import { parsePattern } from "../../src/router/segments.ts";
-import { staticExport } from "../../src/build/export.ts";
 import { h } from "../../src/jsx/jsx-runtime.ts";
 import type { RouteManifest } from "../../src/router/manifest.ts";
 import type { Metadata, PageProps } from "../../src/server/types.ts";
+import { exportInChild } from "../helpers/bounded-build.ts";
 
 Deno.test("document renders expanded metadata (keywords/robots/canonical/og/icon)", () => {
   const meta: Metadata = {
@@ -99,7 +99,7 @@ Deno.test("staticExport renders static + dynamic (generateStaticParams) pages", 
         `export function generateStaticParams(){ return [{ id: "1" }, { id: "2" }]; }\n`,
     );
 
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     assertEquals(result.pages, 3); // home + post/1 + post/2
     assertEquals(result.skipped.length, 0);
 
