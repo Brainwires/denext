@@ -1111,7 +1111,7 @@ build step's `emitFile()` (or `viteEmitterPlugin(vitePlugin)`) publishes files a
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
 `addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets at build and export;
 its `emitFile({ fileName, source })` publishes a file at the site root like Vite's
-`this.emitFile`, and `viteEmitterPlugin(vitePlugin)` runs a Vite `generateBundle` emitter as one),
+`this.emitFile` (`{ name, source }` publishes it as `assets/[name]-[hash][extname]`), and `viteEmitterPlugin(vitePlugin)` runs a Vite `generateBundle` emitter as one),
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb); a router plugin whose pages come from its own route tree also calls

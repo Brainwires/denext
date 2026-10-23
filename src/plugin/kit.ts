@@ -38,6 +38,8 @@
 export type {
   DenextPlugin,
   EmittedAsset,
+  EmittedHashedAsset,
+  EmittedNamedAsset,
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,

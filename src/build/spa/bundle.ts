@@ -381,8 +381,8 @@ function spaBundlePlugins(
     // `platform` is folded in dev too (its value must match the target's build), over the
     // `client:*` rewrite, then the plain modules Fast Refresh does not claim.
     const fold = constantsFoldTransform({ platform });
-    const pre = async (source: string) => {
-      const rewritten = islands ? await spaIslandsTransform(source) : null;
+    const pre = async (source: string, path: string) => {
+      const rewritten = islands ? await spaIslandsTransform(source, path) : null;
       return await fold(rewritten ?? source, "") ?? rewritten;
     };
     return [spaRefreshPlugin(projectDir, pre), platformFoldPlugin(projectDir, platform)];

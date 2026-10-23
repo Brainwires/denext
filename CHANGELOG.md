@@ -12,6 +12,19 @@ and this project adheres to
 
 ### Added
 
+- **SPA `client:*` directives on member tags, and the module-level `hydrate` default.** In SPA
+  mode `<UI.Chart client:visible />` (a namespace import, or a member of a default / named import)
+  now defers its mount and splits its module like a component imported by name, and a component
+  whose module (imported by a relative path) exports `const hydrate = "visible"` is deferred
+  wherever it is written without a directive, a usage-site directive still winning. Before, both
+  mounted eagerly and stayed in the main bundle.
+- **Hashed assets from plugins.** A build step's `emitFile({ name, source })` (and a Vite
+  plugin's `this.emitFile({ type: "asset", name, source })` through `viteEmitterPlugin`) publishes
+  the file under Rollup's default `assets/[name]-[hash][extname]` name (in `spa.assetsDir` when
+  set), immutable-cacheable; `emitFile` resolves to that name and the Vite context's
+  `this.getFileName(ref)` returns it. Before, an asset without a `fileName` failed the build.
+  Chunk emits are still unsupported.
+
 - **`denext create <dir> --monorepo`** (also in the interactive picker and on `denext ui`'s Setup
   page) scaffolds a Deno workspace: a root `deno.json` listing its members, holding the root-only
   fields (`unstable`, `allowScripts`), the shared `compilerOptions` / `fmt` / `lint` and tasks

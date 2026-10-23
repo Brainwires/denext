@@ -3,7 +3,9 @@
 // one's module loads, and the component mounts, only when its trigger fires — `client:idle`
 // once the page is idle, `client:media` when its query matches, `client:visible` when its
 // placeholder scrolls near the viewport, `client:interaction` on the first click on its
-// `client:placeholder` — while the rest of the app is interactive from the start.
+// `client:placeholder` — while the rest of the app is interactive from the start. A member tag
+// (`<Widgets.Gauge client:visible />`) and a component whose module exports a `hydrate` default
+// (`<Stamp />`, no directive) are deferred the same way.
 //
 // Opt-in: run with `deno task test:e2e`.
 
@@ -29,7 +31,7 @@ Deno.test({
       const entry = await Deno.readTextFile(join(client, "index.js")).catch(() => "");
       const files: string[] = [];
       for await (const e of Deno.readDir(client)) if (e.name.endsWith(".js")) files.push(e.name);
-      for (const name of ["chart", "panel", "wide", "later"]) {
+      for (const name of ["chart", "panel", "wide", "later", "widgets", "stamp"]) {
         const marker = `__loaded.${name}`;
         assert(!entry.includes(marker), `${name} is not in index.js`);
         let found = false;
@@ -54,6 +56,8 @@ Deno.test({
       assertEquals(await page.evaluate(exists("chart")), false);
       assertEquals(await page.evaluate(loaded("panel")), false, "the panel's chunk waits");
       assertEquals(await page.evaluate(exists("panel")), false);
+      assertEquals(await page.evaluate(loaded("widgets")), false, "the member tag's chunk waits");
+      assertEquals(await page.evaluate(loaded("stamp")), false, "the module default's chunk waits");
     });
 
     await t.step("client:idle and client:media (matching) mount on their own", async () => {
@@ -70,6 +74,10 @@ Deno.test({
         `document.querySelector('[data-testid="chart"]').textContent`,
       ) as string;
       assert(text.includes("sales") && text.includes("1"), `props pass through: ${text}`);
+      // The member tag and the module-level default, below it, mount on the same scroll.
+      await pollFor(page, exists("gauge"));
+      await pollFor(page, exists("stamp"));
+      assert(await page.evaluate(loaded("widgets")) && await page.evaluate(loaded("stamp")));
     });
 
     await t.step("client:interaction mounts on the first click on its placeholder", async () => {
