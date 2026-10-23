@@ -163,6 +163,35 @@ Deno.test("ensureAppDir exits(1) and prints when no routable tree exists", async
   }
 });
 
+Deno.test("ensureAppDir at a monorepo's root names its apps instead", async () => {
+  const dir = await Deno.makeTempDir();
+  const realExit = Deno.exit;
+  const realError = console.error;
+  const errors: string[] = [];
+  (Deno as { exit: (code?: number) => never }).exit = ((code?: number) => {
+    throw new Error(`EXIT:${code}`);
+  }) as typeof Deno.exit;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  };
+  try {
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ workspace: ["./apps/web", "./packages/ui"] }),
+    );
+    await Deno.mkdir(join(dir, "apps", "web", "app"), { recursive: true });
+    await Deno.mkdir(join(dir, "packages", "ui"), { recursive: true });
+    await assertRejects(() => ensureAppDir(join(dir, "app"), dir), Error, "EXIT:1");
+    assertEquals(errors.length, 1);
+    assertStringIncludes(errors[0], "is a Deno workspace root; its denext app is apps/web.");
+    assertStringIncludes(errors[0], "`denext dev apps/web`");
+  } finally {
+    Deno.exit = realExit;
+    console.error = realError;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 // ---- SHUTDOWN_SIGNALS -------------------------------------------------------
 
 Deno.test("SHUTDOWN_SIGNALS always traps SIGINT and is platform-appropriate", () => {

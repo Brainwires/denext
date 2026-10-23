@@ -6,7 +6,12 @@
 // between the export's pages (denext's client router: soft navigations, a link back, history.back())
 // and loads `/second` in full, asserting each page renders its own content and keeps the desktop
 // bridge, and that the desktop export took `PlatformBadge.desktop.tsx` (imported through an alias)
-// in its server render and its client bundle. Then the full-app update itself: a
+// in its server render and its client bundle. The page's downloads: `downloadToFile` from a server
+// on this machine's private address (a whole file, and one aborted mid-transfer that must leave no
+// partial file), and an `<a download>` blob export and a `Content-Disposition: attachment` response
+// whose save dialogs the runner answers (Return in the folder LAUFEY_TEST_DOWNLOAD_DIR points them
+// at: xdotool, System Events or SendKeys), each file checked where it landed. Then the full-app
+// update itself: a
 // copy of the app downloads, verifies and installs a second build (99.0.0, same throwaway key), the
 // new version's trial launch deliberately does not confirm, and the next launch must roll it back.
 //
@@ -85,6 +90,15 @@ import {
 } from "./windows-signing.ts";
 import pin from "../../../src/build/desktop-runtime-pin.json" with { type: "json" };
 import { parseFlags } from "./cli-args.ts";
+import {
+  DOWNLOAD_PATH,
+  DOWNLOAD_TEXT,
+  type RunnerDownloads,
+  SLOW_CHUNK,
+  SLOW_INTERVAL_MS,
+  SLOW_PATH,
+  SLOW_SIZE,
+} from "../app/downloads.ts";
 
 export const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const SCRATCH = join(ROOT, "e2e", ".run");
@@ -812,6 +826,239 @@ async function startUpdateServer(
   return { base, close: () => void server.shutdown() } satisfies UpdateServer;
 }
 
+// --- page downloads ----------------------------------------------------------------------------
+
+/** Where the runtime's save dialogs open (`LAUFEY_TEST_DOWNLOAD_DIR`): the page's downloads land here. */
+const DOWNLOAD_DIR = join(SCRATCH, "downloads");
+
+/** What the download checks are offered (written into the runner state; see `app/downloads.ts`). */
+let runnerDownloads: RunnerDownloads = {
+  base: null,
+  skip: "the download server has not started",
+  dialogs: null,
+  dialogSkip: "no save dialog driver yet",
+};
+
+/** Whether an IPv4 address is on a private network (RFC 1918). */
+function isPrivateIpv4(address: string): boolean {
+  const [a, b] = address.split(".").map(Number);
+  return a === 10 || (a === 172 && b >= 16 && b < 32) || (a === 192 && b === 168);
+}
+
+/**
+ * This machine's first private-network (RFC 1918) IPv4 address, or `null`: `downloadToFile` refuses
+ * loopback and link-local hosts (a page must not reach local services through the runtime's
+ * CORS-free fetch), so its test server listens on the LAN address.
+ */
+export function privateLanAddress(
+  interfaces: readonly Pick<Deno.NetworkInterfaceInfo, "family" | "address">[],
+): string | null {
+  const found = interfaces.find((i) => i.family === "IPv4" && isPrivateIpv4(i.address));
+  return found?.address ?? null;
+}
+
+/** The keystrokes that answer a save dialog on one OS: Return accepts, Escape dismisses. */
+export interface SaveDialogKeys {
+  readonly driver: "xdotool" | "osascript" | "sendkeys";
+  readonly accept: readonly string[];
+  readonly dismiss: readonly string[];
+}
+
+/**
+ * How the runner presses a key in the focused save dialog on `os`: `xdotool` (X11), System Events
+ * through `osascript` (macOS: the runner needs the Accessibility permission, which hosted runners
+ * grant) and WScript.Shell's `SendKeys` (Windows); `null` elsewhere.
+ */
+export function saveDialogKeys(os: string): SaveDialogKeys | null {
+  const osascript = (code: number) => [
+    "osascript",
+    "-e",
+    `tell application "System Events" to key code ${code}`,
+  ];
+  const sendKeys = (keys: string) => [
+    "powershell",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `(New-Object -ComObject WScript.Shell).SendKeys('${keys}')`,
+  ];
+  switch (os) {
+    case "linux":
+      return {
+        driver: "xdotool",
+        accept: ["xdotool", "key", "--clearmodifiers", "Return"],
+        dismiss: ["xdotool", "key", "--clearmodifiers", "Escape"],
+      };
+    case "darwin":
+      return { driver: "osascript", accept: osascript(36), dismiss: osascript(53) };
+    case "windows":
+      return { driver: "sendkeys", accept: sendKeys("~"), dismiss: sendKeys("{ESC}") };
+    default:
+      return null;
+  }
+}
+
+/** This OS's save dialog keys when they can be pressed here, else why not. */
+async function saveDialogDriver(): Promise<{ keys: SaveDialogKeys | null; skip: string | null }> {
+  const keys = saveDialogKeys(OS);
+  if (!keys) return { keys: null, skip: `no save dialog driver for ${OS}` };
+  if (OS === "linux") {
+    if (linuxSessionType() !== "x11") return { keys: null, skip: "xdotool needs an X11 session" };
+    if ((await quiet("xdotool", ["version"]))?.success !== true) {
+      return { keys: null, skip: "xdotool is not installed" };
+    }
+  }
+  if (OS === "darwin") {
+    const probe = await quiet("osascript", [
+      "-e",
+      'tell application "System Events" to get name of first process whose frontmost is true',
+    ]);
+    if (probe?.success !== true) {
+      return {
+        keys: null,
+        skip: "System Events refused this process (no Accessibility permission)",
+      };
+    }
+  }
+  return { keys, skip: null };
+}
+
+/** Run a key press; a short note on how it went. */
+async function press(cmd: readonly string[]): Promise<string> {
+  const out = await new Deno.Command(cmd[0], {
+    args: cmd.slice(1),
+    stdin: "null",
+    stdout: "null",
+    stderr: "piped",
+  }).output().catch((err: Error) => ({
+    success: false,
+    stderr: new TextEncoder().encode(err.message),
+  }));
+  return out.success
+    ? "ok"
+    : `failed: ${new TextDecoder().decode(out.stderr).trim().slice(0, 200)}`;
+}
+
+/** A file's content once its size stops changing (the engine may still be writing it). */
+async function settledText(file: string): Promise<string | null> {
+  let last = -1;
+  for (let i = 0; i < 20; i++) {
+    const size = await Deno.stat(file).then((s) => s.size, () => -1);
+    if (size >= 0 && size === last) return await Deno.readTextFile(file);
+    last = size;
+    await sleep(250);
+  }
+  return await Deno.readTextFile(file).catch(() => null);
+}
+
+/**
+ * Answer the save dialog a page download opened: press Return (up to three times, the dialog may
+ * still be opening) until `name` lands in {@link DOWNLOAD_DIR}, else Escape so no dialog stays up.
+ */
+async function answerSaveDialog(
+  keys: SaveDialogKeys,
+  name: string,
+): Promise<{ landed: boolean; text: string | null; detail: string }> {
+  const file = join(DOWNLOAD_DIR, name);
+  const steps: string[] = [];
+  for (let attempt = 0; attempt < 3 && !(await exists(file)); attempt++) {
+    await sleep(attempt === 0 ? 2000 : 1000);
+    if (await exists(file)) break;
+    steps.push(`Return ${await press(keys.accept)}`);
+    const until = Date.now() + 5000;
+    while (Date.now() < until && !(await exists(file))) await sleep(200);
+  }
+  if (await exists(file)) {
+    return { landed: true, text: await settledText(file), detail: steps.join("; ") };
+  }
+  steps.push(`Escape ${await press(keys.dismiss)}`);
+  const there = await Array.fromAsync(Deno.readDir(DOWNLOAD_DIR)).catch(() => []);
+  steps.push(`${DOWNLOAD_DIR} holds ${there.map((e) => e.name).join(", ") || "nothing"}`);
+  return { landed: false, text: null, detail: `${keys.driver}: ${steps.join("; ")}` };
+}
+
+/** The driver found at start-up (`null` when no dialog can be answered here). */
+let dialogKeys: SaveDialogKeys | null = null;
+
+/** Answer the save dialogs the page asks about (`kitchen.saveDialog`). */
+async function serveSaveDialogs(): Promise<void> {
+  for await (const e of Deno.readDir(SCRATCH)) {
+    const m = /^save-([a-z0-9-]+)\.request\.json$/.exec(e.name);
+    if (!m) continue;
+    const request = join(SCRATCH, e.name);
+    const { name } = JSON.parse(await Deno.readTextFile(request)) as { name: string };
+    await Deno.remove(request);
+    log(`the page asks for its ${m[1]} download's save dialog (${name}) to be answered`);
+    const result = dialogKeys
+      ? await answerSaveDialog(dialogKeys, name.replace(/^.*[\\/]/, ""))
+      : { landed: false, text: null, detail: "no save dialog driver" };
+    log(`  ${result.landed ? "landed" : "did not land"}: ${result.detail}`);
+    await Deno.writeTextFile(join(SCRATCH, `save-${m[1]}.done.json`), JSON.stringify(result));
+  }
+}
+
+/** A body that trickles out slowly, and stops when the client goes away. */
+function slowBody(): ReadableStream<Uint8Array> {
+  let sent = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  return new ReadableStream({
+    start(controller) {
+      timer = setInterval(() => {
+        const n = Math.min(SLOW_CHUNK, SLOW_SIZE - sent);
+        controller.enqueue(new Uint8Array(n));
+        sent += n;
+        if (sent >= SLOW_SIZE) {
+          clearInterval(timer);
+          controller.close();
+        }
+      }, SLOW_INTERVAL_MS);
+    },
+    cancel() {
+      clearInterval(timer);
+    },
+  });
+}
+
+/**
+ * Serve the `downloadToFile` checks' files on this machine's private address (`host`), and check
+ * the runner itself can fetch from it; the downloads offer, with the reason when there is none.
+ */
+async function startDownloadServer(
+  host: string | null,
+): Promise<{ base: string | null; skip: string | null; close: () => void }> {
+  if (!host) {
+    return {
+      base: null,
+      skip: "this machine has no private-network (RFC 1918) IPv4 address, and downloadToFile " +
+        "refuses loopback hosts",
+      close: () => {},
+    };
+  }
+  const server = Deno.serve({ hostname: "0.0.0.0", port: 0, onListen: () => {} }, (req) => {
+    const path = new URL(req.url).pathname;
+    if (path === DOWNLOAD_PATH) {
+      return new Response(DOWNLOAD_TEXT, { headers: { "content-type": "text/plain" } });
+    }
+    if (path === SLOW_PATH) {
+      return new Response(slowBody(), {
+        headers: { "content-type": "application/octet-stream", "content-length": `${SLOW_SIZE}` },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  });
+  const close = () => void server.shutdown();
+  const base = `http://${host}:${server.addr.port}/`;
+  const probe = await fetch(`${base}${DOWNLOAD_PATH.slice(1)}`, {
+    signal: AbortSignal.timeout(5000),
+  }).then(async (r) => r.ok && (await r.text()) === DOWNLOAD_TEXT, () => false);
+  if (!probe) {
+    close();
+    return { base: null, skip: `the runner can't reach its own server at ${base}`, close };
+  }
+  log(`download server: ${base}`);
+  return { base, skip: null, close };
+}
+
 // --- launching ---------------------------------------------------------------------------------
 
 /** The packaged app's backend (set once the bundle is known), for the page's skip reasons. */
@@ -844,6 +1091,7 @@ async function writeRunnerState(
       updateBase,
       sessionType: linuxSessionType(),
       backend: appBackend,
+      downloads: runnerDownloads,
     }),
   );
 }
@@ -887,7 +1135,12 @@ async function warnIfScreenLocked(): Promise<void> {
 
 /** The app's environment: the stand-in browser first on PATH. */
 function appEnv(bin: string): Record<string, string> {
-  return { PATH: `${bin}${DELIMITER}${Deno.env.get("PATH") ?? ""}` };
+  return {
+    PATH: `${bin}${DELIMITER}${Deno.env.get("PATH") ?? ""}`,
+    // The runtime's save dialogs (a page download's) open in this folder, the proposed name
+    // filled in, so the runner's Return saves the file there (laufey's test hook).
+    LAUFEY_TEST_DOWNLOAD_DIR: DOWNLOAD_DIR,
+  };
 }
 
 /** Start the packaged app, its stdout + stderr appended to `logFile`. */
@@ -963,6 +1216,7 @@ async function waitForReport(
   while (Date.now() < until) {
     if (await exists(file)) return JSON.parse(await Deno.readTextFile(file)) as Report;
     await serveSecondInstances(exe, env);
+    await serveSaveDialogs();
     await sleep(250);
   }
   return null;
@@ -1483,6 +1737,11 @@ async function main(): Promise<void> {
   let signing: Signing | null = OS === "windows" && signSkip ? skippedSigning(signSkip) : null;
   const reports: Report[] = [];
   const extra: string[] = [];
+  // downloadToFile's test host, baked into the package's --allow-net (denext.config.ts): with
+  // --no-package the build in dist/ keeps the host it was packaged with.
+  const lanHost = privateLanAddress(Deno.networkInterfaces());
+  if (lanHost) Deno.env.set("KITCHEN_SINK_DOWNLOAD_HOST", lanHost);
+  await Deno.mkdir(DOWNLOAD_DIR, { recursive: true });
   try {
     let keys: { publicKey: string; privateKeyPem: string };
     if (noPackage) keys = await buildKey();
@@ -1512,6 +1771,15 @@ async function main(): Promise<void> {
     const bin = await installBrowserStub();
     const signed = withUpdate ? signing?.builds ?? null : null;
     const updates = await startUpdateServer(keys, bundle, update, signed);
+    const downloads = await startDownloadServer(lanHost);
+    const driver = await saveDialogDriver();
+    dialogKeys = driver.keys;
+    runnerDownloads = {
+      base: downloads.base,
+      skip: downloads.skip,
+      dialogs: driver.keys?.driver ?? null,
+      dialogSkip: driver.skip,
+    };
     try {
       const main = await mainPhase(exe, bin, updates.base);
       reports.push(main.report);
@@ -1536,6 +1804,7 @@ async function main(): Promise<void> {
       extra.push(err instanceof Error ? err.message : String(err));
     } finally {
       updates.close();
+      downloads.close();
       await cleanupAfterRun([
         bundle,
         bundleIn(join(SCRATCH, "install")),

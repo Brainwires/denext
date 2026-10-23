@@ -1524,13 +1524,13 @@ default").
   `src/build/hydration.ts:26, 72-107`, wired
   `src/build/build-pipeline/routes.ts:50`, `src/build/build-pipeline/transforms.ts:78`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX
-  runtime, hooks, context, and reconciler; no npm React. **~20 KB first load**
-  vs ~60 KB React+ReactDOM / ~137 KB Next.js 16; **~19 KB** shared runtime
-  baseline. — `src/runtime/*`, `src/jsx/*`, `src/client/fiber/*` (numbers:
+  runtime, hooks, context, and reconciler; no npm React. **~25 KB first load**
+  (gzip; 66 KB raw) vs ~139 KB gzip on Next.js 16.4.2 for the same routes; **~24 KB** gz shared runtime
+  baseline (in the `examples/spa` bench the first load is 19.5 KB gz / 52.7 KB raw on denext vs 68.7 KB gz / 218.9 KB raw on React 19.3.1 + ReactDOM). — `src/runtime/*`, `src/jsx/*`, `src/client/fiber/*` (numbers:
   `README.md` "Tiny by default").
 - **Single shared runtime chunk cached across navigations** **[default]** — one
   code-split pass hoists the runtime into a common chunk downloaded once; a
-  later navigation transfers only the route delta (**~0.6–0.9 KB**). Route
+  later navigation transfers only the route delta (**~0.7–1.4 KB** gz). Route
   entries dropped from ~19 KB to ~1 KB each. —
   `src/build/bundle.ts:1734-1746` (`bundleRoutes`), `src/build/build.ts`; regression
   `tests/integration/build-smoke.test.ts:71-90`.

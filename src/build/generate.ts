@@ -10,6 +10,7 @@ import { type DockerRequest, resolveDocker } from "./docker-detect.ts";
 import { type DockerOptions, dockerPlan } from "./docker-template.ts";
 import { ciPlan, migrationPlan, seedPlan, vectorSearchPlan } from "./generate-ops.ts";
 import { resolveProject } from "./paths.ts";
+import { appPlan } from "./generate-app.ts";
 
 /**
  * Every artifact `denext generate` can scaffold, in the order the CLI lists them. This is the
@@ -35,6 +36,7 @@ export const GENERATE_KINDS = [
   "vector-search",
   "seed",
   "ci",
+  "app",
 ] as const;
 
 /** The artifacts `denext generate` can scaffold. */
@@ -58,7 +60,7 @@ export const OPTIONAL_NAME_KINDS: ReadonlySet<GenerateKind> = new Set<GenerateKi
 ]);
 
 /** The kinds that write project-root ops files (no App Router `app/` dir needed). */
-type OpsKind = "docker" | "migration" | "vector-search" | "seed" | "ci";
+type OpsKind = "docker" | "migration" | "vector-search" | "seed" | "ci" | "app";
 
 /** One file a generate run would produce. */
 export interface GeneratePreviewFile {
@@ -374,7 +376,7 @@ async function planArtifacts(
 
 function isOpsKind(kind: GenerateKind): kind is OpsKind {
   return kind === "docker" || kind === "migration" || kind === "vector-search" || kind === "seed" ||
-    kind === "ci";
+    kind === "ci" || kind === "app";
 }
 
 /** The project-root ops scaffolds (Docker, migrations, seeds, CI); `name` is the override. */
@@ -403,6 +405,8 @@ async function opsPlan(
       return await seedPlan(projectDir, name);
     case "ci":
       return await ciPlan(projectDir, name);
+    case "app":
+      return await appPlan(projectDir, name);
   }
 }
 

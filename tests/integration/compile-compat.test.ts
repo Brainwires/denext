@@ -49,6 +49,14 @@ export function GET(request: Request) {
   return NextResponse.json({ hello: new URL(request.url).searchParams.get("name") });
 }
 `,
+  // A route reading a file beside itself (an OG image route's font): the bundled module's
+  // `import.meta.url` names its embedded source file.
+  "app/api/og/route.ts": `import fs from "node:fs/promises";
+export async function GET() {
+  return new Response(await fs.readFile(new URL("./Inter-SemiBold.ttf", import.meta.url)));
+}
+`,
+  "app/api/og/Inter-SemiBold.ttf": "font bytes beside the route\n",
   "public/hello.txt": "hello from the drop-in\n",
 };
 
@@ -354,6 +362,9 @@ Deno.test({
       const hello = await app.get("/api/hello?name=bin");
       assertEquals(hello.status, 200);
       assertEquals(JSON.parse(hello.text), { hello: "bin" });
+      const og = await app.get("/api/og");
+      assertEquals(og.status, 200, og.text);
+      assertEquals(og.text, "font bytes beside the route\n");
       assertEquals((await app.get("/hello.txt")).text, "hello from the drop-in\n");
       assertEquals((await app.get("/missing")).status, 404);
     }),

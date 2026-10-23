@@ -152,7 +152,11 @@ export async function GET(): Promise<Response> {
 }
 `,
     "app/api/runtime/route.ts": `export function GET(): Response {
-  return Response.json({ sql: typeof (Deno as { SQL?: unknown }).SQL, deno: Deno.version.deno });
+  return Response.json({
+    sql: typeof (Deno as { SQL?: unknown }).SQL,
+    deno: Deno.version.deno,
+    denext: (Deno.build as { denext?: string }).denext,
+  });
 }
 `,
     "app/api/slow/route.ts": `export async function GET(): Promise<Response> {
@@ -457,7 +461,7 @@ Deno.test({
             const runtime = JSON.parse((await app.get("/api/runtime")).text);
             if (ON_TOOLCHAIN) {
               assertEquals(runtime.sql, "function", JSON.stringify(runtime));
-              assert(isDenextDenoVersion(runtime.deno), runtime.deno);
+              assert(isDenextDenoVersion(runtime), JSON.stringify(runtime));
             }
             // A handle nothing closes holds the process after the drain: the in-flight request
             // still finishes, and the process exits at the drain deadline anyway (on Windows after

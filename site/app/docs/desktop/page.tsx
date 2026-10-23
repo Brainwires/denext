@@ -2140,8 +2140,14 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         response or a blob export opens the OS save dialog on every backend under denext&apos;s
         pinned runtime (from{" "}
         <code>2.9.7-denext.22</code>), only for the app&apos;s own origins, with a sanitized file
-        name and at most three save dialogs per window in 10 s. Under the stock runtime they stay
-        inert; use <code>saveFile</code> for a save that must work everywhere (see{" "}
+        name and at most three save dialogs per window in 10 s. One exception for now: on WebKit
+        (WKWebView on macOS, WebKitGTK on Linux) a <code>Content-Disposition: attachment</code>{" "}
+        response from a custom-scheme app origin (<code>desktop.app.origin</code>) opens no save
+        dialog and is not downloaded; WebView2 and CEF download it, and an{" "}
+        <code>{"<a download>"}</code>{" "}
+        link or a blob export works everywhere. Under the stock runtime they stay inert; use{" "}
+        <code>saveFile</code> (or <code>downloadToFile</code>{" "}
+        into the app&apos;s folders) for a save that must work everywhere (see{" "}
         <a href="/docs/desktop-runtime#page-downloads">the runtime</a>).
       </p>
 

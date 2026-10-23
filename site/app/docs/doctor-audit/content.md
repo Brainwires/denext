@@ -107,7 +107,7 @@ for it (its flags pass through); Deno's cache locations are `denext deno info`.
 ## `denext analyze`
 
 `denext analyze` builds and then breaks the client bundle down by chunk, with
-`--md` for a markdown report (per-module on the esbuild path) to pipe into CI.
+`--md` for a markdown report (with each chunk's top modules) to pipe into CI.
 `doctor --report` shows the last build's chunks without building; `analyze`
 builds fresh and goes deeper. See [Bundling](/docs/bundling), which owns it.
 

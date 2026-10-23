@@ -94,3 +94,28 @@ export async function pinEligibleFile(
   if (out.ok && out.text !== before) await Deno.writeTextFile(path, out.text);
   return out;
 }
+
+/**
+ * {@link pinEligible} over several configs written together (a monorepo's root, app and
+ * packages): planned over their joined text, so every pin moves to the same version, and each
+ * file rewritten when a pin in it moved.
+ *
+ * @param paths The `deno.json` files.
+ * @param dir The project (workspace root) directory.
+ * @param opts Injected lookups, rule and clock.
+ * @returns The outcome over the joined text.
+ */
+export async function pinEligibleFiles(
+  paths: readonly string[],
+  dir: string,
+  opts: EligibleOptions = {},
+): Promise<EligibleOutcome> {
+  const texts = await Promise.all(paths.map((p) => Deno.readTextFile(p)));
+  const out = await pinEligible(texts.join("\n"), dir, opts);
+  if (!out.ok || out.steps.length === 0) return out;
+  for (const [i, path] of paths.entries()) {
+    const next = applyUpgrade(texts[i], out.steps);
+    if (next !== texts[i]) await Deno.writeTextFile(path, next);
+  }
+  return out;
+}

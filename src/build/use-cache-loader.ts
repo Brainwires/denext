@@ -49,6 +49,7 @@ import {
   readImportAliases,
   resolvePlatformImport,
 } from "./platform-extensions.ts";
+import { workspaceMemberDirs } from "./workspace-imports.ts";
 
 /** Options for {@link createUseCacheLoader}. */
 export interface UseCacheLoaderOptions {
@@ -287,8 +288,21 @@ class UseCacheCompiler {
   #ready = new Map<string, Promise<void>>();
   #dir: Promise<void> | null = null;
   #aliases: Promise<ImportAliases> | null = null;
+  /** The project root, then the other members of its Deno workspace (a sibling `packages/ui`). */
+  #roots: string[];
+  #rootsRead: Promise<void> | null = null;
 
-  constructor(private opts: UseCacheLoaderOptions) {}
+  constructor(private opts: UseCacheLoaderOptions) {
+    this.#roots = [opts.projectDir];
+  }
+
+  /** Read the workspace members once: a package the app imports by name is a project module. */
+  #readRoots(): Promise<void> {
+    return this.#rootsRead ??= workspaceMemberDirs(this.opts.projectDir).then(
+      (dirs) => void (this.#roots = [this.opts.projectDir, ...dirs]),
+      () => {},
+    );
+  }
 
   /** The target `platform` is folded to in the copies (none for `web`, the runtime value). */
   #foldTarget(): Platform | undefined {
@@ -296,9 +310,9 @@ class UseCacheCompiler {
     return target === undefined || target === "web" ? undefined : target;
   }
 
-  /** Whether `url` is a project module the compiler may copy. */
+  /** Whether `url` is a project module (or a workspace member's) the compiler may copy. */
   #own(url: string): boolean {
-    return underRoot(url, this.opts.projectDir);
+    return this.#roots.some((root) => underRoot(url, root));
   }
 
   /**
@@ -473,6 +487,7 @@ class UseCacheCompiler {
 
   /** The effective import URL for `moduleUrl` (original, or a transformed copy). */
   async effectiveUrl(moduleUrl: string): Promise<string> {
+    await this.#readRoots();
     // Only transform project files; leave framework/std/npm and out-of-tree files as-is.
     if (!this.#own(moduleUrl) || this.#needs.get(moduleUrl) === false) return moduleUrl;
     const ready = this.#ready.get(moduleUrl);

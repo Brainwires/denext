@@ -223,3 +223,41 @@ Deno.test("denext dev: each target's session runs its own action variant", async
     await removeTempDir(dir);
   }
 });
+
+Deno.test("denext dev: an edit in a sibling workspace package reaches the server render", async () => {
+  // A monorepo (`denext create --monorepo`): the app is one workspace member, the package it
+  // renders another, outside the app's folder — watched, and copied on edit, as the app's own.
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_dev_ws_" }));
+  const app = await project({
+    "app/page.tsx": `import { Label } from "../../../packages/ui/label.tsx";\n` +
+      `export default function Page(){ return <main><Label/></main>; }\n`,
+  });
+  const dir = join(root, "apps", "web");
+  try {
+    await Deno.mkdir(join(root, "apps"), { recursive: true });
+    await Deno.rename(app, dir);
+    await Deno.mkdir(join(root, "packages", "ui"), { recursive: true });
+    await Deno.writeTextFile(join(root, "packages/ui/label.tsx"), label("PKG_ONE"));
+    await Deno.writeTextFile(
+      join(root, "packages/ui/deno.json"),
+      JSON.stringify({ name: "@acme/ui", exports: "./label.tsx" }),
+    );
+    await Deno.writeTextFile(
+      join(root, "deno.json"),
+      JSON.stringify({ workspace: ["./apps/web", "./packages/ui"] }),
+    );
+    const dev = await devServer(dir);
+    try {
+      assertStringIncludes(await dev.html(), "PKG_ONE");
+      await Deno.writeTextFile(join(root, "packages/ui/label.tsx"), label("PKG_TWO"));
+      await eventually("packages/ui/label.tsx re-rendered", async () => {
+        const html = await dev.html();
+        return html.includes("PKG_TWO") && !html.includes("PKG_ONE");
+      });
+    } finally {
+      await dev.stop();
+    }
+  } finally {
+    await removeTempDir(root);
+  }
+});

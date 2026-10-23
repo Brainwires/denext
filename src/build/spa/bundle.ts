@@ -20,6 +20,9 @@ import {
 import {
   appRendersDocumentTags,
   appUsesActivity,
+  appUsesFormActions,
+  appUsesHrefParams,
+  appUsesImageBlur,
   appUsesViewTransition,
   bundleSourceFiles,
   momentumScrollSeedImport,
@@ -421,6 +424,7 @@ async function bundleNativeSpa(
   minify: boolean,
   dev: boolean,
   platform: Platform,
+  entryPath: string,
 ): Promise<void> {
   const fold = await spaFeatureFold(paths.projectDir, featureFlags(paths.config), !dev, platform);
   // Dev: the Fast Refresh family registrations the compat path's `spaRefreshPlugin` appends
@@ -444,6 +448,12 @@ async function bundleNativeSpa(
       redirects: await projectPlatformRedirects(paths.projectDir, paths.config, platform),
       rewritten: { ...fold.importMap, ...refresh?.importMap, ...islands.importMap },
       dev,
+      // The build-scan defines (`deno bundle --define`): dev keeps every runtime.
+      ...(dev ? {} : {
+        usesImageBlur: await appUsesImageBlur(paths.projectDir, [entryPath]),
+        usesFormActions: await appUsesFormActions(paths.projectDir, [entryPath]),
+        usesHrefParams: await appUsesHrefParams(paths.projectDir, [entryPath]),
+      }),
     });
     await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
   } finally {
@@ -482,7 +492,7 @@ export async function bundleSpaInto(
   if (compat) {
     await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev, platform, modules);
   } else {
-    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev, platform);
+    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev, platform, entryPath);
   }
   // A split chunk that fails to load dispatches `vite:preloadError` / `denext:chunkError`.
   if (!dev) await wrapDynamicImports(clientDir, spaClientPrefix(spa));

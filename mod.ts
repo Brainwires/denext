@@ -30,7 +30,7 @@
  *   escaping, and a continuously-run suite of exploit probes mirrored from real
  *   Next.js CVEs (it has fixed classes Next.js itself only patched later).
  * - **Tiny by default** — denext's own small React-equivalent means a first page
- *   load of ~20 KB gzip (vs ~137 KB for a comparable Next.js app — ~7× smaller;
+ *   load of ~25 KB gzip (vs ~139 KB gzip for a comparable Next.js 16.4.2 app — ~5.5× smaller;
  *   see `bench/REPORT.md`), one shared runtime chunk cached across navigations, and
  *   **zero JavaScript** for routes with no interactivity.
  * - **Deno-native** — `deno bundle` builds, Deno's built-in SQLite (`sqliteCacheStore`) for a shared ISR cache, and
@@ -340,7 +340,13 @@ export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
 
 // Ergonomic utilities (denext-specific): an async-aware effect hook with AbortSignal +
 // typed error handling, and a tuple-returning try/catch that avoids `try`-block scoping.
-export { useAsyncEffect } from "./src/utils/use-async-effect.ts";
+export {
+  type AsyncEffect,
+  type AsyncEffectErrorClass,
+  type AsyncEffectOptions,
+  type UseAsyncEffect,
+  useAsyncEffect,
+} from "./src/utils/use-async-effect.ts";
 export { tryCatch } from "./src/utils/try-catch.ts";
 export type { ErrorResult, SuccessResult, TryCatchResult } from "./src/utils/try-catch.ts";
 export { choose } from "./src/utils/choose.ts";
@@ -490,4 +496,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "4.7.0";
+export const VERSION = "4.7.1";

@@ -19,6 +19,11 @@ import {
   toolchainTsgo,
   type ToolchainTsgoStatus,
 } from "../build/deno-toolchain.ts";
+import {
+  currentDenoIdentity,
+  type DenoIdentity,
+  isPinnedDenextDeno,
+} from "../build/deno-version.ts";
 
 /** The runtime's engine switch: `native` (its default) or `tsc` (the in-process TypeScript). */
 export const CHECK_ENGINE_ENV = "DENO_CHECK_ENGINE";
@@ -28,8 +33,8 @@ const NATIVE_CHECK_ENV = "DENEXT_NATIVE_CHECK";
 /** Seams for {@linkcode nativeCheckDecision}; all default to the process. */
 export interface NativeCheckOptions {
   readonly env?: (name: string) => string | undefined;
-  /** This process's `Deno.version.deno`. */
-  readonly running?: string;
+  /** This process's Deno (default {@linkcode currentDenoIdentity}). */
+  readonly running?: DenoIdentity;
   readonly pin?: DenoToolchainPin;
   readonly target?: string;
   /** The toolchain's compiler (default {@linkcode toolchainTsgo}). */
@@ -47,15 +52,16 @@ export interface NativeCheckDecision {
 }
 
 /**
- * Whether the Deno running as `running` is the pinned toolchain and that release ships the native
- * TypeScript compiler (so it type-checks natively by default).
+ * Whether the Deno running as `running` is the pinned toolchain (denext's Deno of the pin's
+ * version, never upstream Deno of that number) and that release ships the native TypeScript
+ * compiler (so it type-checks natively by default).
  */
 export function runtimeSupportsNativeCheck(
   pin: DenoToolchainPin,
   target: string,
-  running: string,
+  running: DenoIdentity,
 ): boolean {
-  return pin.version !== null && running === pin.version && pin.targets[target]?.tsgo !== undefined;
+  return isPinnedDenextDeno(running, pin.version) && pin.targets[target]?.tsgo !== undefined;
 }
 
 /**
@@ -73,7 +79,7 @@ export async function nativeCheckDecision(
     supported = runtimeSupportsNativeCheck(
       options.pin ?? loadDenoToolchainPin(),
       options.target ?? denoToolchainTarget(),
-      options.running ?? Deno.version.deno,
+      options.running ?? currentDenoIdentity(),
     );
   } catch {
     // an unreadable DENEXT_TOOLCHAIN_PIN_FILE: resolving the toolchain reports it

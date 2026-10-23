@@ -30,6 +30,7 @@ export const NAV: {
     group: "Build with it",
     items: [
       { slug: "project-layout", label: "Project layout" },
+      { slug: "monorepo", label: "Monorepos" },
       { slug: "data", label: "Data & caching" },
       { slug: "content-collections", label: "Content collections" },
       { slug: "typed-api", label: "Typed API" },

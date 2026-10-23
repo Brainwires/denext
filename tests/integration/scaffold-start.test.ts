@@ -14,7 +14,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { type ScaffoldOptions, scaffoldProject } from "../../src/build/scaffold.ts";
 import { removeTempDir } from "../helpers/temp.ts";
-import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
+import { currentDenoIdentity, isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 import {
   buildTask as build,
@@ -103,7 +103,9 @@ async function addRuntimeRoute(dir: string): Promise<void> {
     "export function GET(): Response {\n" +
       "  // deno-lint-ignore no-explicit-any\n" +
       "  const sql = typeof (Deno as any).SQL;\n" +
-      "  return Response.json({ sql, deno: Deno.version.deno });\n}\n",
+      "  // deno-lint-ignore no-explicit-any\n" +
+      "  const denext = (Deno.build as any).denext;\n" +
+      "  return Response.json({ sql, deno: Deno.version.deno, denext });\n}\n",
   );
 }
 
@@ -112,7 +114,7 @@ Deno.test({
   // Up to 4.5.0 the least-privilege task (no --allow-run) served in-process on whatever Deno ran
   // it, so `Deno.SQL` (postgresClient(), the Prisma adapter) worked in `dev` and was missing in
   // production. Now it refuses with the ways out — unless this suite already runs on the toolchain.
-  ignore: isDenextDenoVersion(Deno.version.deno),
+  ignore: isDenextDenoVersion(currentDenoIdentity()),
   fn: async () => {
     const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_scaffold_start_" }));
     try {
@@ -141,9 +143,9 @@ Deno.test({
       const cfg = await pointAtThisCheckout(dir);
       await build(dir, cfg);
       const { html, output } = await start(dir, cfg, SERVE, "/api/runtime");
-      const body = JSON.parse(html) as { sql: string; deno: string };
+      const body = JSON.parse(html) as { sql: string; deno: string; denext?: string };
       assertEquals(body.sql, "function", output);
-      assert(isDenextDenoVersion(body.deno), body.deno);
+      assert(isDenextDenoVersion(body), JSON.stringify(body));
     } finally {
       await removeTempDir(dir);
     }

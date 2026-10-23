@@ -154,6 +154,49 @@ jobs:
         # The same command runs locally (and in `deno task precheck` when a client module changed).
         run: deno task budget
 
+  # `cargo audit` over the Rust-built wasm packages' lockfiles (packages/*/Cargo.lock: lightningcss,
+  # photon, swc), each from its package directory so its .cargo/audit.toml ignores (each with the
+  # reason the advisory cannot reach the wasm) apply. A vulnerability or an `unsound` advisory fails
+  # (scripts/cargo-audit.ts). It runs on every push, so it also runs whenever a lockfile changes, and
+  # a release needs it green: the advisory database is fetched fresh, so a new advisory against an
+  # unchanged lockfile stops the release too. cargo-audit is the release's prebuilt binary,
+  # SHA-256-pinned and cached; no Rust toolchain is installed. Seconds.
+  cargo-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_AUDIT_VERSION: "0.22.2"
+      CARGO_AUDIT_SHA256: 7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # runs scripts/cargo-audit.ts only (no project code)
+
+      - name: Cache cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cargo-audit-bin
+          key: ${{ runner.os }}-cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ env.CARGO_AUDIT_SHA256 }}
+
+      - name: Download cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          name="cargo-audit-x86_64-unknown-linux-musl-v${CARGO_AUDIT_VERSION}"
+          curl -sSfL -o "$RUNNER_TEMP/ca.tgz" \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${CARGO_AUDIT_VERSION}/${name}.tgz"
+          echo "${CARGO_AUDIT_SHA256}  $RUNNER_TEMP/ca.tgz" | sha256sum -c -
+          mkdir -p ~/.cargo-audit-bin
+          tar -xzf "$RUNNER_TEMP/ca.tgz" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/${name}/cargo-audit" ~/.cargo-audit-bin/cargo-audit
+
+      - name: cargo audit (packages/*/Cargo.lock)
+        run: CARGO_AUDIT="$HOME/.cargo-audit-bin/cargo-audit" deno task audit:cargo
+
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
   # Split out so it runs in parallel with `check` instead of extending it.
@@ -291,6 +334,9 @@ jobs:
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      # The Kotlin client-emitter goldens compile with the runner's kotlinc (tests/clients.test.ts;
+      # Go and Swift are found on PATH, Kotlin only through this variable: kotlinc is slow to start).
+      DENEXT_KOTLINC: kotlinc
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -339,6 +385,18 @@ jobs:
         run: |
           set -o pipefail
           deno task test:coverage 2>&1 | tee "$RUNNER_TEMP/coverage.txt"
+
+      # The lcov report the per-file floors read, kept so a baseline can be raised from a CI run
+      # without re-running the suite locally: `gh run download <run> -n coverage-lcov -D coverage`,
+      # then `deno task coverage:ratchet:update` (scripts/coverage-ratchet.ts).
+      - name: Upload the lcov report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: The backend-integration suites ran under coverage (none ignored)
         run: |
@@ -429,9 +487,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-rc.2
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-rc.2-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: cd02c389e25c00c19f7803ac979447e0378fe527b4ac30db09f8cccfedddc2dc
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-rc.3
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-rc.3-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 53eaaa90fb1316434595347e5d35d326e4520bdbbd3a6f15ad0ca223707fbdc0
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -623,10 +681,10 @@ jobs:
         # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
         run: deno run -A scripts/ci/toolchain-on-path.ts
 
-      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: Deno
-      # 2.9 resolves a config's `file:` targets on another drive as `file:///C:/D:/…` (and loses
-      # the framework's own import map for its modules there), so a temp app on C: that imports
-      # this checkout on D: fails in Deno, not in denext. runner.temp has no 8.3 short names.
+      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: a temp
+      # app on another drive than this checkout still fails to build (denext's own cross-drive
+      # paths; the runtime's `file:` link fix from rc.3 is not enough). runner.temp has no 8.3
+      # short names.
       - name: Unit tests
         env:
           TEMP: ${{ runner.temp }}

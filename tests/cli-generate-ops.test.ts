@@ -8,7 +8,7 @@ import { parse as parseYaml } from "@std/yaml";
 import { generateArtifact, OPTIONAL_NAME_KINDS } from "../src/build/generate.ts";
 import { migrationPlan, slugName } from "../src/build/generate-ops.ts";
 import { fakeSqlClient } from "./helpers/fake-sql-client.ts";
-import { denoReleaseVersion } from "../src/build/deno-version.ts";
+import { currentDenoIdentity, denoReleaseVersion } from "../src/build/deno-version.ts";
 
 const SERVER_MOD = toFileUrl(join(Deno.cwd(), "src/server/mod.ts")).href;
 
@@ -206,7 +206,7 @@ Deno.test("generate ci: the project's check + build tasks, Deno pinned, valid YA
       "deno task check",
       "deno task build",
     ]);
-    assertEquals(steps[1].with?.["deno-version"], `v${denoReleaseVersion(Deno.version.deno)}`);
+    assertEquals(steps[1].with?.["deno-version"], `v${denoReleaseVersion(currentDenoIdentity())}`);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

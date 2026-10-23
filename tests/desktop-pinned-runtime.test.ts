@@ -36,8 +36,9 @@ import {
 } from "../scripts/desktop-pin-runtime.ts";
 import {
   compareDenoVersions,
-  denoReleaseVersion,
-  isDenextDenoVersion,
+  denextVersionLine,
+  isDenextReleaseVersion,
+  pinnedDenoReleaseVersion,
 } from "../src/build/deno-version.ts";
 
 /** The pin CLI with the archive attestation stubbed (its own test below covers it). */
@@ -1422,8 +1423,8 @@ Deno.test("pin generator: a release under the fork's own version (3.0.0-rc.1) pi
       "deno-cli-3.0.0-rc.1-aarch64-apple-darwin.zip",
   );
   // It is denext's Deno, built from the pin's Deno, and newer than every 2.9.7-denext.N.
-  assert(isDenextDenoVersion(runtime.version));
-  assertEquals(denoReleaseVersion(runtime.version, runtime.deno), "2.9.7");
+  assert(isDenextReleaseVersion(runtime.version));
+  assertEquals(pinnedDenoReleaseVersion(runtime.version, runtime.deno), "2.9.7");
   assert(compareDenoVersions(runtime.version, "2.9.7-denext.22") > 0);
   assert(compareDenoVersions(ownVersionRelease("3.0.0-rc.10").manifest.version, "3.0.0-rc.9") > 0);
   // Refused: a CI build, a stock Deno version, and an old-scheme release of another Deno.
@@ -1431,6 +1432,37 @@ Deno.test("pin generator: a release under the fork's own version (3.0.0-rc.1) pi
     const r = ownVersionRelease(version);
     assertThrows(() => pinFromRelease(r.tag, r.manifest, r.sums), Error, "bad deno version");
   }
+});
+
+Deno.test("pin generator: a 3.0.0-rc.3+ release must record the CLI's identity marker", () => {
+  // From 3.0.0-rc.3 denext recognises its toolchain by `Deno.build.denext` / the
+  // `denext <version> (Brainwires)` line, so a release whose manifest does not record them is
+  // refused; an older release has none to record.
+  const marked = ownVersionRelease("3.0.0-rc.3");
+  assertThrows(
+    () => toolchainPinFromRelease(marked.tag, marked.manifest, marked.sums),
+    Error,
+    "cli.identity",
+  );
+  marked.manifest.cli.identity = {
+    buildDenext: "3.0.0-rc.3",
+    versionLine: "denext 3.0.0-rc.4 (x)",
+  };
+  assertThrows(
+    () => toolchainPinFromRelease(marked.tag, marked.manifest, marked.sums),
+    Error,
+    "cli.identity",
+  );
+  marked.manifest.cli.identity = {
+    buildDenext: "3.0.0-rc.3",
+    versionLine: denextVersionLine("3.0.0-rc.3"),
+  };
+  assertEquals(
+    toolchainPinFromRelease(marked.tag, marked.manifest, marked.sums)!.version,
+    "3.0.0-rc.3",
+  );
+  const old = ownVersionRelease("3.0.0-rc.2");
+  assertEquals(toolchainPinFromRelease(old.tag, old.manifest, old.sums)!.version, "3.0.0-rc.2");
 });
 
 Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {
@@ -1733,8 +1765,11 @@ Deno.test("the checked-in pin is the deno version denext's runtime targets", asy
   const { DESKTOP_RUNTIME_PIN } = await import("../src/build/desktop-runtime.ts");
   assertEquals(DESKTOP_RUNTIME_PIN.deno, "2.9.7");
   // 2.9.7-denext.N, or the fork's own version (3.0.0-rc.1 on) built from 2.9.7.
-  assert(isDenextDenoVersion(DESKTOP_RUNTIME_PIN.version), DESKTOP_RUNTIME_PIN.version);
-  assertEquals(denoReleaseVersion(DESKTOP_RUNTIME_PIN.version, DESKTOP_RUNTIME_PIN.deno), "2.9.7");
+  assert(isDenextReleaseVersion(DESKTOP_RUNTIME_PIN.version), DESKTOP_RUNTIME_PIN.version);
+  assertEquals(
+    pinnedDenoReleaseVersion(DESKTOP_RUNTIME_PIN.version, DESKTOP_RUNTIME_PIN.deno),
+    "2.9.7",
+  );
 });
 
 Deno.test("the checked-in pin passes pinFromRelease's own checks, for every target and backend", async () => {

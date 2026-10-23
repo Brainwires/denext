@@ -91,7 +91,7 @@ async function refuseInline(code: string, path: string, projectDir?: string): Pr
  * may be spelled with `/` or a backslash (a drive-less `/p` resolves against the current drive), and
  * a prefix test with the host separator misses the other spelling.
  */
-function isInside(path: string, dir: string): boolean {
+export function isInside(path: string, dir: string): boolean {
   const rel = relative(dir, path);
   return rel !== "" && !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== "..";
 }

@@ -5,6 +5,7 @@
 // so the config module is never compiled into the app.
 import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
+import { ATTACHMENT_PATH, attachmentResponse } from "./app/downloads.ts";
 
 /** The WebSocket the "websocket relay" check dials: answers with the `Origin` it was opened with. */
 const ECHO_SOCKET_PATH = "/_kitchen/ws";
@@ -14,7 +15,9 @@ await runDesktop({
   ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
   // Reached only through the runtime's loopback relay (the page's custom origin carries no
   // WebSockets), and only after the desktop runtime checked the exact app `Origin`.
+  // The download checks' `Content-Disposition: attachment` response, from the app's own origin.
   onRequest: (request, url) => {
+    if (url.pathname === ATTACHMENT_PATH) return attachmentResponse();
     if (url.pathname !== ECHO_SOCKET_PATH) return null;
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return null;
     const origin = request.headers.get("origin");

@@ -1,5 +1,6 @@
 // The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs, every
-// desktop-ci.yml job, every e2e.yml job and every desktop-window.yml job passed on.
+// desktop-ci.yml job, every e2e.yml job, every desktop-window.yml job and both native-plugins.yml
+// builds (an Android and an iOS app with every denext plugin) passed on.
 // A push to `development` runs only the fast jobs (integration, next-compat, coverage,
 // backend-integration, windows-tests and macos-tests stay on pull requests, `main` and a manual dispatch), so `deno task release`
 // asks GitHub for the ci.yml runs on HEAD and refuses unless the newest one that ran those jobs
@@ -7,10 +8,14 @@
 // `paths` filter matches, and e2e.yml only on a dispatch, so for each of those the release asks
 // for its newest run on HEAD, push or dispatch, and refuses unless that run finished with every
 // job green (e2e.yml dispatched with `-f job=<one>` skips the rest, so it is refused: the release
-// needs a full run).
-// On `development` all four are dispatches: `gh workflow run ci.yml --ref development`,
-// `gh workflow run desktop-ci.yml --ref development`, `gh workflow run e2e.yml --ref development`
-// and `gh workflow run desktop-window.yml --ref development`.
+// needs a full run). native-plugins.yml runs on a push only when a native template or installer
+// changes, but a release also ships the mobile runtime, the export and the Capacitor config writers
+// it builds: so its newest run on HEAD must be green too, its iOS build included (a dispatch with
+// `-f ios=false` skips it and can't vouch).
+// On `development` all five are dispatches: `gh workflow run ci.yml --ref development`,
+// `gh workflow run desktop-ci.yml --ref development`, `gh workflow run e2e.yml --ref development`,
+// `gh workflow run desktop-window.yml --ref development` and
+// `gh workflow run native-plugins.yml --ref development`.
 
 /** The ci.yml jobs a release needs green on the commit it is cut from. */
 export const RELEASE_CI_JOBS: readonly string[] = [
@@ -23,6 +28,7 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "windows-resolve",
   "windows-tests",
   "macos-tests",
+  "cargo-audit",
 ];
 
 /**
@@ -38,6 +44,7 @@ export const DESKTOP_CI_JOBS: readonly string[] = [
   "secureStore round-trip (macos-latest)",
   "install.ps1 (windows-latest — loopback release, this commit's build, the real latest one)",
   "install.sh (ubuntu-latest — this commit's build + the real latest one)",
+  "install.sh (macos-latest — this commit's build + the real latest one)",
   "installers (windows-latest — .msi per-user + per-machine, upgrade, uninstall)",
   "installers (ubuntu-latest — .deb via apt, .rpm via dnf)",
   "installers (macos-latest — .dmg mounted, .pkg installed; unsigned)",
@@ -63,6 +70,13 @@ export const DESKTOP_WINDOW_JOBS: readonly string[] = [
   "window test (windows-x64)",
   "results by OS",
 ];
+
+/**
+ * The native-plugins.yml jobs a release needs green on the commit it is cut from: examples/mobile
+ * exported, synced and built with every denext native plugin, as a debug `.apk` and an unsigned
+ * iOS Release build.
+ */
+export const NATIVE_PLUGINS_JOBS: readonly string[] = ["android", "ios"];
 
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
 const HEAVY_JOBS = ["integration", "next-compat", "coverage", "backend-integration"];
@@ -234,15 +248,33 @@ export function desktopWindowVerdict(sha: string, gh: GhJson = ghJson): Promise<
   return newestRunVerdict("desktop-window.yml", DESKTOP_WINDOW_JOBS, sha, gh);
 }
 
+/**
+ * Check native-plugins.yml on `sha`: its newest run there (a push or a dispatch) must have finished
+ * with both {@linkcode NATIVE_PLUGINS_JOBS} builds green.
+ *
+ * @param sha The commit to release (HEAD).
+ * @param gh How `gh` is reached (default: the GitHub CLI).
+ */
+export function nativePluginsVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
+  return newestRunVerdict("native-plugins.yml", NATIVE_PLUGINS_JOBS, sha, gh);
+}
+
 /** The workflows the release gates on, in the order its hint dispatches them. */
-const GATED_WORKFLOWS = ["ci.yml", "desktop-ci.yml", "e2e.yml", "desktop-window.yml"];
+export const GATED_WORKFLOWS: readonly string[] = [
+  "ci.yml",
+  "desktop-ci.yml",
+  "e2e.yml",
+  "desktop-window.yml",
+  "native-plugins.yml",
+];
 
 /** What to run to get every gated workflow onto `sha` on `branch`. */
 export function releaseCiHint(branch: string): string {
   const watch = (workflow: string) =>
     `    gh run watch "$(gh run list --workflow=${workflow} --event=workflow_dispatch --limit 1 ` +
     `--json databaseId -q '.[0].databaseId')" --exit-status`;
-  return `push ${branch}, then run ${GATED_WORKFLOWS.join(", ")} on it and wait for all four:\n` +
+  return `push ${branch}, then run ${GATED_WORKFLOWS.join(", ")} on it and wait for all ` +
+    `${GATED_WORKFLOWS.length}:\n` +
     GATED_WORKFLOWS.map((w) => `    gh workflow run ${w} --ref ${branch}\n`).join("") +
     GATED_WORKFLOWS.map(watch).join("\n");
 }

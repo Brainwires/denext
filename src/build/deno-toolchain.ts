@@ -47,6 +47,7 @@ import {
   sweepLeftovers,
 } from "./verified-download.ts";
 import { ESBUILD_VERSION } from "./esbuild/version.ts";
+import { currentDenoIdentity, type DenoIdentity, isPinnedDenextDeno } from "./deno-version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
 
 /** The esbuild a toolchain archive carries beside `deno` (2.9.7-denext.17 on). */
@@ -1290,8 +1291,11 @@ export interface DenoToolchainStatusOptions {
   readonly cacheRoot?: string;
   /** Re-hash a cached binary even when its size and mtime match. */
   readonly verify?: boolean;
-  /** This process's Deno version (default `Deno.version.deno`). */
-  readonly running?: string;
+  /**
+   * This process's Deno (default {@linkcode currentDenoIdentity}: `Deno.version.deno` and its
+   * `Deno.build.denext` marker).
+   */
+  readonly running?: DenoIdentity;
   /**
    * Whether this process is a compiled `denext` executable (default: `Deno.build.standalone`).
    * Its own embedded Deno never runs a command: every child it starts runs on the toolchain.
@@ -1375,16 +1379,19 @@ export async function denoToolchainStatus(
   options: DenoToolchainStatusOptions = {},
 ): Promise<DenoToolchainStatus> {
   const env = options.env ?? processEnv;
-  const running = options.running ?? Deno.version.deno;
+  const identity = options.running ?? currentDenoIdentity();
+  const running = identity.deno;
   const target = options.target ?? denoToolchainTarget();
   const mode = toolchainMode(env);
   const pin = options.pin ?? loadDenoToolchainPin(env);
-  // From the running version alone (an inherited marker or an older `-denext.N` build — a stale
-  // `toolchain link` — is not the pinned toolchain); a `DENEXT_DENO=<path>` binary has no version
-  // to check, so there the marker its own launch set ("path") counts.
+  // From the running Deno alone: denext's Deno (its `Deno.build.denext` marker, or a pre-marker
+  // build's version) of the pin's version. An inherited marker, an older `-denext.N` build (a stale
+  // `toolchain link`) or upstream Deno of the pinned number is not the pinned toolchain; a
+  // `DENEXT_DENO=<path>` binary has no version to check, so there the marker its own launch set
+  // ("path") counts.
   const active = mode.mode === "path"
     ? env(TOOLCHAIN_ACTIVE_ENV) === "path"
-    : pin.version !== null && running === pin.version;
+    : isPinnedDenextDeno(identity, pin.version);
   const standalone = options.standalone ??
     (Deno.build as { standalone?: boolean }).standalone === true;
   const runningText = runningLine(standalone, mode.mode, active, running);

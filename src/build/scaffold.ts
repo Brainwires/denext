@@ -106,6 +106,14 @@ export interface ScaffoldOptions {
    * `.`). Existing files are never overwritten — a conflict is an error.
    */
   allowExisting?: boolean;
+  /**
+   * The scope (`@acme`) of the shared packages when this app is a member of a monorepo
+   * (`denext create --monorepo`, see ./scaffold-monorepo.ts): the layout imports
+   * `<scope>/ui/styles.css`, the page renders `<scope>/ui`'s `Card` and the counter its `Button`
+   * (and `<scope>/shared`'s `pluralize`), and `deno.json` leaves the fields only a workspace root
+   * may set (`allowScripts`, `unstable`) and the shared `lint` to the root's.
+   */
+  monorepoScope?: string;
 }
 
 /** The scaffolded project's README: what the tasks do, where routes live, where to read more. */
@@ -224,6 +232,10 @@ export interface ScaffoldFile {
 const dep = `jsr:@denext/denext@^${VERSION}`;
 /** The version-pinned CLI specifier used by generated `deno task`s. */
 const cli = `${dep}/cli`;
+/** The `denext` import a scaffold pins (`jsr:@denext/denext@^<this version>`). */
+export const SCAFFOLD_DENEXT_DEP: string = dep;
+/** The version-pinned CLI specifier generated `deno task`s run. */
+export const SCAFFOLD_DENEXT_CLI: string = cli;
 /** The Capacitor release `--capacitor` scaffolds (CLI, core and both native platforms). */
 const CAPACITOR = CAPACITOR_VERSION;
 /**
@@ -348,6 +360,34 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
 export const DENEXT_UNSTABLE: readonly string[] = ["no-legacy-abort"];
 
 /**
+ * The `deno.json` fields only a project's (or a workspace's) root config may set: the one npm
+ * lifecycle script in the framework's dependency graph denied — `@parcel/watcher`'s (through
+ * `sass`), which falls back to a native build its prebuilt optional dependency makes unneeded, so
+ * Deno stops printing its "Ignored build scripts" box on every command and every Docker build —
+ * and denext's unstable features.
+ */
+export const DENO_ROOT_FIELDS: Readonly<Record<string, unknown>> = {
+  allowScripts: { deny: ["npm:@parcel/watcher"] },
+  unstable: [...DENEXT_UNSTABLE],
+};
+
+/**
+ * A scaffold's `compilerOptions`: denext's JSX, and the libs its modules type-check against.
+ * `deno.unstable` provides the Deno.Kv types referenced by denext/server's optional KV cache
+ * adapter (type-only; no runtime unstable APIs required).
+ */
+export const SCAFFOLD_COMPILER_OPTIONS: Readonly<Record<string, unknown>> = {
+  jsx: "react-jsx",
+  jsxImportSource: "denext",
+  lib: ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"],
+};
+
+/** A scaffold's `lint`: denext's lint plugin, at the scaffold's version. */
+export const SCAFFOLD_LINT: Readonly<Record<string, unknown>> = {
+  plugins: [`${dep}/lint-plugin`],
+};
+
+/**
  * A `deno.json` `unstable` list: the entries already there (when `existing` is an array of
  * strings), then `extra`, then {@linkcode DENEXT_UNSTABLE}, each once, in that order — so a
  * regenerated config keeps the features its author added.
@@ -364,29 +404,15 @@ export function withDenextUnstable(existing: unknown, extra: readonly string[] =
 }
 
 export function denoJson(opts: ScaffoldOptions): string {
+  const member = opts.monorepoScope !== undefined;
   const config: Record<string, unknown> = {
     tasks: scaffoldTasks(opts),
-    // The one npm lifecycle script in the framework's dependency graph: `@parcel/watcher`'s
-    // (through `sass`), which falls back to a native build its prebuilt optional dependency
-    // makes unneeded. Denied, it never runs and Deno stops printing its "Ignored build scripts"
-    // box on every command and every Docker build.
-    allowScripts: { deny: ["npm:@parcel/watcher"] },
-    unstable: withDenextUnstable(undefined),
-    compilerOptions: {
-      jsx: "react-jsx",
-      jsxImportSource: "denext",
-      // `deno.unstable` provides the Deno.Kv types referenced by denext/server's
-      // optional KV cache adapter (type-only; no runtime unstable APIs required).
-      lib: [
-        "deno.window",
-        "deno.unstable",
-        "dom",
-        "dom.iterable",
-        "dom.asynciterable",
-      ],
-    },
+    // A workspace member may not set these (Deno warns): the monorepo root carries them.
+    ...(member ? {} : DENO_ROOT_FIELDS),
+    compilerOptions: SCAFFOLD_COMPILER_OPTIONS,
     imports: scaffoldImports(opts),
-    lint: { plugins: [`${dep}/lint-plugin`] },
+    // A monorepo lints every member with the root's plugin.
+    ...(member ? {} : { lint: SCAFFOLD_LINT }),
   };
   if (opts.desktop) {
     // Read by `deno desktop` when packaging the native binary.
@@ -484,7 +510,9 @@ function packageJson(): string {
 }
 
 function layout(opts: ScaffoldOptions): string {
-  const cssImport = opts.tailwind ? `import "./globals.css";\n` : "";
+  // A monorepo member also takes the shared UI package's stylesheet (an export of that package).
+  const uiCss = opts.monorepoScope ? `import "${opts.monorepoScope}/ui/styles.css";\n` : "";
+  const cssImport = uiCss + (opts.tailwind ? `import "./globals.css";\n` : "");
   const headLink = opts.tailwind ? "" : `\n  head: \`<link rel="stylesheet" href="/styles.css">\`,`;
   return `// Root layout — denext supplies <html>/<head>/<body>; this renders the chrome.
 ${cssImport}import { Link } from "denext";
@@ -513,6 +541,7 @@ function minimalPage(opts: ScaffoldOptions): string {
   const tw = opts.tailwind;
   const sectionCls = tw ? ' class="mx-auto max-w-xl p-8"' : "";
   const h1Cls = tw ? ' class="text-3xl font-bold"' : "";
+  if (opts.monorepoScope) return minimalMemberPage(opts.monorepoScope, sectionCls, h1Cls);
   return `// Home page (minimal template).
 
 import type { PageProps } from "denext/server";
@@ -524,6 +553,26 @@ export default function Home(_props: PageProps) {
     <section${sectionCls}>
       <h1${h1Cls}>Hello from denext 👋</h1>
       <p>Edit app/page.tsx to get started.</p>
+    </section>
+  );
+}
+`;
+}
+
+/** The `minimal` template's home page in a monorepo: the shared `Card` around the greeting. */
+function minimalMemberPage(scope: string, sectionCls: string, h1Cls: string): string {
+  return `// Home page (minimal template). \`Card\` comes from the workspace's shared UI package.
+
+import type { PageProps } from "denext/server";
+import { Card } from "${scope}/ui";
+
+export const metadata = { title: "denext — home" };
+
+export default function Home(_props: PageProps) {
+  return (
+    <section${sectionCls}>
+      <h1${h1Cls}>Hello from denext 👋</h1>
+      <Card title="packages/ui">Edit app/page.tsx to get started.</Card>
     </section>
   );
 }
@@ -544,7 +593,11 @@ function page(opts: ScaffoldOptions): string {
 // JavaScript. The interactive part is the <Counter /> island in ./counter.tsx.
 
 import type { PageProps } from "denext/server";
-import { Counter } from "./counter.tsx";
+${
+    opts.monorepoScope
+      ? `import { Card } from "${opts.monorepoScope}/ui";\n`
+      : ""
+  }import { Counter } from "./counter.tsx";
 
 export const metadata = { title: "denext — home" };
 
@@ -552,14 +605,30 @@ export default function Home(_props: PageProps) {
   return (
     <section${sectionCls}>
       <h1${h1Cls}>Hello from denext 👋</h1>
-      <p>
+${
+    opts.monorepoScope ? memberPageBody() : `      <p>
         This page is a Server Component; the button below is a client island.
       </p>
-      <Counter />
+      <Counter />`
+  }
     </section>
   );
 }
 `;
+}
+
+/**
+ * The default page's body in a monorepo: the shared package's `Card` (rendered on the server)
+ * around the island (whose button is the same package's, hydrated in the browser).
+ */
+function memberPageBody(): string {
+  return `      <Card title="Shared components">
+        <p>
+          This page is a Server Component rendering the shared Card; the button
+          below is the shared Button inside a client island.
+        </p>
+        <Counter />
+      </Card>`;
 }
 
 /**
@@ -568,6 +637,7 @@ export default function Home(_props: PageProps) {
  */
 function counter(opts: ScaffoldOptions): string {
   const tw = opts.tailwind;
+  const scope = opts.monorepoScope;
   // Written the way `deno fmt` lays it out: the Tailwind classes push the tag past 80 columns.
   const buttonOpen = tw
     ? `<button
@@ -576,6 +646,17 @@ function counter(opts: ScaffoldOptions): string {
         onClick={() => setCount((c) => c + 1)}
       >`
     : `<button type="button" onClick={() => setCount((c) => c + 1)}>`;
+  // A monorepo member's island uses the shared packages: `Button` and `pluralize`.
+  const button = scope
+    ? `<Button onClick={() => setCount((c) => c + 1)}>
+        Clicked {count} {pluralize(count, "time")}
+      </Button>`
+    : `${buttonOpen}
+        Clicked {count} {count === 1 ? "time" : "times"}
+      </button>`;
+  const shared = scope
+    ? `import { Button } from "${scope}/ui";\nimport { pluralize } from "${scope}/shared";\n`
+    : "";
   // A dynamic class expression driven by the hydrated flag.
   const statusExpr = tw
     ? `{hydrated ? "text-green-600" : "text-gray-500"}`
@@ -587,7 +668,7 @@ function counter(opts: ScaffoldOptions): string {
 // Server Component that renders it passes plain serialisable props.
 
 import { useEffect, useState } from "denext";
-
+${shared}
 export function Counter() {
   const [count, setCount] = useState(0);
   const [hydrated, setHydrated] = useState(false);
@@ -601,9 +682,7 @@ export function Counter() {
           {hydrated ? "hydrated ✅" : "server-rendered (not yet hydrated)"}
         </span>
       </p>
-      ${buttonOpen}
-        Clicked {count} {count === 1 ? "time" : "times"}
-      </button>
+      ${button}
     </div>
   );
 }
@@ -637,6 +716,12 @@ const GLOBAL_CSS_PLAIN = `:root {
 `;
 
 const TAILWIND_INPUT = `@import "tailwindcss";\n`;
+
+/**
+ * A monorepo member's Tailwind input: Tailwind scans the app's own folder, so the shared packages
+ * (`../../packages` from `apps/<name>`, relative to this stylesheet) are named as a source too.
+ */
+const TAILWIND_MEMBER_INPUT = `@import "tailwindcss";\n@source "../../../packages";\n`;
 
 /** The `desktop` section a desktop scaffold writes into `denext.config.ts`. */
 const SCAFFOLD_DESKTOP_CONFIG = { app: { identifier: "com.example.denext" } } as const;
@@ -691,22 +776,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     { path: "README.md", content: readme(opts, appBase) },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
   ];
-  if (opts.template === "lustre") {
-    files.push(...lustreTemplateFiles(appBase, opts.tailwind === true));
-  } else {
-    files.push({
-      path: `${appBase}/page.tsx`,
-      content: opts.template === "minimal" ? minimalPage(opts) : page(opts),
-    });
-  }
-  if (opts.template === undefined || opts.template === "default") {
-    files.push({ path: `${appBase}/counter.tsx`, content: counter(opts) });
-  }
-  if (opts.tailwind) {
-    files.push({ path: "styles/tailwind.css", content: TAILWIND_INPUT });
-  } else {
-    files.push({ path: "public/styles.css", content: GLOBAL_CSS_PLAIN });
-  }
+  files.push(...templateFiles(opts, appBase), styleFile(opts));
   // `desktop.capabilities` and the rest of the desktop settings live in `./denext.config.ts`, so
   // a desktop scaffold always needs the config file even without tailwind/compiler.
   if (opts.tailwind || opts.compiler || opts.desktop || opts.template === "lustre") {
@@ -725,6 +795,25 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     );
   }
   return files;
+}
+
+/** The template's own files: the page (and the default template's island), or the Lustre set. */
+function templateFiles(opts: ScaffoldOptions, appBase: string): ScaffoldFile[] {
+  if (opts.template === "lustre") return lustreTemplateFiles(appBase, opts.tailwind === true);
+  if (opts.template === "minimal") {
+    return [{ path: `${appBase}/page.tsx`, content: minimalPage(opts) }];
+  }
+  return [
+    { path: `${appBase}/page.tsx`, content: page(opts) },
+    { path: `${appBase}/counter.tsx`, content: counter(opts) },
+  ];
+}
+
+/** The stylesheet: Tailwind's input (naming a monorepo's packages as a source), or plain CSS. */
+function styleFile(opts: ScaffoldOptions): ScaffoldFile {
+  if (!opts.tailwind) return { path: "public/styles.css", content: GLOBAL_CSS_PLAIN };
+  const content = opts.monorepoScope ? TAILWIND_MEMBER_INPUT : TAILWIND_INPUT;
+  return { path: "styles/tailwind.css", content };
 }
 
 /** The scaffold's `.gitignore`: generated / build outputs to keep out of version control. */
@@ -783,24 +872,48 @@ export async function scaffoldProject(
   const opts = options.fastlane ? { ...options, capacitor: true } : options;
   const files = scaffoldFiles(opts);
   await refuseToClobber(files, opts);
+  const written = await writeScaffoldFiles(opts.dir, files);
+  if (opts.fastlane) {
+    // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
+    written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
+  }
+  written.push(...await writeProjectConfigs(opts));
+  return written;
+}
+
+/**
+ * Write `files` under `dir` (creating their folders).
+ *
+ * @param dir The project directory.
+ * @param files The files, with `dir`-relative paths.
+ * @returns Their paths, as given.
+ */
+export async function writeScaffoldFiles(dir: string, files: ScaffoldFile[]): Promise<string[]> {
   for (const f of files) {
-    const abs = join(opts.dir, f.path);
+    const abs = join(dir, f.path);
     await Deno.mkdir(join(abs, ".."), { recursive: true });
     await Deno.writeTextFile(abs, f.content, f.mode ? { mode: f.mode } : undefined);
   }
-  const written = files.map((f) => f.path);
+  return files.map((f) => f.path);
+}
+
+/**
+ * The editor and agent configs merged into a project (or a monorepo's root): the `.vscode` files
+ * unless `opts.vscode` is `false`, and the MCP client configs with `opts.mcp`. Merged rather than
+ * written, since `init` may meet files that already list settings or servers.
+ *
+ * @param opts The scaffold options (`dir`, `vscode`, `mcp`).
+ * @returns The paths written, relative to `opts.dir` and `/`-separated.
+ */
+export async function writeProjectConfigs(opts: ScaffoldOptions): Promise<string[]> {
+  const written: string[] = [];
   if (opts.vscode !== false) {
     const vscode: string[] = [];
     await ensureVscodeDeno(opts.dir, vscode);
     // `/`-separated like every other scaffolded path, on Windows too.
     written.push(...vscode.map((p) => relative(opts.dir, p).split(SEPARATOR).join("/")));
   }
-  if (opts.fastlane) {
-    // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
-    written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
-  }
   if (opts.mcp) {
-    // Merged like the .vscode files: `init` may meet a client config that already lists servers.
     const mcp = { written: [] as string[], skipped: [] as string[], errors: [] as string[] };
     await writeMcpClientConfigs(opts.dir, {}, mcp);
     written.push(...mcp.written);

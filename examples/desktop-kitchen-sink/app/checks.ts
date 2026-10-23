@@ -13,6 +13,7 @@ import {
   type DeepLinkEvent,
   deleteFile,
   deviceInfo,
+  downloadToFile,
   listDir,
   moveToTrash,
   onLocalNotificationTapped,
@@ -68,6 +69,17 @@ import {
   windowCapabilities,
 } from "denext/desktop/window";
 import { tiledReason } from "./geometry.ts";
+import {
+  ATTACHMENT_NAME,
+  ATTACHMENT_PATH,
+  ATTACHMENT_TEXT,
+  BLOB_NAME,
+  BLOB_TEXT,
+  DOWNLOAD_PATH,
+  DOWNLOAD_TEXT,
+  type RunnerDownloads,
+  SLOW_PATH,
+} from "./downloads.ts";
 
 /** What `kitchen.setup` returns (see `desktop/kitchen.ts`). */
 export interface KitchenSetup {
@@ -105,6 +117,8 @@ export interface KitchenSetup {
   readonly sessionType: "wayland" | "x11" | "tty" | null;
   /** The packaged app's backend as the runner found it; `null` when the app was opened by hand. */
   readonly backend: "webview" | "cef" | null;
+  /** What the runner offers the download checks: a server, and answers to save dialogs. */
+  readonly downloads: RunnerDownloads;
 }
 
 /** One check's outcome. */
@@ -1775,6 +1789,166 @@ const appChecks: Check[] = [
   }],
 ];
 
+// --- downloads -------------------------------------------------------------------------------
+
+/** The `downloadToFile` checks' server, or a skip with the runner's reason. */
+function downloadBase(setup: KitchenSetup): string {
+  if (!setup.downloads.base) {
+    throw new Skip(`no download server: ${setup.downloads.skip ?? "the runner offered none"}`);
+  }
+  return setup.downloads.base;
+}
+
+/** What the runner saw after answering a save dialog (`kitchen.saveDialog`). */
+interface SavedDownload {
+  readonly landed: boolean;
+  readonly text: string | null;
+  readonly detail: string;
+}
+
+/**
+ * A page download through the runtime's save dialog: ask the runner to answer the dialog (Return,
+ * accepting the proposed name in the folder it pointed the dialogs at), start the download with
+ * `start`, and return the file's content once it landed there.
+ */
+async function saveThroughDialog(
+  setup: KitchenSetup,
+  id: string,
+  name: string,
+  start: () => void,
+): Promise<string> {
+  if (!setup.pinnedRuntime) {
+    throw new Skip("page downloads open a save dialog only under denext's pinned runtime");
+  }
+  if (!setup.downloads.dialogs) {
+    throw new Skip(`no one to answer the save dialog: ${setup.downloads.dialogSkip ?? "unknown"}`);
+  }
+  // The request goes out first: the runner waits for the dialog before it presses a key. A
+  // top-level navigation that turns into a download cancels the page's requests in flight (this
+  // one too, on WebKit), so the answer is then read again with a request of its own.
+  const answered = (kitchen.saveDialog({ id, name }, { timeoutMs: 60_000 }) as Promise<
+    SavedDownload
+  >).catch(() => null);
+  await sleep(300);
+  const at = location.href;
+  start();
+  const saved = await answered ??
+    await waitFor(
+      () =>
+        (kitchen.saveDialogDone({ id }, { timeoutMs: 60_000 }) as Promise<SavedDownload>)
+          .catch(() => null),
+      "the runner's answer",
+      60_000,
+    );
+  assert(saved.landed, `${name} did not land where the save dialog put it (${saved.detail})`);
+  eq(location.href, at, "the page's URL after the download (it must not navigate)");
+  return `${saved.text ?? ""}`;
+}
+
+/** Click an `<a download>` link (the client router leaves one alone). */
+function clickDownload(href: string, download: string): void {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = download;
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+const downloadChecks: Check[] = [
+  ["downloads: downloadToFile saves a file into the app's data folder", async ({ setup }) => {
+    const base = downloadBase(setup);
+    const path = "kitchen/downloads/whole.txt";
+    await deleteFile(path, { directory: "data" }).catch(() => {});
+    let progress = 0;
+    const done = await downloadToFile(`${base}${DOWNLOAD_PATH.slice(1)}`, path, {
+      directory: "data",
+      onProgress: (p) => void (progress = p.bytes),
+    });
+    eq(await readFile(path, { directory: "data" }), DOWNLOAD_TEXT, "readFile");
+    eq(
+      (await kitchen.diskRead({ path })).text,
+      DOWNLOAD_TEXT,
+      "the file on disk (the runtime's download, not a browser fallback)",
+    );
+    await deleteFile(path, { directory: "data" });
+    return `${done.path}, ${DOWNLOAD_TEXT.length} bytes (last progress ${progress})`;
+  }],
+  ["downloads: downloadToFile aborted mid-transfer leaves nothing behind", async ({ setup }) => {
+    const base = downloadBase(setup);
+    const dir = "kitchen/downloads";
+    const path = `${dir}/slow.bin`;
+    await writeFile(`${dir}/keep.txt`, "", { directory: "data", recursive: true });
+    const controller = new AbortController();
+    const reason = new Error("kitchen-sink abort");
+    let bytes = 0;
+    const download = downloadToFile(`${base}${SLOW_PATH.slice(1)}`, path, {
+      directory: "data",
+      signal: controller.signal,
+      onProgress: (p) => {
+        bytes = p.bytes;
+        if (p.bytes > 0) controller.abort(reason);
+      },
+    });
+    // The server trickles the body out over many seconds: abort after the first progress, or
+    // after 2 s with none (a runtime that reports progress late still has a transfer to abort).
+    const timer = setTimeout(() => controller.abort(reason), 2000);
+    const outcome = await download.then(
+      () => "resolved",
+      (err) => err === reason ? "aborted" : `rejected: ${err instanceof Error ? err.message : err}`,
+    );
+    clearTimeout(timer);
+    eq(outcome, "aborted", "the download's outcome");
+    // The runtime streams into `<file>.<uuid>.part` and drops it once the transfer stops.
+    const leftovers = await waitFor(
+      async () => {
+        const names = (await listDir(dir, { directory: "data" })).map((e) => e.name);
+        return names.some((n) => n.startsWith("slow.bin")) ? null : names;
+      },
+      "the partial download to be removed",
+      10_000,
+      async () => (await listDir(dir, { directory: "data" })).map((e) => e.name).join(", "),
+    );
+    eq((await kitchen.diskRead({ path })).text, null, "the target file after the abort");
+    return `aborted after ${bytes} bytes; ${dir} holds ${leftovers.join(", ") || "nothing"}`;
+  }],
+  [
+    "downloads: an <a download> blob export lands where the save dialog puts it",
+    async ({ setup }) => {
+      let url = "";
+      const text = await saveThroughDialog(setup, "blob", BLOB_NAME, () => {
+        url = URL.createObjectURL(new Blob([BLOB_TEXT], { type: "text/plain" }));
+        clickDownload(url, BLOB_NAME);
+      });
+      URL.revokeObjectURL(url);
+      eq(text, BLOB_TEXT, `${BLOB_NAME}'s content`);
+      return `${BLOB_NAME}, ${text.length} bytes`;
+    },
+  ],
+  [
+    "downloads: a Content-Disposition: attachment response lands where the save dialog puts it",
+    async ({ setup }) => {
+      // The WebKit backends (macOS WKWebView, Linux WebKitGTK) open no save dialog for an
+      // attachment served from the app's custom-scheme origin, whatever its type, at the top
+      // level or in a frame, and log no refusal; WebView2 and CEF download it. The runtime's own
+      // download test covers an http origin only. A runtime gap, reported until it is fixed.
+      if (setup.os !== "windows" && setup.backend !== "cef") {
+        throw new Skip(
+          "runtime gap: the WebKit webview does not download a custom-scheme origin's " +
+            "Content-Disposition: attachment response (no save dialog, no refusal logged)",
+        );
+      }
+      // A top-level navigation to the attachment, as a plain link or `location.href` makes one:
+      // the response becomes a download and the page stays where it is.
+      const text = await saveThroughDialog(setup, "attachment", ATTACHMENT_NAME, () => {
+        location.href = ATTACHMENT_PATH;
+      });
+      eq(text, ATTACHMENT_TEXT, `${ATTACHMENT_NAME}'s content`);
+      return `${ATTACHMENT_NAME}, ${text.length} bytes`;
+    },
+  ],
+];
+
 /** Every check, in the order they run. */
 export const CHECKS: readonly Check[] = [
   ...runtimeChecks,
@@ -1785,6 +1959,8 @@ export const CHECKS: readonly Check[] = [
   ...launchChecks,
   ...nativeChecks,
   ...securityChecks,
+  // Last: a save dialog no one could answer stays open, and must not hold up another check.
+  ...downloadChecks,
 ];
 
 /** The checks of `phase`: every check for `main`, else that update phase's. */

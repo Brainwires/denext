@@ -35,7 +35,7 @@ export interface FormSubmission {
  * `null` when not inside a `<form>` with a function action). Seeded by the
  * reconciler onto a host `<form>` fiber's descendants; read by `useFormStatus`.
  */
-export const FormStatusContext: Context<FormStatusSignal | null> = createContext<
+export const FormStatusContext: Context<FormStatusSignal | null> = /* @__PURE__ */ createContext<
   FormStatusSignal | null
 >(null);
 

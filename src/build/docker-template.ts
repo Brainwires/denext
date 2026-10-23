@@ -15,7 +15,7 @@
 // here. (`compose-scan.ts` imports this module's sentinel check, so the dependency runs one way.)
 
 import { isAbsolute, join, relative } from "@std/path";
-import { denoReleaseVersion } from "./deno-version.ts";
+import { currentDenoIdentity, denoReleaseVersion } from "./deno-version.ts";
 import { splitNetFlag, toolchainNetSplit } from "./net-permissions.ts";
 import {
   DOCKER_SENTINEL,
@@ -116,7 +116,7 @@ function portOf(options: DockerOptions): number {
 
 /** The Deno base image, pinned to the requested tag or to the version generating this file. */
 function denoImage(options: DockerOptions): string {
-  return `denoland/deno:${options.denoTag ?? denoReleaseVersion(Deno.version.deno)}`;
+  return `denoland/deno:${options.denoTag ?? denoReleaseVersion(currentDenoIdentity())}`;
 }
 
 /** The three-line banner both Dockerfiles open with (sentinel + "bump it deliberately"). */

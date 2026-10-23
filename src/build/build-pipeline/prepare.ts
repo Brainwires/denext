@@ -17,6 +17,9 @@ import {
   appRendersDocumentTags,
   appUsesActivity,
   appUsesClassComponents,
+  appUsesFormActions,
+  appUsesHrefParams,
+  appUsesImageBlur,
   appUsesIsoIslands,
   appUsesViewTransition,
   type ClassRuntimeMode,
@@ -116,8 +119,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // `<ViewTransition>` defined there counts as used. npm packages are not scanned (their
   // sources are opaque to a token scan) — the class runtime covers them by loading on demand.
   const outside = await localModulesOutside(projectDir, manifest.pages);
-  const { classRuntime, usesActivity, usesViewTransition, usesIsoIslands, usesSingletons } =
-    await runtimeFeatureScans(projectDir, paths, outside);
+  const scans = await runtimeFeatureScans(projectDir, paths, outside);
   return {
     projectDir,
     paths,
@@ -140,11 +142,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     serverModules: new Map(),
     usesLive: false,
     usesLiveView: false,
-    classRuntime,
-    usesActivity,
-    usesViewTransition,
-    usesIsoIslands,
-    usesSingletons,
+    ...scans,
     compatServerModules: {},
   };
 }
@@ -186,7 +184,7 @@ async function runtimeFeatureScans(
 ): Promise<
   Pick<
     BuildContext,
-    "classRuntime" | "usesActivity" | "usesViewTransition" | "usesIsoIslands" | "usesSingletons"
+    RuntimeScanKey
   >
 > {
   // The class-component runtime is a code-split chunk the generated entry loads on demand
@@ -212,5 +210,31 @@ async function runtimeFeatureScans(
   // Gate the host-singleton runtime: install it only when the app renders a document tag (a
   // client root layout's `<html>`/`<body>` adopt the page's own elements).
   const usesSingletons = await appRendersDocumentTags(projectDir, outside);
-  return { classRuntime, usesActivity, usesViewTransition, usesIsoIslands, usesSingletons };
+  // Build-scan defines (`deno bundle --define`): the boot's blur-placeholder clearing and the
+  // reconciler's function-valued form-action seam fold out of an app that never writes them, and
+  // so does the route-pattern href filling.
+  const usesImageBlur = await appUsesImageBlur(projectDir, outside);
+  const usesFormActions = await appUsesFormActions(projectDir, outside);
+  const usesHrefParams = await appUsesHrefParams(projectDir, outside);
+  return {
+    classRuntime,
+    usesActivity,
+    usesViewTransition,
+    usesIsoIslands,
+    usesSingletons,
+    usesImageBlur,
+    usesFormActions,
+    usesHrefParams,
+  };
 }
+
+/** The {@linkcode BuildContext} fields {@linkcode runtimeFeatureScans} fills. */
+type RuntimeScanKey =
+  | "classRuntime"
+  | "usesActivity"
+  | "usesViewTransition"
+  | "usesIsoIslands"
+  | "usesSingletons"
+  | "usesImageBlur"
+  | "usesFormActions"
+  | "usesHrefParams";

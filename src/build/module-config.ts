@@ -11,6 +11,7 @@ import { carryLinks } from "./config-links.ts";
 import { ensureDir } from "@std/fs";
 import { parse as parseJsonc } from "@std/jsonc";
 import { denoExecutable, minDepAgeConfig, readFrameworkJson } from "./bundle.ts";
+import { type WorkspaceImports, workspaceImports } from "./workspace-imports.ts";
 
 /** A minimal view of a deno config's fields relevant to module resolution. */
 export interface DenoConfigView {
@@ -141,16 +142,20 @@ export async function readImportsAbsolute(configPath: string): Promise<Record<st
  * @param frameworkImports The framework's absolutized import map.
  * @param appImports The app's absolutized import map.
  * @param appCfg The app's parsed config (for compilerOptions + nodeModulesDir).
+ * @param workspace The app's Deno workspace as entries (between the framework's and the app's),
+ *   so a member package (`"@acme/ui"`) and the root's imports resolve under the merged config.
  */
 export function mergeModuleConfig(
   frameworkImports: Record<string, string>,
   appImports: Record<string, string>,
   appCfg: DenoConfigView,
+  workspace: WorkspaceImports = { imports: {}, scopes: {} },
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = {
     compilerOptions: appCfg.compilerOptions,
-    imports: { ...frameworkImports, ...appImports },
+    imports: { ...frameworkImports, ...workspace.imports, ...appImports },
   };
+  if (Object.keys(workspace.scopes).length > 0) merged.scopes = workspace.scopes;
   const nmd = appCfg.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
   Object.assign(merged, minDepAgeConfig(appCfg.minimumDependencyAge));
@@ -409,6 +414,7 @@ export async function writeMergedModuleConfig(
     await readImportsAbsolute(frameworkConfigPath),
     await readImportsAbsolute(appConfigPath),
     appCfg,
+    await workspaceImports(appConfigPath),
   );
   await ensureDir(outDir);
   carryLinks(merged, appCfg, dirname(appConfigPath), outDir);

@@ -19,7 +19,9 @@ emit correct denext instead of Next.js.
    `denext task start` (the `denext` command brings its own Deno — no Deno install needed; with
    Deno installed, `deno task dev` runs the same task; the least-privilege `start` must be launched
    on denext's toolchain — `denext task start`, or the image / unit `denext deploy prepare` writes —
-   and stops with the fix on stock Deno). Migrating a Next app? `denext migrate` does it in one pass
+   and stops with the fix on stock Deno). `denext create <dir>` scaffolds one (`--monorepo`: a Deno
+   workspace, the app in `apps/web` importing shared `packages/ui` / `packages/shared` by name;
+   `denext generate app <name>` adds another app). Migrating a Next app? `denext migrate` does it in one pass
    — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
    your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
@@ -670,7 +672,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-rc.2 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on, newer by semver; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-rc.3 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on, newer by semver; upstream Deno ships a 3.0.0 too, so from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1035,7 +1037,7 @@ export function Checkout() {
 ```
 
 **Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
-`denext analyze --md` writes a markdown report (per-module on the esbuild path) to pipe into CI.
+`denext analyze --md` writes a markdown report (each chunk's top modules) to pipe into CI.
 Imports of one export from a `"sideEffects": false` dep (lucide-react, Radix) are tree-shaken
 automatically on the esbuild path. `optimizePackageImports` (Next's key, top-level) goes further:
 barrel imports of listed packages are rewritten to the defining modules, so the barrel is never
@@ -1147,10 +1149,10 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   runs it on the toolchain (with no toolchain it refuses, naming `denext toolchain install`;
   `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
-  native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6; an absolute `file:` import
-  doesn't resolve under it yet) and its `deno lsp` runs TypeScript 7 too (`"deno.unstable":
-  ["tsgo-lsp"]` in the `.vscode/settings.json` that `create` / `migrate` / `upgrade` write;
-  `"deno.unstable": []` or `DENEXT_TSGO_LSP=0` keeps TypeScript 6), and in a `package.json` project without a `deno.json` it runs npm
+  native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6) and its `deno lsp` runs
+  TypeScript 7 too (the runtime's own default; `create` / `migrate` / `upgrade` also write
+  `"deno.unstable": ["tsgo-lsp"]` for older runtimes; `DENO_UNSTABLE_TSGO_LSP=0` keeps
+  TypeScript 6), and in a `package.json` project without a `deno.json` it runs npm
   packages as Node.js does (hoisted `node_modules`, Node's export conditions, extensionless and
   `tsconfig` `paths` imports, git / tarball dependencies, the project's own lifecycle scripts);
   everywhere it runs a CommonJS `.js` file as CommonJS and serves `better-sqlite3` over the built-in
@@ -1241,7 +1243,7 @@ denext ships tooling so agents get it right the first time:
 All work lands on `development`, and releases are cut there with
 `deno task release <version>` (which tags `v<version>` and pushes). The script
 first refuses unless ci.yml's heavy jobs (`integration`, `next-compat`, `coverage`,
-with `check`, `backend-integration`, `ios-export-router`, `windows-resolve`, `windows-tests` and `macos-tests`) are green on HEAD: a push to `development`
+with `check`, `backend-integration`, `ios-export-router`, `windows-resolve`, `windows-tests`, `macos-tests` and `cargo-audit`) are green on HEAD: a push to `development`
 skips them, so dispatch ci.yml on the commit first
 (`gh workflow run ci.yml --ref development`, then wait for it). It also refuses unless the newest
 desktop-ci.yml run on HEAD (Windows / macOS / Linux desktop suites, installers, install.ps1 /
@@ -1253,7 +1255,10 @@ e2e.yml run on HEAD ran every job green (`E2E_JOBS`: `e2e`, `migration-beds`, `t
 (a real packaged window on Linux, macOS arm64 / x64 and Windows; `DESKTOP_WINDOW_JOBS`) is green:
 e2e runs only on a dispatch and desktop-window only when its `paths` filter matches, so dispatch
 both (`gh workflow run e2e.yml --ref development`, `gh workflow run desktop-window.yml --ref
-development`) and wait for all four. Active `development` runs ahead of `main` by design.
+development`). Last, the newest native-plugins.yml run on HEAD must have built both apps green
+(`NATIVE_PLUGINS_JOBS`: `android`, `ios`; a push runs it only when a native template or installer
+changes, so dispatch it: `gh workflow run native-plugins.yml --ref development`). Wait for all
+five. Active `development` runs ahead of `main` by design.
 
 **`main` must always be exactly what is published.** So **cutting a version is not
 done until `development` is merged into `main`** — the release flow is: tag

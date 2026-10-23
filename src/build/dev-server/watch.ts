@@ -16,6 +16,8 @@ import { broadcast, broadcastUpdate, closeReloadClients } from "./reload.ts";
 import type { DevState } from "./state.ts";
 import { watchPlatformFiles } from "./platform.ts";
 import { isSelfWrite } from "../self-writes.ts";
+import { watchProjectStructure } from "../platform-watch.ts";
+import { workspaceMemberDirs } from "../workspace-imports.ts";
 
 /**
  * Whether a change set can be handled by Fast Refresh (re-import the route entry,
@@ -246,6 +248,24 @@ function handleChangeSet(st: DevState, configBasenames: Set<string>, changedPath
 }
 
 /**
+ * Watch the other members of the app's Deno workspace (`packages/ui` beside `apps/web`): an edit
+ * to a package the app imports by name reaches the dev loop like an edit under `components/`.
+ * Each member is watched with the project-wide watch's skip rules (its `node_modules`, dot-folders
+ * and build output never report).
+ *
+ * @param st The dev state.
+ * @param onEdit Called with each burst of changed paths.
+ */
+async function watchWorkspaceMembers(
+  st: DevState,
+  onEdit: (paths: string[]) => void,
+): Promise<void> {
+  for (const dir of await workspaceMemberDirs(st.paths.projectDir)) {
+    watchProjectStructure(dir, () => {}, st.options.signal, onEdit);
+  }
+}
+
+/**
  * Watch app + public dirs (and middleware/config), and every other project source through the
  * project-wide watch, and invalidate on change. Closes cleanly on shutdown so the watchers and
  * live-reload streams don't outlive the server.
@@ -286,6 +306,7 @@ export async function watch(st: DevState): Promise<void> {
   // change sets an edit under `app/` makes.
   const outside = outsideEdits(st.paths.projectDir, watched);
   watchPlatformFiles(st, () => applyPlatformFilesChange(st), (paths) => queue(outside(paths)));
+  await watchWorkspaceMembers(st, (paths) => queue(outside(paths)));
   st.options.signal?.addEventListener("abort", () => {
     try {
       watcher.close();

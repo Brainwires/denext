@@ -33,6 +33,7 @@ import {
   readImportAliases,
   resolveImportAlias,
 } from "../platform-extensions.ts";
+import { workspaceImports, workspaceMemberDirs } from "../workspace-imports.ts";
 
 /**
  * A merged deno config (framework deps + the app's import map, absolutized) so the
@@ -50,10 +51,13 @@ export async function ensureMergedConfig(st: UnbundledState): Promise<string> {
       ? new URL(v, toFileUrl(configPath)).href
       : v;
   }
-  const merged = { ...(await frameworkImports()), ...appImports };
+  // The app's Deno workspace: its member packages by name and the root's imports.
+  const workspace = await workspaceImports(configPath);
+  const merged = { ...(await frameworkImports()), ...workspace.imports, ...appImports };
   await ensureDir(st.depDir);
   const p = join(st.depDir, "deno.merged.json");
-  await Deno.writeTextFile(p, JSON.stringify({ imports: merged }));
+  const scopes = Object.keys(workspace.scopes).length > 0 ? { scopes: workspace.scopes } : {};
+  await Deno.writeTextFile(p, JSON.stringify({ imports: merged, ...scopes }));
   st.mergedConfigPath = p;
   return p;
 }
@@ -63,7 +67,13 @@ export async function ensureMergedConfig(st: UnbundledState): Promise<string> {
  * project config: the same table the build's resolvers read ({@linkcode readImportAliases}).
  */
 async function ensureAliases(st: UnbundledState): Promise<ImportAliases> {
+  st.firstPartyRoots ??= [st.opts.projectDir, ...await workspaceMemberDirs(st.opts.projectDir)];
   return st.aliasPrefixes ??= await readImportAliases(st.opts.projectDir);
+}
+
+/** The roots a file alias resolves first-party under (see {@link ensureAliases}). */
+function rootsOf(st: UnbundledState): readonly string[] {
+  return st.firstPartyRoots ?? [st.opts.projectDir];
 }
 
 /** Resolve an import specifier from `importerAbs` to an absolute first-party path, or null. */
@@ -78,7 +88,7 @@ export async function resolveFirstParty(
     spec,
     importerAbs,
     firstPartyProbe(st, platform),
-    st.opts.projectDir,
+    rootsOf(st),
   );
 }
 
@@ -116,7 +126,8 @@ export async function firstPartyResolver(
 ): Promise<(spec: string) => string | null> {
   const aliases = await ensureAliases(st);
   const probe = firstPartyProbe(st, platform);
-  return (spec) => resolveWith(aliases, spec, importerAbs, probe, st.opts.projectDir);
+  const roots = rootsOf(st);
+  return (spec) => resolveWith(aliases, spec, importerAbs, probe, roots);
 }
 
 /**
@@ -137,7 +148,7 @@ function resolveWith(
   spec: string,
   importerAbs: string,
   probe: Probe,
-  projectDir: string,
+  roots: readonly string[],
 ): string | null {
   let hit: string | null = null;
   // A Vite asset query (`./click.mp3?url`) names the file before it (a `#` alias key keeps
@@ -148,13 +159,13 @@ function resolveWith(
   } else {
     // The alias first, then the target's platform file for the file it names. A folder alias
     // (`~/`) is the app's wherever it points, except into the framework; a file alias
-    // (`#button`) only inside the project. `denext` / `denext/` mapped to a checkout is the
+    // (`#button`, a workspace package's `@acme/ui`) only inside the project or a workspace member. `denext` / `denext/` mapped to a checkout is the
     // framework, served as a dependency: through `@fs` it would load a second runtime.
     const exact = aliases.some(([key]) => key === spec);
     const url = resolveImportAlias(spec, aliases) ?? resolveImportAlias(spec + "/", aliases);
     const path = url?.startsWith("file:") ? fromFileUrl(url).replace(/[\\/]$/, "") : null;
     const real = path ? canonicalPath(path) : null;
-    const inProject = real?.startsWith(canonicalDirPrefix(projectDir));
+    const inProject = roots.some((root) => real?.startsWith(canonicalDirPrefix(root)));
     if (path && (inProject || (!exact && !real!.startsWith(FRAMEWORK_ROOT)))) hit = probe(path);
   }
   return hit ? norm(hit) : null;

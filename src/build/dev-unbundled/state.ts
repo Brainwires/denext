@@ -308,6 +308,11 @@ export interface UnbundledState {
   /** The app's import-map aliases (`readImportAliases`), loaded once. */
   aliasPrefixes: ImportAliases | null;
   /**
+   * The project root, then the other members of its Deno workspace (`packages/ui`), loaded with
+   * {@link aliasPrefixes}: a file alias resolves first-party only under one of them.
+   */
+  firstPartyRoots: readonly string[] | null;
+  /**
    * React Native: the names the app's modules import from each package specifier, so the
    * dependency bundle's entry for it can re-export them (CommonJS packages included).
    */
@@ -353,6 +358,7 @@ export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState 
     runtimeBuilt: null,
     mergedConfigPath: null,
     aliasPrefixes: null,
+    firstPartyRoots: null,
     npmNames: new Map(),
     npmBuiltSig: null,
     graphEpoch: 0,

@@ -14,6 +14,7 @@ import {
   type UpgradeStep,
 } from "../../build/upgrade.ts";
 import { projectDir } from "../shared.ts";
+import { memberDirs } from "../../build/workspace-imports.ts";
 import {
   DENEXT_EXCLUDE,
   type DepAgeRule,
@@ -62,19 +63,6 @@ async function memberConfigs(
     else unresolved.push(entry);
   }
   return { paths: [...new Set(paths)], unresolved };
-}
-
-/** The directories one `workspace` entry names: a path, or a `dir/*` glob over subdirectories. */
-async function memberDirs(root: string, entry: string): Promise<string[]> {
-  if (!entry.includes("*")) return [join(root, entry)];
-  const m = /^(.*?)\/?\*\/?$/.exec(entry);
-  if (!m || m[1].includes("*")) return [];
-  const parent = join(root, m[1]);
-  const out: string[] = [];
-  try {
-    for await (const e of Deno.readDir(parent)) if (e.isDirectory) out.push(join(parent, e.name));
-  } catch { /* no such directory: unresolved */ }
-  return out.sort();
 }
 
 /** The steps as aligned `name  from → to` lines (unchanged ones say so). */

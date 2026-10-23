@@ -23,13 +23,24 @@ export default function Bundling() {
         reaches, listed under it), then the chunks several islands share and which islands load
         each, so a heavy library one island pulls in is told apart from one every island pays for.
       </p>
+      <p>
+        The tail of <code>denext analyze examples/islands</code>{" "}
+        (denext 4.7, 2026-10-22; sizes vary with the version):
+      </p>
       <Code lang="text">
-        {`By island:
-  chart-K3J9QW2D.js                    56.1 KB raw · 18.0 KB gz  (+1 exclusive chunk)
-    chunk-QX81ZT0A.js                  54.0 KB raw · 17.2 KB gz
-  counter-V6JCWT7F.js                   0.9 KB raw · 0.4 KB gz
-  shared between islands:
-    chunk-7BD2LM4P.js                   3.1 KB raw · 1.2 KB gz  chart-K3J9QW2D.js, counter-V6JCWT7F.js`}
+        {`  By role:
+    shared runtime     60.1 KB raw · 22.5 KB gz  (5 chunks)
+    route entries      6.1 KB raw · 2.9 KB gz  (4 chunks)
+    islands            2.6 KB raw · 1.3 KB gz  (3 chunks)
+    on-demand runtime  29.8 KB raw · 12.3 KB gz  (8 chunks)
+
+  By island:
+    widget-5RMD7LNM.js         1.8 KB raw · 0.9 KB gz  (+1 exclusive chunk)
+      chunk-IHLJ76A4.js        0.2 KB
+    action-call-ESHSSAYX.js    1.1 KB raw · 0.6 KB gz  (+1 exclusive chunk)
+      chunk-2V5FEKT4.js        1.0 KB raw · 0.6 KB gz
+    shared between islands:
+      chunk-H4S5ATD7.js        1.4 KB raw · 0.7 KB gz  action-call-ESHSSAYX.js, widget-5RMD7LNM.js`}
       </Code>
       <Code lang="bash">
         {`denext analyze            # terminal breakdown by chunk + role
@@ -39,11 +50,8 @@ denext analyze --md > bundle-report.md   # a markdown report (CI artifact)`}
       <p>
         <code>--md</code>{" "}
         prints a markdown report to stdout (pipe it to a file). It carries the per-chunk table, the
-        role subtotals and the per-island breakdown on every project, and — on the esbuild path (a
-        {" "}
-        <a href="/docs/migrating">drop-in compat</a> or <a href="/docs/spa">SPA</a>{" "}
-        app) — a per-chunk breakdown of the modules that dominate each chunk, so you can see{" "}
-        <em>which dependency</em> is fat:
+        role subtotals, the per-island breakdown and a per-chunk breakdown of the modules that
+        dominate each chunk, so you can see <em>which dependency</em> is fat:
       </p>
       <Code lang="markdown">
         {`### \`chunk-abc.js\`
@@ -53,9 +61,11 @@ denext analyze --md > bundle-report.md   # a markdown report (CI artifact)`}
 - \`app/dashboard/page.tsx\` — 0.4 KB`}
       </Code>
       <Callout kind="note">
-        The native App Router path bundles with{" "}
-        <code>deno bundle</code>, which emits no module-level metafile, so <code>--md</code>{" "}
-        stays chunk-level there. The per-module section appears for the esbuild compat/SPA path.
+        The esbuild path (a <a href="/docs/migrating">drop-in compat</a> or{" "}
+        <a href="/docs/spa">SPA</a>{" "}
+        app on npm React) reads the module sizes from esbuild's metafile. The native{" "}
+        <code>deno bundle</code> path writes none, so there <code>--md</code>{" "}
+        attributes each chunk's bytes to its modules from the bundle's source maps.
       </Callout>
 
       <h2>Feature flags (compile-time)</h2>

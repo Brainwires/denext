@@ -4,7 +4,7 @@
 // deno-fmt-ignore-file
 // @ts-self-types="./denext_lightningcss.d.ts"
 
-// source-hash: ef1f7527e7c79d6cf64cbbd257bb5e7e62545dcd
+// source-hash: c1651cfbdc5ba82308d8d129164e078c3e1d805c
 import * as wasm from "./denext_lightningcss.wasm";
 export * from "./denext_lightningcss.internal.js";
 import { __wbg_set_wasm } from "./denext_lightningcss.internal.js";

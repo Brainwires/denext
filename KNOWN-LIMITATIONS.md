@@ -25,6 +25,16 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
   `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
   a server render it returns `null`.
+- **A native App Router or SPA build leaves out three runtimes the app's own sources never name**
+  (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
+  blur placeholders in server-only trees (kept when a source names `blurDataURL` or a
+  `placeholder` other than a plain string), the function-valued `<form action>` /
+  `formAction` seam (kept when a source names `action` or `formAction`) and the filling of a
+  route-pattern href from its `params` (`{ pathname: "/blog/[slug]", params }`, kept when a
+  string or template literal in a source holds a `/[name]`, `/[...name]` or `/[[...name]]`
+  segment). npm packages are not scanned, so a package that renders either of the first two by
+  itself, with props the app never names, or builds a route pattern itself, needs the app to name
+  it once. A next-compat (npm React) build keeps all three.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 
@@ -59,16 +69,16 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   first online run (in the background) or by `denext toolchain install`. A verb used offline
   before either has happened fails to load. The compiled binary embeds every verb.
 - **The TypeScript 7 language server (the editor default) does less than the TypeScript 6
-  service.** `"deno.unstable": ["tsgo-lsp"]`, which `create`, `migrate` and `upgrade` write into
-  `.vscode/settings.json`, runs the dated 7.1 nightly the toolchain pins. Against the in-process
+  service.** The pinned runtime's `deno lsp` runs the dated 7.1 nightly the toolchain pins by
+  default (earlier runtimes through the `"deno.unstable": ["tsgo-lsp"]` that `create`, `migrate`
+  and `upgrade` write into `.vscode/settings.json`). Against the in-process
   TypeScript 6 service it:
   - resolves only what `deno sync-types` expresses as `paths` and `.deno/` files, with the same
     gaps as the native check (no sloppy imports, `@deno-types` / `X-TypeScript-Types`, per-member
     `jsxImportSource`), types `jsr:` packages from `npm.jsr.io` whatever `JSR_URL` says, and sees
     a dependency added by editing an import only after the next `deno cache`;
-  - writes a root `tsconfig.json` (or adds `"./.deno/tsconfig.json"` to an existing one's
-    `extends`) and `.deno/` into the project; `DENO_TSGO_LSP_SYNC_TYPES=0` stops that, at the cost
-    of the import map's types;
+  - writes `.deno/` (ignored by its own `.gitignore`) into the project;
+    `DENO_TSGO_LSP_SYNC_TYPES=0` stops that, at the cost of the import map's types;
   - picks Deno's lib types per project, not per file (a worker module gets the window's types),
     and has no Vitest / Jest types for `*.vitest.ts`;
   - answers nothing inside remote documents (`deno:/https/…`), and a definition in a dependency
@@ -81,14 +91,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
     non-strict defaults;
   - runs as one extra process (about 100–250 MB) beside `deno lsp`.
 
-  Each has the same way out: `"deno.unstable": []` in `.vscode/settings.json` keeps TypeScript 6
-  for that project, `DENEXT_TSGO_LSP=0` stops `create` / `migrate` / `upgrade` writing the entry,
-  and `DENO_UNSTABLE_TSGO_LSP=0` in the language server's environment overrides the setting.
-- **On Windows, keep a project and its `file:` imports on one drive.** Deno 2.9 resolves a
-  `deno.json` whose `file:` targets sit on another drive as `file:///C:/D:/…`, so an app on `C:`
-  that imports a checkout on `D:` (as `migrate --denext-local-path` writes) fails to load, in
-  Deno rather than in denext. Put both on the same drive (CI's `windows-tests` job points
-  `TEMP` / `TMP` at the checkout's drive for this reason).
+  Each has the same way out: `DENO_UNSTABLE_TSGO_LSP=0` in the language server's environment
+  keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
+  `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
+  project.
+- **On Windows, keep a project and the denext checkout it imports on one drive.** A build,
+  export or `build --compile` of an app on `C:` that imports a checkout on `D:` (as
+  `migrate --denext-local-path` writes) still fails, even though runtime 3.0.0-rc.3 fixed Deno's own
+  cross-drive `file:` link. Put both on the same drive (CI's `windows-tests` job points `TEMP` /
+  `TMP` at the checkout's drive for this reason).
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
@@ -276,6 +287,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.
+- **A Deno workspace lists its members one by one for an app to import them by name.** The client
+  bundler's loader can't expand a glob member (`packages/*`), so an app named by one builds on its
+  own config and its siblings' names don't resolve (`denext create --monorepo` lists them). A
+  package's own import map applies to its files as a scope, except in a server copy `denext dev`
+  writes after an edit there, which resolves through the app's map.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -485,6 +501,15 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
+- **An attachment from a custom-scheme app origin is not downloaded on WebKit.** Under the pinned
+  runtime, WKWebView (macOS) and WebKitGTK (Linux) open no save dialog for a
+  `Content-Disposition: attachment` response served from `desktop.app.origin` (such as
+  `myapp://app`), whatever its type, at the top level or in a frame, and log no refusal; WebView2
+  and CEF download it, and an `<a download>` link or a blob export works on every backend.
+  Workaround: `fetch` the response and save it with `saveFile` from `denext/mobile` (the OS save
+  dialog), or turn it into a blob and click an `<a download>` link, or save it into the app's
+  folders with `downloadToFile`. The kitchen sink's window test skips that check on WebKit until
+  the runtime is fixed.
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app

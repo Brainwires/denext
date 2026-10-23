@@ -8,6 +8,7 @@ import { join, resolve } from "@std/path";
 import { denoExecutable } from "../build/bundle.ts";
 import type { CommandContext } from "./command.ts";
 import { explainBuildFailure, explainedToolOutput } from "./explain-output.ts";
+import { workspaceRootHint } from "../build/workspace-imports.ts";
 
 /**
  * The `.env` tier the module gate loads for a verb: the process's own mode when the deployer
@@ -219,6 +220,12 @@ export async function ensureAppDir(
   }
   if (projectDir && await isFile(join(projectDir, "src", "routes", "__root.tsx"))) {
     return; // TanStack Start app — the tanstack-start plugin handles routing.
+  }
+  // A monorepo's root (`denext create --monorepo`): name its apps instead.
+  const hint = projectDir ? await workspaceRootHint(projectDir) : null;
+  if (hint) {
+    console.error(`denext: ${hint}`);
+    Deno.exit(1);
   }
   console.error(
     `denext: no app directory found at ${appDir}\n` +

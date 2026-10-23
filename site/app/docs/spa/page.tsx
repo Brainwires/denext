@@ -568,13 +568,16 @@ spa: { desktop: { icon: "./assets/app-icon.png" } }`}
         small React-equivalent instead of React&nbsp;+&nbsp;ReactDOM, so the client download is a
         fraction of the size. On a trivial SPA, the same app bundled with the same bundler (<code>
           deno bundle
-        </code>, minified), gzipped:
+        </code>, minified), raw and gzipped, against
+        React&nbsp;19.3.1&nbsp;+&nbsp;ReactDOM&nbsp;19.3.1. The first load is the entry and the
+        chunks it imports statically; everything loadable adds the chunks it can load on demand (the
+        class-component runtime, Fragment refs, the iOS scroll fix):
       </p>
       <Code lang="text">
-        {`                              raw      gzip
-  denext (own React-equiv)   38.6 KB   13.3 KB
-  React 19 + ReactDOM 19    190.2 KB   60.1 KB
-  denext is smaller by          4.9×      4.5×`}
+        {`                                  denext            React 19      smaller by
+                           raw      gzip       raw      gzip     raw    gzip
+  first load           52.7 KB   19.5 KB  218.9 KB   68.7 KB    4.2×    3.5×
+  everything loadable  73.1 KB   27.5 KB  218.9 KB   68.7 KB    3.0×    2.5×`}
       </Code>
       <p>
         Reproduce it with <code>deno run -A bench.ts</code> in the <code>examples/spa</code>{" "}

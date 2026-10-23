@@ -8,6 +8,158 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.7.1] - 2026-10-23
+
+### Added
+
+- **`denext create <dir> --monorepo`** (also in the interactive picker and on `denext ui`'s Setup
+  page) scaffolds a Deno workspace: a root `deno.json` listing its members, holding the root-only
+  fields (`unstable`, `allowScripts`), the shared `compilerOptions` / `fmt` / `lint` and tasks
+  (`dev` / `build` / `start` delegate to the app, `test` and `check` cover every member); the app
+  in `apps/web` (every other create option applies to it, native shells included); and
+  `packages/ui` (`@<scope>/ui`: a `Card` and a `Button` that render in Server Components and
+  islands alike, and their stylesheet as an export) and `packages/shared` (plain TypeScript), which
+  the app imports by name. `.vscode`, `--mcp` and `--fallow` go to the root. Every config's denext
+  pin is planned together under the dependency-age hold. `denext generate app <name>` adds another
+  app to such a workspace, and `denext dev` / `build` / `doctor` run at a workspace root name its
+  apps. See https://denext.dev/docs/monorepo.
+
+### Changed
+
+- **denext pins runtime `3.0.0-rc.3`** (from `3.0.0-rc.2`; the Deno toolchain and the Deno
+  Desktop runtime move together), the first with the identity marker, so denext now recognises its
+  toolchain by `Deno.build.denext` / the `deno --version` line rather than by its version.
+  `3.0.0-rc.3` also brings:
+  - TypeScript 7 as the language server's own default: `deno lsp` runs it with no editor setting
+    (or an empty `deno.unstable` list), so the `"deno.unstable": ["tsgo-lsp"]` entry denext writes
+    is needed only on earlier runtimes; `DENO_UNSTABLE_TSGO_LSP=0`, or a `deno.unstable` list
+    naming other features, keeps TypeScript 6. It writes only `.deno/`, never the project's root
+    `tsconfig.json`;
+  - a `node --watch` / `deno run --watch` child that keeps its parent's IPC channel across
+    restarts (Unix);
+  - on Windows, a `file:` link on another drive keeps its import map (denext's own build path still
+    needs a project and its local denext checkout on one drive; see KNOWN-LIMITATIONS);
+  - `createIpcHandle` reporting a failed handle's errno, and an npm `bin` named `..` skipped;
+  - `deno check -- <files>` checking those files, and the native check's TS2307 for an
+    unresolvable import carrying Deno's `deno add` hint.
+- **denext recognises its own Deno by an identity marker, not its version.** Upstream Deno releases
+  a `3.0.0` too, so `3.0.0-rc.N` no longer says whose runtime a Deno is. From runtime `3.0.0-rc.3`
+  denext's Deno carries `Deno.build.denext` (its version) and a last `denext <version> (Brainwires)`
+  line in `deno --version`, and denext keys every runtime check on them: the toolchain re-exec,
+  `denext toolchain status` and `denext doctor`, `denext test`'s Vitest pass, the native type check,
+  the `denoland/deno` tag of `generate docker` and the `setup-deno` version of `generate ci`, the
+  desktop runtime's Deno check and `denext desktop doctor`, and the direction-split network flags.
+  Upstream Deno's `3.0.0-rc.N` / `3.0.0` is stock Deno whatever its number. A runtime from before the
+  marker is recognised by its version only: `2.9.7-denext.N`, or exactly the pinned toolchain while
+  the pin predates the marker (`3.0.0-rc.2` and earlier); an unpinned, markerless `3.0.0-rc.1` no
+  longer counts. `deno task desktop:pin-runtime` refuses a `3.0.0-rc.3`+ release whose manifest does
+  not record the marker (`cli.identity`).
+- **Smaller client bundles: code an app never calls no longer ships through a module-level side
+  effect.** `useAsyncEffect` (its `wrap` helper was assigned to the function at module level), the
+  client location read and `Link`'s status context in navigation, and the layout-segment and
+  form-status contexts are now built with pure expressions, so an app that imports only
+  `createRoot` and a few hooks from `denext` drops them (examples/spa first load 58,776 →
+  57,101 B raw, 21,753 → 21,105 B gzip). `useAsyncEffect` is now a `const` typed by the new
+  `UseAsyncEffect` interface (with its `AsyncEffect`, `AsyncEffectOptions` and
+  `AsyncEffectErrorClass` types, also exported from `denext`); its call forms and
+  `useAsyncEffect.wrap` are unchanged.
+- **The route-pattern href filling ships only to an app that writes one.** Where `deno bundle`
+  takes `--define`, a native App Router or SPA build scans the app's own sources for a string or
+  template literal holding a `/[name]`, `/[...name]` or `/[[...name]]` segment, and when it finds
+  none it folds out the filling of `{ pathname: "/blog/[slug]", params }` hrefs and the
+  route-segment parser behind it (examples/hello shared chunks 62,032 → 61,463 B raw). A stock
+  Deno and a next-compat build keep it. KNOWN-LIMITATIONS lists the npm-package case.
+- **`examples/spa/bench.ts` counts what a page can load.** It reported every file `deno bundle`
+  emitted, including chunks whose only `import()` site was tree-shaken (the desktop bridge, the
+  soft-navigation commit, the Server Action dispatch: 18.7 KB raw that no page loads and
+  `denext build` does not write). It now reports the first load and everything loadable, on both
+  sides: denext 52.7 KB / 19.5 KB gzip first load against React 19's 218.9 KB / 68.7 KB.
+- **CI and the release gate.** `deno task test:coverage` also holds every module under `src/cli`,
+  `src/server`, `src/compat` and `packages/` to the coverage `scripts/coverage-baseline.json`
+  records for it, a ratchet that only goes up (`scripts/coverage-ratchet.ts`; the lcov report now
+  takes every plugin package and is kept as the `coverage-lcov` artifact), and the Kotlin
+  client-emitter goldens compile in the coverage job. `deno task release` also waits for
+  native-plugins.yml's Android and iOS builds on HEAD. publish.yml runs the aarch64 Linux and both
+  macOS binaries on their own runners before it creates a release, and desktop-ci.yml runs
+  `install.sh` on macOS too. The kitchen sink's window test covers page downloads: `downloadToFile`
+  (a whole file, and one aborted mid-transfer that leaves nothing behind), an `<a download>` blob
+  export and a `Content-Disposition: attachment` response, each through the save dialog (the
+  attachment on WebView2 and CEF: the WebKit webview does not download one from the app's
+  custom-scheme origin yet).
+- **Smaller client startup: the blur-placeholder clearing and the form-action seam ship only to an
+  app that uses them.** Where `deno bundle` takes `--define` (denext's Deno toolchain), a native
+  App Router or SPA build scans the app's own sources and defines two gates off when nothing names
+  the feature: the boot's clearing of `next/image` blur placeholders in server-only trees (kept for
+  `blurDataURL` or a `placeholder` other than a plain string) and the reconciler's
+  function-valued `<form action>` / `formAction` seam (kept when a source names `action` or
+  `formAction`). Measured startup bytes (raw): examples/hello's shared chunks 62,954 → 62,003,
+  examples/islands 65,017 → 64,066, examples/actions 65,224 → 64,923, examples/live
+  75,433 → 74,482, examples/spa 59,466 → 58,747. A stock Deno and a next-compat build keep both.
+  The client budget drops from 65,000 to 64,500 B. KNOWN-LIMITATIONS lists the npm-package case
+  the scan can't see.
+- **A chunk no page can load is no longer emitted.** Code splitting placed some chunks before
+  tree-shaking removed their only `import()` site (a native-only module, the class runtime of a
+  `classComponents: false` build, the Flight streaming readers in an app with no Flight route); a
+  native build now writes only the files its entries reach (examples/islands: 23 files,
+  117,278 B → 20 files, 101,020 B; examples/spa: 95,133 → 75,061 B).
+- **`denext analyze --md` breaks every chunk down by module on the native path too.** The report's
+  "Top modules per chunk" section came only from esbuild's metafile (compat and SPA-on-npm-React
+  builds); a native `deno bundle` build now attributes each chunk's bytes to its modules from the
+  bundle's source maps.
+
+### Fixed
+
+- **A Deno workspace member app can use its sibling packages everywhere.** A package another
+  member exports by name (`@acme/ui`, `@acme/ui/styles.css`) now resolves under the configs denext
+  writes for a re-exec (the module, CSS and dev-loop configs carry the root's imports, each
+  member's exports and each member's own imports as a scope), its stylesheets get shims before any
+  import-graph crawl, the per-module dev loop serves its modules (`@fs`) instead of leaving the
+  bare specifier for the browser, `denext dev` watches it, and an edit there re-renders the server
+  and hot-updates the module.
+- **An un-folded `feature()` call reads the configured flag in the dev server's bundled routes,
+  and at module level in a route page on a stock Deno.** The dev server's bundled route, Flight
+  and global-error bundles passed no `features`, so such a call read `false`; and a route entry
+  seeded the flags (without `--define`) only after its page module had run. The route entries now
+  seed them with a `data:` import evaluated first.
+- **`import.meta.url` in a Next.js drop-in's server code names the module's own file.** The
+  compat server bundle is one file under `.denext/server/`, and every module bundled into it saw
+  that file's URL, so a route reading a file beside itself (an OG image route loading its font with
+  `fs.readFile(new URL("./Inter-SemiBold.ttf", import.meta.url))`, or `fetch()` of the same URL)
+  failed with `ENOENT` and answered 500. As in Next.js, each of the app's own modules now keeps its
+  source file's `import.meta.url`, `.filename`, `.dirname` and `.resolve`, pinned relative to the
+  bundle, so they hold under `denext start`, in a container image and in a `build --compile` binary
+  (which embeds `app/` with the files beside its routes). Pages Router and TanStack Start compat
+  bundles get the same.
+
+### Security
+
+- **`@denext/lightningcss` 1.0.0-rc.72.1 drops `rkyv` 0.7 (RUSTSEC-2026-0235).** The wasm build
+  now turns off the wrapped `lightningcss` crate's default features (`bundler`, `sourcemap`),
+  which `transform` never used; `sourcemap` pulled `parcel_sourcemap`, whose unconditional `rkyv`
+  0.7.46 has insufficient archive validation (out-of-bounds reads on archives with `Rc`/`Arc`).
+  The crate, and 43 other unused transitive crates, are gone from the lockfile and the `.wasm`;
+  `transform`'s output is unchanged.
+- **The Rust-built wasm packages are audited in CI.** A `cargo-audit` job in ci.yml (and in the
+  release's required jobs) runs `cargo audit` over every `packages/*/Cargo.lock` against a freshly
+  fetched advisory database; a vulnerability or an `unsound` advisory fails it. Each package's
+  `.cargo/audit.toml` lists the advisories that cannot reach its wasm, with the reason:
+  `@denext/swc`'s `lru` 0.16 (RUSTSEC-2026-0253, needs a panic caught by `catch_unwind`, which a
+  `wasm32-unknown-unknown` build, where panics abort, never does; the fixed `lru` needs a new major
+  of every swc crate) and `@denext/photon`'s `rand` 0.7 (RUSTSEC-2026-0097, needs rand's `log`
+  feature and a custom logger; neither `log` nor the feature is in the build). `deno task
+  audit:cargo` runs the same check locally, and `deno task precheck` runs it when a package's
+  `Cargo.lock`, `Cargo.toml` or `.cargo/audit.toml` changed.
+
+### Docs
+
+- **Bundle-size claims re-measured** (2026-10-22, toolchain 3.0.0-rc.3, Next.js 16.4.2 + React
+  19.3.1, all gzip unless marked raw): `examples/hello`'s shared runtime is 23.9 KB (63.1 KB raw)
+  against 138.8 KB (459.1 KB raw), about 5.8× (was "19.6 KB against 136.9 KB, 7×"; the runtime
+  grew between September's measurement and now), its first load of `/` 25.4 KB against 139.2 KB;
+  the library-heavy app ships 1.7–3.4× less; the `examples/spa` first load is 19.5 KB (52.7 KB
+  raw) against React 19.3.1's 68.7 KB (218.9 KB raw), about 3.5×. `bench/` gains a "Next app
+  migrated onto denext" column and raw sizes.
+
 ## [4.7.0] - 2026-10-22
 
 ### Added
@@ -17857,7 +18009,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.7.1...development
+[4.7.1]: https://jsr.io/@denext/denext@4.7.1
 [4.7.0]: https://jsr.io/@denext/denext@4.7.0
 [4.6.0]: https://jsr.io/@denext/denext@4.6.0
 [4.5.2]: https://jsr.io/@denext/denext@4.5.2

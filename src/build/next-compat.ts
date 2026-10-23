@@ -58,6 +58,7 @@ import {
 } from "./sqlite-wasm.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import { chainSourceTransforms, compatSourceTransform } from "./compat-chain.ts";
+import { pinImportMetaPlugins } from "./compat-import-meta.ts";
 import {
   findInlineServerActions,
   inlineServerActionError,
@@ -2741,7 +2742,25 @@ async function compatPlugins(
       loader: options.denoLoaderMode ?? "portable",
     }));
   }
-  return plugins;
+  return deno && options.absWorkingDir ? pinServerImportMeta(plugins, options) : plugins;
+}
+
+/**
+ * The server bundle's chain with each app module's `import.meta` pinned to its source file
+ * (./compat-import-meta.ts): relative to the bundle when every entry is written straight into
+ * `outdir` (its chunks are too), else absolute (a `?worker` entry under `assets/`).
+ */
+function pinServerImportMeta(
+  plugins: esbuild.Plugin[],
+  options: BundleNextCompatModulesOptions,
+): esbuild.Plugin[] {
+  const flat = Object.keys(options.entryPoints).every((name) => !/[\\/]/.test(name));
+  return pinImportMetaPlugins(plugins, {
+    projectDir: options.absWorkingDir!,
+    buildDir: dirname(options.outdir),
+    outdir: flat ? options.outdir : undefined,
+    jsxInJs: options.jsxInJs,
+  });
 }
 
 /**

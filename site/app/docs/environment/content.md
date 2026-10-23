@@ -241,7 +241,7 @@ Development and diagnostics — all opt-in, none read in production paths:
 | `DENEXT_DEV_INSPECT=1`           | Arm the live component-tree inspector from the first render (the MCP DevTools tools).                                   |
 | `DENEXT_DEV_META=0`              | Kill switch for the DevTools metadata the dev build emits.                                                              |
 | `DENEXT_NO_MINIFY=1`             | Emit readable, unminified production bundles (`denext profile` sets it for you).                                        |
-| `DENEXT_ANALYZE=1`               | Capture the esbuild metafile for `denext analyze --md` (set by the verb).                                               |
+| `DENEXT_ANALYZE=1`               | Capture per-module sizes for `denext analyze --md` (set by the verb).                                                   |
 | `DENEXT_TIMING=1`                | Print wall-time instrumentation for a slow build or render.                                                             |
 | `DENEXT_DEBUG_CACHE=1`           | Log every `"use cache"` hit and miss to stderr.                                                                         |
 | `DENEXT_DEBUG_SUSPENSE=1`        | Record where each `use()` suspension started, for a Suspense boundary that never settles.                               |

@@ -11,7 +11,7 @@ export { denoExecutable };
 import { frameworkFileUrl, frameworkRootUrl } from "./framework-root.ts";
 export { frameworkFileUrl, frameworkRootUrl };
 import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
-import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
+import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 import {
@@ -20,6 +20,12 @@ import {
   type ServerOnlyLeak,
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
+import {
+  analyzeRequested,
+  attributeBytes,
+  pruneUnreachable,
+  recordAttribution,
+} from "./sourcemap-attribution.ts";
 import { holdRequestDeadline } from "../server/request-context.ts";
 import { canonicalPath } from "./canonical-path.ts";
 import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
@@ -267,12 +273,26 @@ export function classDefine(classComponents?: boolean): Record<string, string> {
  * @returns The define map, `name → constant source text`.
  */
 export function nativeBundleDefines(
-  opts: Pick<BundleOptions, "classRuntime" | "features">,
+  opts: Pick<
+    BundleOptions,
+    "classRuntime" | "features" | "usesImageBlur" | "usesFormActions" | "usesHrefParams"
+  >,
 ): Record<string, string> {
   return {
     ...classDefine(opts.classRuntime !== "off"),
     ...(opts.features ? { __DENEXT_FEATURES__: JSON.stringify(opts.features) } : {}),
+    ...scanGateDefine("__DENEXT_IMAGE_BLUR__", opts.usesImageBlur),
+    ...scanGateDefine("__DENEXT_FORM_ACTIONS__", opts.usesFormActions),
+    ...scanGateDefine("__DENEXT_HREF_PARAMS__", opts.usesHrefParams),
   };
+}
+
+/**
+ * One build-scan gate's define (see src/globals.d.ts): the scan's answer as a literal, or nothing
+ * when the caller ran no scan (dev, plugins), which keeps the guarded runtime on.
+ */
+function scanGateDefine(name: string, used: boolean | undefined): Record<string, string> {
+  return used === undefined ? {} : { [name]: JSON.stringify(used) };
 }
 
 /**
@@ -730,6 +750,63 @@ export function appUsesIsoIslands(rootDir: string, extraFiles: string[] = []): P
 }
 
 /**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may render a `next/image` blur
+ * placeholder — the build-time signal that keeps the client boot's clearing of placeholders in
+ * server-only trees (`__DENEXT_IMAGE_BLUR__`). A placeholder needs `placeholder="blur"` (or a
+ * `data:` URL) or a `blurDataURL`, so the scan matches either name: `blurDataURL` anywhere, or a
+ * `placeholder` prop / key whose value is anything but a plain string other than `"blur"` /
+ * `data:…` (an input's `placeholder="Search"` does not count; `placeholder={p}` does). Comments
+ * are not code. npm packages are not scanned (as for every gate): a library that renders a blur
+ * placeholder from a server-only tree leaves it painted behind the loaded image.
+ */
+export function appUsesImageBlur(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => IMAGE_BLUR_USE.test(withoutComments(c)), extraFiles);
+}
+
+/** `blurDataURL`, or a `placeholder` set to anything but a plain non-blur, non-`data:` string. */
+const IMAGE_BLUR_USE =
+  /\bblurDataURL\b|\bplaceholder["']?\s*[=:](?!=)\s*(?!\s)(?!(["'])(?!blur\1|data:)[^"'\n]*\1)/;
+
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may hand an element a
+ * function-valued form action — the build-time signal that keeps the reconciler's
+ * `<form action={fn}>` / `formAction={fn}` seam (`__DENEXT_FORM_ACTIONS__`). Such a prop can't be
+ * written without naming `action` or `formAction` (JSX, an `h()` props object, a prop passed
+ * down), so the scan matches either name followed by `=` or `:` in code. Comments are not code.
+ * npm packages are not scanned (as for every gate): a library that renders its own `<form>` with
+ * a function action from props it builds needs the app to name `action` once.
+ */
+export function appUsesFormActions(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => FORM_ACTION_USE.test(withoutComments(c)), extraFiles);
+}
+
+/** `action` / `formAction` as a JSX prop, an object key or a binding (`=` / `:`, not `==`). */
+const FORM_ACTION_USE = /\b(?:formAction|action)["']?\s*[=:](?!=)/;
+
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may navigate with a route-pattern
+ * href, `{ pathname: "/blog/[slug]", params: { slug } }` — the build-time signal that keeps the
+ * client's filling of the pattern from `params` (`__DENEXT_HREF_PARAMS__`, the route-segment
+ * parser it needs). The pattern has to be written somewhere as text, so the scan matches a string
+ * or template literal holding a `/[name]`, `/[...name]` or `/[[...name]]` segment. Comments are not
+ * code. npm packages are not scanned (as for every gate): a library that builds such a pattern
+ * itself needs the app to write the pattern once.
+ */
+export function appUsesHrefParams(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(
+    rootDir,
+    (c) => HREF_PATTERN_USE.test(withoutComments(c)),
+    extraFiles,
+  );
+}
+
+/** A string or template literal holding a dynamic route segment (`/[id]`, `/[...p]`, `/[[...p]]`). */
+const HREF_PATTERN_USE = /["'`][^"'`\n]*\/\[\[?(?:\.\.\.)?[A-Za-z_$][\w$-]*\]/;
+
+/**
  * Whether any source file under `rootDir` renders a document tag (`<html>`, `<head>`, `<body>`)
  * — the build-time signal that decides if the generated entry installs the host-singleton
  * runtime (see {@linkcode singletonSupportBlock}): only a root layout rendered by client code puts
@@ -944,6 +1021,22 @@ function viewTransitionSupportBlock(
 function featureSeedBlock(features: Record<string, boolean>): string {
   if (Object.keys(features).length === 0) return "";
   return `globalThis.__DENEXT_FEATURES__ = ${JSON.stringify(features)};\n`;
+}
+
+/**
+ * {@linkcode featureSeedBlock} for a route (or global-error) entry: the same seed, needed only
+ * when the running `deno bundle` has no `--define`, but as a side-effect `import` of a `data:`
+ * module. A route entry imports the page statically, and ES imports are evaluated before the
+ * entry's own statements, so a page's module-level `feature()` call would otherwise read the
+ * empty default; an import prepended FIRST runs first (see {@linkcode momentumScrollSeedImport}).
+ *
+ * @param features The configured flags (`undefined`: none passed).
+ * @returns The import to prepend, or `""`.
+ */
+async function featureSeedImport(features: Record<string, boolean> | undefined): Promise<string> {
+  if (!features || Object.keys(features).length === 0 || await bundleSupportsDefine()) return "";
+  const code = `globalThis.__DENEXT_FEATURES__=${JSON.stringify(features)};`;
+  return `import ${JSON.stringify(`data:text/javascript,${encodeURIComponent(code)}`)};\n`;
 }
 
 /**
@@ -1199,10 +1292,29 @@ export interface BundleOptions {
    * Compile-time feature flags (`features`) for the CLIENT on the native `deno bundle` path,
    * so an un-folded `feature()` call reads the configured value instead of the empty default.
    * Passed to `deno bundle --define __DENEXT_FEATURES__=…` when the running Deno supports it
-   * ({@linkcode bundleSupportsDefine}); otherwise the Flight entry seeds them. Only the native
-   * App Router bundlers pass this; compat and SPA builds handle the flags themselves. Unset: none.
+   * ({@linkcode bundleSupportsDefine}); otherwise the Flight, route and global-error entries seed
+   * them. Only the native App Router bundlers pass this (the dev server's too); compat and SPA
+   * builds handle the flags themselves. Unset: none.
    */
   features?: Record<string, boolean>;
+  /**
+   * Whether the app renders a `next/image` blur placeholder (an {@linkcode appUsesImageBlur}
+   * scan). `false` defines `__DENEXT_IMAGE_BLUR__` off on the `--define` path, so the client boot
+   * carries no placeholder clearing. Unset (no scan): kept.
+   */
+  usesImageBlur?: boolean;
+  /**
+   * Whether the app writes a form action (an {@linkcode appUsesFormActions} scan). `false`
+   * defines `__DENEXT_FORM_ACTIONS__` off on the `--define` path, so the reconciler carries no
+   * function-valued `action` seam. Unset (no scan): kept.
+   */
+  usesFormActions?: boolean;
+  /**
+   * Whether the app writes a route-pattern href (an {@linkcode appUsesHrefParams} scan). `false`
+   * defines `__DENEXT_HREF_PARAMS__` off on the `--define` path, so `Link` / `useRouter` carry no
+   * pattern filling (`{ pathname: "/blog/[slug]", params }`). Unset (no scan): kept.
+   */
+  usesHrefParams?: boolean;
   /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
@@ -1251,6 +1363,9 @@ export async function bundleFlightEntry(
       server: opts.server ?? boundary.server,
       classRuntime: opts.classRuntime,
       features: opts.features,
+      usesImageBlur: opts.usesImageBlur,
+      usesFormActions: opts.usesFormActions,
+      usesHrefParams: opts.usesHrefParams,
     },
   );
 }
@@ -1655,7 +1770,33 @@ async function runDenoBundle(
       maps.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
     }
   }
+  // A chunk whose only `import()` site was tree-shaken after splitting is emitted anyway: no
+  // page can load it, so it is neither written nor shipped.
+  const entries = entryPaths.map((p) => basename(p).replace(/\.[cm]?[jt]sx?$/, ".js"));
+  for (const name of pruneUnreachable(files, entries)) maps.delete(`${name}.map`);
+  if (!sourcemap && analyzeRequested()) await recordBundleAttribution(outDir, files);
   return { files, sources: await bundledSources(outDir, files), maps };
+}
+
+/**
+ * `denext analyze --md` on the native path: attribute each emitted file's bytes to its modules
+ * from its external source map, for the report's per-module breakdown.
+ */
+async function recordBundleAttribution(outDir: string, files: Map<string, string>): Promise<void> {
+  for (const [name, code] of files) {
+    const json = await Deno.readTextFile(join(outDir, `${name}.map`)).catch(() => null);
+    if (json === null) continue;
+    const bytes = new Map<string, number>();
+    for (const [source, n] of attributeBytes(code, json)) {
+      const abs = source.startsWith("file:")
+        ? fromFileUrl(source)
+        : /^[a-z][a-z0-9+.-]+:/i.test(source) // a URL (`jsr:`, `https:`), kept as written
+        ? source
+        : await Deno.realPath(resolve(outDir, source)).catch(() => resolve(outDir, source));
+      bytes.set(abs, (bytes.get(abs) ?? 0) + n);
+    }
+    recordAttribution(name, code, bytes);
+  }
 }
 
 /**
@@ -1971,14 +2112,29 @@ async function bundleWorkspace(): Promise<{ tmpDir: string; srcDir: string; outD
  * `deno bundle` with code splitting. Returns the entry file plus any chunk files
  * emitted for dynamic imports.
  */
-export async function bundleSourceFiles(
+export function bundleSourceFiles(
   entrySource: string,
   opts: BundleOptions,
+): Promise<BundleOutput> {
+  return bundleEntry(entrySource, opts, "");
+}
+
+/**
+ * {@linkcode bundleSourceFiles} with `prelude` (a seed import) written ahead of the entry. The
+ * leak check still reads `entrySource` itself, which names the generated entry it labels.
+ */
+async function bundleEntry(
+  entrySource: string,
+  opts: BundleOptions,
+  prelude: string,
 ): Promise<BundleOutput> {
   const { tmpDir, srcDir, outDir } = await bundleWorkspace();
   const entryPath = join(srcDir, "entry.tsx");
   try {
-    await Deno.writeTextFile(entryPath, momentumScrollSeed(opts.momentumSafeScroll) + entrySource);
+    await Deno.writeTextFile(
+      entryPath,
+      prelude + momentumScrollSeed(opts.momentumSafeScroll) + entrySource,
+    );
     const resolution = await bundleResolution(tmpDir, opts);
     const run = await runDenoBundle(
       [entryPath],
@@ -2050,10 +2206,10 @@ async function bundleRoutesNow(
     // Distinct per-entry basenames so esbuild's outputs map back unambiguously.
     const bases = routeEntries.map((_, i) => `entry_${i}`);
     const entryPaths = bases.map((b) => join(srcDir, `${b}.tsx`));
+    const prelude = await featureSeedImport(opts.features) +
+      momentumScrollSeed(opts.momentumSafeScroll);
     await Promise.all(
-      routeEntries.map((re, i) =>
-        Deno.writeTextFile(entryPaths[i], momentumScrollSeed(opts.momentumSafeScroll) + re.source)
-      ),
+      routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], prelude + re.source)),
     );
     const resolution = await bundleResolution(tmpDir, opts);
     const run = await runDenoBundle(
@@ -2101,11 +2257,11 @@ async function bundleRoutesNow(
  *   DevTools metadata, appended to a `dev` entry (see {@linkcode GenerateRouteEntryOptions}).
  * @returns The bundled entry and its chunks.
  */
-export function bundleRoute(
+export async function bundleRoute(
   route: PageRoute,
   opts: BundleOptions & { devMetaFooter?: string },
 ): Promise<BundleOutput> {
-  return bundleSourceFiles(
+  return bundleEntry(
     generateRouteEntry(route, {
       dev: opts.dev,
       instrumentationClient: opts.instrumentationClient,
@@ -2117,17 +2273,19 @@ export function bundleRoute(
       devMetaFooter: opts.devMetaFooter,
     }),
     opts,
+    await featureSeedImport(opts.features),
   );
 }
 
 /** Bundle the `global-error.tsx` browser entry on its own (the dev server's on-demand path). */
-export function bundleGlobalError(
+export async function bundleGlobalError(
   globalErrorFile: string,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  return bundleSourceFiles(
+  return bundleEntry(
     generateGlobalErrorEntry(globalErrorFile, opts.instrumentationClient ?? null),
     opts,
+    await featureSeedImport(opts.features),
   );
 }
 

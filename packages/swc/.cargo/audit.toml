@@ -1,0 +1,16 @@
+# `cargo audit` configuration for this package (read from `.cargo/audit.toml` in the directory
+# `cargo audit` runs in; `deno task audit:cargo` and ci.yml's `cargo-audit` job run it here).
+# Every ignore names why the advisory cannot reach the shipped wasm and what removes it.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2026-0253 (informational: unsound): `lru` 0.16.4, use-after-free when a key's `Drop`
+  # panics inside `LruCache::pop()` and the panic is caught with `catch_unwind`. Pulled by
+  # `swc_ecma_loader` 26 (its `cache` feature, via `swc` 74 / `swc_core` 76), which requires
+  # `lru ^0.16`; the fix is `lru` 0.18.2, first required by `swc_ecma_loader` 27 / `swc_core` 77, a
+  # new major of every swc crate (AST, parser, codegen), so no in-range update exists.
+  # Not reachable in this build: it targets wasm32-unknown-unknown, where panics abort (no
+  # unwinding, so `catch_unwind` never returns), and the cache keys are file names and strings,
+  # whose `Drop` cannot panic. Remove this entry when `swc_core` moves to 77 or later.
+  "RUSTSEC-2026-0253",
+]

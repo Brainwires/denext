@@ -194,6 +194,16 @@ Deno.test("doctor counts the app directory as not needed when a plugin serves th
   assert(!exitCalls.includes(1), "no critical failure for a plugin-routed app");
 });
 
+Deno.test("doctor at a monorepo's root names the apps to run it on", async () => {
+  const { app, exitCalls } = await doctorWithoutAppDir("export default {};\n", {
+    "deno.json": JSON.stringify({ workspace: ["./apps/web"] }),
+    "apps/web/app/page.tsx": "export default function Home() { return null; }\n",
+  });
+  assert(app && !app.ok, JSON.stringify(app));
+  assertStringIncludes(app.detail, "its denext app is apps/web");
+  assert(exitCalls.includes(1), "still a critical failure: the root is not an app");
+});
+
 Deno.test("doctor passes a Pages Router app (no app/) through @denext/pages-router", async () => {
   const pagesRouter = new URL("../packages/pages-router/mod.ts", import.meta.url).href;
   const { app, exitCalls } = await doctorWithoutAppDir(

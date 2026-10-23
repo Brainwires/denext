@@ -7,10 +7,11 @@ _equivalent_ workloads on both frameworks, and reports the ratio between them.
 
 The latest results live in [`REPORT.md`](./REPORT.md).
 
-> **denext itself has zero runtime npm dependencies.** Everything under `bench/` that is
-> not denext — React, Next.js, their `node_modules`, and any `.next` build — is
-> benchmark-only tooling, git-ignored, and never published (see `deno.json`'s
-> `publish.exclude`). Installing it here does not add a dependency to denext.
+> **denext itself has zero runtime npm dependencies.** Everything under `bench/`
+> that is not denext — React, Next.js, their `node_modules`, and any `.next`
+> build — is benchmark-only tooling, git-ignored, and never published (see
+> `deno.json`'s `publish.exclude`). Installing it here does not add a dependency
+> to denext.
 
 ## The three layers
 
@@ -20,12 +21,13 @@ The latest results live in [`REPORT.md`](./REPORT.md).
 | **2 — SSR throughput**      | Renders/second of equivalent component trees | One portable timing harness; denext under Deno, React under Node (both V8); streaming + string APIs                                 | moderate (GC)         |
 | **3 — Client runtime**      | Time-to-interactive and interaction latency  | Headless Chromium on each production build; the same `.on` hydration marker and counter drive both                                  | high (report p50/p95) |
 
-**Run it on an idle machine.** `deno task bench` refuses to start while the 1-minute load
-average is 2.0 or higher (it polls every 10 s, up to 30 min) — a run made behind a test
-suite or a build depresses both frameworks' absolute numbers and pollutes the committed
-baseline. `--max-load=N` changes the threshold; `--no-wait` skips the check (the load is
-still recorded in the report's provenance table). Never commit a `REPORT.md` whose
-"Load (1-min, at start)" is above 2.
+**Run it on an idle machine.** `deno task bench` refuses to start while the
+1-minute load average is 2.0 or higher (it polls every 10 s, up to 30 min) — a
+run made behind a test suite or a build depresses both frameworks' absolute
+numbers and pollutes the committed baseline. `--max-load=N` changes the
+threshold; `--no-wait` skips the check (the load is still recorded in the
+report's provenance table). Never commit a `REPORT.md` whose "Load (1-min, at
+start)" is above 2.
 
 Plus a **load & memory tier** (`load/run.ts`, run via `deno task bench:load`):
 fires a high-volume burst of concurrent requests (default **5000** at
@@ -45,6 +47,22 @@ render the SAME real npm React libraries — recharts (a **class-component**
 library, via denext's `classComponents` opt-in), react-hook-form, Radix dialog,
 lucide — so the comparison holds on a real app, not a toy.
 
+### The three builds compared in Layer 1
+
+- **denext (native)** — `examples/hello`.
+- **Next app on denext (migrated)** — the unmodified `bench/fixtures/next-hello` app, copied to
+  `bench/.migrated/` (git-ignored, rebuilt each run), run through `denext migrate`, its
+  `jsr:@denext/denext` imports pointed at this checkout, then built and served by denext.
+- **Next.js** — `bench/fixtures/next-hello` built and served by `next start`.
+
+`next-hello` mirrors `examples/hello` route for route (same pages, same client boundaries, same
+`ssr:false` island). One known difference: the native home also runs a `useAsyncEffect` demo, a
+denext-only API the Next fixture cannot mirror, so the native home is a few hundred bytes heavier
+than a strict mirror. Pins: next 16.4.2, react/react-dom 19.3.1 (`bench/package.json`). Run the
+harness under the toolchain Deno (`denext toolchain path`), since the bundle `--define` folding
+only applies there. On a loaded machine, `bench/run.ts --layers=1,real --no-wait` reports bytes
+only (sizes are deterministic).
+
 ### Why these choices are fair
 
 - **Same behavior, not same source.** denext ships its own React-equivalent, so
@@ -56,7 +74,13 @@ lucide — so the comparison holds on a real app, not a toy.
   webpack/Turbopack/`deno
   bundle` internals don't matter. Compression is
   applied by _us_, identically, so neither server's own gzip setting skews the
-  result.
+  result. "What the browser fetches" includes a chunk loaded after the page is
+  up: since 4.3 denext's soft-navigation commit is its own `nav-document-*`
+  chunk, which a `Link` prefetch loads on every hello route, so it counts toward
+  the shared runtime (1.4 KB gzip). Reports from before 4.3 count the same code
+  inside the shared chunk. On a toolchain with `deno bundle --define` the
+  build-scan gates fold out code the app never names; a stock Deno keeps it
+  behind runtime checks, so compare reports made on the same Deno.
 - **SSR: one harness, native runtimes.** The identical measurement loop runs on
   each framework in the runtime it actually deploys to. Ratios are the result;
   absolute ns/op are machine-specific.
