@@ -58,6 +58,7 @@ on:
       - "src/platform.ts"
       - "src/version.ts"
       - "src/plugin/mod.ts"
+      - "src/plugin/asset-name.ts"
       - "src/react-native-compat/manifest.ts"
       - "src/react-native/lists/manifest.ts"
       - "scripts/install.sh"
