@@ -1,9 +1,12 @@
 // Keep a CLI loaded from JSR (or any https URL) usable offline. The `denext` entrypoint imports a
 // verb's implementation only when that verb runs (src/cli/lazy-command.ts), so `deno install -g
 // jsr:@denext/denext/cli` caches the entrypoint's small graph but not the verbs': a verb first
-// run offline (`--cached-only`, `denext ui --offline`'s children) would fail to load. This caches
-// every on-demand module — `deno cache` of src/cli/lazy-modules.generated.ts, from the same URL
-// as the running CLI — once per CLI version:
+// run offline (`--cached-only`, `denext ui --offline`'s children) would fail to load, and so would
+// the framework modules a verb loads by URL (the client runtime a build bundles, a worker, the
+// desktop sidecar bundler). This caches all of them — `deno cache` of
+// src/cli/offline-modules.generated.ts (the on-demand CLI modules, the framework's exports and every
+// module src/ names in a computed URL), from the same URL as the running CLI — once per CLI
+// version:
 //
 //   * in the background on the first run of a remote CLI (`warmCliModules`, any verb);
 //   * and in the foreground from `denext toolchain install` (`cacheCliModules`), the post-install
@@ -14,11 +17,11 @@
 import { join } from "@std/path";
 import { denoCacheDir } from "../build/deno-cache-dir.ts";
 
-/** The module whose graph is every module the entrypoint imports on demand. */
+/** The module whose graph is every module a verb can load (scripts/gen-command-table.ts). */
 // Spelled so no tool reads it as an import: this module is itself in that graph (through
 // `denext toolchain install`), and the URL is only ever handed to `deno cache`.
-const CLI_MODULES_URL: string =
-  new URL(["./lazy-modules", "generated.ts"].join("."), import.meta.url)
+export const CLI_MODULES_URL: string =
+  new URL(["./offline-modules", "generated.ts"].join("."), import.meta.url)
     .href;
 
 /** Retry a background warm-up that has not finished (failed, offline) after this long. */
@@ -70,7 +73,7 @@ async function cacheArgs(url: string, configArgs?: string[]): Promise<string[]> 
  * Cache every on-demand CLI module now (`denext toolchain install`). No-op for a local checkout or
  * a binary.
  *
- * @param url The lazy-modules URL (the running CLI's own, by default).
+ * @param url The offline-modules URL (the running CLI's own, by default).
  * @param options Where the marker goes and the config `deno cache` runs with.
  * @returns Whether the modules are cached (`true` when there was nothing to do).
  */
@@ -102,7 +105,7 @@ function markCached(url: string, cacheDir?: string): void {
  * Never throws: a warm-up that can't start (no write access, no `--allow-run`) leaves the CLI
  * exactly as it was, and is retried on a later run.
  *
- * @param url The lazy-modules URL (the running CLI's own, by default).
+ * @param url The offline-modules URL (the running CLI's own, by default).
  * @param options Where the markers go and the config `deno cache` runs with.
  */
 export async function warmCliModules(

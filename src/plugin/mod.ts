@@ -399,6 +399,13 @@ export interface AppPlugins {
   readonly requestHandler: ((request: Request) => Promise<Response | null>) | undefined;
   /** Run this app's prepare steps (each failure logged, never thrown). */
   runPrepareSteps(context: PluginPrepareContext): Promise<void>;
+  /**
+   * Run this app's build steps in registration order, as `denext build` does (a step's failure
+   * is thrown). `emitFile` publishes into `options.emitDir` (default `<outDir>/emitted`).
+   */
+  runBuildSteps(context: PluginPrepareContext, options?: RunBuildStepsOptions): Promise<void>;
+  /** Whether any of this app's plugins registered a build step. */
+  readonly hasBuildSteps: boolean;
   /** Run this app's teardowns, most recent first (each failure logged, never thrown). */
   teardown(): Promise<void>;
   /**
@@ -411,9 +418,9 @@ export interface AppPlugins {
 /**
  * Set up `base.config.plugins` for ONE app, into a registry of its own: every plugin's `setup`
  * runs (not de-duplicated against the process registries {@linkcode applyPlugins} fills), and
- * the route synthesizers, request handlers, prepare steps and teardowns it registers come back
- * on the result. Build steps, commands, deploy adapters, deploy routes and assets are accepted and ignored — they
- * belong to a build or the CLI, not to a running app.
+ * the route synthesizers, request handlers, prepare steps, build steps and teardowns it registers
+ * come back on the result. Commands, deploy adapters, deploy routes and assets are accepted and
+ * ignored — they belong to the CLI or a deploy, not to a running app.
  *
  * @param base The pipeline facts to expose to each plugin.
  * @returns The app's plugin set.
@@ -422,13 +429,14 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
   const synthesizers: RouteSynthesizer[] = [];
   const handlers: PluginRequestHandler[] = [];
   const prepares: Array<PrepareEntry> = [];
+  const builds: PluginBuildStep[] = [];
   const own: PluginTeardown[] = [];
   const servers = new Set<string>();
   const ignore = () => {};
   const sinks: PluginSinks = {
     synthesizer: (fn) => synthesizers.push(fn),
     requestHandler: (handler) => handlers.push(handler),
-    buildStep: ignore,
+    buildStep: (step) => builds.push(step),
     prepareStep: (entry) => prepares.push(entry),
     command: ignore,
     deployAdapter: ignore,
@@ -449,6 +457,10 @@ export async function setupAppPlugins(base: ApplyPluginsBase): Promise<AppPlugin
     synthesizers,
     requestHandler: combineHandlers(handlers),
     runPrepareSteps: (context) => runPrepares(prepares, context),
+    runBuildSteps: (context, options = {}) => runBuildSteps(builds, context, options),
+    get hasBuildSteps() {
+      return builds.length > 0;
+    },
     teardown: () => runTeardowns(own),
     routeServers: [...servers],
   };
@@ -623,11 +635,20 @@ function emittedPath(
  * Run every plugin-registered build step in registration order, each with an
  * {@linkcode PluginBuildContext.emitFile} that publishes into `options.emitDir`.
  */
-export async function runPluginBuildSteps(
+export function runPluginBuildSteps(
   context: PluginPrepareContext,
   options: RunBuildStepsOptions = {},
 ): Promise<void> {
-  if (buildSteps.length === 0) return;
+  return runBuildSteps(buildSteps, context, options);
+}
+
+/** Run `steps` in order, each with an `emitFile` that publishes into `options.emitDir`. */
+async function runBuildSteps(
+  steps: readonly PluginBuildStep[],
+  context: PluginPrepareContext,
+  options: RunBuildStepsOptions,
+): Promise<void> {
+  if (steps.length === 0) return;
   const emitDir = options.emitDir ?? join(context.outDir, EMITTED_DIR);
   const full: PluginBuildContext = {
     ...context,
@@ -641,7 +662,7 @@ export async function runPluginBuildSteps(
       return fileName;
     },
   };
-  for (const step of buildSteps) await step(full);
+  for (const step of steps) await step(full);
 }
 
 /**

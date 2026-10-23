@@ -1063,6 +1063,10 @@ const res = await client.submit(
 // res.status, client.cookies — a cookie jar persists the session across requests.
 ```
 
+`createTestApp` also runs the plugins' prepare and build steps (emitted files are served),
+registers `jobs/` (`runJob(name)` works) and starts `services/`; `await using app = await
+createTestApp(dir)` stops them (`{ services: false }`, `jobs` or `buildSteps` leaves one out).
+
 **Testing a component (hooks/effects/events, no browser):**
 
 ```ts

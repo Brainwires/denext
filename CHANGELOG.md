@@ -46,6 +46,13 @@ and this project adheres to
   date it names still matches (the weak `ETag` never does, so the whole file is sent).
   `parseRanges` (from `denext/server`) parses such a header.
 
+- **`createTestApp` starts what `denext start` runs**: the plugins' build steps (the files they
+  emit are served, from a temporary directory, never the project's `.denext/`), every `jobs/`
+  module (`runJob(name)` works from a test and from a route it requests; no schedule fires) and
+  the `services/` tree (`close()` stops it). A second argument turns each off:
+  `createTestApp(dir, { buildSteps: false, jobs: false, services: false })`. Prepare steps already
+  ran. See https://denext.dev/docs/testing.
+
 ### Changed
 
 - **denext pins runtime `3.0.0-rc.3`** (from `3.0.0-rc.2`; the Deno toolchain and the Deno
@@ -131,6 +138,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A CLI installed from JSR works offline after `denext toolchain install`, every verb included.**
+  The cache step (and the first run's background warm-up) now caches every module a verb loads by
+  URL as well as each verb's own code: the framework's entry points a build bundles or a server
+  loads (the client runtime, the compat layers) and the helpers it runs in a child process (the
+  desktop sidecar bundler, the MDX worker). Before, `denext build` or `denext desktop` run offline
+  after the cache step could still fail to load one of them. The list is generated
+  (`src/cli/offline-modules.generated.ts`), and a test holds it to every lazily loaded module.
 - **A Deno workspace member app can use its sibling packages everywhere.** A package another
   member exports by name (`@acme/ui`, `@acme/ui/styles.css`) now resolves under the configs denext
   writes for a re-exec (the module, CSS and dev-loop configs carry the root's imports, each

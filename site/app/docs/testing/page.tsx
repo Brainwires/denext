@@ -53,6 +53,28 @@ const home = await client.get("/");`}
 const client = createTestClient(app);
 assertEquals((await client.get("/api/hello")).status, 200); // a Pages API route`}
       </Code>
+      <p>
+        The rest of what <code>denext start</code>{" "}
+        runs comes up too. The plugins' build steps run, and the files they emit (<code>
+          emitFile
+        </code>) are served; they write into a temporary directory, never your{" "}
+        <code>.denext/</code>. Every <code>jobs/</code> module is registered, so{" "}
+        <code>runJob(name)</code>{" "}
+        works from the test and from a route it requests (no schedule fires). The{" "}
+        <code>services/</code> tree starts under its supervisor, and <code>close()</code>{" "}
+        stops it. Pass <code>{`{ buildSteps: false }`}</code>, <code>{`{ jobs: false }`}</code> or
+        {" "}
+        <code>{`{ services: false }`}</code>{" "}
+        to leave one out. Services are supervised process-wide, so close one test app before you
+        start another.
+      </p>
+      <Code lang="ts">
+        {`import { runJob } from "denext/server";
+
+await using app = await createTestApp("./"); // jobs/digest.ts, services/queue.ts
+assertEquals(await runJob("digest", { day: "mon" }), "sent");
+const feed = await createTestClient(app).get("/feed.xml"); // emitted by a plugin build step`}
+      </Code>
 
       <h2>Component testing</h2>
       <p>

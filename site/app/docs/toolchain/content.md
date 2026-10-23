@@ -66,9 +66,13 @@ The CLI's entrypoint is thin: it loads only the argument parser and a generated 
 verb's name, flags and help, and imports a verb's own code when that verb runs, so `denext
 --version` and `--help` never load the dev server, the bundler or `denext/server`. A CLI installed
 from JSR (`deno install -A -g -n denext jsr:@denext/denext/cli`) therefore fetches each verb's code
-the first time that verb runs. `denext toolchain install` also caches every verb, and the CLI's
-first online run does the same in the background (a failed attempt retries after 10 minutes), so a
-verb used offline afterwards (`--cached-only`, `denext ui --offline`) still loads. The binary
+the first time that verb runs. `denext toolchain install` also caches every verb's code together
+with everything a verb loads by URL rather than by import: the framework modules a build bundles
+or a server loads (the client runtime, the compat layers, every `denext/*` entry point) and the
+helpers it runs in a child process (the desktop sidecar bundler, the MDX worker). The CLI's first
+online run does the same in the background (a failed attempt retries after 10 minutes). After
+either, `denext build`, `denext desktop …` and every other verb work offline (`--cached-only`,
+`denext ui --offline`), so run `denext toolchain install` once after a JSR install. The binary
 embeds every verb already.
 
 When the toolchain can't be had (offline on first use, a host with no build, a failed or
