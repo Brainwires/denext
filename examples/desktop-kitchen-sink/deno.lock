@@ -147,7 +147,7 @@
     ],
     "links": {
       "jsr:@denext/avif@0.2.0": {},
-      "jsr:@denext/backend@0.6.0": {
+      "jsr:@denext/backend@0.7.0": {
         "dependencies": [
           "jsr:@denext/denext@^4.7.1",
           "jsr:@std/path@1"

@@ -8,8 +8,6 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [4.7.1] - 2026-10-23
-
 ### Added
 
 - **SPA `client:*` directives on member tags, and the module-level `hydrate` default.** In SPA
@@ -24,6 +22,35 @@ and this project adheres to
   set), immutable-cacheable; `emitFile` resolves to that name and the Vite context's
   `this.getFileName(ref)` returns it. Before, an asset without a `fileName` failed the build.
   Chunk emits are still unsupported.
+- **Static files answer multi-range requests.** A `Range` header with several ranges
+  (`bytes=0-9,20-29`) on a `public/` file or an exported asset (`denext start`, the SPA server,
+  `denext dev`, a Deno Desktop window) is a `206` `multipart/byteranges` reply (RFC 9110 §14.6),
+  each part with its own `Content-Type` and `Content-Range`, instead of the whole file.
+  Overlapping or adjacent ranges are coalesced (one result is a plain single-range `206`), an
+  unsatisfiable range beside satisfiable ones is dropped, and a header with more than 64 ranges is
+  ignored (the whole file). `If-Range` is honored: a range is served only while the `Last-Modified`
+  date it names still matches (the weak `ETag` never does, so the whole file is sent).
+  `parseRanges` (from `denext/server`) parses such a header.
+- **`createTestApp` starts what `denext start` runs**: the plugins' build steps (the files they
+  emit are served, from a temporary directory, never the project's `.denext/`), every `jobs/`
+  module (`runJob(name)` works from a test and from a route it requests; no schedule fires) and
+  the `services/` tree (`close()` stops it). A second argument turns each off:
+  `createTestApp(dir, { buildSteps: false, jobs: false, services: false })`. Prepare steps already
+  ran. See https://denext.dev/docs/testing.
+
+### Fixed
+
+- **A CLI installed from JSR works offline after `denext toolchain install`, every verb included.**
+  The cache step (and the first run's background warm-up) now caches every module a verb loads by
+  URL as well as each verb's own code: the framework's entry points a build bundles or a server
+  loads (the client runtime, the compat layers) and the helpers it runs in a child process (the
+  desktop sidecar bundler, the MDX worker). Before, `denext build` or `denext desktop` run offline
+  after the cache step could still fail to load one of them. The list is generated
+  (`src/cli/offline-modules.generated.ts`), and a test holds it to every lazily loaded module.
+
+## [4.7.1] - 2026-10-23
+
+### Added
 
 - **`denext create <dir> --monorepo`** (also in the interactive picker and on `denext ui`'s Setup
   page) scaffolds a Deno workspace: a root `deno.json` listing its members, holding the root-only
@@ -36,22 +63,6 @@ and this project adheres to
   pin is planned together under the dependency-age hold. `denext generate app <name>` adds another
   app to such a workspace, and `denext dev` / `build` / `doctor` run at a workspace root name its
   apps. See https://denext.dev/docs/monorepo.
-- **Static files answer multi-range requests.** A `Range` header with several ranges
-  (`bytes=0-9,20-29`) on a `public/` file or an exported asset (`denext start`, the SPA server,
-  `denext dev`, a Deno Desktop window) is a `206` `multipart/byteranges` reply (RFC 9110 §14.6),
-  each part with its own `Content-Type` and `Content-Range`, instead of the whole file.
-  Overlapping or adjacent ranges are coalesced (one result is a plain single-range `206`), an
-  unsatisfiable range beside satisfiable ones is dropped, and a header with more than 64 ranges is
-  ignored (the whole file). `If-Range` is honored: a range is served only while the `Last-Modified`
-  date it names still matches (the weak `ETag` never does, so the whole file is sent).
-  `parseRanges` (from `denext/server`) parses such a header.
-
-- **`createTestApp` starts what `denext start` runs**: the plugins' build steps (the files they
-  emit are served, from a temporary directory, never the project's `.denext/`), every `jobs/`
-  module (`runJob(name)` works from a test and from a route it requests; no schedule fires) and
-  the `services/` tree (`close()` stops it). A second argument turns each off:
-  `createTestApp(dir, { buildSteps: false, jobs: false, services: false })`. Prepare steps already
-  ran. See https://denext.dev/docs/testing.
 
 ### Changed
 
@@ -138,13 +149,6 @@ and this project adheres to
 
 ### Fixed
 
-- **A CLI installed from JSR works offline after `denext toolchain install`, every verb included.**
-  The cache step (and the first run's background warm-up) now caches every module a verb loads by
-  URL as well as each verb's own code: the framework's entry points a build bundles or a server
-  loads (the client runtime, the compat layers) and the helpers it runs in a child process (the
-  desktop sidecar bundler, the MDX worker). Before, `denext build` or `denext desktop` run offline
-  after the cache step could still fail to load one of them. The list is generated
-  (`src/cli/offline-modules.generated.ts`), and a test holds it to every lazily loaded module.
 - **A Deno workspace member app can use its sibling packages everywhere.** A package another
   member exports by name (`@acme/ui`, `@acme/ui/styles.css`) now resolves under the configs denext
   writes for a re-exec (the module, CSS and dev-loop configs carry the root's imports, each

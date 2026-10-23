@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-10-23
+
 ### Added
 
 - **The auto-REST routes in `@denext/openapi`'s document cover every schema of `rest.schemas`,**

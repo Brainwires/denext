@@ -1272,6 +1272,7 @@
     "parseIdpMetadata:function",
     "parsePattern:function",
     "parseRange:function",
+    "parseRanges:function",
     "peekLogoutMessage:function",
     "peelLocale:function",
     "pendingMfaSession:function",
