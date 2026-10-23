@@ -206,6 +206,8 @@ export { scanRoutes } from "../router/manifest.ts";
 export type {
   DenextPlugin,
   EmittedAsset,
+  EmittedHashedAsset,
+  EmittedNamedAsset,
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,

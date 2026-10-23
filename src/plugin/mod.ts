@@ -25,6 +25,7 @@ import type { CommandSpec } from "../cli/command.ts";
 import type { DeployAdapter } from "../deploy/adapter.ts";
 import type { DeployAssetGroup, DeployRoute } from "../deploy/manifest.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../cli/deno-verbs.ts";
+import { hashedAssetFileName } from "./asset-name.ts";
 import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
@@ -86,14 +87,36 @@ export interface PluginPrepareContext {
   readonly config: DenextConfig;
 }
 
-/** A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}. */
-export interface EmittedAsset {
+/**
+ * A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}: named by
+ * `fileName`, or by `name` alone for a content-hashed name.
+ */
+export type EmittedAsset = EmittedNamedAsset | EmittedHashedAsset;
+
+/** A generated file published at the `fileName` it gives. */
+export interface EmittedNamedAsset {
   /**
    * Where the file is served, relative to the site root, `/`-separated:
    * `"third-party-licenses.json"` is served at `/third-party-licenses.json`, `"meta/build.json"`
    * at `/meta/build.json`. An absolute path, a `..` segment or a backslash is refused.
    */
   readonly fileName: string;
+  /** Not used with a `fileName`. */
+  readonly name?: undefined;
+  /** The file's contents: text (written as UTF-8) or bytes. */
+  readonly source: string | Uint8Array;
+}
+
+/**
+ * A generated file published under a content-hashed name, as Rollup's default `assetFileNames`
+ * (`[name]-[hash][extname]`) names it: `{ name: "logo.svg" }` becomes `assets/logo-<hash>.svg`
+ * (in `spa.assetsDir` when that is set), the hash taken from `source`.
+ */
+export interface EmittedHashedAsset {
+  /** No `fileName`: the build names the file. */
+  readonly fileName?: undefined;
+  /** The name the hashed file name is made from (its last path segment is used). */
+  readonly name: string;
   /** The file's contents: text (written as UTF-8) or bytes. */
   readonly source: string | Uint8Array;
 }
@@ -110,8 +133,11 @@ export interface PluginBuildContext extends PluginPrepareContext {
    * publishes itself: `index.html`, denext's own output under `_denext/` (`client/`, `pages/`,
    * `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`), the `spa.assetsDir` directory and,
    * in an export, any file the build already wrote there (a rendered page, a client chunk).
+   * An asset given by `name` instead of `fileName` gets a content-hashed name
+   * ({@linkcode EmittedHashedAsset}), which may sit in the `spa.assetsDir` directory. Resolves to
+   * the file name it was published under.
    */
-  emitFile(asset: EmittedAsset): Promise<void>;
+  emitFile(asset: EmittedAsset): Promise<string>;
   /**
    * The modules bundled into the client output, as absolute paths (a module esbuild loaded from
    * a virtual namespace keeps its `namespace:path` id), when this build knows them: a SPA built
@@ -501,11 +527,15 @@ const inDir = (name: string, dir: string) => name === dir || name.startsWith(`${
  * would write over them). The rest of `_denext/` is open (`@denext/htmx` publishes its runtime at
  * `_denext/htmx/htmx.min.js`).
  */
-function reservedEmitPath(fileName: string, config: DenextConfig): boolean {
+function reservedEmitPath(fileName: string, config: DenextConfig, hashed = false): boolean {
   const name = fileName.toLowerCase();
   if (RESERVED_EMIT_FILES.has(name) || RESERVED_EMIT_DIRS.some((dir) => inDir(name, dir))) {
     return true;
   }
+  // A content-hashed name the build gave (Vite's `assets/[name]-[hash][extname]`) shares the
+  // `spa.assetsDir` directory with the client output, as in a Vite build: its hash keeps it off
+  // the client's own names, and `builtFiles` refuses a clash in an export.
+  if (hashed) return false;
   const assetsDir = config.spa?.assetsDir?.replace(/^\/+|\/+$/g, "").toLowerCase();
   return !!assetsDir && inDir(name, assetsDir);
 }
@@ -537,6 +567,21 @@ export async function listBuiltFiles(root: string): Promise<Set<string>> {
 }
 
 /**
+ * The file name an emitted asset is published under: its `fileName`, or the content-hashed name
+ * {@linkcode hashedAssetFileName} makes from its `name` (then `hashed`). Throws for neither.
+ */
+function emittedFileName(
+  asset: EmittedAsset,
+  config: DenextConfig,
+): { fileName: string; hashed: boolean } {
+  if (typeof asset.fileName === "string") return { fileName: asset.fileName, hashed: false };
+  if (typeof asset.name === "string" && asset.name !== "") {
+    return { fileName: hashedAssetFileName(asset.name, asset.source, config), hashed: true };
+  }
+  throw new Error("denext: emitFile needs a fileName, or a name to hash the file name from");
+}
+
+/**
  * The absolute path `fileName` is written to under `root`, refusing anything that could leave it
  * (an absolute path, a `..` segment, a backslash, an empty name) or replace the build's own
  * output ({@link reservedEmitPath}, or a file in `builtFiles`).
@@ -546,6 +591,7 @@ function emittedPath(
   fileName: string,
   config: DenextConfig,
   builtFiles?: ReadonlySet<string>,
+  hashed = false,
 ): string {
   const segments = fileName.split("/");
   if (
@@ -558,7 +604,7 @@ function emittedPath(
         "/-separated path inside the site root (no leading /, no . or .. segments, no backslash)",
     );
   }
-  if (reservedEmitPath(fileName, config)) {
+  if (reservedEmitPath(fileName, config, hashed)) {
     throw new Error(
       `denext: emitFile refused ${JSON.stringify(fileName)}: the build publishes it itself ` +
         "(the HTML shell index.html, its output under _denext/ and the spa.assetsDir client " +
@@ -586,11 +632,13 @@ export async function runPluginBuildSteps(
   const full: PluginBuildContext = {
     ...context,
     clientModules: options.clientModules,
-    emitFile: async ({ fileName, source }) => {
-      const dest = emittedPath(emitDir, fileName, context.config, options.builtFiles);
+    emitFile: async (asset) => {
+      const { fileName, hashed } = emittedFileName(asset, context.config);
+      const dest = emittedPath(emitDir, fileName, context.config, options.builtFiles, hashed);
       await Deno.mkdir(dirname(dest), { recursive: true });
-      if (typeof source === "string") await Deno.writeTextFile(dest, source);
-      else await Deno.writeFile(dest, source);
+      if (typeof asset.source === "string") await Deno.writeTextFile(dest, asset.source);
+      else await Deno.writeFile(dest, asset.source);
+      return fileName;
     },
   };
   for (const step of buildSteps) await step(full);

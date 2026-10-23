@@ -316,15 +316,20 @@ export function Review({ diagram, diff }) {
       </div>
       <p>
         The component gets the element's other props and children, and later renders update it as
-        usual. A failed chunk import throws to the nearest error boundary. Only a component imported
-        by name (default or named) is deferred; a member tag (<code>
+        usual. A failed chunk import throws to the nearest error boundary. A component imported by
+        name (default or named) is deferred, and so is a member tag on an import (<code>
           &lt;UI.Chart client:visible /&gt;
-        </code>), a module-level <code>export const hydrate</code>{" "}
-        default and an element whose name an inner scope re-binds mount eagerly. A component that is
-        also used without a directive, or referenced as a value, keeps its static import: its
-        directive elements still defer their mount, but its code stays in the main bundle. An app
-        with no directive bundles none of this. In an npm-React app type-checked against{" "}
-        <code>@types/react</code>, TypeScript learns the attributes from{" "}
+        </code>{" "}
+        with <code>import * as UI</code>, or a member of a default or named import). A module-level
+        {" "}
+        <code>export const hydrate</code>{" "}
+        default works as on a Flight route: a component whose module, imported by a relative path,
+        exports one is deferred wherever it is written without a directive (through a namespace
+        import, its direct members are). An element whose name an inner scope re-binds mounts
+        eagerly. A component that is also used without a directive, or referenced as a value, keeps
+        its static import: its directive elements still defer their mount, but its code stays in the
+        main bundle. An app with no directive bundles none of this. In an npm-React app type-checked
+        against <code>@types/react</code>, TypeScript learns the attributes from{" "}
         <code>denext/jsx-directives</code>'s <code>ClientDirectives</code>, added to React's{" "}
         <code>Attributes</code> by a two-line declaration of your own (with{" "}
         <code>deno check</code>, list it in <code>compilerOptions.types</code>):

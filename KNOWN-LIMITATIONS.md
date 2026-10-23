@@ -121,9 +121,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   the gesture is held at its wrapper and replayed: a capture-phase listener above the island sees
   it twice. `client:only` skips SSR by definition.
 - **In SPA mode the directives defer the mount, not hydration.** There is no server HTML to keep
-  inert, so the directives defer the component's mount and split its code instead: only for a
-  component imported by name, not a member tag or a module-level `hydrate` default; a component
-  also used without a directive stays in the main bundle; `client:interaction` needs a
+  inert, so the directives defer the component's mount and split its code instead. A module-level
+  `hydrate` default is read only from a module imported by a relative path (not through an
+  import-map alias or a package), and only for an import's own component or a namespace import's
+  direct member; a component also used without a directive stays in the main bundle; `client:interaction` needs a
   `client:placeholder` to interact with, and replays the triggering gesture on the element at the
   same position in the component's DOM (its first element when the placeholder's shape differs).
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have
@@ -304,6 +305,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   build steps don't run, so a route served from build output renders on demand (a Pages Router
   `getStaticProps` page is rendered per request, and with a `deno.json` its client bundle is built
   on first use). `jobs/` and `services/` are not started.
+- **`viteEmitterPlugin` runs `generateBundle` asset emits only.** An asset by `fileName`, or by
+  `name` under Rollup's default `assets/[name]-[hash][extname]`, is published; a chunk-type
+  `emitFile` fails the build, and a plugin's own `assetFileNames` pattern, `setAssetSource` and
+  every other Vite hook are not run.
 - **The first-party Markdown renderer escapes raw HTML by default**; `markdown: { html:
   "sanitize" }` keeps what an allowlist sanitizer allows, never passing HTML through. Only the
   block containers (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when

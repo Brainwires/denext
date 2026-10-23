@@ -405,7 +405,11 @@ export default {
       <p>
         <code>denext migrate</code>{" "}
         writes this for an emitter imported from the app's own module; one it cannot carry over
-        (other build hooks, values from vite.config) is listed for review. See{" "}
+        (other build hooks, values from vite.config) is listed for review. An asset it emits by{" "}
+        <code>name</code> alone is published as Rollup names it, <code>[name]-[hash][extname]</code>
+        {" "}
+        in <code>spa.assetsDir</code> (else <code>assets/</code>), and{" "}
+        <code>this.getFileName(ref)</code> returns that name. See{" "}
         <a href="/docs/plugins#seam-3--build-steps">Plugins › build steps</a>. Import it from{" "}
         <code>denext/plugin-kit/vite-emitter</code>, not{" "}
         <code>denext/plugin-kit</code>: the config is also loaded outside the build (a Deno Desktop

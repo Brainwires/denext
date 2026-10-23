@@ -7,7 +7,7 @@
 // bundler paths: the component's module lands in its own chunk, outside the entry's static graph.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { act, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild } from "../src/jsx/types.ts";
@@ -78,7 +78,7 @@ export const ref = Chart;
   assertStringIncludes(r.code, "<Chart />");
 });
 
-Deno.test("spa islands rewrite: every strategy is recognized; unknown names, members, shadows and plain modules are left alone", async () => {
+Deno.test("spa islands rewrite: every strategy is recognized; unknown names, namespaces, shadows and plain modules are left alone", async () => {
   for (const s of ["load", "idle", "visible", "interaction", "media", "only"]) {
     const r = await transformSpaIslands(
       `import X from "./x.tsx";\nexport const A = () => <X client:${s} />;\n`,
@@ -87,7 +87,9 @@ Deno.test("spa islands rewrite: every strategy is recognized; unknown names, mem
   }
   const untouched = [
     `import X from "./x.tsx";\nexport const A = () => <X client:sometime />;\n`,
-    `import * as UI from "./ui.tsx";\nexport const A = () => <UI.Chart client:visible />;\n`,
+    `import * as UI from "./ui.tsx";\nexport const A = () => <UI client:visible />;\n`,
+    `import * as UI from "./ui.tsx";\nexport const A = (UI) => <UI.Chart client:visible />;\n`,
+    `export const A = () => <ui.Chart client:visible />;\n`,
     `import X from "./x.tsx";\nexport const A = (X) => <X client:visible />;\n`,
     `export const A = () => <div client:visible />;\n`,
     `import X from "./x.tsx";\nexport const A = () => <X />;\n`,
@@ -97,6 +99,125 @@ Deno.test("spa islands rewrite: every strategy is recognized; unknown names, mem
     const r = await transformSpaIslands(src);
     assertEquals(r.changed, false, src);
     assertEquals(r.code, src);
+  }
+});
+
+Deno.test("spa islands rewrite: a member tag defers its mount; its loader reads the member off the module", async () => {
+  const src = `import * as UI from "./ui.tsx";
+import Lib from "./lib.tsx";
+import { Kit } from "./kit.tsx";
+export const A = () => <>
+  <UI.Chart client:visible n={1} />
+  <UI.Chart client:idle n={2}>x</UI.Chart>
+  <Lib.Gauge client:load />
+  <Kit.Forms.Field client:media="(min-width: 1px)" />
+</>;
+`;
+  const r = await transformSpaIslands(src);
+  assertEquals(r.islands, 4);
+  assertEquals(r.split, ["./ui.tsx", "./lib.tsx", "./kit.tsx"]);
+  assertStringIncludes(
+    r.code,
+    'const __dnxLoad0 = () => import("./ui.tsx").then((m) => m["Chart"]);',
+  );
+  assertStringIncludes(
+    r.code,
+    'const __dnxLoad1 = () => import("./lib.tsx").then((m) => m["default"]["Gauge"]);',
+  );
+  assertStringIncludes(
+    r.code,
+    'const __dnxLoad2 = () => import("./kit.tsx").then((m) => m["Kit"]["Forms"]["Field"]);',
+  );
+  assert(!r.code.includes("__dnxLoad3"), "two elements of one member share a loader");
+  assertStringIncludes(r.code, "<__DnxSpaIsland __dnxLoad={__dnxLoad0} client:visible n={1} />");
+  assertStringIncludes(
+    r.code,
+    "<__DnxSpaIsland __dnxLoad={__dnxLoad0} client:idle n={2}>x</__DnxSpaIsland>",
+  );
+  assert(!/import \* as UI|import Lib|import \{ Kit \}/.test(r.code), "the imports are dropped");
+});
+
+Deno.test("spa islands rewrite: a namespace also used without a directive keeps its import", async () => {
+  const src = `import * as UI from "./ui.tsx";
+export const A = () => <><UI.Chart client:visible /><UI.Legend /></>;
+`;
+  const r = await transformSpaIslands(src);
+  assertEquals(r.islands, 1);
+  assertEquals(r.split, []);
+  assertStringIncludes(r.code, 'import * as UI from "./ui.tsx";');
+  assertStringIncludes(r.code, "<UI.Legend />");
+});
+
+Deno.test("spa islands rewrite: the isomorphic split leaves member tags as written", async () => {
+  const { transformIsoIslands } = await import("../src/build/iso-islands.ts");
+  const src =
+    `import * as UI from "./ui.tsx";\nexport const A = () => <UI.Chart client:visible />;\n`;
+  const r = await transformIsoIslands(src);
+  assertEquals(r.changed, false);
+});
+
+/** A temp app dir holding `files` (relative path → source). */
+async function appFiles(files: Record<string, string>): Promise<string> {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_hydrate_" }));
+  for (const [rel, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, rel), text);
+  }
+  return dir;
+}
+
+Deno.test("spa islands rewrite: a module-level hydrate default defers the elements written without a directive", async () => {
+  const dir = await appFiles({
+    "src/chart.tsx":
+      `export const hydrate = "visible";\nexport default function Chart() { return <p />; }\n` +
+      `export function Legend() { return <i />; }\n`,
+    "src/gauge/index.tsx":
+      `export const hydrate: string = 'idle' as const;\nexport function Gauge() {}\n`,
+    "src/plain.tsx": `export function Plain() { return <b />; }\n`,
+  });
+  try {
+    const src = `import Chart from "./chart";
+import * as Charts from "./chart.tsx";
+import { Gauge } from "./gauge";
+import { Plain } from "./plain.tsx";
+export const A = () => <main>
+  <Chart n={1} />
+  <Chart client:load n={2} />
+  <Charts.Legend />
+  <Gauge />
+  <Plain />
+</main>;
+`;
+    const importer = join(dir, "src/app.tsx");
+    const r = await transformSpaIslands(src, { importer });
+    assertEquals(r.islands, 4);
+    assertEquals(r.split, ["./chart", "./chart.tsx", "./gauge"]);
+    assertStringIncludes(r.code, "<__DnxSpaIsland __dnxLoad={__dnxLoad0} client:visible n={1} />");
+    assertStringIncludes(r.code, "<__DnxSpaIsland __dnxLoad={__dnxLoad0} client:load n={2} />");
+    assert(!r.code.includes("client:visible client:load"), "a usage-site directive wins");
+    assertStringIncludes(
+      r.code,
+      'const __dnxLoad1 = () => import("./chart.tsx").then((m) => m["Legend"]);',
+    );
+    assertStringIncludes(r.code, "<__DnxSpaIsland __dnxLoad={__dnxLoad1} client:visible />");
+    assertStringIncludes(r.code, "<__DnxSpaIsland __dnxLoad={__dnxLoad2} client:idle />");
+    assertStringIncludes(r.code, "<Plain />");
+    // The deno bundle path hands the module's URL instead of a path.
+    const viaUrl = await transformSpaIslands(src, { moduleUrl: toFileUrl(importer).href });
+    assertEquals(viaUrl.islands, 4);
+    // Without the importer's location there is nothing to look the default up from.
+    assertEquals((await transformSpaIslands(src)).islands, 1);
+    // An edit that drops the default is seen (the lookup is cached by mtime).
+    await Deno.writeTextFile(join(dir, "src/gauge/index.tsx"), "export function Gauge() {}\n");
+    const later = new Date(Date.now() + 5_000);
+    await Deno.utime(join(dir, "src/gauge/index.tsx"), later, later);
+    assertEquals((await transformSpaIslands(src, { importer })).islands, 3);
+    // The sources scan takes a module that only imports a defaulted component.
+    await Deno.writeTextFile(join(dir, "src/unused.tsx"), `import { Plain } from "./plain.tsx";\n`);
+    await Deno.writeTextFile(importer, src);
+    assertEquals(await spaIslandSources(dir), [importer]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
 
@@ -521,10 +642,25 @@ async function staticGraph(
   return seen;
 }
 
+/** How the app defers the chart: a directive on a named import, on a member tag, or none (the
+ * chart's module-level `hydrate` default). */
+type DeferBy = "name" | "member" | "default";
+
+/** The app module deferring `./chart.tsx` the way `by` says. */
+const APP_BY: Record<DeferBy, string> = {
+  name: `import Chart from "./chart.tsx";\nexport function App() {\n` +
+    `  return <main><h1>APP_MODULE</h1><Chart client:visible label="sales" /></main>;\n}\n`,
+  member: `import * as Charts from "./chart.tsx";\nexport function App() {\n` +
+    `  return <main><h1>APP_MODULE</h1><Charts.Chart client:visible label="sales" /></main>;\n}\n`,
+  default: `import Chart from "./chart";\nexport function App() {\n` +
+    `  return <main><h1>APP_MODULE</h1><Chart label="sales" /></main>;\n}\n`,
+};
+
 /** Build a SPA whose app defers a component; return where its marker landed. */
 async function buildSplit(
   compat: boolean,
   dev = false,
+  by: DeferBy = "name",
 ): Promise<{ graph: Set<string>; marker: string[]; app: string[] }> {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_islands_build_" }));
   try {
@@ -534,15 +670,12 @@ async function buildSplit(
       `import { createRoot } from "denext/client";\nimport { App } from "./app.tsx";\n` +
         `const el = document.getElementById("root");\nif (el) createRoot(el).render(<App />);\n`,
     );
-    await Deno.writeTextFile(
-      join(dir, "src/app.tsx"),
-      `import Chart from "./chart.tsx";\nexport function App() {\n` +
-        `  return <main><h1>APP_MODULE</h1><Chart client:visible label="sales" /></main>;\n}\n`,
-    );
+    await Deno.writeTextFile(join(dir, "src/app.tsx"), APP_BY[by]);
     await Deno.writeTextFile(
       join(dir, "src/chart.tsx"),
-      `export default function Chart(p: { label: string }) {\n` +
-        `  return <p data-chart="DEFERRED_CHART_MODULE">{p.label}</p>;\n}\n`,
+      (by === "default" ? `export const hydrate = "visible";\n` : "") +
+        `export default function Chart(p: { label: string }) {\n` +
+        `  return <p data-chart="DEFERRED_CHART_MODULE">{p.label}</p>;\n}\nexport { Chart };\n`,
     );
     await Deno.writeTextFile(
       join(dir, "denext.config.ts"),
@@ -593,6 +726,19 @@ for (const dev of [false, true]) {
   }
 }
 
+for (const by of ["member", "default"] as const) {
+  for (const compat of [false, true]) {
+    const path = compat ? "compat esbuild" : "native deno bundle";
+    const how = by === "member" ? "a member tag's" : "a module-level hydrate default's";
+    Deno.test(`spa islands build (${path} path): ${how} component is its own chunk`, async () => {
+      const { graph, marker, app } = await buildSplit(compat, false, by);
+      assertEquals(marker.length, 1, `the component's code is in one file (${marker})`);
+      assert(!app.includes(marker[0]), `not in the app module's chunk (${app})`);
+      assert(!graph.has(marker[0]), `not in the entry's static graph (${[...graph]})`);
+    });
+  }
+}
+
 // ── the unbundled dev loop: the same rewrite, per module ────────────────────────────────────
 
 /** A SPA project whose `src/app.tsx` defers `./chart.tsx`, and an unbundled dev loop over it. */
@@ -600,14 +746,12 @@ async function unbundledApp(
   opts: { spaIslands?: boolean; features?: Record<string, boolean> },
   app = `import Chart from "./chart.tsx";\nexport function App() {\n` +
     `  return <main><Chart client:visible label="sales" /></main>;\n}\n`,
+  chart = `export default function Chart(p: { label: string }) { return <p>{p.label}</p>; }\n`,
 ) {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_islands_dev_" }));
   await Deno.mkdir(join(dir, "src"));
   await Deno.writeTextFile(join(dir, "src/app.tsx"), app);
-  await Deno.writeTextFile(
-    join(dir, "src/chart.tsx"),
-    `export default function Chart(p: { label: string }) { return <p>{p.label}</p>; }\n`,
-  );
+  await Deno.writeTextFile(join(dir, "src/chart.tsx"), chart);
   await Deno.writeTextFile(
     join(dir, "deno.json"),
     JSON.stringify({
@@ -644,6 +788,20 @@ Deno.test("spa islands unbundled dev: a served module's directive elements are d
   assertStringIncludes(code, "spa-island", "denext/spa-island is imported");
   assert(/import\(\s*["'][^"']*chart\.tsx/.test(code), `chart.tsx is a dynamic import:\n${code}`);
   assert(!/^\s*import\s[^(]*chart\.tsx/m.test(code), "and no longer a static one");
+});
+
+Deno.test("spa islands unbundled dev: a module-level hydrate default defers an element without a directive", async () => {
+  await using app = await unbundledApp(
+    { spaIslands: true },
+    `import Chart from "./chart.tsx";\nexport function App() {\n` +
+      `  return <main><Chart label="sales" /></main>;\n}\n`,
+    `export const hydrate = "idle";\n` +
+      `export default function Chart(p: { label: string }) { return <p>{p.label}</p>; }\n`,
+  );
+  const code = await app.code();
+  assertStringIncludes(code, "__DnxSpaIsland", "the element is a SpaIsland");
+  assert(/["']client:idle["']/.test(code), `the module default is its directive:\n${code}`);
+  assert(/import\(\s*["'][^"']*chart\.tsx/.test(code), `chart.tsx is a dynamic import:\n${code}`);
 });
 
 Deno.test("spa islands unbundled dev: without spaIslands (the App Router loop) the module is served as written", async () => {
