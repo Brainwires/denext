@@ -43,6 +43,18 @@ import {
 } from "../../build/code-signing.ts";
 import { hasCommand, listSigningIdentities } from "../../ui/signing.ts";
 import { workspaceRootHint } from "../../build/workspace-imports.ts";
+import {
+  explainJailFailures,
+  JAIL_DEFAULT_RELEASE,
+  JAIL_DOCS_URL,
+  jailEffective,
+  jailFailures,
+  type JailRequirement,
+  type JailSetting,
+  jailSnippet,
+  readJailProject,
+  requiredJailExceptions,
+} from "../../build/jail-scripts.ts";
 
 /** Whether `path` is an existing directory. */
 async function isDirectory(path: string): Promise<boolean> {
@@ -319,6 +331,88 @@ export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
   };
 }
 
+/** Options for {@linkcode jailScriptsCheck}. */
+export interface JailScriptsCheckOptions {
+  /** The runtime version the project installs with (default: the toolchain pin's). */
+  readonly version?: string;
+  /** The environment (default: the process's). */
+  readonly env?: (name: string) => string | undefined;
+  /** A captured install log (`denext doctor --install-log <file>`) to explain. */
+  readonly installLog?: string;
+}
+
+/**
+ * The lifecycle-script jail check: dependencies in denext's built-in list
+ * (src/build/jail-exceptions.ts) that need a `supplyChain.jailScripts.packages` exception while
+ * the jail is on for the project and have none, and, given an install log, the dependencies'
+ * scripts it shows failing in the jail. Advisory. Null when the project has none of those
+ * dependencies and the log (if any) shows no jail failure.
+ *
+ * @param dir The project directory.
+ * @param options The runtime version, environment and install log.
+ * @returns The check, or null.
+ */
+export async function jailScriptsCheck(
+  dir: string,
+  options: JailScriptsCheckOptions = {},
+): Promise<Check | null> {
+  const name = "lifecycle-script jail";
+  const explained = explainJailFailures(jailFailures(options.installLog ?? ""));
+  const project = await readJailProject(dir, options.env ? { env: options.env } : {});
+  const required = await requiredJailExceptions(project);
+  if (required.length === 0 && explained.length === 0) return null;
+  const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
+  const on = jailEffective(project.setting, options.version);
+  const failures = explained.length
+    ? `the install log shows: ${explained.map((l) => l.trim()).join(" · ")}; `
+    : "";
+  if (on && missing.length) {
+    return {
+      name,
+      ok: false,
+      detail: failures + missingJailDetail(missing, project.setting),
+      critical: false,
+    };
+  }
+  if (explained.length) {
+    return { name, ok: false, detail: `${failures}${JAIL_DOCS_URL}`, critical: false };
+  }
+  return {
+    name,
+    ok: true,
+    detail: passingJailDetail(required, project.setting, on),
+    critical: false,
+  };
+}
+
+/** The jail check's detail for exceptions missing while the jail is on: why, and the fix. */
+function missingJailDetail(missing: readonly JailRequirement[], setting: JailSetting): string {
+  const why = setting.state === "on"
+    ? `${setting.source} turns it on`
+    : `on by default from runtime ${JAIL_DEFAULT_RELEASE}`;
+  const verb = missing.length === 1 ? "needs" : "need";
+  return `${missing.map((r) => r.entry.name).join(", ")} ${verb} an exception: dependencies' ` +
+    `install scripts run jailed (${why}) and theirs download or write outside node_modules; ` +
+    `fix: add ${JSON.stringify(JSON.parse(jailSnippet(missing)))} to deno.json (never turn the ` +
+    `jail off for it): ${JAIL_DOCS_URL}`;
+}
+
+/** The jail check's detail when nothing is missing: off, configured, or needed once it is on. */
+function passingJailDetail(
+  required: readonly JailRequirement[],
+  setting: JailSetting,
+  on: boolean,
+): string {
+  const list = required.map((r) => r.entry.name).join(", ");
+  if (setting.state === "off") {
+    return `off (${setting.source}); ${list} run${required.length === 1 ? "s" : ""} unconfined`;
+  }
+  return on
+    ? `exceptions configured for ${list}`
+    : `${list} will need an exception once dependencies' install scripts run jailed (on by ` +
+      `default from runtime ${JAIL_DEFAULT_RELEASE}): ${JAIL_DOCS_URL}`;
+}
+
 /** The project's parsed `deno.json` (else `deno.jsonc`), or `null`. */
 async function readDenoJson(dir: string): Promise<Record<string, unknown> | null> {
   for (const name of ["deno.json", "deno.jsonc"]) {
@@ -518,7 +612,10 @@ async function builtClientChunks(outDir: string): Promise<BundleChunk[] | null> 
  * @param dir The project directory to diagnose.
  * @returns The report; see {@link DoctorReport} for when a section is `null`.
  */
-export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
+export async function collectDoctorReport(
+  dir: string,
+  options: { installLog?: string } = {},
+): Promise<DoctorReport> {
   const checks: Check[] = [denoVersionCheck(), await denoToolchainCheck(dir)];
 
   // resolveProject loads + validates denext.config and throws on a malformed one; catch it
@@ -571,14 +668,19 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   if (signing) checks.push(signing);
   const depAge = await depAgeExemptionCheck(paths.projectDir);
   if (depAge) checks.push(depAge);
+  const jail = await jailScriptsCheck(paths.projectDir, options);
+  if (jail) checks.push(jail);
   checks.push(...await backendChecks(paths.projectDir, paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
 }
 
 /** The checks alone (the plain `denext doctor` listing); see {@link collectDoctorReport}. */
-async function collectDoctorChecks(dir: string): Promise<Check[]> {
-  return (await collectDoctorReport(dir)).checks;
+async function collectDoctorChecks(
+  dir: string,
+  options: { installLog?: string } = {},
+): Promise<Check[]> {
+  return (await collectDoctorReport(dir, options)).checks;
 }
 
 /** Whether a failing critical check is present (the non-zero-exit condition). */
@@ -686,13 +788,28 @@ function reportChecks(checks: Check[]): void {
  * Collect the report with stdout kept clean for `> report.md` / `| jq`: any progress
  * logging during collection is routed to stderr (the `analyze --md` convention).
  */
-async function collectQuietly(dir: string): Promise<DoctorReport> {
+async function collectQuietly(
+  dir: string,
+  options: { installLog?: string },
+): Promise<DoctorReport> {
   const origLog = console.log;
   console.log = (...args: unknown[]) => console.error(...args);
   try {
-    return await collectDoctorReport(dir);
+    return await collectDoctorReport(dir, options);
   } finally {
     console.log = origLog;
+  }
+}
+
+/** `--install-log <file>`'s text (exit 1 when it can't be read). */
+async function installLogOption(ctx: CommandContext): Promise<{ installLog?: string }> {
+  const file = ctx.flags["install-log"];
+  if (typeof file !== "string") return {};
+  try {
+    return { installLog: await Deno.readTextFile(resolve(commandCwd(ctx), file)) };
+  } catch (err) {
+    console.error(`denext doctor: can't read --install-log ${file}: ${(err as Error).message}`);
+    Deno.exit(1);
   }
 }
 
@@ -710,18 +827,25 @@ export const doctorCommand: CommandSpec = {
     type: "boolean",
     help: "Print a markdown health report (checks, every route's conformance, the last " +
       "build's client bundle by chunk); with --json, the same data as JSON",
+  }, {
+    name: "install-log",
+    type: "string",
+    valueName: "<file>",
+    help: "Explain the dependencies' lifecycle scripts that failed in this captured install " +
+      "output (`denext install 2>&1 | tee install.log`) as lifecycle-script jail failures",
   }],
   run: async (ctx) => {
     const dir = projectDir(ctx);
     const report = ctx.flags.report === true;
+    const options = await installLogOption(ctx);
     if (report || ctx.global.json) {
-      const r = await collectQuietly(dir);
+      const r = await collectQuietly(dir, options);
       if (ctx.global.json) console.log(JSON.stringify(report ? r : r.checks, null, 2));
       else console.log(doctorReportMarkdown(r).join("\n"));
       if (hasCriticalFailure(r.checks)) Deno.exit(1);
       return;
     }
     console.log(`\n  denext doctor  ▸  ${dir}\n`);
-    reportChecks(await collectDoctorChecks(dir));
+    reportChecks(await collectDoctorChecks(dir, options));
   },
 };

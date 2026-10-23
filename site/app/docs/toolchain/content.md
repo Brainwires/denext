@@ -520,6 +520,95 @@ they are out, add it back to the project's `deno.json`, knowing it lets any just
 "minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
 ```
 
+## Supply chain: lifecycle-script jail
+
+An approved dependency's lifecycle script (`preinstall`, `install`, `postinstall`, approved with
+`--allow-scripts` or deno.json `allowScripts`) runs **jailed** on denext's Deno: a scrubbed
+environment (no `GITHUB_TOKEN`, `NPM_TOKEN` or other credentials), a scratch `HOME` removed after
+the script, writes only beneath `node_modules`, no credential files, no network, every `deno` it
+starts clamped to the same limits, and the OS confining the whole process tree where it can
+(Landlock and seccomp on Linux, `sandbox-exec` on macOS). A compromised package's install script
+then can't read your tokens, phone home or rewrite your project. The project's own scripts (the
+root `package.json`, workspace members) are your code and are not jailed.
+
+- **The default.** From runtime `3.0.0-rc.5` the jail is on unless the project turns it off.
+  Earlier runtimes (the `3.0.0-rc.3` and `rc.4` pins) jail only on request: `--jail-scripts`,
+  `jail-scripts=true` in `.npmrc` (or `npm_config_jail_scripts=true`), deno.json
+  `"supplyChain": { "jailScripts": true }`, or `paranoid`.
+- **Opting out** (not recommended): `--no-jail-scripts`, `jail-scripts=false` in `.npmrc` or
+  `npm_config_jail_scripts=false`, or deno.json `"supplyChain": { "jailScripts": false }`. Where
+  sources disagree the stricter one wins, so a `.npmrc` can't quietly undo what deno.json asks for;
+  under `paranoid` every opt-out is an error. denext never turns the jail off for you.
+- **Per-package exceptions** keep the jail on and widen it for one package: environment variables
+  passed through, extra writable directories (relative to deno.json; create them first, Linux
+  skips a missing one) and the network. There is no per-host network list; a node-pre-gyp
+  package's declared `binary.host` is allowed by itself.
+
+```json
+{
+  "supplyChain": {
+    "jailScripts": {
+      "packages": {
+        "puppeteer": {
+          "net": true,
+          "env": ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"]
+        },
+        "msw": { "write": ["public"] }
+      }
+    }
+  }
+}
+```
+
+An exceptions object counts as asking for the jail: on Windows, where the OS can't confine the
+script's other programs, an install then prints a one-line warning saying so.
+
+**denext writes the exceptions for you.** `denext migrate`, `denext create` / `init` (next to an
+existing `package.json`) and `denext add` find the dependencies in denext's built-in list below
+and, when the jail is on for the project, add the narrowest exception each needs to deno.json
+(your comments and existing entries stay). On a runtime that jails only on request they say which
+dependencies will need one and write nothing, since an exceptions object would itself turn the
+jail on. `migrate` lists each exception in its review notes (`--check` too); when it keeps a
+hand-authored deno.json it prints the JSON to add instead. `denext doctor` flags a listed
+dependency whose exception is missing while the jail is on, and
+`denext doctor --install-log install.log` (from `denext install 2>&1 | tee install.log`) explains
+a dependency's failed script: which package, what the jail stopped (the network, a write outside
+`node_modules`, a real `npm` / `npx`) and the exception to add.
+
+| Package                                             | Why its script needs more                                                                                 | Exception                                                                                    |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `@prisma/client`                                    | postinstall runs `prisma generate` (may fetch the engines; writes the client to the generator's `output`) | `net`, Prisma's env, `write`: each `output` outside `node_modules`                           |
+| `@prisma/engines` (with `prisma`, `@prisma/client`) | postinstall downloads the engines from binaries.prisma.sh                                                 | `net`, `PRISMA_*` mirror and engine-path env                                                 |
+| `@sentry/cli`                                       | downloads the binary when the platform package is missing                                                 | `net`, `SENTRYCLI_*`                                                                         |
+| `@tensorflow/tfjs-node`                             | downloads libtensorflow                                                                                   | `net`                                                                                        |
+| `better-sqlite3`                                    | `prebuild-install` from GitHub, else node-gyp                                                             | `net` (or leave it unapproved: the toolchain serves better-sqlite3 over the built-in SQLite) |
+| `canvas`                                            | `prebuild-install` from GitHub (canvas 3), else node-gyp                                                  | `net`                                                                                        |
+| `chromedriver`                                      | downloads chromedriver into its package                                                                   | `net`, `CHROMEDRIVER_*`                                                                      |
+| `cypress`                                           | downloads the Cypress app into `~/.cache/Cypress`                                                         | `net`, `CYPRESS_CACHE_FOLDER` / `_INSTALL_BINARY` / `_DOWNLOAD_MIRROR`                       |
+| `electron`                                          | downloads Electron and unpacks it into its package                                                        | `net`, `ELECTRON_*` mirror / skip env                                                        |
+| `ffmpeg-static`                                     | downloads ffmpeg into its package                                                                         | `net`, `FFMPEG_BINARIES_URL`                                                                 |
+| `keytar`                                            | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                        |
+| `lefthook`                                          | `lefthook install` writes `.git/hooks`                                                                    | `write`: the repository's `.git/hooks`                                                       |
+| `msw`                                               | copies `mockServiceWorker.js` into `msw.workerDirectory`                                                  | `write`: those directories                                                                   |
+| `node-pty`                                          | node-gyp build when no prebuilt binary matches                                                            | `net`                                                                                        |
+| `node-sass`                                         | downloads the libsass binding from GitHub                                                                 | `net`, `SASS_BINARY_*`                                                                       |
+| `playwright-chromium`, `-firefox`, `-webkit`        | download their browser into the Playwright cache                                                          | `net`, `PLAYWRIGHT_BROWSERS_PATH` / `_DOWNLOAD_HOST` / `_SKIP_BROWSER_DOWNLOAD`              |
+| `puppeteer`                                         | downloads Chrome for Testing into `~/.cache/puppeteer`                                                    | `net`, `PUPPETEER_CACHE_DIR` / `_DOWNLOAD_BASE_URL` / `_SKIP_DOWNLOAD`                       |
+| `re2`                                               | downloads a prebuilt binding from GitHub, else node-gyp                                                   | `net`                                                                                        |
+| `sharp`                                             | before 0.33 downloads libvips; later only a build from source needs the network                           | `net`, `SHARP_*_GLOBAL_LIBVIPS`                                                              |
+| `simple-git-hooks`                                  | writes `.git/hooks`                                                                                       | `write`: the repository's `.git/hooks`                                                       |
+| `sqlite3`                                           | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                        |
+
+The packages that download a browser or app into a cache under your home (puppeteer, Playwright's
+browser packages, Cypress) get the network, but the jail's scratch `HOME` is removed after the
+script: point the cache variable (`PUPPETEER_CACHE_DIR`, `PLAYWRIGHT_BROWSERS_PATH`,
+`CYPRESS_CACHE_FOLDER`) at a directory in the project and add it to `write`, or skip the download
+there and fetch the browser afterwards with the tool's own command (`playwright install`,
+`puppeteer browsers install chrome`). A build from source with
+node-gyp downloads the Node.js headers (`npm_config_nodedir` points it at local ones). Not listed,
+because they need nothing: `esbuild` (its binary is an optional dependency), `bcrypt`, `playwright`
+(no install script), `husky` 9 (the project's own `prepare`) and `bufferutil`.
+
 ## Notes: how denext's Deno build is kept current
 
 <a id="versions"></a>**Versions.** Up to `2.9.7-denext.22` each build was named after the Deno release it

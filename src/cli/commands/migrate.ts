@@ -191,6 +191,14 @@ function reportRemix(m: NonNullable<MigrateResult["remix"]>): void {
   );
 }
 
+/** The lifecycle-script jail exceptions migrate wrote (or left to the user). */
+function reportJailScripts(j: NonNullable<MigrateResult["jailScripts"]>): void {
+  const [first, ...rest] = j.lines;
+  const mark = j.action === "written" || j.action === "manual" ? "⚠️ " : "▸";
+  console.log(`  ${mark} ${first}`);
+  for (const line of rest) console.log(`      ${line}`);
+}
+
 /** Up to `max` review notes (and a count of the rest); nothing when there are none. */
 function printReviewNotes(warnings: string[], max: number): void {
   if (warnings.length === 0) return;
@@ -874,6 +882,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       if (r.effect) reportEffect(r);
       if (r.prisma) reportPrisma(r.prisma);
       if (r.nextAuth) reportNextAuth(r.nextAuth);
+      if (r.jailScripts) reportJailScripts(r.jailScripts);
       await capacitorSteps(r, run ?? terminalRunner(false), false);
 
       if (r.denoJsonExists) {
