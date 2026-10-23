@@ -151,13 +151,14 @@ Deno.test("expo-auth-session: useLoadedAuthRequest + useAuthRequestResult prompt
       });
       return null;
     });
-    await tick();
+    // The request is built asynchronously (crypto for the state / PKCE): wait for it.
+    await until(() => request !== null);
     const loaded = request as AuthSession.AuthRequest | null;
     assert(loaded?.url?.startsWith("https://auth.test/authorize?"));
     session.plugin.start = () =>
       Promise.resolve({ url: `myapp://cb?code=abc&state=${loaded!.state}` });
     const out = await prompt();
-    await tick();
+    await until(() => result !== null);
     assertEquals(out.type === "success" && out.params.code, "abc");
     assertEquals((result as AuthSession.AuthSessionResult | null)?.type, "success");
     root.unmount();
