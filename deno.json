@@ -338,6 +338,7 @@
     "docs:fixed": "deno run -A scripts/gen-fixed-page.ts",
     "parity:refresh": "deno run -A scripts/parity/refresh.ts",
     "parity:drift": "deno run -A scripts/parity/refresh.ts --latest",
+    "ts7:diff": "deno run -A scripts/ts7-diff.ts",
     "parity:gaps": "deno run -A scripts/parity/write-known-gaps.ts",
     "parity:native": "deno run -A scripts/parity/native/check.ts",
     "parity:native:refresh": "deno run -A scripts/parity/native/refresh.ts",
