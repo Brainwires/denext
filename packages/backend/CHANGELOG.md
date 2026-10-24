@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Added
+
+- **Realtime replays what a reconnecting subscriber missed** (`realtime({ replay })`, on by
+  default). Each instance journals the changes it receives (keys only) for `retentionSeconds`
+  (60) and up to `maxChangesPerTable` (10 000); a `useTableChanges` subscription whose connection
+  comes back within the retention is sent `resumed`, then the changes after the last one it was
+  delivered, re-read under its row-level security with the same delete rules as live changes
+  (frames still queued at the drop are sent first, numbered on). A gap the journal no longer
+  covers, or a lost database listener, is an explicit `resync`; a reconnect the server does not
+  answer within 10 seconds (the subscription was dropped, or another instance took the socket)
+  sets `stale`. `replay: false` restores the old behaviour.
+
+### Changed
+
+- **One re-read per identity per burst, whatever the filters.** Subscriptions with the same role
+  and claims share one re-read even when their filters differ: each filter is a boolean column of
+  the one query (it was one query per identity and filter). A combined re-read that fails is
+  retried filter by filter, so a bad filter value still costs only its own subscribers.
+- **Frames to a subscription are spaced by the time since its last one,** so a frame queued just
+  after the previous went out (a truncate and the rows after it) is no longer merged away by the
+  Live hub's coalescing.
+
+### Security
+
+- **A reconnect is replayed only under the claims it was read under.** A subscriber re-authorized
+  with other claims than it left with (a refresh's `exp` / `iat` / `nbf` / `jti` aside) gets a
+  `resync`: the frames kept for it are dropped and nothing is replayed. A token without `sub` binds
+  a subscription key to its whole set of claims instead of one shared `authenticated:undefined`
+  identity.
+- **The reconnect journal holds keys only.** Never an `old: "full"` table's old row; a key or old
+  key over 1 024 characters is journaled as a resync of its table; expired entries are dropped on
+  every flush, not only when their own table changes again.
+- **`rest.rateLimit`: an anonymous sign-in also counts against its address,** so minting
+  anonymous users does not mint request budgets.
+
 ## 0.7.1 - 2026-10-24
 
 ### Fixed

@@ -3,7 +3,7 @@
 // simulated by `insert` / `update` / `remove` (each sends the notification the real trigger
 // would, to the `listen` callback), and the three statements realtime runs answered from those
 // tables: the RLS setup (records the claims for the transaction), the column-type lookup, the
-// key-only seed query and the re-read query. Anything else (migrations, the statement timeout)
+// key-only seed query and the re-read query (one filter in its WHERE, or several as `mN` columns). Anything else (migrations, the statement timeout)
 // is recorded and answered with no rows. `delay` slows the seed and re-read queries down, and
 // `inFlight` records how many of each ran at once.
 //
@@ -77,6 +77,8 @@ export interface FakeRealtimeClient extends SqlClient {
   readonly inFlight: InFlight;
   /** The publication rows and the triggers, as the catalog would hold them. */
   readonly catalog: FakeCatalog;
+  /** A statement for which this answers `true` fails, as the database would refuse it. */
+  failWhen?: (text: string, params: unknown[]) => boolean;
 }
 
 /** `"app"."things"` / `"notes"` as `regclass::text` spells it (`app.things` / `notes`). */
@@ -122,6 +124,7 @@ export function fakeRealtimeClient(
 ): FakeRealtimeClient {
   const statements: string[] = [];
   const parameters: unknown[][] = [];
+  const steer: Pick<FakeRealtimeClient, "failWhen"> = {};
   const catalog: FakeCatalog = { publication: [], triggers: new Map() };
 
   /** The catalog statements: publication tables, trigger args, the toggle, trigger DDL. */
@@ -181,12 +184,48 @@ export function fakeRealtimeClient(
     }));
   };
 
+  /** The rows among the keys `$1` lists that the claims may SELECT. */
+  const keyedRows = (table: string, params: unknown[], claims: Claims): Row[] => {
+    const keys = new Set(JSON.parse(String(params[0])) as string[]);
+    return [...(tables.get(table)?.values() ?? [])]
+      .filter((row) => keys.has(String(row[keyCol(table)])))
+      .filter((row) => visible(table, claims, row));
+  };
+
+  /** A combined re-read: one boolean column per filter (`coalesce(<filter $n>, false) as mN`). */
+  const combinedReread = (table: string, text: string, params: unknown[], claims: Claims) => {
+    const matchers = [...text.matchAll(
+      /(?:coalesce\(t\."(\w+)"(?:::text)? (=|<>|<=|<|>=|>|in|= any)[ (]+(?:select jsonb_array_elements_text\()?\$(\d+).*?, false\)|true) as m(\d+)/g,
+    )].map((m) => (row: Row) =>
+      m[1] === undefined || compare(row[m[1]], m[2], params[Number(m[3]) - 1])
+    );
+    return keyedRows(table, params, claims).map((row) => ({
+      k: String(row[keyCol(table)]),
+      r: JSON.stringify(row),
+      ...Object.fromEntries(matchers.map((match, n) => [`m${n}`, match(row)])),
+    }));
+  };
+
+  /** A re-read: one filter in its WHERE (`filterOk`), or several as `mN` columns. */
+  const rereadRows = (
+    table: string,
+    text: string,
+    params: unknown[],
+    claims: Claims,
+    filterOk: (row: Row) => boolean,
+  ): Row[] =>
+    / as m0[, ]/.test(text)
+      ? combinedReread(table, text, params, claims)
+      : keyedRows(table, params, claims).filter(filterOk)
+        .map((row) => ({ k: String(row[keyCol(table)]), r: JSON.stringify(row) }));
+
   const answer = (text: string, params: unknown[], claims: Claims): Row[] => {
     statements.push(text);
     parameters.push(params);
     const fromCatalog = catalogAnswer(text, params);
     if (fromCatalog) return fromCatalog;
-    const reread = /to_jsonb\(t\)::text as r from (?:"\w+"\.)?"(\w+)" t/.exec(text);
+    const reread = /to_jsonb\(t\)::text as r(?:, .*? as m\d+)? from (?:"\w+"\.)?"(\w+)" t/
+      .exec(text);
     const seed = /^select to_jsonb\(t\."(\w+)"\) #>> '\{\}' as k from (?:"\w+"\.)?"(\w+)" t/
       .exec(text);
     const filter =
@@ -196,14 +235,7 @@ export function fakeRealtimeClient(
       return typesOf(params);
     }
     const filterOk = (row: Row) => !filter || compare(row[filter[1]], filter[2], params[1]);
-    if (reread) {
-      const table = reread[1];
-      const keys = new Set(JSON.parse(String(params[0])) as string[]);
-      return [...(tables.get(table)?.values() ?? [])]
-        .filter((row) => keys.has(String(row[keyCol(table)])))
-        .filter((row) => visible(table, claims, row) && filterOk(row))
-        .map((row) => ({ k: String(row[keyCol(table)]), r: JSON.stringify(row) }));
-    }
+    if (reread) return rereadRows(reread[1], text, params, claims, filterOk);
     if (seed && !reread) {
       const table = seed[2];
       return [...(tables.get(table)?.values() ?? [])]
@@ -255,6 +287,9 @@ export function fakeRealtimeClient(
       // Evaluated now: a pipelined setup + query arrive in call order, as on one connection.
       let rows: Row[];
       try {
+        if (steer.failWhen?.(text, params)) {
+          throw new Error("invalid input syntax for type integer");
+        }
         rows = answer(text, params, scope.claims);
       } catch (error) {
         return query<T>(() => {
@@ -329,5 +364,9 @@ export function fakeRealtimeClient(
     },
   });
   Object.defineProperty(client, "listeners", { get: () => subs.size });
+  Object.defineProperty(client, "failWhen", {
+    get: () => steer.failWhen,
+    set: (fn: FakeRealtimeClient["failWhen"]) => void (steer.failWhen = fn),
+  });
   return client;
 }

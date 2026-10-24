@@ -27,6 +27,15 @@ and this project adheres to
   the exception to add. denext never turns the jail off for you. See
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 
+- **Realtime from the database replays what a reconnecting subscriber missed (`@denext/backend`
+  0.8.0).** `useTableChanges` subscriptions whose Live connection drops and comes back within
+  `realtime({ replay: { retentionSeconds } })` (60 seconds by default) are sent the changes made
+  meanwhile, re-read under the subscriber's row-level security with the same delete rules as live
+  changes, after a `resumed` frame. A gap the per-instance journal no longer covers
+  (`maxChangesPerTable`, 10 000), or a lost database listener, is an explicit `resync`, and a
+  reconnect the server does not answer sets `stale` as before. Before, every reconnect was a
+  `stale`. `replay: false` turns it off; Supabase's `postgres_changes` is unchanged.
+
 ### Changed
 
 - **denext pins runtime `3.0.0-rc.5`** (from `3.0.0-rc.3`; the Deno toolchain and the Deno
@@ -66,6 +75,11 @@ and this project adheres to
     test now runs the attachment check on every backend);
   - rustls-webpki 0.103.16 in the desktop runtime;
   - a build with Rust 1.99.1.
+
+- **Realtime re-reads once per identity per burst, whatever the filters (`@denext/backend`).**
+  One user's subscriptions with different filters share one re-read query (a boolean column per
+  filter) instead of one per filter: 36 subscriptions over 17 filters and two users went from 34
+  re-reads per burst to 2.
 
 ### Fixed
 
@@ -122,6 +136,23 @@ and this project adheres to
   response's `ETag` in `If-Range` even when it was weak, which a server must treat as a mismatch,
   so every resume downloaded the file from byte zero. It now sends a strong `ETag`, else
   `Last-Modified`, and starts over only when the response had neither.
+
+### Security
+
+- **A realtime reconnect is replayed only under the claims it was read under (`@denext/backend`).**
+  A `useTableChanges` subscriber that comes back with other claims than it left with (a changed
+  role, team or tenant; a refreshed token is the same claims) gets a `resync` instead of the frames
+  kept for it and a replay, so nothing read under its old grant reaches it. A subscription made
+  with a token that has no `sub` is bound to that token's whole set of claims: before, every such
+  token was one identity, so one could take over another's subscription key.
+- **The realtime reconnect journal holds keys only, and drops what expired (`@denext/backend`).**
+  It no longer keeps the old row an `old: "full"` table's change carries, a key over 1 024
+  characters is journaled as a resync of its table (the logical source does not bound keys), and
+  entries past `replay.retentionSeconds` are dropped on the next flush even when their table went
+  quiet. Before, writes could make each instance hold up to `maxChangesPerTable` old rows per
+  table for as long as the table stayed quiet.
+- **An anonymous sign-in's auto-REST requests also count against its address (`@denext/backend`).**
+  Each anonymous user had a `rest.rateLimit` budget of its own, so minting sign-ins minted budgets.
 
 ## [4.8.0] - 2026-10-23
 

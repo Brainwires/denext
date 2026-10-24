@@ -210,9 +210,9 @@ function tearDown(): void {
 }
 
 /** A signed-in user's session cookie. */
-async function cookieFor(id: string): Promise<string> {
+async function cookieFor(id: string, user: { isAnonymous?: true } = {}): Promise<string> {
   const issuing = createRequestContext(new Request(`${ORIGIN}/`));
-  await runWithContext(issuing, () => issueAuthSession(authConfig, { id }, "credentials"));
+  await runWithContext(issuing, () => issueAuthSession(authConfig, { id, ...user }, "credentials"));
   return issuing.outgoingHeaders.getSetCookie().find((c) => c.startsWith("__Host-denext_auth="))!
     .split(";")[0];
 }
@@ -1712,6 +1712,19 @@ Deno.test("rate limits: a budget per address signed out, per user signed in; 429
       429,
       "the user's budget follows them across addresses",
     );
+    // Anonymous sign-ins (minted on request) also count against their address: a new one per
+    // request cannot mint a fresh budget behind a spent address.
+    const anonPeer = "198.51.100.40";
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: anonPeer })), 200);
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: anonPeer })), 200);
+    for (const n of [1, 2]) {
+      const anonymous = await cookieFor(`anon-user-${n}`, { isAnonymous: true });
+      assertEquals(
+        await status(await app.call("/rest/v1/notes", { peer: anonPeer, cookie: anonymous })),
+        429,
+        "an anonymous sign-in behind a spent address",
+      );
+    }
     // The secret key is a trusted server: never limited.
     for (let i = 0; i < 4; i++) {
       const res = await app.call("/rest/v1/notes", {

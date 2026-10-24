@@ -890,3 +890,84 @@ Deno.test({
     }
   },
 });
+
+/** Notes on lists, readable by their owner. */
+const LISTED = `
+  create table listed (id bigint primary key, owner uuid not null, list int, body text not null);
+  alter table listed enable row level security;
+  create policy "read own" on listed for select using (auth.uid() = owner);
+  grant select on listed to authenticated;
+`;
+
+Deno.test({
+  name:
+    `realtime on a real Postgres: one identity's filters share one re-read; a reconnect is replayed under RLS${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    try {
+      hub = await install(env.app, { listed: {} }, LISTED);
+      const service = db.service();
+      await service`insert into listed (id, owner, list, body) values
+        (10, ${A}, 1, 'a, seeded'), (20, ${B}, 1, 'b, seeded')`;
+      await settle(150);
+      const a = await cookieFor(A);
+      const all = hub.conn(a);
+      const one = hub.conn(a);
+      const two = hub.conn(a);
+      const nulls = hub.conn(a);
+      const { key } = await hub.subscribe(all, "listed");
+      assert((await hub.subscribe(one, "listed", { filter: { list: 1 } })).ok);
+      assert((await hub.subscribe(two, "listed", { filter: "list=in.(2,3)" })).ok);
+      assert((await hub.subscribe(nulls, "listed", { filter: { list: { gt: 0 } } })).ok);
+
+      // One burst, four filters of one identity: one combined re-read, each gets its own rows (a
+      // NULL list matches no comparison).
+      const engine = realtimeEngine();
+      const before = { ...engine.stats };
+      await service`insert into listed (id, owner, list, body) values
+        (1, ${A}, 1, 'one'), (2, ${A}, 2, 'two'), (3, ${A}, null, 'none'), (4, ${B}, 1, 'b')`;
+      await until(() => changesOf(all).length === 3, 5_000, "the unfiltered subscription's rows");
+      await until(() => changesOf(nulls).length === 2, 5_000, "list > 0");
+      await settle(150);
+      assertEquals(changesOf(all).map((c) => c.key), ["1", "2", "3"]);
+      assertEquals(changesOf(one).map((c) => c.key), ["1"]);
+      assertEquals(changesOf(two).map((c) => c.key), ["2"]);
+      assertEquals(changesOf(nulls).map((c) => c.key), ["1", "2"]);
+      const flushes = engine.stats.flushes - before.flushes;
+      assertEquals(engine.stats.rereads - before.rereads, flushes, "one re-read per burst");
+
+      // The unfiltered subscription's socket drops; changes happen; it reconnects.
+      hub.drop(all);
+      await service`update listed set body = 'edited' where id = 1`;
+      await service`delete from listed where id = 10`; // A could see it: replayed as a delete
+      await service`delete from listed where id = 20`; // B's: never A's to hear about
+      await service`insert into listed (id, owner, list, body) values (5, ${A}, 3, 'away')`;
+      await service`update listed set owner = ${B} where id = 2`; // left A's view
+      // The live subscriptions have them (so the journal does too).
+      await until(
+        () => changesOf(one).length === 3 && changesOf(two).length === 3,
+        5_000,
+        "the changes, live",
+      );
+      const back = hub.conn(a);
+      assert((await hub.subscribe(back, "listed", { key })).ok);
+      await until(() => back.frames.length === 2, 5_000, "resumed + the replay");
+      assertEquals(back.frames[0].resumed, true);
+      assertEquals(back.frames[0].seq, all.frames.at(-1)!.seq + 1, "numbered on");
+      const replayed = back.frames[1].changes!.map((c) => [c.op, c.key]);
+      assertEquals(replayed.sort(), [
+        ["delete", "10"],
+        ["delete", "2"],
+        ["insert", "5"],
+        ["update", "1"],
+      ]);
+    } finally {
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});
