@@ -12,6 +12,7 @@ import {
   legacyAbortActive,
   toolchainRuntimeFlags,
 } from "../src/cli/self-exec.ts";
+import { needsNoLegacyAbortFlag } from "../src/build/deno-version.ts";
 
 const src = (path: string) => toFileUrl(join(Deno.cwd(), path)).href;
 
@@ -139,8 +140,14 @@ console.log(JSON.stringify(await legacyAbortActive()));
       assert(!/legacy behavior/.test(stderr), stderr);
       return new TextDecoder().decode(out.stdout).trim();
     };
-    assertEquals(await run([]), "true");
-    assertEquals(await run(["--unstable-no-legacy-abort"]), "false");
+    if (needsNoLegacyAbortFlag(Deno.version.deno)) {
+      assertEquals(await run([]), "true");
+      assertEquals(await run(["--unstable-no-legacy-abort"]), "false");
+    } else {
+      // From runtime 3.0.0-rc.5 the legacy abort is off by default; the flag opts back in.
+      assertEquals(await run([]), "false");
+      assertEquals(await run(["--unstable-legacy-abort"]), "true");
+    }
   } finally {
     await Deno.remove(join(script, ".."), { recursive: true });
   }
