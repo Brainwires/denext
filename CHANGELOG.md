@@ -84,6 +84,19 @@ and this project adheres to
   for the authenticators and conformance tools that still send it. Before, both formats were
   refused, or registered as unattested under `allowUnattested`.
 
+- **The production server trims its memory when it goes idle.** On denext's Deno from runtime
+  `3.0.0-rc.5`, a server whose event loop has gone a second without work now runs a full GC and
+  then `malloc_trim(0)`, handing back the memory a load burst left behind (`examples/hello`: about
+  172 MB a few seconds after a burst instead of 400-650 MB; glibc Linux only). It is on for the
+  server `denext start` starts, the `build --compile` executable (`--unstable-idle-trim` baked in),
+  the image `denext generate docker` and the `docker` / `fly` presets write (`ENV
+  DENO_UNSTABLE_IDLE_TRIM=1`) and the `genericHost()` systemd unit; never for `dev`, tests, jobs or
+  the desktop runtime. It runs at most once per idle period, 10 s apart, and after the first only
+  when the resident memory grew by 16 MB; a request that arrives during one waits for it once (up
+  to about 240 ms on a large app). Opt out with `start: { idleTrim: false }` or
+  `DENEXT_IDLE_TRIM=0`; the deploy manifest's `server.idleTrim` says whether an adapter should turn
+  it on. See https://denext.dev/docs/deployment-targets#idle-memory-trim.
+
 ### Changed
 
 - **denext pins runtime `3.0.0-rc.5`** (from `3.0.0-rc.3`; the Deno toolchain and the Deno

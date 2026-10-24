@@ -354,6 +354,7 @@ export {
   type SpaProxyConfig,
   type SpaShellConfig,
   type SpaTanstackRouterConfig,
+  type StartConfig,
   type TailwindConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";

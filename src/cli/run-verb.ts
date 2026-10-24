@@ -49,6 +49,7 @@ import {
 import { loadEnv } from "../server/env.ts";
 import { markBuildPhase } from "../server/phase.ts";
 import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
+import { configDisablesIdleTrim, idleTrimEnv, readEnv } from "../build/idle-trim.ts";
 import { VERSION } from "../version.ts";
 import type { CommandContext, CommandSpec } from "./command.ts";
 import { envTierFor, projectDir } from "./shared.ts";
@@ -295,7 +296,10 @@ function spawnCliChild(
  *
  * @param dir The project directory the verb targets.
  */
-function maybeReexecPinned(dir: string): Promise<boolean> {
+function maybeReexecPinned(
+  dir: string,
+  childEnv: Record<string, string> = {},
+): Promise<boolean> {
   return reexecPinned(dir, VERSION, Deno.args, {
     standalone: isStandaloneBinary,
     env: (name) => Deno.env.get(name),
@@ -314,7 +318,7 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
           ...minDepAgeArgs(),
         ],
         cli,
-        { DENEXT_PINNED_ACTIVE: "1" },
+        { ...childEnv, DENEXT_PINNED_ACTIVE: "1" },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
@@ -370,6 +374,31 @@ function gateDir(command: CommandSpec, ctx: CommandContext): string {
 }
 
 /**
+ * The environment a child that will serve `denext start` gets: the idle trim
+ * (`DENO_UNSTABLE_IDLE_TRIM=1`, src/build/idle-trim.ts) when the child runs denext's Deno from
+ * 3.0.0-rc.5 (`marker`) and neither the project's config nor `DENEXT_IDLE_TRIM=0` opts out. The
+ * runtime reads it when the process starts, so only a process denext starts itself can get it;
+ * every other verb (`dev`, `test`, `job`, …) gets nothing.
+ *
+ * @param command The verb.
+ * @param dir The project directory (its config's opt-out is read as text, before any import).
+ * @param marker The toolchain the child runs (`undefined`: stock Deno).
+ * @returns The variables to add.
+ */
+export async function startIdleTrimEnv(
+  command: CommandSpec,
+  dir: string,
+  marker: string | undefined,
+): Promise<Record<string, string>> {
+  if (!servesInProcess(command) || command.name !== "start") return {};
+  return idleTrimEnv({
+    runtime: marker,
+    configOff: await configDisablesIdleTrim(dir),
+    env: readEnv,
+  });
+}
+
+/**
  * Run a verb that executes project code on denext's Deno toolchain — the decision is
  * {@linkcode maybeReexecToolchain} (src/cli/self-exec.ts); this wires it to the process: the same
  * invocation re-runs under the toolchain binary with this process's permission grants, stdio and
@@ -405,7 +434,11 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
           ),
         ],
         entrypointArg(entryUrl()),
-        { ...env, DENEXT_TOOLCHAIN_ACTIVE: marker },
+        {
+          ...env,
+          ...await startIdleTrimEnv(command, gateDir(command, ctx), marker),
+          DENEXT_TOOLCHAIN_ACTIVE: marker,
+        },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
@@ -549,7 +582,12 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   // so config helpers don't refuse a runtime secret the build environment doesn't have.
   if (command.name === "build" || command.name === "export") markBuildPhase();
   const dir = gateDir(command, ctx);
-  if (await maybeReexecPinned(dir)) return true;
+  const pinnedEnv = await startIdleTrimEnv(
+    command,
+    dir,
+    childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
+  );
+  if (await maybeReexecPinned(dir, pinnedEnv)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   // `doctor` reports leaked css-shim entries instead of silently healing them.

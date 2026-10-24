@@ -24,6 +24,9 @@ Environment=DENEXT_LOG=json
 # headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
 # per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
 Environment=DENEXT_TRUST_PROXY=1
+# Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
+# GC, then malloc_trim). DENO_UNSTABLE_IDLE_TRIM=0 in the env file below turns it off.
+Environment=DENO_UNSTABLE_IDLE_TRIM=1
 EnvironmentFile=-/etc/shop/env
 ExecStart=/srv/shop/.deno/bin/deno run --allow-net-connect --allow-net-listen=127.0.0.1:3000 --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start . --host 127.0.0.1
 Restart=always

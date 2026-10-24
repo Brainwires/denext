@@ -52,6 +52,7 @@ import {
   signCompiledBinary,
 } from "./compile-sign.ts";
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
+import { idleTrimCompileFlags, readEnv } from "./idle-trim.ts";
 import {
   carryNpmrc,
   type CompileLock,
@@ -723,7 +724,15 @@ export async function compileApp(
     "compile",
     "--no-check",
     "--unstable-sloppy-imports",
-    ...(options.deno ? [] : toolchainCompileFlags(toolchainVersion())),
+    ...(options.deno ? [] : [
+      ...toolchainCompileFlags(toolchainVersion()),
+      // The production server's idle trim, baked in (src/build/idle-trim.ts).
+      ...idleTrimCompileFlags({
+        runtime: toolchainVersion(),
+        configOff: paths.config?.start?.idleTrim === false,
+        env: readEnv,
+      }),
+    ]),
     ...permissions,
     ...minDepAgeArgs(),
     "--config",

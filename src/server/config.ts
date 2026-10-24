@@ -1505,6 +1505,23 @@ export interface DesktopWindowConfig {
   resizable?: boolean;
 }
 
+/** The production server's settings (see {@link DenextConfig.start}). */
+export interface StartConfig {
+  /**
+   * Hand the memory a load burst leaves behind back to the OS once the server goes idle: after
+   * the event loop has gone a second without work, a full V8 GC and then `malloc_trim(0)` (at most
+   * once per idle period, 10 s apart, and after the first only when the resident memory grew by
+   * 16 MB). On by default for `denext start`, the `build --compile` executable, and the Docker
+   * image and systemd unit the generators write, when they run on denext's Deno from runtime
+   * 3.0.0-rc.5 — never for `dev`, tests or jobs. It does anything on glibc Linux only. `false`
+   * turns it off, as does `DENEXT_IDLE_TRIM=0` in the environment. See
+   * {@link https://denext.dev/docs/deployment-targets#idle-memory-trim}.
+   *
+   * @default true
+   */
+  idleTrim?: boolean;
+}
+
 /** `denext build --compile` settings (see {@link DenextConfig.compile}). */
 export interface CompileConfig {
   /**
@@ -2214,6 +2231,12 @@ export interface DenextConfig {
    * {@link https://denext.dev/docs/deployment-targets#a-single-binary-with-denext-build---compile}.
    */
   compile?: CompileConfig;
+  /**
+   * The production server (`denext start`, the `build --compile` executable, the generated Docker
+   * image and systemd unit): its idle memory trim. See
+   * {@link https://denext.dev/docs/deployment-targets#idle-memory-trim}.
+   */
+  start?: StartConfig;
   /**
    * Deploy adapter: `denext build` runs its `prepare` with the typed deploy manifest
    * (`.denext/deploy-manifest.json`) after every build, and `denext deploy` pushes with it. A

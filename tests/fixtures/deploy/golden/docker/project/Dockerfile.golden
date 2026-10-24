@@ -28,6 +28,11 @@ RUN mkdir -p /deno-dir/toolchain-bin && \
   ln -sf "$(deno run -A --config deno.json jsr:@denext/denext@^4.1.0/cli toolchain path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH
 
+# Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
+# GC, then malloc_trim; denext's Deno toolchain from runtime 3.0.0-rc.5). Opt out with
+# `start: { idleTrim: false }` in denext.config and regenerate, or `-e DENO_UNSTABLE_IDLE_TRIM=0`.
+ENV DENO_UNSTABLE_IDLE_TRIM=1
+
 # One access-log line per request (JSON, with its request id; every response carries the id in
 # x-request-id). Set DENEXT_LOG=1 for a compact human line, or remove it to log none.
 ENV DENEXT_LOG=json

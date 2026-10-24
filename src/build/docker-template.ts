@@ -51,6 +51,13 @@ export interface DockerOptions extends StackOptions {
    * runs its server on, has the split (3.0.0-rc.2 or later).
    */
   readonly netSplit?: boolean;
+  /**
+   * Run the server with denext's Deno's idle trim (`ENV DENO_UNSTABLE_IDLE_TRIM=1`): a full GC and
+   * `malloc_trim(0)` once the event loop goes idle. `resolveDocker()` sets it when the pinned
+   * toolchain has it (3.0.0-rc.5 or later) and the project does not opt out
+   * (`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0`). Default: off.
+   */
+  readonly idleTrim?: boolean;
 }
 
 /** One file a Docker regeneration would produce, next to what is on disk today. */
@@ -203,6 +210,21 @@ ENV PATH=/deno-dir/toolchain-bin:$PATH
 }
 
 /**
+ * The server's idle trim ({@linkcode DockerOptions.idleTrim}), or nothing. `ENV` rather than a
+ * flag on the `CMD`, so the `deno task start` fallback gets it too; any other `deno` the container
+ * runs (the health probe) exits long before its loop could go idle.
+ */
+function idleTrimLayer(options: DockerOptions): string {
+  if (!options.idleTrim) return "";
+  return `# Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
+# GC, then malloc_trim; denext's Deno toolchain from runtime 3.0.0-rc.5). Opt out with
+# \`start: { idleTrim: false }\` in denext.config and regenerate, or \`-e DENO_UNSTABLE_IDLE_TRIM=0\`.
+ENV DENO_UNSTABLE_IDLE_TRIM=1
+
+`;
+}
+
+/**
  * For a Gleam app: the CA certificates the Gleam compiler's package fetch (TLS) needs, which the
  * `denoland/deno` image doesn't ship. Installed as root, before the build runs as `deno`.
  */
@@ -238,7 +260,9 @@ RUN deno install
 COPY --chown=deno:deno . .
 RUN deno task build
 ${toolchainLayer(options)}
-# One access-log line per request (JSON, with its request id; every response carries the id in
+${
+    idleTrimLayer(options)
+  }# One access-log line per request (JSON, with its request id; every response carries the id in
 # x-request-id). Set DENEXT_LOG=1 for a compact human line, or remove it to log none.
 ENV DENEXT_LOG=json
 

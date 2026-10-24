@@ -229,6 +229,45 @@ the overlap window two builds serve at once; each page links the content-hashed
 chunks of the build that rendered it, so the mix is safe as long as the old
 image keeps serving until it has drained.
 
+## Idle memory trim
+
+A long-running server's resident memory after a load burst is mostly memory glibc's allocator
+keeps after the JavaScript heap has let go of it. denext's Deno from runtime `3.0.0-rc.5` can hand
+it back: once the event loop has gone a second without work, it runs a full V8 GC and then
+`malloc_trim(0)`. denext turns that on for the production server only:
+
+| Where                                                  | How                                          |
+| ------------------------------------------------------ | -------------------------------------------- |
+| `denext start`, when it starts the server process      | `DENO_UNSTABLE_IDLE_TRIM=1` in its env       |
+| `denext build --compile`                               | `--unstable-idle-trim` baked into the binary |
+| `denext generate docker`, the `docker` / `fly` presets | `ENV DENO_UNSTABLE_IDLE_TRIM=1` in the image |
+| the `genericHost()` systemd unit                       | `Environment=DENO_UNSTABLE_IDLE_TRIM=1`      |
+
+`denext dev`, tests, `denext job`, the desktop runtime and stock Deno never get it, and it does
+anything on glibc Linux only (macOS, Windows and musl ignore it). `denext start` can set it only on
+a process it starts itself (the switch onto the toolchain, a compiled `denext`'s run of the
+project's pinned denext). A `start` task run straight on the toolchain (`denext task start`)
+starts with whatever its environment says, so run it as `DENO_UNSTABLE_IDLE_TRIM=1 denext task
+start` to get it there.
+
+The trim runs between event loop polls, never while JavaScript runs, at most once per idle period,
+never twice within 10 s, and after the first only when the resident memory has grown 16 MB since the
+last one left it, so a server woken by its own timers is not collected over and over. A request
+that arrives during a trim waits for it once: on `examples/hello` after a load burst the GC took
+112-217 ms and `malloc_trim` 9-26 ms (up to about 240 ms); a small handler's trim takes 8-20 ms.
+Measured on an 8-vCPU Linux host (Brainwires/deno DENEXT.md item 104):
+
+| Server           | Resident after a burst, off | After 3 s idle, on | After 30 s idle, off |
+| ---------------- | --------------------------- | ------------------ | -------------------- |
+| `examples/hello` | 541-652 MB                  | 172 MB             | 400-451 MB           |
+| a plain handler  | 139-148 MB                  | 65 MB              | 139-148 MB           |
+
+Throughput and p99 latency were unchanged within run-to-run noise. Turn it off with
+`start: { idleTrim: false }` in `denext.config.ts`, or `DENEXT_IDLE_TRIM=0` in the environment of
+`denext start` (or of the `build --compile` / `generate` run, since a baked flag and a generated
+file keep what they were written with); an image or unit already written takes
+`DENO_UNSTABLE_IDLE_TRIM=0`. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
+
 ## A single binary with `denext build --compile`
 
 ```sh

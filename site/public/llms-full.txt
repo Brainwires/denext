@@ -972,6 +972,12 @@ plugin teardowns, then `instrumentation.ts`'s `onShutdown()`. Close app-owned re
 for example `export async function onShutdown() { await sql.end(); }`. The process exits by
 `DENEXT_SHUTDOWN_DRAIN_MS` even if a pool, timer or socket stays open.
 
+**Idle memory trim:** on denext's Deno from runtime 3.0.0-rc.5 the production server (the process
+`denext start` starts, the `build --compile` binary, the generated Docker image / systemd unit)
+runs a full GC and `malloc_trim(0)` once its event loop has been idle for a second (glibc Linux;
+at most once per idle period, 10 s apart, then only after 16 MB of growth). Never for `dev`, tests
+or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
+
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
 throw is a crash; hold a resource with `await ctx.stopped`; `ctx.signal` aborts on stop). The
