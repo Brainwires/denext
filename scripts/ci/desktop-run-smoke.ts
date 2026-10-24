@@ -48,7 +48,7 @@ async function pump(
 const pumps = Promise.all([pump(child.stdout, Deno.stdout), pump(child.stderr, Deno.stderr)]);
 
 const problems: string[] = [];
-let timer: number | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined;
 const outcome = await Promise.race([
   listening.then(() => "listening" as const),
   child.status.then(() => "exited" as const),
