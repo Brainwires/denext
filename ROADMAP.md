@@ -13,6 +13,32 @@
 - **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
 
+## Supply chain (lifecycle-script jail)
+
+Low findings from the 4.8 supply-chain audit:
+
+- **`denext add` leaves an exception behind when `deno add` fails.** The exceptions go into
+  deno.json before `deno add` runs its scripts; put the file back when the add exits non-zero.
+- **Other `@denext` exemptions from the dependency-age hold go unnoticed.** `doctor` and `upgrade`
+  look for the literal `"jsr:@denext/*"` denext once wrote; flag `"jsr:@denext/denext"` and other
+  `@denext` entries too (denext never writes them).
+- **The user-level `~/.npmrc`.** The runtime reads `jail-scripts` / `paranoid` from it too;
+  `readJailSetting` reads only the project's `.npmrc` and the environment.
+- **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail**
+  (DENEXT.md item 108). `readJailSetting` still counts it as on, so next to `jail-scripts=false`
+  denext writes exceptions and `doctor` flags missing ones for a jail that is off.
+- **Narrow existing exceptions on the move to rc.6.** A built-in entry already configured as
+  `net: true` stays so; `doctor` (or `upgrade`) could offer the host list and the `~` cache.
+- **npm (`package.json` `workspaces`) members** are not read for dependencies; only a deno.json
+  `workspace` is.
+- **An unknown package's network failure** is pointed at `net: true`; on rc.6 suggest listing
+  the hosts from the log instead.
+- **The runtime in use, not the pin.** The jail planning assumes the pinned runtime; under
+  `DENEXT_DENO=stock` or another binary it should read that runtime's version.
+- **`.npmrc` next to a generated build config.** `module-config.json` / `css-config.json` now
+  carry `supplyChain`; check whether a build child still finds the project's `.npmrc` (`paranoid`
+  set there) from a config in `.denext/`, without copying a file that may hold credentials.
+
 ## Deno Desktop
 
 - **A Windows Hello passkey ceremony in the release checks:** the Windows test machine is a

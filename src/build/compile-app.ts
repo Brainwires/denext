@@ -41,6 +41,7 @@ import {
 import { relocatableImportMap } from "./desktop-import-map.ts";
 import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
+import { supplyChainConfig } from "./workspace-imports.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
 import { NET_SPLIT_RELEASE, netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
@@ -489,6 +490,8 @@ async function writeCompileConfig(
       ...relativeCssRedirects(buildOnlyStubs(), configUrl),
     },
     ...resolutionSettings(appCfg, lock),
+    // the project's npm supply-chain policy (paranoid, advisoryCheck, the jail) holds here too
+    ...await supplyChainConfig(paths.configPath),
   };
   await Deno.writeTextFile(file, `${JSON.stringify(config, null, 2)}\n`);
   return { file, lock };

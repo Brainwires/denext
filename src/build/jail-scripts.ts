@@ -16,10 +16,11 @@
 // itself turn the jail on.
 
 import { parse as parseJsonc } from "@std/jsonc";
-import { dirname, join, relative, resolve, SEPARATOR } from "@std/path";
+import { dirname, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
 import { compareDenoVersions, isDenextReleaseVersion } from "./deno-version.ts";
 import { stripAnsi } from "./explain/parse.ts";
+import { workspaceOf } from "./workspace-imports.ts";
 import {
   JAIL_SCRIPT_EXCEPTIONS,
   type JailExceptionEntry,
@@ -29,6 +30,26 @@ import {
 
 /** The first release of denext's Deno that jails dependencies' lifecycle scripts by default. */
 export const JAIL_DEFAULT_RELEASE = "3.0.0-rc.5";
+
+/**
+ * The first release of denext's Deno that takes a per-package host list (`"net": ["host"]`) and
+ * `~`-relative `write` paths in `jailScripts.packages` (DENEXT.md item 108). On older runtimes a
+ * host list is a config error and `~` a literal directory name, so neither is written there.
+ */
+const JAIL_HOSTS_RELEASE = "3.0.0-rc.6";
+
+/**
+ * Whether a release of denext's own Deno takes per-package host lists and `~` write paths.
+ *
+ * @param version The runtime version (default: the checked-in toolchain pin's).
+ * @returns Whether {@linkcode JAIL_HOSTS_RELEASE} or later.
+ */
+export function jailHostListsSupported(
+  version: string | undefined = toolchainPin.version,
+): boolean {
+  return version !== undefined && isDenextReleaseVersion(version) &&
+    compareDenoVersions(version, JAIL_HOSTS_RELEASE) >= 0;
+}
 
 /** The docs section on the jail. */
 export const JAIL_DOCS_URL = "https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail";
@@ -57,6 +78,8 @@ export interface JailSetting {
   readonly source?: string;
   /** deno.json's `supplyChain.jailScripts.packages`. */
   readonly packages: Readonly<Record<string, JailPackageException>>;
+  /** Where `paranoid` is turned on, when it is (it refuses scripts the OS can't confine). */
+  readonly paranoid?: string;
 }
 
 /** Where a project's jail settings are read from. */
@@ -126,11 +149,14 @@ export function readJailSetting(inputs: JailInputs): JailSetting {
     ],
     ["npm_config_jail_scripts", boolValue(npmEnv(inputs.env, "jail-scripts"))],
   ];
+  const pkgs = packages as JailSetting["packages"];
+  const paranoid = votes.find(([name, v]) => v === true && name.includes("paranoid"))?.[0];
+  const extra = paranoid ? { paranoid } : {};
   const on = votes.find(([, v]) => v === true);
-  if (on) return { state: "on", source: on[0], packages: packages as JailSetting["packages"] };
+  if (on) return { state: "on", source: on[0], packages: pkgs, ...extra };
   const off = votes.find(([, v]) => v === false);
-  if (off) return { state: "off", source: off[0], packages: packages as JailSetting["packages"] };
-  return { state: "default", packages: packages as JailSetting["packages"] };
+  if (off) return { state: "off", source: off[0], packages: pkgs, ...extra };
+  return { state: "default", packages: pkgs, ...extra };
 }
 
 /**
@@ -199,15 +225,30 @@ function denoJsonDeps(deno: Record<string, unknown> | null): string[] {
 
 /** What the jail planning reads from a project. */
 export interface JailProject {
-  /** The project directory. */
+  /**
+   * The directory whose deno.json holds `supplyChain`: the Deno workspace's root when the project
+   * is a member (the runtime reads `supplyChain` from the root alone), else the project itself.
+   * `write` paths are relative to it.
+   */
   readonly dir: string;
+  /** The directory the command ran on (a workspace member, or {@linkcode dir} itself). */
+  readonly appDir: string;
+  /** Every package directory the root installs for: the root, then each workspace member. */
+  readonly packageDirs: readonly string[];
+  /**
+   * A workspace member's own config that sets `supplyChain`, which the runtime ignores (with a
+   * warning) — null when there is none.
+   */
+  readonly ignoredMemberConfig: string | null;
   /** The deno.json (else deno.jsonc) path, or null when there is none. */
   readonly configPath: string | null;
   /** The parsed config, or null. */
   readonly denoJson: Record<string, unknown> | null;
   /** The parsed package.json, or null. */
   readonly packageJson: Record<string, unknown> | null;
-  /** The npm packages the project depends on directly. */
+  /** Each package directory's parsed package.json (null when it has none), by directory. */
+  readonly packageJsons: ReadonlyMap<string, Record<string, unknown> | null>;
+  /** The npm packages the project (every workspace member included) depends on directly. */
   readonly deps: ReadonlySet<string>;
   /** The jail settings. */
   readonly setting: JailSetting;
@@ -245,25 +286,51 @@ export async function readJailProject(
   options: ReadJailProjectOptions = {},
 ): Promise<JailProject> {
   const fs = options.fs ?? DENO_FS;
-  let configPath: string | null = null;
-  let denoJson: Record<string, unknown> | null = null;
+  const appDir = resolve(dir);
+  const ws = await workspaceOf(appDir).catch(() => null);
+  const root = ws?.root ?? appDir;
+  const { configPath, denoJson } = await configIn(fs, root);
+  const packageDirs = [root, ...(ws?.members ?? []).filter((m) => m !== root)];
+  const packageJsons = new Map<string, Record<string, unknown> | null>();
+  const allDeps: string[] = [];
+  for (const pkgDir of packageDirs) {
+    const pkg = await readObject(fs, join(pkgDir, "package.json"));
+    packageJsons.set(pkgDir, pkg);
+    const config = pkgDir === root ? denoJson : (await configIn(fs, pkgDir)).denoJson;
+    allDeps.push(...packageJsonDeps(pkg), ...denoJsonDeps(config));
+  }
+  const own = appDir === root ? null : await configIn(fs, appDir);
+  const ignoredMemberConfig = own?.denoJson?.supplyChain !== undefined ? own.configPath : null;
+  const setting = readJailSetting({
+    denoJson,
+    npmrc: await readOr(fs, join(root, ".npmrc")),
+    env: options.env ?? processEnv,
+  });
+  return {
+    dir: root,
+    appDir,
+    packageDirs,
+    ignoredMemberConfig,
+    configPath,
+    denoJson,
+    packageJson: packageJsons.get(root) ?? null,
+    packageJsons,
+    deps: new Set(options.deps ?? allDeps),
+    setting,
+  };
+}
+
+/** The deno.json (else deno.jsonc) in `dir` and its object (null for each when absent). */
+async function configIn(
+  fs: JailFs,
+  dir: string,
+): Promise<{ configPath: string | null; denoJson: Record<string, unknown> | null }> {
   for (const name of ["deno.json", "deno.jsonc"]) {
     const path = join(dir, name);
     if ((await readOr(fs, path)) === null) continue;
-    configPath = path;
-    denoJson = await readObject(fs, path);
-    break;
+    return { configPath: path, denoJson: await readObject(fs, path) };
   }
-  const packageJson = await readObject(fs, join(dir, "package.json"));
-  const deps = new Set(
-    options.deps ?? [...packageJsonDeps(packageJson), ...denoJsonDeps(denoJson)],
-  );
-  const setting = readJailSetting({
-    denoJson,
-    npmrc: await readOr(fs, join(dir, ".npmrc")),
-    env: options.env ?? processEnv,
-  });
-  return { dir, configPath, denoJson, packageJson, deps, setting };
+  return { configPath: null, denoJson: null };
 }
 
 /** A built-in entry the project needs, with its exception resolved for the project. */
@@ -274,6 +341,11 @@ export interface JailRequirement {
   readonly trigger: string;
   /** The exception to write (the entry's, plus the project directories it needs). */
   readonly exception: JailPackageException;
+  /**
+   * Project directories the entry would write that were left out because they are not narrow:
+   * an absolute path, or the project itself or a directory above it (`.`, `..`).
+   */
+  readonly refused?: readonly string[];
 }
 
 /** A path relative to the project, `/`-separated, as deno.json's `write` takes it. */
@@ -294,12 +366,26 @@ async function gitHooksDir(fs: JailFs, dir: string): Promise<string | null> {
   }
 }
 
-/** package.json's `msw.workerDirectory` entries. */
-function mswWorkerDirs(pkg: Record<string, unknown> | null): string[] {
+/** package.json's `msw.workerDirectory` entries, relative to `root` (the package is in `pkgDir`). */
+function mswWorkerDirs(
+  pkg: Record<string, unknown> | null,
+  pkgDir: string,
+  root: string,
+): string[] {
   const dirs = objectOf(pkg?.msw)?.workerDirectory;
   const list = Array.isArray(dirs) ? dirs : [dirs];
   return list.filter((d): d is string => typeof d === "string" && d.trim() !== "")
-    .map((d) => d.trim().replace(/^\.\//, "").replace(/\/+$/, ""));
+    .map((d) => projectRelative(root, resolve(pkgDir, d.trim())));
+}
+
+/**
+ * Whether a resolved `write` directory is narrow enough to grant on the project's behalf: not
+ * absolute (another drive on Windows), and not the project itself or a directory above it — a
+ * grant that covers the whole project (or more) would undo the jail.
+ */
+function narrowWriteTarget(rel: string): boolean {
+  if (rel === "" || isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) return false;
+  return !rel.split("/").every((seg) => seg === "." || seg === ".." || seg === "");
 }
 
 /** A Prisma generator `output` (`output = "../generated/client"`), per generator block. */
@@ -324,16 +410,17 @@ function generatorOutputs(text: string, schemaPath: string, dir: string): string
   return out;
 }
 
-/** The Prisma schema's generator outputs outside node_modules, relative to `dir`. */
+/** The Prisma schema's generator outputs outside node_modules, relative to `root`. */
 async function prismaOutputs(
   fs: JailFs,
-  dir: string,
+  pkgDir: string,
+  root: string,
   pkg: Record<string, unknown> | null,
 ): Promise<string[]> {
   for (const candidate of prismaSchemaCandidates(pkg)) {
-    const path = resolve(dir, candidate);
+    const path = resolve(pkgDir, candidate);
     const text = await readOr(fs, path);
-    if (text !== null) return generatorOutputs(text, path, dir);
+    if (text !== null) return generatorOutputs(text, path, root);
   }
   return [];
 }
@@ -344,29 +431,73 @@ async function writeTargetDirs(
   project: JailProject,
   target: JailWriteTarget,
 ): Promise<string[]> {
-  if (target === "msw-worker") return mswWorkerDirs(project.packageJson);
-  if (target === "prisma-output") return await prismaOutputs(fs, project.dir, project.packageJson);
-  const hooks = await gitHooksDir(fs, project.dir);
-  return hooks ? [hooks] : [];
+  if (target === "git-hooks") {
+    const hooks = await gitHooksDir(fs, project.dir);
+    return hooks ? [hooks] : [];
+  }
+  const out: string[] = [];
+  for (const pkgDir of project.packageDirs) {
+    const pkg = project.packageJsons.get(pkgDir) ?? null;
+    out.push(
+      ...target === "msw-worker"
+        ? mswWorkerDirs(pkg, pkgDir, project.dir)
+        : await prismaOutputs(fs, pkgDir, project.dir, pkg),
+    );
+  }
+  return out;
 }
 
-/** The entry's exception with its write targets resolved, or null when it needs nothing. */
+/**
+ * A built-in entry's exception for a runtime, before its project directories: the host list and
+ * the `~` download cache where the runtime takes them (DENEXT.md item 108), else `net: true`.
+ *
+ * @param entry The built-in entry.
+ * @param version The runtime version (default: the toolchain pin's).
+ * @returns The exception.
+ */
+export function entryException(
+  entry: JailExceptionEntry,
+  version?: string,
+): JailPackageException {
+  const hostLists = jailHostListsSupported(version);
+  const cache = hostLists ? entry.cache : undefined;
+  const write = [...new Set([...entry.exception.write ?? [], ...cache ? [cache.path] : []])];
+  const env = [...new Set([...entry.exception.env ?? [], ...cache ? [cache.env] : []])].sort();
+  const net = !entry.exception.net
+    ? undefined
+    : hostLists && entry.hosts?.length
+    ? [...new Set(entry.hosts)].sort()
+    : true;
+  return {
+    ...(env.length ? { env } : {}),
+    ...(write.length ? { write } : {}),
+    ...(net !== undefined ? { net } : {}),
+  };
+}
+
+/**
+ * The entry's exception for the runtime with its project directories resolved, and the
+ * directories left out as too broad; the exception is null when it needs nothing.
+ */
 async function resolvedException(
   fs: JailFs,
   project: JailProject,
   entry: JailExceptionEntry,
-): Promise<JailPackageException | null> {
-  const write = [...entry.exception.write ?? []];
+  version: string | undefined,
+): Promise<{ exception: JailPackageException | null; refused: string[] }> {
+  const found: string[] = [];
   for (const target of entry.writeTargets ?? []) {
-    write.push(...await writeTargetDirs(fs, project, target));
+    found.push(...await writeTargetDirs(fs, project, target));
   }
-  const unique = [...new Set(write)];
+  const refused = [...new Set(found.filter((w) => !narrowWriteTarget(w)))];
+  const base = entryException(entry, version);
+  const write = [...new Set([...base.write ?? [], ...found.filter(narrowWriteTarget)])];
   const exception: JailPackageException = {
-    ...(entry.exception.env?.length ? { env: [...entry.exception.env] } : {}),
-    ...(unique.length ? { write: unique } : {}),
-    ...(entry.exception.net ? { net: true } : {}),
+    ...(base.env ? { env: base.env } : {}),
+    ...(write.length ? { write } : {}),
+    ...(base.net !== undefined ? { net: base.net } : {}),
   };
-  return Object.keys(exception).length ? exception : null;
+  return { exception: Object.keys(exception).length ? exception : null, refused };
 }
 
 /**
@@ -379,15 +510,32 @@ async function resolvedException(
 export async function requiredJailExceptions(
   project: JailProject,
   fs: JailFs = DENO_FS,
+  version?: string,
 ): Promise<JailRequirement[]> {
   const out: JailRequirement[] = [];
   for (const entry of JAIL_SCRIPT_EXCEPTIONS) {
     const trigger = [entry.name, ...entry.via ?? []].find((n) => project.deps.has(n));
     if (!trigger) continue;
-    const exception = await resolvedException(fs, project, entry);
-    if (exception) out.push({ entry, trigger, exception });
+    const { exception, refused } = await resolvedException(fs, project, entry, version);
+    if (exception) out.push({ entry, trigger, exception, ...refused.length ? { refused } : {} });
+    else if (refused.length) out.push({ entry, trigger, exception: {}, refused });
   }
   return out;
+}
+
+/** Whether a requirement has anything to write (one whose every directory was refused has not). */
+export function grantsSomething(r: JailRequirement): boolean {
+  return Object.keys(r.exception).length > 0;
+}
+
+/** The lines saying which too-broad directories were left out of the exceptions. */
+function refusedLines(reqs: readonly JailRequirement[]): string[] {
+  return reqs.filter((r) => r.refused?.length).map((r) =>
+    `${r.entry.name}: not granting write to ${
+      r.refused!.map((w) => `"${w}"`).join(", ")
+    } (the whole project or beyond, or another drive); list the narrower directory it needs ` +
+    `under its "write" by hand`
+  );
 }
 
 /** What {@linkcode applyJailExceptions} did. */
@@ -446,7 +594,7 @@ export function jailSnippet(missing: readonly JailRequirement[]): string {
 
 /** One line per requirement: the package, why, and what the exception cannot fix. */
 function requirementLines(reqs: readonly JailRequirement[]): string[] {
-  return reqs.flatMap((r) => [
+  return reqs.filter(grantsSomething).flatMap((r) => [
     `${r.entry.name}${r.trigger === r.entry.name ? "" : ` (via ${r.trigger})`}: ${r.entry.reason}`,
     ...(r.entry.caveat ? [`  ${r.entry.caveat}`] : []),
   ]);
@@ -487,10 +635,60 @@ async function ensureWriteDirs(
 ): Promise<void> {
   for (const r of missing) {
     for (const w of r.exception.write ?? []) {
-      if (w.startsWith("..")) continue;
+      // `~` is the runtime's (it creates those itself); above the project is not ours to create
+      if (w.startsWith("..") || w.startsWith("~")) continue;
       await fs.mkdir(join(dir, w), { recursive: true }).catch(() => {});
     }
   }
+}
+
+/** The fields every {@linkcode JailReport} shares. */
+type JailReportBase = Pick<JailReport, "effective" | "required" | "missing">;
+
+/**
+ * The report when nothing is to be written: no listed dependency, the jail off or not yet on, or
+ * every exception already configured. Null when some exception is missing.
+ */
+function unwrittenReport(
+  base: JailReportBase,
+  setting: JailSetting,
+  refused: readonly string[],
+): JailReport | null {
+  const { effective, required, missing } = base;
+  if (required.length === 0) {
+    const say = effective && refused.length > 0;
+    return { ...base, action: say ? "manual" : "none", lines: say ? [...refused] : [] };
+  }
+  if (setting.state === "off") {
+    return {
+      ...base,
+      action: "off",
+      lines: [
+        `lifecycle scripts are not jailed here (${setting.source} turns the jail off); ` +
+        `${names(required)} would need an exception under it`,
+      ],
+    };
+  }
+  if (!effective) {
+    return {
+      ...base,
+      action: "pending",
+      lines: [
+        `${names(required)} will need a lifecycle-script jail exception once dependencies' ` +
+        `install scripts run jailed (on by default from denext's runtime ${JAIL_DEFAULT_RELEASE}, ` +
+        "or with jail-scripts=true); `denext doctor` flags it then",
+      ],
+    };
+  }
+  if (missing.length > 0) return null;
+  return {
+    ...base,
+    action: "configured",
+    lines: [
+      `lifecycle-script jail exceptions already configured for ${names(required)}`,
+      ...refused,
+    ],
+  };
 }
 
 /**
@@ -510,39 +708,14 @@ export async function applyJailExceptions(
 ): Promise<JailReport> {
   const fs = options.fs ?? DENO_FS;
   const project = await readJailProject(dir, options);
-  const required = await requiredJailExceptions(project, fs);
+  const all = await requiredJailExceptions(project, fs, options.version);
+  const refused = refusedLines(all);
+  const required = all.filter(grantsSomething);
   const effective = jailEffective(project.setting, options.version);
   const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
   const base = { effective, required, missing };
-  if (required.length === 0) return { ...base, action: "none", lines: [] };
-  if (project.setting.state === "off") {
-    return {
-      ...base,
-      action: "off",
-      lines: [
-        `lifecycle scripts are not jailed here (${project.setting.source} turns the jail off); ` +
-        `${names(required)} would need an exception under it`,
-      ],
-    };
-  }
-  if (!effective) {
-    return {
-      ...base,
-      action: "pending",
-      lines: [
-        `${names(required)} will need a lifecycle-script jail exception once dependencies' ` +
-        `install scripts run jailed (on by default from denext's runtime ${JAIL_DEFAULT_RELEASE}, ` +
-        "or with jail-scripts=true); `denext doctor` flags it then",
-      ],
-    };
-  }
-  if (missing.length === 0) {
-    return {
-      ...base,
-      action: "configured",
-      lines: [`lifecycle-script jail exceptions already configured for ${names(required)}`],
-    };
-  }
+  const early = unwrittenReport(base, project.setting, refused);
+  if (early) return early;
   const written = options.edit === false || project.configPath === null ? null : await editedConfig(
     await fs.readTextFile(project.configPath),
     project.denoJson,
@@ -559,11 +732,12 @@ export async function applyJailExceptions(
         "exception; add this to deno.json (" + JAIL_DOCS_URL + "):",
         ...snippet.split("\n").map((l) => `  ${l}`),
         ...requirementLines(missing),
+        ...refused,
       ],
     };
   }
   await fs.writeTextFile(project.configPath!, written);
-  await ensureWriteDirs(fs, dir, missing);
+  await ensureWriteDirs(fs, project.dir, missing);
   return {
     ...base,
     action: "written",
@@ -573,6 +747,7 @@ export async function applyJailExceptions(
       `${names(missing)} (their install scripts need more than the lifecycle-script jail allows; ` +
       "the jail stays on)",
       ...requirementLines(missing),
+      ...refused,
     ],
   };
 }
@@ -600,19 +775,36 @@ export interface JailFailure {
 const FAILED_SCRIPT =
   /error: script '([^']+)' in '((?:@[^@'/]+\/)?[^@']+)@([^']+)' failed with exit code (\d+)/g;
 
-/** The jail's own messages and the errors a confined script meets, by what they mean. */
-const SIGNS: readonly [JailSign, RegExp][] = [
+/**
+ * The jail's own messages and Deno's permission clamp, by what they mean: what every `deno` in
+ * the jail says on every OS.
+ */
+const CLAMP_SIGNS: readonly [JailSign, RegExp][] = [
   ["npm", /running a real np[mx] is not allowed in a jailed npm lifecycle script/],
   ["deno", /deno subcommand is not allowed in a jailed npm lifecycle script/],
-  [
-    "net",
-    /Requires (?:net|import) access|NotCapable[^\n]*\bnet\b|getaddrinfo|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|fetch failed/i,
-  ],
+  ["net", /Requires (?:net|import) access|NotCapable[^\n]*\bnet\b/],
+  ["write", /Requires write access|NotCapable[^\n]*\bwrite\b/],
+];
+
+/**
+ * The errors the OS sandbox gives a confined program (`curl`, a compiler). Where the OS can't
+ * confine the script's other programs (Windows) these mean something else (a locked file, a
+ * real network failure), so they are not read as the jail's there.
+ */
+const OS_SIGNS: readonly [JailSign, RegExp][] = [
+  ["net", /getaddrinfo|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|fetch failed/i],
   [
     "write",
-    /Requires write access|NotCapable[^\n]*\bwrite\b|EACCES|EPERM|EROFS|Operation not permitted|permission denied|read-only file system/i,
+    /EACCES|EPERM|EROFS|Operation not permitted|permission denied|read-only file system/i,
   ],
 ];
+
+/** The signs `block` shows, in a stable order, each once. */
+function signsIn(block: string, os: typeof Deno.build.os): JailSign[] {
+  const table = os === "windows" ? CLAMP_SIGNS : [...CLAMP_SIGNS, ...OS_SIGNS];
+  const found = new Set(table.filter(([, re]) => re.test(block)).map(([sign]) => sign));
+  return (["npm", "deno", "net", "write"] as const).filter((sign) => found.has(sign));
+}
 
 /**
  * The dependencies' failed lifecycle scripts in an install's output (Deno's `error: script
@@ -620,9 +812,14 @@ const SIGNS: readonly [JailSign, RegExp][] = [
  * each with what the jail visibly stopped.
  *
  * @param output What `deno install` / `add` / `ci` printed.
+ * @param os The OS the install ran on (default: this one); on Windows only Deno's own clamp
+ *   messages count, since the OS doesn't confine the script's other programs there.
  * @returns The failures, in order.
  */
-export function jailFailures(output: string): JailFailure[] {
+export function jailFailures(
+  output: string,
+  os: typeof Deno.build.os = Deno.build.os,
+): JailFailure[] {
   const text = stripAnsi(output);
   const matches = [...text.matchAll(FAILED_SCRIPT)];
   return matches.map((m, i) => {
@@ -633,15 +830,15 @@ export function jailFailures(output: string): JailFailure[] {
       version: m[3],
       script: m[1],
       exitCode: Number(m[4]),
-      signs: SIGNS.filter(([, re]) => re.test(block)).map(([sign]) => sign),
+      signs: signsIn(block, os),
       ...(entry ? { entry } : {}),
     };
   });
 }
 
 /** The exception a failure points at: the built-in one, else one inferred from its signs. */
-function suggestedException(f: JailFailure): JailPackageException | null {
-  if (f.entry) return f.entry.exception;
+function suggestedException(f: JailFailure, version?: string): JailPackageException | null {
+  if (f.entry) return entryException(f.entry, version);
   if (f.signs.includes("net")) return { net: true };
   return null;
 }
@@ -652,9 +849,13 @@ function suggestedException(f: JailFailure): JailPackageException | null {
  * and no built-in entry are left out.
  *
  * @param failures From {@linkcode jailFailures}.
+ * @param version The runtime version (default: the toolchain pin's), for the exception's shape.
  * @returns One block of lines per failure the jail explains.
  */
-export function explainJailFailures(failures: readonly JailFailure[]): string[] {
+export function explainJailFailures(
+  failures: readonly JailFailure[],
+  version?: string,
+): string[] {
   const out: string[] = [];
   for (const f of failures) {
     if (f.signs.length === 0 && !f.entry) continue;
@@ -674,7 +875,7 @@ export function explainJailFailures(failures: readonly JailFailure[]): string[] 
         `(stopped: ${stopped})`,
     );
     if (f.entry) out.push(`  ${f.entry.reason}`);
-    const exception = suggestedException(f);
+    const exception = suggestedException(f, version);
     if (exception) {
       out.push(
         `  fix: deno.json "supplyChain": { "jailScripts": { "packages": { "${f.name}": ${

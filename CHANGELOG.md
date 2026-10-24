@@ -69,6 +69,28 @@ and this project adheres to
 
 ### Fixed
 
+- **Lifecycle-script jail exceptions are narrower and land where Deno reads them** (a
+  supply-chain audit of denext's jail integration):
+  - on runtime `3.0.0-rc.6` and later, the built-in exceptions grant each package's download
+    hosts (`"net": ["storage.googleapis.com"]`) instead of the whole network, and the browser
+    packages (puppeteer, Playwright's, Cypress) get their download cache as an explicit
+    `~/.cache/…` `write` plus its variable, so a browser download survives the jail's scratch
+    HOME. `denext doctor --install-log` suggests the same shape. Older runtimes keep `net: true`,
+    since they reject a host list and read `~` as a directory name;
+  - in a Deno workspace, `migrate`, `create` / `init`, `add` and `doctor` read and write the root
+    deno.json, where Deno reads `supplyChain` (a member's own is ignored), and consider every
+    member's dependencies. `denext doctor` says when a member sets its own `supplyChain`;
+  - a project directory that a package would write (msw's `workerDirectory`, a Prisma
+    generator's `output`) is no longer granted when it is the whole project, a directory above
+    it, or on another drive. denext names it for you to narrow by hand;
+  - `denext doctor` on Windows reads only Deno's own permission errors in an install log as the
+    jail's (an `EPERM` there is usually a locked file), notes that the OS can't confine a
+    script's other programs there, and flags a `paranoid` project with approved scripts, which
+    `paranoid` refuses to run on Windows;
+  - the configs denext generates for a build child (`module-config.json`, `css-config.json`, the
+    `--compile` config) carry the project's `supplyChain`, so `paranoid` and
+    `advisoryCheck: "required"` hold there too instead of Deno's defaults.
+
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,

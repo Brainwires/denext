@@ -546,8 +546,17 @@ root `package.json`, workspace members) are your code and are not jailed.
   under `paranoid` every opt-out is an error. denext never turns the jail off for you.
 - **Per-package exceptions** keep the jail on and widen it for one package: environment variables
   passed through, extra writable directories (relative to deno.json; create them first, Linux
-  skips a missing one) and the network. There is no per-host network list; a node-pre-gyp
-  package's declared `binary.host` is allowed by itself.
+  skips a missing one) and the network. From runtime `3.0.0-rc.6` `net` also takes the hosts the
+  scripts may reach (`"net": ["storage.googleapis.com"]`, enforced for every `deno` in the jail;
+  a program that isn't Deno, such as `curl`, can still reach any host), and a `write` path may
+  start with `~` (your home directory, resolved when the jail runs, so a checked-in deno.json
+  names no one's home). On older runtimes `net` is `true` or `false` only. A node-pre-gyp
+  package's declared `binary.host` is allowed by itself (not under `paranoid`; a host list
+  replaces it).
+- **Workspaces: the root deno.json only.** Deno reads `supplyChain` from the workspace root's
+  deno.json alone, as it does `allowScripts`: one `node_modules` is installed for every member. A
+  member's own `supplyChain` is ignored (with a warning), and relative `write` paths are resolved
+  against the root's directory.
 
 ```json
 {
@@ -555,8 +564,9 @@ root `package.json`, workspace members) are your code and are not jailed.
     "jailScripts": {
       "packages": {
         "puppeteer": {
-          "net": true,
-          "env": ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"]
+          "net": ["storage.googleapis.com"],
+          "env": ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"],
+          "write": ["~/.cache/puppeteer"]
         },
         "msw": { "write": ["public"] }
       }
@@ -565,13 +575,28 @@ root `package.json`, workspace members) are your code and are not jailed.
 }
 ```
 
-An exceptions object counts as asking for the jail: on Windows, where the OS can't confine the
-script's other programs, an install then prints a one-line warning saying so.
+(On runtime `3.0.0-rc.5`, puppeteer's entry is `"net": true` with the same `env` and no `write`.)
+Up to `3.0.0-rc.5` an exceptions object counts as asking for the jail: on Windows an install then
+prints a one-line warning that the script's other programs are not confined. From `3.0.0-rc.6` an
+object that only lists `packages` configures the default jail and prints nothing.
+
+**On Windows** the jail can't confine a script's other programs (`curl`, a compiler, a
+downloaded binary): the scrubbed environment, the scratch `HOME` and every `deno` the script
+starts are still jailed, so the exceptions are still needed, but a write or download by another
+program is not stopped. `paranoid` refuses to run an approved script where the OS can't confine
+it, so on Windows a `paranoid` project's approved install scripts don't run; `denext doctor`
+says so, and reads only Deno's own permission errors in an install log as the jail's there (an
+`EPERM` on Windows is usually a locked file).
 
 **denext writes the exceptions for you.** `denext migrate`, `denext create` / `init` (next to an
 existing `package.json`) and `denext add` find the dependencies in denext's built-in list below
 and, when the jail is on for the project, add the narrowest exception each needs to deno.json
-(your comments and existing entries stay). On a runtime that jails only on request they say which
+(your comments and existing entries stay): on runtime `3.0.0-rc.6` and later the package's
+download hosts instead of `net: true`, and the browser packages' cache under `~`. In a workspace
+they read every member's dependencies and write the root deno.json. A project directory a
+package would write (msw's `workerDirectory`, a Prisma generator's `output`) is never granted
+when it is the whole project or lies above it, or on another drive: denext says so and leaves
+that one for you to narrow. On a runtime that jails only on request they say which
 dependencies will need one and write nothing, since an exceptions object would itself turn the
 jail on. `migrate` lists each exception in its review notes (`--check` too); when it keeps a
 hand-authored deno.json it prints the JSON to add instead. `denext doctor` flags a listed
@@ -604,12 +629,25 @@ a dependency's failed script: which package, what the jail stopped (the network,
 | `simple-git-hooks`                                  | writes `.git/hooks`                                                                                       | `write`: the repository's `.git/hooks`                                                       |
 | `sqlite3`                                           | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                        |
 
+On runtime `3.0.0-rc.6` and later each `net` grant is the package's download hosts: GitHub
+releases (`github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`)
+for the prebuilt bindings, Electron and ffmpeg-static, `nodejs.org` for a node-gyp build's headers,
+`storage.googleapis.com` for puppeteer and `@tensorflow/tfjs-node`, Playwright's CDNs,
+`download.cypress.io` / `cdn.cypress.io`, `binaries.prisma.sh`, `downloads.sentry-cdn.com`, and
+chromedriver's `googlechromelabs.github.io` / `storage.googleapis.com`. A mirror or proxy you set
+(`PUPPETEER_DOWNLOAD_BASE_URL`, `PRISMA_ENGINES_MIRROR`, `NODEJS_ORG_MIRROR`, …) needs its host
+added to that package's `net`.
+
 The packages that download a browser or app into a cache under your home (puppeteer, Playwright's
-browser packages, Cypress) get the network, but the jail's scratch `HOME` is removed after the
-script: point the cache variable (`PUPPETEER_CACHE_DIR`, `PLAYWRIGHT_BROWSERS_PATH`,
-`CYPRESS_CACHE_FOLDER`) at a directory in the project and add it to `write`, or skip the download
-there and fetch the browser afterwards with the tool's own command (`playwright install`,
-`puppeteer browsers install chrome`). A build from source with
+browser packages, Cypress) lose it with the jail's scratch `HOME`, which is removed after the
+script. On runtime `3.0.0-rc.6` and later their exception grants the cache directory under `~`
+(`~/.cache/puppeteer`, `~/.cache/ms-playwright`, `~/.cache/Cypress`) and passes its variable; set
+the variable to that directory (`PUPPETEER_CACHE_DIR=$HOME/.cache/puppeteer`,
+`PLAYWRIGHT_BROWSERS_PATH`, `CYPRESS_CACHE_FOLDER`) for the install and for the app. The grant is
+per package and visible in your deno.json because the cache holds executables other projects run
+outside any jail. On older runtimes point the variable at a directory in the project and add that
+to `write`. Or skip the download there and fetch the browser afterwards with the tool's own
+command (`playwright install`, `puppeteer browsers install chrome`). A build from source with
 node-gyp downloads the Node.js headers (`npm_config_nodedir` points it at local ones). Not listed,
 because they need nothing: `esbuild` (its binary is an optional dependency), `bcrypt`, `playwright`
 (no install script), `husky` 9 (the project's own `prepare`) and `bufferutil`.

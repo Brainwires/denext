@@ -45,10 +45,13 @@ import { hasCommand, listSigningIdentities } from "../../ui/signing.ts";
 import { workspaceRootHint } from "../../build/workspace-imports.ts";
 import {
   explainJailFailures,
+  grantsSomething,
   JAIL_DEFAULT_RELEASE,
   JAIL_DOCS_URL,
   jailEffective,
   jailFailures,
+  jailHostListsSupported,
+  type JailProject,
   type JailRequirement,
   type JailSetting,
   jailSnippet,
@@ -339,6 +342,23 @@ export interface JailScriptsCheckOptions {
   readonly env?: (name: string) => string | undefined;
   /** A captured install log (`denext doctor --install-log <file>`) to explain. */
   readonly installLog?: string;
+  /** The OS the project installs on (default: this one). */
+  readonly os?: typeof Deno.build.os;
+}
+
+/** What the jail can't do on Windows, said with every Windows jail detail. */
+const WINDOWS_JAIL_NOTE = "on Windows the OS can't confine the scripts' other programs " +
+  "(`curl`, a compiler, a downloaded binary): only the scrubbed environment, the scratch HOME " +
+  "and every `deno` they start are jailed";
+
+/** Whether deno.json approves any dependency's lifecycle scripts (`allowScripts`). */
+function approvesScripts(denoJson: Record<string, unknown> | null): boolean {
+  const v = denoJson?.allowScripts;
+  if (v === true) return true;
+  if (Array.isArray(v)) return v.length > 0;
+  const allow = (v as { allow?: unknown } | null | undefined)?.allow;
+  return v !== null && typeof v === "object" &&
+    (allow === true || Array.isArray(allow) && allow.length > 0);
 }
 
 /**
@@ -357,36 +377,75 @@ export async function jailScriptsCheck(
   options: JailScriptsCheckOptions = {},
 ): Promise<Check | null> {
   const name = "lifecycle-script jail";
-  const explained = explainJailFailures(jailFailures(options.installLog ?? ""));
+  const os = options.os ?? Deno.build.os;
+  const explained = explainJailFailures(
+    jailFailures(options.installLog ?? "", os),
+    options.version,
+  );
   const project = await readJailProject(dir, options.env ? { env: options.env } : {});
-  const required = await requiredJailExceptions(project);
-  if (required.length === 0 && explained.length === 0) return null;
+  const required = (await requiredJailExceptions(project, undefined, options.version))
+    .filter(grantsSomething);
+  const blocked = jailBlockers(project, os);
+  if (required.length === 0 && explained.length === 0 && blocked.length === 0) return null;
   const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
   const on = jailEffective(project.setting, options.version);
+  const windows = on && os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
   const failures = explained.length
     ? `the install log shows: ${explained.map((l) => l.trim()).join(" · ")}; `
     : "";
+  const blockers = blocked.map((b) => `${b}; `).join("");
   if (on && missing.length) {
     return {
       name,
       ok: false,
-      detail: failures + missingJailDetail(missing, project.setting),
+      detail: blockers + failures +
+        missingJailDetail(missing, project.setting, options.version) + windows,
       critical: false,
     };
   }
-  if (explained.length) {
-    return { name, ok: false, detail: `${failures}${JAIL_DOCS_URL}`, critical: false };
+  if (explained.length || blocked.length) {
+    return { name, ok: false, detail: `${blockers}${failures}${JAIL_DOCS_URL}`, critical: false };
   }
   return {
     name,
     ok: true,
-    detail: passingJailDetail(required, project.setting, on),
+    detail: passingJailDetail(required, project.setting, on) + windows,
     critical: false,
   };
 }
 
+/**
+ * What stops the project's jail settings from doing what they look like they do: a workspace
+ * member's own `supplyChain` (the runtime reads the root's alone), and `paranoid` on Windows,
+ * where it refuses every approved install script because the OS can't confine it.
+ */
+function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] {
+  const out: string[] = [];
+  if (project.ignoredMemberConfig) {
+    out.push(
+      `${project.ignoredMemberConfig} sets "supplyChain", which Deno ignores in a workspace ` +
+        `member (it reads the root's alone); fix: move it to ${
+          project.configPath ?? "the workspace root's deno.json"
+        }`,
+    );
+  }
+  if (os === "windows" && project.setting.paranoid && approvesScripts(project.denoJson)) {
+    out.push(
+      `${project.setting.paranoid} turns on paranoid, which refuses to run an approved ` +
+        "dependency's install script on Windows (the OS can't confine it), so the approved " +
+        "scripts in allowScripts don't run; install on Linux or macOS (WSL included), or keep " +
+        "paranoid off on this machine",
+    );
+  }
+  return out;
+}
+
 /** The jail check's detail for exceptions missing while the jail is on: why, and the fix. */
-function missingJailDetail(missing: readonly JailRequirement[], setting: JailSetting): string {
+function missingJailDetail(
+  missing: readonly JailRequirement[],
+  setting: JailSetting,
+  version?: string,
+): string {
   const why = setting.state === "on"
     ? `${setting.source} turns it on`
     : `on by default from runtime ${JAIL_DEFAULT_RELEASE}`;
@@ -394,7 +453,18 @@ function missingJailDetail(missing: readonly JailRequirement[], setting: JailSet
   return `${missing.map((r) => r.entry.name).join(", ")} ${verb} an exception: dependencies' ` +
     `install scripts run jailed (${why}) and theirs download or write outside node_modules; ` +
     `fix: add ${JSON.stringify(JSON.parse(jailSnippet(missing)))} to deno.json (never turn the ` +
-    `jail off for it): ${JAIL_DOCS_URL}`;
+    `jail off for it): ${JAIL_DOCS_URL}` + cacheNote(missing, version);
+}
+
+/** How to keep a browser download that the exception's `~` cache directory grants. */
+function cacheNote(missing: readonly JailRequirement[], version?: string): string {
+  if (!jailHostListsSupported(version)) return "";
+  const caches = missing.flatMap((r) => r.entry.cache ? [r.entry.cache] : []);
+  return caches.length
+    ? `; set ${
+      caches.map((c) => `${c.env}=${c.path.replace(/^~/, "$HOME")}`).join(", ")
+    } for the install and the app, or the download is lost with the jail's scratch HOME`
+    : "";
 }
 
 /** The jail check's detail when nothing is missing: off, configured, or needed once it is on. */
