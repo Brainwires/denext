@@ -6,6 +6,8 @@
 // Nothing here reads a secret. `security` is asked WHICH identities exist; the private key never
 // leaves the keychain, and the identity string it prints is a name, not a credential.
 
+import { runToExit } from "../build/exited-output.ts";
+
 /** One code-signing identity, as `security find-identity` reports it. */
 export interface SigningIdentity {
   /** The certificate's SHA-1 fingerprint, as printed. */
@@ -75,12 +77,12 @@ export async function listSigningIdentities(
   const argv = identityCommand(os);
   if (argv === null) return [];
   try {
-    const out = await new Deno.Command(argv[0], {
+    const out = await runToExit(argv[0], {
       args: argv.slice(1),
       stdin: "null",
       stdout: "piped",
       stderr: "null",
-    }).output();
+    });
     return out.code === 0 ? parseIdentities(new TextDecoder().decode(out.stdout)) : [];
   } catch {
     // Spawning a program that is not there THROWS rather than resolving with a failure, so this

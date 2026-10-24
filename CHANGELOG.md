@@ -17,6 +17,23 @@ and this project adheres to
   inherits those pipes and kept them open for its whole life, so the crawl, and a
   `deno test --parallel` run, waited forever. It now reads until `deno info` exits, at most a few
   seconds past it; a grandchild it leaves behind on any OS no longer holds it either.
+- **The build's other short-lived children read until they exit, too.** `deno bundle` and its
+  version / `--help` probes, Tailwind, the framework-deps install, the server-only import check,
+  the dev type-check, the `ESBUILD_BINARY_PATH` version check, Gleam, the background-runner and
+  `desktop.preload` bundles, `build --compile` signing, the `denext ui` logs and signing-identity
+  probes and the desktop `dialogs` capability no longer wait on a pipe a concurrently spawned
+  process inherited (Windows) or a grandchild kept open; they also give the child an empty stdin
+  instead of the terminal's.
+- **`@denext/backend` serves several ranges and honours `If-Range`.** Object downloads (the
+  plugin's object route and the Storage API) read `Range` as the static file handler does: several
+  ranges come back as one `multipart/byteranges` answer (sorted and coalesced), an unsatisfiable
+  range among satisfiable ones is dropped, and an `If-Range` that no longer names the object (a
+  weak or different `ETag`, another date) gets the whole object. Before, a header with more than
+  one range got the whole object and `If-Range` was ignored.
+- **A resumed `downloadToFile` no longer starts over behind a weak `ETag`.** The web path sent the
+  response's `ETag` in `If-Range` even when it was weak, which a server must treat as a mismatch,
+  so every resume downloaded the file from byte zero. It now sends a strong `ETag`, else
+  `Last-Modified`, and starts over only when the response had neither.
 
 ## [4.8.0] - 2026-10-23
 

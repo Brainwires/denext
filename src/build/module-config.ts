@@ -6,6 +6,7 @@
 // `import "drizzle-orm"` in an app server module is "not a dependency and not in
 // import map". This module builds that config; cli.ts drives the re-exec.
 
+import { runToExit } from "./exited-output.ts";
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { carryLinks } from "./config-links.ts";
 import { ensureDir } from "@std/fs";
@@ -346,12 +347,12 @@ async function installFwdeps(fwDir: string, nm: string, denoJson: string): Promi
   if (!(await acquireFwdepsInstall(lockPath, isCached))) return true;
   try {
     await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
-    const { code, stderr } = await new Deno.Command(denoExecutable(), {
+    const { code, stderr } = await runToExit(denoExecutable(), {
       args: ["install", "--quiet"],
       cwd: fwDir,
       stdout: "null",
       stderr: "piped",
-    }).output();
+    });
     if (code !== 0) {
       console.error(
         "denext: could not materialize the framework's build deps (esbuild/sass/…) " +

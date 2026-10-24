@@ -23,6 +23,7 @@
 // reads it from a 0600 file rather than its command line. A configured `compile.sign` without
 // credentials (or the tool) warns and leaves the binary unsigned; an explicit `--sign` fails.
 
+import { runToExit } from "./exited-output.ts";
 import { dirname, isAbsolute, join } from "@std/path";
 import type { CompileSignConfig } from "../server/config.ts";
 import {
@@ -106,12 +107,12 @@ function redact(text: string, secrets: readonly string[]): string {
 
 /** The default runner: the command with its output captured. */
 const defaultRun: SignCommandRunner = async (cmd) => {
-  const out = await new Deno.Command(cmd[0], {
+  const out = await runToExit(cmd[0], {
     args: cmd.slice(1),
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
-  }).output();
+  });
   const text = (b: Uint8Array) => new TextDecoder().decode(b);
   return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
 };

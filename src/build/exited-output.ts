@@ -77,3 +77,41 @@ export async function exitedOutput(
     stderr: { get: read("stderr", err), enumerable: true },
   });
 }
+
+/** {@linkcode runToExit}'s options: `Deno.CommandOptions` without a writable stdin. */
+export type RunToExitOptions = Omit<Deno.CommandOptions, "stdin"> & {
+  /** The child's stdin: `"null"` (the default) or `"inherit"`; nothing writes to it. */
+  readonly stdin?: "null" | "inherit";
+};
+
+/**
+ * Run `cmd` to its exit and collect its output, like `new Deno.Command(cmd, options).output()`
+ * but read with {@linkcode exitedOutput}, so a pipe handle another process inherited cannot keep
+ * it waiting. stdout and stderr default to `"piped"` as `output()`'s do; stdin defaults to
+ * `"null"`, so the child inherits no handle it does not need.
+ *
+ * @param cmd The program.
+ * @param options How to run it.
+ * @param graceMs How long to keep reading the pipes after the exit.
+ * @returns The child's {@linkcode Deno.CommandOutput}; rejects when it cannot be started.
+ */
+export async function runToExit(
+  cmd: string | URL,
+  options: RunToExitOptions = {},
+  graceMs: number = DRAIN_AFTER_EXIT_MS,
+): Promise<Deno.CommandOutput> {
+  const stdout = options.stdout ?? "piped";
+  const stderr = options.stderr ?? "piped";
+  const child = new Deno.Command(cmd, {
+    ...options,
+    stdin: options.stdin ?? "null",
+    stdout,
+    stderr,
+  })
+    .spawn();
+  return await exitedOutput(
+    child,
+    { stdout: stdout === "piped", stderr: stderr === "piped" },
+    graceMs,
+  );
+}
