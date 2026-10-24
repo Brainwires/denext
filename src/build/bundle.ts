@@ -626,7 +626,7 @@ const SCAN_SKIP = new Set([".denext", ".git", "node_modules"]);
 /** Project-root folders that hold build output (`denext export`'s default, desktop/mobile builds). */
 const SCAN_SKIP_ROOT = new Set(["out", "dist"]);
 /** The source extensions a feature scan reads. */
-const SCAN_SOURCE = /\.(?:tsx?|jsx?|mjs)$/;
+const SCAN_SOURCE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 
 /**
  * The app's source files under `dir`, for the feature scans. Build output is left out: the
@@ -779,7 +779,9 @@ const IMAGE_BLUR_USE =
  * function-valued form action — the build-time signal that keeps the reconciler's
  * `<form action={fn}>` / `formAction={fn}` seam (`__DENEXT_FORM_ACTIONS__`). Such a prop can't be
  * written without naming `action` or `formAction` (JSX, an `h()` props object, a prop passed
- * down), so the scan matches either name followed by `=` or `:` in code. Comments are not code.
+ * down), so the scan matches either name followed by `=` or `:`, or as a shorthand property, in
+ * code. A build that drops the seam reports a function action it meets (error 6) rather than letting
+ * the form submit natively in silence. Comments are not code.
  * npm packages are not scanned (as for every gate): a library that renders its own `<form>` with
  * a function action from props it builds needs the app to name `action` once.
  */
@@ -787,8 +789,12 @@ export function appUsesFormActions(rootDir: string, extraFiles: string[] = []): 
   return scanAppSources(rootDir, (c) => FORM_ACTION_USE.test(withoutComments(c)), extraFiles);
 }
 
-/** `action` / `formAction` as a JSX prop, an object key or a binding (`=` / `:`, not `==`). */
-const FORM_ACTION_USE = /\b(?:formAction|action)["']?\s*[=:](?!=)/;
+/**
+ * `action` / `formAction` as a JSX prop, an object key or a binding (`=` / `:`, not `==`), or as
+ * a shorthand property (`{ action }`, `h("form", { formAction, … })`).
+ */
+const FORM_ACTION_USE =
+  /\b(?:formAction|action)["']?\s*[=:](?!=)|[{,]\s*(?:formAction|action)\s*[,}]/;
 
 /**
  * Whether any source file under `rootDir` (or in `extraFiles`) may navigate with a route-pattern

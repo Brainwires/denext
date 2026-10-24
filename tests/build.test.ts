@@ -340,6 +340,14 @@ Deno.test("appUsesFormActions: action / formAction props and keys in code, not i
     assertEquals(await scan(`<form action={save}>`), true, "a JSX prop");
     assertEquals(await scan(`<button formAction={save} />`), true, "formAction");
     assertEquals(await scan(`h("form", { action: save })`), true, "an h() props key");
+    // A shorthand property hands the prop over without `=` / `:` (AU5: a silent miss before).
+    assertEquals(await scan(`h("form", { action, method: "post" })`), true, "shorthand");
+    assertEquals(await scan(`const p = { id, formAction };`), true, "shorthand formAction");
+    assertEquals(await scan(`const { actions } = x;`), false, "another name");
+    // A module in a `.mts` / `.cts` file is source too.
+    await Deno.writeTextFile(page, "");
+    await Deno.writeTextFile(join(dir, "form.mts"), `h("form", { action: save })`);
+    assertEquals(await appUsesFormActions(dir), true, "an .mts module");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

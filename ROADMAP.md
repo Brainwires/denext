@@ -157,3 +157,36 @@ seeded fallback. No Deno has the hook below yet.
   but runs several times slower on every compat build and dev session.
 - **Maintenance:** track each vendored codec's upstream CVEs, rebuild SHA-256-pinned and
   regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.
+
+## Client runtime and Server Actions (AU5 audit, low severity)
+
+From the 4.8 client-runtime and Server Actions audit; the High and Medium findings shipped.
+
+- **Action ids are build-stable hashes of `module#export`** (`actionIdFor`,
+  src/runtime/server-action.ts), and every function a `"use server"` module exports is callable,
+  referenced by client code or not. Actions authorize and validate their own input (they are
+  public endpoints, as in Next.js), so this is hardening: salt the id with the build's
+  `serverActionsKey` (build time and server must agree: `client-imports.ts`,
+  `inline-server-action.ts`, `tagServerExports`) and register only the exports a client module
+  references, as Next.js 15 does.
+- **`notFound()` / `forbidden()` / `unauthorized()` in a Server Action called from the browser**
+  reaches the client as a plain `Error("notFound")` (src/client/action-dispatch.ts), so the error
+  boundary renders, not `not-found.tsx`; the client has no not-found boundary for an event-path
+  signal yet. Add one, then re-raise the reply's `signal` as the branded error.
+- **A bound reference to a `serverAction` id with a `.` in it does not resolve**: `splitBoundId`
+  (src/server/action-bound.ts) splits at the first `.`; the token (base64url) has none, so split
+  at the last.
+- **A held form-action submit** (one that beat the on-demand form-action chunk) builds its
+  `FormData` and starts `useFormStatus`'s pending flag when the chunk arrives, not at the submit;
+  `form.requestSubmit(button)` with no click does not run that button's function `formAction`; and
+  `useFormStatus` under a form with no function `action` of its own (only a button's
+  `formAction`) has no pending signal (src/client/form-action.ts, begin-work.ts `beginElement`).
+- **The route-pattern href and blur-placeholder gates** (`__DENEXT_HREF_PARAMS__`,
+  `__DENEXT_IMAGE_BLUR__`) still fail quietly when only a library uses the feature: a pattern href
+  navigates to the literal `/blog/[slug]`, a placeholder stays painted. Report them as the
+  form-action and hook-boundary gates do (errors 6 and 7).
+- **The Fragment-ref runtime chunk**, once it fails to load, leaves a no-op for the page's life
+  (src/client/fiber/fragment-ref-support.ts); retry it on the next Fragment ref.
+- **Live handshakes waiting on `live.authorize`** are not counted against
+  `live.limits.maxConnectionsPerIp` until they attach (re-checked after `authorize`, so no excess
+  socket opens, but a slow hook can hold many pending handshakes). Count them while pending.

@@ -15,6 +15,8 @@ import { currentFiber } from "../../client/fiber/hooks-dispatcher.ts";
 import type { Fiber } from "../../client/fiber/fiber.ts";
 import { componentErrorInfo, setComponentBoundary } from "../../client/fiber/fiber-utils.ts";
 import { resetBoundary } from "../../client/fiber/boundaries.ts";
+import { ERR_HOOK_BOUNDARIES_OFF, reconcilerError } from "../../client/fiber/errors.ts";
+import { componentDisplayName } from "../../runtime/react-brands.ts";
 import { options } from "./options.ts";
 
 export {
@@ -46,6 +48,9 @@ function markBoundary(fiber: Fiber, on: boolean): void {
     if (f) on ? boundaries.add(f) : boundaries.delete(f);
   }
 }
+
+/** Whether the gate-off error below was reported (once per page). */
+let boundaryGateReported = false;
 
 /** What Preact passes a `useErrorBoundary` callback with the error. */
 export interface ErrorInfo {
@@ -85,6 +90,15 @@ export function useErrorBoundary(
   callback?: (error: unknown, info: ErrorInfo) => Promise<void> | void,
 ): [unknown, () => void] {
   const fiber = currentFiber;
+  // A build whose scan saw no `useErrorBoundary` (a library calls it) left the reconciler's
+  // boundary seam out: errors would pass this component by. Say so, once.
+  if (
+    fiber && !boundaryGateReported && typeof __DENEXT_HOOK_BOUNDARIES__ !== "undefined" &&
+    !__DENEXT_HOOK_BOUNDARIES__
+  ) {
+    boundaryGateReported = true;
+    reportError(reconcilerError(ERR_HOOK_BOUNDARIES_OFF, componentDisplayName(fiber.vnode.type)));
+  }
   const error = fiber?.ext?.__error ?? undefined;
   // A boundary only while it shows its children: a caught error must not loop back here.
   if (fiber) markBoundary(fiber, error === undefined);

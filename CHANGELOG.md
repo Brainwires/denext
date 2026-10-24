@@ -157,6 +157,27 @@ and this project adheres to
 
 ### Fixed
 
+- **A submit button's function `formAction` runs** (`<button formAction={fn}>`, a
+  `useActionState` dispatch or a Server Action on a button). denext listened for `submit` on the
+  button, where it never fires (the browser fires it at the form), so the form submitted natively
+  instead, or ran the form's own `action`. The button's click now readies its form, the submit
+  that follows runs the button's action in place of the form's (React's rule), and its `FormData`
+  carries the button's own name and value. A click that arrives before the on-demand form-action
+  runtime has loaded is held and submitted again through the button once it has.
+- **A `FormData` passed to a Server Action is left as it was.** The client added its reserved
+  arguments field to the caller's own `FormData`, so the same `FormData` sent twice carried the
+  first call's other arguments to the server.
+- **A Server Action call after the dispatch chunk failed to load tries again.** The failed import
+  was kept, so every action on the page failed until a reload; the next call now imports it again,
+  and the page's early prefetch no longer reports an unhandled rejection.
+- **A production build that left out the form-action or the `useErrorBoundary` support says so.**
+  `denext build` leaves each out when the app's own sources never name it (a library's code is
+  not scanned). A function `action` / `formAction` rendered by such a build now reports
+  `denext: error 6` instead of letting the form submit natively in silence, and Preact's
+  `useErrorBoundary` reports `denext: error 7` instead of letting errors pass it by
+  (see https://denext.dev/docs/troubleshooting). The form-action scan now also sees a shorthand
+  property (`h("form", { action })`) and `.mts` / `.cts` / `.cjs` modules.
+
 - **Lifecycle-script jail exceptions are narrower and land where Deno reads them** (a
   supply-chain audit of denext's jail integration):
   - on runtime `3.0.0-rc.6` and later, the built-in exceptions grant each package's download

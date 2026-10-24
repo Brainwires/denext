@@ -300,16 +300,23 @@ value afterwards:
 **Cause.** A production client bundle carries only the code of the reconciler's own errors,
 not their full text (a dev build, `denext dev`, and `denext/testing` throw the full message):
 
-| Code | Full message                                                                     |
-| ---- | -------------------------------------------------------------------------------- |
-| 1    | Rendered more hooks than during the previous render (a conditional hook)         |
-| 2    | Maximum update depth exceeded: the component schedules an update on every render |
-| 3    | An async component rendered on the client (async components are server-only)     |
-| 4    | Retired: `memo()` of a class component now renders, as in React                  |
-| 5    | A class component with the class runtime off, or after it failed to load         |
+| Code | Full message                                                                       |
+| ---- | ---------------------------------------------------------------------------------- |
+| 1    | Rendered more hooks than during the previous render (a conditional hook)           |
+| 2    | Maximum update depth exceeded: the component schedules an update on every render   |
+| 3    | An async component rendered on the client (async components are server-only)       |
+| 4    | Retired: `memo()` of a class component now renders, as in React                    |
+| 5    | A class component with the class runtime off, or after it failed to load           |
+| 6    | A function `action` / `formAction` in a build whose scan saw none (names the prop) |
+| 7    | Preact's `useErrorBoundary` in a build whose scan saw none                         |
 
 **Fix.** Reproduce it under `denext dev` for the full message, the component stack and the
-dev warnings; the component the production error names is where to start.
+dev warnings; the component the production error names is where to start. Codes 6 and 7 come
+only from a production build: `denext build` leaves the form-action runtime and the
+hook-boundary support out of an app whose own sources never name `action` / `formAction` or
+`useErrorBoundary` (a library's code is not scanned), so `denext dev` does not reproduce them.
+Name the prop or the hook once in the app's own code, for example where the library's component
+is used, and rebuild.
 
 ## `ReferenceError: window is not defined` (or `document`, `localStorage`)
 

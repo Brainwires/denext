@@ -6,6 +6,8 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   ERR_ASYNC_COMPONENT,
   ERR_CLASS_DISABLED,
+  ERR_FORM_ACTIONS_OFF,
+  ERR_HOOK_BOUNDARIES_OFF,
   ERR_MORE_HOOKS,
   ERR_UPDATE_DEPTH,
   reconcilerError,
@@ -44,6 +46,14 @@ Deno.test("reconciler errors: the installed texts are the full messages", () => 
   assertStringIncludes(
     reconcilerError(ERR_CLASS_DISABLED, "Legacy").message,
     "class components are disabled",
+  );
+  assertStringIncludes(
+    reconcilerError(ERR_FORM_ACTIONS_OFF, "formAction").message,
+    "a function-valued `formAction` was rendered, but this build left the form-action runtime out",
+  );
+  assertStringIncludes(
+    reconcilerError(ERR_HOOK_BOUNDARIES_OFF, "Guard").message,
+    "<Guard> calls useErrorBoundary",
   );
   assert(!depth.includes("a dev build"), "the full text replaces the short form");
 });

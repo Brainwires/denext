@@ -22,6 +22,7 @@ import type { FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
 import { SVG_NAMESPACE } from "./fiber/fiber-utils.ts";
+import { ERR_FORM_ACTIONS_OFF, reconcilerError } from "./fiber/errors.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -54,11 +55,13 @@ function isFormActionProp(name: string, value: unknown): boolean {
   return (name === "action" || name === "formAction") && typeof value === "function";
 }
 
-/** Drop the "submit" listener a function-valued form action wired (setFormAction). */
+/** Drop the listener a function-valued form action wired (setFormAction: a form's submit, a
+ * submit button's click). */
 function removeFormAction(el: Element, state: HostState): void {
   const existing = state.listeners?.get("submit");
   if (!existing) return;
   el.removeEventListener("submit", existing);
+  el.removeEventListener("click", existing);
   state.listeners!.delete("submit");
 }
 
@@ -133,11 +136,12 @@ function setProp(
   // A form `action={fn}` (React 19 form action / useActionState dispatch): intercept
   // submit and call the action with the form's FormData. Off (a define the build sets from a
   // scan of the app's sources for `action` / `formAction`) in an app that never writes one.
-  if (
-    (typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__) &&
-    isFormActionProp(name, value)
-  ) {
-    return setFormAction(el, state, value as (payload: unknown) => void, onError);
+  // In a build whose scan saw no form action the form would submit natively: say so instead.
+  if (isFormActionProp(name, value)) {
+    if (typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__) {
+      return setFormAction(el, state, value as (payload: unknown) => void, onError);
+    }
+    reportError(reconcilerError(ERR_FORM_ACTIONS_OFF, name));
   }
   // Compared by `__html` (React parity): a fresh `{ __html }` object of the same markup each
   // render must not re-create the nodes.
@@ -230,6 +234,8 @@ export type FormActionRunner = (
   state: HostState,
   action: (payload: unknown) => void,
   onError: ErrorRouter,
+  el: Element,
+  held?: boolean,
 ) => void;
 
 /**
@@ -274,15 +280,21 @@ function setFormAction(
   action: (payload: unknown) => void,
   onError: ErrorRouter,
 ): void {
-  const existing = state.listeners?.get("submit");
-  if (existing) el.removeEventListener("submit", existing);
+  removeFormAction(el, state);
   if (!runFormAction) installFormActions().catch(() => {}); // a submit retries and reports it
   const handler: EventListener = (event) => {
+    if (runFormAction) return runFormAction(event, state, action, onError, el);
+    // Held for the runtime, never sent natively: the runner runs a held submit and re-submits a
+    // held click.
     event.preventDefault();
-    if (runFormAction) return runFormAction(event, state, action, onError);
-    installFormActions().then(() => runFormAction!(event, state, action, onError), onError);
+    installFormActions().then(
+      () => runFormAction!(event, state, action, onError, el, true),
+      onError,
+    );
   };
-  el.addEventListener("submit", handler);
+  // A form's own action runs on its submit. A submit button's `formAction` runs from its click:
+  // the submit event fires at the form, never at the button, so the click readies the form.
+  el.addEventListener(el.tagName == "FORM" ? "submit" : "click", handler);
   (state.listeners ??= new Map()).set("submit", handler);
 }
 
