@@ -1167,8 +1167,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   SQLite: https://denext.dev/docs/toolchain. A dependency's approved lifecycle script runs jailed
   (no network, writes only under `node_modules`; on by default from runtime 3.0.0-rc.5):
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
-  packages (puppeteer, sharp, Prisma's engines, electron, …) need and `denext doctor` flags a
-  missing one; never turn the jail off for them:
+  packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
+  deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
+  3.0.0-rc.6) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext

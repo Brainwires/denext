@@ -10,10 +10,12 @@
 // The jail's only per-package lever is deno.json's
 // `"supplyChain": { "jailScripts": { "packages": { "<name>": { "env": [...], "write": [...],
 // "net": true } } } }`: environment variables passed through, extra writable directories
-// (relative to that deno.json) and the network. There is no per-host network list in the config
-// (the jail allows a node-pre-gyp `binary.host` a package declares by itself, so such packages
-// are not listed here) and no per-package opt-out, so each entry below is the narrowest of those
-// three that lets the script do its job. `denext migrate` / `create` / `add` write the entries for
+// (relative to that deno.json) and the network. From runtime 3.0.0-rc.6 (DENEXT.md item 108)
+// `net` also takes the hosts the scripts may reach, and a `write` path may start with `~` (the
+// user's home, resolved when the jail runs); each entry below names its download hosts and, for
+// a download cache under the home, the cache directory and its variable, used on runtimes that
+// take them (`net: true` and no cache grant on older ones). There is no per-package opt-out, so
+// each entry is the narrowest grant that lets the script do its job. `denext migrate` / `create` / `add` write the entries for
 // the dependencies they find, and `denext doctor` flags a missing one; nothing here ever turns the
 // jail off. Data only: src/build/jail-scripts.ts reads it.
 
@@ -23,8 +25,19 @@ export interface JailPackageException {
   readonly env?: readonly string[];
   /** Extra directories the package's scripts may write to, relative to the deno.json. */
   readonly write?: readonly string[];
-  /** The network for the package's scripts. */
-  readonly net?: boolean;
+  /**
+   * The network for the package's scripts: `true`, or (runtime 3.0.0-rc.6 and later) the hosts
+   * they may reach.
+   */
+  readonly net?: boolean | readonly string[];
+}
+
+/** A download cache under the user's home that the package keeps across installs. */
+export interface JailCache {
+  /** The variable naming the cache directory, passed through (`PUPPETEER_CACHE_DIR`). */
+  readonly env: string;
+  /** The directory, `~`-relative as the runtime resolves it (`~/.cache/puppeteer`). */
+  readonly path: string;
 }
 
 /**
@@ -46,8 +59,22 @@ export interface JailExceptionEntry {
   readonly via?: readonly string[];
   /** What the script does, and why the jail stops it. */
   readonly reason: string;
-  /** The exception, before {@linkcode writeTargets} are resolved. */
+  /**
+   * The exception, before {@linkcode writeTargets} are resolved, on a runtime without per-package
+   * host lists (`net` is `true` there).
+   */
   readonly exception: JailPackageException;
+  /**
+   * The hosts the script downloads from (redirect targets included), the `net` grant on a runtime
+   * that takes a host list. A mirror or proxy the user configures needs its own host added.
+   */
+  readonly hosts?: readonly string[];
+  /**
+   * A download cache under the home kept across installs on a runtime that takes `~` write
+   * paths: written to `write`, its variable to `env`. It takes effect only with the variable set
+   * to that directory for the install and the app.
+   */
+  readonly cache?: JailCache;
   /**
    * Project directories added to `write` when they are found. An entry with nothing else that
    * finds none needs no exception (msw without a `workerDirectory` copies nothing).
@@ -60,9 +87,20 @@ export interface JailExceptionEntry {
 /** The scratch-HOME caveat of the packages that download into a cache under the user's home. */
 const HOME_CACHE =
   "The jail's HOME is a scratch directory removed after the script, so a download into the " +
-  "default cache under your home is lost: point the cache variable at a directory in the " +
-  "project and list it under `write`, or skip the download here and install the binary after " +
-  "the install.";
+  "default cache under your home is lost: set the cache variable to the directory the exception " +
+  "lists under `write` (on runtimes before 3.0.0-rc.6, to a directory in the project and list " +
+  "that under `write`) for the install and the app, or skip the download here and install the " +
+  "browser after the install.";
+
+/** GitHub release downloads: the release URL and the hosts it redirects to. */
+const GITHUB = [
+  "github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+];
+
+/** node-gyp's Node.js headers, for a build from source. */
+const NODE_HEADERS = "nodejs.org";
 
 /** The caveat of the packages that build from source with node-gyp when no prebuilt binary fits. */
 const NODE_GYP = "A build from source with node-gyp also downloads the Node.js headers (set " +
@@ -71,6 +109,13 @@ const NODE_GYP = "A build from source with node-gyp also downloads the Node.js h
 /** The Playwright browser packages that download their browser at install. */
 const PLAYWRIGHT_BROWSERS = ["chromium", "firefox", "webkit"] as const;
 
+/** Playwright's browser download CDNs (its built-in mirror list). */
+const PLAYWRIGHT_HOSTS = [
+  "cdn.playwright.dev",
+  "playwright.azureedge.net",
+  "playwright.download.prss.microsoft.com",
+];
+
 /**
  * The built-in exception list, sorted by package name. Reviewed against each package's install
  * script; `tests/jail-scripts.test.ts` checks its shape.
@@ -78,6 +123,7 @@ const PLAYWRIGHT_BROWSERS = ["chromium", "firefox", "webkit"] as const;
 export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   {
     name: "@prisma/client",
+    hosts: ["binaries.prisma.sh"],
     reason: "postinstall runs `prisma generate`, which may download the engines (from " +
       "binaries.prisma.sh) and writes the client to the generator's `output`",
     exception: {
@@ -94,6 +140,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "@prisma/engines",
+    hosts: ["binaries.prisma.sh"],
     via: ["prisma", "@prisma/client"],
     reason: "postinstall downloads the query and schema engines from binaries.prisma.sh into " +
       "its package",
@@ -110,6 +157,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "@sentry/cli",
+    hosts: ["downloads.sentry-cdn.com"],
     reason: "install.js downloads the sentry-cli binary into its package when the platform " +
       "package is missing",
     exception: {
@@ -119,12 +167,14 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "@tensorflow/tfjs-node",
+    hosts: ["storage.googleapis.com", NODE_HEADERS],
     reason: "install script downloads the libtensorflow shared library",
     exception: { net: true },
     caveat: NODE_GYP,
   },
   {
     name: "better-sqlite3",
+    hosts: [...GITHUB, NODE_HEADERS],
     reason: "`prebuild-install` fetches a prebuilt binding from GitHub releases, else " +
       "`node-gyp rebuild` fetches the Node.js headers",
     exception: { net: true },
@@ -133,6 +183,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "canvas",
+    hosts: [...GITHUB, NODE_HEADERS],
     reason: "install fetches a prebuilt binding with `prebuild-install` from GitHub (canvas 3; " +
       "canvas 2's declared node-pre-gyp host is allowed by the jail by itself), else builds it",
     exception: { net: true },
@@ -140,6 +191,11 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "chromedriver",
+    hosts: [
+      "chromedriver.storage.googleapis.com",
+      "googlechromelabs.github.io",
+      "storage.googleapis.com",
+    ],
     reason: "install.js downloads the chromedriver binary into its package",
     exception: {
       net: true,
@@ -154,6 +210,8 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "cypress",
+    hosts: ["cdn.cypress.io", "download.cypress.io"],
+    cache: { env: "CYPRESS_CACHE_FOLDER", path: "~/.cache/Cypress" },
     reason: "postinstall downloads the Cypress app into ~/.cache/Cypress",
     exception: {
       net: true,
@@ -163,6 +221,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "electron",
+    hosts: GITHUB,
     reason: "postinstall (install.js) downloads the Electron binary from GitHub and unpacks it " +
       "into its package",
     exception: {
@@ -180,11 +239,13 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "ffmpeg-static",
+    hosts: GITHUB,
     reason: "install script downloads the ffmpeg binary into its package",
     exception: { net: true, env: ["FFMPEG_BINARIES_URL"] },
   },
   {
     name: "keytar",
+    hosts: [...GITHUB, NODE_HEADERS],
     reason: "`prebuild-install` fetches a prebuilt binding from GitHub releases, else builds it",
     exception: { net: true },
     caveat: NODE_GYP,
@@ -206,18 +267,22 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "node-pty",
+    hosts: [NODE_HEADERS],
     reason: "install builds the native module with node-gyp when no prebuilt binary matches",
     exception: { net: true },
     caveat: NODE_GYP,
   },
   {
     name: "node-sass",
+    hosts: [...GITHUB, NODE_HEADERS],
     reason: "install downloads the libsass binding from GitHub, else builds it",
     exception: { net: true, env: ["SASS_BINARY_NAME", "SASS_BINARY_PATH", "SASS_BINARY_SITE"] },
     caveat: NODE_GYP,
   },
   ...PLAYWRIGHT_BROWSERS.map((browser): JailExceptionEntry => ({
     name: `playwright-${browser}`,
+    hosts: PLAYWRIGHT_HOSTS,
+    cache: { env: "PLAYWRIGHT_BROWSERS_PATH", path: "~/.cache/ms-playwright" },
     reason: `install script downloads ${browser} into the Playwright browser cache under the ` +
       "home directory",
     exception: {
@@ -232,6 +297,8 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   })),
   {
     name: "puppeteer",
+    hosts: ["storage.googleapis.com"],
+    cache: { env: "PUPPETEER_CACHE_DIR", path: "~/.cache/puppeteer" },
     reason: "postinstall downloads Chrome for Testing into ~/.cache/puppeteer",
     exception: {
       net: true,
@@ -241,6 +308,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "re2",
+    hosts: [...GITHUB, NODE_HEADERS],
     reason: "install downloads a prebuilt binding from GitHub (`install-artifact-from-github`), " +
       "else builds it",
     exception: { net: true },
@@ -248,6 +316,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "sharp",
+    hosts: [...GITHUB, NODE_HEADERS],
     reason: "before 0.33 install downloads libvips and a prebuilt binding from GitHub; from 0.33 " +
       "the binaries are optional dependencies and the script reaches the network only to build " +
       "from source",
@@ -265,6 +334,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "sqlite3",
+    hosts: [...GITHUB, NODE_HEADERS],
     reason: "`prebuild-install` fetches a prebuilt binding from GitHub releases, else builds it",
     exception: { net: true },
     caveat: NODE_GYP,

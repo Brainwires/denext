@@ -27,7 +27,7 @@ import { compileTailwind } from "./tailwind.ts";
 import { inRootContext } from "../server/root-context.ts";
 import { holdRequestDeadline } from "../server/request-context.ts";
 import { configAnchorsResolution } from "./module-config.ts";
-import { workspaceImports, workspacePackageDirs } from "./workspace-imports.ts";
+import { supplyChainConfig, workspaceImports, workspacePackageDirs } from "./workspace-imports.ts";
 import { recordSelfWrite, writeManagedFile } from "./self-writes.ts";
 import { appConfigBackupPath, guardRestore, isInjectedCssShimEntry } from "./css-config-guard.ts";
 
@@ -677,6 +677,7 @@ async function writeCssConfig(
   const nmd = appCfgRaw?.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
   Object.assign(merged, minDepAgeConfig(appCfgRaw?.minimumDependencyAge));
+  Object.assign(merged, await supplyChainConfig(opts.configPath));
   carryLinks(merged, appCfgRaw, dirname(opts.configPath), opts.outDir);
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));

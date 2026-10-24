@@ -14,6 +14,7 @@ import {
 } from "../src/build/jail-exceptions.ts";
 import {
   applyJailExceptions,
+  entryException,
   explainJailFailures,
   JAIL_DEFAULT_RELEASE,
   jailEffective,
@@ -358,7 +359,8 @@ TypeError: x is not a function
 `;
 
 Deno.test("jail: an install log's jail failures are recognised and explained", () => {
-  const failures = jailFailures(INSTALL_LOG);
+  // as on Linux / macOS, where the OS sandbox's own errors are the jail's too
+  const failures = jailFailures(INSTALL_LOG, "linux");
   assertEquals(
     failures.map((f) => [f.name, f.version, f.script, f.exitCode, f.signs]),
     [
@@ -368,9 +370,15 @@ Deno.test("jail: an install log's jail failures are recognised and explained", (
       ["plain", "1.0.0", "postinstall", 2, []],
     ],
   );
-  const text = explainJailFailures(failures).join("\n");
+  const text = explainJailFailures(failures, RC5).join("\n");
   assertStringIncludes(text, "puppeteer@24.1.0's postinstall script failed in the lifecycle");
-  assertStringIncludes(text, `"puppeteer": ${JSON.stringify(listed("puppeteer"))}`);
+  const puppeteer = JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === "puppeteer")!;
+  assertStringIncludes(text, `"puppeteer": ${JSON.stringify(entryException(puppeteer, RC5))}`);
+  // on a runtime with host lists the fix names the hosts, not the whole network
+  assertStringIncludes(
+    explainJailFailures(failures, "3.0.0-rc.6").join("\n"),
+    '"net":["storage.googleapis.com"]',
+  );
   assertStringIncludes(text, "packages.@acme/native.write");
   assertStringIncludes(text, "never allowed in the jail");
   assertFalse(text.includes("plain@"), "a failure without a sign of the jail is not blamed on it");
@@ -378,11 +386,13 @@ Deno.test("jail: an install log's jail failures are recognised and explained", (
   // an unknown package that hit the network is pointed at `net`
   const net = jailFailures(
     "error: script 'install' in 'x@1.0.0' failed with exit code 1\nNotCapable: Requires net access",
+    "linux",
   );
   assertStringIncludes(explainJailFailures(net).join("\n"), '{"net":true}');
   const deno = jailFailures(
     "error: script 'install' in 'y@1.0.0' failed with exit code 1\n" +
       "error: This deno subcommand is not allowed in a jailed npm lifecycle script (jail-scripts).",
+    "linux",
   );
   assertEquals(deno[0].signs, ["deno"]);
 });
@@ -391,14 +401,14 @@ Deno.test("doctor: the jail check flags a missing exception, then passes once it
   const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
   const dir = await project({ "deno.json": "{}", "package.json": { dependencies: { re2: "1" } } });
   try {
-    const opts = { version: RC5, env: NO_ENV };
+    const opts = { version: RC5, env: NO_ENV, os: "linux" as const };
     const missing = await jailScriptsCheck(dir, opts);
     assertEquals([missing?.ok, missing?.critical], [false, false]);
     assertStringIncludes(missing!.detail, "re2 needs an exception");
     assertStringIncludes(missing!.detail, '{"supplyChain":{"jailScripts":{"packages":{"re2"');
     assertStringIncludes(missing!.detail, `on by default from runtime ${RC5}`);
     // before rc.5 it is a heads-up, not a failure
-    const pending = await jailScriptsCheck(dir, { version: RC3, env: NO_ENV });
+    const pending = await jailScriptsCheck(dir, { version: RC3, env: NO_ENV, os: "linux" });
     assertEquals(pending?.ok, true);
     assertStringIncludes(pending!.detail, "will need an exception");
     await applyJailExceptions(dir, opts);

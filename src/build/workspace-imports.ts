@@ -6,7 +6,7 @@
 // carry: the root's imports, each member's `exports` under its `name`, and each member's own
 // imports scoped to its directory.
 
-import { dirname, join, resolve, toFileUrl } from "@std/path";
+import { dirname, isAbsolute, join, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 
 /** What {@linkcode workspaceImports} adds to a merged config. */
@@ -137,6 +137,57 @@ async function findWorkspace(appDir: string): Promise<Workspace | null> {
     if (ws) return (await allMemberDirs(up, ws.members)).includes(appDir) ? ws : null;
   }
   return null;
+}
+
+/** A Deno workspace as {@linkcode workspaceOf} reports it. */
+export interface WorkspaceDirs {
+  /** The root directory (the one whose config declares `workspace`). */
+  readonly root: string;
+  /** Every member directory the root lists (resolved). */
+  readonly members: readonly string[];
+}
+
+/**
+ * The Deno workspace `dir` belongs to (as its root or a listed member), or null.
+ *
+ * @param dir A project directory.
+ * @returns The root and member directories.
+ */
+export async function workspaceOf(dir: string): Promise<WorkspaceDirs | null> {
+  const ws = await findWorkspace(resolve(dir));
+  return ws ? { root: ws.root, members: await allMemberDirs(ws.root, ws.members) } : null;
+}
+
+/**
+ * The npm supply-chain settings a config denext generates for a re-exec (`module-config.json`,
+ * `css-config.json`, the compile config) must carry, so a build child resolves npm packages
+ * under the project's own policy (`paranoid`, `advisoryCheck: "required"`, the jail and its
+ * exceptions) and not Deno's defaults. Deno reads `supplyChain` from the workspace root's
+ * config alone, so a member app takes the root's. Relative `jailScripts.packages.*.write` paths
+ * are made absolute against that config's directory (the generated file lives elsewhere); `~`
+ * paths stay for the runtime to resolve.
+ *
+ * @param appConfigPath The app's `deno.json` / `deno.jsonc`.
+ * @returns `{ supplyChain }`, or `{}` when the project sets none.
+ */
+export async function supplyChainConfig(
+  appConfigPath: string,
+): Promise<{ supplyChain?: unknown }> {
+  const appDir = resolve(dirname(appConfigPath));
+  const ws = await findWorkspace(appDir);
+  const root = ws?.root ?? appDir;
+  const config = ws ? ws.config : await readObject(resolve(appConfigPath));
+  const value = config?.supplyChain;
+  if (value === undefined || value === null) return {};
+  const copy = structuredClone(value) as Record<string, unknown>;
+  const jail = copy?.jailScripts as { packages?: Record<string, { write?: unknown }> } | undefined;
+  for (const pkg of Object.values(jail?.packages ?? {})) {
+    if (!pkg || !Array.isArray(pkg.write)) continue;
+    pkg.write = pkg.write.map((w) =>
+      typeof w === "string" && !w.startsWith("~") && !isAbsolute(w) ? resolve(root, w) : w
+    );
+  }
+  return { supplyChain: copy };
 }
 
 /**
