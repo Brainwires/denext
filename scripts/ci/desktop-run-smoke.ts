@@ -75,8 +75,9 @@ if (outcome === "listening" && status.code !== 0) {
 }
 if (/NotCapable/.test(output)) problems.push("the app hit a permission error (NotCapable)");
 if (!/Opening the desktop window/.test(output)) problems.push("the verb never opened a window");
-// On the pinned runtime the build passes --unstable-no-legacy-abort, which the runtime keeps
-// (2.9.7-denext.21): the window's first request prints no Deno.serve legacy-abort notice.
+// On the pinned runtime the window's first request prints no Deno.serve legacy-abort notice: the
+// new abort is the runtime's default from 3.0.0-rc.5 (before, the build passed
+// --unstable-no-legacy-abort, which the runtime keeps from 2.9.7-denext.21).
 if (!/STOCK/.test(output) && output.includes("(legacy behavior)")) {
   problems.push("the app printed Deno.serve's legacy-abort notice on the pinned runtime");
 }

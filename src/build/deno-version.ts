@@ -92,6 +92,26 @@ export function compareDenoVersions(a: string, b: string): number {
   return comparePrerelease(x.pre, y.pre);
 }
 
+/**
+ * The first release of denext's Deno whose `Deno.serve` aborts `request.signal` only when a
+ * response is not delivered by default (Brainwires/deno DENEXT.md item 102): there
+ * `--unstable-no-legacy-abort` is accepted and does nothing, and the old behavior is an opt-out
+ * (`--unstable-legacy-abort`, `DENO_LEGACY_ABORT=1`).
+ */
+const FIRST_NO_LEGACY_ABORT_RUNTIME = "3.0.0-rc.5";
+
+/**
+ * Whether denext's Deno of `version` still runs `Deno.serve`'s legacy `request.signal` abort
+ * unless `--unstable-no-legacy-abort` turns it off: every release before
+ * {@linkcode FIRST_NO_LEGACY_ABORT_RUNTIME}, and a version that does not parse.
+ *
+ * @param version A version of denext's Deno (`2.9.7-denext.N`, `3.0.0-rc.N`).
+ * @returns Whether it needs the flag.
+ */
+export function needsNoLegacyAbortFlag(version: string): boolean {
+  return compareDenoVersions(version, FIRST_NO_LEGACY_ABORT_RUNTIME) < 0;
+}
+
 /** `2.9.7-denext.N`: a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

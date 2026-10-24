@@ -111,15 +111,19 @@ is not the pinned build (stock Deno that inherited the marker inside `denext tas
 `-denext.N` that a `toolchain link` from before a denext upgrade still points at) switches to the
 pinned one.
 
-The switch also passes the toolchain's runtime flag, `--unstable-no-legacy-abort`: `request.signal`
-aborts only when a response is not delivered, and Deno prints no legacy-abort notice on the first
-request. A server verb (`dev`, `start`, `profile`) started on the toolchain directly (the `deno`
-that `toolchain link` puts on PATH, or a `deno task` step running it) checks whether it has that
-flag, with one loopback request, and re-runs once on the same binary with it when it does not.
-Without `--allow-run` it keeps serving in-process, so the `deno.json` that `denext create` and
-`denext migrate` write carries `"unstable": ["no-legacy-abort"]`, which turns the flag on for every
-`deno` that reads the config (a least-privilege `start` task included). Add it to an older
-project's `deno.json` (the Setup page of `denext ui` offers to), beside any features already listed.
+From runtime `3.0.0-rc.5`, `request.signal` aborts only when a response is not delivered (the
+client went away or the request timed out) by default, and Deno prints no legacy-abort notice; code
+that relied on the old abort after every delivered response opts back in with
+`--unstable-legacy-abort`, `"unstable": ["legacy-abort"]` or `DENO_LEGACY_ABORT=1` (use the
+handler's `info.completed` to learn that a response was delivered). An older toolchain needs
+`--unstable-no-legacy-abort` for that, which the switch passes to it. A server verb (`dev`,
+`start`, `profile`) started on such a toolchain directly (the `deno` that `toolchain link` puts on
+PATH, or a `deno task` step running it) checks whether it has that flag, with one loopback
+request, and re-runs once on the same binary with it when it does not. The `deno.json` that
+`denext create` and `denext migrate` write carries `"unstable": ["no-legacy-abort"]`, which turns
+the new behavior on for stock Deno 2.9 and older toolchains too (a least-privilege `start` task
+included); `3.0.0-rc.5` and later accept it and do nothing. Add it to an older project's
+`deno.json` (the Setup page of `denext ui` offers to), beside any features already listed.
 
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
@@ -483,7 +487,8 @@ and Arm64 (`desktop-ci`). What works:
 Not on Windows: `denext fastlane` and iOS builds (both need macOS).
 
 A `deno.json` `file:` target on another drive (an app on `C:` importing a checkout on `D:`, as
-`migrate --denext-local-path` writes) resolves on the toolchain from runtime `3.0.0-rc.3`. Stock
+`migrate --denext-local-path` writes) resolves on the toolchain from runtime `3.0.0-rc.3`, and a
+workspace member's mapping to a module on another drive from `3.0.0-rc.5`. Stock
 Deno 2.9 still resolves it as `file:///C:/D:/…`, so under `DENEXT_DENO=stock` keep the project and
 its `file:` targets on one drive.
 
@@ -629,10 +634,10 @@ denext's Deno carries an identity marker: `Deno.build.denext` (its version, a st
 upstream Deno) and a last line in `deno --version`:
 
 ```
-deno 3.0.0-rc.4 (stable, release, aarch64-apple-darwin)
+deno 3.0.0-rc.5 (stable, release, aarch64-apple-darwin)
 v8 15.0.245.2-rusty
 typescript 6.0.3
-denext 3.0.0-rc.4 (Brainwires)
+denext 3.0.0-rc.5 (Brainwires)
 ```
 
 denext recognises its toolchain and the `deno` a desktop build runs by that marker (in its own
@@ -667,9 +672,19 @@ release is adopted by rebasing the patches onto it and cutting a new release (`-
 `3.0.0-rc.3` adds the identity marker above, makes TypeScript 7 the
 language server's own default, keeps a `--watch` child's IPC channel across restarts, resolves a
 `file:` link on another Windows drive, checks the files after `deno check --`, and gives the native
-check's TS2307 Deno's `deno add` hint. `3.0.0-rc.4` (the build denext pins today) is built from
-Deno 2.9.8 (X.509 v1 TLS certificates handled as OpenSSL does, safer npm symlinking, zsh
-completions, `mock.reset()`, the distrusted eMudhra CAs removed). Deno's next minor
+check's TS2307 Deno's `deno add` hint. `3.0.0-rc.4` is built from Deno 2.9.8 (X.509 v1 TLS
+certificates handled as OpenSSL does, safer npm symlinking, zsh completions, `mock.reset()`, the
+distrusted eMudhra CAs removed). `3.0.0-rc.5` (the build denext pins today) makes two Deno 3.0
+behaviors the default: `request.signal` aborts only when a response is not delivered
+(`--unstable-legacy-abort` or `DENO_LEGACY_ABORT=1` restores the old abort), and an approved
+dependency's lifecycle script runs [jailed](#supply-chain-lifecycle-script-jail). It adds
+type-aware lint rules (`deno lint --type-aware`, or `"lint": { "typeAware": true }`: typescript-eslint's
+`no-floating-promises`, `no-misused-promises`, `await-thenable` and others through a pinned tsgolint
+shipped in the CLI zip; off by default) and `--unstable-idle-trim` (a full GC and `malloc_trim`
+when the event loop goes idle, so a server's memory returns to the OS after a burst; glibc Linux
+only). On Windows a spawned child inherits only its own handles, so a concurrent spawn no longer
+keeps another's output pipe open (`.output()` waited for the unrelated process to exit), and a
+workspace member's import map can map a module on another drive. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
 **Support across denext releases.** The patches are carried forward from release to release. Each

@@ -56,7 +56,7 @@ The results document (`e2e/.run/results.json`, `--results`, `--json`) is the mac
   "schema": 1,
   "os": "linux", "arch": "x86_64", "target": "x86_64-unknown-linux-gnu",
   "backend": "cef",
-  "runtime": { "mode": "pinned", "version": "3.0.0-rc.4", "dir": null },
+  "runtime": { "mode": "pinned", "version": "3.0.0-rc.5", "dir": null },
   "flags": { "noPackage": false, "backend": "cef", … },
   "ok": false,
   "summary": { "pass": 70, "skip": 3, "fail": 1, "problems": 1 },

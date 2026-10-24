@@ -100,14 +100,15 @@ Deno.test("jail: on by default from runtime 3.0.0-rc.5, never on stock or older 
   for (const v of [RC5, "3.0.0-rc.6", "3.0.0-rc.10", "3.0.0", "3.1.0"]) {
     assert(jailOnByDefault(v), v);
   }
-  for (const v of [RC3, "3.0.0-rc.4", "2.9.7-denext.22", "2.9.7", "", undefined]) {
+  for (const v of [RC3, "3.0.0-rc.4", "2.9.7-denext.22", "2.9.7", ""]) {
     assertFalse(jailOnByDefault(v), String(v));
   }
-  // the checked-in pin decides the default
+  // no version: the checked-in pin decides the default (3.0.0-rc.5 or later: on)
   assertEquals(
     jailOnByDefault(),
     compareDenoVersions(toolchainPin.version, RC5) >= 0,
   );
+  assertEquals(jailOnByDefault(undefined), jailOnByDefault(toolchainPin.version));
 });
 
 Deno.test("jail: settings merge as the runtime merges them, the stricter one winning", () => {

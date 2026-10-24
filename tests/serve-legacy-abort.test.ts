@@ -17,6 +17,11 @@ const src = (path: string) => toFileUrl(join(Deno.cwd(), path)).href;
 
 Deno.test("toolchainRuntimeFlags: the toolchain child opts in to Deno.serve's new request abort", () => {
   assertEquals(toolchainRuntimeFlags("2.9.7-denext.16"), ["--unstable-no-legacy-abort"]);
+  assertEquals(toolchainRuntimeFlags("3.0.0-rc.4"), ["--unstable-no-legacy-abort"]);
+  // From 3.0.0-rc.5 the new abort is the runtime's default (the flag is a no-op): none.
+  assertEquals(toolchainRuntimeFlags("3.0.0-rc.5"), []);
+  assertEquals(toolchainRuntimeFlags("3.0.0-rc.10"), []);
+  assertEquals(toolchainRuntimeFlags("3.0.0"), []);
   // A DENEXT_DENO=<path> binary may predate the flag; no toolchain, no flag.
   assertEquals(toolchainRuntimeFlags("path"), []);
   assertEquals(toolchainRuntimeFlags(undefined), []);

@@ -555,7 +555,7 @@ export async function desktopBundleCommand(
       Boolean(runtimeEnv.DENORT_DESKTOP_BIN) && await desktopNetSplitFor(),
     ),
     ...denoFlags,
-    // The pinned runtime's own flags (`--unstable-no-legacy-abort`).
+    // The pinned runtime's own flags (`--unstable-no-legacy-abort` before 3.0.0-rc.5; none after).
     ...desktopRuntimeDenoFlags(runtimeEnv, denoFlags),
     "--include",
     "out",

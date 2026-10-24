@@ -130,7 +130,7 @@ async function buildApp(out: string, target?: string): Promise<void> {
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
     ...denoFlags,
-    // The pinned runtime keeps --unstable-no-legacy-abort: no Deno.serve legacy-abort notice.
+    // The pinned runtime's own flags (--unstable-no-legacy-abort before 3.0.0-rc.5; none after).
     ...desktopRuntimeDenoFlags(env, denoFlags),
     "--include",
     "out",

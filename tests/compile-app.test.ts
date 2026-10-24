@@ -55,6 +55,8 @@ Deno.test("toolchainCompileFlags: the toolchain's npm pruning and runtime flags,
     "--exclude-unused-npm",
     "--unstable-no-legacy-abort",
   ]);
+  // From 3.0.0-rc.5 the new abort is the runtime's default: only the npm pruning.
+  assertEquals(toolchainCompileFlags("3.0.0-rc.5"), ["--exclude-unused-npm"]);
 });
 
 Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere", async () => {

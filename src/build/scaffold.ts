@@ -355,7 +355,8 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  * notice on the first request — what `denext start` / `dev` get from the toolchain's
  * `--unstable-no-legacy-abort`, here for every `deno` that reads the config (a least-privilege
  * `start` task included, which cannot re-run itself with the flag). Stock Deno 2.9 accepts the key
- * without a warning.
+ * without a warning. denext's runtime from 3.0.0-rc.5 has that behavior by default and accepts
+ * the key as a no-op; it stays for a project run on stock Deno 2.9.x or an older toolchain.
  */
 export const DENEXT_UNSTABLE: readonly string[] = ["no-legacy-abort"];
 
@@ -1209,7 +1210,7 @@ async function buildApp(out: string, target?: string): Promise<void> {
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
     ...denoFlags,
-    // The pinned runtime keeps --unstable-no-legacy-abort: no Deno.serve legacy-abort notice.
+    // The pinned runtime's own flags (--unstable-no-legacy-abort before 3.0.0-rc.5; none after).
     ...desktopRuntimeDenoFlags(env, denoFlags),
     "--include",
     "out",

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.1 - 2026-10-24
+
 ### Fixed
 
 - **Object downloads serve several ranges and honour `If-Range`,** as denext's static file handler

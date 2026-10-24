@@ -1733,10 +1733,10 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
         of any file it changes. <code>denext desktop package</code>{" "}
-        warns when a script is stale: one from before denext 3.1 builds on the stock runtime, and a
-        {" "}
-        <code>scripts/package-macos.ts</code> that does not call{" "}
-        <code>desktopRuntimeDenoFlags</code> builds without <code>--unstable-no-legacy-abort</code>.
+        warns when a script is stale: one from before denext 3.1 builds on the stock runtime.{" "}
+        <code>desktopRuntimeDenoFlags</code> gives a build on a pinned runtime before{" "}
+        <code>3.0.0-rc.5</code> its <code>--unstable-no-legacy-abort</code>; from{" "}
+        <code>3.0.0-rc.5</code> that behavior is the runtime&apos;s default and it returns none.
       </Callout>
       <Callout kind="note">
         <strong>The network grant by direction.</strong>{" "}
