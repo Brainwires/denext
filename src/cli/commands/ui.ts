@@ -14,6 +14,7 @@ import type { CommandContext, CommandSpec } from "../command.ts";
 import { projectDir } from "../shared.ts";
 import { installShutdown } from "../shutdown.ts";
 import { openBrowser } from "../../ui/open.ts";
+import { workspaceVerbTarget } from "../../build/workspace-imports.ts";
 import {
   DEFAULT_UI_PORT,
   startUiServer,
@@ -92,6 +93,24 @@ export function uiServerOptions(
   };
 }
 
+/**
+ * The options with the project a workspace root stands for: `denext ui` pointed at a
+ * `denext create --monorepo` root serves its app (said on stderr), and with several apps it exits
+ * naming them, so the UI never edits a config or scaffolds a shell into the root.
+ *
+ * @param options The options {@linkcode uiServerOptions} parsed.
+ * @returns The options to start the server with.
+ */
+export async function uiTargetOptions(options: UiServerOptions): Promise<UiServerOptions> {
+  const target = await workspaceVerbTarget(options.dir, { command: "denext ui" });
+  if ("error" in target) {
+    console.error(`denext ui: ${target.error}`);
+    Deno.exit(1);
+  }
+  if (target.app) console.error(`  denext ui: workspace root — serving its app ${target.app}`);
+  return { ...options, dir: target.dir };
+}
+
 export const uiCommand: CommandSpec = {
   name: "ui",
   summary: "Open the project management UI in a browser (loopback only)",
@@ -140,7 +159,7 @@ export const uiCommand: CommandSpec = {
   ],
   run: async (ctx) => {
     const controller = new AbortController();
-    const options = uiServerOptions(ctx, controller.signal);
+    const options = await uiTargetOptions(uiServerOptions(ctx, controller.signal));
     installShutdown(controller);
     const server = await startUiServer(options);
     activeUiServers.add(server);

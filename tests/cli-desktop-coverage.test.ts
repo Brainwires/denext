@@ -675,6 +675,44 @@ Deno.test("desktop add: --json reports the result; --list --json is the catalog;
   }
 });
 
+Deno.test("desktop add at a monorepo root: the app gets the capability, never the root", async () => {
+  // `denext create --monorepo` puts the app (and its native shells) in apps/web. Run at the root,
+  // `desktop add` used to write a denext.config.ts there, a config no app reads.
+  const dir = await tempDir("denext_desktop_add_ws_");
+  try {
+    const write = (rel: string, text: string) =>
+      Deno.mkdir(join(dir, rel, ".."), { recursive: true }).then(() =>
+        Deno.writeTextFile(join(dir, rel), text)
+      );
+    await write("deno.json", JSON.stringify({ workspace: ["./apps/web", "./packages/ui"] }));
+    await write("apps/web/deno.json", "{}");
+    await write("apps/web/app/page.tsx", "export default () => null;\n");
+    await write("packages/ui/deno.json", JSON.stringify({ name: "@x/ui", exports: "./mod.ts" }));
+    const one = await runAdd(dir, ["clipboard"]);
+    assertEquals(one.code, 0, one.err);
+    assertStringIncludes(one.err, "running on its app apps/web");
+    assertEquals(await exists(join(dir, "denext.config.ts")), false);
+    assertStringIncludes(
+      await Deno.readTextFile(join(dir, "apps/web/denext.config.ts")),
+      "clipboard",
+    );
+    // A second app: the root names both and changes nothing.
+    await write("apps/admin/deno.json", "{}");
+    await write("apps/admin/app/page.tsx", "export default () => null;\n");
+    await write(
+      "deno.json",
+      JSON.stringify({ workspace: ["./apps/web", "./apps/admin", "./packages/ui"] }),
+    );
+    const two = await runAdd(dir, ["device"]);
+    assertEquals(two.code, 1);
+    assertStringIncludes(two.err, "several apps (apps/web, apps/admin)");
+    assertStringIncludes(two.err, "denext desktop add device --cwd apps/web");
+    assertEquals(await exists(join(dir, "denext.config.ts")), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop: the project dir and the lock plan per action", () => {
   const ctx = (positionals: string[], flags: Record<string, boolean> = {}, cwd?: string) =>
     makeCtx({ positionals, flags, global: cwd ? { cwd } : {} });

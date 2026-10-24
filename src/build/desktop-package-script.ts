@@ -788,9 +788,11 @@ export interface DesktopSignWindowsDeps {
 
 /**
  * Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password
- * `DENEXT_WINDOWS_CERT_PASSWORD`, timestamped by `DENEXT_SIGN_TIMESTAMP_URL`), batched a few
- * dozen files per `signtool sign` call. Without a certificate, or without `signtool` (off
- * Windows), nothing is signed and a warning says so. The password, which signtool takes only as
+ * `DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,
+ * timestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.
+ * Without a certificate nothing is signed and a warning says so. With one but without `signtool`
+ * (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the
+ * script's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as
  * `/p`, is redacted from a failure message.
  *
  * @param files The files to sign (a bundle's PE files from {@linkcode desktopPeFiles}, or an .msi).
@@ -805,16 +807,20 @@ export async function desktopSignWindows(
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   if (files.length === 0) return false;
   const what = files.length === 1 ? files[0] : `${files.length} files`;
-  // The shared certificate settings (./code-signing.ts); a store thumbprint is the compiled
-  // binary's option only, so this path keeps reading the .pfx alone.
-  const cert = windowsCertificate(env, false);
+  // The shared certificate settings (./code-signing.ts): a .pfx, else a store thumbprint.
+  const cert = windowsCertificate(env);
   if (!cert) {
     warn(`  no DENEXT_WINDOWS_CERT set — ${what} not Authenticode-signed.`);
     return false;
   }
   if (!(await (deps.has ?? desktopHasTool)("signtool"))) {
-    warn(`  signtool not found (Windows SDK) — ${what} not signed; sign on a Windows host/CI.`);
-    return false;
+    // A configured certificate means the app ships signed: fail closed, never package it unsigned.
+    const variable = cert.kind === "pfx" ? "DENEXT_WINDOWS_CERT" : "DENEXT_WINDOWS_CERT_THUMBPRINT";
+    throw new Error(
+      `denext: ${variable} is set but signtool (Windows SDK) is not on PATH, so ${what} can't ` +
+        "be Authenticode-signed here. Package on a Windows host with the Windows SDK, or pass " +
+        "--no-sign to build unsigned on purpose.",
+    );
   }
   const timestamp = env("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
   const run = deps.run ?? desktopRun;

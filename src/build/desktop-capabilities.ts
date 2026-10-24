@@ -20,6 +20,8 @@ import { desktopNetSplitFor } from "./desktop-runtime.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
+import { permissionListError } from "../desktop/permission-entries.ts";
+import { loadConfigBeside } from "./desktop-config-beside.ts";
 
 /** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
 export type DesktopOs = "darwin" | "windows" | "linux";
@@ -572,9 +574,31 @@ export function sidecarPermissionSet(
   return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v].sort()]));
 }
 
+/**
+ * A permission object from the raw config (the package scripts read it unvalidated), each list
+ * checked by `permissionListError`: an entry that is not exactly one value, or a list that is not
+ * an array of strings, fails the build rather than bake a wider (or a mangled) grant.
+ *
+ * @param field The config path, for the message.
+ * @param value The configured object (`undefined`: none).
+ * @returns The object.
+ */
+function checkedPermissions(field: string, value: unknown): DesktopPermissionSet {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`denext: ${field} must be an object of permission kinds to string arrays`);
+  }
+  for (const [kind, list] of Object.entries(value)) {
+    const error = permissionListError(kind, list);
+    if (error) throw new Error(`denext: ${field}.${kind} ${error}`);
+  }
+  return value as DesktopPermissionSet;
+}
+
 /** One sidecar's needs as `[kind, values]`: its `permissions`, its program, its log file. */
 function sidecarNeeds(d: SidecarDefinition): Array<[string, readonly string[]]> {
-  const needs = Object.entries(d.permissions ?? {}).filter(
+  const permissions = checkedPermissions(`desktop.sidecars "${d.name}" permissions`, d.permissions);
+  const needs = Object.entries(permissions).filter(
     (e): e is [string, readonly string[]] => Array.isArray(e[1]),
   );
   const exec = (d.run as { exec?: unknown } | undefined)?.exec;
@@ -647,7 +671,7 @@ export function desktopBuildFlags(
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   // `desktop.extraPermissions` and what the sidecars need, baked the same way.
   const extra = mergePermissionSets(
-    cfg.desktop?.extraPermissions ?? {},
+    checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
     sidecarPermissionSet(configSidecars(cfg), os),
   );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
@@ -702,8 +726,8 @@ export function desktopBuildFlags(
 
 /**
  * The `deno desktop` `--allow-*` flags for a scaffolded packaging script: read the project's
- * `denext.config.ts` (next to `entryUrl` — a packaging script lives in `scripts/`, so the config
- * is `../denext.config.ts`) and derive the least-privilege flags for `os` via {@linkcode
+ * config (next to `entryUrl` — a packaging script lives in `scripts/`, so the config is
+ * `../denext.config.ts`, or its `.mts` / `.js` / `.mjs` twin) and derive the least-privilege flags for `os` via {@linkcode
  * desktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The
  * config is imported dynamically at run time from a caller-supplied URL, so it is never part of
  * this module's own dependency graph (nor a build-time import of user code). The network grant is
@@ -721,13 +745,8 @@ export async function desktopPackageFlags(
   os: DesktopOs,
   netSplit?: boolean,
 ): Promise<string[]> {
-  let config: unknown;
-  try {
-    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
-    config = (mod as { default?: unknown }).default;
-  } catch {
-    // no denext.config.ts (or it exports no config) → baseline only
-  }
+  // No config (or one that exports none) → the baseline; a config that fails to load fails.
+  const config = await loadConfigBeside(entryUrl);
   return desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
 }
 
@@ -762,13 +781,8 @@ function configExtensionPaths(config: unknown): string[] {
  * argv.
  */
 export async function desktopIncludeArgs(entryUrl: string, os?: DesktopOs): Promise<string[]> {
-  let config: unknown;
-  try {
-    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
-    config = (mod as { default?: unknown }).default;
-  } catch {
-    // no denext.config.ts (or it exports no config) → no extensions to embed
-  }
+  // No config → no extensions to embed; a config that fails to load fails.
+  const config = await loadConfigBeside(entryUrl);
   const includes = configExtensionPaths(config).flatMap((p) => ["--include", p]);
   const projectUrl = new URL("../", entryUrl);
   const local = projectUrl.protocol === "file:";

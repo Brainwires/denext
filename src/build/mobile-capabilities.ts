@@ -14,6 +14,7 @@
 import { stabilizeSpmPluginPaths } from "./spm-plugin-paths.ts";
 import { dirname, join, resolve } from "@std/path";
 import { posixRelative } from "./mobile-paths.ts";
+import { workspaceVerbTarget } from "./workspace-imports.ts";
 import {
   EMPTY_ENTITLEMENTS,
   withAppDelegatePushForwarding,
@@ -1088,12 +1089,24 @@ async function isCapacitorProject(dir: string): Promise<boolean> {
 }
 
 /**
- * The project root: `dir` resolved against `cwd` when given, else `cwd`. It must hold a
- * `capacitor.config.*` and a `package.json`. An explicit `dir` never falls back to `cwd`:
- * a mistyped `--dir` would otherwise change whichever project the shell happens to be in.
+ * The project root: `dir` resolved against `cwd` when given, else `cwd` — or, when `cwd` is a Deno
+ * workspace root (`denext create --monorepo`), its one member with a `capacitor.config.*` (several
+ * are refused, naming them). It must hold a `capacitor.config.*` and a `package.json`. An explicit
+ * `dir` never falls back to `cwd`: a mistyped `--dir` would otherwise change whichever project the
+ * shell happens to be in.
  */
 export async function findProject(cwd: string, dir: string | undefined): Promise<string> {
-  const root = dir === undefined ? cwd : resolve(cwd, dir);
+  let root = dir === undefined ? cwd : resolve(cwd, dir);
+  if (dir === undefined && !(await isCapacitorProject(root))) {
+    // A monorepo root (`denext create --monorepo --capacitor`): its one Capacitor app.
+    const target = await workspaceVerbTarget(root, {
+      command: "denext mobile",
+      accepts: isCapacitorProject,
+      dirFlag: "--dir",
+    });
+    if ("error" in target) throw new Error(target.error);
+    root = target.dir;
+  }
   if (!(await isCapacitorProject(root))) {
     throw new Error(
       dir === undefined

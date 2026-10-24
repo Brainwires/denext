@@ -2761,8 +2761,9 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         (the same keys: <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>,
         {" "}
         <code>sys</code>, <code>run</code>, <code>ffi</code>; <code>"*"</code>{" "}
-        bakes the unscoped flag). The scripts union it into the flags they bake, and{" "}
-        <code>--regenerate-scripts</code>{" "}
+        bakes the unscoped flag; each entry is one value, so an entry with a comma, an empty one or
+        a URL as a host is refused, by config validation and again by the package scripts). The
+        scripts union it into the flags they bake, and <code>--regenerate-scripts</code>{" "}
         keeps it because it lives in the config, not in the script. Events that fire before a
         handler subscribes (a notification click that launched the app, a deep link) are kept by the
         runtime and delivered to the first subscriber.
@@ -3748,7 +3749,11 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>WebView2Loader.dll</code>, the app-local VC++ runtime, CEF&apos;s DLLs and helpers,
           any <code>.node</code>, found by their header, third-party ones included), then the{" "}
           <code>.msi</code>. A full-app update of a signed app is refused unless every PE file in it
-          carries the running app&apos;s signature. Unset, nothing is signed.{" "}
+          carries the running app&apos;s signature. Unset, nothing is signed; set, the run fails
+          where <code>signtool</code> is not on <code>PATH</code>{" "}
+          rather than ship an unsigned app (<code>--no-sign</code> builds unsigned on purpose).{" "}
+          <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>{" "}
+          names a certificate in the Windows store instead of a <code>.pfx</code>.{" "}
           <code>DENEXT_WINDOWS_CERT_PASSWORD</code> is its password (redacted from errors) and{" "}
           <code>DENEXT_SIGN_TIMESTAMP_URL</code>{" "}
           an RFC 3161 timestamp server (default DigiCert&apos;s). A CEF app must be signed with a
@@ -3797,10 +3802,13 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         task, on denext&apos;s pinned runtime from any host). The <code>.msi</code>{" "}
         needs WiX 5 and Authenticode needs{" "}
         <code>signtool</code>, both on a Windows host: elsewhere the default <code>.msi</code>{" "}
-        falls back to a <code>.zip</code> per architecture and the <code>.exe</code>{" "}
-        stays unsigned. On Windows both are signed when <code>DENEXT_WINDOWS_CERT</code> (+{" "}
-        <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
-        <code>DENEXT_SIGN_TIMESTAMP_URL</code>) is set.
+        falls back to a <code>.zip</code>{" "}
+        per architecture, and a certificate in the environment fails the run unless it is given{" "}
+        <code>--no-sign</code>{" "}
+        (an unsigned build is then on purpose). On Windows both are signed when{" "}
+        <code>DENEXT_WINDOWS_CERT</code> (+ <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
+        <code>DENEXT_SIGN_TIMESTAMP_URL</code>) or <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>{" "}
+        is set.
       </Callout>
     </DocsShell>
   );

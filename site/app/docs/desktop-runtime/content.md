@@ -912,8 +912,10 @@ on the stock runtime (point `DENO_BIN` at a 2.9.8 binary to keep the pinned one)
 executable name (`laufey_webview.exe` on Windows, `laufey_webview` elsewhere), then copies the
 backend's directory into the app and renames the binary to the app's launcher. For a Windows app
 packaged on macOS or Linux, or a Linux app on Windows, denext offers the backend under the host's
-name from a sibling of the verified runtime (`<target>-<backend>.cross-host`, hard links into it),
-so every Linux and Windows target packages from any host. macOS apps package on a Mac.
+name from a sibling of the verified runtime (`<target>-<backend>.cross-host`, hard links into it,
+copies where the filesystem can't link), so every Linux and Windows target packages from any host.
+`--verify-runtime` re-hashes that sibling too, against the runtime it copies, and rebuilds it on
+any difference. macOS apps package on a Mac.
 
 **`denext doctor`** reports the pinned runtime version, whether it is cached and verified on this
 machine, and whether `deno` is the version it needs.

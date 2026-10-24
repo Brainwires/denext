@@ -84,6 +84,14 @@ the app directly: `denext dev apps/web`, `denext build apps/web`,
 `denext doctor apps/web`. Run at the root itself, `denext dev`, `build` and
 `doctor` name the workspace's apps and tell you how to run them.
 
+`denext ui`, `denext desktop …` and `denext mobile …` run at the root work on
+the workspace's app: `denext ui` serves `apps/web`, `denext desktop add
+clipboard` writes `apps/web/denext.config.ts`, and `denext mobile add haptics`
+installs into the member that holds `capacitor.config.ts`. They say which app
+they picked. With several apps they change nothing and name them, so pick one
+with `--cwd apps/admin` (`--dir apps/admin` for `denext mobile`). None of them
+writes a config or a native shell into the root.
+
 `denext dev` treats the packages as part of the app. An edit in `packages/ui`
 hot-updates the module in the browser and re-renders the server. You don't need
 to restart anything.
@@ -93,7 +101,9 @@ to restart anything.
 A denext target (`--desktop`, `--capacitor`) is one app, so the native shells
 live in `apps/web`: its `desktop.ts`, `capacitor.config.ts`, `package.json` and
 packaging scripts. A second app with its own shell is a second member with its
-own options.
+own options. From the root, `denext task desktop`
+and `denext task mobile:sync` run the app's tasks, and the `desktop` and
+`mobile` verbs find the app themselves (see [Tasks](#tasks)).
 
 ## Adding a member
 
@@ -107,10 +117,15 @@ a `dev:admin` task. Give each app its own port when two run at once:
 (`@my-shop/<name>`), `version` and `exports`. Then add its path to the root's
 `workspace` list, and apps can import it by name.
 
-List members one by one, as the scaffold does, not as a `packages/*` glob:
-denext's client bundler resolves a member by name only when the root lists it.
-denext also handles an app inside a workspace that doesn't list it: it builds
-on its own config, as Deno runs it, but it can't import its siblings by name.
+The scaffold lists members one by one, so the root says exactly what the
+workspace holds. A glob works too: with `"workspace": ["./apps/*",
+"./packages/*"]` every app and package under those folders is a member, imports
+its siblings by name in the server and the client bundle alike, and
+`denext generate app` adds no second entry for an app the glob already covers
+(Deno refuses a member listed twice). A glob matches the folders directly under
+its parent (`apps/*`), not deeper ones. denext also handles an app inside a
+workspace that doesn't list it: it builds on its own config, as Deno runs it,
+but it can't import its siblings by name.
 
 ## Upgrading
 
