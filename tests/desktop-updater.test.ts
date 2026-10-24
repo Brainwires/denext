@@ -907,3 +907,62 @@ Deno.test("desktop updater SECURITY (AU6-L): apply refuses a version that is not
     await Deno.remove(data, { recursive: true });
   }
 });
+
+Deno.test("desktop updater SECURITY (AU6-L1): an expired manifest is refused, the running one included", async () => {
+  const { publicKey, signingKey } = await keys();
+  const feed = await exportDir("console.log('overlay')");
+  const bundled = await exportDir("console.log('bundled')");
+  const data = await tmpData();
+  const past = Math.floor(Date.now() / 1000) - 60;
+  await writeOtaManifest(bundled, { sequence: 100 }, signingKey);
+  await writeOtaManifest(feed, { sequence: 101, expiresAt: past }, signingKey);
+  const config = cfg(data, publicKey);
+  const restore = routeFetch(() => createOtaHandler({ dir: feed, basePath: BASE }));
+  try {
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    const err = await assertRejects(() => checkForDesktopUpdate(config), DesktopUpdateError);
+    assertEquals((err as DesktopUpdateError).code, "expired");
+    const prep = await assertRejects(() => prepareDesktopUpdate(config), DesktopUpdateError);
+    assertEquals((prep as DesktopUpdateError).code, "expired");
+    // Re-signed with a fresh expiry: offered as usual.
+    await writeOtaManifest(feed, { sequence: 102 }, signingKey);
+    assertEquals((await checkForDesktopUpdate(config)).available, true);
+  } finally {
+    restore();
+    for (const d of [feed, bundled, data]) await Deno.remove(d, { recursive: true });
+  }
+});
+
+Deno.test("desktop updater SECURITY (AU6-L1): an expiry-aware bundle refuses an unexpiring overlay; an older bundle takes it", async () => {
+  const { publicKey, signingKey } = await keys();
+  const feed = await exportDir("console.log('overlay, no expiry')");
+  const bundled = await exportDir("console.log('bundled')");
+  const data = await tmpData();
+  // The feed's manifest comes from older tooling: signed (v2), but without an expiry.
+  const unexpiring = async () => {
+    const stamped = await writeOtaManifest(feed, { sequence: 101 });
+    const signed = await signOtaManifest(stamped, signingKey);
+    await Deno.writeTextFile(join(feed, "_denext", "ota.json"), JSON.stringify(signed));
+  };
+  await unexpiring();
+  const config = cfg(data, publicKey);
+  const restore = routeFetch(() => createOtaHandler({ dir: feed, basePath: BASE }));
+  try {
+    // A bundle whose manifest carries an expiry (this tooling, signed): no unexpiring overlay.
+    await writeOtaManifest(bundled, { sequence: 100 }, signingKey);
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    const err = await assertRejects(() => checkForDesktopUpdate(config), DesktopUpdateError);
+    assertEquals((err as DesktopUpdateError).code, "expired");
+    // A bundle from older tooling (no expiry): the migration path keeps taking it.
+    const older = await signOtaManifest(
+      await writeOtaManifest(bundled, { sequence: 100 }),
+      signingKey,
+    );
+    await Deno.writeTextFile(join(bundled, "_denext", "ota.json"), JSON.stringify(older));
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    assertEquals((await checkForDesktopUpdate(config)).available, true);
+  } finally {
+    restore();
+    for (const d of [feed, bundled, data]) await Deno.remove(d, { recursive: true });
+  }
+});

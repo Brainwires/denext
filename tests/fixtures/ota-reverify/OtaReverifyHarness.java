@@ -282,11 +282,11 @@ public final class OtaReverifyHarness {
         {
             Constructor<?> full = null;
             for (Constructor<?> c : DenextOtaStore.ApplyRequest.class.getDeclaredConstructors()) {
-                if (c.getParameterCount() == 10) full = c;
+                if (c.getParameterCount() == 11) full = c;
             }
             boolean ok = false;
             if (full != null) {
-                Object request = full.newInstance("http://127.0.0.1/ui", new HashMap<String, String>(), version, manifestFiles(), 7L, false, "hello", null, null, signature);
+                Object request = full.newInstance("http://127.0.0.1/ui", new HashMap<String, String>(), version, manifestFiles(), 7L, false, "hello", null, null, signature, null);
                 File dir = new File(work, "roundtrip");
                 Method write = DenextOtaStore.class.getDeclaredMethod("writeManifest", DenextOtaStore.ApplyRequest.class, File.class);
                 write.setAccessible(true);
@@ -298,6 +298,40 @@ public final class OtaReverifyHarness {
                 }
             }
             check("the stored manifest keeps the signed fields and verifies again", ok);
+        }
+
+        // ---- the v4 payload: a signed expiresAt is stored and verified again ---------------------
+        {
+            Long expiresAt = System.currentTimeMillis() / 1000 + 86_400;
+            String v4 = sign(key, DenextOtaStore.signaturePayload(version, false, "hello", 7L, null, null, expiresAt));
+            Constructor<?> full = null;
+            for (Constructor<?> c : DenextOtaStore.ApplyRequest.class.getDeclaredConstructors()) {
+                if (c.getParameterCount() == 11) full = c;
+            }
+            boolean ok = false;
+            boolean alteredRefused = false;
+            if (full != null) {
+                Object request = full.newInstance("http://127.0.0.1/ui", new HashMap<String, String>(), version, manifestFiles(), 7L, false, "hello", null, null, v4, expiresAt);
+                File dir = new File(work, "roundtrip-v4");
+                Method write = DenextOtaStore.class.getDeclaredMethod("writeManifest", DenextOtaStore.ApplyRequest.class, File.class);
+                write.setAccessible(true);
+                write.invoke(null, request, dir);
+                try {
+                    ok = call(null, "verifyInstalled", dir, version, publicKey) != null;
+                } catch (IllegalStateException ex) {
+                    System.err.println(ex.getCause());
+                }
+                File stored = new File(dir, "_denext/ota.json");
+                String text = new String(Files.readAllBytes(stored.toPath()), StandardCharsets.UTF_8);
+                Files.write(stored.toPath(), text.replace(String.valueOf(expiresAt), String.valueOf(expiresAt + 1)).getBytes(StandardCharsets.UTF_8));
+                try {
+                    call(null, "verifyInstalled", dir, version, publicKey);
+                } catch (IllegalStateException ex) {
+                    alteredRefused = true;
+                }
+            }
+            check("expiry: the stored v4 manifest keeps expiresAt and verifies at launch", ok);
+            check("expiry: a stored expiresAt changed on the device fails the signature", alteredRefused);
         }
 
         // ---- a clean install is served, file by file ---------------------------------------------

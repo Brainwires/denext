@@ -519,7 +519,8 @@ core and `offline-screen` writes a page; web fallback where one exists): `keyboa
 (`setSystemBars`, `useSystemBarsFollowTheme`; `useSafeAreaInsets()` needs nothing),
 `permissions` (`checkPermission`/`requestPermission`/`usePermission` → granted | limited |
 prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`; `deliveredNotifications` / `removeDeliveredNotifications({ threadId })` list and clear delivered ones, pushes too),
-`biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
+`biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`, which the OS
+enforces: a Keychain access control / an Android Keystore key, never readable by page script),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
 `background-location`, `background-audio` (`setNowPlaying`/`onMediaControl`/`setAudioSession`:
 background playback with lock-screen / notification controls; the Media Session API on the web),
@@ -735,7 +736,9 @@ or `createApp({ allowedOrigins })`.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
-`_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it;
+`_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it (a signed
+manifest expires: 30 days, `--expires-in <days>`; past it every shell refuses it, code `expired`,
+so re-sign the live release);
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is

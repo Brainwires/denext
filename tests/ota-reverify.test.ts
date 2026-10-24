@@ -27,6 +27,9 @@ import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
 import { writtenOtaTemplatesAt } from "./_release-templates.ts";
 import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
+import { otaSignaturePayload } from "../src/mobile/ota-manifest.ts";
+import { SETTINGS_IOS_FILES } from "../src/build/settings-native-templates.ts";
+import { PRINT_IOS_FILES } from "../src/build/expo-sdk-native-templates.ts";
 
 const FIXTURES = new URL("./fixtures/ota-reverify/", import.meta.url);
 const fixture = (path: string) => fromFileUrl(new URL(path, FIXTURES));
@@ -422,6 +425,25 @@ const UNREADABLE_CHECKS = [
 ];
 const IS_ROOT = Deno.build.os !== "windows" && Deno.uid() === 0;
 
+/** AU6 lows (OTA template generation 11): the signed expiry round trip, in both harnesses. */
+const EXPIRY_CHECKS = [
+  "expiry: the stored v4 manifest keeps expiresAt and verifies at launch",
+  "expiry: a stored expiresAt changed on the device fails the signature",
+];
+
+/** AU6 lows the Swift harness drives through `ApplyRequest` and `admit` directly. */
+const IOS_LOW_CHECKS = [
+  "expiry: a manifest past its expiresAt is refused (expired)",
+  "expiry: a manifest before its expiresAt is accepted",
+  "expiry: an expiresAt without a sequence is invalid",
+  "release build: an unsigned UI from loopback is refused (insecure)",
+  "debug build: an unsigned UI from loopback is accepted",
+  "a baseUrl with credentials is invalid",
+  "a baseUrl with a backslash is invalid",
+  "a request for a directory of the UI is refused without quarantining",
+  "the UI is still served after it",
+];
+
 /** Asserts a harness's output: every line ok, the shared checks all present, a clean tally. */
 function assertHarness(output: string, platform: string): void {
   const lines = output.trim().split(/\r?\n/);
@@ -463,6 +485,7 @@ Deno.test({
       await Deno.mkdir(work);
       const out = await run("java", ["-cp", classes, "dev.denext.ota.OtaReverifyHarness", work]);
       assertHarness(out, "android");
+      for (const name of EXPIRY_CHECKS) assertStringIncludes(out, `ok ${name}`);
       assertStringIncludes(out, "ok the bundled assets are answered as Capacitor does");
       assertStringIncludes(
         out,
@@ -528,6 +551,21 @@ Deno.test({
       const out = await run(bin, [work]);
       assertHarness(out, "ios");
       assertStringIncludes(out, "ok an embedded key that does not parse refuses it (fail closed)");
+      for (const name of [...EXPIRY_CHECKS, ...IOS_LOW_CHECKS]) {
+        assertStringIncludes(out, `ok ${name}`);
+      }
+      // The Swift v4 payload is byte for byte denext's otaSignaturePayload.
+      const [, version, base64] = /^payload-v4 ([0-9a-f]{64}) (\S+)$/m.exec(out) ?? [];
+      assert(version !== undefined, out);
+      const expected = await otaSignaturePayload({
+        version,
+        required: true,
+        notes: "n",
+        sequence: 7,
+        minNative: 3,
+        expiresAt: 1_800_000_000,
+      });
+      assertEquals(atob(base64), new TextDecoder().decode(expected));
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -564,6 +602,50 @@ Deno.test({
         "DenextOtaStore.swift": IOS_STORE,
         "DenextOtaPlugin.swift": IOS_PLUGIN,
         "DenextExportRouter.swift": "import Foundation\nimport Capacitor\n" + EXPORT_ROUTER_SWIFT,
+      };
+      for (const [name, text] of Object.entries(sources)) {
+        await Deno.writeTextFile(join(dir, name), text);
+      }
+      await xcrun([
+        "-typecheck",
+        "-swift-version",
+        "5",
+        "-I",
+        dir,
+        ...Object.keys(sources).map((name) => join(dir, name)),
+      ]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "AU6 lows (iOS): the settings plugin's biometric secrets and the print plugin type-check against UIKit",
+  ignore: !IOS_SDK,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "denext_au6_ios_" });
+    try {
+      const xcrun = (args: string[]) =>
+        run("xcrun", ["--sdk", "iphoneos", "swiftc", "-target", "arm64-apple-ios15.0", ...args]);
+      await Deno.writeTextFile(
+        join(dir, "Capacitor.swift"),
+        (await Deno.readTextFile(fixture("swift/CapacitorCore.swift"))) +
+          (await Deno.readTextFile(fixture("swift/CapacitorUI.swift"))),
+      );
+      await xcrun([
+        "-emit-module",
+        "-parse-as-library",
+        "-module-name",
+        "Capacitor",
+        "-emit-module-path",
+        join(dir, "Capacitor.swiftmodule"),
+        join(dir, "Capacitor.swift"),
+      ]);
+      const sources = {
+        "DenextSettingsPlugin.swift": SETTINGS_IOS_FILES["DenextSettingsPlugin.swift"],
+        "DenextPrintPlugin.swift": PRINT_IOS_FILES["DenextPrintPlugin.swift"],
       };
       for (const [name, text] of Object.entries(sources)) {
         await Deno.writeTextFile(join(dir, name), text);

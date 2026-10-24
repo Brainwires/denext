@@ -1377,10 +1377,15 @@ export function DeepLinks() {
         <code>launch: true</code>, to the subscribers registered by then (so mount it in the root
         layout); links opened while the app runs follow with <code>launch: false</code>.{" "}
         <strong>Only accepted links reach your code.</strong>{" "}
-        The default accepts the app's custom schemes (the OS only delivers the ones you registered)
-        and no <code>https</code> host, so list your domains in <code>accept.hosts</code>{" "}
-        or pass a predicate. Anyone can craft a deep link, so treat its path and query as untrusted
-        input. An accepted link's in-app path is navigated once: pushed onto the history with a{" "}
+        The default accepts the app's custom schemes and no <code>https</code>{" "}
+        host, so list your domains in <code>accept.hosts</code> or pass a predicate.{" "}
+        <code>accept</code>{" "}
+        filters what reaches your code; it is not authentication. Any web page or app can open a
+        custom-scheme link, and on Android another app can send an explicit intent straight to the
+        app's activity, which skips the intent filters (so even an <code>https</code>{" "}
+        App Link with the verified host can come from another app). Treat a link's path and query as
+        untrusted input, and never let one complete a sign-in or a payment by itself. An accepted
+        link's in-app path is navigated once: pushed onto the history with a{" "}
         <code>popstate</code>, which denext's router and history-based SPA routers follow. Pass{" "}
         <code>route: (path) =&gt; router.push(path)</code> to use your own router, or{" "}
         <code>route: false</code>{" "}
@@ -1868,15 +1873,27 @@ const saved = await secureStore.get("refreshToken", { reason: "Sign in" }); // p
         <strong>
           What <code>requireBiometric</code> guarantees.
         </strong>{" "}
-        The secure-storage plugin has no biometric access control on its Keychain / Keystore items,
-        so the gate is denext's code: <code>secureStore.get</code>{" "}
-        runs the prompt before it returns a gated value. The item is stored "when passcode set, this
-        device only" on iOS (never backed up or migrated, deleted if the passcode is removed), but
-        native code in the app could still read it without a prompt. It protects against someone
-        picking up an unlocked phone, not against a compromised app. On the web a gated value cannot
-        be read at all. The <code>expo-secure-store</code> shim's <code>requireAuthentication</code>
+        With <code>denext mobile add biometrics</code> from this release (its{" "}
+        <code>DenextSettings</code>{" "}
+        plugin, in a new binary) the OS enforces the gate. On iOS the value is a Keychain item whose
+        access control requires the enrolled biometrics or the device passcode, stored "when
+        passcode set, this device only" (never backed up or migrated, deleted with the passcode);
+        the read asks for Face ID / Touch ID first (the passcode too with{" "}
+        <code>allowDeviceCredential</code>). On Android 9 and later the value is sealed under an
+        Android Keystore key that needs the user for every use, opened through a{" "}
+        <code>BiometricPrompt</code> (a strong biometric; the PIN / pattern too with{" "}
+        <code>allowDeviceCredential</code>{" "}
+        on Android 11 and later); Android 8 and earlier refuse it (<code>unavailable</code>).
+        Neither value is in the secure-storage plugin, so page script, an XSS included, cannot read
+        it through any bridge method without the prompt. Storing never prompts. A value is dropped
+        (reads{" "}
+        <code>null</code>) when the enrolled biometrics change. In a binary built before this, and
+        in a Deno Desktop window, the gate is denext's code in the page (the value sits in the plain
+        secure store, which page script can read; the first such <code>set</code>{" "}
+        warns), and such a value moves into the OS-enforced store the first time a current binary
+        opens it. On the web a gated value cannot be read at all. The <code>expo-secure-store</code>
         {" "}
-        maps to it.
+        shim's <code>requireAuthentication</code> maps to it.
       </Callout>
 
       <h2 id="clerk">Clerk in the shell</h2>
@@ -3287,11 +3304,15 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         (repeatable, or comma-separated; https only, plain http only to loopback) writes the
         Info.plist string <code>DenextOtaOrigins</code> and the <code>dev.denext.ota.ORIGINS</code>
         {" "}
-        meta-data, and the app then refuses a <code>baseUrl</code>{" "}
-        on any other origin except loopback (code{" "}
+        meta-data, and the app then refuses a <code>baseUrl</code> on any other origin (code{" "}
         <code>insecure</code>), signed or not. A binary with no public key accepts an unsigned UI
-        only from a pinned https origin or loopback: any script in the page can call the plugin, so
-        an unsigned update from whatever server it names would replace the UI for good.{" "}
+        only from a pinned https origin: any script in the page can call the plugin, so an unsigned
+        update from whatever server it names would replace the UI for good. A loopback{" "}
+        <code>baseUrl</code> (<code>localhost</code>, <code>127.0.0.1</code>,{" "}
+        <code>::1</code>, and Android's emulator alias{" "}
+        <code>10.0.2.2</code>) passes both checks only in a debug build (iOS: compiled with{" "}
+        <code>DEBUG</code>, Xcode's Debug configuration; Android: a debuggable build): in a release
+        build another app on the device could serve an unsigned UI there.{" "}
         <code>denext mobile doctor --release</code> fails when OTA is installed without a key.
       </p>
       <p>
@@ -3333,21 +3354,38 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         a different one refuses it (code <code>native_mismatch</code>); see{" "}
         <a href="#native-fingerprint">Native fingerprint</a>.
       </p>
+      <p>
+        <strong>Expiry.</strong> Signing also stamps an <code>expiresAt</code>{" "}
+        (Unix seconds): 30 days from now, or <code>--expires-in &lt;days&gt;</code> /{" "}
+        <code>--expires-at &lt;RFC 3339&gt;</code>. From then on every shell refuses the manifest
+        (code <code>expired</code>), and <code>checkForUiUpdate</code>{" "}
+        reports it even when it names the UI already running, so a feed that keeps serving an old
+        release (a stale CDN, an attacker replaying the newest one it saw) shows up as an error
+        instead of "current". Re-sign the live release before it expires (
+        <code>denext ota manifest out --sign ota.key</code>{" "}
+        again; the version stays, the sequence grows). A UI already installed keeps running past its
+        manifest's expiry. An app whose bundled UI's manifest carries an expiry refuses a release
+        without one (code{" "}
+        <code>expired</code>), while an app bundled by older tooling keeps taking them, so upgrading
+        denext never strands a fleet.
+      </p>
       <Code lang="bash">
-        {`denext ota manifest out --sign ota.key --min-native 42   # sequence = now
-denext ota manifest out --sign ota.key --sequence 1758700000`}
+        {`denext ota manifest out --sign ota.key --min-native 42   # sequence = now, expires in 30 days
+denext ota manifest out --sign ota.key --sequence 1758700000 --expires-in 7`}
       </Code>
       <p>
         The signature is ECDSA P-256 / SHA-256, as standard base64 of the raw 64-byte{" "}
         <code>r‖s</code>, over these UTF-8 bytes (<code>\n</code>{" "}
-        is one 0x0A byte, with no trailing newline). A manifest with a <code>sequence</code> and a
+        is one 0x0A byte, with no trailing newline). A manifest with an <code>expiresAt</code>{" "}
+        is signed as v4, else one with a <code>sequence</code> and a <code>nativeFingerprint</code>
         {" "}
-        <code>nativeFingerprint</code> is signed as v3, one with a <code>sequence</code>{" "}
+        as v3, one with a <code>sequence</code>{" "}
         alone as v2 (byte-for-byte what denext 2.9 signed), one without as v1 (what denext 2.8
-        signed); all three are accepted:
+        signed); all four are accepted:
       </p>
       <Code lang="text">
-        {`v3: denext-ota-v3\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>\\n<nativeFingerprint>
+        {`v4: denext-ota-v4\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>\\n<nativeFingerprint or empty>\\n<expiresAt>
+v3: denext-ota-v3\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>\\n<nativeFingerprint>
 v2: denext-ota-v2\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>
 v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
       </Code>
@@ -3377,9 +3415,15 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <li>
           with no key, refuses the manifest (code{" "}
           <code>insecure</code>) unless it comes from a pinned <code>https</code>{" "}
-          origin or a loopback host: <code>localhost</code>, <code>127.0.0.1</code>,{" "}
-          <code>::1</code>, or the Android emulator's <code>10.0.2.2</code>{" "}
-          in a debuggable Android build. An unpinned <code>https</code> server is refused too;
+          origin, or, in a debug build only, a loopback host: <code>localhost</code>,{" "}
+          <code>127.0.0.1</code>, <code>::1</code>, or the Android emulator's{" "}
+          <code>10.0.2.2</code>. An unpinned <code>https</code> server is refused too;
+        </li>
+        <li>
+          refuses a manifest past its{" "}
+          <code>expiresAt</code>, or one without an expiry when the bundled UI's carries one (code
+          {" "}
+          <code>expired</code>);
         </li>
         <li>
           refuses an older <code>sequence</code> (code <code>downgrade</code>), a{" "}
@@ -3440,8 +3484,13 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         </li>
         <li>
           <code>insecure</code>: a <code>baseUrl</code>{" "}
-          outside the pinned origins, or no key and a host that is neither a pinned{" "}
-          <code>https</code> origin nor loopback;
+          outside the pinned origins, or no key and a host that is not a pinned <code>https</code>
+          {" "}
+          origin (loopback passes only in a debug build);
+        </li>
+        <li>
+          <code>expired</code>: the manifest's signed <code>expiresAt</code>{" "}
+          has passed (re-sign it), or it has none while the bundled UI's manifest does;
         </li>
         <li>
           <code>downgrade</code>: an older <code>sequence</code>, or none after a sequenced release;
@@ -3533,16 +3582,17 @@ export function OtaWatch() {
       </Code>
       <Callout kind="warn">
         <strong>Limits.</strong>{" "}
-        Downgrade protection covers sequenced (v2 and v3) releases: a device that never accepted a
-        sequenced manifest still takes an older v1 one. Without an embedded key, the transport (TLS)
-        is the only thing standing between the app and a hostile UI. Rotating the key takes an app
-        release, and a leaked key is valid until then. A file already verified in a process is not
-        hashed again until the next launch, so a change made while the app runs is caught then. On
-        iOS the first request for each file hashes it on the main thread (Capacitor's router is
-        synchronous), so a very large file delays its own first load once per process. On iOS, a web
-        content process that dies during a trial is reloaded by Capacitor itself; if that leaves the
-        page blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and
-        the next launch counts it as a failed trial attempt.
+        Downgrade protection covers sequenced (v2 to v4) releases: a device that never accepted a
+        sequenced manifest, on an app whose bundled UI carries none, still takes an older v1 one.
+        Without an embedded key, the transport (TLS) is the only thing standing between the app and
+        a hostile UI. Rotating the key takes an app release, and a leaked key is valid until then. A
+        file already verified in a process is not hashed again until the next launch, so a change
+        made while the app runs is caught then. On iOS the first request for each file hashes it on
+        the main thread (Capacitor's router is synchronous), so a very large file delays its own
+        first load once per process. On iOS, a web content process that dies during a trial is
+        reloaded by Capacitor itself; if that leaves the page blank, the watchdog rolls it back. On
+        Android, a renderer crash takes the app down, and the next launch counts it as a failed
+        trial attempt.
       </Callout>
       <p>
         A Deno Desktop app takes the same signed manifests through{" "}

@@ -56,8 +56,14 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * Generation 10: the downgrade floor is raised to the bundled UI's own manifest `sequence`, so an
  * older signed UI cannot replace a newer bundled one on a device that has not yet accepted an
  * over-the-air UI; the bump keeps an older denext from rewriting that check away.
+ * Generation 11: a manifest's signed `expiresAt` (the v4 payload) is enforced (code `expired`),
+ * and one without an expiry is refused once the bundled UI's manifest carries one; an unsigned UI
+ * from a loopback host is accepted (and loopback exempt from pinned origins) only in a debug
+ * build (iOS `DEBUG`, Android `FLAG_DEBUGGABLE`); `booted` without a version confirms nothing;
+ * and a request for a directory of a downloaded UI no longer quarantines it. The bump keeps an
+ * older denext from rewriting those checks away.
  */
-export const OTA_TEMPLATE_VERSION = 10;
+export const OTA_TEMPLATE_VERSION = 11;
 
 /**
  * SHA-256 of every template file denext shipped before the marker line existed, by file name:

@@ -29,6 +29,10 @@
 //  5. NO PATH ESCAPE. Every manifest path is checked with `isOtaManifestPath` (no control
 //     characters) and split into segments that reject `""`, `.`, `..` and backslashes; the
 //     resolved path must stay inside the staging/version directory.
+//  4b. EXPIRY. A manifest whose signed `expiresAt` has passed is refused (`expired`), as is one
+//     without an expiry once the bundled export's own manifest carries one (an expiry-aware
+//     app never takes an unexpiring release), so a feed that keeps serving an old release is
+//     noticed instead of reported as "no update".
 //  6. ATOMIC POINTER SWAP. The "current" pointer is flipped by writing `current.json.tmp` and
 //     `Deno.rename`-ing it over `current.json` — a same-directory rename is atomic, so a crash
 //     never leaves a half-written pointer. The previous version dir is kept for rollback.
@@ -36,6 +40,7 @@
 import { dirname, join, resolve, SEPARATOR } from "@std/path";
 import {
   isOtaManifest,
+  isOtaManifestExpired,
   isOtaManifestPath,
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_HEADER,
@@ -77,6 +82,8 @@ const DEFAULT_APP_ID = "denext-desktop";
  *   app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), its
  *   `platform` disagrees with the export's stamp file, or that stamp (which the version covers,
  *   unlike the unsigned field) names another target, with or without the field;
+ * - `expired`: the manifest's signed `expiresAt` has passed, or it carries none while the bundled
+ *   export's manifest does (re-sign it: `denext ota manifest --sign`);
  * - `not_staged`: {@linkcode applyDesktopUpdate} named a version that is not staged;
  * - `rejected`: the version was rolled back after failing to boot; refused until
  *   {@linkcode desktopUpdateReset}.
@@ -89,6 +96,7 @@ export type DesktopUpdateErrorCode =
   | "signature"
   | "downgrade"
   | "platform_mismatch"
+  | "expired"
   | "not_staged"
   | "rejected";
 
@@ -553,6 +561,23 @@ function downgradeFloor(state: UpdaterState, bundle: BundleRecord | undefined): 
   return known.length === 0 ? null : Math.max(...known);
 }
 
+/**
+ * Refuse a manifest whose `expiresAt` has passed, or which has none while the bundled export's
+ * manifest carries one (invariant 4b).
+ */
+function assertFresh(manifest: OtaManifest, bundle: BundleRecord | undefined): void {
+  if (isOtaManifestExpired(manifest)) {
+    const at = new Date(manifest.expiresAt! * 1000).toISOString();
+    throw new DesktopUpdateError("expired", `the manifest expired at ${at}`);
+  }
+  if (manifest.expiresAt === undefined && bundle?.expiring === true) {
+    throw new DesktopUpdateError(
+      "expired",
+      "the manifest carries no expiry, but the bundled export's does",
+    );
+  }
+}
+
 function assertNotDowngrade(
   manifest: OtaManifest,
   state: UpdaterState,
@@ -566,6 +591,25 @@ function assertNotDowngrade(
       `sequence ${manifest.sequence ?? "(none)"} is not newer than the accepted ${highest}`,
     );
   }
+}
+
+/**
+ * Fetch the feed's manifest and run the trust gate every path shares: integrity and signature
+ * (invariants 2–3), the target, and freshness (invariant 4b). With the data dir and the bundle
+ * record it read.
+ */
+async function fetchTrustedManifest(config: DesktopUpdaterConfig): Promise<{
+  dir: string;
+  manifest: OtaManifest;
+  bundle: BundleRecord | undefined;
+}> {
+  const dir = dataDirOf(config);
+  const manifest = await fetchManifest(config);
+  await assertVerified(manifest, config.publicKey);
+  await assertPlatform(manifest, config);
+  const bundle = await readBundleRecord(dir);
+  assertFresh(manifest, bundle);
+  return { dir, manifest, bundle };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -583,14 +627,12 @@ function assertNotDowngrade(
 export async function checkForDesktopUpdate(
   config: DesktopUpdaterConfig,
 ): Promise<DesktopUpdateCheck> {
-  const dir = dataDirOf(config);
-  const manifest = await fetchManifest(config);
-  await assertVerified(manifest, config.publicKey); // integrity + signature, verify-before-trust
-  await assertPlatform(manifest, config); // the target: the stamp file the version covers
+  // Integrity + signature (verify-before-trust), the target, and freshness: before "not
+  // available", so a stale feed is an error.
+  const { dir, manifest, bundle } = await fetchTrustedManifest(config);
 
   const pointer = await readPointer(dir);
   if (pointer && pointer.version === manifest.version) return { available: false };
-  const bundle = await readBundleRecord(dir);
   // The bundled export itself, with no overlay active: nothing newer.
   if (!pointer && bundle?.bundle === `ota:${manifest.version}`) return { available: false };
 
@@ -630,11 +672,8 @@ async function currentOverlayHashes(dir: string): Promise<Map<string, string>> {
 export async function prepareDesktopUpdate(
   config: DesktopUpdaterConfig,
 ): Promise<DesktopUpdatePrepared> {
-  const dir = dataDirOf(config);
-  const manifest = await fetchManifest(config);
-  await assertVerified(manifest, config.publicKey); // re-verify: integrity + signature
-  await assertPlatform(manifest, config);
-  assertNotDowngrade(manifest, await readState(dir), await readBundleRecord(dir));
+  const { dir, manifest, bundle } = await fetchTrustedManifest(config); // re-verify
+  assertNotDowngrade(manifest, await readState(dir), bundle);
 
   const staging = stagingDir(dir, manifest.version);
   await removeDir(staging); // start clean; a stale partial staging must not survive
@@ -816,13 +855,17 @@ interface BundleRecord {
   readonly bundle: string;
   /** The bundled export's signed-manifest `sequence`: the downgrade floor before any overlay. */
   readonly sequence?: number;
+  /** Whether the bundled export's manifest carries an `expiresAt`: overlays then must too. */
+  readonly expiring?: true;
 }
 
 function isBundleRecord(v: unknown): v is BundleRecord {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
   return typeof r.bundle === "string" &&
-    (r.sequence === undefined || (Number.isSafeInteger(r.sequence) && (r.sequence as number) >= 0));
+    (r.sequence === undefined ||
+      (Number.isSafeInteger(r.sequence) && (r.sequence as number) >= 0)) &&
+    (r.expiring === undefined || r.expiring === true);
 }
 
 const readBundleRecord = (dir: string) => readJson(bundlePath(dir), isBundleRecord);
@@ -835,8 +878,12 @@ async function bundleIdentity(bundledOut: string): Promise<BundleRecord | null> 
   const manifest = await readJson(join(bundledOut, OTA_MANIFEST_PATH), isOtaManifest);
   if (manifest) {
     // The bundle ships inside the signed app, so its manifest's sequence is trusted as the floor.
-    const { sequence } = manifest;
-    return { bundle: `ota:${manifest.version}`, ...(sequence !== undefined ? { sequence } : {}) };
+    const { sequence, expiresAt } = manifest;
+    return {
+      bundle: `ota:${manifest.version}`,
+      ...(sequence !== undefined ? { sequence } : {}),
+      ...(expiresAt !== undefined ? { expiring: true as const } : {}),
+    };
   }
   try {
     return {
@@ -857,7 +904,10 @@ async function forgetOverlaysOfAnotherBundle(dir: string, bundledOut: string): P
   const identity = await bundleIdentity(bundledOut);
   if (identity === null) return;
   const recorded = await readBundleRecord(dir);
-  if (recorded?.bundle === identity.bundle && recorded.sequence === identity.sequence) return;
+  if (
+    recorded?.bundle === identity.bundle && recorded.sequence === identity.sequence &&
+    recorded.expiring === identity.expiring
+  ) return;
   if (recorded && recorded.bundle !== identity.bundle) {
     await removeFile(pointerPath(dir));
     await removeFile(bootingPath(dir));

@@ -26,6 +26,7 @@ import { runtimePlatform, shellPlugin } from "./bridge.ts";
 import { listenerDisposer, type ListenerHandle } from "./plugin.ts";
 import {
   isOtaManifest,
+  isOtaManifestExpired,
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_HEADER,
   OTA_PLATFORM_PATH,
@@ -43,8 +44,14 @@ import {
  * - `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the
  *   manifest's `signature` is missing or does not verify;
  * - `insecure`: the binary pins origins (`denext mobile add-ota --ota-origin`) and `baseUrl` is on
- *   none of them, or it embeds no key and `baseUrl` is neither a pinned https origin nor loopback
- *   (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);
+ *   none of them, or it embeds no key and `baseUrl` is not a pinned https origin. A loopback
+ *   `baseUrl` (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` on Android) passes both checks
+ *   only in a debug build (iOS: compiled with `DEBUG`, Xcode's Debug configuration; Android: a
+ *   debuggable build); a release build treats it as any other origin;
+ * - `expired`: the manifest's signed `expiresAt` has passed (re-sign it: `denext ota manifest
+ *   --sign`), or it carries none while the app's bundled UI does (an expiry-aware app refuses an
+ *   unexpiring release). Checked here too, before the running version is reported `current`, so
+ *   a feed stuck on an old release shows up as an error;
  * - `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted or
  *   the bundled UI's own manifest carries, or it has none once there is such a floor;
  * - `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS
@@ -60,7 +67,7 @@ import {
  *   export) fits every shell.
  *
  * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,
- * `native_mismatch`, and
+ * `native_mismatch`, `expired`, and
  * `invalid` for a malformed or oversized manifest) run before any file is downloaded, and a
  * refusal leaves the running UI and any staged one as they were.
  */
@@ -76,7 +83,8 @@ export type OtaErrorCode =
   | "downgrade"
   | "native_too_old"
   | "native_mismatch"
-  | "platform_mismatch";
+  | "platform_mismatch"
+  | "expired";
 
 // An array literal, not a `new Set(...)`: bundlers keep a module-level constructor call,
 // which would pin this module into every bundle that imports `denext/mobile`.
@@ -93,6 +101,7 @@ const OTA_ERROR_CODES: readonly string[] = [
   "native_too_old",
   "native_mismatch",
   "platform_mismatch",
+  "expired",
 ] satisfies readonly OtaErrorCode[];
 
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */
@@ -509,9 +518,8 @@ async function newerManifest(
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const manifest = await fetchManifest(baseUrl, options, headers);
   if (typeof manifest === "string") return { kind: "error", reason: manifest };
-  const target = shellTarget(options);
-  const mismatch = target === undefined ? null : await otaPlatformMismatch(manifest, target);
-  if (mismatch !== null) return { kind: "error", reason: mismatch, code: "platform_mismatch" };
+  const refused = await manifestRefusal(manifest, options);
+  if (refused) return refused;
   let status: Partial<OtaStatus>;
   try {
     status = await plugin.status();
@@ -523,6 +531,25 @@ async function newerManifest(
   const running = status.pending ?? status.current ?? status.bundled ?? null;
   if (manifest.version === running) return { kind: "current" };
   return { kind: "newer", manifest, baseUrl };
+}
+
+/**
+ * Why this shell refuses `manifest` before asking the native side anything, or null: another
+ * target's export (`platform_mismatch`), or past its signed `expiresAt` (`expired`; checked before
+ * the running version is reported `current`, so a feed stuck on an old release is an error).
+ */
+async function manifestRefusal(
+  manifest: OtaManifest,
+  options: OtaCheckOptions,
+): Promise<
+  { readonly kind: "error"; readonly reason: string; readonly code: OtaErrorCode } | null
+> {
+  const target = shellTarget(options);
+  const mismatch = target === undefined ? null : await otaPlatformMismatch(manifest, target);
+  if (mismatch !== null) return { kind: "error", reason: mismatch, code: "platform_mismatch" };
+  if (!isOtaManifestExpired(manifest)) return null;
+  const at = new Date(manifest.expiresAt! * 1000).toISOString();
+  return { kind: "error", reason: `the manifest expired at ${at}`, code: "expired" };
 }
 
 /**
@@ -781,7 +808,10 @@ export async function pageUiVersion(): Promise<string | undefined> {
  *
  * It sends this page's own UI version, read from the `_denext/ota.json` the page was served
  * with (its web root), and the native side confirms only when that is the version on trial.
- * A late call from the page being replaced therefore cannot confirm the new UI. The manifest
+ * A late call from the page being replaced therefore cannot confirm the new UI. A page with no
+ * readable manifest sends no version, and a current shell (OTA template generation 11 on) then
+ * confirms nothing: every downloaded UI carries its manifest, so only a page that is not the
+ * trial UI lacks one. (A shell older than that confirms a version-less call.) The manifest
  * is read at the first call, before the page could have been switched away from; reading
  * `otaStatus().pending` instead would name the new version as soon as the switch starts.
  *

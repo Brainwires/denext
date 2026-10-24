@@ -1465,6 +1465,18 @@ try {
         any overlay was accepted, so an overlay older than the UI the app ships is refused.
       </p>
       <p>
+        <strong>Releases expire.</strong> <code>denext ota manifest --sign</code> stamps a signed
+        {" "}
+        <code>expiresAt</code> (30 days, or <code>--expires-in</code> /{" "}
+        <code>--expires-at</code>). From then on <code>checkForDesktopUpdate</code> and{" "}
+        <code>prepareDesktopUpdate</code>{" "}
+        refuse the manifest (<code>expired</code>), even when it names the overlay already running,
+        so a feed stuck on an old release is reported instead of read as "no update"; re-sign the
+        live release before then. An app whose bundled export's manifest carries an expiry also
+        refuses a release without one (<code>expired</code>); one bundled by older tooling keeps
+        taking them.
+      </p>
+      <p>
         <strong>The export is for this OS.</strong> A manifest that names another target (
         <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>) is refused
         (<code>platform_mismatch</code>); the updater sends its OS (or the updater config&apos;s

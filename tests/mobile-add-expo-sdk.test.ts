@@ -365,3 +365,18 @@ for (const family of ALL) {
     },
   });
 }
+
+Deno.test("print templates SECURITY (AU6-L6/L7): no app-private file reaches a printer or the PDF WebView", () => {
+  const swift = PRINT_IOS_FILES["DenextPrintPlugin.swift"];
+  // printToPrinter (no dialog) takes only a file in Documents, Caches or tmp, symlinks resolved.
+  assertStringIncludes(swift, "guard let file = DenextPrintPlugin.printableFile(path) else {");
+  assertStringIncludes(swift, "static func printableFile(_ path: String) -> URL? {");
+  assertStringIncludes(swift, "url.resolvingSymlinksInPath().standardizedFileURL.path");
+  assert(
+    !swift.includes("controller.printingItem = path.hasPrefix"),
+    "the raw path is never printed",
+  );
+  const java = PRINT_ANDROID_FILES["DenextPrintPlugin.java"];
+  assertStringIncludes(java, "webView.getSettings().setAllowFileAccess(false);");
+  assertStringIncludes(java, "webView.getSettings().setAllowContentAccess(false);");
+});

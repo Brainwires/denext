@@ -86,6 +86,48 @@ and this project adheres to
   anything else rejects with code `invalid`. `callbackPrefix` and `state` now apply on mobile too.
 - `applyDesktopUpdate` refuses a version that is not a manifest version (64 hex digits) before it
   names a staging directory.
+- **Security: over-the-air UI manifests expire.** A feed could keep a device on an old release
+  for good by serving it forever (the newest one a device had seen is never a downgrade). `denext
+  ota manifest --sign` (and `denext export` with `spa.ota` and a signing key) now stamps a signed
+  `expiresAt`, 30 days out by default (`--expires-in <days>`, `--expires-at <RFC 3339>`), in a v4
+  signature payload (`otaSignaturePayload`; v1–v3 manifests verify as before). The `DenextOta`
+  plugin, `checkForUiUpdate` / `prepareUiUpdate` and the Deno Desktop UI updater refuse a manifest
+  past it with the new code `expired`, the JS sides even when it names the UI already running (so
+  a stale feed is an error, not "current"), and `denext ota promote` / `channel` refuse an
+  expired release unless `--force`. An app whose bundled UI's manifest carries an expiry refuses a
+  release without one; one bundled by older tooling keeps taking them. Re-sign the live release
+  before it expires.
+- **Security: an unsigned over-the-air UI from loopback is refused in a release build.** Without
+  an embedded key, the `DenextOta` plugin took an unsigned UI from `localhost` / `127.0.0.1` /
+  `::1` in any build, and loopback was exempt from pinned origins, so with another app listening
+  on 127.0.0.1 (Android) a script in the page could install an unsigned UI. Loopback now passes
+  only in a debug build (iOS: compiled with `DEBUG`; Android: a debuggable build, which the
+  emulator's `10.0.2.2` already needed). A `baseUrl` with credentials or a backslash is refused
+  (`invalid`), so the origin checks and the downloader always read the same host.
+- **Security: `otaBooted()` from a page with no version confirms nothing.** `booted` without a
+  version confirmed whatever UI was on trial, so a late call from an unstamped page could confirm
+  a broken new UI and defeat the rollback watchdog. The plugin now confirms only the version the
+  page names (every downloaded UI carries its manifest, so the trial page can).
+- **A request for a directory of a downloaded UI no longer quarantines it.** The serve check took
+  any existing path the signed manifest does not list as a file added on the device, so a request
+  for a folder (`/assets`), which page script can make, took the running UI out of service and
+  fell back to the bundled one. Only a non-directory counts now. The OTA templates move to
+  generation 11 for these four; run `denext mobile add-ota` to upgrade, then ship a new binary.
+- **Security: `secureStore.set(…, { requireBiometric: true })` is enforced by the OS.** The gate
+  was denext's code in the page: the value sat in the secure-storage plugin, which page script (an
+  XSS included) could read through `SecureStorage.internalGetItem` without a prompt. With `denext
+  mobile add biometrics` (its `DenextSettings` plugin, template generation 4, in a new binary) the
+  value is now a Keychain item whose access control requires the enrolled biometrics or the
+  passcode (iOS), or is sealed under an Android Keystore key that needs the user for every use and
+  opens only through a `BiometricPrompt` `CryptoObject` (Android 9+); it is never in the
+  secure-storage plugin. The API is unchanged. A value an older denext stored moves into the
+  OS-enforced store the first time it is read; an older binary keeps the in-page gate and warns
+  once.
+- **Security: printing cannot reach the app's private files.** iOS `printToPrinter` (expo-print's
+  `printAsync({ printerUrl, uri })`, no dialog) printed any file the app could read to any printer
+  URL; it now prints only a file in the app's Documents, Caches or temporary folder. Android
+  `printToFile`'s WebView no longer reads `file:` / `content:` URLs (remote images still load).
+  The print templates move to generation 2; run `denext mobile add print`.
 
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute

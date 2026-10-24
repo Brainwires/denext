@@ -12,6 +12,8 @@ export const SETTINGS_IOS_FILES: Readonly<Record<string, string>> = {
 
 @preconcurrency import Capacitor
 import Foundation
+import LocalAuthentication
+import Security
 import UIKit
 import UserNotifications
 
@@ -28,6 +30,17 @@ import UserNotifications
 /// - \`removeDeliveredNotifications({ notifications: [{ id }] })\`: removes those from Notification
 ///   Center (\`removeDeliveredNotifications(withIdentifiers:)\`). Rejects with code \`invalid\`
 ///   without the array.
+/// - \`biometricSecretSet({ key, value })\` / \`biometricSecretGet({ key, reason?,
+///   allowDeviceCredential? }) → { value }\` / \`biometricSecretDelete({ key })\`: the native half of
+///   \`secureStore.set(key, value, { requireBiometric: true })\`. The value is a Keychain item
+///   (service \`dev.denext.biometric-secret\`, "when passcode set, this device only") whose
+///   \`SecAccessControl\` requires the enrolled biometrics or the device passcode, so the OS itself
+///   refuses to hand it out without the user: a read first asks for Face ID / Touch ID (or, with
+///   \`allowDeviceCredential\`, the passcode) through \`LAContext\` and then reads the item with that
+///   context. \`value\` is \`null\` when there is none, or when the enrolled biometrics changed since it
+///   was stored (the item is then deleted: \`.biometryCurrentSet\`). A refused prompt rejects with
+///   the \`BiometricError\` code (\`cancelled\`, \`fallback\`, \`lockout\`, \`not-enrolled\`,
+///   \`unavailable\`, \`passcode-not-set\`, \`failed\`); a malformed call with \`invalid\`.
 @objc(DenextSettingsPlugin)
 public class DenextSettingsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "DenextSettingsPlugin"
@@ -35,8 +48,160 @@ public class DenextSettingsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Senda
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deliveredNotifications", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "removeDeliveredNotifications", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "removeDeliveredNotifications", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "biometricSecretSet", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "biometricSecretGet", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "biometricSecretDelete", returnType: CAPPluginReturnPromise)
     ]
+
+    /// The Keychain service biometric-gated secrets are stored under (not the secure-storage
+    /// plugin's, whose items page script can read without a prompt).
+    static let biometricSecretService = "dev.denext.biometric-secret"
+
+    /// The query naming the biometric-gated item \`key\`.
+    static func biometricSecretQuery(_ key: String) -> [String: Any] {
+        return [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: biometricSecretService,
+            kSecAttrAccount as String: key
+        ]
+    }
+
+    /// An \`LAError\` as a \`BiometricError\` code of \`denext/mobile\`.
+    static func biometricCode(_ error: Error?) -> String {
+        guard let error = error as? LAError else { return "failed" }
+        switch error.code {
+        case .userCancel, .systemCancel, .appCancel:
+            return "cancelled"
+        case .userFallback:
+            return "fallback"
+        case .biometryLockout:
+            return "lockout"
+        case .biometryNotEnrolled:
+            return "not-enrolled"
+        case .biometryNotAvailable:
+            return "unavailable"
+        case .passcodeNotSet:
+            return "passcode-not-set"
+        default:
+            return "failed"
+        }
+    }
+
+    @objc func biometricSecretSet(_ call: CAPPluginCall) {
+        guard let key = call.getString("key"), !key.isEmpty, let value = call.getString("value") else {
+            call.reject("key and value must be strings.", "invalid")
+            return
+        }
+        var error: Unmanaged<CFError>?
+        guard let access = SecAccessControlCreateWithFlags(
+            nil,
+            kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+            [.biometryCurrentSet, .or, .devicePasscode],
+            &error
+        ) else {
+            call.reject("The Keychain access control could not be created.", "failed")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let query = DenextSettingsPlugin.biometricSecretQuery(key)
+            SecItemDelete(query as CFDictionary)
+            var item = query
+            item[kSecValueData as String] = Data(value.utf8)
+            item[kSecAttrAccessControl as String] = access
+            let status = SecItemAdd(item as CFDictionary, nil)
+            if status == errSecSuccess {
+                call.resolve()
+            } else if status == errSecAuthFailed || status == errSecNotAvailable {
+                // "When passcode set" items need a device passcode.
+                call.reject("The device has no passcode, so the secret cannot be protected.", "passcode-not-set")
+            } else {
+                call.reject("The Keychain refused the secret (OSStatus \\(status)).", "failed")
+            }
+        }
+    }
+
+    @objc func biometricSecretGet(_ call: CAPPluginCall) {
+        guard let key = call.getString("key"), !key.isEmpty else {
+            call.reject("key must be a non-empty string.", "invalid")
+            return
+        }
+        let reason = call.getString("reason") ?? "Unlock a saved secret"
+        let allowDeviceCredential = call.getBool("allowDeviceCredential") ?? false
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Whether there is an item at all, without any prompt (no data is read).
+            let silent = LAContext()
+            silent.interactionNotAllowed = true
+            var probe = DenextSettingsPlugin.biometricSecretQuery(key)
+            probe[kSecUseAuthenticationContext as String] = silent
+            if SecItemCopyMatching(probe as CFDictionary, nil) == errSecItemNotFound {
+                call.resolve(["value": NSNull()])
+                return
+            }
+            let context = LAContext()
+            let policy: LAPolicy = allowDeviceCredential
+                ? .deviceOwnerAuthentication
+                : .deviceOwnerAuthenticationWithBiometrics
+            var unavailable: NSError?
+            guard context.canEvaluatePolicy(policy, error: &unavailable) else {
+                call.reject(unavailable?.localizedDescription ?? "Biometrics are unavailable.", DenextSettingsPlugin.biometricCode(unavailable))
+                return
+            }
+            if context.biometryType == .faceID,
+               Bundle.main.object(forInfoDictionaryKey: "NSFaceIDUsageDescription") == nil {
+                call.reject("Face ID needs NSFaceIDUsageDescription in Info.plist (denext mobile add biometrics).", "unavailable")
+                return
+            }
+            if let cancel = call.getString("cancelTitle") { context.localizedCancelTitle = cancel }
+            if !allowDeviceCredential { context.localizedFallbackTitle = call.getString("fallbackTitle") ?? "" }
+            context.evaluatePolicy(policy, localizedReason: reason) { verified, failure in
+                guard verified else {
+                    call.reject(failure?.localizedDescription ?? "The user was not verified.", DenextSettingsPlugin.biometricCode(failure))
+                    return
+                }
+                var query = DenextSettingsPlugin.biometricSecretQuery(key)
+                query[kSecReturnData as String] = true
+                query[kSecMatchLimit as String] = kSecMatchLimitOne
+                query[kSecUseAuthenticationContext as String] = context
+                var result: CFTypeRef?
+                let status = SecItemCopyMatching(query as CFDictionary, &result)
+                switch status {
+                case errSecSuccess:
+                    guard let data = result as? Data, let text = String(data: data, encoding: .utf8) else {
+                        call.reject("The stored secret is not text.", "failed")
+                        return
+                    }
+                    call.resolve(["value": text])
+                case errSecItemNotFound:
+                    call.resolve(["value": NSNull()])
+                case errSecUserCanceled:
+                    call.reject("The user cancelled.", "cancelled")
+                case errSecAuthFailed:
+                    // The enrolled biometrics changed since it was stored (.biometryCurrentSet): the
+                    // OS will never release it again, so it is gone.
+                    SecItemDelete(DenextSettingsPlugin.biometricSecretQuery(key) as CFDictionary)
+                    call.resolve(["value": NSNull()])
+                default:
+                    call.reject("The Keychain refused the secret (OSStatus \\(status)).", "failed")
+                }
+            }
+        }
+    }
+
+    @objc func biometricSecretDelete(_ call: CAPPluginCall) {
+        guard let key = call.getString("key"), !key.isEmpty else {
+            call.reject("key must be a non-empty string.", "invalid")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let status = SecItemDelete(DenextSettingsPlugin.biometricSecretQuery(key) as CFDictionary)
+            if status == errSecSuccess || status == errSecItemNotFound {
+                call.resolve()
+            } else {
+                call.reject("The Keychain refused to delete the secret (OSStatus \\(status)).", "failed")
+            }
+        }
+    }
 
     @objc func open(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
@@ -102,20 +267,49 @@ export const SETTINGS_ANDROID_FILES: Readonly<Record<string, string>> = {
 
 package dev.denext.settings;
 
+import android.annotation.TargetApi;
+import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.hardware.biometrics.BiometricPrompt;
 import android.net.Uri;
+import android.os.Build;
+import android.os.CancellationSignal;
 import android.provider.Settings;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyPermanentlyInvalidatedException;
+import android.security.keystore.KeyProperties;
 import android.service.notification.StatusBarNotification;
+import android.util.Base64;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.nio.charset.StandardCharsets;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.KeyFactory;
+import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.spec.MGF1ParameterSpec;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.OAEPParameterSpec;
+import javax.crypto.spec.PSource;
+import javax.crypto.spec.SecretKeySpec;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -143,9 +337,268 @@ import org.json.JSONObject;
  * tag? }] })} cancels each ({@code cancel(tag, id)}); an entry whose id is not an integer is
  * skipped. Rejects with code {@code invalid} without the array, {@code failed} when Android
  * refuses to list them.
+ *
+ * <p>{@code biometricSecretSet({ key, value })} / {@code biometricSecretGet({ key, reason?, title?,
+ * cancelTitle?, allowDeviceCredential? }) → { value }} / {@code biometricSecretDelete({ key })}: the
+ * native half of {@code secureStore.set(key, value, { requireBiometric: true })} (Android 9 and
+ * later; earlier ones reject with {@code unavailable}). The value is sealed with AES-GCM under a
+ * fresh key, which is wrapped (RSA-OAEP) with the public half of an Android Keystore key pair whose
+ * private half requires user authentication for every use and is invalidated when the enrolled
+ * biometrics change; the sealed value lives in the app's private {@code
+ * dev.denext.biometric-secrets} preferences. Storing needs no prompt; reading unwraps the key
+ * through a {@code BiometricPrompt} {@code CryptoObject}, so the Keystore itself refuses without
+ * the user (a strong biometric, or with {@code allowDeviceCredential} on Android 11 and later the
+ * device PIN / pattern / password too). {@code value} is {@code null} when there is none, or when
+ * the key was invalidated (every such secret is then deleted). A refused prompt rejects with the
+ * {@code BiometricError} code ({@code cancelled}, {@code lockout}, {@code not-enrolled},
+ * {@code unavailable}, {@code passcode-not-set}, {@code failed}); a malformed call with
+ * {@code invalid}.
  */
 @CapacitorPlugin(name = "DenextSettings")
 public class DenextSettingsPlugin extends Plugin {
+
+    /** The Android Keystore alias of the key pair that wraps every biometric-gated secret. */
+    static final String SECRET_KEY_ALIAS = "dev.denext.biometric-secret";
+    /** The private preferences holding the sealed secrets, by key. */
+    static final String SECRET_PREFS = "dev.denext.biometric-secrets";
+    /** RSA-OAEP with SHA-256 and MGF1-SHA-1: what the Android Keystore supports for decryption. */
+    static final OAEPParameterSpec OAEP = new OAEPParameterSpec(
+        "SHA-256",
+        "MGF1",
+        MGF1ParameterSpec.SHA1,
+        PSource.PSpecified.DEFAULT
+    );
+
+    @PluginMethod
+    public void biometricSecretSet(PluginCall call) {
+        String key = call.getString("key");
+        String value = call.getString("value");
+        if (key == null || key.isEmpty() || value == null) {
+            call.reject("key and value must be strings.", "invalid");
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            call.reject("Biometric-gated secrets need Android 9 or later.", "unavailable");
+            return;
+        }
+        try {
+            KeyGenerator generator = KeyGenerator.getInstance("AES");
+            generator.init(256);
+            SecretKey aes = generator.generateKey();
+            byte[] iv = new byte[12];
+            new SecureRandom().nextBytes(iv);
+            Cipher gcm = Cipher.getInstance("AES/GCM/NoPadding");
+            gcm.init(Cipher.ENCRYPT_MODE, aes, new GCMParameterSpec(128, iv));
+            byte[] sealed = gcm.doFinal(value.getBytes(StandardCharsets.UTF_8));
+            Cipher rsa = Cipher.getInstance("RSA/ECB/OAEPPadding");
+            rsa.init(Cipher.ENCRYPT_MODE, secretPublicKey(), OAEP);
+            byte[] wrapped = rsa.doFinal(aes.getEncoded());
+            String record = b64(wrapped) + "." + b64(iv) + "." + b64(sealed);
+            if (!secretPrefs().edit().putString(key, record).commit()) {
+                call.reject("The secret could not be saved.", "failed");
+                return;
+            }
+            call.resolve();
+        } catch (InvalidAlgorithmParameterException e) {
+            // The Keystore refuses an authentication-bound key without a secure lock screen (and,
+            // before Android 11, without an enrolled biometric).
+            call.reject("The device cannot protect the secret: " + e.getMessage(), deviceSecure() ? "not-enrolled" : "passcode-not-set");
+        } catch (Exception e) {
+            // Never let it escape: Capacitor's Bridge turns a plugin method's exception into a crash.
+            call.reject("The secret could not be protected: " + e.getMessage(), "failed");
+        }
+    }
+
+    @PluginMethod
+    public void biometricSecretGet(PluginCall call) {
+        String key = call.getString("key");
+        if (key == null || key.isEmpty()) {
+            call.reject("key must be a non-empty string.", "invalid");
+            return;
+        }
+        String record = secretPrefs().getString(key, null);
+        String[] parts = record == null ? null : record.split("\\\\.");
+        if (parts == null || parts.length != 3) {
+            JSObject none = new JSObject();
+            none.put("value", JSONObject.NULL);
+            call.resolve(none);
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            call.reject("Biometric-gated secrets need Android 9 or later.", "unavailable");
+            return;
+        }
+        Cipher rsa;
+        try {
+            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+            store.load(null);
+            PrivateKey privateKey = (PrivateKey) store.getKey(SECRET_KEY_ALIAS, null);
+            if (privateKey == null) {
+                // A restore onto another device, or a key the system removed: nothing can open it.
+                dropAllSecrets();
+                JSObject none = new JSObject();
+                none.put("value", JSONObject.NULL);
+                call.resolve(none);
+                return;
+            }
+            rsa = Cipher.getInstance("RSA/ECB/OAEPPadding");
+            rsa.init(Cipher.DECRYPT_MODE, privateKey, OAEP);
+        } catch (KeyPermanentlyInvalidatedException e) {
+            // The enrolled biometrics (or the lock screen) changed: the OS will never use the key again.
+            dropAllSecrets();
+            JSObject none = new JSObject();
+            none.put("value", JSONObject.NULL);
+            call.resolve(none);
+            return;
+        } catch (Exception e) {
+            call.reject("The secret could not be opened: " + e.getMessage(), "failed");
+            return;
+        }
+        final Cipher cipher = rsa;
+        getActivity().runOnUiThread(() -> promptForSecret(call, cipher, parts));
+    }
+
+    @PluginMethod
+    public void biometricSecretDelete(PluginCall call) {
+        String key = call.getString("key");
+        if (key == null || key.isEmpty()) {
+            call.reject("key must be a non-empty string.", "invalid");
+            return;
+        }
+        secretPrefs().edit().remove(key).commit();
+        call.resolve();
+    }
+
+    /** Main thread. Asks for the user, then unwraps and opens the secret with the authorised cipher. */
+    @TargetApi(Build.VERSION_CODES.P)
+    private void promptForSecret(PluginCall call, Cipher rsa, String[] parts) {
+        boolean credential = Boolean.TRUE.equals(call.getBoolean("allowDeviceCredential", false)) &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+        Executor executor = getContext().getMainExecutor();
+        AtomicBoolean settled = new AtomicBoolean(false);
+        BiometricPrompt.Builder builder = new BiometricPrompt.Builder(getContext())
+            .setTitle(call.getString("title", "Authenticate"))
+            .setSubtitle(call.getString("reason", "Unlock a saved secret"));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            builder.setAllowedAuthenticators(
+                credential
+                    ? android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG |
+                        android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                    : android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
+            );
+        }
+        if (!credential) {
+            builder.setNegativeButton(call.getString("cancelTitle", "Cancel"), executor, (dialog, which) -> {
+                if (settled.compareAndSet(false, true)) call.reject("The user cancelled.", "cancelled");
+            });
+        }
+        try {
+            builder.build().authenticate(
+                new BiometricPrompt.CryptoObject(rsa),
+                new CancellationSignal(),
+                executor,
+                new BiometricPrompt.AuthenticationCallback() {
+                    @Override
+                    public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                        if (!settled.compareAndSet(false, true)) return;
+                        try {
+                            Cipher unwrap = result.getCryptoObject().getCipher();
+                            SecretKeySpec aes = new SecretKeySpec(unwrap.doFinal(unb64(parts[0])), "AES");
+                            Cipher gcm = Cipher.getInstance("AES/GCM/NoPadding");
+                            gcm.init(Cipher.DECRYPT_MODE, aes, new GCMParameterSpec(128, unb64(parts[1])));
+                            JSObject out = new JSObject();
+                            out.put("value", new String(gcm.doFinal(unb64(parts[2])), StandardCharsets.UTF_8));
+                            call.resolve(out);
+                        } catch (Exception e) {
+                            call.reject("The secret could not be opened: " + e.getMessage(), "failed");
+                        }
+                    }
+
+                    @Override
+                    public void onAuthenticationError(int code, CharSequence message) {
+                        if (settled.compareAndSet(false, true)) call.reject(String.valueOf(message), biometricCode(code));
+                    }
+                }
+            );
+        } catch (Exception e) {
+            if (settled.compareAndSet(false, true)) call.reject("The prompt could not be shown: " + e.getMessage(), "unavailable");
+        }
+    }
+
+    /** A {@code BiometricPrompt} error as a {@code BiometricError} code of {@code denext/mobile}. */
+    static String biometricCode(int code) {
+        switch (code) {
+            case BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED:
+            case BiometricPrompt.BIOMETRIC_ERROR_CANCELED:
+            case BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON:
+                return "cancelled";
+            case BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT:
+            case BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT_PERMANENT:
+                return "lockout";
+            case BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS:
+                return "not-enrolled";
+            case BiometricPrompt.BIOMETRIC_ERROR_HW_NOT_PRESENT:
+            case BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE:
+                return "unavailable";
+            case 14: // BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL (Android 10)
+                return "passcode-not-set";
+            default:
+                return "failed";
+        }
+    }
+
+    /** The wrapping key pair's public half (made on first use), as a plain key for encryption. */
+    @TargetApi(Build.VERSION_CODES.P)
+    private PublicKey secretPublicKey() throws Exception {
+        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+        store.load(null);
+        if (!store.containsAlias(SECRET_KEY_ALIAS)) {
+            KeyGenParameterSpec.Builder spec = new KeyGenParameterSpec.Builder(SECRET_KEY_ALIAS, KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(2048)
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
+                .setUserAuthenticationRequired(true)
+                .setInvalidatedByBiometricEnrollment(true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                spec.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG | KeyProperties.AUTH_DEVICE_CREDENTIAL);
+            }
+            KeyPairGenerator generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore");
+            generator.initialize(spec.build());
+            generator.generateKeyPair();
+        }
+        PublicKey stored = store.getCertificate(SECRET_KEY_ALIAS).getPublicKey();
+        // Encrypting needs no authentication, so it runs outside the Keystore on a plain copy.
+        return KeyFactory.getInstance(stored.getAlgorithm()).generatePublic(new X509EncodedKeySpec(stored.getEncoded()));
+    }
+
+    /** Deletes every sealed secret and the key pair: nothing can open them any more. */
+    private void dropAllSecrets() {
+        secretPrefs().edit().clear().commit();
+        try {
+            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+            store.load(null);
+            store.deleteEntry(SECRET_KEY_ALIAS);
+        } catch (Exception e) {
+            // Already gone, or the Keystore is unavailable: the next set makes a new pair.
+        }
+    }
+
+    private SharedPreferences secretPrefs() {
+        return getContext().getSharedPreferences(SECRET_PREFS, Context.MODE_PRIVATE);
+    }
+
+    private boolean deviceSecure() {
+        KeyguardManager keyguard = (KeyguardManager) getContext().getSystemService(Context.KEYGUARD_SERVICE);
+        return keyguard != null && keyguard.isDeviceSecure();
+    }
+
+    private static String b64(byte[] bytes) {
+        return Base64.encodeToString(bytes, Base64.NO_WRAP);
+    }
+
+    private static byte[] unb64(String text) {
+        return Base64.decode(text, Base64.NO_WRAP);
+    }
 
     @PluginMethod
     public void open(PluginCall call) {

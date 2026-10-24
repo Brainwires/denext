@@ -597,6 +597,18 @@ platform-specific files builds each platform its own.
 which picks the export by the `x-denext-ota-platform` header the app sends. See
 [Over-the-air updates](/docs/platform-files#over-the-air-updates).
 
+### An over-the-air update is refused with `expired`
+
+**Cause.** The manifest's signed `expiresAt` has passed (`denext ota manifest --sign` stamps 30
+days by default), so the feed is serving a release nobody re-signed; or the manifest carries no
+expiry at all (signed by older tooling) while the app's bundled UI was built with one.
+`checkForUiUpdate` and the desktop updater report it even when the release is the UI already
+running.
+
+**Fix.** Re-sign the release the feed serves before it expires: `denext ota manifest out --sign
+ota.key` (add `--expires-in <days>` for another lifetime; the version stays, the sequence grows),
+and re-sign on a schedule in CI. See [Over-the-air UI updates](/docs/mobile#over-the-air-ui-updates).
+
 ## React Native mode
 
 The entries below are for an app built with `reactNative: true`. The full guide is

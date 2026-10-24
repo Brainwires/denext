@@ -70,30 +70,30 @@
 
 ## Security hardening (4.8 OTA / updater / native-template audit, low)
 
-- **Mobile OTA manifest expiry:** a signed `expiresAt` (a v4 payload) refused once past
-  (`expired`), as the desktop full-app manifest has, so a feed cannot freeze a device on an old UI.
-- **Loopback OTA only in debug builds:** without an embedded key, an unsigned UI from loopback is
-  accepted in release builds too, and loopback is exempt from pinned origins. Gate it on a
-  debuggable build (Android `isDebuggable()`, an iOS debug flag the installer writes).
-- **`booted()` without a version:** with a trial pending, require the page's version to equal it,
-  so a late call from an unstamped page cannot confirm a broken UI.
-- **OTA serve check:** count only regular files as "added on the device" (a directory request, or
-  an NFC/NFD variant on APFS, should not quarantine the UI); check the platform stamp natively;
-  make `admit` fail closed outside the versions root; parse Android's `baseUrl` once (refuse `\`
-  and userinfo); run the check on `/_capacitor_file_/` paths under the UI root.
-- **Biometric-gated `secureStore` in the OS:** `requireBiometric` is a JS gate today; store such
-  items with `SecAccessControl(.biometryCurrentSet)` / a Keystore key requiring user
-  authentication with a `CryptoObject`, and say in the docs that page script can read them now.
-- **Print plugin:** confine iOS `printToPrinter`'s `path` to Documents / Caches, and turn off file
-  and content access in Android `printToFile`'s WebView (keeping remote images).
-- **Bridge frame guard by origin:** refuse plugin calls from a main frame that is not the app's
-  origin (`server.allowNavigation`, a remote `server.url`); `mobile doctor --release` flags
-  `allowNavigation`.
-- **PKCE on mobile `openAuthSession`:** require `code_challenge_method=S256` unless
-  `pkce: "not-applicable"`, as Deno Desktop does, with a path for Expo's `usePKCE: false`.
-- **Small ones:** Android transfer record names from a hash of the id (not `hashCode-length`); a
-  `secureStore` accessibility option (ThisDeviceOnly for tokens); correct the deep-link docs (an
-  explicit intent skips intent filters, so `accept` is not authentication).
+The audit's lows that were security gaps have landed (see the CHANGELOG: manifest expiry, loopback OTA only in
+debug builds, `booted()` bound to a version, directory requests, OS-enforced `requireBiometric`,
+print confinement, `baseUrl` credentials). What is left, each with why it is not done there:
+
+- **Bridge frame guard by origin:** refusing plugin calls from a main frame that is not the app's
+  origin breaks hosted-mode apps (a remote `server.url`) and `server.allowNavigation` flows that
+  call plugins on purpose; it needs a decision on an opt-out (and `mobile doctor --release`
+  flagging `allowNavigation`).
+- **PKCE on mobile `openAuthSession`:** requiring `code_challenge_method=S256` breaks Expo's
+  `usePKCE: false` and implicit flows; it needs a decision on the Expo-compat path
+  (`pkce: "not-applicable"`). The callback itself is bound since AU6-M3.
+- **`requireBiometric` on Deno Desktop:** the desktop keychain items have no biometric access
+  control, so the gate is in the page there; it needs a runtime capability (macOS
+  `SecAccessControl`, Windows Hello) in the Brainwires/deno fork.
+- **OTA serve check, the rest:** checking the platform stamp natively (a signed export of the same
+  publisher for another target, not a trust breach), `admit` failing closed outside the versions
+  root (the served base is chosen by native code, never by the page) and the check on
+  `/_capacitor_file_/` paths (needs write access to the app container already) are hardening, not
+  gaps. NFC/NFD variants do not reach it (Swift compares paths by canonical equivalence; Android's
+  filesystems are normalization-sensitive).
+- **Small ones:** Android transfer record names from a hash of the id (a collision overwrites a
+  record, but the page chooses every id: no boundary is crossed); a `secureStore` accessibility
+  option (ThisDeviceOnly for tokens) is new API and changing the default changes documented
+  behaviour, so it needs a decision.
 
 ## Build toolchain: waiting on `deno bundle`
 
