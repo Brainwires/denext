@@ -3,7 +3,7 @@
 // and refusing it the moment it outgrows its pin, hashing a file on disk, reading a JSON marker,
 // and sweeping what a crashed install left behind.
 
-import { join } from "@std/path";
+import { dirname, join } from "@std/path";
 import { createHash } from "node:crypto";
 
 /**
@@ -50,6 +50,97 @@ export async function sweepLeftovers(dir: string): Promise<void> {
       await Deno.remove(path, { recursive: true }).catch(() => {});
     }
   }
+}
+
+/** Raised when a cache directory may be written by another user (see {@linkcode assertTrustedCacheDirs}). */
+export class UntrustedCacheDirError extends Error {
+  override name = "UntrustedCacheDirError";
+}
+
+/** What {@linkcode assertTrustedCacheDirs} reads from the process (injectable for tests). */
+export interface TrustedCacheDirSeams {
+  /** The OS (default `Deno.build.os`); Windows is not checked (its ACLs are no mode bits). */
+  readonly os?: string;
+  /** This process's user id (default `Deno.uid()`; `null` when it can't be read). */
+  readonly uid?: number | null;
+  /** Stat a path (default `Deno.stat`). */
+  readonly stat?: (path: string) => Promise<Deno.FileInfo>;
+}
+
+/** `Deno.uid()`, or `null` without the grant. */
+function processUid(): number | null {
+  try {
+    return Deno.uid();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Refuse to trust a download cache another user can change. A binary cached under a directory
+ * another user owns, or that anyone may write into (world-writable without the sticky bit), may
+ * have been planted or swapped by that user, stamp and all, and so may the cache's lock files (a
+ * symlink there makes this process create a file wherever it points). Each existing directory of
+ * `dirs` must be owned by this user (or by root) and must not be world-writable unless it is
+ * sticky. A missing directory is skipped: this process creates it. Not checked on Windows, and only
+ * world-writability is checked where this process may not read its own user id.
+ *
+ * @param dirs The cache directories, outermost first (`DENO_DIR` down to the binary's own).
+ * @param seams Test seams.
+ * @throws {UntrustedCacheDirError} When one of them is not this user's alone.
+ */
+export async function assertTrustedCacheDirs(
+  dirs: readonly string[],
+  seams: TrustedCacheDirSeams = {},
+): Promise<void> {
+  if ((seams.os ?? Deno.build.os) === "windows") return;
+  const uid = seams.uid !== undefined ? seams.uid : processUid();
+  const stat = seams.stat ?? Deno.stat;
+  for (const dir of dirs) {
+    const info = await stat(dir).catch(() => null);
+    if (!info) continue;
+    const why = untrustedWhy(info, uid);
+    if (why === null) continue;
+    throw new UntrustedCacheDirError(
+      `denext: refusing the cache directory ${dir}: it ${why}, so another user could replace ` +
+        "what denext would run from it.\n  Fix: point DENO_DIR at a directory only you can write " +
+        `(or \`chown -R $(id -u) ${dir}\` and \`chmod o-w ${dir}\`), then retry.`,
+    );
+  }
+}
+
+/** Why a cache directory is not this user's alone, or `null`. */
+function untrustedWhy(info: Deno.FileInfo, uid: number | null): string | null {
+  const owner = info.uid;
+  if (uid !== null && owner !== null && owner !== uid && owner !== 0) {
+    return `is owned by user ${owner}, not you (${uid})`;
+  }
+  const mode = info.mode;
+  if (mode !== null && (mode & 0o002) !== 0 && (mode & 0o1000) === 0) {
+    return "is writable by every user";
+  }
+  return null;
+}
+
+/**
+ * The directories from `outer` down to `inner` (both included), outermost first: what
+ * {@linkcode assertTrustedCacheDirs} checks for a binary in `inner` of a cache under `outer`.
+ * Just `[outer, inner]` when `inner` is not under `outer`.
+ *
+ * @param outer The outermost directory (`DENO_DIR`).
+ * @param inner The binary's directory.
+ * @returns The chain.
+ */
+export function cacheDirChain(outer: string, inner: string): string[] {
+  const out: string[] = [];
+  let at = inner;
+  while (at !== outer) {
+    out.unshift(at);
+    const up = dirname(at);
+    if (up === at) return [outer, inner];
+    at = up;
+  }
+  return [outer, ...out];
 }
 
 /** How {@linkcode streamHashed} words its two refusals. */

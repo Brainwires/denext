@@ -12,6 +12,26 @@
 
 - **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
+- **Toolchain audit (4.8) low-severity follow-ups:**
+  - The Windows `toolchain link` shim writes `"<deno>" %*`: a `%` in the toolchain's path is
+    expanded by cmd. Double each `%` when writing it (and when reading it back).
+  - `toolchain link` / `unlink` on macOS and Linux take a link as denext's when its target merely
+    starts with the cache root's path (`…/denext-deno-other/…` counts). Compare up to a separator.
+  - `build --compile --sign` with signtool passes the `.pfx` password as `/p <password>` on the
+    command line, where an administrator's process listing can read it. Sign by thumbprint after
+    importing the `.pfx` into the user's store instead.
+  - With neither `HOME` nor `USERPROFILE` set, `DENO_DIR` falls back to the working directory, so a
+    checked-out repository could ship a toolchain binary and a stamp that vouches for it. Refuse,
+    or use a per-user directory under the system temp directory.
+  - The installers check the archive against `SHA256SUMS` from the same release: integrity, not
+    authenticity. Verify the release's build attestation (or a signature) too.
+  - A relative `DENO_BIN` resolves against the child's working directory (`build --compile` runs
+    in the project), unlike `DENEXT_DENO`, which is made absolute. Resolve it when read.
+  - The compile directory's `.npmrc` copy gets mode 0600 only when it is created; rewrite an older
+    copy's mode too.
+  - The never-embedded walk of `build --compile` does not follow symlinks, while `deno compile
+    --include` may embed what a symlinked directory holds: check what it embeds, and exclude
+    `.env` files and databases behind a link too.
 
 ## Deno Desktop
 

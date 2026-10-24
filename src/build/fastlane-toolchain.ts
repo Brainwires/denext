@@ -28,7 +28,7 @@
 // Plugins (`fastlane/Pluginfile`) need the project's own Gemfile: the managed fastlane runs
 // denext's pinned bundle, so `denext fastlane` warns when the project lists plugins.
 
-import { DELIMITER, join, resolve } from "@std/path";
+import { DELIMITER, dirname, join, resolve } from "@std/path";
 import { createHash } from "node:crypto";
 import {
   type DenoToolchainArtifact,
@@ -43,7 +43,13 @@ import {
 import { acquireCacheLock } from "./project-locks.ts";
 import { renameRetrying } from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
-import { readJsonFile, sha256File, sweepLeftovers } from "./verified-download.ts";
+import {
+  assertTrustedCacheDirs,
+  cacheDirChain,
+  readJsonFile,
+  sha256File,
+  sweepLeftovers,
+} from "./verified-download.ts";
 import pinJson from "./fastlane-toolchain-pin.json" with { type: "json" };
 
 /** The pinned fastlane (`fastlane-toolchain-pin.json`). */
@@ -491,6 +497,8 @@ export async function ensureFastlaneToolchain(
     cached,
   });
   await Deno.mkdir(slot.root, { recursive: true });
+  // Before the lock files are opened or a cached Ruby is trusted: nobody else may write here.
+  await assertTrustedCacheDirs(cacheDirChain(dirname(slot.root), slot.dir));
   const descr = "fastlane cache";
   {
     using _shared = await acquireCacheLock(slot.root, "shared", descr);

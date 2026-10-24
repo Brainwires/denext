@@ -313,7 +313,7 @@ prints the flags it baked.
 into `--allow-net-connect` (outbound: `fetch`, WebSocket, database clients) and
 `--allow-net-listen` (`Deno.serve`, `Deno.listen`, `node:net` servers). Name either direction in
 `compile.permissions` and the binary bakes the pair instead of `--allow-net`; an unset direction
-stays unscoped:
+stays unscoped (an empty list is a config error, since Deno would read it as unscoped too):
 
 ```ts
 export default {

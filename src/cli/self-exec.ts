@@ -10,6 +10,7 @@ import {
   needsNoLegacyAbortFlag,
 } from "../build/deno-version.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
+import { runToExit } from "../build/exited-output.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -592,11 +593,10 @@ export async function ownCommandLine(): Promise<string[] | null> {
       return (await Deno.readTextFile("/proc/self/cmdline")).split("\0").filter(Boolean);
     }
     if (Deno.build.os === "darwin") {
-      const out = await new Deno.Command("ps", {
+      const out = await runToExit("ps", {
         args: ["-ww", "-o", "args=", "-p", String(Deno.pid)],
-        stdout: "piped",
         stderr: "null",
-      }).output();
+      });
       return new TextDecoder().decode(out.stdout).trim().split(/\s+/);
     }
   } catch { /* no permission, no ps */ }

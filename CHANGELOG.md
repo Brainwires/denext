@@ -100,6 +100,28 @@ and this project adheres to
   response's `ETag` in `If-Range` even when it was weak, which a server must treat as a mismatch,
   so every resume downloaded the file from byte zero. It now sends a strong `ETag`, else
   `Last-Modified`, and starts over only when the response had neither.
+- **A download cache another user can write is refused.** The Deno toolchain, its `denort`, the
+  pinned Gleam, esbuild, fastlane's Ruby and the Deno Desktop runtime are cached under `DENO_DIR`
+  and run from there; a cached binary whose size and modification time match its stamp is not
+  re-hashed. With `DENO_DIR` in a shared place (a CI cache, `/tmp`), another user who created a
+  directory of that cache first could plant a binary and its stamp, or symlink a lock file so this
+  process created a file where it pointed. Before it opens a lock file or trusts a cached binary,
+  denext now checks every directory from `DENO_DIR` down: one owned by another user (root aside),
+  or writable by every user without the sticky bit, stops the command with the fix (point
+  `DENO_DIR` at a directory only you can write). Not checked on Windows.
+- **The cached Tailwind binary is re-verified before it runs.** A Tailwind standalone binary already
+  in the cache ran unchecked; one changed since, or left half-written by two builds downloading at
+  once (they shared one temp file), ran as is. It is now re-hashed against its pin once per
+  process and re-downloaded on a mismatch, and each download writes its own temp file.
+- **An empty `compile.permissions.netConnect` / `netListen` is a config error.** An empty list is
+  no scope to Deno, so `denext build --compile` baked that direction unscoped
+  (`--allow-net-connect` with no hosts: every host), the opposite of what an empty list reads as.
+  List the hosts, use `["*"]` for any, or leave the key out.
+- **More children read until they exit.** The desktop `secure-store` capability's credential CLI
+  (inside the packaged app), the `next.config` evaluator, `denext profile`'s port lookup (beside
+  the Chromium it starts) and its `adb` calls (which may start the adb server), the Deno Desktop
+  runtime's `deno --version` and attestation checks, and the CLI's own command-line read no longer
+  wait on a pipe a process they left behind, or one spawned beside them on Windows, keeps open.
 
 ## [4.8.0] - 2026-10-23
 

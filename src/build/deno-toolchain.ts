@@ -34,11 +34,13 @@
 // `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
 
 import { encodeHex } from "@std/encoding/hex";
-import { join, resolve } from "@std/path";
+import { dirname, join, resolve } from "@std/path";
 import { acquireCacheLock } from "./project-locks.ts";
 import { denoCacheDir, renameRetrying } from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
 import {
+  assertTrustedCacheDirs,
+  cacheDirChain,
   type DownloadProgress,
   downloadProgress,
   readJsonFile,
@@ -870,6 +872,7 @@ export interface CacheSlot extends DownloadNames {
  * Make `slot`'s binary available and verified in the cache (see the module header): reuse it when
  * its stamp matches, else download, verify and install it under the cache lock. Resolves whether
  * it was already cached. The pinned Gleam compiler (gleam-toolchain.ts) is cached the same way.
+ * Refuses a cache another user can write ({@linkcode assertTrustedCacheDirs}).
  *
  * @param slot The binary, its cache directory and its pinned archive.
  * @param options The download seams (`fetch`, `log`).
@@ -882,6 +885,8 @@ export async function ensureCached(
   const { root, dir, exe, version, target, artifact } = slot;
   const descr = slot.what === "Deno toolchain" ? CACHE_DESCR : `${slot.what} cache`;
   await Deno.mkdir(root, { recursive: true });
+  // Before the lock files are opened or a cached binary is trusted: nobody else may write here.
+  await assertTrustedCacheDirs(cacheDirChain(dirname(root), dir));
   {
     using _shared = await acquireCacheLock(root, "shared", descr);
     if (await cacheVerdict(dir, exe, version, target, artifact, false) === "ok") return true;

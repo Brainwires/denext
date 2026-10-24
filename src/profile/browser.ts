@@ -19,6 +19,7 @@
 // signal listener would itself cause a hang).
 
 import { type Browser, launch } from "@astral/astral";
+import { runToExit } from "../build/exited-output.ts";
 
 interface TrackedBrowser {
   browser: Browser;
@@ -36,22 +37,18 @@ async function chromiumPid(browser: Browser): Promise<number | null> {
   try {
     const port = new URL(browser.wsEndpoint()).port;
     if (!port) return null;
-    const cmd = Deno.build.os === "windows"
-      ? new Deno.Command("powershell", {
-        args: [
+    // Until the lookup exits: Chromium, started beside it, may hold an inherited copy of its pipes.
+    const [cmd, args] = Deno.build.os === "windows"
+      ? [
+        "powershell",
+        [
           "-NoProfile",
           "-Command",
           `(Get-NetTCPConnection -LocalPort ${port} -State Listen).OwningProcess`,
         ],
-        stdout: "piped",
-        stderr: "null",
-      })
-      : new Deno.Command("lsof", {
-        args: ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
-        stdout: "piped",
-        stderr: "null",
-      });
-    const out = await cmd.output();
+      ]
+      : ["lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]];
+    const out = await runToExit(cmd, { args, stderr: "null" });
     const pid = parseInt(new TextDecoder().decode(out.stdout).trim().split(/\s+/)[0], 10);
     return Number.isFinite(pid) ? pid : null;
   } catch {

@@ -45,6 +45,7 @@
  */
 
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
+import { exitedOutput } from "../../build/exited-output.ts";
 import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from "../extension.ts";
 import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
 import { platformFacts } from "./platform.ts";
@@ -201,7 +202,9 @@ export async function runSecureCli(
     await w.write(new TextEncoder().encode(stdin));
     await w.close();
   }
-  const { code, stdout, stderr } = await child.output();
+  // Read until the CLI exits, not until every copy of its pipes closes: a helper it leaves
+  // running (or a process this app spawned at the same moment, on Windows) would hold them.
+  const { code, stdout, stderr } = await exitedOutput(child, { stdout: true, stderr: true });
   const text = new TextDecoder();
   return { code, stdout: text.decode(stdout), stderr: text.decode(stderr) };
 }
