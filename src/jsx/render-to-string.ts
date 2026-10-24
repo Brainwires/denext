@@ -504,6 +504,34 @@ export interface RenderOptions {
 }
 
 /**
+ * {@link RenderOptions} plus another renderer's markup conventions for text, attributes, void
+ * tags and Suspense boundaries (`denext/preact/render-to-string` passes Preact's). Internal: the
+ * public entry points take `RenderOptions`, and read `markup` when a caller passes this.
+ */
+export interface FlavoredRenderOptions extends RenderOptions {
+  /** The markup conventions. Default: React's. */
+  markup?: MarkupFlavor;
+}
+
+/**
+ * A renderer's markup conventions, applied over the React-shaped serialization: how a text
+ * node and an element's attributes are written, how a void element closes, and what marks a
+ * Suspense boundary that suspended.
+ */
+export interface MarkupFlavor {
+  /** A text node's HTML. */
+  text(value: string): string;
+  /** An element's attribute text (each with a leading space). */
+  attributes(props: Record<string, unknown>, tag: string): string;
+  /** What closes a void element's tag (`""` for `<br>`, `"/"` for `<br/>`). */
+  voidClose: string;
+  /** The comments around a boundary that suspended in an async render, or null for none. */
+  suspendedMarks: readonly [open: string, close: string] | null;
+  /** A synchronous render suspended: throw (or return to render the fallback, React's way). */
+  syncSuspended(): void;
+}
+
+/**
  * Mutable render context threaded through the recursion — one object per render
  * pass, replacing the four positional args the old renderer carried through every
  * call. `out` is the single append-only buffer the whole tree writes into.
@@ -524,13 +552,15 @@ interface RenderCtx {
   sync?: boolean;
   /** Bracket Suspense boundaries with React's comment markers (see RenderOptions). */
   markers?: boolean;
+  /** Another renderer's markup conventions (see RenderOptions). */
+  markup?: MarkupFlavor;
 }
 
 /**
  * A fresh render pass's context. Suspense markers default on for the async render (React's
  * `renderToString`) and off for the sync one (static markup), unless `boundaryMarkers` says.
  */
-function renderCtx(options: RenderOptions, sync: boolean): RenderCtx {
+function renderCtx(options: FlavoredRenderOptions, sync: boolean): RenderCtx {
   const scopes: ProviderScope[] = [];
   const ids: IdHolder = { scope: rootScope(options.idPrefix) };
   return {
@@ -540,7 +570,8 @@ function renderCtx(options: RenderOptions, sync: boolean): RenderCtx {
     head: options.head ?? null,
     ids,
     sync,
-    markers: options.boundaryMarkers ?? !sync,
+    markers: options.boundaryMarkers ?? (!sync && !options.markup),
+    markup: options.markup,
   };
 }
 
@@ -675,12 +706,9 @@ function renderChildInto(child: VNodeChild, ctx: RenderCtx): void | Promise<void
   // React flattens arbitrarily-nested children arrays; some libraries (recharts)
   // pass a nested array as a single child, so recurse instead of treating it as a node.
   if (Array.isArray(child)) return renderChildrenInto(child as VNodeChildren, ctx);
-  if (typeof child === "string") {
-    ctx.out.push(escapeHtml(child));
-    return;
-  }
-  if (typeof child === "number" || typeof child === "bigint") {
-    ctx.out.push(escapeHtml(String(child)));
+  if (typeof child === "string" || typeof child === "number" || typeof child === "bigint") {
+    const text = String(child);
+    ctx.out.push(ctx.markup ? ctx.markup.text(text) : escapeHtml(text));
     return;
   }
   return renderVNodeInto(child as VNode, ctx);
@@ -748,6 +776,8 @@ interface BoundaryRender {
   boundaryScope: IdScope;
   /** Sync mode showed the fallback in place of the suspended children. */
   showedFallback?: boolean;
+  /** The children suspended at least once (an async render waited for them). */
+  suspended?: boolean;
 }
 
 /**
@@ -766,6 +796,11 @@ function renderSuspenseToStr(props: Props, ctx: RenderCtx): string | Promise<str
   const boundaryScope = enterScope(parentScope);
   const b: BoundaryRender = { props, ctx, parentScope, boundaryScope };
   const r = attemptBoundary(b);
+  const marks = ctx.markup?.suspendedMarks;
+  if (marks) {
+    const markSuspended = (html: string) => b.suspended ? marks[0] + html + marks[1] : html;
+    return isThenable(r) ? (r as Promise<string>).then(markSuspended) : markSuspended(r);
+  }
   if (!ctx.markers) return r;
   const mark = (html: string) =>
     (b.showedFallback ? "<!--$!--><template></template>" : "<!--$-->") + html + "<!--/$-->";
@@ -805,6 +840,7 @@ function renderFallbackSync(b: BoundaryRender): string {
 function suspendedSync(b: BoundaryRender, pending: unknown): string | null {
   if (!b.ctx.sync) return null;
   (pending as Promise<unknown>).catch(() => {});
+  b.ctx.markup?.syncSuspended();
   b.showedFallback = true;
   return renderFallbackSync(b);
 }
@@ -822,12 +858,16 @@ function attemptBoundary(b: BoundaryRender): string | Promise<string> {
     r = renderToStr(b.props.children, b.ctx);
   } catch (err) {
     if (!isThenable(err)) throw err;
+    b.suspended = true;
     return suspendedSync(b, err) ?? (err as Promise<unknown>).then(() => retryBoundary(b));
   }
   if (isThenable(r)) {
     return suspendedSync(b, r) ??
       (r as Promise<string>).then((s) => (restoreBoundary(b), s), (err) => {
-        if (isThenable(err)) return (err as Promise<unknown>).then(() => retryBoundary(b));
+        if (isThenable(err)) {
+          b.suspended = true;
+          return (err as Promise<unknown>).then(() => retryBoundary(b));
+        }
         restoreBoundary(b);
         throw err;
       });
@@ -969,7 +1009,7 @@ function renderHostInto(
   ctx: RenderCtx,
   key: unknown = props.key,
 ): void | Promise<void> {
-  let attrs = serializeAttributes(props, tag);
+  let attrs = ctx.markup ? ctx.markup.attributes(props, tag) : serializeAttributes(props, tag);
   // A <form> posting to a server action needs method=post for the no-JS path.
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
@@ -984,7 +1024,7 @@ function renderHostInto(
     return renderChildrenInto(hostChildren(tag, props), ctx);
   }
   if (VOID_ELEMENTS.has(tag)) {
-    ctx.out.push(`<${tag}${attrs}>`);
+    ctx.out.push(`<${tag}${attrs}${ctx.markup?.voidClose ?? ""}>`);
     return;
   }
   // dangerouslySetInnerHTML support (raw HTML injection).

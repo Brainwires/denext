@@ -6,6 +6,7 @@ import {
   findErrorBoundary,
   findSuspense,
   isClassBoundary,
+  isHookBoundary,
 } from "./fiber-utils.ts";
 import { reportCaught, reportUncaught } from "./root-callbacks.ts";
 import { retrySuspendedTransition, retrySuspense } from "./boundaries.ts";
@@ -146,6 +147,8 @@ function handleRenderError(sourceFiber: Fiber, thrown: unknown): Fiber {
   } else {
     reportCaught(boundary, thrown);
     fiberExt(boundary).__error = thrown;
+    // A hook boundary is a component: give it work on this pass so it renders, not bails.
+    if (isHookBoundary(boundary)) boundary.lanes |= renderLanes;
   }
   reseedBoundary(boundary);
   return boundary;

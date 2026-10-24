@@ -105,16 +105,15 @@ WebSocket under `denext start` and `denext dev`, where the raw request is availa
 Each finding names the files it was found in. **Won't migrate** means denext does not run it;
 **review** means it migrates but needs a look.
 
-| Won't migrate                                                                                        | What to do                                                                              |
-| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `app.appWrapper` / `layout` / `onError` / `notFound` / `route` / `mountApp` / `islands` in `main.ts` | Move them to `routes/` files (`_app`, `_layout`, `_error`, `_404`, a route).            |
-| Vite plugins other than Fresh's and Tailwind's                                                       | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).               |
-| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside)                                               | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin. |
-| Preact's `useErrorBoundary`                                                                          | Catch with `<ErrorBoundary>` from denext, or an `error.tsx`.                            |
-| `preact-render-to-string`                                                                            | Render with `renderToString` from `denext/react-dom/server`.                            |
-| `useSignalRef` / `createModel` from `@preact/signals`                                                | Not in `denext/signals`.                                                                |
-| Preact's `options` hooks                                                                             | denext's renderer does not call them.                                                   |
-| A `static/` or generated file that already exists                                                    | Merge it by hand.                                                                       |
+| Won't migrate                                                                                            | What to do                                                                                          |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `app.appWrapper` / `layout` / `onError` / `notFound` / `route` / `mountApp` / `islands` in `main.ts`     | Move them to `routes/` files (`_app`, `_layout`, `_error`, `_404`, a route).                        |
+| Vite plugins other than Fresh's and Tailwind's                                                           | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).                           |
+| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside)                                                   | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin.             |
+| `preact-render-to-string/jsx`, `/stream-node`                                                            | Use `denext/preact/render-to-string` (`preact-render-to-string` itself maps there).                 |
+| `useSignalRef` / `createModel` from `@preact/signals`                                                    | Not in `denext/signals`.                                                                            |
+| Preact's `options.diffed` / `unmount` / `debounceRendering` / `requestAnimationFrame` and internal hooks | denext never calls them ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)). |
+| A `static/` or generated file that already exists                                                        | Merge it by hand.                                                                                   |
 
 | Review                                                         | What to do                                                                                                                                               |
 | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |

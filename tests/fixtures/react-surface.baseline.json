@@ -9,11 +9,15 @@
     "@remix-run/node": "2.17.5",
     "next-auth": "5.0.0-beta.32",
     "next-auth-v4": "4.24.15",
+    "preact": "11.0.1",
+    "preact-render-to-string": "6.8.1",
+    "preact-iso": "2.12.2",
+    "@preact/signals": "2.11.3",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/react-is": "19.3.0"
   },
-  "capturedAt": "2026-10-19T04:21:51.419Z",
+  "capturedAt": "2026-10-24T02:23:20.194Z",
   "surfaces": [
     {
       "specifier": "react",
@@ -36192,6 +36196,1811 @@
       "symbols": {
         "default": {
           "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "preact",
+      "resolved": true,
+      "symbols": {
+        "ToggleEvent": {
+          "name": "ToggleEvent",
+          "kind": "interface",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "CommandEvent": {
+          "name": "CommandEvent",
+          "kind": "interface",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "SnapEvent": {
+          "name": "SnapEvent",
+          "kind": "interface",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "Component": {
+          "name": "Component",
+          "kind": "interface",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "displayName",
+            "getDerivedStateFromError",
+            "getDerivedStateFromProps",
+            "prototype"
+          ]
+        },
+        "createElement": {
+          "name": "createElement",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "h": {
+          "name": "h",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "render": {
+          "name": "render",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hydrate": {
+          "name": "hydrate",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createPortal": {
+          "name": "createPortal",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "cloneElement": {
+          "name": "cloneElement",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Fragment": {
+          "name": "Fragment",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "options": {
+          "name": "options",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "__suspenseDidResolve",
+            "_addHookName",
+            "attr",
+            "debounceRendering",
+            "diffed",
+            "event",
+            "requestAnimationFrame",
+            "unmount",
+            "useDebugValue",
+            "vnode"
+          ]
+        },
+        "createRef": {
+          "name": "createRef",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "toChildArray": {
+          "name": "toChildArray",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isValidElement": {
+          "name": "isValidElement",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createContext": {
+          "name": "createContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "preact/hooks",
+      "resolved": true,
+      "symbols": {
+        "useState": {
+          "name": "useState",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useReducer": {
+          "name": "useReducer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "useRef": {
+          "name": "useRef",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useEffect": {
+          "name": "useEffect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useImperativeHandle": {
+          "name": "useImperativeHandle",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "useLayoutEffect": {
+          "name": "useLayoutEffect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useCallback": {
+          "name": "useCallback",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useMemo": {
+          "name": "useMemo",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useContext": {
+          "name": "useContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useDebugValue": {
+          "name": "useDebugValue",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useErrorBoundary": {
+          "name": "useErrorBoundary",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useId": {
+          "name": "useId",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "preact/compat",
+      "resolved": true,
+      "symbols": {
+        "useCallback": {
+          "name": "useCallback",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useContext": {
+          "name": "useContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useDebugValue": {
+          "name": "useDebugValue",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useEffect": {
+          "name": "useEffect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useImperativeHandle": {
+          "name": "useImperativeHandle",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "useId": {
+          "name": "useId",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useLayoutEffect": {
+          "name": "useLayoutEffect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useMemo": {
+          "name": "useMemo",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useReducer": {
+          "name": "useReducer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "useRef": {
+          "name": "useRef",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useState": {
+          "name": "useState",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useInsertionEffect": {
+          "name": "useInsertionEffect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useTransition": {
+          "name": "useTransition",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useDeferredValue": {
+          "name": "useDeferredValue",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useSyncExternalStore": {
+          "name": "useSyncExternalStore",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useEffectEvent": {
+          "name": "useEffectEvent",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "use": {
+          "name": "use",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "Component": {
+          "name": "Component",
+          "kind": "interface",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "defaultProps",
+            "displayName",
+            "getDerivedStateFromError",
+            "getDerivedStateFromProps",
+            "prototype"
+          ]
+        },
+        "createContext": {
+          "name": "createContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "createRef": {
+          "name": "createRef",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "Fragment": {
+          "name": "Fragment",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createElement": {
+          "name": "createElement",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "cloneElement": {
+          "name": "cloneElement",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": true
+            },
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Suspense": {
+          "name": "Suspense",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "displayName",
+            "getDerivedStateFromError",
+            "getDerivedStateFromProps",
+            "prototype"
+          ]
+        },
+        "lazy": {
+          "name": "lazy",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "StrictMode": {
+          "name": "StrictMode",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "version": {
+          "name": "version",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "startTransition": {
+          "name": "startTransition",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createPortal": {
+          "name": "createPortal",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "render": {
+          "name": "render",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hydrate": {
+          "name": "hydrate",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unmountComponentAtNode": {
+          "name": "unmountComponentAtNode",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createFactory": {
+          "name": "createFactory",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isValidElement": {
+          "name": "isValidElement",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isFragment": {
+          "name": "isFragment",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isMemo": {
+          "name": "isMemo",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "findDOMNode": {
+          "name": "findDOMNode",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PureComponent": {
+          "name": "PureComponent",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "contextType",
+            "displayName",
+            "getDerivedStateFromError",
+            "getDerivedStateFromProps",
+            "prototype"
+          ]
+        },
+        "memo": {
+          "name": "memo",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "forwardRef": {
+          "name": "forwardRef",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "flushSync": {
+          "name": "flushSync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "unstable_batchedUpdates": {
+          "name": "unstable_batchedUpdates",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            },
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "Children": {
+          "name": "Children",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "count",
+            "forEach",
+            "map",
+            "only",
+            "toArray"
+          ]
+        },
+        "unstable_ImmediatePriority": {
+          "name": "unstable_ImmediatePriority",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "unstable_UserBlockingPriority": {
+          "name": "unstable_UserBlockingPriority",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "unstable_NormalPriority": {
+          "name": "unstable_NormalPriority",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "unstable_LowPriority": {
+          "name": "unstable_LowPriority",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "unstable_IdlePriority": {
+          "name": "unstable_IdlePriority",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "unstable_runWithPriority": {
+          "name": "unstable_runWithPriority",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_now": {
+          "name": "unstable_now",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "preact/jsx-runtime",
+      "resolved": true,
+      "symbols": {
+        "Fragment": {
+          "name": "Fragment",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "jsx": {
+          "name": "jsx",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "jsxs": {
+          "name": "jsxs",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "jsxDEV": {
+          "name": "jsxDEV",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "jsxTemplate": {
+          "name": "jsxTemplate",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "jsxAttr": {
+          "name": "jsxAttr",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "jsxEscape": {
+          "name": "jsxEscape",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "preact-render-to-string",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "render": {
+          "name": "render",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "renderToString": {
+          "name": "renderToString",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "renderToStringAsync": {
+          "name": "renderToStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "renderToStaticMarkup": {
+          "name": "renderToStaticMarkup",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "preact-render-to-string/stream",
+      "resolved": true,
+      "symbols": {
+        "renderToReadableStream": {
+          "name": "renderToReadableStream",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "preact-iso",
+      "resolved": true,
+      "symbols": {
+        "LocationProvider": {
+          "name": "LocationProvider",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "exec": {
+          "name": "exec",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Router": {
+          "name": "Router",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useLocation": {
+          "name": "useLocation",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useRoute": {
+          "name": "useRoute",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Route": {
+          "name": "Route",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "prerender": {
+          "name": "prerender",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "lazy": {
+          "name": "lazy",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "ErrorBoundary": {
+          "name": "ErrorBoundary",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hydrate": {
+          "name": "hydrate",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "@preact/signals",
+      "resolved": true,
+      "symbols": {
+        "signal": {
+          "name": "signal",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "computed": {
+          "name": "computed",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "batch": {
+          "name": "batch",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "effect": {
+          "name": "effect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "action": {
+          "name": "action",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "createModel": {
+          "name": "createModel",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "Signal": {
+          "name": "Signal",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "untracked": {
+          "name": "untracked",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useSignal": {
+          "name": "useSignal",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            },
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useComputed": {
+          "name": "useComputed",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useSignalEffect": {
+          "name": "useSignalEffect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useModel": {
+          "name": "useModel",
           "kind": "function",
           "isValue": true,
           "isType": false,

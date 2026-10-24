@@ -275,7 +275,12 @@ export function classDefine(classComponents?: boolean): Record<string, string> {
 export function nativeBundleDefines(
   opts: Pick<
     BundleOptions,
-    "classRuntime" | "features" | "usesImageBlur" | "usesFormActions" | "usesHrefParams"
+    | "classRuntime"
+    | "features"
+    | "usesImageBlur"
+    | "usesFormActions"
+    | "usesHrefParams"
+    | "usesHookBoundaries"
   >,
 ): Record<string, string> {
   return {
@@ -284,6 +289,7 @@ export function nativeBundleDefines(
     ...scanGateDefine("__DENEXT_IMAGE_BLUR__", opts.usesImageBlur),
     ...scanGateDefine("__DENEXT_FORM_ACTIONS__", opts.usesFormActions),
     ...scanGateDefine("__DENEXT_HREF_PARAMS__", opts.usesHrefParams),
+    ...scanGateDefine("__DENEXT_HOOK_BOUNDARIES__", opts.usesHookBoundaries),
   };
 }
 
@@ -803,6 +809,24 @@ export function appUsesHrefParams(
   );
 }
 
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may make a function component an
+ * error boundary with Preact's `useErrorBoundary` — the build-time signal that keeps the
+ * reconciler's hook-boundary seam (`__DENEXT_HOOK_BOUNDARIES__`). The app names the hook, or
+ * imports preact-iso (whose `ErrorBoundary` is built on it). Comments are not code. npm packages
+ * are not scanned (as for every gate): a Preact library that calls `useErrorBoundary` itself needs
+ * the app to name it once.
+ */
+export function appUsesHookBoundaries(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => HOOK_BOUNDARY_USE.test(withoutComments(c)), extraFiles);
+}
+
+/** Preact's `useErrorBoundary`, or a preact-iso import (its `ErrorBoundary` uses the hook). */
+const HOOK_BOUNDARY_USE = /\buseErrorBoundary\b|["'](?:denext\/)?preact-iso(?:\/[\w-]+)?["']/;
+
 /** A string or template literal holding a dynamic route segment (`/[id]`, `/[...p]`, `/[[...p]]`). */
 const HREF_PATTERN_USE = /["'`][^"'`\n]*\/\[\[?(?:\.\.\.)?[A-Za-z_$][\w$-]*\]/;
 
@@ -1316,6 +1340,12 @@ export interface BundleOptions {
    */
   usesHrefParams?: boolean;
   /**
+   * Whether the app may use Preact's `useErrorBoundary` (an {@linkcode appUsesHookBoundaries}
+   * scan). `false` defines `__DENEXT_HOOK_BOUNDARIES__` off on the `--define` path, so the
+   * reconciler carries no hook-boundary seam. Unset (no scan): kept.
+   */
+  usesHookBoundaries?: boolean;
+  /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
    */
@@ -1366,6 +1396,7 @@ export async function bundleFlightEntry(
       usesImageBlur: opts.usesImageBlur,
       usesFormActions: opts.usesFormActions,
       usesHrefParams: opts.usesHrefParams,
+      usesHookBoundaries: opts.usesHookBoundaries,
     },
   );
 }

@@ -354,11 +354,22 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   options are not run, `csp()` is a no-op (denext's own CSP applies) and Vite's
   `import.meta.env` is not defined. `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
-- **Preact:** `useErrorBoundary`, `preact-render-to-string`, Preact's `options` hooks and
-  `@preact/signals`' `useSignalRef` / `createModel` are not provided. `denext/preact-iso`'s
-  `Router` renders nothing while a `lazy()` route loads (preact-iso keeps the previous route) and
-  never calls `onLoadStart`; its `hydrate` renders on the client. A migrated Preact app runs as a
-  SPA, so preset-vite's `prerender` does not carry over.
+- **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
+  its `signal` / `computed` / `effect` (and hook forms) take no options argument.
+  `denext/preact/compat` lacks `createFactory`, `findDOMNode`, `isFragment`, `isMemo` and
+  `unmountComponentAtNode`, and its `render` / `hydrate` / `flushSync` take no callback;
+  `denext/preact/jsx-runtime` lacks Deno's precompiled-JSX helpers (`jsxTemplate`, `jsxAttr`,
+  `jsxEscape`), so `"jsx": "precompile"` needs `react-jsx`. (The parity gate lists each in
+  `tests/fixtures/react-parity-known-gaps.json`.) Of Preact's `options` hooks denext calls
+  `vnode`, `event` and `useDebugValue` (for elements the Preact entry points create); `diffed`,
+  `unmount`, `debounceRendering`, `requestAnimationFrame` and the internal hooks are never called,
+  so `preact/debug` / `preact/devtools` are empty modules. `useErrorBoundary` never catches during
+  a server render, and a production build compiles its boundary support in only when the app's
+  own sources name `useErrorBoundary` or import preact-iso (a Preact library that calls the hook
+  needs the app to name it once). `denext/preact/render-to-string` keeps denext's attribute order and hyphenated SVG attributes, ignores the legacy `context` argument,
+  and `renderToReadableStream` sends the whole document once resolved (no fallback-first
+  streaming); `preact-render-to-string/jsx` and `/stream-node` are not mapped. A migrated Preact
+  app runs as a SPA, so preset-vite's `prerender` does not carry over.
 - **`denext/signals` re-renders the component that read a signal**, where Preact patches the text
   node in place; a signal bound to a DOM prop needs Preact's JSX runtime
   (`jsxImportSource: "preact"`).

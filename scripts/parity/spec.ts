@@ -30,6 +30,12 @@ export const REAL_PACKAGES = [
   // NextAuth.js v4 — the line most Next apps still run — installed beside v5 under an npm
   // alias (REAL_PACKAGE_ALIASES), since the shim serves v4's server API too.
   "next-auth-v4",
+  // Preact and its ecosystem — what `denext/preact`, `denext/preact/*`, `denext/preact-iso` and
+  // `denext/signals` mirror (each ships its own `.d.ts`).
+  "preact",
+  "preact-render-to-string",
+  "preact-iso",
+  "@preact/signals",
   "@types/react",
   "@types/react-dom",
   "@types/react-is",
@@ -92,6 +98,18 @@ export const NEXT_AUTH_V4_SUBPATHS: ReadonlyArray<readonly [subpath: string, fil
  */
 export const NEXT_AUTH_PROVIDERS: readonly string[] = NEXT_AUTH_PROVIDER_MODULES;
 
+/** The Preact specifiers checked, each against the `src/compat/preact/` file that serves it. */
+export const PREACT_SPECIFIERS: ReadonlyArray<readonly [specifier: string, file: string]> = [
+  ["preact", "mod.ts"],
+  ["preact/hooks", "hooks.ts"],
+  ["preact/compat", "compat.ts"],
+  ["preact/jsx-runtime", "jsx-runtime.ts"],
+  ["preact-render-to-string", "render-to-string.ts"],
+  ["preact-render-to-string/stream", "render-to-string.ts"],
+  ["preact-iso", "iso.ts"],
+  ["@preact/signals", "signals.ts"],
+];
+
 /** One React/Next(-adjacent) specifier and the two files that must agree on it. */
 export interface SpecEntry {
   /** The public bare specifier, e.g. `react` or `next/navigation`. */
@@ -109,7 +127,8 @@ export interface SpecEntry {
     | "pages-router"
     | "remix"
     | "next-auth"
-    | "next-auth-v4";
+    | "next-auth-v4"
+    | "preact";
 }
 
 /**
@@ -341,6 +360,13 @@ export const CATALOG: SpecEntry[] = [
     real: `next-auth-v4/providers/${p}`,
     denext: `src/compat/next-auth/providers/${p}.ts`,
     group: "next-auth-v4" as const,
+  })),
+  // Preact (`denext migrate` maps each specifier to the denext module beside it).
+  ...PREACT_SPECIFIERS.map(([specifier, file]) => ({
+    specifier,
+    real: specifier,
+    denext: `src/compat/preact/${file}`,
+    group: "preact" as const,
   })),
 ];
 

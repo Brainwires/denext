@@ -156,6 +156,14 @@ export const WAIVERS: Waiver[] = [
       "runs on Deno web standards (Request/Response/ReadableStream), so these have no place in the runtime.",
   },
   {
+    specifier: "preact",
+    pattern: "^(ToggleEvent|CommandEvent|SnapEvent)$",
+    categories: ["MISSING_VALUE"],
+    reason: "Preact 11's typings declare these DOM event types beside its exports, but its " +
+      "JavaScript exports no such values (`import('preact')` has none): the browser's own " +
+      "`ToggleEvent` / `CommandEvent` / `SnapEvent` globals are what code uses.",
+  },
+  {
     specifier: "next-auth@4/providers/twitter",
     symbol: "TwitterLegacy",
     categories: ["MISSING_VALUE"],

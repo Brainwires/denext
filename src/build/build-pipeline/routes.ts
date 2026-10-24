@@ -108,6 +108,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
     usesImageBlur: ctx.usesImageBlur,
     usesFormActions: ctx.usesFormActions,
     usesHrefParams: ctx.usesHrefParams,
+    usesHookBoundaries: ctx.usesHookBoundaries,
   });
   // Write shared + island chunks under their own (content-hashed) basenames; identical
   // chunks across routes collapse to one file.
@@ -196,6 +197,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     usesImageBlur: ctx.usesImageBlur,
     usesFormActions: ctx.usesFormActions,
     usesHrefParams: ctx.usesHrefParams,
+    usesHookBoundaries: ctx.usesHookBoundaries,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);

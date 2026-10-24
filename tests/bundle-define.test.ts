@@ -52,17 +52,24 @@ Deno.test("nativeBundleDefines: features become the __DENEXT_FEATURES__ JSON, ab
 
 Deno.test("nativeBundleDefines: the build-scan gates are defined only when a scan ran", () => {
   assertEquals(
-    nativeBundleDefines({ usesImageBlur: false, usesFormActions: true, usesHrefParams: false }),
+    nativeBundleDefines({
+      usesImageBlur: false,
+      usesFormActions: true,
+      usesHrefParams: false,
+      usesHookBoundaries: false,
+    }),
     {
       __DENEXT_CLASS_COMPONENTS__: "true",
       __DENEXT_IMAGE_BLUR__: "false",
       __DENEXT_FORM_ACTIONS__: "true",
       __DENEXT_HREF_PARAMS__: "false",
+      __DENEXT_HOOK_BOUNDARIES__: "false",
     },
   );
   const unscanned = nativeBundleDefines({});
   assert(!("__DENEXT_IMAGE_BLUR__" in unscanned) && !("__DENEXT_FORM_ACTIONS__" in unscanned));
   assert(!("__DENEXT_HREF_PARAMS__" in unscanned));
+  assert(!("__DENEXT_HOOK_BOUNDARIES__" in unscanned));
 });
 
 /** Run the probe in a fresh process with `DENO_BIN` set to a fake `deno` script (POSIX only). */
@@ -352,6 +359,44 @@ for (const define of PATHS) {
           "the segment parser in an app with no pattern",
         );
         assert(!off.includes("__DENEXT_HREF_PARAMS__"), "the gate folded");
+      }
+    } finally {
+      __setBundleDefineForTests(undefined);
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
+
+// The hook-boundary gate (Preact's `useErrorBoundary`): with `--define` an app the scan found no
+// use in carries no hook-boundary check in the reconciler's boundary search; one that uses it (or
+// a bundle no scan ran for) keeps it.
+for (const define of PATHS) {
+  Deno.test(`native bundle (${label(define)}): the hook-boundary build-scan gate`, async () => {
+    const dir = await project({});
+    __setBundleDefineForTests(define);
+    try {
+      const entry = `import { findErrorBoundary } from ${
+        JSON.stringify(`${ROOT}src/client/fiber/fiber-utils.ts`)
+      };\n(globalThis as Record<string, unknown>).x = findErrorBoundary;\n`;
+      const bundle = async (usesHookBoundaries?: boolean) => {
+        const out = await bundleSourceFiles(entry, {
+          configPath: join(dir, "deno.json"),
+          minify: true,
+          usesHookBoundaries,
+        });
+        return [...out.files.values()].join("\n");
+      };
+      // HookBoundaryBit (4096) is tested against a fiber's bits only by the hook-boundary check.
+      const checksBit = (code: string) => /4096&|&4096/.test(code);
+      const off = await bundle(false);
+      for (
+        const kept of define ? [await bundle(true), await bundle()] : [off, await bundle(true)]
+      ) {
+        assert(checksBit(kept), "the hook-boundary check");
+      }
+      if (define) {
+        assert(!checksBit(off), "the hook-boundary check in an app with no useErrorBoundary");
+        assert(!off.includes("__DENEXT_HOOK_BOUNDARIES__"), "the gate folded");
       }
     } finally {
       __setBundleDefineForTests(undefined);

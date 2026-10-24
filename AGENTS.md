@@ -36,8 +36,9 @@ emit correct denext instead of Next.js.
    (`denext/fresh`, `denext/signals`) in its `deno.json`. A **Preact** app (Vite's
    `@preact/preset-vite`, preact-cli, WMR or esbuild) takes the SPA path with the same Preact
    layer (`preact` → `denext/preact`, `@preact/signals` → `denext/signals`, through `resolveAlias`
-   for npm packages too); preact-iso maps to `denext/preact-iso`, and preact-router /
-   wouter-preact keep running on the aliases. Guides: https://denext.dev/docs/migrating-fresh,
+   for npm packages too); preact-iso maps to `denext/preact-iso`, `preact-render-to-string` to
+   `denext/preact/render-to-string` (Preact's markup), `useErrorBoundary` catches, and Preact's
+   `options.vnode` / `event` hooks run; preact-router / wouter-preact keep running on the aliases. Guides: https://denext.dev/docs/migrating-fresh,
    https://denext.dev/docs/migrating-preact, https://denext.dev/docs/tanstack-start;
    `denext/signals` (Preact Signals' API, usable in any app, not the resumability `useSignal`
    from `denext`): https://denext.dev/docs/signals.

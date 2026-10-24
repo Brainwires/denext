@@ -37,3 +37,5 @@ declare const __DENEXT_IMAGE_BLUR__: boolean | undefined;
 declare const __DENEXT_FORM_ACTIONS__: boolean | undefined;
 /** Route-pattern hrefs (`{ pathname: "/blog/[slug]", params }`): filling the pattern from `params`. */
 declare const __DENEXT_HREF_PARAMS__: boolean | undefined;
+/** Preact's `useErrorBoundary`: a function component that is an error boundary (the reconciler). */
+declare const __DENEXT_HOOK_BOUNDARIES__: boolean | undefined;

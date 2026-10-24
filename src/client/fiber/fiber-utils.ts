@@ -19,6 +19,7 @@ import {
   hasBit,
   HasEffect,
   HiddenBit,
+  HookBoundaryBit,
   NoLane,
   OffscreenBit,
   Placement,
@@ -132,9 +133,19 @@ export function findSuspense(fiber: Fiber): Fiber | null {
   return null;
 }
 
+/**
+ * Whether `fiber` is a function component made an error boundary by Preact's `useErrorBoundary`
+ * (`denext/preact/hooks`). Folds to `false` in a build whose scan found no use
+ * (`__DENEXT_HOOK_BOUNDARIES__`), so the seam costs such an app nothing.
+ */
+export function isHookBoundary(fiber: Fiber): boolean {
+  return (typeof __DENEXT_HOOK_BOUNDARIES__ === "undefined" || __DENEXT_HOOK_BOUNDARIES__) &&
+    (fiber.bits & HookBoundaryBit) !== 0;
+}
+
 export function findErrorBoundary(fiber: Fiber): Fiber | null {
   for (let n = fiber.return; n !== null; n = n.return) {
-    if (n.tag === "errorboundary" || isClassBoundary(n)) return n;
+    if (n.tag === "errorboundary" || isHookBoundary(n) || isClassBoundary(n)) return n;
   }
   return null;
 }

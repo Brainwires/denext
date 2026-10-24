@@ -8,6 +8,46 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Preact's `useErrorBoundary` catches.** In `denext/preact/hooks`, the component that calls it
+  is an error boundary for what it renders: a render, effect or event-handler error below
+  re-renders it with `[error, resetError]`, its callback gets `(error, errorInfo)` once that render
+  commits, and `resetError()` renders the children again; an error its error UI throws goes to
+  the boundary above. Before, it always returned `[undefined, reset]` and never caught.
+- **`denext/preact/render-to-string`**, which `preact-render-to-string` and
+  `preact-render-to-string/stream` now map to: `renderToString` (also the default export and
+  `render`), `renderToStaticMarkup`, `renderToStringAsync` and `renderToReadableStream`, rendered
+  by denext's server renderer in Preact's markup (self-closed void elements, bare boolean and empty
+  attributes, `class` over `className`, only `&`, `<` and `"` escaped, `<!--$s-->` around a
+  boundary that suspended, and a synchronous render that suspends throws as Preact's does).
+- **Preact's `options` hooks** `vnode`, `event` and `useDebugValue` are called: `options.vnode`
+  for each element `h`, `createElement`, `cloneElement` (`denext/preact`, `denext/preact/compat`)
+  and Preact's JSX runtime create, `options.event` before each handler of an intrinsic element
+  they create (its return value replaces the event), and `options.useDebugValue` from
+  `useDebugValue` in `denext/preact/hooks`. `diffed`, `unmount`, `debounceRendering`,
+  `requestAnimationFrame` and the internal hooks remain no-ops.
+- `denext/preact` exports `createPortal`, which Preact 11 moved into its core.
+- **The parity gate covers Preact**: `preact`, `preact/hooks`, `preact/compat`,
+  `preact/jsx-runtime`, `preact-render-to-string` (+ `/stream`), `preact-iso` and
+  `@preact/signals` are checked against preact 11.0.1, preact-render-to-string 6.8.1, preact-iso
+  2.12.2 and @preact/signals 2.11.3.
+
+### Changed
+
+- **`denext/preact-iso` follows preact-iso while a `lazy()` route loads**: `<Router>` keeps the
+  previous route mounted and on screen and calls `onLoadStart(url)`, then `onRouteChange(url)` and
+  `onLoadEnd(url)` once the new route renders (before, it rendered nothing and never called
+  `onLoadStart`). `onRouteChange` is no longer called on the first render, as in preact-iso, and
+  `useLocation()` carries `wasPush`. `ErrorBoundary` passes an error to `onError` and then on to
+  the boundary above, as preact-iso's does (before, it rendered nothing in its place), and lets a
+  suspended child wait in place. `hydrate()` hydrates prerendered markup on a page with the
+  `isodata` script the first time (before, it always rendered).
+- `denext migrate --check` no longer lists `useErrorBoundary` or `preact-render-to-string` as
+  won't-migrate; it lists `options.diffed` / `unmount` / `debounceRendering` /
+  `requestAnimationFrame` and internal-hook assignments, and `preact-render-to-string/jsx` /
+  `/stream-node`.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added
