@@ -278,6 +278,8 @@ interface Tamper {
   aud?: string;
   exp?: number;
   nonce?: string;
+  /** The discovery document advertises RFC 9207 `iss` support. */
+  issAdvertised?: boolean;
 }
 
 /** Stub every endpoint `p` names; `nonce` is read when the id_token is minted. */
@@ -323,6 +325,7 @@ function stubIdp(p: OAuthProvider, row: Row, nonce: () => string | undefined, ta
           token_endpoint: p.tokenUrl,
           jwks_uri: p.jwksUrl,
           ...(p.userinfoUrl ? { userinfo_endpoint: p.userinfoUrl } : {}),
+          ...(tamper.issAdvertised ? { authorization_response_iss_parameter_supported: true } : {}),
         }),
     );
   }
@@ -486,6 +489,43 @@ Deno.test("next-auth provider flow: an `iss` response parameter naming the issue
   const row = ROWS.google;
   const { res, failures } = await signIn("google", row, {
     issParam: "https://accounts.google.com",
+  });
+  assertEquals(failures, []);
+  assert(signedIn(res));
+});
+
+/**
+ * A Keycloak row on its own issuer: the discovery document is cached per issuer for an hour, so
+ * each RFC 9207 case needs an issuer no other test has resolved.
+ */
+function issRow(realm: string): Row {
+  const issuer = `https://kc-iss.example.com/realms/${realm}`;
+  return {
+    ...ROWS.keycloak,
+    provider: Keycloak({ issuer }),
+    authorize: `${issuer}/protocol/openid-connect/auth`,
+  };
+}
+
+Deno.test("next-auth provider flow: a missing `iss` is refused when discovery advertises RFC 9207 support", async () => {
+  const { res, users, failures } = await signIn("keycloak", issRow("adv-missing"), {
+    issAdvertised: true,
+  });
+  assert(!signedIn(res));
+  assertEquals(users, []);
+  assertEquals(failures.length, 1);
+});
+
+Deno.test("next-auth provider flow: a missing `iss` is accepted when discovery does not advertise it", async () => {
+  const { res, failures } = await signIn("keycloak", issRow("plain"), { issAdvertised: false });
+  assertEquals(failures, []);
+  assert(signedIn(res));
+});
+
+Deno.test("next-auth provider flow: a correct `iss` is accepted when discovery advertises RFC 9207 support", async () => {
+  const { res, failures } = await signIn("keycloak", issRow("adv-ok"), {
+    issAdvertised: true,
+    issParam: "https://kc-iss.example.com/realms/adv-ok",
   });
   assertEquals(failures, []);
   assert(signedIn(res));

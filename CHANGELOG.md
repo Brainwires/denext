@@ -69,6 +69,17 @@ and this project adheres to
 
 ### Fixed
 
+- **(security) `denext ui` no longer writes through a dangling symlink.** The containment check
+  of the UI (and the MCP tools sharing it) skipped past a symlink whose target did not exist to
+  its parent, so a write through a link pointing outside the project would have created the
+  target there. A dangling symlink anywhere on a path is now refused, as in the commands that
+  write into a cloned project.
+- **(security) A callback without `iss` is refused when the issuer advertises RFC 9207.** When an
+  OIDC provider's discovery document says `authorization_response_iss_parameter_supported:
+  true`, an authorization response lacking the `iss` parameter now fails the sign-in
+  (`oauth_failed`), not only one naming another issuer. Plain OAuth 2 providers and multi-tenant
+  issuer templates are unchanged.
+
 - **The commands that write into a project they did not create no longer follow its symlinks out
   of it.** `denext migrate`, `init`, `upgrade`, `mobile add` and `desktop add` run on cloned
   repositories, where a committed symlink is the repository author's choice. A write now never

@@ -375,7 +375,8 @@ async function completeCallback(
  * Whether the authorization response's `iss` parameter (RFC 9207) names an issuer other than
  * this provider's — the mix-up attack, where a response minted by one authorization server is
  * replayed at another's callback. Checked as Auth.js (oauth4webapi) does: an `iss` that is
- * present must equal the issuer. A plain OAuth provider has no issuer to compare against, and a
+ * present must equal the issuer, and one is required when the discovery document advertises
+ * `authorization_response_iss_parameter_supported`. A plain OAuth provider has no issuer to compare against, and a
  * multi-tenant issuer is a template whose tenant is checked on the id_token instead.
  */
 function issuerParamMismatch(
@@ -383,7 +384,8 @@ function issuerParamMismatch(
   endpoints: ProviderEndpoints,
   iss: string | null | undefined,
 ): boolean {
-  if (iss == null || provider.tenantIssuer || endpoints.issuer === undefined) return false;
+  if (provider.tenantIssuer || endpoints.issuer === undefined) return false;
+  if (iss == null) return endpoints.issParamRequired === true;
   return iss !== endpoints.issuer;
 }
 
