@@ -34,7 +34,7 @@ import type { ModuleLoader } from "../../server/types.ts";
 import type { DevBoundary, DevState } from "./state.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 import type { NpmBoundaryFinder } from "../module-graph.ts";
-import { broadcast } from "./reload.ts";
+import { broadcast, broadcastError } from "./reload.ts";
 import { holdRequestDeadline } from "../../server/request-context.ts";
 
 /** The unbundled dev loop, created on first use (after compat detection settled). */
@@ -76,6 +76,7 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
     config: st.paths.config ?? {},
     mode: "dev",
     load: st.load,
+    reportDevError: (title, error) => broadcastError(st, title, error),
   });
   const manifest = await scanRoutes(st.paths.appDir);
   if (manifest !== st.lastEmittedManifest) {

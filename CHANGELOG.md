@@ -106,6 +106,13 @@ and this project adheres to
   `DENEXT_IDLE_TRIM=0`; the deploy manifest's `server.idleTrim` says whether an adapter should turn
   it on. See https://denext.dev/docs/deployment-targets#idle-memory-trim.
 
+- **Plugin kit: the edited files, and the dev error overlay.** A prepare step re-run by an edit
+  under `denext dev` gets the matching changed files as `changed` on its context, and a plugin's
+  context has `reportDevError(title, error)`, which shows an error in the dev error overlay (App
+  Router dev; `undefined` elsewhere). `@denext/graphql` uses both: each dev schema reload logs the
+  edited files, and a failed reload is shown in the overlay. A failing prepare step's log line now
+  names its plugin on a dev re-run too. See https://denext.dev/docs/plugins.
+
 ### Changed
 
 - **Windows packaging fails closed on signing.** With `DENEXT_WINDOWS_CERT` set and no `signtool`

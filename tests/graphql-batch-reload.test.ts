@@ -175,3 +175,71 @@ Deno.test("graphql dev: a schema object imported into the config reloads from it
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("graphql dev: a reload names the edited file, and a failed one reaches the dev overlay", async () => {
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_gql_reload_" }));
+  const schemaFile = join(root, "app", "graphql", "schema.ts");
+  let broken = false;
+  const load =
+    (() =>
+      broken
+        ? Promise.reject(new SyntaxError("Unexpected token in schema.ts"))
+        : Promise.resolve({ schema: costSchema })) as unknown as ModuleLoader;
+  const reported: { title: string; error: unknown }[] = [];
+  const logged: string[] = [];
+  const prepare = {
+    projectRoot: root,
+    appDir: join(root, "app"),
+    outDir: join(root, ".denext"),
+    config: {},
+  };
+  const { info, error } = console;
+  console.info = (...a: unknown[]) => logged.push(a.map(String).join(" "));
+  console.error = (...a: unknown[]) => logged.push(a.map(String).join(" "));
+  try {
+    resetPlugins();
+    await applyPlugins({
+      projectRoot: root,
+      appDir: join(root, "app"),
+      config: { plugins: [graphql({ schema: "./app/graphql/schema.ts" })] } as DenextConfig,
+      mode: "dev",
+      load,
+      reportDevError: (title, err) => reported.push({ title, error: err }),
+    });
+    const handle = getPluginRequestHandler()!;
+    const hello = async () => (await handle(postJson({ query: "{ hello }" })))!;
+    assertEquals((await (await hello()).json()).data.hello, "world");
+
+    // A good edit: one line naming the file, nothing for the overlay.
+    assert(await runMatchingPrepareSteps(prepare, [schemaFile]));
+    assertEquals((await (await hello()).json()).data.hello, "world");
+    assertEquals(logged, [
+      `[@denext/graphql] schema reloaded after an edit to ${join("app", "graphql", "schema.ts")}`,
+    ]);
+    assertEquals(reported, []);
+
+    // A broken edit: logged with the file, and shown in the dev error overlay.
+    broken = true;
+    logged.length = 0;
+    const resolvers = join(root, "app", "graphql", "resolvers.ts");
+    assert(await runMatchingPrepareSteps(prepare, [resolvers, schemaFile]));
+    await (await hello().catch(() => new Response(null)))?.body?.cancel();
+    await new Promise((r) => setTimeout(r, 0));
+    const files = `${join("app", "graphql", "resolvers.ts")}, ${
+      join("app", "graphql", "schema.ts")
+    }`;
+    assertEquals(reported.length, 1);
+    assertEquals(reported[0].title, `GraphQL schema reload failed after an edit to ${files}`);
+    assert(reported[0].error instanceof SyntaxError);
+    assertEquals(logged.length, 1);
+    assertStringIncludes(
+      logged[0],
+      `[@denext/graphql] schema reload failed after an edit to ${files}:`,
+    );
+  } finally {
+    console.info = info;
+    console.error = error;
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+});

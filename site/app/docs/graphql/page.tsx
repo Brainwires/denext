@@ -212,6 +212,13 @@ subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { sig
         exports it and re-imports that module after an edit. One it cannot trace (built in the
         config itself, or imported through an alias) needs a restart, and a dev notice says so.
       </p>
+      <p>
+        Each reload logs one line naming the edited files (
+        <code>[@denext/graphql] schema reloaded after an edit to app/graphql/schema.ts</code>). A
+        reload that fails (a syntax error, a schema that no longer builds) logs the error with the
+        same files and shows it in the dev error overlay; requests answer with that error until the
+        next edit.
+      </p>
 
       <h2>CI</h2>
       <Code lang="sh">
