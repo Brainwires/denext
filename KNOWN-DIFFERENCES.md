@@ -521,9 +521,6 @@ from TypeScript 7.0's compiler rather than `tsc` 6:
   printed `"light" | "dark"`, so a "use one of" suggestion lists them in that order.
 - TypeScript 7.0.2 rejects a regular expression character-class range bounded by a literal
   (unescaped) character above U+07FF with TS1516; write the escape (`\uD7FF`) instead.
-- An unresolved bare import reads `Cannot find module 'zod' or its corresponding type
-  declarations` (TS2307) without Deno's `deno add` hint; the explanation names the package to add
-  either way.
 - `import x = require("m")` in an ES module is an error (TS1202), which the in-process checker let
   through.
 - In a `tsconfig.json`, an option TypeScript 7 removed (`baseUrl`, `"moduleResolution": "node"`,
