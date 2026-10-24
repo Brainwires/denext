@@ -175,7 +175,7 @@ export async function verifyNewPasskey(
       rpId: rp.rpId,
       requireUserVerification: rp.requireUserVerification,
       algorithms: rp.algorithms,
-      // Asking for "direct" attestation brings formats denext doesn't verify (`tpm`, …): with
+      // Asking for "direct" attestation may bring a format denext doesn't verify (a newer one): with
       // unattested passkeys allowed, they register as unattested, held to the AAGUID's status.
       acceptUnverifiedFormats: rp.mds?.allowUnattested === true,
     },

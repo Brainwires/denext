@@ -192,10 +192,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
 - **An Android `apk-key-hash` passkey origin can't call the passkey endpoints:** a native app has
   no web origin for `passkeys.corsOrigins`, so it needs endpoints of its own.
-- **Passkeys verify `none`, `packed`, `tpm`, `android-key`, `apple` and `fido-u2f`
-  attestation** (`android-safetynet` and `compound` register only as unattested, under
-  `attestation.mds.allowUnattested`), and ES256 / RS256 / Ed25519 credential keys only. The
-  Metadata Service checks use CRLs, not OCSP.
+- **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
+  attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
+  Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
+  CRL block registration; `attestation.revocation: "soft"` (the default with an offline `blob`)
+  lets it through instead.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII.
 - **Native sessions:** Apple token revocation needs `native.apple.clientSecret`.

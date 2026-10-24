@@ -387,7 +387,8 @@ retired one opens and is re-sealed on its next passing check, or at once with `d
 SSO: `saml()` signs in through a SAML 2.0 identity provider on `/auth/*`, and
 `microsoftEntra({ tenant: "common" | "organizations" | "consumers", allowedTenants })` takes a
 multi-tenant app (keyed on `tid` + `oid`). `passkeys: { attestation: { mds: {} } }` checks new
-passkeys against the FIDO Metadata Service. A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
+passkeys against the FIDO Metadata Service (OCSP, then CRL revocation; fail-closed unless
+`attestation.revocation: "soft"`). A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
 slides. `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
 (id and owner, never the token). Full guide: https://denext.dev/docs/auth
 

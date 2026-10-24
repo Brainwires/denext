@@ -228,6 +228,7 @@ Deno.test("crl: best-effort warns once per distribution point", async () => {
 Deno.test("mds revocation: require by default, best-effort with an offline blob, validated", () => {
   assertEquals(resolveMds({})?.revocation, "require");
   assertEquals(resolveMds({ blob: "x" })?.revocation, "best-effort");
+  assertEquals(resolveMds({ blob: "x" }, "hard")?.revocation, "require");
   assertEquals(resolveMds({ blob: "x", revocation: "require" })?.revocation, "require");
   assertEquals(resolveMds({ revocation: "off" })?.revocation, "off");
   let threw = false;
