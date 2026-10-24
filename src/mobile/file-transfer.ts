@@ -10,7 +10,10 @@
  *   background (and, on iOS, after the system terminates it), and the plugin keeps its record, so
  *   {@linkcode fileTransfers} reports a transfer that finished while the page was gone.
  * - In a Deno Desktop window the runtime runs a download (`fs.download`); the page tracks it
- *   (listed, evented, cancelled through `fs.cancelDownload`), but it cannot pause.
+ *   (listed, evented, paused through `fs.pauseDownload`, resumed through `fs.resumeDownload`,
+ *   cancelled through `fs.cancelDownload`). The runtime keeps a paused or interrupted download's
+ *   partial file, so a resume (or the same download started again, after a restart too)
+ *   continues it with a range request.
  * - Elsewhere it runs in the page: `fetch` with the body read as a stream (download progress,
  *   pause and a range-request resume) and `XMLHttpRequest` for uploads (upload progress), so it
  *   lasts as long as the page does.
@@ -380,8 +383,8 @@ interface PageTransfer {
   resume?(): void;
   /** Cancel it while paused (no request is running): settle its promise. */
   cancelPaused?(why: "cancel" | "caller"): void;
-  /** The rejection for a pause, when the transfer's engine cannot pause one. */
-  refusePause?(): unknown;
+  /** Pause it through its engine (else a pause aborts its request): whether it paused. */
+  pause?(): Promise<boolean>;
 }
 
 /** Why a page transfer's request was aborted. */
@@ -558,59 +561,88 @@ function attemptFailure(err: unknown, canResume: boolean, url: string): {
   };
 }
 
-/** One page download: its record, its current request, and its promise's settlement. */
-class PageDownload implements PageTransfer {
+/** How a download's promise settles. */
+interface Settle<T> {
+  resolve(value: T): void;
+  reject(err: unknown): void;
+}
+
+/**
+ * A download whose promise settles once, shared by the page's own downloads and the ones another
+ * engine runs: it starts, pauses (the promise stays pending), resumes, and is cancelled while
+ * running or paused.
+ */
+abstract class SettlingDownload<T> implements PageTransfer {
   info: FileTransferInfo;
-  #controller = new AbortController();
-  #validator: string | null = null;
-  #progress;
-  #settle: { resolve(bytes: number): void; reject(err: unknown): void };
+  /** The current request's controller (a new one per attempt). */
+  protected controller = new AbortController();
+  #settle: Settle<T>;
   #onAbort = () => cancelPage(this.info.id, "caller");
 
-  constructor(
-    readonly spec: PageTransferSpec,
-    readonly sink: DownloadSink,
-    id: string,
-    settle: { resolve(bytes: number): void; reject(err: unknown): void },
-  ) {
+  constructor(readonly spec: PageTransferSpec, id: string, settle: Settle<T>) {
     this.info = pageInfo(spec, id, "download");
     this.#settle = settle;
-    this.#progress = throttled(100, (bytes, total) => {
-      pageEvent(this, "progress", { bytes, total });
-      spec.options.onProgress?.({ id, kind: "download", bytes, total });
-    });
   }
+
+  /** Run the download's request (`resume`: continue a paused one). */
+  protected abstract attempt(resume: boolean): Promise<void>;
 
   start(): void {
     const { signal } = this.spec.options;
     pageTransfers.set(this.info.id, this);
     if (signal?.aborted) {
       pageEvent(this, "cancelled", { state: "cancelled" });
-      return this.#fail(abortReason(signal));
+      return this.fail(abortReason(signal));
     }
     signal?.addEventListener("abort", this.#onAbort, { once: true });
     pageEvent(this, "started");
-    void this.#run();
+    void this.attempt(false);
   }
 
   abort(reason: AbortWhy): void {
-    this.#controller.abort(reason);
+    this.controller.abort(reason);
   }
 
   resume(): void {
-    this.#controller = new AbortController();
+    this.controller = new AbortController();
     pageEvent(this, "started", { state: "running" });
-    void this.#run();
+    void this.attempt(true);
   }
 
   cancelPaused(why: "cancel" | "caller"): void {
     pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
-    this.#fail(cancelError("downloadToFile", this.info.id, why, this.spec.options.signal));
+    this.fail(cancelError("downloadToFile", this.info.id, why, this.spec.options.signal));
   }
 
-  #fail(err: unknown): void {
+  /** Reject the download's promise. */
+  protected fail(err: unknown): void {
     this.spec.options.signal?.removeEventListener("abort", this.#onAbort);
     this.#settle.reject(err);
+  }
+
+  /** Resolve the download's promise. */
+  protected succeed(value: T): void {
+    this.spec.options.signal?.removeEventListener("abort", this.#onAbort);
+    this.#settle.resolve(value);
+  }
+}
+
+/** One page download: its record, its current request, and its promise's settlement. */
+class PageDownload extends SettlingDownload<number> {
+  #validator: string | null = null;
+  #progress;
+
+  constructor(
+    spec: PageTransferSpec,
+    readonly sink: DownloadSink,
+    id: string,
+    settle: Settle<number>,
+  ) {
+    super(spec, id, settle);
+    this.#progress = throttled(100, (bytes, total) => {
+      pageEvent(this, "progress", { bytes, total });
+      spec.options.onProgress?.({ id, kind: "download", bytes, total });
+    });
   }
 
   /** The request: the rest of the file (a range) when bytes are kept and there is a validator. */
@@ -621,16 +653,14 @@ class PageDownload implements PageTransfer {
       headers.set("range", `bytes=${from}-`);
       headers.set("if-range", this.#validator);
     }
-    return fetch(this.spec.url, { headers, signal: this.#controller.signal });
+    return fetch(this.spec.url, { headers, signal: this.controller.signal });
   }
 
-  async #run(): Promise<void> {
+  protected async attempt(): Promise<void> {
     try {
       const res = await this.#request();
       if (!res.ok) return await this.#httpError(res);
-      const bytes = await this.#receive(res);
-      this.spec.options.signal?.removeEventListener("abort", this.#onAbort);
-      this.#settle.resolve(bytes);
+      this.succeed(await this.#receive(res));
     } catch (err) {
       this.#stopped(err);
     }
@@ -645,7 +675,7 @@ class PageDownload implements PageTransfer {
       error: `the server answered ${res.status}`,
       resumable: false,
     });
-    this.#fail(
+    this.fail(
       new FileTransferError(`downloadToFile: ${this.spec.url} answered ${res.status}`, {
         code: "HTTP",
         id: this.info.id,
@@ -689,14 +719,14 @@ class PageDownload implements PageTransfer {
 
   /** The request stopped: a pause, a cancel, or a failure. */
   #stopped(err: unknown): void {
-    const reason = this.#controller.signal.reason;
+    const reason = this.controller.signal.reason;
     if (reason === "pause") {
       pageEvent(this, "paused", { state: "paused", resumable: this.#validator !== null });
       return;
     }
     if (reason === "cancel" || reason === "caller") {
       pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
-      return this.#fail(
+      return this.fail(
         cancelError("downloadToFile", this.info.id, reason, this.spec.options.signal),
       );
     }
@@ -706,7 +736,7 @@ class PageDownload implements PageTransfer {
       this.spec.url,
     );
     pageEvent(this, "failed", { state: "failed", code, error: message, resumable });
-    this.#fail(
+    this.fail(
       new FileTransferError(`downloadToFile: ${message}`, { code, id: this.info.id, resumable }),
     );
   }
@@ -738,18 +768,34 @@ export interface TrackedDownloadHooks {
   readonly signal: AbortSignal;
   /** Report the bytes so far. */
   readonly onProgress: (bytes: number, total: number | null) => void;
+  /** Whether this run continues a paused download ({@linkcode resumeFileTransfer}). */
+  readonly resume: boolean;
 }
 
-/** A download another engine runs: how to start it and how to read its failures. */
+/** Where a paused download stopped, as its engine reports it. */
+export interface TrackedDownloadPause {
+  /** The bytes its partial file kept. */
+  readonly bytes: number;
+  /** The file's size, when the server said. */
+  readonly total: number | null;
+  /** Whether a resume continues from `bytes` (else it starts over). */
+  readonly resumable: boolean;
+}
+
+/** A download another engine runs: how to start, pause and cancel it, and how to read its failures. */
 export interface TrackedDownloadEngine {
-  /** Run the download; resolves the file's path. */
+  /** Run the download (or, with `resume`, continue it); resolves the file's path. */
   run(hooks: TrackedDownloadHooks): Promise<{ path: string }>;
   /** The engine's failure as the caller's error (a {@linkcode FileTransferError} for a transfer's). */
   error(err: unknown, id: string): unknown;
   /** Whether `err` means the engine is not there: the record is dropped and the caller falls back. */
   absent(err: unknown): boolean;
-  /** The rejection for {@linkcode pauseFileTransfer}: the engine cannot pause a download. */
-  pauseRefusal(id: string): unknown;
+  /** Pause running download `id` (its `run` then rejects with the pause); whether it paused. */
+  pause(id: string): Promise<boolean>;
+  /** Where `err` (a `run`'s rejection) says a pause stopped it, or `undefined` for another failure. */
+  paused(err: unknown): TrackedDownloadPause | undefined;
+  /** Drop paused download `id`'s kept partial file (a cancel while paused). */
+  discard(id: string): Promise<void>;
 }
 
 /** A failed transfer's record fields from its error: the code, the message, an HTTP status. */
@@ -759,52 +805,57 @@ function failedPatch(error: unknown): Partial<FileTransferEvent> {
     state: "failed",
     code: typeof raw?.code === "string" ? raw.code : "NETWORK",
     error: String(raw?.message ?? error),
+    resumable: false,
   };
   if (typeof raw?.status === "number") patch.status = raw.status;
   return patch as Partial<FileTransferEvent>;
 }
 
-/** A download an outside engine runs, tracked like a page transfer (listed, evented, cancelled). */
-class TrackedDownload implements PageTransfer {
-  info: FileTransferInfo;
-  #controller = new AbortController();
+/**
+ * A download an outside engine runs, tracked like a page transfer (listed, evented, paused,
+ * resumed, cancelled). A pause keeps its promise pending until it is resumed or cancelled.
+ */
+class TrackedDownload extends SettlingDownload<{ path: string }> {
+  #pausing = false;
 
   constructor(
-    readonly spec: PageTransferSpec,
+    spec: PageTransferSpec,
     readonly engine: TrackedDownloadEngine,
     id: string,
+    settle: Settle<{ path: string }>,
   ) {
-    this.info = pageInfo(spec, id, "download");
+    super(spec, id, settle);
   }
 
-  abort(reason: AbortWhy): void {
-    this.#controller.abort(reason);
-  }
-
-  refusePause(): unknown {
-    return this.engine.pauseRefusal(this.info.id);
-  }
-
-  async run(): Promise<{ path: string }> {
-    const { id } = this.info;
-    const { signal, onProgress } = this.spec.options;
-    pageTransfers.set(id, this);
-    if (signal?.aborted) {
-      pageEvent(this, "cancelled", { state: "cancelled" });
-      throw abortReason(signal);
+  async pause(): Promise<boolean> {
+    this.#pausing = true;
+    let paused = false;
+    try {
+      paused = await this.engine.pause(this.info.id);
+      return paused;
+    } finally {
+      // Not paused (it had already settled, or the call failed): a later stop is not a pause.
+      if (!paused) this.#pausing = false;
     }
-    const onAbort = () => cancelPage(id, "caller");
-    signal?.addEventListener("abort", onAbort, { once: true });
-    pageEvent(this, "started");
+  }
+
+  override cancelPaused(why: "cancel" | "caller"): void {
+    super.cancelPaused(why);
+    void this.engine.discard(this.info.id).catch(() => {});
+  }
+
+  protected async attempt(resume: boolean): Promise<void> {
+    const { id } = this.info;
     const progress = (bytes: number, total: number | null) => {
       pageEvent(this, "progress", { bytes, total });
-      onProgress?.({ id, kind: "download", bytes, total });
+      this.spec.options.onProgress?.({ id, kind: "download", bytes, total });
     };
     try {
       const done = await this.engine.run({
         id,
-        signal: this.#controller.signal,
+        signal: this.controller.signal,
         onProgress: progress,
+        resume,
       });
       const { bytes } = this.info;
       pageEvent(this, "done", {
@@ -813,19 +864,29 @@ class TrackedDownload implements PageTransfer {
         total: this.info.total ?? bytes,
         file: done.path,
       });
-      return done;
+      this.succeed(done);
     } catch (err) {
-      throw this.#failure(err);
+      this.#stopped(err);
     } finally {
-      signal?.removeEventListener("abort", onAbort);
+      this.#pausing = false;
     }
+  }
+
+  /** The run stopped: a pause (the promise stays pending), a cancel, or a failure. */
+  #stopped(err: unknown): void {
+    const pause = this.#pausing ? this.engine.paused(err) : undefined;
+    if (pause) {
+      pageEvent(this, "paused", { state: "paused", ...pause });
+      return;
+    }
+    this.fail(this.#failure(err));
   }
 
   /** The error the download rejects with (its event sent; none when the engine is absent). */
   #failure(err: unknown): unknown {
-    const reason = this.#controller.signal.reason;
+    const reason = this.controller.signal.reason;
     if (reason === "cancel" || reason === "caller") {
-      pageEvent(this, "cancelled", { state: "cancelled" });
+      pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
       return cancelError("downloadToFile", this.info.id, reason, this.spec.options.signal);
     }
     if (this.engine.absent(err)) {
@@ -834,7 +895,7 @@ class TrackedDownload implements PageTransfer {
     }
     const mapped = this.engine.error(err, this.info.id);
     const cancelled = mapped instanceof FileTransferError && mapped.code === "CANCELLED";
-    if (cancelled) pageEvent(this, "cancelled", { state: "cancelled" });
+    if (cancelled) pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
     else pageEvent(this, "failed", failedPatch(mapped));
     return mapped;
   }
@@ -843,9 +904,10 @@ class TrackedDownload implements PageTransfer {
 /**
  * Track a download another engine runs (the Deno Desktop runtime's `fs.download`) like a page
  * transfer: {@linkcode fileTransfers} lists it, {@linkcode onFileTransfer} gets its `started` /
- * `progress` / `done` / `failed` / `cancelled` events, {@linkcode cancelFileTransfer} and the
- * caller's `signal` abort the signal the engine is handed, and {@linkcode pauseFileTransfer}
- * rejects with the engine's refusal.
+ * `progress` / `paused` / `done` / `failed` / `cancelled` events, {@linkcode pauseFileTransfer}
+ * pauses it (the engine keeps the bytes so far; the promise stays pending),
+ * {@linkcode resumeFileTransfer} continues it, and {@linkcode cancelFileTransfer} and the caller's
+ * `signal` cancel it (a paused one's kept bytes dropped).
  *
  * @param spec The transfer.
  * @param engine The engine.
@@ -855,7 +917,10 @@ export function trackedDownload(
   spec: PageTransferSpec,
   engine: TrackedDownloadEngine,
 ): Promise<{ path: string }> {
-  return new TrackedDownload(spec, engine, transferId("downloadToFile", spec.id)).run();
+  const id = transferId("downloadToFile", spec.id);
+  return new Promise((resolve, reject) => {
+    new TrackedDownload(spec, engine, id, { resolve, reject }).start();
+  });
 }
 
 /** Cancel a page transfer; `caller` when the caller's own signal aborted it. */
@@ -1168,8 +1233,9 @@ export async function fileTransfers(): Promise<FileTransferInfo[]> {
  * continues from them where the server allows a range (else it starts over). Its
  * `downloadToFile` promise stays pending until then. Uploads cannot pause.
  *
- * A Deno Desktop download cannot pause (the runtime keeps no partial file to resume): this
- * rejects with code `"unsupported"`; cancel it and download it again.
+ * A Deno Desktop download pauses in the runtime: it keeps the partial file (and a sidecar naming
+ * the URL and its validator) beside the destination, and a resume asks for the rest with a range
+ * request guarded by `If-Range`.
  *
  * @param id The transfer's id.
  * @returns Whether it paused.
@@ -1178,7 +1244,7 @@ export async function pauseFileTransfer(id: string): Promise<boolean> {
   const page = pageTransfers.get(id);
   if (page) {
     if (page.info.kind !== "download" || page.info.state !== "running") return false;
-    if (page.refusePause) throw page.refusePause();
+    if (page.pause) return await page.pause();
     page.abort("pause");
     return true;
   }

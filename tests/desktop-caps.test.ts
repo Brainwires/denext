@@ -2408,9 +2408,12 @@ Deno.test("fs.download: progress events carry the id; a failure's code says what
     const dl = (url: string) => call(cap, "download", { url, path: "n.bin", directory: "data" });
     assertEquals(await rejectCode(dl("https://files.test/offline")), "network");
     assertEquals(await rejectCode(dl("https://files.test/cut")), "network");
+    // A cut connection keeps the bytes so far (and the sidecar) for a resume.
     assertEquals((await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(), [
       "f.bin",
       "g.bin",
+      "n.bin.part",
+      "n.bin.part.json",
     ]);
   } finally {
     await cleanup();
@@ -2464,7 +2467,7 @@ Deno.test("fs.cancelDownload: stops a running download, answers once the partial
   }
 });
 
-Deno.test("fs.download: the page going away cancels it too (its request's signal)", async () => {
+Deno.test("fs.download: the page going away stops it too (its request's signal), the partial kept", async () => {
   const { root, cap, cleanup } = await downloadFixture(
     ((_u: unknown, init?: RequestInit) => {
       const body = new ReadableStream<Uint8Array>({
@@ -2488,7 +2491,8 @@ Deno.test("fs.download: the page going away cancels it too (its request's signal
     await until(async () => (await listAll(root)).length > 0);
     page.abort();
     assertEquals(await rejectCode(running), "cancelled");
-    assertEquals(await listAll(root), []);
+    // Not the user's cancel: the bytes so far stay for a resume (after a restart too).
+    assertEquals(await listAll(root), ["p.bin.part", "p.bin.part.json"]);
   } finally {
     await cleanup();
   }

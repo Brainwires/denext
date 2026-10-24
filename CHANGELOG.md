@@ -10,6 +10,18 @@ and this project adheres to
 
 ### Added
 
+- Deno Desktop downloads pause and resume: `pauseFileTransfer` / `resumeFileTransfer` work on a
+  `downloadToFile` in a Deno Desktop window as they do in the shell and on the web, where
+  `pauseFileTransfer` rejected `unsupported` before. The runtime keeps the bytes so far in
+  `<file>.part` with a `<file>.part.json` sidecar (the URL, the strong `ETag` or `Last-Modified`,
+  the size, the bytes written) and asks for the rest with `Range` + `If-Range` (never a weak
+  `ETag`); a `200`, a `Content-Range` that does not continue the kept bytes, or no usable
+  validator starts it over, and a `416` for a complete file finishes it. Every SSRF, host and
+  header check runs again on the resumed request, and the 100 MiB cap counts the whole file. A
+  network failure or a restart keeps the partial file too: downloading the same URL to the same
+  file again continues it. The `fs` capability gains `pauseDownload` and `resumeDownload`;
+  `cancelDownload` also drops a paused download's partial file.
+
 - **Ready for the lifecycle-script jail.** denext's Deno runs a dependency's approved install
   script jailed (a scrubbed environment, a scratch `HOME`, writes only under `node_modules`, no
   network), on request up to runtime `3.0.0-rc.4` and by default from `3.0.0-rc.5`, which denext

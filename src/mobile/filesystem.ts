@@ -30,6 +30,7 @@ import {
   pageDownload,
   pageUpload,
   trackedDownload,
+  type TrackedDownloadPause,
   transferPlugin,
   type UploadFileResult,
 } from "./file-transfer.ts";
@@ -602,9 +603,11 @@ function urlOf(fn: string, url: string): string {
  * - In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime
  *   fetches in the Deno process (with the request `headers`; CORS does not apply) and writes
  *   under the app's folder, with progress. {@linkcode fileTransfers} lists it and
- *   {@linkcode onFileTransfer} reports it; {@linkcode cancelFileTransfer} or aborting `signal`
- *   cancels it and drops the partial file. It cannot pause ({@linkcode pauseFileTransfer}
- *   rejects with code `"unsupported"`).
+ *   {@linkcode onFileTransfer} reports it; {@linkcode pauseFileTransfer} keeps the bytes so far
+ *   and {@linkcode resumeFileTransfer} asks for the rest with a range request (a server that
+ *   answers 200 starts it over); {@linkcode cancelFileTransfer} or aborting `signal` cancels it
+ *   and drops the partial file. A download a restart interrupted continues when the same URL is
+ *   downloaded to the same file again.
  * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
  *   request (a server that answers 200 starts it over).
@@ -697,12 +700,25 @@ function httpDetail(raw: unknown): { status?: number; body?: string } {
   return out;
 }
 
+/** Where a desktop download's `paused` rejection says it stopped (`undefined` for another error). */
+function desktopPause(err: unknown): TrackedDownloadPause | undefined {
+  const e = err as { code?: unknown; data?: unknown } | null;
+  if (e?.code !== "paused") return undefined;
+  const d = (e.data ?? {}) as { bytes?: unknown; total?: unknown; resumable?: unknown };
+  return {
+    bytes: typeof d.bytes === "number" ? d.bytes : 0,
+    total: typeof d.total === "number" ? d.total : null,
+    resumable: d.resumable === true,
+  };
+}
+
 /**
  * A download in a Deno Desktop window: the runtime fetches it with the request `headers` and
  * reports progress. It is a tracked transfer (`fileTransfers()`, `onFileTransfer`,
- * `cancelFileTransfer`); a cancel, or `signal` aborting, sends `fs.cancelDownload` (the partial
- * file is dropped). The runtime keeps no partial file to resume, so a pause rejects
- * `unsupported`. Its failures are the mobile path's {@linkcode FileTransferError}s.
+ * `pauseFileTransfer`, `resumeFileTransfer`, `cancelFileTransfer`): a pause sends
+ * `fs.pauseDownload` (the runtime keeps the partial file), a resume `fs.resumeDownload` (a range
+ * request guarded by `If-Range`), and a cancel, or `signal` aborting, `fs.cancelDownload` (the
+ * partial file is dropped). Its failures are the mobile path's {@linkcode FileTransferError}s.
  */
 function desktopDownload(
   desktop: DesktopNative,
@@ -713,22 +729,19 @@ function desktopDownload(
 ): Promise<{ path: string }> {
   const shown = isPicked(directory) ? "picked" : directory;
   return trackedDownload({ id: options.id, url: href, directory: shown, path: rel, options }, {
-    run: ({ id, signal, onProgress }) =>
+    run: ({ id, signal, onProgress, resume }) =>
       desktop.fsDownload(href, rel, directory, {
         id,
         headers: headersOf(options.headers),
         signal,
         onProgress,
+        resume,
       }),
     error: desktopTransferError,
     absent: (err) => (err as { code?: unknown } | null)?.code === "unavailable",
-    pauseRefusal: () =>
-      capabilityError(
-        "pauseFileTransfer",
-        "unsupported",
-        "a Deno Desktop download cannot pause (the runtime keeps no partial file to resume); " +
-          "cancel it and download it again",
-      ),
+    pause: (id) => desktop.fsPauseDownload(id),
+    paused: desktopPause,
+    discard: (id) => desktop.fsCancelDownload(id),
   });
 }
 

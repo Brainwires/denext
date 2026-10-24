@@ -123,6 +123,11 @@ export interface DesktopDownloadOptions {
   readonly headers?: Readonly<Record<string, string>>;
   /** Aborting it cancels the download in the runtime (its partial file removed). */
   readonly signal?: AbortSignal;
+  /**
+   * Continue a paused download (`resumeDownload`): from the bytes its partial file kept, when the
+   * server allows a range for the same file, else from zero.
+   */
+  readonly resume?: boolean;
   /** Called with the bytes so far: as the runtime reports them, and once at the end. */
   readonly onProgress?: (bytes: number, total: number | null) => void;
 }
@@ -148,8 +153,11 @@ function forwardDownloadProgress(
 /**
  * `downloadToFile` on desktop: the runtime fetches `url` itself (no CORS, no bytes through the
  * page) with the page's request `headers`, and writes the file, reporting progress as `fs`
- * `progress` events. Aborting `signal` sends `cancelDownload` (which answers once the partial
- * file is gone) and rejects with the signal's reason. It resolves the absolute path.
+ * `progress` events. A partial file a paused or interrupted download kept for the same URL and
+ * file is continued (a range request guarded by `If-Range`). Aborting `signal` sends
+ * `cancelDownload` (which answers once the partial file is gone) and rejects with the signal's
+ * reason; {@linkcode fsPauseDownload} stops it with the partial kept (it rejects with code
+ * `paused`). It resolves the absolute path.
  */
 export async function fsDownload(
   url: string,
@@ -169,7 +177,8 @@ export async function fsDownload(
   const stop = forwardDownloadProgress(id, onProgress);
   try {
     const args = { url, path, directory, id, headers: { ...(options.headers ?? {}) } };
-    const out = await desktopRpc<{ path?: unknown; bytes?: unknown }>("fs", "download", args, {
+    const method = options.resume ? "resumeDownload" : "download";
+    const out = await desktopRpc<{ path?: unknown; bytes?: unknown }>("fs", method, args, {
       timeoutMs: false,
       signal: call.signal,
     });
@@ -183,6 +192,28 @@ export async function fsDownload(
     signal?.removeEventListener("abort", onAbort);
     stop();
   }
+}
+
+/**
+ * Pause desktop download `id`: the runtime stops it and keeps its partial file and sidecar, and
+ * its {@linkcode fsDownload} call rejects with code `paused` (`data`: `{ bytes, total, resumable }`).
+ *
+ * @param id The download's id.
+ * @returns Whether a running download paused.
+ */
+export async function fsPauseDownload(id: string): Promise<boolean> {
+  const out = await desktopRpc<{ paused?: unknown }>("fs", "pauseDownload", { id });
+  return out?.paused === true;
+}
+
+/**
+ * Cancel desktop download `id`: a running one stops, and a paused one's kept partial file and
+ * sidecar are dropped.
+ *
+ * @param id The download's id.
+ */
+export async function fsCancelDownload(id: string): Promise<void> {
+  await desktopRpc("fs", "cancelDownload", { id });
 }
 
 // --- sqlite (cap "sqlite") --------------------------------------------------

@@ -2268,11 +2268,11 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
       </p>
       <p>
         A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
-        file on Android, the OPFS file on the web) and resumes with a range request guarded by the
-        response&apos;s <code>ETag</code> (or <code>Last-Modified</code>); a server that answers
+        file on Android and on Deno Desktop, the OPFS file on the web) and resumes with a range
+        request guarded by the response&apos;s <code>ETag</code> (or{" "}
+        <code>Last-Modified</code>); a server that answers <code>200</code>{" "}
+        to it starts the download over. Uploads cannot pause. <code>cancelFileTransfer(id)</code>
         {" "}
-        <code>200</code> to it starts the download over. Uploads cannot pause.{" "}
-        <code>cancelFileTransfer(id)</code>{" "}
         drops a download&apos;s partial file and rejects its promise with a{" "}
         <code>FileTransferError</code> of code <code>"CANCELLED"</code> (an aborted{" "}
         <code>signal</code>{" "}
@@ -2299,10 +2299,16 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         <code>fetch</code>, a redirect to another origin drops{" "}
         <code>Authorization</code>. It is a transfer like any other under its <code>id</code>:{" "}
         <code>fileTransfers()</code> lists it, <code>onFileTransfer</code> gets its events, and{" "}
+        <code>pauseFileTransfer</code> stops it in the runtime with the bytes so far kept in{" "}
+        <code>&lt;file&gt;.part</code> (and a <code>&lt;file&gt;.part.json</code>{" "}
+        sidecar naming the URL and its validator), <code>resumeFileTransfer</code>{" "}
+        asks for the rest with a <code>Range</code> request guarded by <code>If-Range</code>{" "}
+        (a strong <code>ETag</code> or <code>Last-Modified</code>; a server that answers{" "}
+        <code>200</code>, or offers only a weak <code>ETag</code>, starts it over), and{" "}
         <code>cancelFileTransfer</code>{" "}
-        stops it in the runtime and drops the partial file. It cannot pause (the runtime keeps no
-        partial file to resume): <code>pauseFileTransfer</code> rejects with code{" "}
-        <code>"unsupported"</code>. <code>uploadFile</code>{" "}
+        stops it in the runtime and drops the partial file. A download a network failure or a
+        restart interrupted keeps its partial file too: downloading the same URL to the same file
+        again continues it. <code>uploadFile</code>{" "}
         reads the file through the runtime and sends it from the page.
       </p>
       <Callout kind="note">
