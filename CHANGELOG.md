@@ -266,6 +266,13 @@ and this project adheres to
   runtime's `deno --version` and attestation checks, and the CLI's own command-line read no longer
   wait on a pipe a process they left behind, or one spawned beside them on Windows, keeps open.
 
+- **Desktop `fs` works before the app's data directory exists, behind a symlinked path.** On first
+  launch the data, cache or documents directory may not exist yet, and on macOS its path crosses a
+  symlink (`/var` → `/private/var`). The `fs` capability judged every path against that
+  directory's unresolved spelling, so it refused them all with "path escapes its directory". The
+  directory's real path now comes from its nearest existing ancestor, the same way the requested
+  path's does. `..` and symlink escapes are still refused.
+
 ### Security
 
 - **A realtime reconnect is replayed only under the claims it was read under (`@denext/backend`).**
