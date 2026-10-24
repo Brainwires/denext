@@ -176,6 +176,11 @@ interface Audience {
   position: number;
   /** It came back after a disconnect: the next flush replays what it missed. */
   resume: boolean;
+  /**
+   * It was re-authorized while disconnected with other claims than it was read under: its kept
+   * frames and journal position are not the new grant's, so its return is a `resync`.
+   */
+  regranted: boolean;
   /** When its last frame was published (epoch ms; 0: none yet). */
   sentAt: number;
 }
@@ -716,7 +721,7 @@ export class RealtimeEngine {
     // The triggers fire only for the table's `events`; the WAL carries every change, so a kind
     // the table does not send is dropped here (a resync always passes).
     if (event.op !== "resync" && !table.events.includes(event.op)) return;
-    this.#journal?.append(event);
+    this.#journal?.append(journaled(event));
     if (event.op === "truncate") {
       // Changes earlier in the burst are moot (the rows are gone); later ones follow it.
       const dropped = this.#pending.get(event.table)?.size ?? 0;
@@ -1170,6 +1175,7 @@ export class RealtimeEngine {
 
   /** Drop audiences that have had no subscriber for the grace period, and full budgets. */
   #sweep(): void {
+    this.#journal?.prune();
     const now = Date.now();
     const grace = this.config.replay ? this.config.replay.retentionSeconds * 1000 : IDLE_GRACE_MS;
     const cutoff = now - grace;
@@ -1279,6 +1285,12 @@ export class RealtimeEngine {
       if (!this.#roomFor(owner, audience)) return false;
       audience.owner = owner;
     }
+    // A reconnect under other claims (a role, a tenant, a group changed): what was read and kept
+    // for it was read under the old ones, so it is dropped and the return is a resync.
+    if (audience.everActive && !audience.active && grantOf(scope) !== grantOf(audience.scope)) {
+      audience.queue.length = 0;
+      audience.regranted = true;
+    }
     audience.scope = scope;
     return true;
   }
@@ -1322,6 +1334,7 @@ export class RealtimeEngine {
       pumping: false,
       position: this.#journal?.head ?? 0,
       resume: false,
+      regranted: false,
       sentAt: 0,
     });
     return true;
@@ -1359,7 +1372,9 @@ export class RealtimeEngine {
     const again = audience.everActive && !audience.active;
     audience.active = audience.everActive = true;
     if (!again) return;
-    if (!this.#journal?.covers(audience.table.name, audience.position)) {
+    const regranted = audience.regranted;
+    audience.regranted = false;
+    if (regranted || !this.#journal?.covers(audience.table.name, audience.position)) {
       audience.queue.length = 0; // superseded: the subscriber re-reads everything
       audience.position = this.#journal?.head ?? 0;
       return this.#enqueue(audience, { resync: true });
@@ -1537,11 +1552,51 @@ export interface TableChangesOptions {
   onChange: (frame: TableChangesFrame) => void;
 }
 
-/** The identity a scope binds: `anon` or `authenticated:<sub>`. */
-function identityOf(scope: RlsScope): string {
+/**
+ * The identity a subscription key is bound to: `anon`, `authenticated:<sub>`, or — a token with
+ * no subject — its whole grant ({@linkcode grantOf}).
+ *
+ * @param scope The subscriber's scope.
+ * @returns The identity.
+ */
+export function identityOf(scope: RlsScope): string {
   if (scope.role === "anon") return "anon";
   const claims = JSON.parse(scope.claims) as { sub?: unknown };
-  return `authenticated:${String(claims.sub)}`;
+  if (typeof claims.sub === "string" && claims.sub !== "") return `authenticated:${claims.sub}`;
+  // No subject (a custom token): the grant itself is the identity, so two such callers with
+  // different claims never share a subscription.
+  return `authenticated?${grantOf(scope)}`;
+}
+
+/** Claims that change with every token refresh or session slide, not with what it may read. */
+const VOLATILE_CLAIMS = new Set(["exp", "iat", "nbf", "jti"]);
+
+/**
+ * What a scope may read: its role and claims, canonical (keys sorted at every depth) and without
+ * the claims a token refresh changes ({@linkcode VOLATILE_CLAIMS}). Two scopes with the same
+ * grant see the same rows under any policy that does not read the time.
+ *
+ * @param scope The scope.
+ * @returns The grant, as text.
+ */
+export function grantOf(scope: RlsScope): string {
+  const claims = JSON.parse(scope.claims) as Record<string, unknown>;
+  const kept = Object.fromEntries(
+    Object.entries(claims ?? {}).filter(([name]) => !VOLATILE_CLAIMS.has(name)),
+  );
+  return `${scope.role}:${canonical(kept)}`;
+}
+
+/** JSON with every object's keys sorted. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 /** Whether a re-read of the publication changed nothing about a table. */
@@ -1662,6 +1717,29 @@ function byFilterOf(group: Audience[]): Map<string, Audience[]> {
 /** A filter's identity within a group (`""`: none). */
 function filterId(filter: ParsedFilter | undefined): string {
   return filter ? JSON.stringify([filter.column, filter.op ?? "eq", filter.value]) : "";
+}
+
+/** The longest key the reconnect journal keeps (a longer one is journaled as a resync). */
+const JOURNAL_KEY_CHARS = 1_024;
+
+/**
+ * What the reconnect journal keeps of a change: its keys and time only — never the old row a
+ * `old: "full"` table carries (a replay re-reads rows; it never sends an old image) — and a
+ * change whose key is longer than {@linkcode JOURNAL_KEY_CHARS} (the logical source does not
+ * bound it) as a resync of its table, so a write cannot make the journal hold large values.
+ *
+ * @param event The change as received.
+ * @returns What the journal keeps of it.
+ */
+export function journaled(event: TableNotification): TableNotification {
+  const { table, op, key, oldKey, ts } = event;
+  if (op === "resync" || (key?.length ?? 0) > JOURNAL_KEY_CHARS) return { table, op: "resync" };
+  if ((oldKey?.length ?? 0) > JOURNAL_KEY_CHARS) return { table, op: "resync" };
+  const entry: TableNotification = { table, op };
+  if (key !== undefined) entry.key = key;
+  if (oldKey !== undefined) entry.oldKey = oldKey;
+  if (ts !== undefined) entry.ts = ts;
+  return entry;
 }
 
 /**

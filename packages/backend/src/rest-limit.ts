@@ -1,7 +1,8 @@
 // Auto-REST rate limits: a fixed-window request budget per client in front of the statements, on
 // denext's rate-limit stores. A signed-in user is counted by their user id (so users behind one
-// address don't share a budget), anyone else by their client address (`clientIpForLimits()`: the
-// socket peer, a trusted proxy's hop or the app's `rateLimitHeader`, an IPv6 address by its /64).
+// address don't share a budget; an anonymous sign-in by its address as well), anyone else by
+// their client address (`clientIpForLimits()`: the socket peer, a trusted proxy's hop or the
+// app's `rateLimitHeader`, an IPv6 address by its /64).
 // The secret key (`service_role`) is a trusted server and is never limited. A request whose
 // credential is refused (a 401) is charged to its address too, so a stream of forged tokens is
 // bounded like anonymous reads. When no address can be told apart from a shared proxy's — an
@@ -153,14 +154,19 @@ export class RestLimiter {
    */
   async charge(identity: RequestIdentity): Promise<void> {
     if (identity.role === "service_role") return;
-    const key = identity.role === "authenticated" && identity.userId !== undefined
-      ? `rest|user:${identity.userId}`
-      : this.#addressKey();
-    if (key !== undefined) await this.#count(key);
+    if (identity.role !== "authenticated" || identity.userId === undefined) {
+      return await this.chargeRefused();
+    }
+    await this.#count(`rest|user:${identity.userId}`);
+    // An anonymous sign-in is minted on request: by its own budget alone, one address could
+    // take a fresh budget per sign-in. It also counts against its address, as signed-out
+    // visitors do.
+    if (identity.claims.is_anonymous === true) await this.chargeRefused();
   }
 
   /**
-   * Count a request whose credential was refused against its address.
+   * Count a request against its address: a signed-out one, an anonymous sign-in's, or one whose
+   * credential was refused.
    *
    * @throws {RestRateLimited} When the address's budget is spent.
    */

@@ -24,6 +24,19 @@
   after the previous went out (a truncate and the rows after it) is no longer merged away by the
   Live hub's coalescing.
 
+### Security
+
+- **A reconnect is replayed only under the claims it was read under.** A subscriber re-authorized
+  with other claims than it left with (a refresh's `exp` / `iat` / `nbf` / `jti` aside) gets a
+  `resync`: the frames kept for it are dropped and nothing is replayed. A token without `sub` binds
+  a subscription key to its whole set of claims instead of one shared `authenticated:undefined`
+  identity.
+- **The reconnect journal holds keys only.** Never an `old: "full"` table's old row; a key or old
+  key over 1 024 characters is journaled as a resync of its table; expired entries are dropped on
+  every flush, not only when their own table changes again.
+- **`rest.rateLimit`: an anonymous sign-in also counts against its address,** so minting
+  anonymous users does not mint request budgets.
+
 ## 0.7.0 - 2026-10-23
 
 ### Added

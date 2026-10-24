@@ -809,8 +809,9 @@ and `stale` stays `false`. Each server instance journals the changes it receives
 each subscription the last change it was delivered, so nothing runs while the viewer is away: the
 missed changes are coalesced and re-read once, when they return. When the gap can't be replayed —
 older than the retention, more than `replay.maxChangesPerTable` changes of the table, the
-database listener was lost meanwhile, or the reconnect reached another instance (no sticky
-sessions) — `stale` turns true and `onResync` runs, as before.
+database listener was lost meanwhile, the reconnect reached another instance (no sticky
+sessions), or the viewer came back with other claims than they left with (a changed role, team or
+tenant; a refreshed token is the same claims) — `stale` turns true and `onResync` runs, as before.
 
 ### How it works
 
@@ -864,22 +865,26 @@ sessions) — `stale` turns true and `onResync` runs, as before.
    cap (a row too large for one frame arrives with `truncated: true` and no `row`) and numbered per
    subscription; a gap, a burst over the queue limit, or a reconnect that can't be replayed sets
    `stale` and calls `onResync`.
-6. **Replay after a reconnect.** Every change an instance receives is journaled (keys only, the
-   old row of an `old: "full"` table included) for `replay.retentionSeconds`, at most
-   `replay.maxChangesPerTable` per table, and each subscription keeps the journal position it was
+6. **Replay after a reconnect.** Every change an instance receives is journaled (its keys only,
+   never an `old: "full"` table's old row; a key over 1 024 characters is journaled as a resync of
+   its table) for `replay.retentionSeconds`, at most `replay.maxChangesPerTable` per table (expired
+   entries are dropped on the next flush), and each subscription keeps the journal position it was
    delivered up to. A subscription whose connection closed is kept for the retention; frames not
    yet sent wait for it. When the same key subscribes again the server sends `{ resumed: true }`,
    then — in the next flush, on its own — the journal's changes after its position, coalesced and
    re-read as the subscriber through the same tracked-key rules as live changes, numbered on from
    the frames before the drop. A position the journal no longer covers, or a journaled listener
-   loss, is `{ resync: true }` instead; a reconnect answered by neither within 10 seconds (the
-   subscription was dropped, or the socket reached another instance) marks the hook `stale`.
+   loss, or a reconnect re-authorized under other claims (the frames kept for it were read under
+   the old ones, and are dropped), is `{ resync: true }` instead; a reconnect answered by neither
+   within 10 seconds (the subscription was dropped, or the socket reached another instance) marks
+   the hook `stale`.
 
 **Who receives what.** The subscription key holds the table, the filter and a 128-bit random value
-the browser picks; the first subscriber binds it to their identity (the user's id, or anon), and
-anyone else presenting it is refused. The binding is re-checked every 60 seconds of traffic, so a
-signed-out session stops receiving. A table needs `grant select … to authenticated` (and to `anon`
-if signed-out visitors may watch it) for its rows to be readable at all.
+the browser picks; the first subscriber binds it to their identity (the user's id, or anon; for a
+token without a subject, its whole set of claims), and anyone else presenting it is refused. The
+binding is re-checked every 60 seconds of traffic, so a signed-out session stops receiving. A
+table needs `grant select … to authenticated` (and to `anon` if signed-out visitors may watch it)
+for its rows to be readable at all.
 
 **Limits.** Each identity — a signed-in user across all their connections, or the signed-out
 visitors at one client address (`clientIpForLimits({ bucket: true })`, an IPv6 address counting
@@ -1286,7 +1291,8 @@ and `count=estimated` counts exactly only while the estimate is at most `maxRows
 
 **Rate limits.** Each client has a request budget across the routes: 1200 requests a minute by
 default (20 a second on average — far above a page of supabase-js calls). A signed-in user is
-counted by their user id, so users behind one address don't share a budget; anyone else by their
+counted by their user id, so users behind one address don't share a budget (an anonymous sign-in
+counts against its address as well, so minting sign-ins can't mint budgets); anyone else by their
 client address (`clientIpForLimits()`'s rule: the socket peer, a trusted proxy's hop or the
 `rateLimitHeader` address, an IPv6 address by its `/64`). The secret key is never limited. A
 request whose credential is refused (a `401`) counts against its address too, so forged tokens

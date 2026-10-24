@@ -68,6 +68,29 @@
   pinned and its hash checked, but the install has not been run; drop the KNOWN-LIMITATIONS
   clause once it passes.
 
+## Backend (`@denext/backend`)
+
+Low findings of the 4.8 backend audit (realtime and storage):
+
+- **TUS: a PATCH that outlives its lease.** A PATCH stalled past the 5-minute lease still saves
+  its progress, unconditionally, over a newer PATCH's (`saveResumable` does not check the lease).
+  The completion's size check fails such an upload closed, but its orphaned chunk objects stay in
+  `.denext-tus`. Save only while holding the lease, and refuse a PATCH that lost it.
+- **Ranged reads from a store that ignores `Range`.** `serve` answers `206` with the requested
+  range even when the S3-compatible store answered `200` with the whole object; use the range the
+  driver reports (and fall back to a `200`). The object's size is also read by a `HEAD` before
+  the `GET`, so a concurrent overwrite can change it in between.
+- **Realtime: a frame in the Live hub's flush window at a drop.** A frame published just before a
+  subscriber's connection dropped is fanned out on the hub's next flush, so a reconnect
+  re-authorized within those milliseconds under other claims can still receive it (same user).
+  Let a regranted subscription discard frames already handed to the hub.
+- **Realtime: a reconnect that finds a new subscription** (swept, or another instance) is
+  detected by the client only after 10 seconds of silence. Let the client mark a re-subscribe,
+  so the server answers one that recreated the subscription with an explicit `resync`.
+- **Realtime: the combined re-read's select list** is spliced into the single-filter query by a
+  string replace of `as r from`; build it structurally (only a configured key column name could
+  break it).
+
 ## Build toolchain: waiting on `deno bundle`
 
 esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)

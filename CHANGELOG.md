@@ -26,6 +26,23 @@ and this project adheres to
   filter) instead of one per filter: 36 subscriptions over 17 filters and two users went from 34
   re-reads per burst to 2.
 
+### Security
+
+- **A realtime reconnect is replayed only under the claims it was read under (`@denext/backend`).**
+  A `useTableChanges` subscriber that comes back with other claims than it left with (a changed
+  role, team or tenant; a refreshed token is the same claims) gets a `resync` instead of the frames
+  kept for it and a replay, so nothing read under its old grant reaches it. A subscription made
+  with a token that has no `sub` is bound to that token's whole set of claims: before, every such
+  token was one identity, so one could take over another's subscription key.
+- **The realtime reconnect journal holds keys only, and drops what expired (`@denext/backend`).**
+  It no longer keeps the old row an `old: "full"` table's change carries, a key over 1 024
+  characters is journaled as a resync of its table (the logical source does not bound keys), and
+  entries past `replay.retentionSeconds` are dropped on the next flush even when their table went
+  quiet. Before, writes could make each instance hold up to `maxChangesPerTable` old rows per
+  table for as long as the table stayed quiet.
+- **An anonymous sign-in's auto-REST requests also count against its address (`@denext/backend`).**
+  Each anonymous user had a `rest.rateLimit` budget of its own, so minting sign-ins minted budgets.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added

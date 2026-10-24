@@ -44,7 +44,10 @@ import {
   triggerArgs,
 } from "../packages/backend/src/realtime-sql.ts";
 import {
+  grantOf,
+  identityOf,
   installRealtime,
+  journaled,
   parseNotification,
   RAW_FRAME_BYTES,
   realtimeEngine,
@@ -2042,6 +2045,8 @@ Deno.test("ChangeJournal: positions across tables, coverage by count and by age,
   assertEquals(journal.size, 5);
   now += 10_001; // everything is past the retention
   assertEquals([journal.covers("b", 2), journal.covers("b", 4)], [false, true]);
+  assertEquals(journal.size, 3, "a's expired entries are held until a prune");
+  journal.prune();
   assertEquals(journal.size, 0);
   // Many entries: dropped ones are compacted away, positions keep counting.
   const big = new ChangeJournal<{ table: string }>(60_000, 10);
@@ -2123,6 +2128,132 @@ Deno.test("realtime fan-out: a combined re-read that fails is retried filter by 
     assertEquals(unnumbered(bad.frames), [{ resync: true }]);
   } finally {
     console.error = original;
+    await env.done();
+  }
+});
+
+// ── Replay is bound to the subscriber's grant; the journal stays small (audit 4.8) ─────────────
+
+Deno.test("realtime replay: a reconnect under other claims drops what was kept and is a resync", async () => {
+  // Rows are visible by a claim other than the subject (a team, a tenant, a role).
+  const byEmail = (claims: Record<string, unknown>, row: Record<string, unknown>) =>
+    claims.email !== undefined && claims.email === row.email;
+  const sql = fakeRealtimeClient({ notes: { policy: byEmail } });
+  const env = await setUp({}, sql);
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(await cookieFor(A, "one@x.test"));
+    const { key } = await env.hub.subscribe(first, "notes");
+    // A burst of many frames: the subscriber drops after the first, the rest are kept for it.
+    const body = "x".repeat(500);
+    for (let i = 1; i <= 800; i++) env.sql.insert("notes", { id: i, email: "one@x.test", body });
+    await engine.flush();
+    await until(() => first.frames.length >= 1, 5_000, "the first frame");
+    env.hub.drop(first);
+    // A frame already handed to the Live hub before the drop is fanned out on the hub's next
+    // flush (a few ms): let that window pass, as any real reconnect does.
+    await settle(100);
+    env.sql.insert("notes", { id: 900, email: "one@x.test", body: "while away" });
+    await engine.flush();
+
+    // The same user (same subject) is back, but with other claims: nothing read under the old
+    // ones (the kept frames, the replay's starting point) reaches it — it re-reads.
+    const back = env.hub.conn(await cookieFor(A, "two@x.test"));
+    assert((await env.hub.subscribe(back, "notes", { key })).ok, "the same subject may come back");
+    await until(() => back.frames.length >= 1, 3_000, "the answer to the reconnect");
+    await settle(150);
+    assertEquals(unnumbered(back.frames), [{ resync: true }]);
+    assertEquals(changesOf(back), [], "no row read under the old claims");
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: a subscription's identity and grant — a token without a subject is its own identity", () => {
+  const scope = (claims: Record<string, unknown>) => ({
+    role: "authenticated" as const,
+    claims: JSON.stringify(claims),
+  });
+  // Two tokens without `sub`: before, both were `authenticated:undefined` (one identity).
+  assert(identityOf(scope({ tenant: 1 })) !== identityOf(scope({ tenant: 2 })));
+  assertEquals(identityOf(scope({ sub: "u1", tenant: 1 })), "authenticated:u1");
+  assertEquals(identityOf(scope({ sub: "u1", tenant: 2 })), "authenticated:u1");
+  assertEquals(identityOf({ role: "anon", claims: '{"role":"anon"}' }), "anon");
+  // A refresh (exp, iat, nbf, jti) or a key order change is the same grant; another claim is not.
+  assertEquals(
+    grantOf(scope({ sub: "u1", exp: 1, iat: 1, app_metadata: { a: 1, b: [1, { c: 2, d: 3 }] } })),
+    grantOf(
+      scope({
+        app_metadata: { b: [1, { d: 3, c: 2 }], a: 1 },
+        iat: 9,
+        nbf: 5,
+        jti: "j",
+        sub: "u1",
+      }),
+    ),
+  );
+  assert(grantOf(scope({ sub: "u1", role: "x" })) !== grantOf(scope({ sub: "u1", role: "y" })));
+  assert(grantOf(scope({ sub: "u1" })) !== grantOf({ role: "anon", claims: '{"sub":"u1"}' }));
+});
+
+Deno.test("realtime replay: the journal keeps keys only; an oversized key is journaled as a resync", async () => {
+  // Keys only: never the old row an `old: "full"` table's notification carries.
+  assertEquals(
+    journaled({
+      table: "notes",
+      op: "update",
+      key: "1",
+      oldKey: "0",
+      ts: 5,
+      old: { id: 0, secret: "x".repeat(4_000) },
+    }),
+    { table: "notes", op: "update", key: "1", oldKey: "0", ts: 5 },
+  );
+  assertEquals(journaled({ table: "notes", op: "delete", key: "k", oldOverflow: true }), {
+    table: "notes",
+    op: "delete",
+    key: "k",
+  });
+  assertEquals(journaled({ table: "notes", op: "insert", key: "k".repeat(1_025) }), {
+    table: "notes",
+    op: "resync",
+  });
+  assertEquals(journaled({ table: "notes", op: "update", key: "1", oldKey: "o".repeat(1_025) }), {
+    table: "notes",
+    op: "resync",
+  });
+
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const ca = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(ca, "notes");
+    env.hub.drop(ca);
+    // A write with a very long key (the logical source does not bound keys) while A is away.
+    env.sql.notify(JSON.stringify({ table: "notes", op: "insert", key: "k".repeat(2_000) }));
+    await engine.flush();
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key })).ok);
+    await until(() => back.frames.length === 2, 3_000, "resumed, then the resync");
+    assertEquals(unnumbered(back.frames), [{ resumed: true }, { resync: true }]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a table that went quiet does not keep its journal past the retention", async () => {
+  const env = await setUp({ replay: { retentionSeconds: 1 } });
+  try {
+    const engine = realtimeEngine();
+    assert((await env.hub.subscribe(env.hub.conn(env.a), "notes")).ok); // the listener starts
+    for (let i = 1; i <= 5; i++) env.sql.insert("notes", { id: i, owner: A, body: "x" });
+    await engine.flush();
+    assertEquals(engine.journalSize, 5);
+    await settle(1_100); // notes' entries are now past the retention; notes stays quiet
+    env.sql.insert("items", { sku: "s1" });
+    await engine.flush();
+    assertEquals(engine.journalSize, 1, "only the new items change is held");
+  } finally {
     await env.done();
   }
 });

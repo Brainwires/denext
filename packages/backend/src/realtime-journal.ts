@@ -106,14 +106,29 @@ export class ChangeJournal<E extends { table: string }> {
     return out;
   }
 
-  /** Entries held, across every table (tests and diagnostics). */
+  /**
+   * Entries held, across every table (tests and diagnostics): what is in memory now — an entry
+   * past the retention counts until a {@linkcode prune} (or its table's next use) drops it.
+   */
   get size(): number {
     let size = 0;
+    for (const log of this.#tables.values()) size += log.entries.length - log.start;
+    return size;
+  }
+
+  /**
+   * Drop every table's entries past the retention or the count — so a table that went quiet
+   * does not hold its last entries until its next change. An emptied table keeps only its floor
+   * (what it no longer covers).
+   */
+  prune(): void {
     for (const log of this.#tables.values()) {
       this.#trim(log);
-      size += log.entries.length - log.start;
+      if (log.start > 0 && log.start >= log.entries.length) {
+        log.entries = [];
+        log.start = 0;
+      }
     }
-    return size;
   }
 
   /** Forget everything (the engine stopped). */
