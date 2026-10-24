@@ -5,6 +5,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { serveDir } from "@std/http/file-server";
+import { runBounded } from "./helpers/bounded-command.ts";
+import { CHILD_DEADLINE_MS } from "./helpers/isolated.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 
@@ -13,14 +15,14 @@ const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
  * imports), returning the output dir.
  */
 async function exportApp(dir: string): Promise<{ outDir: string }> {
-  const out = await new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", CLI, "export", dir],
+  // Bounded: a stalled export has its tree killed and fails here with what it printed, instead
+  // of holding the CI job until its timeout.
+  const out = await runBounded(Deno.execPath(), ["run", "-A", CLI, "export", dir], {
     cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
-  assert(out.success, log);
+    timeoutMs: CHILD_DEADLINE_MS,
+  });
+  assert(!out.timedOut, `the export did not finish in ${CHILD_DEADLINE_MS} ms:\n${out.output}`);
+  assert(out.success, out.output);
   return { outDir: join(dir, "out") };
 }
 

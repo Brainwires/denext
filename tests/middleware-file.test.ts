@@ -5,6 +5,10 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { createTestApp, createTestClient, probeApp } from "../src/testing/mod.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// createTestApp crawls and builds the app in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const JSX = new URL("../src/jsx/jsx-runtime.ts", import.meta.url).href;
 

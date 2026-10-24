@@ -21,6 +21,10 @@ import { diffSurfaces, findingKey, formatReport } from "../scripts/parity/diff.t
 import { WAIVERS } from "../scripts/parity/waivers.ts";
 import type { Baseline } from "../scripts/parity/types.ts";
 import { fromFileUrl } from "@std/path";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// The surface extraction runs `deno doc` children from this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url)).replace(/[\\/]$/, "");
 const LEDGER = `${ROOT}/tests/fixtures/react-parity-known-gaps.json`;
