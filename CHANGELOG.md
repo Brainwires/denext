@@ -157,6 +157,10 @@ and this project adheres to
 
 ### Fixed
 
+- **A bound reference to a `serverAction` id with a `.` in it resolves.** `action.bind(null, …)`
+  on `serverAction("posts.delete", …)` produced an id that split at the first `.` and answered 404;
+  it now splits at the last (the sealed token never contains one).
+
 - **A submit button's function `formAction` runs** (`<button formAction={fn}>`, a
   `useActionState` dispatch or a Server Action on a button). denext listened for `submit` on the
   button, where it never fires (the browser fires it at the form), so the form submitted natively
@@ -256,6 +260,17 @@ and this project adheres to
 
 ### Security
 
+- **Server Action ids are salted per build, and only the actions the app imports are callable.**
+  As in Next.js 15, an action's id is now an HMAC of its module and export name under a secret
+  `denext build` generates (kept in the server-only `manifest.json`), so a new build gets new ids
+  and an open-source app's ids can't be computed from its source; replicas of one build agree,
+  and deploys that build more than once set `DENEXT_ACTION_ID_SECRET` to one value. The server
+  also registers only the exports of a `"use server"` module that the app's modules import
+  (directly or through `export { … } from` / `export *`; inline actions always): an export no
+  module imports answers like a random id (404) instead of running. `denext build` lists the
+  exports it leaves out, and `denext dev` keeps them callable with a warning. A page from an older
+  build gets the unknown-action answer, as an expired Next.js action does. Unused action stubs
+  are tree-shaken from client bundles, so their ids are not shipped either.
 - **A realtime reconnect is replayed only under the claims it was read under (`@denext/backend`).**
   A `useTableChanges` subscriber that comes back with other claims than it left with (a changed
   role, team or tenant; a refreshed token is the same claims) gets a `resync` instead of the frames

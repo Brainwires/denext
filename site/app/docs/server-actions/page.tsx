@@ -107,6 +107,39 @@ export default async function Note({ params }: { params: Promise<{ id: string }>
         can't be triggered cross-site — CSRF defense is built in. Actions are POST-only.
       </Callout>
 
+      <h2>Action ids and which actions are exposed</h2>
+      <p>
+        As in Next.js 15, an action's id is not derived from your source alone: it is an HMAC of the
+        module and export name under a secret <code>denext build</code>{" "}
+        generates (recorded in the server-only{" "}
+        <code>.denext/manifest.json</code>), so a new build gets new ids and an open-source app's
+        ids can't be computed. Replicas started from one build agree. When one deploy builds more
+        than once (an image per replica, a build per region, a <code>denext export</code>{" "}
+        served next to a separate <code>denext build</code>), set{" "}
+        <code>DENEXT_ACTION_ID_SECRET</code> (at least 16 characters;{" "}
+        <code>openssl rand -base64 32</code>) to the same value for every build and every instance.
+        A page rendered by an older build posts ids the new one does not know: the request is an
+        unknown action (404), as an expired Next.js action is.
+      </p>
+      <p>
+        Only the exports your app's modules import are callable: imported into a client component,
+        imported by a Server Component that renders it as a <code>{"<form action>"}</code> /{" "}
+        <code>formAction</code> or passes it down, bound with{" "}
+        <code>.bind</code>, or reached through a re-export (
+        <code>export {"{ save } from"}</code>,{" "}
+        <code>export *</code>). Inline actions are always registered. An export no module imports
+        answers exactly as a random id does (404). Whatever the build can't follow by name (<code>
+          import * as actions
+        </code>, a literal <code>import()</code>) exposes every export of that module.{" "}
+        <code>denext build</code> lists the exports it left out, and <code>denext dev</code>{" "}
+        keeps them callable but warns the first time one is called.
+      </p>
+      <p>
+        Neither replaces authorization: an exposed action is a public endpoint anyone who can load
+        the page may call with any arguments. Check the session and validate the input inside every
+        action.
+      </p>
+
       <h2>Return values &amp; redirects</h2>
       <p>
         Call an action from a client component and <code>await</code> its return value, or{" "}

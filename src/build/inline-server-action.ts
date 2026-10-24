@@ -34,6 +34,8 @@
 //   would ship. Next refuses the build with the same message.
 
 import { actionIdFor } from "../runtime/server-action.ts";
+// Inline actions carry the build's salted ids (installs the minter).
+import "../server/action-ids.ts";
 import { scanDirective } from "./directives.ts";
 import {
   applyEdits,

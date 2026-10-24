@@ -80,6 +80,11 @@ export interface BuildContext {
   readonly finalClientDir: string;
   /** next-compat mode (drop-in npm React): react→denext rewriting at bundle time. */
   readonly compat: boolean;
+  /**
+   * The secret this build mints Server Action ids under (src/server/action-ids.ts), recorded in
+   * `manifest.json`; null when `DENEXT_ACTION_ID_SECRET` sets it (never recorded then).
+   */
+  readonly actionIdSecret: string | null;
   /** Route paths with a Flight (RSC) boundary. */
   readonly flightRoutes: Set<string>;
   readonly boundaryRoutes: PageRoute[];

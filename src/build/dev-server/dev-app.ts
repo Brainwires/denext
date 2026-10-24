@@ -2,6 +2,7 @@
 // cache store booted once, then `createApp` wired to the per-generation dev state, and the
 // Live Server Components hub on top.
 
+import { setUnreferencedActionsPermissive } from "../../runtime/server-action.ts";
 import { resolveCors } from "../../server/cors.ts";
 import { renderPlatform } from "./platform.ts";
 import { join } from "@std/path";
@@ -132,6 +133,9 @@ export function createDevApp(st: DevState): RequestHandler {
   const { paths } = st;
   const rules = startConfigRules(st);
   installDefaultCacheStore(st);
+  // An action no module imports stays callable here (an edit that adds the import needs no
+  // restart), with a warning that a production build refuses it.
+  setUnreferencedActionsPermissive(true);
   const appConfig = devAppConfig(st, rules);
   // `onRequest` is read from the config object per request, so it is set on it once the
   // (async) instrumentation load lands — unset until then, which keeps the `DENEXT_LOG`

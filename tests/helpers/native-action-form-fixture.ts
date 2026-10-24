@@ -61,6 +61,11 @@ export async function addTagged(tag: string, formData: FormData) {
   add(tag + ":" + String(formData.get("title") ?? ""));
   revalidatePath("/");
 }
+
+// No module imports this one: the server never exposes it.
+export async function addUnreferenced(formData: FormData) {
+  add("unreferenced:" + String(formData.get("title") ?? ""));
+}
 `,
     "app/counter.tsx": `"use client";
 import { useState } from "denext";

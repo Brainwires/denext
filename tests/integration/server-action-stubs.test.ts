@@ -17,6 +17,7 @@ import { actionEndpoint, actionIdFor } from "../../src/runtime/server-action.ts"
 import { encodeActionArgs } from "../../src/client/action-dispatch.ts";
 import { prepareWire } from "../../src/runtime/wire-encode.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
+import { ACTION_ID_SECRET_ENV } from "../../src/server/action-ids.ts";
 import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
 import { removeTempDir } from "../helpers/temp.ts";
 
@@ -116,10 +117,24 @@ export function Island() {
   return dir;
 }
 
-/** The action's stable id, as the server registers it and its stub names it. */
+/**
+ * The secret every CLI child here mints action ids under: ids are salted per build, so this
+ * process (which calls the action by id) and the separate build, export and dev processes agree
+ * only through it, as a deploy that builds more than once does.
+ */
+const ACTION_ID_SECRET = "server-action-stubs-shared-secret";
+
+/** The action's id, as the server registers it and its stub names it. */
 async function actionId(dir: string): Promise<string> {
   const url = toFileUrl(await Deno.realPath(join(dir, "app/actions.ts"))).href;
-  return actionIdFor(serverModuleIdFor(join(dir, "app"), url), "act");
+  const prev = Deno.env.get(ACTION_ID_SECRET_ENV);
+  Deno.env.set(ACTION_ID_SECRET_ENV, ACTION_ID_SECRET);
+  try {
+    return actionIdFor(serverModuleIdFor(join(dir, "app"), url), "act");
+  } finally {
+    if (prev === undefined) Deno.env.delete(ACTION_ID_SECRET_ENV);
+    else Deno.env.set(ACTION_ID_SECRET_ENV, prev);
+  }
 }
 
 /** The CLI under the app's own config, the way `denext` runs a project. */
@@ -134,7 +149,7 @@ async function cli(dir: string, args: string[]): Promise<{ code: number; output:
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
-    env: { NO_COLOR: "1" },
+    env: { NO_COLOR: "1", [ACTION_ID_SECRET_ENV]: ACTION_ID_SECRET },
   }).output();
   const dec = new TextDecoder();
   return { code, output: dec.decode(stdout) + dec.decode(stderr) };
@@ -183,7 +198,7 @@ async function server(dir: string, verb: "start" | "dev") {
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
-    env: { NO_COLOR: "1" },
+    env: { NO_COLOR: "1", [ACTION_ID_SECRET_ENV]: ACTION_ID_SECRET },
   }).spawn();
   // Keep what the server prints (drained, so a full pipe never stalls it) for a failure message.
   let output = "";

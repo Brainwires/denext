@@ -162,20 +162,10 @@ seeded fallback. No Deno has the hook below yet.
 
 From the 4.8 client-runtime and Server Actions audit; the High and Medium findings shipped.
 
-- **Action ids are build-stable hashes of `module#export`** (`actionIdFor`,
-  src/runtime/server-action.ts), and every function a `"use server"` module exports is callable,
-  referenced by client code or not. Actions authorize and validate their own input (they are
-  public endpoints, as in Next.js), so this is hardening: salt the id with the build's
-  `serverActionsKey` (build time and server must agree: `client-imports.ts`,
-  `inline-server-action.ts`, `tagServerExports`) and register only the exports a client module
-  references, as Next.js 15 does.
 - **`notFound()` / `forbidden()` / `unauthorized()` in a Server Action called from the browser**
   reaches the client as a plain `Error("notFound")` (src/client/action-dispatch.ts), so the error
   boundary renders, not `not-found.tsx`; the client has no not-found boundary for an event-path
   signal yet. Add one, then re-raise the reply's `signal` as the branded error.
-- **A bound reference to a `serverAction` id with a `.` in it does not resolve**: `splitBoundId`
-  (src/server/action-bound.ts) splits at the first `.`; the token (base64url) has none, so split
-  at the last.
 - **A held form-action submit** (one that beat the on-demand form-action chunk) builds its
   `FormData` and starts `useFormStatus`'s pending flag when the chunk arrives, not at the submit;
   `form.requestSubmit(button)` with no click does not run that button's function `formAction`; and

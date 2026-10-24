@@ -22,6 +22,7 @@ import {
 } from "@std/path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Directive, readDirective } from "./directives.ts";
+import { referencedActionExports } from "./action-references.ts";
 import { canonicalPath } from "./canonical-path.ts";
 import { clientIdFor, serverModuleIdFor, shortHash } from "./boundary-ids.ts";
 import {
@@ -756,6 +757,7 @@ export async function buildBoundaryManifest(
 
   if (opts.npm) await addNpmBoundary(manifest, appDir, locals, opts.npm);
 
+  const localServers = new Map<string, string[]>();
   await Promise.all(
     locals.map(async (filePath) => {
       const directive: Directive = await readDirective(filePath);
@@ -776,11 +778,37 @@ export async function buildBoundaryManifest(
         // `createServerReference` per export.
         const exports = opts.exportsOf ? await opts.exportsOf(filePath) : [];
         manifest.server.set(serverModuleIdFor(appDir, url), { url, exports });
+        localServers.set(url, exports);
       }
     }),
   );
-
+  if (localServers.size > 0) await recordExposedActions(manifest, entryFiles, locals, localServers);
   return manifest;
+}
+
+/**
+ * Record on each local `"use server"` module which of its exports the app's modules reference
+ * (`exposed`, ./action-references.ts): the server registers only those. One referenced as a
+ * whole keeps every export.
+ */
+async function recordExposedActions(
+  manifest: BoundaryManifest,
+  entryFiles: string[],
+  locals: string[],
+  servers: Map<string, string[]>,
+): Promise<void> {
+  const { info, roots } = await denoInfoGraph(entryFiles);
+  const localUrls = new Set(locals.map((p) => toFileUrl(p).href));
+  const graph = runtimeReachable(info, roots).filter((m) => localUrls.has(m.specifier));
+  const referenced = await referencedActionExports(graph, servers);
+  // A route entry the framework imports itself is referenced as a whole.
+  const entries = new Set(roots);
+  for (const ref of manifest.server.values()) {
+    if (!servers.has(ref.url) || entries.has(ref.url)) continue;
+    const names = referenced.get(ref.url);
+    if (names === "*") continue;
+    ref.exposed = [...names ?? []].sort();
+  }
 }
 
 /**

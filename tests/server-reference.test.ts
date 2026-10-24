@@ -36,9 +36,12 @@ Deno.test("tagServerExports auto-registers use-server exports in place", async (
 Deno.test("generateServerStub emits client dispatch stubs per export", () => {
   const stub = generateServerStub("acts", ["save", "default"]);
   assertStringIncludes(stub, `clientActionStub(${JSON.stringify(actionIdFor("acts", "save"))})`);
+  // Pure: a stub no client module uses is tree-shaken, its id never shipped.
   assertStringIncludes(
     stub,
-    `export default clientActionStub(${JSON.stringify(actionIdFor("acts", "default"))})`,
+    `export default /* @__PURE__ */ clientActionStub(${
+      JSON.stringify(actionIdFor("acts", "default"))
+    })`,
   );
   assertStringIncludes(stub, `from "denext/action-stub"`);
 });

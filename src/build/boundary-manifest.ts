@@ -10,6 +10,12 @@ export interface BoundaryRef {
   url: string;
   /** Exported symbol names, when resolved (empty if not extracted). */
   exports: string[];
+  /**
+   * A `"use server"` module's exports the app's modules reference (./action-references.ts): the
+   * only ones the server registers as actions. Absent: every export (an npm module, a module
+   * imported as a namespace, or a build that predates the analysis).
+   */
+  exposed?: string[];
 }
 
 /** The client/server module split discovered across an app's import graph. */
@@ -22,8 +28,15 @@ export interface BoundaryManifest {
 
 /** {@link BoundaryManifest} as the build manifest stores it: ids → project-relative paths. */
 export interface SerializedBoundary {
-  client: Record<string, { path: string; exports: string[] }>;
-  server: Record<string, { path: string; exports: string[] }>;
+  client: Record<string, SerializedRef>;
+  server: Record<string, SerializedRef>;
+}
+
+/** A {@link BoundaryRef} as `manifest.json` stores it. */
+interface SerializedRef {
+  path: string;
+  exports: string[];
+  exposed?: string[];
 }
 
 /**
@@ -38,6 +51,7 @@ export function serializeBoundary(b: BoundaryManifest, projectDir: string): Seri
         // `/`-separated so a manifest built on Windows reads the same everywhere.
         path: relative(projectDir, fromFileUrl(ref.url)).split(SEPARATOR).join("/"),
         exports: ref.exports,
+        ...(ref.exposed ? { exposed: ref.exposed } : {}),
       }]),
     );
   return { client: rel(b.client), server: rel(b.server) };
@@ -45,11 +59,12 @@ export function serializeBoundary(b: BoundaryManifest, projectDir: string): Seri
 
 /** Inverse of {@link serializeBoundary}. */
 export function deserializeBoundary(sb: SerializedBoundary, projectDir: string): BoundaryManifest {
-  const abs = (r: Record<string, { path: string; exports: string[] }>) =>
+  const abs = (r: Record<string, SerializedRef>) =>
     new Map(
       Object.entries(r).map(([id, ref]) => [id, {
         url: toFileUrl(resolve(projectDir, ref.path)).href,
         exports: ref.exports,
+        ...(Array.isArray(ref.exposed) ? { exposed: ref.exposed } : {}),
       }]),
     );
   return { client: abs(sb.client), server: abs(sb.server) };

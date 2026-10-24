@@ -18,6 +18,12 @@ import {
 import { type ProjectPaths, routeId } from "../paths.ts";
 import { parseServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
 import { setBuildServerActionsKey } from "../../server/action-bound.ts";
+import {
+  ACTION_ID_SECRET_ENV,
+  actionIdSecretFromEnv,
+  setBuildActionIdSecret,
+  setLegacyActionIds,
+} from "../../server/action-ids.ts";
 
 /** What `denext start` reads from `manifest.json` (absent/old fields fall back). */
 export interface BuildInfo {
@@ -54,6 +60,27 @@ function installBuildKey(key: string): void {
   }
 }
 
+/**
+ * Install the secret the build minted its Server Action ids under: the recorded one, the
+ * environment's when the build used it (it must be set here too), or — for a build from before
+ * salted ids — the legacy ids its client bundle carries.
+ */
+function installActionIdSecret(bm: { actionIdSecret?: unknown; actionIdSecretEnv?: unknown }) {
+  if (typeof bm.actionIdSecret === "string" && bm.actionIdSecret) {
+    setBuildActionIdSecret(bm.actionIdSecret);
+  } else if (bm.actionIdSecretEnv === true) {
+    setBuildActionIdSecret(null);
+    if (!actionIdSecretFromEnv()) {
+      console.error(
+        `denext: this build minted its Server Action ids under ${ACTION_ID_SECRET_ENV}, which ` +
+          "is not set here: set the same value, or every action request gets a 404.",
+      );
+    }
+  } else {
+    setLegacyActionIds(true);
+  }
+}
+
 /** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
 export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
   const info: BuildInfo = {
@@ -72,6 +99,7 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
     // The key this build seals bound Server Action values under (unless the env sets one).
     if (typeof bm.serverActionsKey === "string") installBuildKey(bm.serverActionsKey);
+    installActionIdSecret(bm);
     info.nextCompat = bm.nextCompat === true;
     if (typeof bm.buildId === "string" && bm.buildId) info.buildId = bm.buildId;
     info.buildIdPinned = bm.buildIdPinned === true;
