@@ -157,6 +157,23 @@ and this project adheres to
 
 ### Fixed
 
+- **Island split constraints on isomorphic routes.** A user event on an island's server DOM
+  before it hydrates (a click, a key, focus, `input`, `change`, `submit`) is now taken by a
+  listener above the document, as React's selective hydration does: the island hydrates at once,
+  whatever its `client:*` strategy (an island nested in it too), so the event runs through the
+  page once and an `on*Capture` handler in the island sees the event that woke it. Before, only a
+  `client:interaction` island woke on an event, and one on a `client:visible` / `idle` / `media`
+  island was lost. An island whose chunk is still loading holds every event on it and replays
+  them in order once it has hydrated; a capture listener above it no longer sees the gesture
+  twice, and a held click or submit has its default action cancelled, the replay performing it
+  (a checkbox no longer toggles twice).
+
+- **`useId` matches the server's under class components and split islands.** A class component
+  is a component level of its own on the client, as every server renderer counts it (ids below a
+  class, or a `memo(Class)`, differed from the server's). A split class or `lazy()` island's
+  stand-in no longer adds a level, and a hydration that suspends on its chunk (at the root, or
+  under a Suspense boundary) no longer shifts the ids of the render that retries it.
+
 - **Lifecycle-script jail exceptions are narrower and land where Deno reads them** (a
   supply-chain audit of denext's jail integration):
   - on runtime `3.0.0-rc.6` and later, the built-in exceptions grant each package's download
