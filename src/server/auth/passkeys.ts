@@ -169,7 +169,7 @@ function resolve(config: AuthConfig, options: AuthPasskeyConfig): ResolvedPasske
     requireUserVerification: options.userVerification !== "preferred",
     timeout: Number.isFinite(timeout) ? Math.min(900, Math.max(30, Math.floor(timeout))) : 300,
     algorithms: PASSKEY_ALGORITHMS,
-    mds: resolveMds(options.attestation?.mds),
+    mds: resolveMds(options.attestation?.mds, options.attestation?.revocation),
     cors,
   };
 }

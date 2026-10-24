@@ -13,10 +13,11 @@
  * - the credential public key (COSE, RFC 9052/9053): ES256 (`-7`, P-256), RS256 (`-257`) and
  *   EdDSA (`-8`, Ed25519) — and nothing else;
  * - the attestation statement (§8): `none` (§8.7), `packed` (§8.2) — self attestation, or
- *   an `x5c` leaf whose signature and §8.2.1 certificate requirements are checked — and `tpm`,
- *   `android-key`, `fido-u2f` and `apple` ({@link ./webauthn-attestation.ts}); the chain to a
- *   trust anchor is evaluated only with `passkeys.attestation.mds`, one layer up (see
- *   {@linkcode RegistrationResult});
+ *   an `x5c` leaf whose signature and §8.2.1 certificate requirements are checked — `tpm`,
+ *   `android-key`, `android-safetynet`, `fido-u2f` and `apple` ({@link ./webauthn-attestation.ts}),
+ *   and `compound` (§8.9), each of its statements verified; the chain to a trust anchor is
+ *   evaluated only with `passkeys.attestation.mds`, one layer up (see
+ *   {@linkcode RegistrationResult}) — but for android-safetynet's, to Google's root;
  * - the assertion signature over `authenticatorData ‖ SHA-256(clientDataJSON)` (§7.2 step 20),
  *   the backup-eligibility flag against the stored record, and the signature counter (§6.1.1):
  *   a counter that doesn't increase is a possible cloned authenticator and is refused.
@@ -390,10 +391,10 @@ export interface RegistrationExpectations extends Omit<ClientDataExpectations, "
   /** The algorithms offered in `pubKeyCredParams` (§7.1 step 17). Default: all supported. */
   algorithms?: readonly PasskeyAlgorithm[];
   /**
-   * Accept an attestation statement format this relying party can't verify
-   * (`android-safetynet`, `compound`, …) as no attestation (`fmt: "none"`) instead of refusing
-   * the registration — what a relying party that asks for `"direct"` attestation but accepts
-   * unattested credentials needs. Default `false`.
+   * Accept an attestation statement format this relying party can't verify (one outside
+   * {@linkcode AttestationFormat}, or a `compound` statement holding one) as no attestation
+   * (`fmt: "none"`) instead of refusing the registration — what a relying party that asks for
+   * `"direct"` attestation but accepts unattested credentials needs. Default `false`.
    */
   acceptUnverifiedFormats?: boolean;
 }
@@ -423,19 +424,43 @@ export interface RegistrationResult {
   fmt: AttestationFormat;
   /**
    * What the attestation established (§6.5.4): `"none"`, `"self"` (packed without `x5c`),
-   * `"basic"` (packed / android-key / fido-u2f with a verified `x5c` leaf), `"attca"` (tpm) or
-   * `"anonca"` (apple). This function does not chain the leaf to a trust anchor, so on its own a
-   * certificate type is unverified attestation, never proof of a specific authenticator model;
-   * `passkeys.attestation.mds` chains it to the FIDO Metadata Service's roots one layer up
-   * ({@link ./fido-mds.ts}).
+   * `"basic"` (packed / android-key / android-safetynet / fido-u2f with a verified `x5c` leaf),
+   * `"attca"` (tpm) or `"anonca"` (apple); for `compound`, its first certificate statement's
+   * type. This function does not chain the leaf to a trust anchor (but for android-safetynet's
+   * chain to Google's root), so on its own a certificate type is unverified attestation, never
+   * proof of a specific authenticator model; `passkeys.attestation.mds` chains it to the FIDO
+   * Metadata Service's roots one layer up ({@link ./fido-mds.ts}).
    */
   attestationType: AttestationType;
-  /** The statement's `x5c` (DER, leaf first), for a certificate attestation type. */
+  /**
+   * The statement's `x5c` (DER, leaf first), for a certificate attestation type — for
+   * `compound`, its first certificate statement's.
+   */
+  attestationCertificates?: Uint8Array[];
+  /** For `compound` (§8.9): each verified statement, in order. */
+  attestationStatements?: VerifiedStatement[];
+}
+
+/** One statement of a verified `compound` attestation. */
+export interface VerifiedStatement {
+  /** Its format. */
+  fmt: Exclude<AttestationFormat, "compound">;
+  /** What it established. */
+  attestationType: AttestationType;
+  /** Its `x5c` (DER, leaf first), for a certificate attestation type. */
   attestationCertificates?: Uint8Array[];
 }
 
 /** The attestation statement formats this relying party verifies. */
-export type AttestationFormat = "none" | "packed" | "tpm" | "android-key" | "fido-u2f" | "apple";
+export type AttestationFormat =
+  | "none"
+  | "packed"
+  | "tpm"
+  | "android-key"
+  | "android-safetynet"
+  | "fido-u2f"
+  | "apple"
+  | "compound";
 
 /** A CBOR map's string-keyed value. */
 function field(map: Map<number | string, unknown>, key: string): unknown {
@@ -476,7 +501,8 @@ export async function verifyRegistration(
   const authDataBytes = field(att, "authData");
   const attStmt = field(att, "attStmt");
   check(
-    typeof fmt === "string" && authDataBytes instanceof Uint8Array && attStmt instanceof Map,
+    typeof fmt === "string" && authDataBytes instanceof Uint8Array &&
+      (attStmt instanceof Map || (fmt === "compound" && Array.isArray(attStmt))),
     "malformed",
     "attestationObject lacks fmt / authData / attStmt",
   );
@@ -504,20 +530,23 @@ export async function verifyRegistration(
     "the credential algorithm was not offered",
   );
   // Steps 19–21: the attestation statement.
-  const attestation = await verifyAttestation(
-    fmt,
-    {
-      stmt: attStmt as Map<number | string, unknown>,
-      authData: authDataBytes,
-      clientDataHash,
-      credentialPublicKey: attested.publicKey,
-      credentialId: attested.credentialId,
-      aaguid: attested.aaguid,
-      rpIdHash: authData.rpIdHash,
-    },
-    credential,
-    expected.acceptUnverifiedFormats === true,
-  );
+  const ceremony = {
+    authData: authDataBytes,
+    clientDataHash,
+    credentialPublicKey: attested.publicKey,
+    credentialId: attested.credentialId,
+    aaguid: attested.aaguid,
+    rpIdHash: authData.rpIdHash,
+  };
+  const unverified = expected.acceptUnverifiedFormats === true;
+  const attestation = fmt === "compound"
+    ? await verifyCompound(attStmt as unknown[], ceremony, credential, unverified)
+    : await verifyAttestation(
+      fmt,
+      { stmt: attStmt as Map<number | string, unknown>, ...ceremony },
+      credential,
+      unverified,
+    );
   return {
     credentialId: attested.credentialId,
     publicKey: attested.publicKey,
@@ -527,15 +556,81 @@ export async function verifyRegistration(
     backupEligible: authData.flags.backupEligible,
     backedUp: authData.flags.backedUp,
     userVerified: authData.flags.userVerified,
-    fmt: isVerifiedFormat(fmt) ? fmt : "none",
+    fmt: attestation.unverified ? "none" : fmt as AttestationFormat,
     attestationType: attestation.type,
     ...(attestation.x5c ? { attestationCertificates: attestation.x5c } : {}),
+    ...(attestation.statements ? { attestationStatements: attestation.statements } : {}),
   };
 }
 
-/** Whether `fmt` is a format this relying party verifies. */
-function isVerifiedFormat(fmt: string): fmt is AttestationFormat {
+/** Whether `fmt` is a single-statement format this relying party verifies. */
+function isVerifiedFormat(fmt: string): fmt is Exclude<AttestationFormat, "compound"> {
   return fmt === "none" || fmt === "packed" || Object.hasOwn(CERTIFIED_FORMATS, fmt);
+}
+
+/** A verified statement, as the registration reports it. */
+interface Attested extends VerifiedAttestation {
+  /** An unsupported format accepted unverified: reported as `fmt: "none"`. */
+  unverified?: boolean;
+  /** For `compound`: each statement. */
+  statements?: VerifiedStatement[];
+}
+
+/** The most statements a `compound` attestation may hold. */
+const MAX_COMPOUND = 8;
+
+/**
+ * The `compound` statement (L3 §8.9): an array of at least two `{ fmt, attStmt }` maps, none
+ * itself `compound`, each verified by its own format's procedure over the same ceremony; any
+ * failure refuses the registration. The result's type and `x5c` are its first certificate
+ * statement's (else `self`, else `none`), and every statement is reported.
+ */
+async function verifyCompound(
+  stmts: unknown[],
+  ceremony: Omit<Parameters<(typeof CERTIFIED_FORMATS)[string]>[0], "stmt">,
+  credential: CredentialKey,
+  acceptUnverifiedFormats: boolean,
+): Promise<Attested> {
+  check(
+    stmts.length >= 2 && stmts.length <= MAX_COMPOUND,
+    "attestation",
+    "a compound attestation holds 2 to 8 statements",
+  );
+  const entries = stmts.map(compoundEntry);
+  // A format denext can't verify, accepted unverified: the whole compound proves nothing.
+  if (acceptUnverifiedFormats && entries.some(([fmt]) => !isVerifiedFormat(fmt))) {
+    return { type: "none", unverified: true };
+  }
+  const statements: VerifiedStatement[] = [];
+  for (const [fmt, stmt] of entries) {
+    const result = await verifyAttestation(fmt, { stmt, ...ceremony }, credential, false);
+    statements.push({
+      fmt: fmt as VerifiedStatement["fmt"],
+      attestationType: result.type,
+      ...(result.x5c ? { attestationCertificates: result.x5c } : {}),
+    });
+  }
+  return { ...compoundType(statements), statements };
+}
+
+/** One `{ fmt, attStmt }` entry of a compound statement, not itself compound. */
+function compoundEntry(entry: unknown): [string, Map<number | string, unknown>] {
+  const map = entry instanceof Map ? entry : new Map();
+  const fmt = map.get("fmt");
+  const stmt = map.get("attStmt");
+  check(
+    typeof fmt === "string" && fmt !== "compound" && stmt instanceof Map,
+    "attestation",
+    "a compound statement entry must be a non-compound { fmt, attStmt }",
+  );
+  return [fmt, stmt];
+}
+
+/** A compound's type and `x5c`: its first certificate statement's, else `self`, else `none`. */
+function compoundType(statements: VerifiedStatement[]): VerifiedAttestation {
+  const certified = statements.find((s) => s.attestationCertificates);
+  if (certified) return { type: certified.attestationType, x5c: certified.attestationCertificates };
+  return { type: statements.some((s) => s.attestationType === "self") ? "self" : "none" };
 }
 
 /**
@@ -548,9 +643,9 @@ async function verifyAttestation(
   input: Parameters<(typeof CERTIFIED_FORMATS)[string]>[0],
   credential: CredentialKey,
   acceptUnverifiedFormats: boolean,
-): Promise<VerifiedAttestation> {
+): Promise<Attested> {
   // An unsupported format, accepted unverified: its statement proves nothing here.
-  if (!isVerifiedFormat(fmt) && acceptUnverifiedFormats) return { type: "none" };
+  if (!isVerifiedFormat(fmt) && acceptUnverifiedFormats) return { type: "none", unverified: true };
   if (fmt === "none") {
     // §8.7: the statement is the empty map.
     check(input.stmt.size === 0, "attestation", "a none attestation statement must be empty");

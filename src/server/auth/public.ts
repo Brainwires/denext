@@ -282,6 +282,7 @@ export type {
   AuthorizedCallbackInput,
   AuthPasskeyConfig,
   AuthPasskeyMdsConfig,
+  AuthPasskeyRevocationPolicy,
   AuthProvider,
   AuthSession,
   AuthSessionConfig,

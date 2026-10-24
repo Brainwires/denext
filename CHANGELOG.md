@@ -8,6 +8,39 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **OCSP revocation checks for passkey attestation.** With `passkeys.attestation.mds`, every
+  certificate of the metadata BLOB's signing path and of an attestation's `x5c` path that names an
+  OCSP responder (Authority Information Access) is asked about before its CRL: a DER request by
+  SHA-1 `CertID`, POSTed to at most four `http(s)` responders; an answer is used only when it is
+  signed by the issuer or a delegated `id-kp-OCSPSigning` responder the issuer signed, names the
+  certificate exactly, and is current (`thisUpdate` / `nextUpdate`). A `good` or `revoked` answer
+  is cached until its `nextUpdate`; a certificate with none is not asked about again for five
+  minutes. A certificate reported revoked is refused.
+- **`passkeys.attestation.revocation: "soft" | "hard"`.** What an unreachable OCSP responder or CRL
+  means, for both: `"soft"` (the default) registers with a warning logged once, `"hard"` refuses.
+  `mds.revocation` still overrides it.
+- **The `compound` attestation format** (WebAuthn L3 §8.9): 2 to 8 statements, none itself
+  `compound`, each verified by its own format; one failure refuses the registration. The result
+  reports every statement (`attestationStatements`), takes its first certificate statement's type
+  and `x5c`, and under `attestation.mds` every certificate statement's chain must reach the
+  authenticator's metadata roots.
+- **The `android-safetynet` attestation format** (§8.5): the JWS must chain to Google's root (GTS
+  Root R1, pinned) with a leaf issued for `attest.android.com`, verify with that leaf, and carry
+  this ceremony's nonce, `ctsProfileMatch: true` and a `timestampMs` within a minute of now. Google
+  has deprecated the SafetyNet Attestation API for the Play Integrity API; the format is verified
+  for the authenticators and conformance tools that still send it. Before, both formats were
+  refused, or registered as unattested under `allowUnattested`.
+
+### Changed
+
+- **Passkey attestation revocation is soft-fail by default.** A CRL that can't be fetched for a
+  certificate of an MDS path used to refuse the registration unless the BLOB came from `mds.blob`;
+  it now goes on with a warning, like an unreachable OCSP responder. Set
+  `passkeys.attestation.revocation: "hard"` (or `mds.revocation: "require"`) for the previous
+  fail-closed behavior.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added
