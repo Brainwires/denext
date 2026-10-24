@@ -161,6 +161,11 @@ The binary is cached beside Deno's own cache:
   fast path is the same trust Deno gives its own module cache: whoever can write to `DENO_DIR`
   can change what runs, so keep a shared or group-writable `DENO_DIR` to trusted users (or run
   `denext toolchain status --verify`).
+- Before it opens the cache's lock files or trusts a cached binary, denext checks every directory
+  from `DENO_DIR` down to the binary's (on macOS and Linux): one owned by another user (root
+  aside), or writable by every user without the sticky bit, stops the command, since that user
+  could have planted the binary and its stamp. Point `DENO_DIR` at a directory only you can write.
+  The esbuild, Gleam, fastlane and Deno Desktop runtime caches are checked the same way.
 - On a terminal the download prints one self-redrawing line with the megabytes received and the
   percent; in a log or CI it prints nothing.
 - Two commands starting at once download it once: the second prints

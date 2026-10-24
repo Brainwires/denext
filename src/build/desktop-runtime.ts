@@ -29,6 +29,8 @@ import { acquireCacheLock } from "./project-locks.ts";
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
 import {
+  assertTrustedCacheDirs,
+  cacheDirChain,
   downloadProgress,
   readJsonFile,
   sha256File,
@@ -36,6 +38,7 @@ import {
   sweepLeftovers,
 } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
+import { runToExit } from "./exited-output.ts";
 import {
   currentDenoIdentity,
   type DenoIdentity,
@@ -378,7 +381,7 @@ export type CaptureRunner = (
 ) => Promise<{ code: number; text: string }>;
 
 const capture: CaptureRunner = async (cmd, args) => {
-  const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped" }).output();
+  const out = await runToExit(cmd, { args });
   const d = new TextDecoder();
   return { code: out.code, text: d.decode(out.stdout) + d.decode(out.stderr) };
 };
@@ -665,6 +668,9 @@ export async function ensureDesktopRuntime(
   // DownloadExclusive (readers of other versions carry on); replacing an existing (bad) tree is
   // MutateExclusive. Each re-checks after it is granted — the process it waited on may have
   // installed exactly this runtime.
+  // Before the lock files are opened or a cached tree is trusted: nobody else may write here.
+  await Deno.mkdir(cacheRoot, { recursive: true });
+  await assertTrustedCacheDirs(cacheDirChain(dirname(cacheRoot), dir));
   {
     using _shared = await acquireCacheLock(cacheRoot, "shared", RUNTIME_CACHE_DESCR);
     if (await plan.acceptable()) return resolved(true);

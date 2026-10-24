@@ -14,14 +14,20 @@
 //      before it is made executable; nothing unverified ever runs. This is the path for
 //      `DENEXT_DENO=stock`, plain stock Deno, and every toolchain before denext.17.
 
-import { join } from "@std/path";
+import { dirname, join } from "@std/path";
 import { encodeBase64 } from "@std/encoding/base64";
 import { denoCacheDir, renameRetrying } from "../desktop-runtime.ts";
 import { denoToolchainTarget, toolchainEsbuild } from "../deno-toolchain.ts";
 import type { DenoToolchainPin } from "../deno-toolchain.ts";
 import { acquireCacheLock } from "../project-locks.ts";
 import { extractArchive } from "../safe-extract.ts";
-import { readJsonFile, sha256File, sweepLeftovers } from "../verified-download.ts";
+import {
+  assertTrustedCacheDirs,
+  cacheDirChain,
+  readJsonFile,
+  sha256File,
+  sweepLeftovers,
+} from "../verified-download.ts";
 import { ESBUILD_VERSION } from "./version.ts";
 
 /** esbuild's own override: the binary to run, unverified. */
@@ -305,6 +311,8 @@ export async function ensureNpmEsbuild(options: ResolveEsbuildBinaryOptions = {}
   const exe = (options.os ?? Deno.build.os) === "windows" ? "esbuild.exe" : "esbuild";
   const path = join(dir, exe);
   await Deno.mkdir(root, { recursive: true });
+  // Before the lock files are opened or a cached binary is trusted: nobody else may write here.
+  await assertTrustedCacheDirs(cacheDirChain(dirname(root), dir));
   {
     using _shared = await acquireCacheLock(root, "shared", CACHE_DESCR);
     if (await cachedOk(path, dir, a)) return path;

@@ -170,6 +170,18 @@ function validateCompilePermissions(permissions: unknown, fail: Fail): void {
     isPermissionList,
     fail,
   );
+  // An empty direction would bake its UNSCOPED flag (an empty list is no scope to Deno), the
+  // opposite of what "none" reads as: refuse it rather than grant every host.
+  for (const k of ["netConnect", "netListen"]) {
+    const v = (permissions as Record<string, unknown>)[k];
+    if (Array.isArray(v) && v.length === 0) {
+      fail(
+        `compile.permissions.${k}`,
+        'is empty, which would leave that direction unscoped: list the hosts, use ["*"] for ' +
+          "any, or leave it out",
+      );
+    }
+  }
 }
 
 /** `compile.sign`'s keys, each with its check and the message for a bad value. */

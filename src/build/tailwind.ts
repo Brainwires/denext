@@ -57,52 +57,108 @@ function cacheDir(): string {
   return join(base, "denext", "tailwind", tailwindVersion());
 }
 
+/** Seams of {@linkcode resolveTailwindBin} (all default to the process). */
+interface ResolveTailwindBinOptions {
+  /** The cache directory (default: `$XDG_CACHE_HOME/denext/tailwind/<version>`). */
+  readonly cacheDir?: string;
+  /** The OS (default `Deno.build.os`). */
+  readonly os?: string;
+  /** The CPU architecture (default `Deno.build.arch`). */
+  readonly arch?: string;
+  /** The fetch to download with. */
+  readonly fetch?: typeof fetch;
+  /** Where the download is announced (default `console.log`). */
+  readonly log?: (line: string) => void;
+}
+
+/** The binaries this process already checked against the pin (path → SHA-256). */
+const verifiedBins = new Map<string, string>();
+
 /**
- * Resolve the Tailwind standalone binary, downloading it on first use.
- *
- * Resolution order:
- *   1. `TAILWIND_BIN` — an explicit path to a Tailwind executable.
- *   2. A previously-downloaded binary in denext's cache.
- *   3. Download the pinned version from GitHub releases into the cache.
- *
- * @returns Absolute path to an executable Tailwind binary.
+ * Whether the cached binary at `dest` is the pinned one: re-hashed against the pin once per
+ * process (a binary changed since, truncated by a crashed download, or put there by hand is not).
+ * Throws when no hash is pinned for it.
  */
-async function resolveTailwindBin(): Promise<string> {
-  const override = Deno.env.get("TAILWIND_BIN");
-  if (override) return override;
-
-  const asset = tailwindAssetName(Deno.build.os, Deno.build.arch);
-  const dir = cacheDir();
-  const binName = Deno.build.os === "windows" ? "tailwindcss.exe" : "tailwindcss";
-  const dest = join(dir, binName);
+async function cachedTailwindOk(dest: string, version: string, asset: string): Promise<boolean> {
+  const info = await Deno.stat(dest).catch(() => null);
+  if (!info?.isFile) return false;
+  const expected = expectedTailwindSha256(version, asset);
+  if (expected !== undefined && verifiedBins.get(dest) === expected) return true;
   try {
-    await Deno.stat(dest);
-    return dest; // already downloaded
-  } catch { /* not cached — download below */ }
+    await assertTailwindIntegrity(await Deno.readFile(dest), version, asset);
+  } catch (err) {
+    if (expected === undefined) throw err; // no pin: refuse, as a download would be
+    return false;
+  }
+  verifiedBins.set(dest, expected!);
+  return true;
+}
 
-  await ensureDir(dir);
-  const url = tailwindDownloadUrl(tailwindVersion(), asset);
-  console.log(`  denext: downloading Tailwind ${tailwindVersion()} (${asset})…`);
-  const res = await fetch(url);
+/** GET the release asset at `url`. */
+async function fetchTailwind(url: string, fetchImpl: typeof fetch): Promise<Uint8Array> {
+  const res = await fetchImpl(url);
   if (!res.ok || !res.body) {
+    await res.body?.cancel();
     throw new Error(
       `denext: failed to download Tailwind from ${url} (${res.status} ${res.statusText}). ` +
         `Set TAILWIND_BIN to a local binary, or DENEXT_TAILWIND_VERSION to a valid release.`,
     );
   }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/**
+ * Put verified `bytes` at `dest`: a temp file of this process's own (never one another build is
+ * writing), then a rename, so a concurrent build never sees, or runs, a partial binary.
+ */
+async function installTailwind(dest: string, bytes: Uint8Array, os: string): Promise<void> {
+  const tmp = `${dest}.download-${crypto.randomUUID()}`;
+  try {
+    await Deno.writeFile(tmp, bytes, { createNew: true, mode: 0o755 });
+    if (os !== "windows") await Deno.chmod(tmp, 0o755);
+    await Deno.rename(tmp, dest);
+  } finally {
+    await Deno.remove(tmp).catch(() => {});
+  }
+}
+
+/**
+ * Resolve the Tailwind standalone binary, downloading it on first use.
+ *
+ * Resolution order:
+ *   1. `TAILWIND_BIN` — an explicit path to a Tailwind executable.
+ *   2. A previously-downloaded binary in denext's cache, once it hashes to the pin.
+ *   3. Download the pinned version from GitHub releases into the cache, verified before it is
+ *      written in place.
+ *
+ * @param options Seams for tests.
+ * @returns Absolute path to an executable Tailwind binary.
+ */
+async function resolveTailwindBin(options: ResolveTailwindBinOptions = {}): Promise<string> {
+  const override = Deno.env.get("TAILWIND_BIN");
+  if (override) return override;
+  const { os = Deno.build.os, arch = Deno.build.arch, log = console.log } = options;
+  const asset = tailwindAssetName(os, arch);
+  const dir = options.cacheDir ?? cacheDir();
+  const dest = join(dir, os === "windows" ? "tailwindcss.exe" : "tailwindcss");
+  const version = tailwindVersion();
+  if (await cachedTailwindOk(dest, version, asset)) return dest;
+  if (await Deno.stat(dest).catch(() => null)) {
+    log(
+      `  denext: the cached Tailwind at ${dest} does not match its pinned SHA-256; re-downloading.`,
+    );
+  }
+  await ensureDir(dir);
+  const url = tailwindDownloadUrl(version, asset);
+  log(`  denext: downloading Tailwind ${version} (${asset})…`);
   // Integrity: this binary is fetched outside Deno's module graph, so `deno.lock` gives
   // it no coverage. Digest it and fail closed on a mismatch or a missing pin — otherwise a
   // compromised GitHub release asset (or a `DENEXT_TAILWIND_VERSION` pointed at an attacker
   // tag) is silent build-time code execution.
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  await assertTailwindIntegrity(bytes, tailwindVersion(), asset);
-  // Write to a temp file then rename, so a concurrent build never sees a partial binary.
-  const tmp = `${dest}.download`;
-  await Deno.writeFile(tmp, bytes, { create: true, mode: 0o755 });
-  await Deno.rename(tmp, dest);
-  if (Deno.build.os !== "windows") {
-    await Deno.chmod(dest, 0o755);
-  }
+  const bytes = await fetchTailwind(url, options.fetch ?? fetch);
+  await assertTailwindIntegrity(bytes, version, asset);
+  await installTailwind(dest, bytes, os);
+  verifiedBins.set(dest, expectedTailwindSha256(version, asset)!);
   return dest;
 }
 

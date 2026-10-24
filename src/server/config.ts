@@ -1585,7 +1585,8 @@ export interface CompilePermissions {
    * unscoped. Setting this or {@linkcode CompilePermissions.netListen} bakes the network grant
    * split by direction instead of the baseline's unscoped `--allow-net`, under denext's Deno
    * 3.0.0-rc.2 or later (the toolchain compiling onto its own `denort`); an unset direction is
-   * unscoped. Elsewhere the binary keeps `--allow-net`, with a warning.
+   * unscoped, and an empty list is refused (it would be unscoped too). Elsewhere the binary keeps
+   * `--allow-net`, with a warning.
    *
    * @itemPattern "^(?!.*://)[^\\s,]+$"
    */
