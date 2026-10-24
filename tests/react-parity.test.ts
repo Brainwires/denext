@@ -15,7 +15,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
-import { assertCatalogMatchesExports, CATALOG } from "../scripts/parity/spec.ts";
+import { assertCatalogMatchesExports, CATALOG, readBaselines } from "../scripts/parity/spec.ts";
 import { extractDenextSurfaces } from "../scripts/parity/extract-denext.ts";
 import { diffSurfaces, findingKey, formatReport } from "../scripts/parity/diff.ts";
 import { WAIVERS } from "../scripts/parity/waivers.ts";
@@ -23,7 +23,6 @@ import type { Baseline } from "../scripts/parity/types.ts";
 import { fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url)).replace(/[\\/]$/, "");
-const BASELINE = `${ROOT}/tests/fixtures/react-surface.baseline.json`;
 const LEDGER = `${ROOT}/tests/fixtures/react-parity-known-gaps.json`;
 
 interface Ledger {
@@ -31,7 +30,8 @@ interface Ledger {
 }
 
 async function loadBaseline(): Promise<Baseline> {
-  return JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline;
+  // The React/Next baseline plus the Preact one (tests/fixtures/preact-surface.baseline.json).
+  return await readBaselines(ROOT);
 }
 
 async function loadKnownGaps(): Promise<Set<string>> {

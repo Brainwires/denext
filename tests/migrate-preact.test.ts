@@ -108,6 +108,14 @@ Deno.test("migrate: a Preact + Vite + preact-iso app takes the SPA path with the
     assertStringIncludes(deno.imports.preact, "src/compat/preact/mod.ts");
     assertStringIncludes(deno.imports["denext/preact"], "src/compat/preact/mod.ts");
     assertStringIncludes(deno.imports["preact-iso"], "src/compat/preact/iso.ts");
+    assertStringIncludes(
+      deno.imports["preact-render-to-string"],
+      "src/compat/preact/render-to-string.ts",
+    );
+    assertStringIncludes(
+      deno.imports["preact-render-to-string/stream"],
+      "src/compat/preact/render-to-string.ts",
+    );
     assertStringIncludes(deno.imports["@preact/signals"], "src/compat/preact/signals.ts");
     assertStringIncludes(deno.imports["preact/debug"], "src/compat/empty.ts");
     assertEquals(deno.compilerOptions.jsxImportSource, "preact");

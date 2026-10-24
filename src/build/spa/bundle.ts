@@ -21,6 +21,7 @@ import {
   appRendersDocumentTags,
   appUsesActivity,
   appUsesFormActions,
+  appUsesHookBoundaries,
   appUsesHrefParams,
   appUsesImageBlur,
   appUsesViewTransition,
@@ -453,6 +454,7 @@ async function bundleNativeSpa(
         usesImageBlur: await appUsesImageBlur(paths.projectDir, [entryPath]),
         usesFormActions: await appUsesFormActions(paths.projectDir, [entryPath]),
         usesHrefParams: await appUsesHrefParams(paths.projectDir, [entryPath]),
+        usesHookBoundaries: await appUsesHookBoundaries(paths.projectDir, [entryPath]),
       }),
     });
     await writeBundleOutput(clientDir, bundle, ENTRY_FILE);

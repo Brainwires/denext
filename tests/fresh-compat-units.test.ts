@@ -244,12 +244,13 @@ Deno.test("fresh/runtime: asset, Head, Partial, CSP helpers; preact shims", asyn
   assertEquals(preact.toChildArray([["a", null], "b", false] as never).length, 2);
   assertEquals(typeof preact.options, "object");
   assertEquals(typeof preact.h, "function");
+  // A server render never catches: `[undefined, reset]`, and reset is a no-op there.
   const Boundary = () => {
     const [error, reset] = useErrorBoundary();
     reset();
-    return error;
+    return String(error) as never;
   };
-  assertEquals(Boundary(), undefined);
+  assertEquals(await renderToString(preact.h(Boundary as never, null)), "undefined");
   assertEquals(typeof compat.createPortal, "function");
   assertEquals(typeof compat.default.createElement, "function");
 });

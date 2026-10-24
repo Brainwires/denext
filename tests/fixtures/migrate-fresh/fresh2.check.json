@@ -99,10 +99,6 @@
     {
       "item": "vite.config.ts: inspect()",
       "reason": "a Vite plugin; denext builds the app without Vite. Port what it does (a build step, an emitted file) to denext.config.ts (`plugins`, `viteEmitterPlugin`)"
-    },
-    {
-      "item": "useErrorBoundary",
-      "reason": "Preact's useErrorBoundary never sees an error on denext; catch with <ErrorBoundary> from denext (or an error.tsx) instead (islands/Counter.tsx)"
     }
   ],
   "review": [

@@ -139,6 +139,8 @@ export interface BuildContext {
   usesFormActions: boolean;
   /** Whether the app may write a route-pattern href (scan; the `__DENEXT_HREF_PARAMS__` define). */
   usesHrefParams: boolean;
+  /** Whether the app may use Preact's `useErrorBoundary` (scan; `__DENEXT_HOOK_BOUNDARIES__`). */
+  usesHookBoundaries: boolean;
   /** next-compat: source module (project-relative) → server bundle (outDir-relative). */
   readonly compatServerModules: Record<string, string>;
 }

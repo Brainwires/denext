@@ -18,6 +18,7 @@ import {
   appUsesActivity,
   appUsesClassComponents,
   appUsesFormActions,
+  appUsesHookBoundaries,
   appUsesHrefParams,
   appUsesImageBlur,
   appUsesIsoIslands,
@@ -216,6 +217,8 @@ async function runtimeFeatureScans(
   const usesImageBlur = await appUsesImageBlur(projectDir, outside);
   const usesFormActions = await appUsesFormActions(projectDir, outside);
   const usesHrefParams = await appUsesHrefParams(projectDir, outside);
+  // …and the reconciler's hook-boundary seam (Preact's `useErrorBoundary`).
+  const usesHookBoundaries = await appUsesHookBoundaries(projectDir, outside);
   return {
     classRuntime,
     usesActivity,
@@ -225,6 +228,7 @@ async function runtimeFeatureScans(
     usesImageBlur,
     usesFormActions,
     usesHrefParams,
+    usesHookBoundaries,
   };
 }
 
@@ -237,4 +241,5 @@ type RuntimeScanKey =
   | "usesSingletons"
   | "usesImageBlur"
   | "usesFormActions"
-  | "usesHrefParams";
+  | "usesHrefParams"
+  | "usesHookBoundaries";

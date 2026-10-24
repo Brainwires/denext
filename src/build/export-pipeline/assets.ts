@@ -184,11 +184,17 @@ export async function exportClientTransforms(ctx: ExportContext): Promise<void> 
 /** The build-scan gates a native bundle defines (`deno bundle --define`), as the build's. */
 function scanGates(
   ctx: ExportContext,
-): { usesImageBlur: boolean; usesFormActions: boolean; usesHrefParams: boolean } {
+): {
+  usesImageBlur: boolean;
+  usesFormActions: boolean;
+  usesHrefParams: boolean;
+  usesHookBoundaries: boolean;
+} {
   return {
     usesImageBlur: ctx.usesImageBlur,
     usesFormActions: ctx.usesFormActions,
     usesHrefParams: ctx.usesHrefParams,
+    usesHookBoundaries: ctx.usesHookBoundaries,
   };
 }
 

@@ -12,6 +12,7 @@ import { scanRoutes } from "../../router/manifest.ts";
 import {
   appUsesActivity,
   appUsesFormActions,
+  appUsesHookBoundaries,
   appUsesHrefParams,
   appUsesImageBlur,
   appUsesIsoIslands,
@@ -198,6 +199,7 @@ export async function prepareExport(
   const usesImageBlur = await appUsesImageBlur(paths.projectDir, outside);
   const usesFormActions = await appUsesFormActions(paths.projectDir, outside);
   const usesHrefParams = await appUsesHrefParams(paths.projectDir, outside);
+  const usesHookBoundaries = await appUsesHookBoundaries(paths.projectDir, outside);
   const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -227,6 +229,7 @@ export async function prepareExport(
     usesImageBlur,
     usesFormActions,
     usesHrefParams,
+    usesHookBoundaries,
     pages: 0,
     skipped: [],
   };

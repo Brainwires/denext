@@ -3,31 +3,27 @@
  * `LocationProvider`, `useLocation`, `Router`, `Route`, `useRoute`, `exec`, `lazy`,
  * `ErrorBoundary`, `hydrate`, `prerender` and `locationStub`. preact-iso drives Preact's internal
  * render hooks, so it cannot run on denext's renderer as it is; this module implements the same
- * contract on denext's hooks and `<Suspense>`.
- *
- * Differences: while a `lazy()` route loads, `<Router>` renders nothing in its place (preact-iso
- * keeps the previous route on screen), and `onLoadStart` is not called.
+ * contract on denext's hooks and `<Suspense>`: while a `lazy()` route loads, `<Router>` keeps the
+ * previous route mounted and on screen and calls `onLoadStart`, then `onRouteChange` /
+ * `onLoadEnd` once the new route commits; `ErrorBoundary` reports an error to `onError` and
+ * passes it on to the boundary above (as preact-iso's does), and lets a suspended child wait;
+ * `hydrate` hydrates prerendered markup (a page with preact-iso's `isodata` script) the first
+ * time, and renders otherwise.
  *
  * @module
  */
 
-import { h } from "../../jsx/jsx-runtime.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { createContext } from "../../runtime/context.ts";
-import {
-  type Context,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-} from "../../runtime/hooks.ts";
+import { type Context, useContext, useLayoutEffect, useMemo, useRef } from "../../runtime/hooks.ts";
 import { useReducer } from "../../runtime/hooks/use-reducer.ts";
 import { Suspense } from "../../runtime/suspense.ts";
-import { ErrorBoundary as DenextErrorBoundary } from "../../runtime/error-boundary.ts";
 import { lazy as denextLazy } from "../../runtime/dynamic.ts";
 import { Children, cloneElement } from "../../runtime/react-core.ts";
-import { render as domRender } from "../react-dom.ts";
+import { hydrate as domHydrate, render as domRender } from "../react-dom.ts";
 import { renderToString } from "../../jsx/render-to-string.ts";
+import { useErrorBoundary } from "./hooks.ts";
 
 /** What {@link useLocation} returns. */
 export interface LocationHook {
@@ -43,6 +39,8 @@ export interface LocationHook {
   back: () => void;
   /** Go forward in history. */
   forward: () => void;
+  /** Whether the last navigation pushed a history entry (a link, `route(url)`). */
+  wasPush?: boolean;
 }
 
 /** What {@link useRoute} returns: the matched route's path, query and parameters. */
@@ -67,6 +65,12 @@ export interface MatchProps {
 
 /** One navigation action. */
 type NavAction = { url: string; replace?: boolean } | Event;
+
+/** The provider's state: the URL, and whether the navigation to it pushed an entry. */
+interface NavState {
+  url: string;
+  push: boolean;
+}
 
 /** The current location as `path?query`. */
 function currentUrl(): string {
@@ -104,19 +108,24 @@ function clickedLink(e: MouseEvent): HTMLAnchorElement | null {
 }
 
 /** The location reducer: a link click, history navigation, or `route()`. */
-function navigate(state: string, action: NavAction): string {
+function navigate(state: NavState, action: NavAction): NavState {
   if (action instanceof Event) {
-    if (action.type !== "click") return currentUrl();
+    if (action.type !== "click") return { url: currentUrl(), push: false };
     const link = clickedLink(action as MouseEvent);
     if (!link) return state;
     action.preventDefault();
     const url = link.href.replace(location.origin, "");
     history.pushState(null, "", url);
-    return url;
+    return { url, push: true };
   }
   if (action.replace) history.replaceState(null, "", action.url);
   else history.pushState(null, "", action.url);
-  return action.url;
+  return { url: action.url, push: !action.replace };
+}
+
+/** The provider's first state: the page's URL, not pushed. */
+function initialNav(): NavState {
+  return { url: currentUrl(), push: false };
 }
 
 const LocationContext: Context<LocationHook> = createContext<LocationHook>(
@@ -133,19 +142,20 @@ export interface LocationProviderProps {
 }
 
 function LocationProviderComponent(props: LocationProviderProps): VNode {
-  const [url, dispatch] = useReducer(navigate, undefined, currentUrl);
+  const [nav, dispatch] = useReducer(navigate, undefined, initialNav);
   if (props.scope) scope = props.scope;
   const value = useMemo<LocationHook>(() => {
-    const u = new URL(url, "http://localhost");
+    const u = new URL(nav.url, "http://localhost");
     return {
-      url,
+      url: nav.url,
       path: u.pathname.replace(/\/+$/, "") || "/",
       query: Object.fromEntries(u.searchParams),
       route: (to, replace) => dispatch({ url: to, replace }),
       back: () => history.back(),
       forward: () => history.forward(),
+      wasPush: nav.push,
     };
-  }, [url]);
+  }, [nav]);
   useLayoutEffect(() => {
     addEventListener("click", dispatch);
     addEventListener("popstate", dispatch);
@@ -251,59 +261,154 @@ function matchSegment(
 
 /** Props of {@link Router}. */
 export interface RouterProps {
-  /** Called with the URL after a route renders. */
+  /** Called with the URL once a navigation's new route has rendered. */
   onRouteChange?: (url: string) => void;
-  /** Called with the URL once a route has rendered. */
+  /** Called with the URL once a route that had to load (`onLoadStart`) has rendered. */
   onLoadEnd?: (url: string) => void;
-  /** Not called on denext. */
+  /** Called with the URL when the matched route suspends (a `lazy()` route loading). */
   onLoadStart?: (url: string) => void;
   /** `<Route>`s or components with a `path` / `default` prop. */
   children?: VNodeChildren;
 }
 
-/**
- * Render the first child whose `path` matches the URL (else the `default` one), with the match
- * as props (`params`, `path`, `query`, `rest`, and each parameter).
- *
- * @param props The routes.
- * @returns The matched route.
- */
-export function Router(props: RouterProps): VNode {
-  const { url, path, query } = useLocation();
-  const parent = useContext(RouteContext);
-  const rest = parent.rest || path;
-  let matched: VNode | undefined;
+/** What a {@link Router} keeps across renders (preact-iso's refs). */
+interface RouterState {
+  /** The path the last committed route was rendered for. */
+  prevRoute: string;
+  /** A route suspended and has not rendered since (`onLoadEnd` is due). */
+  loading: boolean;
+  /** A suspended route's fallback is mounted. */
+  suspended: boolean;
+  /** Bumped whenever the route component changes: the slots' keys. */
+  count: number;
+  /** The current route element. */
+  cur: VNode | null;
+  /** The route kept on screen while the current one loads. */
+  prev: VNode | null;
+}
+
+/** One route slot: its element (read when the slot renders) inside its own Suspense. */
+function RouteSlot(props: { at: () => VNode | null; fallback: VNodeChildren }): VNode {
+  return h(Suspense, { fallback: props.fallback }, props.at() as VNodeChildren);
+}
+
+/** Props of {@link RouteLoading}. */
+interface RouteLoadingProps {
+  /** Keep the previous route on screen (runs while rendering, before the previous slot). */
+  keepPrevious: () => void;
+  /** The fallback mounted: the route is loading. */
+  started: () => void;
+  /** The fallback went away: the route rendered, or the navigation moved on. */
+  ended: () => void;
+}
+
+/** The current route's Suspense fallback: keeps the previous route, reports the load. */
+function RouteLoading(props: RouteLoadingProps): VNode {
+  props.keepPrevious();
+  useLayoutEffect(() => {
+    props.started();
+    return props.ended;
+  }, []);
+  return null as unknown as VNode;
+}
+
+/** The first child route matching `rest` (else the `default` one), cloned with its match props. */
+function matchRoute(
+  children: VNodeChildren,
+  rest: string,
+  query: Record<string, string>,
+  params: Record<string, string> | undefined,
+): { route: VNode | undefined; matchProps: MatchProps } {
   let fallback: VNode | undefined;
   let matchProps: MatchProps = { params: {} };
-  for (const child of Children.toArray(props.children) as VNode[]) {
+  for (const child of Children.toArray(children) as VNode[]) {
     const childProps = child.props as Record<string, unknown>;
     const candidate: MatchProps = {
       ...childProps,
       path: rest,
       query,
-      params: { ...parent.params },
+      params: { ...params },
       rest: "",
     };
     if (exec(rest, childProps.path as string, candidate)) {
-      matched = cloneElement(child, candidate as never);
-      matchProps = candidate;
-      break;
+      return { route: cloneElement(child, candidate as never), matchProps: candidate };
     }
     if (childProps.default && !fallback) {
       fallback = cloneElement(child, candidate as never);
       matchProps = candidate;
     }
   }
-  useEffect(() => {
-    props.onRouteChange?.(url);
-    props.onLoadEnd?.(url);
-  }, [url]);
-  const route = matched ?? fallback ?? null;
-  return h(
-    RouteContext as never,
-    { value: matchProps },
-    h(Suspense, { fallback: null }, route as VNodeChildren),
-  );
+  return { route: fallback, matchProps };
+}
+
+/**
+ * Render the first child whose `path` matches the URL (else the `default` one), with the match
+ * as props (`params`, `path`, `query`, `rest`, and each parameter). While a new route suspends
+ * (a `lazy()` component loading), the previous route stays mounted and on screen.
+ *
+ * @param props The routes and the navigation callbacks.
+ * @returns The matched route.
+ */
+export function Router(props: RouterProps): VNode {
+  const [c, update] = useReducer((n: number, _: void) => n + 1, 0);
+  const { url, path, query, wasPush } = useLocation();
+  const parent = useContext(RouteContext);
+  const rest = parent.rest || path;
+  const state = useRef<RouterState>({
+    prevRoute: path,
+    loading: false,
+    suspended: false,
+    count: 1,
+    cur: null,
+    prev: null,
+  }).current;
+  const { route: incoming, matchProps } = matchRoute(props.children, rest, query, parent.params);
+  const component = (incoming?.props as RouteProps | undefined)?.component;
+  const { path: matched, params, rest: tail } = matchProps;
+  useMemo(() => {
+    // A new slot only when the route component changes (a param change re-renders in place);
+    // the outgoing route is kept for the new one's load.
+    const outgoing = (state.cur?.props as { children?: VNode } | undefined)?.children;
+    const same = outgoing && incoming && incoming.type === outgoing.type &&
+      component === (outgoing.props as RouteProps).component;
+    state.prev = same ? null : state.cur;
+    if (!same) state.count++;
+  }, [url, JSON.stringify([matched, params, tail]), incoming?.type, component]);
+  state.cur = h(RouteContext as never, { value: matchProps }, (incoming ?? null) as VNodeChildren);
+  // Render the previous route only if the current one suspends (RouteLoading restores it).
+  const previous = state.prev;
+  state.prev = null;
+  const count = state.count;
+  const loading = h(RouteLoading, {
+    keepPrevious: () => {
+      state.prev = previous;
+    },
+    started: () => {
+      state.suspended = true;
+      state.loading = true;
+      props.onLoadStart?.(url);
+    },
+    ended: () => {
+      state.suspended = false;
+      if (count !== state.count) return; // a later navigation took over
+      state.prev = null;
+      update();
+    },
+  });
+  useLayoutEffect(() => {
+    if (state.suspended) return; // the new route has not rendered yet
+    if (state.prevRoute !== path) {
+      if (wasPush && typeof scrollTo === "function") scrollTo(0, 0);
+      props.onRouteChange?.(url);
+      state.prevRoute = path;
+    }
+    if (state.loading) props.onLoadEnd?.(url);
+    state.loading = false;
+  }, [path, wasPush, c]);
+  return h(Fragment, null, [
+    h(RouteSlot, { key: count, at: () => state.cur, fallback: loading }),
+    h(RouteSlot, { key: count - 1, at: () => state.prev, fallback: null }),
+  ]);
 }
 
 /** Props of {@link Route}. */
@@ -356,35 +461,46 @@ export function lazy<P = Record<string, unknown>>(
 /** Props of {@link ErrorBoundary}. */
 export interface ErrorBoundaryProps {
   /** Called with an error a child threw. */
-  onError?: (error: unknown) => void;
+  onError?: (error: Error) => void;
   /** The content. */
   children?: VNodeChildren;
 }
 
 /**
- * Catch a render error below (calling `onError`); the content renders nothing in its place.
+ * Report a render error below to `onError`, then pass it on to the error boundary above (as
+ * preact-iso's `ErrorBoundary` does: it does not handle the error itself). A child that
+ * suspends (a `lazy()` component) waits here, rendering nothing until it has loaded.
  *
  * @param props The handler and the content.
- * @returns The boundary.
+ * @returns The content.
  */
 export function ErrorBoundary(props: ErrorBoundaryProps): VNode {
-  const Fallback = (fallback: { error: unknown }) => {
-    useEffect(() => props.onError?.(fallback.error), [fallback.error]);
-    return null as unknown as VNode;
-  };
-  return h(DenextErrorBoundary, { fallback: Fallback, children: props.children });
+  const [error] = useErrorBoundary();
+  if (error !== undefined) {
+    props.onError?.(error as Error);
+    throw error;
+  }
+  return h(Suspense, { fallback: null }, props.children);
 }
 
+/** Whether {@link hydrate} has run (only its first call can hydrate). */
+let hydrated = false;
+
 /**
- * Render the app into `parent` (default: the body). denext renders a SPA on the client, so
- * there is no server markup to hydrate.
+ * Mount the app into `parent` (default: the element holding preact-iso's `isodata` script, else
+ * the body). The first call hydrates the markup {@link prerender} wrote when the page carries that
+ * script; any other call (or a page without it) renders. A no-op without a document.
  *
  * @param jsx The app.
- * @param parent Where to render it.
+ * @param parent Where to mount it.
  */
 export function hydrate(jsx: VNode, parent?: Element | null): void {
   if (typeof document === "undefined") return;
-  domRender(jsx, parent ?? document.body);
+  const isodata = document.querySelector("script[type=isodata]");
+  const target = parent ?? (isodata?.parentNode as Element | null) ?? document.body;
+  if (!hydrated && isodata) domHydrate(jsx, target);
+  else domRender(jsx, target);
+  hydrated = true;
 }
 
 /**

@@ -254,7 +254,8 @@ Deno.test("migrate on a Preact app reports the tooling, the routers and the find
     "vite.config.js":
       `import preact from "@preact/preset-vite";\nexport default { plugins: [preact()] };\n`,
     "index.html": `<div id="app"></div><script type="module" src="/src/index.jsx"></script>\n`,
-    "src/index.jsx": `import { options, render } from "preact";\nrender(<p />, document.body);\n`,
+    "src/index.jsx":
+      `import { options, render } from "preact";\noptions.diffed = () => {};\nrender(<p />, document.body);\n`,
   };
   for (const [rel, text] of Object.entries(files)) {
     await Deno.mkdir(join(dir, rel, ".."), { recursive: true });

@@ -262,6 +262,26 @@ Deno.test("appUsesImageBlur: a blur placeholder or blurDataURL in code, not an i
   }
 });
 
+Deno.test("appUsesHookBoundaries: useErrorBoundary or a preact-iso import in code, not a comment", async () => {
+  const { appUsesHookBoundaries } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-hook-boundary-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesHookBoundaries(dir);
+    };
+    assertEquals(await scan(`export default () => <ErrorBoundary />;`), false, "no hook");
+    assertEquals(await scan(`// useErrorBoundary()\nexport {};`), false, "a comment");
+    assertEquals(await scan(`const [e] = useErrorBoundary();`), true, "the hook");
+    assertEquals(await scan(`import { Router } from "preact-iso";`), true, "preact-iso");
+    assertEquals(await scan(`import { lazy } from 'denext/preact-iso';`), true, "denext's");
+    assertEquals(await scan(`import { lazy } from "preact-iso/lazy";`), true, "a subpath");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("appUsesHrefParams: a route-pattern string or template literal in code, not a comment", async () => {
   const { appUsesHrefParams } = await import("../src/build/bundle.ts");
   const dir = await Deno.makeTempDir({ prefix: "denext-scan-href-" });
