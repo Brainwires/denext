@@ -265,13 +265,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   (`rest.rateLimit`) counts per process when neither it nor `denextAuth`'s `rateLimit` names a
   shared `store`.
 - **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
-  trigger sends only the key, so every change costs a re-read per identity and filter; many
-  concurrent writers serialize on commit (the logical-replication source
-  avoids that, but needs `wal_level = logical` and a `REPLICATION` role); and a change sent while
-  the listener reconnects is lost (every subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
-  that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
-  are capped per identity and per instance; behind a reverse proxy without
-  `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
+  trigger sends only the key, so every burst costs one re-read per distinct role and claims (a
+  user's sessions each carry their own `session_id`, so two devices are two re-reads); many
+  concurrent writers serialize on commit (the logical-replication source avoids that, but needs
+  `wal_level = logical` and a `REPLICATION` role); and a change sent while the database listener
+  reconnects is lost (every subscriber is told to re-read). A browser's reconnect is replayed only
+  from the instance that held its subscription, within `replay.retentionSeconds` and
+  `replay.maxChangesPerTable`: without sticky sessions, or past either, the subscriber re-reads.
+  Supabase's `postgres_changes` has no replay, as on Supabase. A delete, or an update out of view,
+  reaches only a subscription that tracked the key — at most `maxTrackedKeys` (default 10 000) per
+  subscription. Subscriptions are capped per identity and per instance; behind a reverse proxy
+  without `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per
+  address.
 - **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
   TypeScript decides, with no `storage` schema to join against). A signed upload without a
   `size` is not length-pinned at the store (S3 has no length range for a presigned `PUT`), so

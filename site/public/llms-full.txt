@@ -885,7 +885,9 @@ task, and `db.service()` bypasses RLS (maintenance only). Tables need `grant …
 Realtime from the database: `backend({ postgres, realtime: realtime({ tables: { notes: {} } }) })`
 installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter?, events? })`
 from `@denext/backend/client` keeps rows live (filters `eq neq lt lte gt gte in`), each change
-re-read AS the subscriber under RLS (a delete only to subscribers who could see the row);
+re-read AS the subscriber under RLS (a delete only to subscribers who could see the row; once
+per identity per burst, whatever the filters), and a reconnect within `replay.retentionSeconds`
+(60) is replayed from the instance's journal (else `stale`);
 `onTableChange(table, fn)` / `tableChanges(table, { as, onChange })` from `@denext/backend/server`,
 and `revalidate: true` pushes `table:<name>` tags. The same option serves Supabase Realtime at
 `/realtime/v1/websocket`: stock `supabase.channel()` — `postgres_changes`, broadcast (also

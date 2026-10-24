@@ -24,6 +24,15 @@
 // one whose connection closed is kept for a reconnect, but only while there is room — at a cap,
 // the oldest such one goes first, and only live subscriptions refuse a new one.
 //
+// A subscription whose connection closed is resumed when it comes back (replay, on by default):
+// the engine journals every change it receives (realtime-journal.ts) and each subscription the
+// position it was delivered up to; a reactivated one is first sent `resumed`, then — in the next
+// flush, on its own — the journaled changes after its position, re-read as its subscriber and run
+// through the same tracked-key rules as live changes. Frames still queued at the drop are kept
+// and sent first. A gap the journal no longer covers (dropped for age or count, or a lost
+// listener's resync) is a `resync` frame. A reconnect that finds no subscription (swept, or on
+// another instance) is answered by neither, and the browser re-reads.
+//
 // Re-reads compare keys and filters in the column's own type (read once from the catalog), so a
 // primary-key or filter index serves them; each runs under a transaction-local
 // `statement_timeout`, and flushes are single-flight: a burst arriving while one runs is
@@ -79,6 +88,7 @@ import {
   triggerArgs,
 } from "./realtime-sql.ts";
 import { LogicalSource, releaseReserved, type Reserved } from "./realtime-logical.ts";
+import { ChangeJournal } from "./realtime-journal.ts";
 
 /** A change as the database reported it — keys only, before any re-read. */
 export interface TableChangeEvent {
@@ -162,6 +172,12 @@ interface Audience {
   sink: Sink;
   queue: TableChangesFrame[];
   pumping: boolean;
+  /** The journal position this subscription was delivered up to. */
+  position: number;
+  /** It came back after a disconnect: the next flush replays what it missed. */
+  resume: boolean;
+  /** When its last frame was published (epoch ms; 0: none yet). */
+  sentAt: number;
 }
 
 /** The burst's change to a key after one more notification (`previous`: the burst's so far). */
@@ -226,6 +242,8 @@ export interface RealtimeStats {
   listens: number;
   /** `revalidateTag` calls this instance made (one per table per burst it owned). */
   revalidations: number;
+  /** Reconnected subscriptions resumed from the journal. */
+  replays: number;
 }
 
 /** The burst window: Live's own flush interval. */
@@ -242,12 +260,14 @@ const KEYS_PER_QUERY = 1_000;
 const FRAME_BYTES = 12_000;
 /** A `raw` audience's frame size (a server callback: no channel cap); larger rows are truncated. */
 export const RAW_FRAME_BYTES = 1024 * 1024;
-/** How long an audience with no subscriber is kept (a reconnect resumes it). */
+/** How long an audience with no subscriber is kept with replay off (a reconnect resyncs it). */
 const IDLE_GRACE_MS = 15_000;
 /** How often the publication's tables are read again. */
 const PUBLICATION_POLL_MS = 10_000;
 /** The publication `source: "logical"` keeps the configured tables in. */
 const DENEXT_PUBLICATION = "denext_realtime";
+/** Distinct filters one combined re-read statement evaluates (more go in further statements). */
+const FILTERS_PER_QUERY = 64;
 /** Group re-reads run at once. */
 const REREAD_CONCURRENCY = 4;
 /** Subscribe-time seed queries run at once (more wait their turn). */
@@ -328,6 +348,7 @@ export class RealtimeEngine {
     frames: 0,
     listens: 0,
     revalidations: 0,
+    replays: 0,
   };
   #client: () => SqlClient;
   #audiences = new Map<string, Audience>();
@@ -363,6 +384,10 @@ export class RealtimeEngine {
   #seedWaiters: Array<() => void> = [];
   /** Each owner's seed budget: tokens left, as of `at`. */
   #budgets = new Map<string, { tokens: number; at: number }>();
+  /** The reconnect journal (`null`: replay is off). */
+  #journal: ChangeJournal<TableNotification> | null;
+  /** Subscriptions being replayed by the flush in progress (live delivery skips them). */
+  #replaying = new Set<Audience>();
 
   /**
    * @param options The realtime options.
@@ -377,6 +402,10 @@ export class RealtimeEngine {
     this.config = resolveRealtime(options);
     this.#client = client;
     this.#publish = publish;
+    const replay = this.config.replay;
+    this.#journal = replay
+      ? new ChangeJournal(replay.retentionSeconds * 1000, replay.maxChangesPerTable)
+      : null;
   }
 
   /** The client, checked for `listen`. */
@@ -649,9 +678,12 @@ export class RealtimeEngine {
     this.#logical = source;
   }
 
-  /** Every table: changes may have been missed. */
+  /** Every table: changes may have been missed (journaled, so a replay over it resyncs too). */
   #resyncAll(): void {
-    for (const name of this.config.tables.keys()) this.#resyncTables.add(name);
+    for (const name of this.config.tables.keys()) {
+      this.#resyncTables.add(name);
+      this.#journal?.append({ table: name, op: "resync" });
+    }
     this.#schedule();
   }
 
@@ -684,6 +716,7 @@ export class RealtimeEngine {
     // The triggers fire only for the table's `events`; the WAL carries every change, so a kind
     // the table does not send is dropped here (a resync always passes).
     if (event.op !== "resync" && !table.events.includes(event.op)) return;
+    this.#journal?.append(event);
     if (event.op === "truncate") {
       // Changes earlier in the burst are moot (the rows are gone); later ones follow it.
       const dropped = this.#pending.get(event.table)?.size ?? 0;
@@ -700,13 +733,9 @@ export class RealtimeEngine {
 
   /** Fold one change into the burst: the latest op per key wins (an insert stays an insert). */
   #coalesce(table: string, key: string, event: TableNotification): void {
-    const op = event.op as Pending["op"];
     let byKey = this.#pending.get(table);
     if (!byKey) this.#pending.set(table, byKey = new Map());
-    const previous = byKey.get(key);
-    if (previous) byKey.delete(key); // re-inserted below: commit order of the LAST change
-    else this.#pendingCount++;
-    byKey.set(key, merge(previous, op, event));
+    if (coalesceInto(byKey, key, event)) this.#pendingCount++;
   }
 
   #schedule(): void {
@@ -743,19 +772,26 @@ export class RealtimeEngine {
     return this.#flushing;
   }
 
-  /** Deliver the burst gathered so far. */
+  /** Deliver the burst gathered so far, and replay what reconnected subscriptions missed. */
   async #flushOnce(): Promise<void> {
     const pending = this.#pending;
     const resync = this.#resyncTables;
     const truncated = this.#truncated;
+    // Every change of this burst is journaled at or before `head`.
+    const head = this.#journal?.head ?? 0;
     this.#pending = new Map();
     this.#resyncTables = new Set();
     this.#truncated = new Map();
     this.#pendingCount = 0;
-    if (pending.size === 0 && resync.size === 0 && truncated.size === 0) return;
+    const resuming = this.#takeResuming(head);
+    if (pending.size === 0 && resync.size === 0 && truncated.size === 0 && !resuming.length) {
+      return;
+    }
     this.stats.flushes++;
     this.#sweep();
-    const work: Array<() => Promise<void>> = [];
+    const work: Array<() => Promise<void>> = resuming.map((audience) => () =>
+      this.#replay(audience, head).finally(() => this.#replaying.delete(audience))
+    );
     for (const [name, ts] of truncated) this.#truncateTable(name, ts);
     for (const name of resync) work.push(...this.#resyncTable(name));
     for (const [name, changes] of pending) {
@@ -766,11 +802,64 @@ export class RealtimeEngine {
     await runLimited(work, REREAD_CONCURRENCY);
   }
 
+  /**
+   * The reconnected subscriptions this flush replays (marked as replaying, so live delivery skips
+   * them); every other live one is current as of `head` once this burst is delivered.
+   */
+  #takeResuming(head: number): Audience[] {
+    const resuming: Audience[] = [];
+    for (const audience of this.#audiences.values()) {
+      if (!audience.active) continue;
+      if (audience.resume) {
+        audience.resume = false;
+        this.#replaying.add(audience);
+        resuming.push(audience);
+      } else if (!this.#replaying.has(audience)) {
+        audience.position = head;
+      }
+    }
+    return resuming;
+  }
+
+  /** Whether live delivery reaches the audience now (live, and not resuming or replaying). */
+  #live(audience: Audience): boolean {
+    return audience.active && !audience.resume && !this.#replaying.has(audience);
+  }
+
+  /**
+   * Replay what a reconnected subscription missed: the journal's changes of its table after its
+   * position (up to `head`), coalesced as one burst and re-read as its subscriber — or a `resync`
+   * when the journal no longer covers the gap, or it holds a lost listener's resync.
+   */
+  async #replay(audience: Audience, head: number): Promise<void> {
+    const entries = this.#journal?.since(audience.table.name, audience.position, head) ?? null;
+    audience.position = head;
+    if (!entries || entries.some((entry) => entry.event.op === "resync")) {
+      return this.#enqueue(audience, { resync: true });
+    }
+    this.stats.replays++;
+    let changes = new Map<string, Pending>();
+    let truncated = false;
+    for (const { event } of entries) {
+      if (event.op === "truncate") {
+        changes = new Map(); // the rows are gone: only what follows the truncate matters
+        truncated = true;
+      } else {
+        coalesceInto(changes, event.key!, event);
+      }
+    }
+    if (truncated && audience.tracked.size > 0) {
+      audience.tracked.clear();
+      this.#enqueue(audience, { changes: [{ op: "truncate" }] });
+    }
+    if (changes.size > 0) await this.#deliverGroup([audience], changes);
+  }
+
   /** A table whose changes were lost: tell its hooks and subscribers to re-read. */
   #resyncTable(name: string): Array<() => Promise<void>> {
     this.#runHooks({ table: name, op: "resync" });
     for (const audience of this.#audiences.values()) {
-      if (audience.table.name === name && audience.active) {
+      if (audience.table.name === name && this.#live(audience)) {
         this.#enqueue(audience, { resync: true });
       }
     }
@@ -787,7 +876,9 @@ export class RealtimeEngine {
     );
     for (const audience of this.#audiences.values()) {
       // Only a subscriber who could see rows hears of it: there is nothing to clear otherwise.
-      if (audience.table.name !== name || !audience.active || audience.tracked.size === 0) continue;
+      if (audience.table.name !== name || !this.#live(audience) || audience.tracked.size === 0) {
+        continue;
+      }
       audience.tracked.clear();
       if (audience.mode === "raw" && !audience.events?.has("truncate")) continue;
       const change: TableChange = audience.mode === "raw" && ts !== undefined
@@ -806,7 +897,7 @@ export class RealtimeEngine {
     }
     const groups = new Map<string, Audience[]>();
     for (const audience of this.#audiences.values()) {
-      if (audience.table.name !== name || !audience.active) continue;
+      if (audience.table.name !== name || !this.#live(audience)) continue;
       const id = groupId(audience);
       const group = groups.get(id);
       if (group) group.push(audience);
@@ -888,41 +979,82 @@ export class RealtimeEngine {
     } catch { /* never reserved: nothing is held */ }
   }
 
-  /** Re-read the burst's rows once for the group, then work out each audience's changes. */
+  /**
+   * Re-read the burst's rows once for the group — one identity's subscriptions to one table,
+   * whatever their filters — then work out each audience's changes. A failure with several
+   * filters is retried filter by filter, so one bad filter value costs only its own audiences.
+   */
   async #deliverGroup(group: Audience[], changes: Map<string, Pending>): Promise<void> {
     const [first] = group;
     const keys = [...changes].filter(([, c]) => c.op !== "delete").map(([key]) => key);
-    let rows: Map<string, unknown>;
+    const byFilter = byFilterOf(group);
+    let rows: Map<string, Map<string, unknown>>;
     let open = false;
     try {
-      rows = await this.#reread(first, keys);
+      rows = await this.#reread(first, [...byFilter.values()].map(([a]) => a.filter), keys);
       open = (await this.#catalog(first.table)).open;
     } catch (error) {
-      this.#types.delete(first.table.name); // the table may have changed: read its types again
-      console.error(`[@denext/backend] realtime re-read of ${first.table.name} failed`, error);
-      for (const audience of group) this.#enqueue(audience, { resync: true });
-      return;
+      return await this.#rereadFailed(group, byFilter, changes, error);
     }
     for (const audience of group) {
+      const seen = rows.get(filterId(audience.filter))!;
       const out = audience.mode === "raw"
-        ? rawChanges(audience, changes, rows, this.config.maxTrackedKeys, open)
-        : audienceChanges(audience, changes, rows, this.config.maxTrackedKeys);
+        ? rawChanges(audience, changes, seen, this.config.maxTrackedKeys, open)
+        : audienceChanges(audience, changes, seen, this.config.maxTrackedKeys);
       for (const frame of toFrames(out, audience.frameBytes)) this.#enqueue(audience, frame);
     }
   }
 
-  /** The rows among `keys` the audience's scope (and filter) can SELECT, as parsed JSON. */
-  async #reread(audience: Audience, keys: string[]): Promise<Map<string, unknown>> {
-    const rows = new Map<string, unknown>();
+  /**
+   * A group's re-read failed: with several filters, each is retried on its own (one bad filter
+   * value then costs only its own audiences); otherwise the group is told to re-read.
+   */
+  async #rereadFailed(
+    group: Audience[],
+    byFilter: Map<string, Audience[]>,
+    changes: Map<string, Pending>,
+    error: unknown,
+  ): Promise<void> {
+    if (byFilter.size > 1) {
+      for (const same of byFilter.values()) await this.#deliverGroup(same, changes);
+      return;
+    }
+    const { table } = group[0];
+    this.#types.delete(table.name); // the table may have changed: read its types again
+    console.error(`[@denext/backend] realtime re-read of ${table.name} failed`, error);
+    for (const audience of group) this.#enqueue(audience, { resync: true });
+  }
+
+  /**
+   * The rows among `keys` the audience's scope can SELECT, as parsed JSON, for each of `filters`
+   * (by {@linkcode filterId}). One filter is one query (the filter in its WHERE); several share
+   * one, each matched by a boolean column — so an identity's burst is one re-read per 1 000 keys
+   * however many filters its subscriptions use.
+   */
+  async #reread(
+    audience: Audience,
+    filters: Array<ParsedFilter | undefined>,
+    keys: string[],
+  ): Promise<Map<string, Map<string, unknown>>> {
+    const out = new Map(filters.map((filter) => [filterId(filter), new Map<string, unknown>()]));
     const { types } = await this.#catalog(audience.table);
+    // One filter: its WHERE. Several: up to FILTERS_PER_QUERY boolean columns per statement.
+    const batches = filters.length === 1 ? [filters] : Array.from(
+      { length: Math.ceil(filters.length / FILTERS_PER_QUERY) },
+      (_, n) => filters.slice(n * FILTERS_PER_QUERY, (n + 1) * FILTERS_PER_QUERY),
+    );
     for (let i = 0; i < keys.length; i += KEYS_PER_QUERY) {
       const chunk = keys.slice(i, i + KEYS_PER_QUERY);
-      const { text, params } = rereadQuery(audience.table, audience.filter, chunk, types);
-      this.stats.rereads++;
-      const result = await this.#timed<{ k: string; r: string }>(audience.scope, text, params);
-      for (const row of result) rows.set(String(row.k), JSON.parse(String(row.r)));
+      for (const batch of batches) {
+        const { text, params } = batch.length === 1
+          ? rereadQuery(audience.table, batch[0], chunk, types)
+          : groupRereadQuery(audience.table, batch, chunk, types);
+        this.stats.rereads++;
+        const result = await this.#timed<Record<string, unknown>>(audience.scope, text, params);
+        for (const row of result) sortRow(row, batch, out);
+      }
     }
-    return rows;
+    return out;
   }
 
   /**
@@ -981,15 +1113,26 @@ export class RealtimeEngine {
     if (!audience.pumping) void this.#pump(audience);
   }
 
-  /** Send queued frames one by one, spaced so the Live hub never merges two of them. */
+  /**
+   * Send queued frames one by one, spaced so the Live hub never merges two of them — also a frame
+   * queued just after the pump went idle (a truncate and the burst's re-read rows, a `resumed`
+   * and its replay). A Live subscription whose subscriber is gone keeps the rest queued for its
+   * reconnect.
+   */
   async #pump(audience: Audience): Promise<void> {
     audience.pumping = true;
+    const channel = "channel" in audience.sink;
     try {
       while (audience.queue.length > 0 && !this.#stopped) {
+        if (channel && !audience.active) break;
+        const wait = audience.sentAt + PACE_MS - Date.now();
+        if (channel && wait > 0) {
+          await sleep(wait);
+          continue; // the subscriber may have left meanwhile
+        }
         const frame = audience.queue.shift()!;
         frame.seq = ++audience.seq;
-        if (!(await this.#send(audience, frame))) continue;
-        if ("channel" in audience.sink && audience.queue.length > 0) await sleep(PACE_MS);
+        if (await this.#send(audience, frame)) audience.sentAt = Date.now();
       }
     } finally {
       audience.pumping = false;
@@ -1028,7 +1171,8 @@ export class RealtimeEngine {
   /** Drop audiences that have had no subscriber for the grace period, and full budgets. */
   #sweep(): void {
     const now = Date.now();
-    const cutoff = now - IDLE_GRACE_MS;
+    const grace = this.config.replay ? this.config.replay.retentionSeconds * 1000 : IDLE_GRACE_MS;
+    const cutoff = now - grace;
     for (const [key, audience] of this.#audiences) {
       if (!audience.active && audience.idleSince < cutoff) this.#audiences.delete(key);
     }
@@ -1176,6 +1320,9 @@ export class RealtimeEngine {
       seq: 0,
       queue: [],
       pumping: false,
+      position: this.#journal?.head ?? 0,
+      resume: false,
+      sentAt: 0,
     });
     return true;
   }
@@ -1201,16 +1348,31 @@ export class RealtimeEngine {
     );
   }
 
-  /** A key's first subscriber arrived (the channel's `onActive`). */
+  /**
+   * A key's first subscriber arrived (the channel's `onActive`). One coming back after a
+   * disconnect is told `resumed` — and what it missed is replayed by the next flush — or, when
+   * the journal no longer covers its gap (or replay is off), `resync`.
+   */
   activate(key: string): void {
     const audience = this.#audiences.get(key);
-    if (audience) audience.active = audience.everActive = true;
+    if (!audience) return;
+    const again = audience.everActive && !audience.active;
+    audience.active = audience.everActive = true;
+    if (!again) return;
+    if (!this.#journal?.covers(audience.table.name, audience.position)) {
+      audience.queue.length = 0; // superseded: the subscriber re-reads everything
+      audience.position = this.#journal?.head ?? 0;
+      return this.#enqueue(audience, { resync: true });
+    }
+    this.#enqueue(audience, { resumed: true });
+    audience.resume = true;
+    this.#schedule();
   }
 
   /**
    * A key's last subscriber left (the channel's `onIdle`). Unsubscribed (or revoked): forgotten
-   * at once. Disconnected: kept for a reconnect of the same identity — swept after
-   * {@linkcode IDLE_GRACE_MS}, or sooner when a cap needs the room.
+   * at once. Disconnected: kept for a reconnect of the same identity — swept after the replay
+   * retention ({@linkcode IDLE_GRACE_MS} with replay off), or sooner when a cap needs the room.
    *
    * @param key The subscription key.
    * @param reason Why it went idle (an older hub passes none: kept, as for a disconnect).
@@ -1225,7 +1387,8 @@ export class RealtimeEngine {
     }
     audience.active = false;
     audience.idleSince = Date.now();
-    audience.queue.length = 0;
+    // With replay the frames not yet sent wait for the reconnect; without, it resyncs anyway.
+    if (!this.#journal) audience.queue.length = 0;
   }
 
   /**
@@ -1328,6 +1491,11 @@ export class RealtimeEngine {
     return this.#audiences.size;
   }
 
+  /** How many changes the reconnect journal holds (0 when replay is off). */
+  get journalSize(): number {
+    return this.#journal?.size ?? 0;
+  }
+
   /** Stop: UNLISTEN, cancel the burst, forget every subscription and hook. */
   async stop(): Promise<void> {
     this.#stopped = true;
@@ -1336,6 +1504,7 @@ export class RealtimeEngine {
     this.#audiences.clear();
     this.#hooks.clear();
     this.#pending.clear();
+    this.#journal?.clear();
     if (this.#publicationTimer !== null) clearInterval(this.#publicationTimer);
     this.#publicationTimer = null;
     await this.#listening?.catch(() => {});
@@ -1453,16 +1622,59 @@ async function runStatements(tx: SqlClient, script: string): Promise<void> {
   for (const statement of statements) await tx.unsafe(statement);
 }
 
-/** Audiences that see exactly the same rows share a re-read. */
+/**
+ * Audiences re-read as the same role and claims share a re-read — one query for all their
+ * filters (see `#reread`).
+ */
 function groupId(audience: Audience): string {
-  const f = audience.filter;
-  return JSON.stringify([
-    audience.scope.role,
-    audience.scope.claims,
-    f?.column ?? null,
-    f?.op ?? "eq",
-    f?.value ?? null,
-  ]);
+  return JSON.stringify([audience.scope.role, audience.scope.claims]);
+}
+
+/**
+ * File one re-read row under each of `filters` it matches: all of them for a single-filter
+ * query (its WHERE already matched), else those whose `m<n>` column is true.
+ */
+function sortRow(
+  row: Record<string, unknown>,
+  filters: Array<ParsedFilter | undefined>,
+  out: Map<string, Map<string, unknown>>,
+): void {
+  const parsed = JSON.parse(String(row.r));
+  filters.forEach((filter, n) => {
+    if (filters.length === 1 || row[`m${n}`] === true) {
+      out.get(filterId(filter))!.set(String(row.k), parsed);
+    }
+  });
+}
+
+/** A group's audiences by filter (in first-seen order). */
+function byFilterOf(group: Audience[]): Map<string, Audience[]> {
+  const byFilter = new Map<string, Audience[]>();
+  for (const audience of group) {
+    const id = filterId(audience.filter);
+    const same = byFilter.get(id);
+    if (same) same.push(audience);
+    else byFilter.set(id, [audience]);
+  }
+  return byFilter;
+}
+
+/** A filter's identity within a group (`""`: none). */
+function filterId(filter: ParsedFilter | undefined): string {
+  return filter ? JSON.stringify([filter.column, filter.op ?? "eq", filter.value]) : "";
+}
+
+/**
+ * Fold one change into a burst's changes by key: the latest op per key wins (an insert stays an
+ * insert), moved to the end so the map keeps the commit order of each key's LAST change.
+ *
+ * @returns Whether the key is new to the burst.
+ */
+function coalesceInto(byKey: Map<string, Pending>, key: string, event: TableNotification): boolean {
+  const previous = byKey.get(key);
+  if (previous) byKey.delete(key);
+  byKey.set(key, merge(previous, event.op as Pending["op"], event));
+  return previous === undefined;
 }
 
 /** A notification payload, validated (malformed → `null`; overflow or no key → `resync`). */
@@ -1566,6 +1778,28 @@ export function rereadQuery(
     params.push(filter.value);
     text += ` and ${filterSql(filter, "$2", types)}`;
   }
+  return { text, params };
+}
+
+/**
+ * `select key, row, m0, m1, …` for the given keys under the caller's scope, where `m<n>` says
+ * whether the row matches `filters[n]` (`false` for a NULL comparison): one re-read for several
+ * subscriptions of one identity with different filters. Each filter value is its own parameter.
+ */
+function groupRereadQuery(
+  table: ResolvedTable,
+  filters: Array<ParsedFilter | undefined>,
+  keys: string[],
+  types: Map<string, string>,
+): { text: string; params: unknown[] } {
+  const base = rereadQuery(table, undefined, keys, types);
+  const params = [...base.params];
+  const columns = filters.map((filter, n) => {
+    if (!filter) return `true as m${n}`;
+    params.push(filter.value);
+    return `coalesce(${filterSql(filter, `$${params.length}`, types)}, false) as m${n}`;
+  });
+  const text = base.text.replace(" as r from ", ` as r, ${columns.join(", ")} from `);
   return { text, params };
 }
 

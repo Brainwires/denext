@@ -1,7 +1,8 @@
 // `useTableChanges` from `@denext/backend/client` against a fake WebSocket and the in-memory DOM:
 // the subscribe frame (the realtime channel, a key naming the table, a fresh nonce and the
 // filter), rows kept from `initial` as changes arrive, `stale` + `onResync` on a gap, a resync
-// frame or a reconnect, a new `initial` clearing it, and a refused subscription. Plus
+// frame or a reconnect the server does not answer with `resumed` (one it does is replayed, not
+// stale), a new `initial` clearing it, and a refused subscription. Plus
 // `applyTableChanges` and `fromPostgresJs`'s `listen` mapping.
 
 import { assert, assertEquals } from "@std/assert";
@@ -69,6 +70,40 @@ function withFakeSocket(body: () => void): void {
 
 type Note = { id: number; body: string };
 
+/**
+ * Take over the 10-second resume waits the hook arms (every other timer runs as usual):
+ * `fire()` runs those still armed, as if the wait ended; `armed` counts them; `restore()` undoes it.
+ */
+function resumeWaits(): { readonly armed: number; fire(): void; restore(): void } {
+  const set = globalThis.setTimeout;
+  const clear = globalThis.clearTimeout;
+  const waits = new Map<number, () => void>();
+  let next = 1_000_000;
+  globalThis.setTimeout = ((cb: () => void, ms?: number, ...rest: unknown[]) => {
+    if (ms !== 10_000) return set(cb, ms, ...rest);
+    waits.set(++next, cb);
+    return next;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: number) => {
+    if (id !== undefined && waits.has(id)) waits.delete(id);
+    else clear(id);
+  }) as typeof clearTimeout;
+  return {
+    get armed() {
+      return waits.size;
+    },
+    fire() {
+      const due = [...waits.values()];
+      waits.clear();
+      for (const cb of due) cb();
+    },
+    restore() {
+      globalThis.setTimeout = set;
+      globalThis.clearTimeout = clear;
+    },
+  };
+}
+
 Deno.test("useTableChanges: subscribes with a fresh key and keeps rows from initial", () => {
   withFakeSocket(() => {
     const { doc, container } = makeDom();
@@ -129,13 +164,35 @@ Deno.test("useTableChanges: subscribes with a fresh key and keeps rows from init
     setInitial([{ id: 1, body: "uno" }, { id: 5, body: "five" }, { id: 6, body: "six" }]);
     flushSync();
     assertEquals([state.stale, container.textContent], [false, "uno,five,six"]);
-    // A resync frame, and a second ack (a reconnect), each mark it stale.
+    // A resync frame marks it stale.
     frame(4, { seq: 5, resync: true });
     flushSync();
     assertEquals(resyncs.length, 2);
-    ws.deliver({ type: "channel-ready", subId: sent.subId });
+    setInitial([{ id: 1, body: "uno" }]);
     flushSync();
-    assertEquals([state.stale, resyncs.length], [true, 3]);
+    // A second ack (a reconnect) answered by `resumed`: the server replays what was missed, so it
+    // is not stale, and the replayed changes (numbered on) apply.
+    const waits = resumeWaits();
+    try {
+      ws.deliver({ type: "channel-ready", subId: sent.subId });
+      flushSync();
+      assertEquals(waits.armed, 1, "the re-subscribe waits for the server's answer");
+      frame(5, { seq: 6, resumed: true });
+      frame(6, { seq: 7, changes: [{ op: "insert", key: "7", row: { id: 7, body: "seven" } }] });
+      flushSync();
+      assertEquals(waits.armed, 0, "answered");
+      assertEquals([state.stale, resyncs.length, container.textContent], [false, 2, "uno,seven"]);
+      // A reconnect the server does not answer (it lost the subscription): stale once the wait
+      // ends, not before.
+      ws.deliver({ type: "channel-ready", subId: sent.subId });
+      flushSync();
+      assertEquals([waits.armed, state.stale], [1, false]);
+      waits.fire();
+      flushSync();
+      assertEquals([state.stale, resyncs.length], [true, 3]);
+    } finally {
+      waits.restore();
+    }
     // Refused: the error is reported.
     ws.deliver({
       type: "error",

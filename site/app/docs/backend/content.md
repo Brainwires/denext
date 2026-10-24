@@ -793,7 +793,7 @@ export function NoteList({ initial }: { initial: Note[] }) {
 | `key`      | The rows' key column, as configured for the table (default `"id"`).                                                                                                                                                                                    |
 | `schema`   | The table's schema, for a table outside `public` (one the publication lists, or a configured table with a `schema`).                                                                                                                                   |
 | `onChange` | Called with each batch: `{ op: "insert" \| "update", key, row }`, `{ op: "update", key, oldKey, row }` when the key changed, `{ op: "delete", key }`, `{ op: "truncate" }`; `update` and `delete` carry `old` for a table configured `old: "full"`.    |
-| `onResync` | Called when changes may have been missed: re-read and pass the rows as `initial`.                                                                                                                                                                      |
+| `onResync` | Called when changes may have been missed (a reconnect the server could not replay, a lost frame): re-read and pass the rows as `initial`.                                                                                                              |
 | `enabled`  | `false` keeps the hook idle.                                                                                                                                                                                                                           |
 
 From a subscriber's side, `insert` means a row entered their view — inserted, or updated so their
@@ -801,6 +801,16 @@ policies or filter now match it — and `delete` means one left it: deleted, or 
 policies or filter. `truncate` empties the list (it reaches only subscribers who could see rows of
 the table). Rows keep arrival order; sort them when you render. The same tables also serve
 [`supabase.channel()`](#supabase-realtime-supabasechannel), with Supabase's own event semantics.
+
+**A reconnect is replayed.** When the viewer's connection drops (a train tunnel, a laptop lid) and
+comes back within `replay.retentionSeconds` (60 by default), the server sends what changed in
+between — re-read as that viewer, under their policies, with deletes only for rows they could see —
+and `stale` stays `false`. Each server instance journals the changes it receives (keys only) and
+each subscription the last change it was delivered, so nothing runs while the viewer is away: the
+missed changes are coalesced and re-read once, when they return. When the gap can't be replayed —
+older than the retention, more than `replay.maxChangesPerTable` changes of the table, the
+database listener was lost meanwhile, or the reconnect reached another instance (no sticky
+sessions) — `stale` turns true and `onResync` runs, as before.
 
 ### How it works
 
@@ -824,20 +834,26 @@ the table). Rows keep arrival order; sort them when you render. The same tables 
    every subscriber. Changing a table's `events`, `key` or `old` installs a
    new migration that replaces its triggers; a table removed from the options keeps them until you
    `drop trigger denext_realtime on <table>` (and `denext_realtime_truncate`).
-2. **One listener per server instance.** A single connection `LISTEN`s (the driver re-listens after
-   a lost connection, and every subscriber is told to re-read, since changes sent meanwhile are
-   lost). Notifications are coalesced for 16 ms, as Live coalesces its own pushes: within a burst
-   the latest change per key wins. One burst is delivered at a time: changes that arrive while its
-   re-reads run go out together in the next.
-3. **Re-read as each subscriber.** Subscribers with the same identity, table and filter form a
-   group, and each group's changed rows are read back with one query
+2. **One listener per server instance.** A single connection `LISTEN`s and feeds every
+   subscriber of every table (the driver re-listens after a lost connection, and every subscriber
+   is told to re-read, since changes sent meanwhile are lost). Notifications are coalesced for
+   16 ms, as Live coalesces its own pushes: within a burst the latest change per key wins. One
+   burst is delivered at a time: changes that arrive while its re-reads run go out together in the
+   next.
+3. **Re-read once per identity.** Subscriptions with the same role and claims to one table form a
+   group, whatever their filters, and each group's changed rows are read back with one query
    (`select … where key = any(…)`, 1 000 keys per statement) through the RLS-scoped client — `role`
-   and `request.jwt.claims` set for that identity, exactly as `db()` does. A burst costs one query
-   per identity, not one per subscriber per row: a 500-row transaction watched by two users is one
-   flush and two re-reads. Keys and the filter value are compared in the column's own type (read
-   once from the catalog), so the primary key — and an index on a filter column — serves the
-   re-read, and each query runs under a transaction-local `statement_timeout` (`queryTimeoutMs`); a
-   re-read that fails or times out becomes a "re-read" signal for that group.
+   and `request.jwt.claims` set for that identity, exactly as `db()` does. With one filter it is
+   the query's `WHERE`; with several, each is a boolean column of the same query (`coalesce(<filter>,
+   false) as m0, …`), so a burst costs one query per identity, not one per subscriber, filter or
+   row: a 500-row transaction watched by two users is one flush and two re-reads, and so is one
+   watched by those users through 36 subscriptions over 17 filters. Two tabs of one session share
+   the claims; two devices (two sessions, each with its own `session_id`) are two identities here.
+   Keys and filter values are compared in the column's own type (read once from the catalog), so
+   the primary key — and an index on a single filter column — serves the re-read, and each query
+   runs under a transaction-local `statement_timeout` (`queryTimeoutMs`); a re-read that fails or
+   times out becomes a "re-read" signal for that group (a combined one is retried filter by filter
+   first, so a bad filter value affects only its own subscribers).
 4. **Deletes go only to those who could see the row.** A deleted row cannot be re-read against a
    policy, so each subscription tracks the keys it may know about: the rows it could see when it
    subscribed (one key-only query under its own policies, up to `maxTrackedKeys`) plus every row
@@ -846,8 +862,18 @@ the table). Rows keep arrival order; sort them when you render. The same tables 
    deletes are not sent: keep subscriptions narrow with a `filter`, or raise the limit.
 5. **Frames.** Changes ride the Live socket on the backend's own channel, split to fit its payload
    cap (a row too large for one frame arrives with `truncated: true` and no `row`) and numbered per
-   subscription; a gap, a burst over the queue limit, or a reconnect sets `stale` and calls
-   `onResync`. Delivery is at-most-once, like every Live channel.
+   subscription; a gap, a burst over the queue limit, or a reconnect that can't be replayed sets
+   `stale` and calls `onResync`.
+6. **Replay after a reconnect.** Every change an instance receives is journaled (keys only, the
+   old row of an `old: "full"` table included) for `replay.retentionSeconds`, at most
+   `replay.maxChangesPerTable` per table, and each subscription keeps the journal position it was
+   delivered up to. A subscription whose connection closed is kept for the retention; frames not
+   yet sent wait for it. When the same key subscribes again the server sends `{ resumed: true }`,
+   then — in the next flush, on its own — the journal's changes after its position, coalesced and
+   re-read as the subscriber through the same tracked-key rules as live changes, numbered on from
+   the frames before the drop. A position the journal no longer covers, or a journaled listener
+   loss, is `{ resync: true }` instead; a reconnect answered by neither within 10 seconds (the
+   subscription was dropped, or the socket reached another instance) marks the hook `stale`.
 
 **Who receives what.** The subscription key holds the table, the filter and a 128-bit random value
 the browser picks; the first subscriber binds it to their identity (the user's id, or anon), and
@@ -863,9 +889,10 @@ known, or when it is a loopback/private socket peer — a reverse proxy every vi
 from `rateLimitTrustedProxies`, or a loopback/private peer under `trustForwardedHeaders`), to key
 on each visitor's address; `rateLimitLocalAddresses` counts such a peer as itself) — may hold
 `maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
-the distinct filters (re-read groups) it adds to a burst; the instance holds `maxSubscribers`. An
-unsubscribed key is forgotten at once. One whose connection closed is kept for 15 seconds so a
-reconnect resumes it, but only while there is room: at either cap the oldest such subscription
+the filters it adds to a burst's re-reads; the instance holds `maxSubscribers`. An
+unsubscribed key is forgotten at once. One whose connection closed is kept for
+`replay.retentionSeconds` (15 seconds with `replay: false`) so a reconnect resumes it, but only
+while there is room: at either cap the oldest such subscription
 gives way, and only live subscriptions refuse a new one (the browser sees `denied`). Subscribing
 runs one key-only query; at most four run at a time, and each identity may start 32 in a burst,
 then 8 a second. Server-side `tableChanges` subscriptions count toward `maxSubscribers` only.
@@ -1112,11 +1139,12 @@ logical when many connections write realtime tables at once.
 | `logical`                     | —                     | `{ pollMs?: 50, maxChanges?: 10000 }`: the logical source's read interval and batch.                                                                                         |
 | `revalidate`                  | `false`               | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.                                                                                 |
 | `migrate`                     | `true`                | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead.                                                                              |
-| `maxSubscribers`              | 10 000                | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect, while there is room).                                                                        |
+| `maxSubscribers`              | 10 000                | Subscriptions per server instance (a closed tab's is kept for the replay retention, while there is room).                                                                    |
 | `maxSubscriptionsPerIdentity` | 64                    | Subscriptions per signed-in user, or per signed-out client address (and so its distinct filters).                                                                            |
 | `maxTrackedKeys`              | 10 000                | Keys tracked per subscription, for deletes.                                                                                                                                  |
 | `queryTimeoutMs`              | 5 000                 | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                                                                                            |
 | `socket`                      | `true`                | Serve `/realtime/v1/*` for supabase-js; `false` turns it off; an object sets its [limits](#supabase-realtime-supabasechannel).                                               |
+| `replay`                      | `true`                | `{ retentionSeconds?: 60, maxChangesPerTable?: 10000 }`: replay a `useTableChanges` reconnect from the journal; `false`: a reconnect is always a re-read.                    |
 
 Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's
 [Deno toolchain](/docs/toolchain)), or the npm `postgres` package through

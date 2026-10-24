@@ -25,7 +25,7 @@
     ],
     "links": {
       "jsr:@denext/avif@0.2.0": {},
-      "jsr:@denext/backend@0.7.0": {
+      "jsr:@denext/backend@0.8.0": {
         "dependencies": [
           "jsr:@denext/denext@^4.8.0",
           "jsr:@std/path@1"

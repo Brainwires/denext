@@ -8,6 +8,24 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Realtime from the database replays what a reconnecting subscriber missed (`@denext/backend`
+  0.8.0).** `useTableChanges` subscriptions whose Live connection drops and comes back within
+  `realtime({ replay: { retentionSeconds } })` (60 seconds by default) are sent the changes made
+  meanwhile, re-read under the subscriber's row-level security with the same delete rules as live
+  changes, after a `resumed` frame. A gap the per-instance journal no longer covers
+  (`maxChangesPerTable`, 10 000), or a lost database listener, is an explicit `resync`, and a
+  reconnect the server does not answer sets `stale` as before. Before, every reconnect was a
+  `stale`. `replay: false` turns it off; Supabase's `postgres_changes` is unchanged.
+
+### Changed
+
+- **Realtime re-reads once per identity per burst, whatever the filters (`@denext/backend`).**
+  One user's subscriptions with different filters share one re-read query (a boolean column per
+  filter) instead of one per filter: 36 subscriptions over 17 filters and two users went from 34
+  re-reads per burst to 2.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added
