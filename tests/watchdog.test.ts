@@ -6,7 +6,15 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import { join } from "@std/path";
 import { runBounded } from "./helpers/bounded-command.ts";
 import { removeTempDir } from "./helpers/temp.ts";
-import { exitedOutputForTest } from "./helpers/watchdog.ts";
+import {
+  exitedOutputForTest,
+  parseCimJson,
+  parseGetProcess,
+  parsePs,
+  processSnapshot,
+  processTree,
+  stallMessage,
+} from "./helpers/watchdog.ts";
 
 const WATCHDOG = new URL("./helpers/watchdog.ts", import.meta.url).href;
 
@@ -39,6 +47,14 @@ Deno.test("watchTests: a stalled test fails at its deadline, naming the open sub
     assertStringIncludes(r.output, `"stalls" still running after 1 s`);
     assertStringIncludes(r.output, "Subprocesses this file started that have not finished:");
     assertStringIncludes(r.output, "eval await new Promise");
+    // The open subprocess is said to be still running (not exited with its pipes held open), and
+    // the OS's view of this test process's children is in the report.
+    assertStringIncludes(r.output, "still running");
+    assert(
+      /Processes under this test process \(pid \d+\):\n\s+- pid \d+: .*eval/.test(r.output) ||
+        r.output.includes("The OS listing has no parent pids here"),
+      r.output,
+    );
     assertStringIncludes(r.output, "3 passed");
     assertStringIncludes(r.output, "1 failed");
     assertStringIncludes(r.output, "1 ignored");
@@ -81,4 +97,80 @@ Deno.test("watchTests: output() returns shortly after the child exits while anot
     } catch { /* gone, or never started */ }
     await removeTempDir(dir);
   }
+});
+
+Deno.test("watchdog: the OS process listings parse into pid, parent and command", () => {
+  assertEquals(parsePs("  1     0 /sbin/launchd\n 4242   1 deno test -A x.ts\n\n"), [
+    { pid: 1, ppid: 0, command: "/sbin/launchd" },
+    { pid: 4242, ppid: 1, command: "deno test -A x.ts" },
+  ]);
+  assertEquals(
+    parseCimJson(
+      '[{"ProcessId":4,"ParentProcessId":0,"Name":"System","CommandLine":null},' +
+        '{"ProcessId":9,"ParentProcessId":4,"Name":"deno.exe","CommandLine":"deno doc --json a.ts"}]',
+    ),
+    [
+      { pid: 4, ppid: 0, command: "System" },
+      { pid: 9, ppid: 4, command: "deno doc --json a.ts" },
+    ],
+  );
+  assertEquals(parseCimJson('{"ProcessId":7,"ParentProcessId":1,"CommandLine":"x"}'), [
+    { pid: 7, ppid: 1, command: "x" },
+  ]);
+  assertEquals(parseGetProcess("9872,deno\r\n956,esbuild\r\n\r\n"), [
+    { pid: 9872, command: "deno" },
+    { pid: 956, command: "esbuild" },
+  ]);
+});
+
+Deno.test("watchdog: processTree lists the descendants of a pid, indented, and nothing else", () => {
+  const rows = [
+    { pid: 1, ppid: 0, command: "init" },
+    { pid: 10, ppid: 1, command: "deno test" },
+    { pid: 11, ppid: 10, command: "esbuild --service" },
+    { pid: 12, ppid: 11, command: "conhost" },
+    { pid: 13, ppid: 10, command: "x".repeat(400) },
+    { pid: 20, ppid: 1, command: "unrelated" },
+    { pid: 30, command: "no parent known" },
+  ];
+  const tree = processTree(rows, 10);
+  assertEquals(tree.slice(0, 2), ["  - pid 11: esbuild --service", "    - pid 12: conhost"]);
+  assertEquals(tree.length, 3);
+  assert(tree[2].startsWith("  - pid 13: xxx") && tree[2].endsWith("…"), tree[2]);
+  assertEquals(processTree(rows, 20), []);
+});
+
+Deno.test("watchdog: the stall report says when the OS listing is missing or has no children", async () => {
+  const none = await stallMessage("t", 1_000, () => Promise.resolve([]));
+  assertStringIncludes(none, '"t" still running after 1 s');
+  assertStringIncludes(none, "The process list could not be read.");
+  const failing = await stallMessage("t", 1_000, () => Promise.reject(new Error("no ps")));
+  assertStringIncludes(failing, "The process list could not be read.");
+  const noKids = await stallMessage(
+    "t",
+    1_000,
+    () => Promise.resolve([{ pid: Deno.pid, ppid: 1, command: "deno" }]),
+  );
+  assertStringIncludes(noKids, `No process is running under this test process (pid ${Deno.pid}).`);
+  const noParents = await stallMessage(
+    "t",
+    1_000,
+    () => Promise.resolve([{ pid: Deno.pid, command: "deno.exe" }]),
+  );
+  assertStringIncludes(noParents, "The OS listing has no parent pids here");
+  const tree = await stallMessage(
+    "t",
+    1_000,
+    () => Promise.resolve([{ pid: 77, ppid: Deno.pid, command: "deno doc --json a.ts" }]),
+  );
+  assertStringIncludes(
+    tree,
+    `Processes under this test process (pid ${Deno.pid}):\n  - pid 77: deno doc`,
+  );
+});
+
+Deno.test("watchdog: processSnapshot lists this process", async () => {
+  const rows = await processSnapshot();
+  // Windows without admin rights falls back to Get-Process (no parents); every listing has this pid.
+  assert(rows.some((r) => r.pid === Deno.pid), `pid ${Deno.pid} missing from ${rows.length} rows`);
 });

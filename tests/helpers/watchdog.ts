@@ -9,7 +9,10 @@
 // `deno info`, a `deno bundle`, an esbuild service). The stalled work is abandoned, not stopped;
 // the rest of the run goes on. The file's `output()` calls also stop reading shortly after their
 // child exits, which removes the one stall this harness is known to cause (the Windows pipe
-// inheritance described in `tests/helpers/bounded-build.ts`).
+// inheritance described in `tests/helpers/bounded-build.ts`). The failure also says, for each open
+// subprocess, whether it is still running or has exited with its pipes still open, and lists the
+// processes alive under this test process (pid, parent, command line), so a stall in CI names the
+// process it waits on.
 
 import { exitedOutput as readExited } from "../../src/build/exited-output.ts";
 
@@ -20,6 +23,10 @@ const TEST_DEADLINE_MS = 600_000;
 interface Open {
   readonly what: string;
   readonly since: number;
+  /** The child's pid, once spawned. */
+  pid?: number;
+  /** Set when the child has exited (its `output()` may still be reading the pipes). */
+  exited?: string;
 }
 
 const open = new Set<Open>();
@@ -30,13 +37,25 @@ function describe(cmd: string | URL, options?: Deno.CommandOptions): string {
   return text.length > 240 ? `${text.slice(0, 240)}…` : text;
 }
 
-/** Track `p` as open (`what`) until it settles. */
-function track<T>(what: string, p: Promise<T>): Promise<T> {
-  const entry = { what, since: Date.now() };
+/** Track `p` as open (`what`) until it settles; the entry is returned for its pid and exit. */
+function track<T>(
+  what: string,
+  p: Promise<T>,
+  entry: Open = { what, since: Date.now() },
+): Promise<T> {
   open.add(entry);
   const done = () => open.delete(entry);
   p.then(done, done);
   return p;
+}
+
+/** Record `child`'s pid in `entry`, and its exit once it happens. */
+function watchChild(entry: Open, child: Deno.ChildProcess): void {
+  entry.pid = child.pid;
+  child.status.then(
+    (s) => entry.exited = s.signal ? `signal ${s.signal}` : `code ${s.code}`,
+    () => entry.exited = "status unknown",
+  );
 }
 
 /** How long `output()` reads a pipe after the child has exited (see {@linkcode exitedOutput}). */
@@ -54,11 +73,13 @@ function exitedOutput(
   cmd: string | URL,
   options: Deno.CommandOptions = {},
   graceMs = DRAIN_AFTER_EXIT_MS,
+  entry?: Open,
 ): Promise<Deno.CommandOutput> {
   const stdout = options.stdout ?? "piped";
   const stderr = options.stderr ?? "piped";
   const child = new Original(cmd, { ...options, stdin: options.stdin ?? "null", stdout, stderr })
     .spawn();
+  if (entry) watchChild(entry, child);
   return readExited(child, { stdout: stdout === "piped", stderr: stderr === "piped" }, graceMs);
 }
 
@@ -84,15 +105,154 @@ function trackSubprocesses(): void {
       this.#what = describe(cmd, options);
     }
     override output(): Promise<Deno.CommandOutput> {
-      return track(`${this.#what} (output)`, exitedOutput(Original, this.#cmd, this.#options));
+      const entry: Open = { what: `${this.#what} (output)`, since: Date.now() };
+      return track(
+        entry.what,
+        exitedOutput(Original, this.#cmd, this.#options, DRAIN_AFTER_EXIT_MS, entry),
+        entry,
+      );
     }
     override spawn(): Deno.ChildProcess {
       const child = super.spawn();
-      track(`${this.#what} (pid ${child.pid})`, child.status);
+      const entry: Open = { what: `${this.#what} (pid ${child.pid})`, since: Date.now() };
+      watchChild(entry, child);
+      track(entry.what, child.status, entry);
       return child;
     }
   }
+  originalCommand = Original;
   Object.defineProperty(Deno, "Command", { value: Tracked, configurable: true, writable: true });
+}
+
+/** The `Deno.Command` from before {@linkcode trackSubprocesses} replaced it (the snapshot's own). */
+let originalCommand: typeof Deno.Command = Deno.Command;
+
+/** One process of a {@linkcode processSnapshot}. */
+export interface ProcessRow {
+  readonly pid: number;
+  /** The parent's pid; `undefined` where the OS listing has none (Windows without CIM). */
+  readonly ppid?: number;
+  readonly command: string;
+}
+
+/** How long the process listing may take before the stall report goes without it. */
+const SNAPSHOT_TIMEOUT_MS = 20_000;
+
+/** Parse `ps -A -o pid=,ppid=,command=` output. */
+export function parsePs(text: string): ProcessRow[] {
+  const rows: ProcessRow[] = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3].trim() });
+  }
+  return rows;
+}
+
+/** Parse `Get-CimInstance Win32_Process | … | ConvertTo-Json` output (one object or an array). */
+export function parseCimJson(text: string): ProcessRow[] {
+  const parsed = JSON.parse(text) as unknown;
+  const list = Array.isArray(parsed) ? parsed : [parsed];
+  return list.map((p) => {
+    const o = p as {
+      ProcessId: number;
+      ParentProcessId: number;
+      CommandLine: string | null;
+      Name?: string;
+    };
+    return { pid: o.ProcessId, ppid: o.ParentProcessId, command: o.CommandLine ?? o.Name ?? "" };
+  });
+}
+
+/**
+ * Parse `<pid>,<name>` lines from `Get-Process` (no parent pids: CIM, and `tasklist` with it, are
+ * refused without admin rights).
+ */
+export function parseGetProcess(text: string): ProcessRow[] {
+  const rows: ProcessRow[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^(\d+),(.*)$/);
+    if (m) rows.push({ pid: Number(m[1]), command: m[2].trim() });
+  }
+  return rows;
+}
+
+/** The listing children's own pids, left out of the tree. */
+const listingPids = new Set<number>();
+
+/** Run a listing command to its exit within {@linkcode SNAPSHOT_TIMEOUT_MS}; its stdout, or null. */
+async function listing(cmd: string, args: string[]): Promise<string | null> {
+  let child: Deno.ChildProcess;
+  try {
+    child = new originalCommand(cmd, { args, stdin: "null", stdout: "piped", stderr: "null" })
+      .spawn();
+  } catch {
+    return null;
+  }
+  listingPids.add(child.pid);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((r) => timer = setTimeout(() => r(null), SNAPSHOT_TIMEOUT_MS));
+  const out = await Promise.race([
+    readExited(child, { stdout: true, stderr: false }, 2_000).then((o) =>
+      o.success ? new TextDecoder().decode(o.stdout) : null
+    ),
+    late,
+  ]).catch(() => null);
+  clearTimeout(timer);
+  if (out === null) {
+    try {
+      child.kill("SIGKILL");
+    } catch { /* already gone */ }
+  }
+  return out;
+}
+
+/** Every process the OS lists (best effort: `[]` when no listing could be had). */
+export async function processSnapshot(): Promise<ProcessRow[]> {
+  if (Deno.build.os === "windows") {
+    const cim = await listing("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | " +
+      "ConvertTo-Json -Compress",
+    ]);
+    if (cim) {
+      try {
+        return parseCimJson(cim);
+      } catch { /* fall back to Get-Process */ }
+    }
+    const procs = await listing("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Get-Process | ForEach-Object { '{0},{1}' -f $_.Id,$_.ProcessName }",
+    ]);
+    return procs ? parseGetProcess(procs) : [];
+  }
+  const ps = await listing("ps", ["-A", "-o", "pid=,ppid=,command="]);
+  return ps ? parsePs(ps) : [];
+}
+
+/** `rows` under `root` (its descendants), as an indented tree; empty when `rows` has no parents. */
+export function processTree(rows: readonly ProcessRow[], root: number): string[] {
+  const kids = new Map<number, ProcessRow[]>();
+  for (const r of rows) {
+    if (r.ppid === undefined || r.pid === root || listingPids.has(r.pid)) continue;
+    kids.set(r.ppid, [...(kids.get(r.ppid) ?? []), r]);
+  }
+  const out: string[] = [];
+  const seen = new Set<number>();
+  const walk = (pid: number, depth: number) => {
+    for (const r of kids.get(pid) ?? []) {
+      if (seen.has(r.pid)) continue;
+      seen.add(r.pid);
+      const cmd = r.command.length > 300 ? `${r.command.slice(0, 300)}…` : r.command;
+      out.push(`${"  ".repeat(depth)}- pid ${r.pid}: ${cmd}`);
+      walk(r.pid, depth + 1);
+    }
+  };
+  walk(root, 1);
+  return out;
 }
 
 /** Test seam: {@linkcode exitedOutput} with a chosen grace. */
@@ -102,17 +262,40 @@ export const exitedOutputForTest = (
   graceMs: number,
 ): Promise<Deno.CommandOutput> => exitedOutput(Deno.Command, cmd, options, graceMs);
 
-/** Why the test named `name` was failed at `ms`. */
-function stallMessage(name: string, ms: number): string {
+/** What `o` is doing now: still running, or exited with its pipes still being read. */
+function stateOf(o: Open, alive: ReadonlySet<number> | null): string {
+  if (o.exited) return `exited (${o.exited}) but its pipes are still open`;
+  if (o.pid === undefined) return "not spawned yet";
+  if (alive && !alive.has(o.pid)) return `pid ${o.pid}, no longer listed by the OS`;
+  return `pid ${o.pid}, still running`;
+}
+
+/** Why the test named `name` was failed at `ms`, with what the OS lists under this process. */
+export async function stallMessage(
+  name: string,
+  ms: number,
+  snapshot: () => Promise<ProcessRow[]> = processSnapshot,
+): Promise<string> {
+  const rows = await snapshot().catch(() => [] as ProcessRow[]);
+  const alive = rows.length ? new Set(rows.map((r) => r.pid)) : null;
   const now = Date.now();
   const list = [...open].map((o) =>
-    `  - ${o.what}, open for ${Math.round((now - o.since) / 1000)} s`
+    `  - ${o.what}, open for ${Math.round((now - o.since) / 1000)} s: ${stateOf(o, alive)}`
   );
+  const tree = processTree(rows, Deno.pid);
+  const treeText = tree.length
+    ? `Processes under this test process (pid ${Deno.pid}):\n${tree.join("\n")}`
+    : rows.length && rows.every((r) => r.ppid === undefined)
+    ? "The OS listing has no parent pids here (CIM refused): see the states above."
+    : rows.length
+    ? `No process is running under this test process (pid ${Deno.pid}).`
+    : "The process list could not be read.";
   return `"${name}" still running after ${ms / 1000} s: failed here instead of holding the job ` +
     `until its timeout (an in-process build cannot be stopped).\n` +
     (list.length
       ? `Subprocesses this file started that have not finished:\n${list.join("\n")}`
-      : "No subprocess of this file is open: the stall is in this process.");
+      : "No subprocess of this file is open: the stall is in this process.") +
+    `\n${treeText}`;
 }
 
 type TestFn = (t: Deno.TestContext) => void | Promise<void>;
@@ -122,7 +305,9 @@ function bounded(name: string, fn: TestFn, ms: number): TestFn {
   const wrapped = async (t: Deno.TestContext) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stall = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(stallMessage(name, ms))), ms);
+      timer = setTimeout(() => {
+        stallMessage(name, ms).then((m) => reject(new Error(m)), reject);
+      }, ms);
     });
     try {
       await Promise.race([fn(t), stall]);
