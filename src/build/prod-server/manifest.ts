@@ -8,7 +8,7 @@ import { boundaryRefLoader, compatModuleMapFromManifest } from "../next-compat-l
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
-import { tagServerModules } from "../../runtime/server-action.ts";
+import { setUnreferencedActionsPermissive, tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import {
   type BoundaryManifest,
@@ -215,6 +215,9 @@ export async function resolveFlightBoundary(
   // the single keyed server bundle (the whole app's islands cost one module load, not one
   // import per island).
   const tagLoad = boundaryRefLoader(load);
+  // Production refuses the actions no module imports (a dev server earlier in this process, as
+  // in a test run, may have left the process permissive).
+  setUnreferencedActionsPermissive(false);
   await timed("tagServerModules", () => tagServerModules(boundary.server, tagLoad));
   // Import + tag the islands now, before the server listens, so the FIRST request doesn't
   // pay for it.
