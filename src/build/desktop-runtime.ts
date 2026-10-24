@@ -36,6 +36,7 @@ import {
   sweepLeftovers,
 } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
+import { runToExit } from "./exited-output.ts";
 import {
   currentDenoIdentity,
   type DenoIdentity,
@@ -378,7 +379,7 @@ export type CaptureRunner = (
 ) => Promise<{ code: number; text: string }>;
 
 const capture: CaptureRunner = async (cmd, args) => {
-  const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped" }).output();
+  const out = await runToExit(cmd, { args });
   const d = new TextDecoder();
   return { code: out.code, text: d.decode(out.stdout) + d.decode(out.stderr) };
 };

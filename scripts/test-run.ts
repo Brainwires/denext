@@ -39,6 +39,12 @@
 // is removed when the run ends: the temp dirs tests (and the builds, CLIs and browsers they start)
 // make and never remove — scaffolds, build output, profiles — go with it instead of piling up
 // in the machine's temp dir. Each test still gets its own directory inside the root.
+//
+// The parallel and serial passes preload `tests/helpers/watchdog-preload.ts`: every test of every
+// stock file gets a stall deadline (10 min by default, `DENEXT_TEST_DEADLINE_MS` to change it, `0`
+// to turn it off; a file's own `watchTests(ms)` sets its own), past which it fails with the
+// subprocesses it left open and the process tree under the test process, and the run goes on,
+// instead of a hung test holding the CI job until its timeout.
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative } from "@std/path";
@@ -195,6 +201,24 @@ export function testPasses(
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
+/** The module every stock pass preloads: the per-test stall watchdog. */
+export const WATCHDOG_PRELOAD = fromFileUrl(
+  new URL("../tests/helpers/watchdog-preload.ts", import.meta.url),
+);
+
+/**
+ * A stock pass's `deno test` arguments with the watchdog preloaded (null stays null).
+ *
+ * @param args The pass's arguments (`["test", ...]`), or null when it has nothing to run.
+ * @param preload The watchdog module.
+ */
+export function withWatchdog(
+  args: string[] | null,
+  preload: string = WATCHDOG_PRELOAD,
+): string[] | null {
+  return args ? [args[0], "--preload", preload, ...args.slice(1)] : null;
+}
+
 /** Every `*.vitest.ts` under `tests/` (repo-relative, `/`-separated), fixtures excluded. */
 export async function findVitestFiles(root: string = ROOT): Promise<string[]> {
   const out: string[] = [];
@@ -331,8 +355,8 @@ async function runPasses(): Promise<boolean> {
     console.error(`test-run: the stock test files run on ${Deno.execPath()}.`);
   }
   const stock = stockPassDeno(toolchain, Deno.execPath());
-  const parallel = await runPass(passes.parallel, stock);
-  const serial = await runPass(passes.serial, stock);
+  const parallel = await runPass(withWatchdog(passes.parallel), stock);
+  const serial = await runPass(withWatchdog(passes.serial), stock);
   const vitest = await vitestPass(passes.vitest, toolchain); // every pass runs, whatever failed
   return parallel && serial && vitest;
 }

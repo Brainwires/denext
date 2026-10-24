@@ -536,3 +536,33 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name:
+    "denoInfoGraph: a `deno info` that never exits is killed at the deadline and the crawl fails",
+  // The stand-in `deno` is a shell script.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_graph_stuck_" });
+    const entry = join(dir, "entry.ts");
+    await Deno.writeTextFile(entry, "export {};\n");
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(fake, `#!/bin/sh\nexec sleep 120\n`);
+    await Deno.chmod(fake, 0o755);
+    try {
+      const t0 = Date.now();
+      const { value } = await inChild<string>({
+        imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+        body: `return await denoInfoGraph([${JSON.stringify(entry)}], ` +
+          `{ cache: false, deadlineMs: 1_000 })` +
+          `.then(() => "returned", (e) => String(e));`,
+        env: { DENO_BIN: fake },
+        timeoutMs: 60_000,
+      });
+      assert(value.includes("was still running after 1 s and was killed"), value);
+      assert(Date.now() - t0 < 60_000, `took ${Date.now() - t0} ms`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

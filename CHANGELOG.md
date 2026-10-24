@@ -90,6 +90,12 @@ and this project adheres to
   probes and the desktop `dialogs` capability no longer wait on a pipe a concurrently spawned
   process inherited (Windows) or a grandchild kept open; they also give the child an empty stdin
   instead of the terminal's.
+- **A `deno info` crawl that never exits fails the build instead of hanging it.** The boundary
+  and feature-scan crawl kills a `deno info` still running after 10 minutes and fails with its
+  pid and stderr. The `next.config.*` evaluator (`denext migrate`, `denext ui`'s config panel)
+  and the Deno Desktop runtime's verification probes read until their child exits, too, so a
+  process the config left running (or one that inherited the pipes on Windows) no longer holds
+  them.
 - **`@denext/backend` 0.7.1 serves several ranges and honours `If-Range`.** Object downloads (the
   plugin's object route and the Storage API) read `Range` as the static file handler does: several
   ranges come back as one `multipart/byteranges` answer (sorted and coalesced), an unsatisfiable

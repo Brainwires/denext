@@ -400,11 +400,12 @@ export function reachableModules(info: DenoInfo, roots: string[]): DenoInfoModul
  * parsed graph plus the entries' resolved specifiers. Shared by the boundary/hydration
  * crawl and the CSS discovery crawl so both apply the same flags (sloppy imports, the
  * minimum-dependency-age policy) and the same temp-dir hygiene. Cached per `cache` name
- * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely.
+ * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely. A `deno info`
+ * still running after `deadlineMs` (default 10 minutes) is killed and the crawl fails.
  */
 export function denoInfoGraph(
   entryFiles: string[],
-  opts: { cache?: boolean | string } = {},
+  opts: { cache?: boolean | string; deadlineMs?: number } = {},
 ): Promise<ModuleGraph> {
   const name = cacheNameOf(opts.cache);
   const wanted = entryFiles.map((f) => toFileUrl(f).href);
@@ -420,7 +421,7 @@ export function denoInfoGraph(
     const pending = graphInFlight.get(key);
     if (pending) return pending;
   }
-  const run = spawnDenoInfo(entryFiles).then((graph) => {
+  const run = spawnDenoInfo(entryFiles, opts.deadlineMs).then((graph) => {
     if (name) {
       const entries = new Set(wanted);
       // Keep the largest graph: a later, smaller request must not evict the superset.
@@ -458,8 +459,41 @@ async function redirectConfigArgs(tmpDir: string): Promise<string[]> {
 /** `deno info`'s output streams, both read. */
 const PIPED = { stdout: true, stderr: true } as const;
 
+/** How long one `deno info` crawl may run, by default (minutes past a cold npm install's crawl). */
+const DENO_INFO_DEADLINE_MS = 600_000;
+
+/**
+ * `child`'s output, read until it exits ({@linkcode exitedOutput}); a child still running after
+ * `deadlineMs` is killed and the crawl fails, naming it, rather than holding the build forever.
+ */
+async function boundedInfoOutput(
+  child: Deno.ChildProcess,
+  deadlineMs: number,
+): Promise<Deno.CommandOutput> {
+  let killed = false;
+  const timer = setTimeout(() => {
+    killed = true;
+    try {
+      child.kill("SIGKILL");
+    } catch { /* it exited meanwhile */ }
+  }, deadlineMs);
+  try {
+    const out = await exitedOutput(child, PIPED);
+    if (killed) {
+      throw new Error(
+        `deno info (pid ${child.pid}) was still running after ${deadlineMs / 1000} s and was ` +
+          `killed:\n${new TextDecoder().decode(out.stderr)}`,
+      );
+    }
+    return out;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function spawnDenoInfo(
   entryFiles: string[],
+  deadlineMs: number = DENO_INFO_DEADLINE_MS,
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
   graphSpawns++;
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });
@@ -490,8 +524,9 @@ async function spawnDenoInfo(
       stderr: "piped",
     });
     // Read until `deno info` exits, not until its pipes close: a process spawned meanwhile by
-    // another thread (Windows) can hold them open for its whole life.
-    const { code, stdout, stderr } = await exitedOutput(command.spawn(), PIPED);
+    // another thread (Windows) can hold them open for its whole life. One that never exits is
+    // killed at the deadline.
+    const { code, stdout, stderr } = await boundedInfoOutput(command.spawn(), deadlineMs);
     if (code !== 0) {
       throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
     }

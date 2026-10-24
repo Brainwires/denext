@@ -13,8 +13,19 @@
 // subprocess, whether it is still running or has exited with its pipes still open, and lists the
 // processes alive under this test process (pid, parent, command line), so a stall in CI names the
 // process it waits on.
+//
+// `scripts/test-run.ts` preloads `tests/helpers/watchdog-preload.ts` into every stock test file,
+// which calls {@linkcode watchAllTests}: every test of every file gets the default deadline and its
+// subprocesses are tracked for the report, while `output()` keeps its own semantics there. A file
+// that calls `watchTests(ms)` itself sets its own deadline (and the short pipe drain) on top of
+// that, never a second wrapper.
 
 import { exitedOutput as readExited } from "../../src/build/exited-output.ts";
+
+// The timer functions as they were when this module loaded (preloaded: before any test file), so a
+// test that fakes the clock (`FakeTime`) or jitters timers neither stalls nor leaks the deadline.
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
 
 /** The default deadline: minutes past the slowest healthy runner's time for one test (several builds). */
 const TEST_DEADLINE_MS = 600_000;
@@ -83,16 +94,52 @@ function exitedOutput(
   return readExited(child, { stdout: stdout === "piped", stderr: stderr === "piped" }, graceMs);
 }
 
-let tracking = false;
+/**
+ * The watchdog's settings for this isolate (one test file), on `globalThis` so the preloaded copy
+ * and a file's own `watchTests()` share them even if the module were loaded twice.
+ */
+interface Settings {
+  /** The deadline given to each test registered from now on. */
+  deadline: number;
+  /** Whether `output()` stops reading shortly after the child exits ({@linkcode exitedOutput}). */
+  drain: boolean;
+  /** Whether `Deno.test` and `Deno.Command` are wrapped (once per isolate). */
+  installed: boolean;
+}
+
+const SETTINGS = Symbol.for("denext.tests.watchdog");
+
+/** This isolate's {@linkcode Settings}. */
+function settings(): Settings {
+  const g = globalThis as { [SETTINGS]?: Settings };
+  return g[SETTINGS] ??= { deadline: TEST_DEADLINE_MS, drain: false, installed: false };
+}
+
+/**
+ * `output()` as `Deno.Command` does it (EOF on both pipes; a spawn failure throws at once), but
+ * spawned so the child's pid and exit are known while it runs.
+ */
+function faithfulOutput(
+  Original: typeof Deno.Command,
+  cmd: string | URL,
+  options: Deno.CommandOptions = {},
+  entry: Open,
+): Promise<Deno.CommandOutput> {
+  const child = new Original(cmd, {
+    ...options,
+    stdout: options.stdout ?? "piped",
+    stderr: options.stderr ?? "piped",
+  }).spawn();
+  watchChild(entry, child);
+  return child.output();
+}
 
 /**
  * Record every `Deno.Command` this file runs (`output()` until it returns, `spawn()` until the
- * child exits), and read an `output()` child's pipes only briefly past its exit
- * ({@linkcode exitedOutput}).
+ * child exits); under {@linkcode Settings.drain}, read an `output()` child's pipes only briefly
+ * past its exit ({@linkcode exitedOutput}).
  */
 function trackSubprocesses(): void {
-  if (tracking) return;
-  tracking = true;
   const Original = Deno.Command;
   class Tracked extends Original {
     readonly #cmd: string | URL;
@@ -105,10 +152,14 @@ function trackSubprocesses(): void {
       this.#what = describe(cmd, options);
     }
     override output(): Promise<Deno.CommandOutput> {
+      // `output()` refuses a piped stdin; let it say so.
+      if (this.#options?.stdin === "piped") return super.output();
       const entry: Open = { what: `${this.#what} (output)`, since: Date.now() };
       return track(
         entry.what,
-        exitedOutput(Original, this.#cmd, this.#options, DRAIN_AFTER_EXIT_MS, entry),
+        settings().drain
+          ? exitedOutput(Original, this.#cmd, this.#options, DRAIN_AFTER_EXIT_MS, entry)
+          : faithfulOutput(Original, this.#cmd, this.#options, entry),
         entry,
       );
     }
@@ -190,14 +241,14 @@ async function listing(cmd: string, args: string[]): Promise<string | null> {
   }
   listingPids.add(child.pid);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<null>((r) => timer = setTimeout(() => r(null), SNAPSHOT_TIMEOUT_MS));
+  const late = new Promise<null>((r) => timer = realSetTimeout(() => r(null), SNAPSHOT_TIMEOUT_MS));
   const out = await Promise.race([
     readExited(child, { stdout: true, stderr: false }, 2_000).then((o) =>
       o.success ? new TextDecoder().decode(o.stdout) : null
     ),
     late,
   ]).catch(() => null);
-  clearTimeout(timer);
+  realClearTimeout(timer);
   if (out === null) {
     try {
       child.kill("SIGKILL");
@@ -305,14 +356,14 @@ function bounded(name: string, fn: TestFn, ms: number): TestFn {
   const wrapped = async (t: Deno.TestContext) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stall = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
+      timer = realSetTimeout(() => {
         stallMessage(name, ms).then((m) => reject(new Error(m)), reject);
       }, ms);
     });
     try {
       await Promise.race([fn(t), stall]);
     } finally {
-      clearTimeout(timer);
+      realClearTimeout(timer);
     }
   };
   Object.defineProperty(wrapped, "name", { value: fn.name });
@@ -337,18 +388,65 @@ function boundArgs(args: unknown[], ms: number): unknown[] {
 }
 
 /**
- * Give every `Deno.test` registered after this call (in this file: each test file has its own
- * globals) a deadline of `ms`, and track this file's subprocesses for the failure message.
- *
- * @param ms The per-test deadline.
+ * Wrap `Deno.test` (each test registered gets the deadline current at its registration; none when
+ * it is 0) and `Deno.Command`, once per isolate.
  */
-export function watchTests(ms: number = TEST_DEADLINE_MS): void {
+function install(): void {
+  const s = settings();
+  if (s.installed) return;
+  s.installed = true;
   trackSubprocesses();
   const original = Deno.test;
   const call = (register: (...a: unknown[]) => void) => (...args: unknown[]) =>
-    register(...boundArgs(args, ms));
+    register(...(s.deadline > 0 ? boundArgs(args, s.deadline) : args));
   const test = call(original as (...a: unknown[]) => void) as typeof Deno.test;
   test.ignore = call(original.ignore as (...a: unknown[]) => void) as typeof Deno.test.ignore;
   test.only = call(original.only as (...a: unknown[]) => void) as typeof Deno.test.only;
   Object.defineProperty(Deno, "test", { value: test, configurable: true, writable: true });
+}
+
+/**
+ * Give every `Deno.test` registered after this call (in this file: each test file has its own
+ * globals) a deadline of `ms`, track this file's subprocesses for the failure message, and read
+ * an `output()` child's pipes only briefly past its exit. Under the global watchdog
+ * ({@linkcode watchAllTests}) this only changes the deadline and the drain: tests are wrapped once.
+ *
+ * @param ms The per-test deadline.
+ */
+export function watchTests(ms: number = TEST_DEADLINE_MS): void {
+  const s = settings();
+  s.deadline = ms;
+  s.drain = true;
+  install();
+}
+
+/** The variable that sets {@linkcode watchAllTests}'s deadline in ms (`0` turns it off). */
+const DEADLINE_ENV = "DENEXT_TEST_DEADLINE_MS";
+
+/**
+ * The global watchdog's deadline: {@linkcode DEADLINE_ENV} when it is a whole number of ms (0:
+ * off), else the default.
+ *
+ * @param raw The variable's value.
+ */
+export function deadlineFrom(raw: string | undefined): number {
+  const n = Number(raw);
+  return raw !== undefined && raw.trim() !== "" && Number.isInteger(n) && n >= 0
+    ? n
+    : TEST_DEADLINE_MS;
+}
+
+/**
+ * The global watchdog (`tests/helpers/watchdog-preload.ts`, which `scripts/test-run.ts` preloads
+ * into every stock test file): every test gets the default deadline (or
+ * {@linkcode DEADLINE_ENV}'s) and the file's subprocesses are tracked for the report; `output()`
+ * keeps its own semantics. A file's own `watchTests()` overrides it.
+ */
+export function watchAllTests(): void {
+  let raw: string | undefined;
+  try {
+    raw = Deno.env.get(DEADLINE_ENV);
+  } catch { /* no env permission: the default */ }
+  settings().deadline = deadlineFrom(raw);
+  install();
 }

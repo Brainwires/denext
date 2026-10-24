@@ -12,6 +12,7 @@
 
 import { resolve, toFileUrl } from "@std/path";
 import { denoExecutable } from "./bundle.ts";
+import { exitedOutput } from "./exited-output.ts";
 
 /** The evaluation deadline when neither the caller nor the environment sets one. */
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -273,7 +274,9 @@ export async function evalNextConfigProgram(
       const writer = child.stdin.getWriter();
       await writer.write(new TextEncoder().encode(program)).catch(() => {});
       await writer.close().catch(() => {});
-      output = await child.output();
+      // Read until the evaluator exits, not until its pipes close: a process the config left
+      // running (or, on Windows, one another thread spawned meanwhile) can hold them open.
+      output = await exitedOutput(child, { stdout: true, stderr: true });
     } finally {
       await dismissReaper?.();
     }

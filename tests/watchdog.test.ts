@@ -7,6 +7,7 @@ import { join } from "@std/path";
 import { runBounded } from "./helpers/bounded-command.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 import {
+  deadlineFrom,
   exitedOutputForTest,
   parseCimJson,
   parseGetProcess,
@@ -63,6 +64,87 @@ Deno.test("watchTests: a stalled test fails at its deadline, naming the open sub
   } finally {
     await removeTempDir(dir);
   }
+});
+
+const PRELOAD = new URL("./helpers/watchdog-preload.ts", import.meta.url).href;
+
+/** A test file that never opts in: one test stalls on a child that never ends. */
+const UNWATCHED =
+  `Deno.test({ name: "stalls", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  await new Deno.Command(Deno.execPath(), {
+    args: ["eval", "await new Promise((r) => setTimeout(r, 120000))"],
+  }).output();
+} });
+Deno.test("finishes", async () => {
+  const out = await new Deno.Command(Deno.execPath(), { args: ["eval", "console.log(42)"] }).output();
+  if (new TextDecoder().decode(out.stdout).trim() !== "42") throw new Error("output() changed");
+});
+`;
+
+/** A test file that opts in under the preload: its own deadline, and no second wrapper. */
+const OPTED_IN = `import { watchTests } from ${JSON.stringify(WATCHDOG)};
+const before = Deno.test;
+watchTests(1_000);
+const same = Deno.test === before;
+Deno.test("wrapped once", () => { if (!same) throw new Error("watchTests wrapped Deno.test again"); });
+Deno.test({ name: "stalls", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  await new Promise((r) => setTimeout(r, 30000));
+} });
+`;
+
+/** Run `source` as a test file with the global watchdog preloaded and `deadline` in the env. */
+async function runPreloaded(source: string, deadline: string) {
+  const dir = await Deno.makeTempDir({ prefix: "denext_watchdog_global_" });
+  const file = join(dir, "global.test.ts");
+  await Deno.writeTextFile(file, source);
+  try {
+    return await runBounded(
+      Deno.execPath(),
+      ["test", "-A", "--no-check", "--preload", PRELOAD, file],
+      { timeoutMs: 150_000, env: { NO_COLOR: "1", DENEXT_TEST_DEADLINE_MS: deadline } },
+    );
+  } finally {
+    await removeTempDir(dir);
+  }
+}
+
+Deno.test("watchdog preload: a file that never calls watchTests still fails a stalled test at the deadline", async () => {
+  const t0 = Date.now();
+  // Far enough off that the other test's own `deno eval` finishes first on a loaded machine.
+  const r = await runPreloaded(UNWATCHED, "15000");
+  assert(!r.timedOut, r.output);
+  assert(!r.success, "the stalled test failed the run");
+  assertStringIncludes(r.output, `"stalls" still running after 15 s`);
+  assertStringIncludes(r.output, "Subprocesses this file started that have not finished:");
+  assertStringIncludes(r.output, "eval await new Promise");
+  assertStringIncludes(r.output, "still running");
+  // output() keeps its own semantics under the global watchdog.
+  assertStringIncludes(r.output, "1 passed");
+  assertStringIncludes(r.output, "1 failed");
+  assert(Date.now() - t0 < 130_000, `took ${Date.now() - t0} ms`);
+});
+
+Deno.test("watchdog preload: a file's own watchTests(ms) sets its deadline without wrapping twice", async () => {
+  // The preload's deadline is far off: only the file's own 1 s can fail the stalled test.
+  const r = await runPreloaded(OPTED_IN, "600000");
+  assert(!r.timedOut, r.output);
+  assertStringIncludes(r.output, `"stalls" still running after 1 s`);
+  assertStringIncludes(
+    r.output,
+    "No subprocess of this file is open: the stall is in this process.",
+  );
+  assertStringIncludes(r.output, "1 passed");
+  assertStringIncludes(r.output, "1 failed");
+});
+
+Deno.test("watchdog preload: DENEXT_TEST_DEADLINE_MS sets the deadline, 0 turns it off", () => {
+  assertEquals(deadlineFrom(undefined), 600_000);
+  assertEquals(deadlineFrom(""), 600_000);
+  assertEquals(deadlineFrom("abc"), 600_000);
+  assertEquals(deadlineFrom("-5"), 600_000);
+  assertEquals(deadlineFrom("1.5"), 600_000);
+  assertEquals(deadlineFrom("1800000"), 1_800_000);
+  assertEquals(deadlineFrom("0"), 0);
 });
 
 Deno.test("watchTests: output() returns shortly after the child exits while another process holds its stdout", async () => {
