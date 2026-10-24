@@ -347,8 +347,10 @@ Deno.test("revocation: a certificate naming no responder and no CRL has nothing 
 
 // ---- the passkeys configuration ------------------------------------------------------------
 
-Deno.test("attestation.revocation: soft by default, hard on request; mds.revocation wins", () => {
-  assertEquals(resolveMds({})?.revocation, "best-effort");
+Deno.test("attestation.revocation: hard by default (soft with an offline blob), soft on request; mds.revocation wins", () => {
+  assertEquals(resolveMds({})?.revocation, "require");
+  assertEquals(resolveMds({ blob: "x" })?.revocation, "best-effort");
+  assertEquals(resolveMds({ blob: "x" }, "hard")?.revocation, "require");
   assertEquals(resolveMds({}, "soft")?.revocation, "best-effort");
   assertEquals(resolveMds({}, "hard")?.revocation, "require");
   assertEquals(resolveMds({ revocation: "off" }, "hard")?.revocation, "off");
@@ -362,7 +364,7 @@ Deno.test("attestation.revocation: soft by default, hard on request; mds.revocat
   assert(threw, "an unknown policy is a config error");
 });
 
-Deno.test("attestation.revocation: an attestation x5c revoked by OCSP is refused; an unreachable responder refuses only hard", async () => {
+Deno.test("attestation.revocation: a revoked x5c is refused; an unreachable responder and CRL refuse by default and register with soft", async () => {
   const pki = await testPki();
   const signer = await testKey();
   const blobLeaf = await makeCert({
@@ -385,34 +387,44 @@ Deno.test("attestation.revocation: an attestation x5c revoked by OCSP is refused
     signer,
     [blobLeaf, pki.intermediate],
   );
-  const { cert: attestation } = await leafOf(pki, { ocspUrls: [OCSP_URL], serial: 42 });
+  const { cert: attestation } = await leafOf(pki, {
+    ocspUrls: [OCSP_URL],
+    crlUrls: [CRL_URL],
+    serial: 42,
+  });
   const result = {
     aaguid: Uint8Array.from(aaguid.match(/../g)!, (h) => parseInt(h, 16)),
     attestationType: "basic" as const,
     attestationCertificates: [attestation, pki.intermediate],
   };
   const issuer = issuerOf(pki.intermediateKey);
+  // Resolved as a fetched BLOB is (no `blob` option), then handed the test BLOB.
   const mds = (
     bodies: Parameters<typeof stubFetch>[0],
     policy?: "soft" | "hard",
   ): ResolvedMds => ({
-    ...resolveMds({ blob: jwt }, policy)!,
+    ...resolveMds({}, policy)!,
+    blob: jwt,
     roots: [pki.root],
     fetch: stubFetch(bodies).fetch,
   });
   const ocsp = (status: "good" | "revoked") =>
     makeOcspResponse({ issuer, entries: [{ serial: 42, status }] });
-  await checkMdsAttestation(mds({ [OCSP_URL]: await ocsp("good") }, "hard"), result, NOW);
-  const revoked = mds({ [OCSP_URL]: await ocsp("revoked") });
+  await checkMdsAttestation(mds({ [OCSP_URL]: await ocsp("good") }), result, NOW);
+  const revoked = mds({ [OCSP_URL]: await ocsp("revoked") }, "soft");
   await assertRejects(
     () => checkMdsAttestation(revoked, result, NOW),
     Error,
     "revoked",
   );
-  await checkMdsAttestation(mds({}), result, NOW); // soft: the responder is down, it registers
-  await assertRejects(
-    () => checkMdsAttestation(mds({}, "hard"), result, NOW),
-    Error,
-    "no revocation status",
-  );
+  // The OCSP responder and the CRL are both unreachable: refused by default and under hard…
+  for (const policy of [undefined, "hard"] as const) {
+    await assertRejects(
+      () => checkMdsAttestation(mds({}, policy), result, NOW),
+      Error,
+      "no revocation status",
+    );
+  }
+  // …registered under soft.
+  await checkMdsAttestation(mds({}, "soft"), result, NOW);
 });

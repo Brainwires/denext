@@ -970,9 +970,10 @@ export interface AuthPasskeyConfig {
     /**
      * What an unreachable revocation source means for a certificate of a path {@link mds}
      * validates (the BLOB's signing chain, an attestation's `x5c` chain) that names an OCSP
-     * responder or a CRL distribution point. `"soft"` (the default) goes on without a status;
-     * `"hard"` refuses the path. A certificate a usable OCSP answer or CRL reports revoked is
-     * refused under both. `mds.revocation`, when set, takes precedence.
+     * responder or a CRL distribution point. `"hard"` refuses the path (fail closed); `"soft"`
+     * goes on without a status, logging a warning. Default `"hard"`, or `"soft"` when `mds.blob`
+     * supplies the BLOB (a server without outbound network). A certificate a usable OCSP answer
+     * or CRL reports revoked is refused under both. `mds.revocation`, when set, takes precedence.
      */
     revocation?: AuthPasskeyRevocationPolicy;
   };
@@ -1001,8 +1002,9 @@ export interface AuthPasskeyMdsConfig {
    * for a certificate of the BLOB's or an attestation's path that names an OCSP responder or CRL
    * distribution points: `"require"` refuses the path (fail closed), `"best-effort"` goes on
    * without it (a certificate reported revoked is still refused), `"off"` asks nothing.
-   * Default: `passkeys.attestation.revocation` (`"hard"` is `"require"`, `"soft"` — the
-   * default — is `"best-effort"`).
+   * Default: `passkeys.attestation.revocation` (`"hard"` is `"require"`, `"soft"` is
+   * `"best-effort"`); with neither, `"require"`, or `"best-effort"` when {@linkcode blob}
+   * supplies the BLOB.
    */
   revocation?: "require" | "best-effort" | "off";
   /** The fetch timeout, ms. Default `15000`. */

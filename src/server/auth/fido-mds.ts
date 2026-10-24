@@ -33,8 +33,9 @@
  * points is checked against its issuer ({@link ./revocation.ts}: OCSP first, {@link ./ocsp.ts},
  * then the CRL, {@link ./crl.ts}; bounded fetches, answers kept until their `nextUpdate`).
  * `revocation` sets what a status that can't be had means: `"require"` refuses the path
- * (`passkeys.attestation.revocation: "hard"`), `"best-effort"` goes on without it (`"soft"`, the
- * default), `"off"` asks nothing. A certificate reported revoked is refused under both.
+ * (`passkeys.attestation.revocation: "hard"`; the default, unless the BLOB is supplied as `blob`),
+ * `"best-effort"` goes on without it (`"soft"`; the default with `blob`), `"off"` asks
+ * nothing. A certificate reported revoked is refused under both.
  *
  * @module
  */
@@ -171,22 +172,38 @@ export function resolveMds(
 
 /**
  * The revocation mode: `mds.revocation` when set, else `attestation.revocation` (`"hard"` →
- * `"require"`, `"soft"` → `"best-effort"`), else `"best-effort"` (soft-fail).
+ * `"require"`, `"soft"` → `"best-effort"`), else `"require"` (fail closed) — `"best-effort"`
+ * when `blob` supplies the BLOB (a server without outbound network).
  */
 function revocationMode(
   config: AuthPasskeyMdsConfig,
   policy: AuthPasskeyRevocationPolicy | undefined,
 ): RevocationMode {
-  if (policy !== undefined && policy !== "soft" && policy !== "hard") {
-    throw new Error('denextAuth: `passkeys.attestation.revocation` must be "soft" or "hard"');
-  }
-  const mode = config.revocation ?? (policy === "hard" ? "require" : "best-effort");
-  if (mode !== "require" && mode !== "best-effort" && mode !== "off") {
+  const mode = config.revocation ?? policyMode(policy, config.blob !== undefined);
+  if (!MODES.includes(mode)) {
     throw new Error(
       'denextAuth: `passkeys.attestation.mds.revocation` must be "require", "best-effort" or "off"',
     );
   }
   return mode;
+}
+
+const MODES: readonly RevocationMode[] = ["require", "best-effort", "off"];
+const POLICY_MODES: Record<AuthPasskeyRevocationPolicy, RevocationMode> = {
+  hard: "require",
+  soft: "best-effort",
+};
+
+/** `attestation.revocation` as a mode, validated; unset: `"require"`, or `"best-effort"` with a blob. */
+function policyMode(
+  policy: AuthPasskeyRevocationPolicy | undefined,
+  blob: boolean,
+): RevocationMode {
+  if (policy === undefined) return blob ? "best-effort" : "require";
+  if (!Object.hasOwn(POLICY_MODES, policy)) {
+    throw new Error('denextAuth: `passkeys.attestation.revocation` must be "soft" or "hard"');
+  }
+  return POLICY_MODES[policy];
 }
 
 const checkers = new WeakMap<ResolvedMds, RevocationChecker>();

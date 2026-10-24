@@ -18,9 +18,11 @@ and this project adheres to
   certificate exactly, and is current (`thisUpdate` / `nextUpdate`). A `good` or `revoked` answer
   is cached until its `nextUpdate`; a certificate with none is not asked about again for five
   minutes. A certificate reported revoked is refused.
-- **`passkeys.attestation.revocation: "soft" | "hard"`.** What an unreachable OCSP responder or CRL
-  means, for both: `"soft"` (the default) registers with a warning logged once, `"hard"` refuses.
-  `mds.revocation` still overrides it.
+- **A soft-fail opt-in for passkey attestation revocation: `passkeys.attestation.revocation:
+  "soft" | "hard"`.** One policy for an unreachable OCSP responder or CRL. `"hard"` refuses the
+  registration and stays the default, as the CRL check did before (`"soft"` with an offline
+  `mds.blob`, as before); `"soft"` registers with a warning logged once. `mds.revocation` still
+  overrides it.
 - **The `compound` attestation format** (WebAuthn L3 §8.9): 2 to 8 statements, none itself
   `compound`, each verified by its own format; one failure refuses the registration. The result
   reports every statement (`attestationStatements`), takes its first certificate statement's type
@@ -32,14 +34,6 @@ and this project adheres to
   has deprecated the SafetyNet Attestation API for the Play Integrity API; the format is verified
   for the authenticators and conformance tools that still send it. Before, both formats were
   refused, or registered as unattested under `allowUnattested`.
-
-### Changed
-
-- **Passkey attestation revocation is soft-fail by default.** A CRL that can't be fetched for a
-  certificate of an MDS path used to refuse the registration unless the BLOB came from `mds.blob`;
-  it now goes on with a warning, like an unreachable OCSP responder. Set
-  `passkeys.attestation.revocation: "hard"` (or `mds.revocation: "require"`) for the previous
-  fail-closed behavior.
 
 ## [4.8.0] - 2026-10-23
 

@@ -199,8 +199,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   no web origin for `passkeys.corsOrigins`, so it needs endpoints of its own.
 - **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
   attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
-  Metadata Service paths (OCSP, then CRL) is soft-fail by default: an unreachable responder lets
-  the registration through unless `attestation.revocation: "hard"`.
+  Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
+  CRL block registration; `attestation.revocation: "soft"` (the default with an offline `blob`)
+  lets it through instead.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII.
 - **Native sessions:** Apple token revocation needs `native.apple.clientSecret`.

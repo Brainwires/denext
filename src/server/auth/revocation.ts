@@ -7,8 +7,8 @@
  * 1. When its Authority Information Access names OCSP responders, a usable `revoked` answer
  *    refuses the path and a usable `good` one settles it.
  * 2. Otherwise, when it names CRL distribution points, a usable CRL settles it the same way.
- * 3. When neither gives a usable answer, the policy decides: `"require"` (`revocation: "hard"`)
- *    refuses the path; `"best-effort"` (`"soft"`, the default) goes on, logging once per
+ * 3. When neither gives a usable answer, the policy decides: `"require"` (`revocation: "hard"`, the
+ *    default) refuses the path; `"best-effort"` (`"soft"`) goes on, logging once per
  *    certificate's sources; `"off"` asks nothing at all.
  *
  * A certificate that names no OCSP responder and no distribution point has nothing to check.

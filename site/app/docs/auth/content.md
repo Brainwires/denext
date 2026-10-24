@@ -1747,15 +1747,15 @@ one more day, then registrations are refused (`400 { code: "attestation" }`; `re
 answers `invalid`) until a refresh succeeds — retried at most every five minutes. Sign-ins never
 consult the metadata.
 
-| Key                          | Default                         | What it sets                                           |
-| ---------------------------- | ------------------------------- | ------------------------------------------------------ |
-| `url`                        | `https://mds.fidoalliance.org/` | Where the BLOB is fetched (`https:` only)              |
-| `blob`                       | —                               | The BLOB itself, or a loader; `url` is then unused     |
-| `timeoutMs`                  | `15000`                         | The fetch timeout                                      |
-| `maxBytes`                   | 32 MiB                          | The largest BLOB accepted                              |
-| `allowUnattested`            | `false`                         | Accept `none` / self attestation                       |
-| `allowUnknownAuthenticators` | `false`                         | Accept a certificate attestation the BLOB doesn't list |
-| `revocation`                 | from `attestation.revocation`   | What a status that can't be had means (below)          |
+| Key                          | Default                                                                  | What it sets                                           |
+| ---------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `url`                        | `https://mds.fidoalliance.org/`                                          | Where the BLOB is fetched (`https:` only)              |
+| `blob`                       | —                                                                        | The BLOB itself, or a loader; `url` is then unused     |
+| `timeoutMs`                  | `15000`                                                                  | The fetch timeout                                      |
+| `maxBytes`                   | 32 MiB                                                                   | The largest BLOB accepted                              |
+| `allowUnattested`            | `false`                                                                  | Accept `none` / self attestation                       |
+| `allowUnknownAuthenticators` | `false`                                                                  | Accept a certificate attestation the BLOB doesn't list |
+| `revocation`                 | `attestation.revocation`, else `"require"` (`"best-effort"` with `blob`) | What a status that can't be had means (below)          |
 
 **Revocation.** Every certificate of the BLOB's signing path, and of an attestation's `x5c`
 path to its metadata roots, that names an OCSP responder (Authority Information Access) or CRL
@@ -1785,13 +1785,15 @@ Every fetch has a timeout of `timeoutMs` capped at 10 s. `passkeys.attestation.r
 what happens when neither gives a usable answer for a certificate that names a source:
 
 ```ts
-passkeys: { attestation: { mds: {}, revocation: "hard" } },
+passkeys: { attestation: { mds: {}, revocation: "soft" } },
 ```
 
-- `"soft"` (the default) — the check is skipped and a warning logged once per certificate's
-  sources (soft-fail, as browsers treat OCSP). A certificate a usable answer reports revoked is
-  still refused.
-- `"hard"` — the path is refused (fail closed): an unreachable responder blocks registration.
+- `"hard"` — the path is refused (fail closed): an unreachable responder and CRL block
+  registration. The default when the BLOB is fetched.
+- `"soft"` — the check is skipped and a warning logged once per certificate's sources
+  (soft-fail, as browsers treat OCSP); a certificate a usable answer reports revoked is still
+  refused. The default when `blob` supplies the BLOB, since a server without outbound network
+  can't reach a responder or a CRL either.
 
 `mds.revocation` overrides it for the MDS paths: `"require"` (= hard), `"best-effort"` (= soft) or
 `"off"` (nothing is fetched).
@@ -3297,7 +3299,8 @@ What the first-party auth layer still does not do — the full ledger is
   `compound`), but a credential key must be ES256, RS256 or Ed25519 — ES384, ES512 and Ed448
   keys are refused. A certificate is chained to a vendor root only with
   [`attestation.mds`](#attestation-the-fido-metadata-service) (or, for `android-safetynet`, to
-  Google's), and revocation is soft-fail unless `attestation.revocation: "hard"`.
+  Google's), and revocation fails closed unless `attestation.revocation: "soft"` (or the BLOB
+  comes from `blob`).
 - **Single-node SQLite, additive schema only, and sliding expiry only on paths that own a
   `Response`** — see [Database adapter](#database-adapter) and [Sessions](#sessions).
 - **`verifyTotp` is SHA-1 only**, the algorithm every authenticator app supports.
