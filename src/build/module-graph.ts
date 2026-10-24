@@ -31,6 +31,7 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
+import { exitedOutput } from "./exited-output.ts";
 
 // The boundary ids and the manifest's shape live in leaf modules the server runtime imports
 // without this crawler.
@@ -454,6 +455,9 @@ async function redirectConfigArgs(tmpDir: string): Promise<string[]> {
   return ["--config", await prepareConfig(tmpDir, { configPath, importMap })];
 }
 
+/** `deno info`'s output streams, both read. */
+const PIPED = { stdout: true, stderr: true } as const;
+
 async function spawnDenoInfo(
   entryFiles: string[],
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
@@ -481,10 +485,13 @@ async function spawnDenoInfo(
         // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
         toFileUrl(barrel).href,
       ],
+      stdin: "null",
       stdout: "piped",
       stderr: "piped",
     });
-    const { code, stdout, stderr } = await command.output();
+    // Read until `deno info` exits, not until its pipes close: a process spawned meanwhile by
+    // another thread (Windows) can hold them open for its whole life.
+    const { code, stdout, stderr } = await exitedOutput(command.spawn(), PIPED);
     if (code !== 0) {
       throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
     }

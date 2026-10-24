@@ -82,6 +82,7 @@ import {
 import {
   bucketAndKey,
   objectHeaders,
+  type ObjectReader,
   objectResponse,
   preflight,
   transformedHeaders,
@@ -305,10 +306,12 @@ async function serve(
   const headers = objectHeaders(info, cacheOf(row), disposition(type, key, params.get("download")));
   const early = preflight(info, headers, request);
   if (early instanceof Response) return early;
-  if (request.method === "HEAD") return objectResponse(info, headers, early.range, null);
-  const object = await rt.driver.get(at.bucket, at.key, early.range);
-  if (!object) throw new StorageError("not_found", "Object not found");
-  return objectResponse(info, headers, early.range, object.body);
+  const read: ObjectReader = async (range) => {
+    const object = await rt.driver.get(at.bucket, at.key, range);
+    if (!object) throw new StorageError("not_found", "Object not found");
+    return object.body;
+  };
+  return await objectResponse(info, headers, early.ranges, request.method === "HEAD" ? null : read);
 }
 
 /** A Supabase image transform (`width`, `height`, `resize`, `quality`, `format`). */

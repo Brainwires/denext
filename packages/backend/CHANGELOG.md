@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Object downloads serve several ranges and honour `If-Range`,** as denext's static file handler
+  does: a `Range` with several ranges gets one `multipart/byteranges` answer (sorted and
+  coalesced; an unsatisfiable range among satisfiable ones is dropped), and an `If-Range` that no
+  longer names the object (a weak or different `ETag`, another date) gets the whole object.
+  Before, more than one range got the whole object and `If-Range` was ignored.
+
 ## 0.7.0 - 2026-10-23
 
 ### Added

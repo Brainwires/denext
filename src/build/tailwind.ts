@@ -5,6 +5,7 @@
 // binary is a build-time tool, like the @denext/lightningcss wasm) while giving projects
 // first-class Tailwind support.
 
+import { runToExit } from "./exited-output.ts";
 import { join, resolve } from "@std/path";
 import { denoExecutable } from "./deno-executable.ts";
 import { ensureDir } from "@std/fs";
@@ -248,12 +249,12 @@ async function compileTailwindV3(
       ...(opts.minify ? ["--minify"] : []),
       ...(postcss ? ["--postcss"] : []),
     ];
-    const { code, stderr } = await new Deno.Command(denoExecutable(), {
+    const { code, stderr } = await runToExit(denoExecutable(), {
       args,
       cwd,
       stdout: "piped",
       stderr: "piped",
-    }).output();
+    });
     return code === 0 ? "" : new TextDecoder().decode(stderr) || `exit ${code}`;
   };
   let failure = await attempt(hasPostcss);
@@ -278,13 +279,12 @@ export async function compileTailwind(opts: CompileTailwindOptions): Promise<voi
   const bin = opts.bin ?? await resolveTailwindBin();
   const args = ["-i", opts.input, "-o", opts.output];
   if (opts.minify) args.push("--minify");
-  const cmd = new Deno.Command(bin, {
+  const { code, stderr } = await runToExit(bin, {
     args,
     cwd: opts.cwd,
     stdout: "piped",
     stderr: "piped",
   });
-  const { code, stderr } = await cmd.output();
   if (code !== 0) {
     throw new Error(
       `denext: Tailwind compile failed (${code}):\n${new TextDecoder().decode(stderr)}`,

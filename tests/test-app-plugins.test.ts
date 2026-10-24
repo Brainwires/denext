@@ -6,6 +6,11 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { createTestApp, createTestClient, probeApp } from "../src/testing/mod.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// An App Router test app crawls its graph with `deno info` in this process: a stall there fails
+// the test, naming the open subprocess, instead of holding the CI job.
+watchTests();
 
 const JSX = new URL("../src/jsx/jsx-runtime.ts", import.meta.url).href;
 const PAGES_ROUTER = new URL("../packages/pages-router/mod.ts", import.meta.url).href;

@@ -3,7 +3,7 @@
 // security and caching headers, conditional and ranged answers, and the transformable-source
 // check.
 
-import { parseRange } from "@denext/denext/server";
+import { parseRanges } from "@denext/denext/server";
 import { isStorageError, StorageError } from "./errors.ts";
 import { normalizeKey } from "./keys.ts";
 import { essence } from "./mime.ts";
@@ -65,45 +65,72 @@ export function objectHeaders(
 
 /**
  * The answer an object request gets before its body is read: `304` for a matching
- * `If-None-Match`, `416` for an unsatisfiable range — else the range to read (or none).
+ * `If-None-Match`, `416` when none of the requested ranges can be satisfied — else the ranges to
+ * read (none for the whole object). `Range` is read as the static file handler reads it (several
+ * ranges, sorted and coalesced; {@linkcode parseRanges}), and an `If-Range` that no longer names
+ * the object asks for all of it.
  *
  * @param info The object.
  * @param headers Its headers (a 416 adds `Content-Range`).
  * @param request The request.
- * @returns A response to send now, or the range.
+ * @returns A response to send now, or the ranges.
  */
 export function preflight(
   info: ObjectInfo,
   headers: Headers,
   request: Request,
-): Response | { range?: ByteRange } {
+): Response | { ranges?: ByteRange[] } {
   if (info.etag && request.headers.get("if-none-match") === `"${info.etag}"`) {
     return new Response(null, { status: 304, headers });
   }
   const header = request.headers.get("range");
-  const range = header === null ? undefined : parseRange(header, info.size);
-  if (range === null) {
+  const ranges = header === null || !ifRangeHolds(request.headers, info)
+    ? undefined
+    : parseRanges(header, info.size);
+  if (ranges === null) {
     headers.set("content-range", `bytes */${info.size}`);
     return new Response(null, { status: 416, headers });
   }
-  return { range };
+  return { ranges };
 }
 
 /**
- * A `200` with the whole object, or a `206` with the range.
+ * `If-Range` (RFC 9110 §13.1.5): absent, or a validator that still names this object, lets the
+ * range through; anything else asks for the whole object. An entity tag must match strongly (a
+ * weak one never does), a date must equal `Last-Modified` to the second.
+ */
+function ifRangeHolds(req: Headers, info: ObjectInfo): boolean {
+  const value = req.get("if-range")?.trim();
+  if (value === undefined) return true;
+  if (value.startsWith("W/")) return false;
+  if (value.startsWith('"')) return info.etag !== undefined && value === `"${info.etag}"`;
+  const date = Date.parse(value);
+  return info.lastModified !== undefined && Number.isFinite(date) &&
+    Math.floor(info.lastModified.getTime() / 1000) === Math.floor(date / 1000);
+}
+
+/** Reads an object's bytes, or one range of them; rejects when the object is gone. */
+export type ObjectReader = (range?: ByteRange) => Promise<ReadableStream<Uint8Array>>;
+
+/**
+ * A `200` with the whole object, a `206` with one range, or a `206` with several as one
+ * `multipart/byteranges` body (RFC 9110 §14.6), each part read in turn.
  *
  * @param info The object.
  * @param headers Its headers.
- * @param range The range served, if any.
- * @param body The bytes (`null` for HEAD).
+ * @param ranges The ranges served ({@linkcode preflight}'s), if any.
+ * @param read Reads the bytes (`null` for HEAD).
  * @returns The response.
  */
-export function objectResponse(
+export async function objectResponse(
   info: ObjectInfo,
   headers: Headers,
-  range: ByteRange | undefined,
-  body: ReadableStream<Uint8Array> | null,
-): Response {
+  ranges: ByteRange[] | undefined,
+  read: ObjectReader | null,
+): Promise<Response> {
+  if (ranges && ranges.length > 1) return await multipartResponse(info, headers, ranges, read);
+  const range = ranges?.[0];
+  const body = read ? await read(range) : null;
   if (range) {
     headers.set("content-range", `bytes ${range.start}-${range.end}/${info.size}`);
     headers.set("content-length", String(range.end - range.start + 1));
@@ -111,6 +138,42 @@ export function objectResponse(
   }
   headers.set("content-length", String(info.size));
   return new Response(body, { status: 200, headers });
+}
+
+/** Several ranges as `multipart/byteranges`: the first part is read before the answer starts. */
+async function multipartResponse(
+  info: ObjectInfo,
+  headers: Headers,
+  ranges: ByteRange[],
+  read: ObjectReader | null,
+): Promise<Response> {
+  const type = headers.get("content-type") ?? "application/octet-stream";
+  const dash = `--denext-${crypto.randomUUID().replaceAll("-", "")}`;
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  // Each part: its delimiter line (CRLF-led after the first), its headers, a blank line.
+  const heads = ranges.map(({ start, end }, i) =>
+    bytes(
+      [i > 0 ? "\r\n" : "", dash, "\r\n", "content-type: ", type, "\r\n"].join("") +
+        `content-range: bytes ${start}-${end}/${info.size}\r\n\r\n`,
+    )
+  );
+  const tail = bytes(`\r\n${dash}--\r\n`);
+  let length = tail.byteLength;
+  for (const [i, { start, end }] of ranges.entries()) {
+    length += heads[i].byteLength + end - start + 1;
+  }
+  headers.set("content-type", `multipart/byteranges; boundary=${dash.slice(2)}`);
+  headers.set("content-length", String(length));
+  if (!read) return new Response(null, { status: 206, headers });
+  const first = await read(ranges[0]);
+  async function* parts(): AsyncGenerator<Uint8Array> {
+    for (let i = 0; i < ranges.length; i++) {
+      yield heads[i];
+      yield* i === 0 ? first : await read!(ranges[i]);
+    }
+    yield tail;
+  }
+  return new Response(ReadableStream.from(parts()), { status: 206, headers });
 }
 
 /**

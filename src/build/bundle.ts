@@ -5,6 +5,7 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
+import { runToExit } from "./exited-output.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
@@ -181,11 +182,11 @@ async function probeBundleSupport(): Promise<void> {
   const deno = denoExecutable();
   let versionText: string;
   try {
-    const out = await new Deno.Command(deno, {
+    const out = await runToExit(deno, {
       args: ["--version"],
       stdout: "piped",
       stderr: "null",
-    }).output();
+    });
     versionText = new TextDecoder().decode(out.stdout);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -228,11 +229,11 @@ export function bundleSupportsDefine(): Promise<boolean> {
 /** {@linkcode bundleSupportsDefine}'s probe: `deno bundle --help` lists `--define`. */
 async function probeBundleDefine(): Promise<boolean> {
   try {
-    const out = await new Deno.Command(denoExecutable(), {
+    const out = await runToExit(denoExecutable(), {
       args: ["bundle", "--help"],
       stdout: "piped",
       stderr: "null",
-    }).output();
+    });
     return out.success && /--define\b/.test(new TextDecoder().decode(out.stdout));
   } catch {
     return false;
@@ -1751,11 +1752,11 @@ async function runDenoBundle(
   for (const [name, value] of Object.entries(define)) args.push("--define", `${name}=${value}`);
   args.push(...entryPaths);
 
-  const { code, stderr } = await new Deno.Command(denoExecutable(), {
+  const { code, stderr } = await runToExit(denoExecutable(), {
     args,
     stdout: "piped",
     stderr: "piped",
-  }).output();
+  });
   if (code !== 0) {
     throw new Error(bundleFailureMessage(code, new TextDecoder().decode(stderr)));
   }

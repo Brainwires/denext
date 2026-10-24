@@ -7,6 +7,7 @@
 //
 // Dev/CLI only: nothing here reaches a client bundle.
 
+import { runToExit } from "../build/exited-output.ts";
 import { denoExecutable } from "../build/bundle.ts";
 import { parseDiagnostics, type SourceDiagnostic } from "../build/explain/parse.ts";
 
@@ -58,13 +59,13 @@ export function typeCheckArgs(request: Omit<TypeCheckRequest, "signal">): string
  */
 export async function checkTypes(request: TypeCheckRequest): Promise<TypeCheckResult | null> {
   try {
-    const { code, stderr } = await new Deno.Command(denoExecutable(), {
+    const { code, stderr } = await runToExit(denoExecutable(), {
       args: typeCheckArgs(request),
       cwd: request.projectDir,
       stdout: "null",
       stderr: "piped",
       signal: request.signal,
-    }).output();
+    });
     if (request.signal?.aborted) return null;
     if (code === 0) return { ok: true, text: "", diagnostics: [] };
     const text = new TextDecoder().decode(stderr).trim();

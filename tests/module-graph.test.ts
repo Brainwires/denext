@@ -15,6 +15,7 @@ import {
   shortHash,
 } from "../src/build/module-graph.ts";
 import { SEPARATOR, toFileUrl } from "@std/path";
+import { inChild } from "./helpers/isolated.ts";
 
 Deno.test("shortHash is stable and deterministic", () => {
   assertEquals(shortHash("a/b/c.tsx"), shortHash("a/b/c.tsx"));
@@ -496,4 +497,42 @@ Deno.test("clientGraphModules: what a client bundle can contain — islands' gra
     resetModuleGraphCache();
     await Deno.remove(app, { recursive: true });
   }
+});
+
+Deno.test({
+  name: "denoInfoGraph: returns once `deno info` exits while a process it left holds its output",
+  // The stand-in `deno` is a shell script. On Windows the holder is a process another thread of
+  // the test process spawned meanwhile (it inherits the pipe); the read is the same.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_graph_held_" });
+    const pidFile = join(dir, "pid");
+    const entry = join(dir, "entry.ts");
+    await Deno.writeTextFile(entry, "export {};\n");
+    // Prints a graph and exits, leaving a background process with its stdout and stderr open.
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\nsleep 120 &\necho $! > '${pidFile}'\n` +
+        `printf '%s' '{"roots":[],"modules":[{"specifier":"x"}],"redirects":{}}'\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    try {
+      const t0 = Date.now();
+      const { value } = await inChild<{ modules: number; roots: string[] }>({
+        imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+        body: `const g = await denoInfoGraph([${JSON.stringify(entry)}], { cache: false });\n` +
+          `return { modules: g.info.modules.length, roots: g.roots };`,
+        env: { DENO_BIN: fake },
+        timeoutMs: 60_000,
+      });
+      assertEquals(value, { modules: 1, roots: [toFileUrl(entry).href] });
+      assert(Date.now() - t0 < 60_000, `took ${Date.now() - t0} ms`);
+    } finally {
+      try {
+        Deno.kill(Number((await Deno.readTextFile(pidFile)).trim()), "SIGKILL");
+      } catch { /* gone, or never started */ }
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
