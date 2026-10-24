@@ -160,6 +160,22 @@ function toolchainNet(
 }
 
 /**
+ * The unit's idle-trim lines: `DENO_UNSTABLE_IDLE_TRIM=1` when the manifest asks for it
+ * (`server.idleTrim`) and `ExecStart` runs on the toolchain `build.sh` links (a `--compile`
+ * executable has it baked in; another `deno` may be stock). Before the env file, which may set
+ * `DENO_UNSTABLE_IDLE_TRIM=0` to turn it off.
+ */
+function idleTrimLines(manifest: DeployManifest, o: Resolved): string {
+  const onToolchain = manifest.server.command[0] === "deno" &&
+    o.deno === `${o.directory}/${TOOLCHAIN_LINK}`;
+  if (!manifest.server.idleTrim || manifest.compile || !onToolchain) return "";
+  return `# Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
+# GC, then malloc_trim). DENO_UNSTABLE_IDLE_TRIM=0 in the env file below turns it off.
+Environment=DENO_UNSTABLE_IDLE_TRIM=1
+`;
+}
+
+/**
  * The systemd unit.
  *
  * @param manifest The deploy manifest.
@@ -196,7 +212,7 @@ Environment=DENEXT_LOG=json
 # headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
 # per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
 Environment=DENEXT_TRUST_PROXY=1
-EnvironmentFile=-/etc/${o.name}/env
+${idleTrimLines(manifest, o)}EnvironmentFile=-/etc/${o.name}/env
 ExecStart=${execStart(manifest, o)}
 Restart=always
 RestartSec=2

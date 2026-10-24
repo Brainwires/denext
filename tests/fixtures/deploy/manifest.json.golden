@@ -126,7 +126,8 @@
       "ms": 10000,
       "env": "DENEXT_SHUTDOWN_DRAIN_MS"
     },
-    "buildDir": ".denext"
+    "buildDir": ".denext",
+    "idleTrim": true
   },
   "jobs": [
     {

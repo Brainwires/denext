@@ -74,6 +74,14 @@ export interface DeployServer {
   drain: { ms: number; env: "DENEXT_SHUTDOWN_DRAIN_MS" };
   /** The build directory the server reads, and writes its durable cache to, project-relative. */
   buildDir: string;
+  /**
+   * Whether a server started on denext's pinned Deno toolchain should run with its idle trim
+   * (`DENO_UNSTABLE_IDLE_TRIM=1`: a full GC and `malloc_trim(0)` once the event loop goes idle):
+   * the pinned toolchain has it (3.0.0-rc.5 or later) and the project does not opt out
+   * (`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0` when the manifest was written). A
+   * `--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1.
+   */
+  idleTrim?: boolean;
 }
 
 /** A job under `jobs/`. */

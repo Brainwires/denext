@@ -217,6 +217,18 @@ export function validateCompile(compile: unknown, fail: Fail): void {
   validateCompileSign(sign, fail);
 }
 
+/** `start`: an object whose `idleTrim` (when set) is a boolean. */
+export function validateStart(start: unknown, fail: Fail): void {
+  if (start === undefined) return;
+  if (typeof start !== "object" || start === null || Array.isArray(start)) {
+    return fail("start", "must be an object");
+  }
+  const idleTrim = (start as { idleTrim?: unknown }).idleTrim;
+  if (idleTrim !== undefined && typeof idleTrim !== "boolean") {
+    fail("start.idleTrim", "must be a boolean");
+  }
+}
+
 /**
  * `deploy`: an object whose `adapter` (when set) is a deploy adapter — a `name` string and a
  * `prepare` function (`deploy`, when present, a function too).

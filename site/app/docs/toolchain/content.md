@@ -125,6 +125,14 @@ the new behavior on for stock Deno 2.9 and older toolchains too (a least-privile
 included); `3.0.0-rc.5` and later accept it and do nothing. Add it to an older project's
 `deno.json` (the Setup page of `denext ui` offers to), beside any features already listed.
 
+From runtime `3.0.0-rc.5` the toolchain can also trim a server's memory once its event loop goes
+idle (a full GC, then `malloc_trim(0)`; glibc Linux only). `denext start` turns it on for the
+server process it starts (`DENO_UNSTABLE_IDLE_TRIM=1`), as do `build --compile` and the generated
+Docker image and systemd unit; `dev`, tests and jobs never get it. A request arriving during a trim
+waits for it once (up to about 240 ms on a large app). `start: { idleTrim: false }` or
+`DENEXT_IDLE_TRIM=0` turns it off. See
+[Deployment targets › Idle memory trim](/docs/deployment-targets#idle-memory-trim).
+
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
 denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb) also

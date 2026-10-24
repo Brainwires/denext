@@ -13,6 +13,7 @@ import { join } from "@std/path";
 import { isStack, type StackOptions } from "./docker-stack.ts";
 import { detectDockerMode, type DockerOptions } from "./docker-template.ts";
 import { usesPostgres } from "./generate-ops.ts";
+import { configDisablesIdleTrim, pinnedIdleTrim, readEnv } from "./idle-trim.ts";
 
 /**
  * A requested app port (a whole number, 1–65535) and `denoland/deno` image tag (an image-tag-safe
@@ -448,6 +449,9 @@ export async function resolveDocker(
     ...(request.exposeDb ? { exposeDb: true } : {}),
     ...(request.dev ? { dev: true } : {}),
     ...dashboardLogsOf(request, stack, warnings),
+    ...(mode === "server"
+      ? { idleTrim: pinnedIdleTrim(await configDisablesIdleTrim(dir), readEnv) }
+      : {}),
   };
   return { options, detection, warnings };
 }
