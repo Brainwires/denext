@@ -11,7 +11,8 @@ import { bundleSpaInto } from "../src/build/spa/bundle.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
-// The SPA bundles run in this process: a stalled one fails its test instead of holding the CI job.
+// The SPA bundles run in this process: a stalled one fails its test instead of holding the CI
+// job.
 watchTests();
 
 const ROOT = new URL("../", import.meta.url);

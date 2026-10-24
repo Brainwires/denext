@@ -18,7 +18,8 @@ import { SEPARATOR, toFileUrl } from "@std/path";
 import { inChild } from "./helpers/isolated.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
-// The module-graph crawls run `deno info` children from this process: a stalled one fails its test instead of holding the CI job.
+// The module-graph crawls run `deno info` children from this process: a stalled one fails its
+// test instead of holding the CI job.
 watchTests();
 
 Deno.test("shortHash is stable and deterministic", () => {
