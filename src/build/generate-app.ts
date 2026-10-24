@@ -48,6 +48,22 @@ async function memberNames(rootDir: string, members: readonly string[]): Promise
   return names;
 }
 
+/** A member entry without its leading `./` and trailing `/`. */
+const bareEntry = (entry: string) => entry.replace(/^\.\//, "").replace(/\/$/, "");
+
+/**
+ * Whether the workspace entry `entry` names the member at `dir` (root-relative, `/`-separated):
+ * the same path, or a `<parent>/*` glob over `dir`'s parent — Deno refuses a member named twice,
+ * so a glob that covers the new app means it is listed already.
+ */
+function namesMember(entry: string, dir: string): boolean {
+  const bare = bareEntry(entry);
+  if (!bare.includes("*")) return bare === dir;
+  const glob = /^(.*?)\/?\*$/.exec(bare);
+  return glob !== null && !glob[1].includes("*") &&
+    bareEntry(glob[1]) === dir.slice(0, dir.lastIndexOf("/"));
+}
+
 /** The scope whose `ui` and `shared` packages are both members (`@acme`), or null. */
 function sharedScope(names: readonly string[]): string | null {
   for (const name of names) {
@@ -99,7 +115,7 @@ export async function appPlan(rootDir: string, name: string): Promise<AppPlanFil
         `jsr:@denext/denext@${pinned}`,
       ),
     }));
-  const listed = members.some((m) => m.replace(/^\.\//, "").replace(/\/$/, "") === dir);
+  const listed = members.some((m) => namesMember(m, dir));
   const workspace = listed ? members : [...members, `./${dir}`];
   const text = await withMember(root.text, config!, workspace, name, dir);
   return [...files, { path: root.path, contents: text, overwrite: true }];

@@ -538,6 +538,43 @@ Deno.test("mobile add: finds the project in --dir, else cwd; unknown capabilitie
   });
 });
 
+Deno.test("mobile add: at a monorepo root, the workspace's Capacitor app (several are named)", async () => {
+  // `denext create --monorepo --capacitor` keeps the shell in apps/web; run at the root, `mobile
+  // add` used to stop at "no Capacitor project" there.
+  const app = await project({});
+  const root = await Deno.makeTempDir({ prefix: "denext_mobile_add_ws_" });
+  try {
+    await Deno.mkdir(join(root, "apps"));
+    await Deno.mkdir(join(root, "packages", "ui"), { recursive: true });
+    await Deno.rename(app, join(root, "apps", "web"));
+    await Deno.writeTextFile(join(root, "packages", "ui", "deno.json"), "{}");
+    await Deno.writeTextFile(
+      join(root, "deno.json"),
+      JSON.stringify({ workspace: ["./apps/web", "./packages/ui"] }),
+    );
+    const plan = await planMobileCapabilities({ capabilities: ["device"], cwd: root });
+    assertEquals(plan.root, join(root, "apps", "web"));
+    // A second Capacitor member: the root names both instead of guessing.
+    await Deno.mkdir(join(root, "apps", "admin"));
+    await Deno.copyFile(
+      join(root, "apps", "web", "capacitor.config.ts"),
+      join(root, "apps", "admin", "capacitor.config.ts"),
+    );
+    await Deno.writeTextFile(
+      join(root, "deno.json"),
+      JSON.stringify({ workspace: ["./apps/web", "./apps/admin", "./packages/ui"] }),
+    );
+    await assertRejects(
+      () => planMobileCapabilities({ capabilities: ["device"], cwd: root }),
+      Error,
+      "`denext mobile --dir apps/web`",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(app, { recursive: true }).catch(() => {});
+  }
+});
+
 Deno.test("mobile add: an explicit --dir without a project throws, never falling back to cwd", async () => {
   await inProject({}, async (dir) => {
     const outer = await Deno.makeTempDir({ prefix: "denext_mobile_add_dir_" });

@@ -40,6 +40,7 @@ import {
 import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
+import { workspaceVerbTarget } from "../../build/workspace-imports.ts";
 import { desktopPublishUpdate, PUBLISH_UPDATE_FLAGS } from "./desktop-publish-update.ts";
 import { DESKTOP_DOCTOR_FLAGS, desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
@@ -100,7 +101,7 @@ const DESKTOP_ACTIONS: Record<
   run: (_ctx, dir, entry) => runDesktop(dir, entry),
   dev: (ctx, dir, entry) => runDesktopDevSession(ctx, dir, entry),
   package: (ctx, dir) => packageDesktop(ctx, dir),
-  add: (ctx) => desktopAdd(ctx),
+  add: (ctx, dir) => desktopAdd(ctx, dir),
   "publish-update": (ctx, dir) => desktopPublishUpdate(ctx, dir),
   doctor: async (ctx, dir) => void await desktopDoctor(ctx, dir),
 };
@@ -225,7 +226,8 @@ export const desktopCommand: CommandSpec = {
     // Read by resolveDesktopRuntimeEnv here AND by a packaging script's own call (inherited env).
     if (ctx.flags["verify-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_VERIFY_ENV, "1");
     if (ctx.flags["attest-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_ATTEST_ENV, "1");
-    const dir = desktopDir(ctx);
+    // At a monorepo root, the workspace's app: never a desktop shell or config in the root.
+    const dir = await desktopTargetDir(ctx, action);
     const entry = (ctx.flags.entry as string | undefined) ?? "desktop.ts";
     if (action !== "dev" && ctx.flags["inspect-renderer"] !== undefined) {
       fail("denext desktop: --inspect-renderer applies to `denext desktop dev` only.");
@@ -239,6 +241,28 @@ export const desktopCommand: CommandSpec = {
     Deno.exit(1);
   },
 };
+
+/**
+ * The project a `denext desktop <action>` runs on: {@linkcode desktopDir}, or at a Deno workspace
+ * root that is no app itself (`denext create --monorepo`), its one app (said on stderr). With
+ * several apps it exits naming them.
+ *
+ * @param ctx The parsed command line.
+ * @param action The action.
+ * @returns The project directory.
+ */
+async function desktopTargetDir(ctx: CommandContext, action: string): Promise<string> {
+  const given = desktopDir(ctx);
+  const args = action === "add" ? ctx.positionals.slice(1).join(" ") : "";
+  const target = await workspaceVerbTarget(given, {
+    command: `denext desktop ${action}${args ? ` ${args}` : ""}`,
+  });
+  if ("error" in target) fail(`denext desktop: ${target.error}`);
+  if (target.app) {
+    console.error(`  denext desktop: workspace root — running on its app ${target.app}`);
+  }
+  return target.dir;
+}
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {

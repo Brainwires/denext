@@ -74,6 +74,31 @@ Low findings from the 4.8 supply-chain audit:
   (2.9.8's CLI looks a prebuilt backend up under the host's executable name), and archive the
   forks.
 
+- **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
+  - `desktop.app.bridgeOrigins` takes `"*"` and `"<scheme>://*"` with no warning, and the desktop
+    page never mentions them: warn at config validation (each binding's own `bind(…, { origins })`
+    still has to list the origin) and document the two forms.
+  - The `shell` capability's printed note names only `open` / `explorer` / `xdg-open`, while it
+    also bakes `osascript`, `powershell.exe`, `rundll32.exe`, `gio` and `dbus-send` (the docs
+    table lists them all). Make the note match.
+  - The runtime's build provenance (`gh attestation verify`) is opt-in (`--attest-runtime`); the
+    SHA-256 pin shipped in the denext package is the default trust root. Attest by default when
+    `gh` is signed in, and say so when it is not.
+  - A cached runtime is checked by file size unless `--verify-runtime` is given; a same-size
+    change by another local process goes unnoticed until then. Re-hash in the background after
+    a launch, or on a schedule.
+  - A sidecar's child under the Deno CLI (`spawnSelf` from an app run with `deno run`) gets the
+    parent's unscoped `--allow-*` but not `desktop.denoFlags` or `--unstable-*` flags given on the
+    command line.
+  - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
+    copy's path in the cache folder is only known at launch). Scope it once the runtime can take
+    a launch-time path.
+- **Monorepo leftovers (Low):** a workspace member listed outside the root (`../x`, which Deno
+  refuses) is still read for its imports and named oddly in hints; skip it. The loader stand-in
+  for a glob member carries the workspace's imports but none of the root's other fields
+  (`nodeModulesDir`): cover a glob-member app whose npm packages live in the root's
+  `node_modules` with a test.
+
 ## Mobile and React Native
 
 - **Android on a real device.** Every Android half (`denext/mobile`, the `denext mobile add`

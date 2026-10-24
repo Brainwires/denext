@@ -18,6 +18,8 @@
  * @module
  */
 
+import { permissionListError } from "./permission-entries.ts";
+
 /** The Deno permissions a sidecar needs, as `--allow-*` scopes (baked into the packaged app). */
 export interface SidecarPermissions {
   /** `--allow-read` paths. */
@@ -580,6 +582,8 @@ function permissionsError(permissions: unknown): string | null {
   for (const [k, v] of Object.entries(permissions)) {
     if (!PERMISSION_KINDS.includes(k)) return `permissions.${k} is not a permission kind`;
     if (!isStringArray(v)) return `permissions.${k} must be a string array`;
+    const entry = permissionListError(k, v);
+    if (entry) return `permissions.${k} ${entry}`;
   }
   return null;
 }

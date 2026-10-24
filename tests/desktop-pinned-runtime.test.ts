@@ -795,6 +795,55 @@ Deno.test({
 
 // Its runtime archive carries symlinks: a standard Windows user cannot extract it.
 Deno.test({
+  name: "resolveDesktopRuntimeEnv: --verify-runtime re-hashes the cross-host backend too",
+  ignore: !canSymlink,
+}, async () => {
+  // The cross-host mirror is a copy of the verified runtime's backend directory (hard links where
+  // the filesystem allows, copies otherwise). A full verify used to re-hash the runtime and then
+  // hand `deno desktop` the mirror after a size check only, so a same-size change to the mirrored
+  // backend binary survived DENEXT_DESKTOP_RUNTIME_VERIFY=1.
+  const win = "x86_64-pc-windows-msvc";
+  const f = await fixture(await windowsArchive());
+  const project = await Deno.makeTempDir();
+  try {
+    const pin: DesktopRuntimePin = {
+      ...f.pin,
+      targets: { [win]: { runtimeLib: "denort.dll", webview: f.pin.targets[TARGET].webview } },
+    };
+    const logs: string[] = [];
+    const resolve = (vars: Record<string, string> = {}) =>
+      resolveDesktopRuntimeEnv({
+        projectDir: project,
+        target: win,
+        hostOs: "darwin",
+        pin,
+        cacheRoot: f.cacheRoot,
+        env: envOf(vars),
+        denoVersion: () => Promise.resolve("9.9.9"),
+        log: (l) => logs.push(l),
+      });
+    const shim = (await resolve()).env.LAUFEY_DEV_DIR;
+    const binary = join(shim, "webview", "build", "laufey_webview");
+    // A same-size change, written as a new file (not through a hard link into the runtime).
+    await Deno.remove(binary);
+    await Deno.writeTextFile(binary, "win-hosT");
+    logs.length = 0;
+    // The cheap check (sizes) keeps the mirror, as it keeps a cached runtime…
+    await resolve();
+    assertEquals(await Deno.readTextFile(binary), "win-hosT");
+    // …a full verify rebuilds it from the verified runtime.
+    await resolve({ DENEXT_DESKTOP_RUNTIME_VERIFY: "1" });
+    assertEquals(await Deno.readTextFile(binary), "win-host");
+    assertStringIncludes(logs.join("\n"), "cross-building");
+    assertEquals(f.hits(), 1, "the runtime itself was not downloaded again");
+  } finally {
+    await f.close();
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+// Its runtime archive carries symlinks: a standard Windows user cannot extract it.
+Deno.test({
   name: "resolveDesktopRuntimeEnv: a cross-host symlink the OS refuses becomes a copy of its file",
   ignore: !canSymlink,
 }, async () => {

@@ -277,7 +277,8 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     // Cross-builds from any OS via `deno desktop --target`.
     tasks["desktop:package:linux"] = "deno run -A scripts/package-linux.ts";
     // Windows bundle (exe + dlls) → zip, Authenticode-signed when a cert is configured.
-    // The exe cross-builds from any OS; signing runs where signtool is available.
+    // The exe cross-builds from any OS; signing needs signtool (a configured cert without it
+    // fails the run; --no-sign builds unsigned).
     tasks["desktop:package:windows"] = "deno run -A scripts/package-windows.ts";
   }
   if (opts.capacitor) {
@@ -1873,8 +1874,9 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * complete bundle directory (the \`.exe\`, its \`.dll\`s, and resources); this builds one or
  * both arches, Authenticode-signs every PE file in the bundle (the \`.exe\`, its \`.dll\`s, any
  * \`.node\`) when a code-signing certificate is provided, and
- * wraps each bundle in its installers (an \`.msi\` by default). Signing only runs where
- * \`signtool\` is available (Windows) and a cert is configured.
+ * wraps each bundle in its installers (an \`.msi\` by default). Signing needs \`signtool\`
+ * (Windows SDK): with a certificate configured and no signtool the run fails rather than ship an
+ * unsigned app (\`--no-sign\` builds unsigned on purpose).
  *
  *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign] [--format <list>]
  *
@@ -1903,6 +1905,7 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   DENEXT_WINDOWS_CERT            path to a code-signing certificate (.pfx) — signing is
  *                                  skipped when unset (no secrets are ever baked in).
  *   DENEXT_WINDOWS_CERT_PASSWORD   the .pfx password, if any.
+ *   DENEXT_WINDOWS_CERT_THUMBPRINT a certificate in the Windows store instead of a .pfx.
  *   DENEXT_SIGN_TIMESTAMP_URL      RFC-3161 timestamp server (default: DigiCert's).
  *   deno.json \`version\` is the MSI ProductVersion (numeric major.minor.build); denext.config.ts
  *   \`desktop.installers.publisher\` its Manufacturer.
@@ -1986,7 +1989,8 @@ async function buildBundle(
 }
 
 /** Authenticode-sign \`files\` with DENEXT_WINDOWS_CERT through \`signtool\`, batched; without a
- * certificate or signtool, skip with a warning (see desktopSignWindows). Whether they were signed. */
+ * certificate, skip with a warning; with one but no signtool, fail (see desktopSignWindows).
+ * Whether they were signed. */
 async function sign(files: string[]): Promise<boolean> {
   return await desktopSignWindows(files);
 }

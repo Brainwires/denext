@@ -2,10 +2,10 @@
 // refuses an update of a signed app unless each PE file in the staged bundle (the .exe,
 // <App>.dll, WebView2Loader.dll, the app-local VC++ runtime, CEF's DLLs and helpers, any .node
 // addon) carries the running app's Authenticode signature. PE files are found by their header,
-// not their extension; signing is batched through signtool with the password redacted, and with
-// no certificate (or no signtool) nothing is signed.
+// not their extension; signing is batched through signtool with the password redacted. With no
+// certificate nothing is signed; a certificate without signtool fails the run.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { desktopPeFiles, desktopSignWindows } from "../src/build/desktop.ts";
 import type { DesktopRunOptions } from "../src/build/desktop.ts";
@@ -121,25 +121,57 @@ Deno.test("desktopSignWindows: signs every PE file of the bundle in batched sign
   }
 });
 
-Deno.test("desktopSignWindows: no certificate, or no signtool, signs nothing and says so", async () => {
+Deno.test("desktopSignWindows: no certificate signs nothing and says so", async () => {
+  const { calls, run } = recorder();
+  const warnings: string[] = [];
+  const signed = await desktopSignWindows(["a.exe", "a.dll"], {
+    run,
+    has: () => Promise.resolve(true),
+    env: () => undefined,
+    warn: (m) => warnings.push(m),
+  });
+  assertEquals(signed, false);
+  assertEquals(calls, []);
+  assertStringIncludes(warnings.join("\n"), "no DENEXT_WINDOWS_CERT set");
+});
+
+Deno.test("desktopSignWindows: a configured certificate without signtool fails the run, never an unsigned build", async () => {
+  // A certificate in the environment says the app is to ship signed: without signtool here (off
+  // Windows, no Windows SDK) the run used to warn and package the app unsigned, and an update of
+  // a signed install is refused unless every PE file carries its signature. `--no-sign` (which
+  // never calls this) is the way to build unsigned on purpose.
   for (
-    const [env, has, said] of [
-      [{}, true, "no DENEXT_WINDOWS_CERT set"],
-      [{ DENEXT_WINDOWS_CERT: "app.pfx" }, false, "signtool not found"],
-    ] as Array<[Record<string, string>, boolean, string]>
+    const [env, named] of [
+      [{ DENEXT_WINDOWS_CERT: "app.pfx" }, "DENEXT_WINDOWS_CERT"],
+      [{ DENEXT_WINDOWS_CERT_THUMBPRINT: "ab cd" }, "DENEXT_WINDOWS_CERT_THUMBPRINT"],
+    ] as Array<[Record<string, string>, string]>
   ) {
     const { calls, run } = recorder();
-    const warnings: string[] = [];
-    const signed = await desktopSignWindows(["a.exe", "a.dll"], {
-      run,
-      has: () => Promise.resolve(has),
-      env: (name) => env[name],
-      warn: (m) => warnings.push(m),
-    });
-    assertEquals(signed, false);
+    const error = await assertRejects(() =>
+      desktopSignWindows(["a.exe", "a.dll"], {
+        run,
+        has: () => Promise.resolve(false),
+        env: (name) => env[name],
+        warn: () => {},
+      })
+    );
+    assertStringIncludes(String(error), named);
+    assertStringIncludes(String(error), "--no-sign");
     assertEquals(calls, []);
-    assertStringIncludes(warnings.join("\n"), said);
   }
+});
+
+Deno.test("desktopSignWindows: a store thumbprint signs with /sha1, as build --compile --sign does", async () => {
+  const { calls, run } = recorder();
+  const env: Record<string, string> = { DENEXT_WINDOWS_CERT_THUMBPRINT: "AB CD EF" };
+  const signed = await desktopSignWindows(["a.exe"], {
+    run,
+    has: (cmd) => Promise.resolve(cmd === "signtool"),
+    env: (name) => env[name],
+    warn: () => {},
+  });
+  assert(signed);
+  assertStringIncludes(calls[0].cmd.join(" "), "signtool sign /sha1 ABCDEF /fd sha256");
 });
 
 Deno.test("package-windows.ts: signs the bundle's PE files before wrapping it, then the .msi", () => {

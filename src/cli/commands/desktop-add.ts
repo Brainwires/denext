@@ -47,12 +47,12 @@ export const DESKTOP_ADD_FLAGS: readonly FlagSpec[] = [
 ];
 
 /** `denext desktop add sidecar --name <n> (--entry <module> [--node-modules <dir>] | --exec <p>)`. */
-async function desktopAddSidecar(ctx: CommandContext): Promise<void> {
+async function desktopAddSidecar(ctx: CommandContext, dir: string): Promise<void> {
   const dryRun = ctx.flags["dry-run"] === true;
   const str = (k: string) => ctx.flags[k] as string | undefined;
   try {
     const report = await addDesktopSidecar({
-      dir: resolve(ctx.global.cwd ?? "."),
+      dir,
       name: str("name") ?? "",
       ...(str("entry") !== undefined ? { entry: str("entry") } : {}),
       ...(str("node-modules") !== undefined ? { nodeModules: str("node-modules") } : {}),
@@ -76,12 +76,17 @@ async function desktopAddSidecar(ctx: CommandContext): Promise<void> {
 
 /**
  * `denext desktop add <capability...> [--dry-run] [--list]`: capabilities are the positionals
- * after `add`; the project is `--cwd` (default: the current directory).
+ * after `add`; the project is `dir` (`--cwd`, default the current directory, or a workspace
+ * root's app).
  *
  * @param ctx The parsed command line.
+ * @param dir The project directory.
  */
-export async function desktopAdd(ctx: CommandContext): Promise<void> {
-  if (ctx.positionals[1] === "sidecar") return await desktopAddSidecar(ctx);
+export async function desktopAdd(
+  ctx: CommandContext,
+  dir: string = resolve(ctx.global.cwd ?? "."),
+): Promise<void> {
+  if (ctx.positionals[1] === "sidecar") return await desktopAddSidecar(ctx, dir);
   if (ctx.flags.list === true) {
     if (ctx.global.json) return console.log(JSON.stringify(DESKTOP_CAPABILITIES));
     console.log(
@@ -96,7 +101,7 @@ export async function desktopAdd(ctx: CommandContext): Promise<void> {
   try {
     report = await addDesktopCapabilities({
       capabilities: ctx.positionals.slice(1),
-      dir: resolve(ctx.global.cwd ?? "."),
+      dir,
       dryRun,
     });
   } catch (err) {

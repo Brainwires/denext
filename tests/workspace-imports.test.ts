@@ -13,6 +13,7 @@ import {
   workspaceMembers,
   workspacePackageDirs,
   workspaceRootHint,
+  workspaceVerbTarget,
 } from "../src/build/workspace-imports.ts";
 import { mergeModuleConfig, writeMergedModuleConfig } from "../src/build/module-config.ts";
 import { readImportAliases } from "../src/build/platform-extensions.ts";
@@ -21,6 +22,7 @@ import { createUnbundledState, norm } from "../src/build/dev-unbundled/state.ts"
 import { createUseCacheLoaders, DevCopies } from "../src/build/use-cache-loader.ts";
 import { buildAppCss } from "../src/build/css.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { uiTargetOptions } from "../src/cli/commands/ui.ts";
 
 /** Write `files` (path → text, objects as JSON) under a fresh real-path temp dir. */
 async function tree(files: Record<string, string | object>): Promise<string> {
@@ -152,6 +154,63 @@ Deno.test("workspaceApps / workspaceRootHint: name the apps of a workspace root"
     assertStringIncludes(hint!, "its denext apps are apps/web, apps/admin");
     assertStringIncludes(hint!, "`denext dev apps/web`");
     assertEquals(await workspaceRootHint(join(dir, "apps/web")), null);
+  } finally {
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test("workspaceVerbTarget: a monorepo root stands for its one app; several are named", async () => {
+  const dir = await tree({
+    "deno.json": { workspace: ["./apps/*", "./packages/ui"] },
+    // An SPA member: no app/ folder, a denext.config.ts.
+    "apps/web/denext.config.ts": "export default { mode: 'spa' };\n",
+    "apps/web/capacitor.config.ts": "export default {};\n",
+    "packages/ui/deno.json": { name: "@x/ui", exports: "./mod.ts" },
+  });
+  try {
+    const command = "denext ui";
+    assertEquals(await workspaceVerbTarget(dir, { command }), {
+      dir: join(dir, "apps/web"),
+      app: "apps/web",
+    });
+    // An app itself, a package and a plain directory run where they are.
+    for (const own of [join(dir, "apps/web"), join(dir, "packages/ui"), join(dir, "apps")]) {
+      assertEquals(await workspaceVerbTarget(own, { command }), { dir: own });
+    }
+    await Deno.mkdir(join(dir, "apps/admin/app"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "apps/admin/deno.json"), "{}");
+    const several = await workspaceVerbTarget(dir, { command });
+    assert("error" in several);
+    assertStringIncludes(several.error, "several apps (apps/admin, apps/web)");
+    assertStringIncludes(several.error, "`denext ui --cwd apps/admin`");
+    // A verb for one kind of member (Capacitor shells) still finds the only one.
+    const capacitor = (d: string) =>
+      Deno.stat(join(d, "capacitor.config.ts")).then(() => true, () => false);
+    assertEquals(
+      await workspaceVerbTarget(dir, {
+        command: "denext mobile",
+        accepts: capacitor,
+        dirFlag: "--dir",
+      }),
+      { dir: join(dir, "apps/web"), app: "apps/web" },
+    );
+    // A root that is an app of its own keeps the verb.
+    await Deno.mkdir(join(dir, "app"));
+    assertEquals(await workspaceVerbTarget(dir, { command }), { dir });
+  } finally {
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test("uiTargetOptions: denext ui at a monorepo root serves its app", async () => {
+  const dir = await tree({
+    "deno.json": { workspace: ["./apps/web", "./packages/ui"] },
+    "apps/web/app/page.tsx": "export default () => null;\n",
+    "packages/ui/deno.json": { name: "@x/ui", exports: "./mod.ts" },
+  });
+  try {
+    const options = { dir, port: 0, signal: new AbortController().signal };
+    assertEquals((await uiTargetOptions(options)).dir, join(dir, "apps/web"));
   } finally {
     await removeTempDir(dir);
   }

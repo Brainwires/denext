@@ -51,6 +51,24 @@ Deno.test("generate app: apps/<name> importing the shared packages, listed in th
   }
 });
 
+Deno.test("generate app: a glob member already covering apps/<name> is not listed twice", async () => {
+  // Deno refuses a workspace that names a member twice ("Cannot specify a workspace member
+  // twice"), so adding `./apps/admin` beside `./apps/*` broke the whole workspace.
+  const dir = await monorepo();
+  try {
+    const rootPath = join(dir, "deno.json");
+    const root = JSON.parse(await Deno.readTextFile(rootPath));
+    root.workspace = ["./apps/*", "./packages/*"];
+    await Deno.writeTextFile(rootPath, JSON.stringify(root, null, 2) + "\n");
+    await generateArtifact(dir, "app", "admin");
+    const after = JSON.parse(await Deno.readTextFile(rootPath));
+    assertEquals(after.workspace, ["./apps/*", "./packages/*"]);
+    assertEquals(after.tasks["dev:admin"], "deno task --cwd apps/admin dev");
+  } finally {
+    await removeTempDir(join(dir, ".."));
+  }
+});
+
 Deno.test("generate app: --dry-run previews and writes nothing", async () => {
   const dir = await monorepo();
   try {

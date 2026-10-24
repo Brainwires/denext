@@ -26,6 +26,15 @@ and this project adheres to
   `denext doctor --install-log <file>` explains an install's failed scripts as jail failures with
   the exception to add. denext never turns the jail off for you. See
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
+- **Monorepos: glob members, and the app verbs at the root.** A workspace may name its members
+  with a glob (`"workspace": ["./apps/*", "./packages/*"]`): an app it covers imports its siblings
+  by name in the client bundle too (the bundler's loader can't expand a glob, so denext hands it
+  the workspace's entries), and `denext generate app` adds no second entry for an app the glob
+  already covers (Deno refuses a member listed twice). `denext ui`, `denext desktop …` and
+  `denext mobile …` run at a `denext create --monorepo` root work on its app (`denext ui` serves
+  `apps/web`, `desktop add` writes `apps/web/denext.config.ts`, `mobile add` installs into the
+  member with the `capacitor.config.*`), and with several apps they name them and change nothing,
+  instead of writing a config into the root. See https://denext.dev/docs/monorepo.
 
 - **Realtime from the database replays what a reconnecting subscriber missed (`@denext/backend`
   0.8.0).** `useTableChanges` subscriptions whose Live connection drops and comes back within
@@ -98,6 +107,13 @@ and this project adheres to
   it on. See https://denext.dev/docs/deployment-targets#idle-memory-trim.
 
 ### Changed
+
+- **Windows packaging fails closed on signing.** With `DENEXT_WINDOWS_CERT` set and no `signtool`
+  on `PATH` (off Windows, or no Windows SDK), `scripts/package-windows.ts` used to warn and package
+  the app unsigned, and an update of a signed install is refused unless every PE file carries its
+  signature. It now stops with the fix; `--no-sign` builds unsigned on purpose. A store
+  certificate (`DENEXT_WINDOWS_CERT_THUMBPRINT`, as `build --compile --sign` takes) now signs the
+  packaged app too instead of being ignored. See https://denext.dev/docs/desktop.
 
 - **denext pins runtime `3.0.0-rc.5`** (from `3.0.0-rc.3`; the Deno toolchain and the Deno
   Desktop runtime move together). It is built from Deno 2.9.8, so the stock Deno the desktop
@@ -178,6 +194,23 @@ and this project adheres to
   - the configs denext generates for a build child (`module-config.json`, `css-config.json`, the
     `--compile` config) carry the project's `supplyChain`, so `paranoid` and
     `advisoryCheck: "required"` hold there too instead of Deno's defaults.
+
+- **A permission entry is one value.** Each entry of `desktop.extraPermissions`,
+  `compile.permissions` and a sidecar's `permissions` becomes one value of a baked
+  `--allow-<kind>=a,b` flag, and Deno splits that value on commas: `net: ["api.example.com,
+  0.0.0.0"]` granted two hosts. Config validation now refuses an entry with a comma, an empty one,
+  and a URL where a host belongs, for every kind (it checked `netConnect` / `netListen` only), and
+  the package scripts, which read the config unvalidated, refuse them too; a string where a list
+  belongs (`run: "*"`) was spread character by character and now fails the build.
+- **`--verify-runtime` covers a cross-host package.** Packaging a Windows app on macOS or Linux (or
+  a Linux app on Windows) builds from a copy of the verified runtime's backend directory, which a
+  full verify only size-checked; it now re-hashes that copy against the runtime and rebuilds it on
+  any difference.
+- **The package scripts read the config `denext export` reads.** They imported
+  `denext.config.ts` only, so a project configured in `denext.config.mts` / `.js` / `.mjs`
+  packaged without its capabilities' permissions, extensions and installers, and three of the four
+  readers took a config that threw at import for a missing one and packaged with the defaults.
+  They now load the first config file that exists and fail on one that does not load.
 
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute

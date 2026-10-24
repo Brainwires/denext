@@ -88,6 +88,8 @@ on:
       - "src/build/paths.ts"
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
+      - "src/build/config-files.ts"
+      - "src/build/workspace-imports.ts"
       - "src/build/patch-diff.ts"
       - "src/build/css-config-guard.ts"
       - "src/build/dev-proxy.ts"

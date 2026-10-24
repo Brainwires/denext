@@ -946,20 +946,51 @@ interface CrossHostStamp {
   files: Record<string, number>;
 }
 
-/** Whether `shim` holds a complete mirror of the runtime archive `sha256`. */
-async function crossHostIntact(shim: string, sha256: string): Promise<boolean> {
-  let stamp: CrossHostStamp;
-  try {
-    stamp = JSON.parse(await Deno.readTextFile(join(shim, CROSS_HOST_STAMP)));
-  } catch {
-    return false;
-  }
-  if (stamp.sha256 !== sha256 || Object.keys(stamp.files ?? {}).length === 0) return false;
+/** What {@linkcode crossHostIntact} checks a mirror against. */
+interface CrossHostSource {
+  /** The runtime archive's SHA-256 the mirror must have been made from. */
+  readonly sha256: string;
+  /** The verified runtime the mirror copies (read by a full check). */
+  readonly runtimeDir: string;
+  /** The binary's rename (a full check compares the mirror's binary with the original). */
+  readonly rename: CrossHostRename;
+  /** Re-hash every mirrored file against its original in the verified runtime. */
+  readonly full: boolean;
+}
+
+/** The runtime-relative path a mirrored file was copied from (the binary under its own name). */
+function crossHostSourceRel(rel: string, rename: CrossHostRename): string {
+  return rel === `laufey/${rename.dir}/${rename.to}` ? `laufey/${rename.dir}/${rename.from}` : rel;
+}
+
+/**
+ * Whether `shim` holds a complete mirror of the runtime archive: every recorded file present at its
+ * size, and, with `full`, the same bytes as its original in the verified runtime (a copy, unlike a
+ * hard link, would otherwise keep a change the runtime's own re-hash never sees).
+ */
+async function crossHostIntact(shim: string, source: CrossHostSource): Promise<boolean> {
+  const stamp = await readJsonFile<CrossHostStamp>(join(shim, CROSS_HOST_STAMP));
+  if (stamp?.sha256 !== source.sha256 || Object.keys(stamp.files ?? {}).length === 0) return false;
   for (const [rel, size] of Object.entries(stamp.files)) {
-    const info = await Deno.lstat(join(shim, ...rel.split("/"))).catch(() => null);
-    if (!info?.isFile || info.size !== size) return false;
+    if (!await crossHostFileIntact(shim, rel, size, source)) return false;
   }
   return true;
+}
+
+/** Whether one mirrored file is present at `size` (and, with `full`, holds its original's bytes). */
+async function crossHostFileIntact(
+  shim: string,
+  rel: string,
+  size: number,
+  source: CrossHostSource,
+): Promise<boolean> {
+  const path = join(shim, ...rel.split("/"));
+  const info = await Deno.lstat(path).catch(() => null);
+  if (!info?.isFile || info.size !== size) return false;
+  if (!source.full) return true;
+  const original = join(source.runtimeDir, ...crossHostSourceRel(rel, source.rename).split("/"));
+  const want = await sha256File(original).catch(() => null);
+  return want !== null && await sha256File(path) === want;
 }
 
 /** Hard-link (else copy) `src` to `dest`. */
@@ -1039,12 +1070,14 @@ async function crossHostLaufeyDir(
   rt: ResolvedDesktopRuntime,
   rename: CrossHostRename,
   log: (line: string) => void,
+  full: boolean,
 ): Promise<string> {
   const marker = await readMarker(rt.dir);
   if (!marker) throw new Error(`denext: the Deno Desktop runtime at ${rt.dir} has no marker`);
   const versionDir = dirname(rt.dir);
   const shim = join(versionDir, `${basename(rt.dir)}.cross-host`);
-  const valid = () => crossHostIntact(shim, marker.archive.sha256);
+  const source = { sha256: marker.archive.sha256, runtimeDir: rt.dir, rename, full };
+  const valid = () => crossHostIntact(shim, source);
   using _lock = await acquireCacheLock(dirname(versionDir), "download", RUNTIME_CACHE_DESCR);
   if (await valid()) return join(shim, "laufey");
   log(
@@ -1134,7 +1167,8 @@ export async function resolveDesktopRuntimeEnv(
     log,
   });
   const rename = crossHostBackendRename(options.hostOs ?? Deno.build.os, target, backend);
-  const laufeyDir = rename ? await crossHostLaufeyDir(rt, rename, log) : rt.laufeyDir;
+  const verify = env(DESKTOP_RUNTIME_VERIFY_ENV) === "1";
+  const laufeyDir = rename ? await crossHostLaufeyDir(rt, rename, log, verify) : rt.laufeyDir;
   return { mode: "pinned", env: { DENORT_DESKTOP_BIN: rt.runtimeLib, LAUFEY_DEV_DIR: laufeyDir } };
 }
 
