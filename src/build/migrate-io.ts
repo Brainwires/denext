@@ -9,6 +9,7 @@
 // the disk to produce the list of changes the real run would make.
 
 import { dirname, join, resolve, SEPARATOR } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 
 /** One overlay entry: planned text, a file moved here from `from`, or a removal. */
 type Entry =
@@ -33,6 +34,38 @@ interface Overlay {
  * start while another is in progress.
  */
 let active: Overlay | null = null;
+
+/**
+ * The project real writes are confined to while {@link confineWrites} runs, or null. Module
+ * state for the same reason as {@link active}: the planners are sequential CLI steps.
+ */
+let writeRoot: string | null = null;
+
+/**
+ * Run `fn` with every real write, move, removal and directory creation through {@link mfs}
+ * held inside the project at `root`: one that would go through a symlink leading out of the
+ * project (a committed `.vscode` → `~/`, a `deno.json` → `/etc/…`) or through a dangling one
+ * throws `OutsideProjectError` instead. Migrate and init run on cloned repositories, where
+ * such a link is attacker-controlled.
+ *
+ * @param root The project directory.
+ * @param fn The writes to confine.
+ * @returns What `fn` returns.
+ */
+export async function confineWrites<T>(root: string, fn: () => Promise<T>): Promise<T> {
+  const previous = writeRoot;
+  writeRoot = resolve(root);
+  try {
+    return await fn();
+  } finally {
+    writeRoot = previous;
+  }
+}
+
+/** Refuse a real write that leaves the confined project (no-op outside {@link confineWrites}). */
+async function confined(path: string, entry = false): Promise<void> {
+  if (writeRoot !== null) await assertInsideProject(writeRoot, path, { entry });
+}
 
 /** What a path is in the merged (overlay over disk) view. */
 type Kind = "file" | "dir" | "none";
@@ -176,24 +209,37 @@ export const mfs = {
   },
   async writeTextFile(path: string, text: string): Promise<void> {
     const o = active;
-    if (!o) return await Deno.writeTextFile(path, text);
+    if (!o) {
+      await confined(path);
+      return await Deno.writeTextFile(path, text);
+    }
     const abs = resolve(path);
     await markDirs(o, dirname(abs));
     o.files.set(abs, { kind: "text", text });
   },
   async mkdir(path: string, options?: Deno.MkdirOptions): Promise<void> {
     const o = active;
-    if (!o) return await Deno.mkdir(path, options);
+    if (!o) {
+      await confined(path);
+      return await Deno.mkdir(path, options);
+    }
     await markDirs(o, resolve(path));
   },
   async remove(path: string): Promise<void> {
     const o = active;
-    if (!o) return await Deno.remove(path);
+    if (!o) {
+      await confined(path, true);
+      return await Deno.remove(path);
+    }
     await overlayRemove(o, resolve(path));
   },
   async rename(from: string, to: string): Promise<void> {
     const o = active;
-    if (!o) return await Deno.rename(from, to);
+    if (!o) {
+      await confined(from, true);
+      await confined(to, true);
+      return await Deno.rename(from, to);
+    }
     await overlayRename(o, resolve(from), resolve(to));
   },
   async stat(path: string): Promise<MigrateStat> {

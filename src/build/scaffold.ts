@@ -6,7 +6,8 @@
 
 import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import { mfs } from "./migrate-io.ts";
+import { confineWrites, mfs } from "./migrate-io.ts";
+import { assertInsideProject, OutsideProjectError } from "./project-confine.ts";
 import { DESKTOP_RUNTIME_CONFIG_FILE, desktopRuntimeConfigText } from "./desktop-app-config.ts";
 import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
 import { addFastlaneToProject } from "./mobile-fastlane.ts";
@@ -873,13 +874,16 @@ export async function scaffoldProject(
   const opts = options.fastlane ? { ...options, capacitor: true } : options;
   const files = scaffoldFiles(opts);
   await refuseToClobber(files, opts);
-  const written = await writeScaffoldFiles(opts.dir, files);
-  if (opts.fastlane) {
-    // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
-    written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
-  }
-  written.push(...await writeProjectConfigs(opts));
-  return written;
+  // `init` writes into an existing (maybe cloned) directory: its symlinks never lead a write out.
+  return await confineWrites(opts.dir, async () => {
+    const written = await writeScaffoldFiles(opts.dir, files);
+    if (opts.fastlane) {
+      // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
+      written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
+    }
+    written.push(...await writeProjectConfigs(opts));
+    return written;
+  });
 }
 
 /**
@@ -892,6 +896,7 @@ export async function scaffoldProject(
 export async function writeScaffoldFiles(dir: string, files: ScaffoldFile[]): Promise<string[]> {
   for (const f of files) {
     const abs = join(dir, f.path);
+    await assertInsideProject(dir, abs);
     await Deno.mkdir(join(abs, ".."), { recursive: true });
     await Deno.writeTextFile(abs, f.content, f.mode ? { mode: f.mode } : undefined);
   }
@@ -1045,11 +1050,18 @@ async function writeVscodeText(
   text: string,
   written: string[],
 ): Promise<void> {
-  await mfs.mkdir(vscodeDir, { recursive: true });
-  // Same symlink guard as migrate's `ensureGitignore`: unlink first so a symlinked target
-  // (possible in a cloned third-party repo) isn't followed out of tree.
-  await mfs.remove(path).catch(() => {});
-  await mfs.writeTextFile(path, text);
+  try {
+    await mfs.mkdir(vscodeDir, { recursive: true });
+    // Same symlink guard as migrate's `ensureGitignore`: unlink first so a symlinked target
+    // (possible in a cloned third-party repo) isn't followed out of tree.
+    await mfs.remove(path).catch(() => {});
+    await mfs.writeTextFile(path, text);
+  } catch (error) {
+    // A `.vscode` linked out of the project (shared editor settings, or a planted link) is left
+    // alone: the editor setup is a convenience, not worth refusing the whole run over.
+    if (error instanceof OutsideProjectError) return;
+    throw error;
+  }
   written.push(path);
 }
 

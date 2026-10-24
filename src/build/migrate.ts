@@ -16,7 +16,7 @@
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
-import { mfs } from "./migrate-io.ts";
+import { confineWrites, mfs } from "./migrate-io.ts";
 import { applyJailExceptions, type JailReport } from "./jail-scripts.ts";
 import {
   type MappedViteEmitter,
@@ -1452,6 +1452,12 @@ export async function migrateProject(
   options: MigrateOptions = {},
 ): Promise<MigrateResult> {
   checkCapacitorFlags(options);
+  // A cloned repository's symlinks never redirect a write out of the project.
+  return await confineWrites(dir, () => migrateConfined(dir, options));
+}
+
+/** {@link migrateProject} inside the project's write confinement. */
+async function migrateConfined(dir: string, options: MigrateOptions): Promise<MigrateResult> {
   const migrated = await migrateAnyProject(dir, options);
   const jail = await applyJailExceptions(dir, { fs: mfs, edit: !migrated.denoJsonExists });
   const r = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };

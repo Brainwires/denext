@@ -69,6 +69,28 @@ and this project adheres to
 
 ### Fixed
 
+- **The commands that write into a project they did not create no longer follow its symlinks out
+  of it.** `denext migrate`, `init`, `upgrade`, `mobile add` and `desktop add` run on cloned
+  repositories, where a committed symlink is the repository author's choice. A write now never
+  goes through a symlink (to a folder or a file) that leads out of the project, nor through a
+  dangling one; a link that stays inside is followed as before. Before, a `.vscode` folder linked
+  elsewhere had `migrate` and `init` replace (and first delete) the `settings.json` and
+  `extensions.json` there; a folder such as `app/` linked elsewhere had `init` write the new
+  app into it; a native `ios/` or `android/` folder linked elsewhere had `mobile add` edit the
+  manifests and plists it found there; and a `deno.json` or `denext.config.ts` linked elsewhere
+  was rewritten by `upgrade` or `desktop add`. `migrate` and `init` now leave a `.vscode` linked
+  out of the project alone and stop with an error at any other such write; `mobile add` checks
+  its folders before it installs anything. `denext upgrade` also no longer rewrites a workspace
+  member outside the project (`"workspace": ["../other"]`, or a member linked out of it): it
+  names the member and leaves its pins alone. `denext patch` refuses a package name that is not
+  an npm name (`../../x`, or a patch file named `..+1.0.0.patch`), which could put the patch file
+  outside `patches/`.
+- **An OAuth / OIDC sign-in refuses an authorization response whose `iss` names another issuer**
+  (RFC 9207), as Auth.js does: a response minted by one authorization server can no longer be
+  replayed at another provider's callback. A response without `iss` is accepted as before; a
+  plain OAuth 2.0 provider (no issuer) and Microsoft Entra ID's multi-tenant issuer (checked per
+  token) ignore the parameter. This covers denext's own providers, the `next-auth/providers/*`
+  modules and Supabase-style sign-ins.
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,

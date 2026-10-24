@@ -12,6 +12,7 @@ import type {
   MobileCapability,
   NativeEdit,
 } from "./mobile-capabilities.ts";
+import { assertInsideProject, writeTextInside } from "./project-confine.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import {
   withAppDelegateBackgroundTransfers,
@@ -193,6 +194,7 @@ async function writeRunnerConfig(dir: string, report: NativeInstallReport): Prom
       ["plugins", "BackgroundRunner"],
       BACKGROUND_RUNNER_CONFIG,
     );
+    await assertInsideProject(dir, file);
     await Deno.writeTextFile(file, next);
     report.written.push(rel);
   } catch (err) {
@@ -220,7 +222,7 @@ async function wireRunnerGradle(dir: string, report: NativeInstallReport): Promi
   } else if (next === gradle) {
     report.unchanged.push(rel);
   } else {
-    await Deno.writeTextFile(nativeJoin(dir, rel), next);
+    await writeTextInside(dir, nativeJoin(dir, rel), next);
     report.written.push(rel);
   }
 }

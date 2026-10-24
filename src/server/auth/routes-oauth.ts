@@ -350,6 +350,7 @@ async function completeCallback(
       tx,
       redirectUri,
       callbackParams,
+      iss: params.get("iss"),
     });
     if (!result.profile.id) throw new Error("provider profile had no id");
     return await completeSignIn(ctx, provider, result, tx.returnTo);
@@ -368,6 +369,22 @@ async function completeCallback(
       error instanceof DiscoveryError ? "config" : "oauth_failed",
     );
   }
+}
+
+/**
+ * Whether the authorization response's `iss` parameter (RFC 9207) names an issuer other than
+ * this provider's — the mix-up attack, where a response minted by one authorization server is
+ * replayed at another's callback. Checked as Auth.js (oauth4webapi) does: an `iss` that is
+ * present must equal the issuer. A plain OAuth provider has no issuer to compare against, and a
+ * multi-tenant issuer is a template whose tenant is checked on the id_token instead.
+ */
+function issuerParamMismatch(
+  provider: OAuthProvider,
+  endpoints: ProviderEndpoints,
+  iss: string | null | undefined,
+): boolean {
+  if (iss == null || provider.tenantIssuer || endpoints.issuer === undefined) return false;
+  return iss !== endpoints.issuer;
 }
 
 /** The posted fields besides the response parameters the callback reads itself. */
@@ -584,9 +601,14 @@ export async function fetchOAuthProfile(
     tx: Transaction;
     redirectUri: string;
     callbackParams?: Record<string, string>;
+    /** The authorization response's `iss` parameter (RFC 9207), when it carried one. */
+    iss?: string | null;
   },
 ): Promise<OAuthProfileResult> {
   const endpoints = await endpointsFor(ctx, provider);
+  if (issuerParamMismatch(provider, endpoints, params.iss)) {
+    throw new Error(`the authorization response's iss names another issuer than ${provider.id}'s`);
+  }
   // Pin the fetch to the provider's own hosts PLUS whatever discovery resolved — a
   // discovery-only provider configures no URL for `providerHosts` to derive them from.
   const doFetch = makeProviderFetch(

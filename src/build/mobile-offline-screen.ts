@@ -12,6 +12,7 @@
 // later run, an edited one is kept.
 
 import { join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import {
@@ -87,6 +88,7 @@ async function writePage(
     report.manual.push(`${PUBLIC_PAGE} was edited and is kept (--force replaces it)`);
     return;
   }
+  await assertInsideProject(dir, path);
   await Deno.mkdir(join(dir, "public"), { recursive: true });
   await Deno.writeTextFile(path, next);
   report.written.push(PUBLIC_PAGE);

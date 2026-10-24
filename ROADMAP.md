@@ -68,6 +68,21 @@
   pinned and its hash checked, but the install has not been run; drop the KNOWN-LIMITATIONS
   clause once it passes.
 
+## Migrators and auth providers (audit 4.8, low findings)
+
+- **OAuth `iss` required when the issuer says so.** The callback refuses an `iss` naming another
+  issuer, but does not yet require one when the discovery document advertises
+  `authorization_response_iss_parameter_supported: true` (oauth4webapi does). Keep the flag on
+  the resolved endpoints and refuse a response without `iss` from such an issuer.
+- **`migrate` freezes the migrating machine's paths into inlined rules.** The next.config
+  evaluator keeps `HOME`, `TMPDIR`, `DENO_DIR` and the Windows profile variables; a
+  `redirects()` / `headers()` that interpolates one of them is written into `denext.config.ts`
+  with that machine's value. Pass placeholders for them, or flag such a rule for review.
+- **`denext patch` follows links inside `node_modules`.** A patch's targets are confined
+  lexically to the package folder, and the package folder is resolved through pnpm's links (which
+  may lead to a workspace package outside the app). Confine the resolved targets to the project
+  or workspace root, by real path.
+
 ## Build toolchain: waiting on `deno bundle`
 
 esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)
