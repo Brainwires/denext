@@ -27,7 +27,9 @@ import { nativePlugin } from "./plugin.ts";
  * Deno Desktop's custom-scheme callbacks add:
  *
  * - `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;
- * - `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256`;
+ * - `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256` (every
+ *   platform: the iOS / Android shell and the web popup too), and `pkce: "not-applicable"` was not
+ *   given;
  * - `scheme_owned_by_other_app`: another app handles the scheme (its identity in
  *   {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call
  *   `claimDeepLinkScheme` (`denext/desktop/client`);
@@ -101,9 +103,11 @@ export interface AuthSessionOptions {
    */
   readonly callbackPrefix?: string;
   /**
-   * Deno Desktop, custom-scheme callback: PKCE (S256) is mandatory unless this is
-   * `"not-applicable"`, for a provider that binds the callback to the initiating client another
-   * way; then {@linkcode AuthSessionOptions.reason} says how.
+   * PKCE (S256) is mandatory (the iOS / Android shell, the web popup, and Deno Desktop's
+   * custom-scheme callback) unless this is `"not-applicable"`, for a provider that binds the
+   * callback to the initiating client another way; then {@linkcode AuthSessionOptions.reason}
+   * says how. Without PKCE another app that registers the same callback scheme could take the
+   * `code` and redeem it.
    */
   readonly pkce?: "not-applicable";
   /** Why PKCE does not apply (required with `pkce: "not-applicable"`; kept with the session). */
@@ -264,6 +268,55 @@ function checkTimeout(timeoutMs: unknown): number | undefined {
     throw authSessionError("invalid", "timeoutMs must be a positive number of milliseconds");
   }
   return timeoutMs;
+}
+
+/** A PKCE S256 `code_challenge`: base64url(SHA-256), 43 characters, no padding. */
+const S256_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** The longest `reason` kept for a `pkce: "not-applicable"` session. */
+const MAX_PKCE_REASON = 500;
+
+/** The single value of `name` in `url`'s query, or null when absent or repeated. */
+function singleParam(url: URL, name: string): string | null {
+  const all = url.searchParams.getAll(name);
+  return all.length === 1 ? all[0] : null;
+}
+
+/**
+ * PKCE S256 in the URL (one `code_challenge`, a SHA-256's base64url, and one
+ * `code_challenge_method=S256`), unless `pkce: "not-applicable"` with a `reason`. Without it,
+ * any app that registers the same callback scheme could take the `code` and redeem it. Throws
+ * `pkce_required` or `invalid`.
+ */
+function checkPkce(url: string, options: AuthSessionOptions | undefined): void {
+  const pkce = options?.pkce as unknown;
+  if (pkce !== undefined && pkce !== "not-applicable") {
+    throw authSessionError("invalid", 'pkce must be "not-applicable" when given');
+  }
+  if (pkce === "not-applicable") return checkPkceReason(options?.reason);
+  if (!hasS256Challenge(new URL(url))) {
+    throw authSessionError(
+      "pkce_required",
+      "the URL must carry PKCE: one code_challenge (a 43-character base64url SHA-256) and " +
+        'code_challenge_method=S256 (or pass pkce: "not-applicable" with a reason)',
+    );
+  }
+}
+
+/** A `pkce: "not-applicable"` waiver's reason: present and bounded, else `invalid`. */
+function checkPkceReason(reason: unknown): void {
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (text === "" || text.length > MAX_PKCE_REASON) {
+    throw authSessionError(
+      "invalid",
+      'pkce: "not-applicable" needs a reason (how the provider binds the callback)',
+    );
+  }
+}
+
+/** Whether `url` carries one S256 `code_challenge` and one `code_challenge_method=S256`. */
+function hasS256Challenge(url: URL): boolean {
+  return S256_CHALLENGE.test(singleParam(url, "code_challenge") ?? "") &&
+    singleParam(url, "code_challenge_method") === "S256";
 }
 
 /** A session that failed before it started. */
@@ -497,9 +550,10 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,
  *   denext's pinned runtime).
  *
- * Only one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this
- * only opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)
- * before the call, compare `state` after it, and exchange the `code` on your server.
+ * Only one session is open at a time (`busy` otherwise). The URL must carry PKCE S256 (a
+ * `code_challenge` and `code_challenge_method=S256`; `pkce_required` otherwise) unless
+ * `pkce: "not-applicable"` with a `reason`. Generate `state` and the PKCE verifier before the
+ * call, compare `state` after it, and exchange the `code` (with the verifier) on your server.
  *
  * @param url The provider's authorization URL (absolute `https:`).
  * @param options The callback scheme, and the iOS ephemeral and timeout options.
@@ -516,11 +570,19 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   authorize.searchParams.set("redirect_uri", "myapp://auth/callback");
  *   authorize.searchParams.set("response_type", "code");
  *   authorize.searchParams.set("state", state);
- *   // (add code_challenge / code_challenge_method for PKCE)
+ *   const verifier = crypto.randomUUID() + crypto.randomUUID();
+ *   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+ *   const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+ *     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+ *   authorize.searchParams.set("code_challenge", challenge);
+ *   authorize.searchParams.set("code_challenge_method", "S256");
  *   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
  *   const params = new URL(url).searchParams;
  *   if (params.get("state") !== state) throw new Error("state mismatch");
- *   await fetch("/api/auth/exchange", { method: "POST", body: params.get("code") });
+ *   await fetch("/api/auth/exchange", {
+ *     method: "POST",
+ *     body: JSON.stringify({ code: params.get("code"), verifier }),
+ *   });
  * }
  * ```
  */
@@ -545,6 +607,7 @@ export async function openAuthSession(
       });
   }
   const scheme = checkScheme(options?.callbackScheme);
+  checkPkce(target, options);
   if (active) throw authSessionError("busy", "another auth session is still open");
   active = true;
   try {

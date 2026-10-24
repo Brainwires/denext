@@ -60,8 +60,9 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * and one without an expiry is refused once the bundled UI's manifest carries one; an unsigned UI
  * from a loopback host is accepted (and loopback exempt from pinned origins) only in a debug
  * build (iOS `DEBUG`, Android `FLAG_DEBUGGABLE`); `booted` without a version confirms nothing;
- * and a request for a directory of a downloaded UI no longer quarantines it. The bump keeps an
- * older denext from rewriting those checks away.
+ * a request for a directory of a downloaded UI no longer quarantines it; and the bridge's frame
+ * guard also refuses a main frame on another origin than the app's (bridge-frame-guard-native-
+ * template.ts). The bump keeps an older denext from rewriting those checks away.
  */
 export const OTA_TEMPLATE_VERSION = 11;
 

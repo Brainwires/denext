@@ -1451,14 +1451,23 @@ export default {
 import { openAuthSession } from "denext/mobile";
 
 export async function signIn() {
-  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const state = crypto.randomUUID();
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   const authorize = new URL("https://auth.example.com/authorize");
   authorize.searchParams.set("redirect_uri", "myapp://auth/callback");
   authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge); // PKCE S256: required
+  authorize.searchParams.set("code_challenge_method", "S256");
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
   if (params.get("state") !== state) throw new Error("state mismatch");
-  await fetch("/api/auth/exchange", { method: "POST", body: params.get("code") });
+  await fetch("/api/auth/exchange", {
+    method: "POST",
+    body: JSON.stringify({ code: params.get("code"), verifier }),
+  });
 }`}
       </Code>
       <ul>
@@ -1498,12 +1507,19 @@ export async function signIn() {
         Only one session is open at a time (<code>busy</code>); <code>timeoutMs</code> gives up with
         {" "}
         <code>timeout</code>, and a non-https <code>url</code> or a bad scheme is{" "}
-        <code>invalid</code>.{" "}
-        <strong>
-          PKCE and <code>state</code> stay your job:
-        </strong>{" "}
-        denext only opens the page and hands back the callback URL. Check <code>state</code>{" "}
-        and exchange the <code>code</code> on your server.
+        <code>invalid</code>. <strong>PKCE S256 is required:</strong> the URL must carry a{" "}
+        <code>code_challenge</code> and{" "}
+        <code>code_challenge_method=S256</code>, or the call rejects with <code>pkce_required</code>
+        {" "}
+        before anything opens (in the shell and the web popup alike). Without it, another app that
+        registers the same callback scheme could receive the redirect and redeem the code. A
+        provider that binds the callback to the client another way passes{" "}
+        <code>pkce: "not-applicable"</code> with a <code>reason</code>. Generating{" "}
+        <code>state</code> and the verifier, checking <code>state</code> and exchanging the{" "}
+        <code>code</code> on your server stay your job. The <code>expo-web-browser</code> /{" "}
+        <code>expo-auth-session</code> shims keep Expo's behaviour: a URL without PKCE (an{" "}
+        <code>AuthRequest</code> with{" "}
+        <code>usePKCE: false</code>) still opens, with a one-time console warning naming the risk.
       </p>
       <p>
         In a Deno Desktop window the same <code>openAuthSession</code>{" "}
@@ -4072,6 +4088,45 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         With a <code>fastlane/</code> folder, <code>--release</code>{" "}
         also checks it (<a href="/docs/mobile-build#fastlane">fastlane</a>). Not checked: whether
         icons are still Capacitor&apos;s placeholders, and anything about the content itself.
+      </p>
+
+      <h3 id="bridge-origin-guard">The bridge&apos;s origin guard</h3>
+      <p>
+        The native bridge every denext native plugin installs accepts plugin calls only from the
+        app&apos;s main frame on the app&apos;s own origin: Capacitor&apos;s local one (
+        <code>capacitor://localhost</code> on iOS, <code>https://localhost</code> on Android), plus
+        {" "}
+        <code>server.url</code> in a debug build so <code>denext mobile dev</code>{" "}
+        live reload keeps working. A page the WebView navigates to through{" "}
+        <code>server.allowNavigation</code>, a hosted <code>server.url</code>{" "}
+        in a release build, and every iframe get no plugins: on iOS their calls are dropped, on
+        Android the bridge is not given to them at all (Capacitor itself hands it to every{" "}
+        <code>allowNavigation</code> origin). Configure it in the Capacitor config, which{" "}
+        <code>cap sync</code> ships inside the app (the page cannot change it):
+      </p>
+      <Code lang="ts">
+        {`// capacitor.config.ts
+plugins: {
+  DenextBridge: {
+    // pages there may call plugins too (exact origins: scheme, host, port)
+    allowedOrigins: ["https://app.example.com"],
+    // or turn the origin check off entirely (only the main-frame check stays)
+    // frameGuard: false,
+  },
+},`}
+      </Code>
+      <p>
+        A hosted app (the shell loads a remote{" "}
+        <code>server.url</code>) lists that origin, or opts out with <code>frameGuard: false</code>;
+        {" "}
+        <code>denext migrate --enable-capacitor</code>{" "}
+        writes the opt-out into a kept config that loads one. <code>denext mobile doctor</code>{" "}
+        warns about every <code>server.url</code> / <code>allowNavigation</code>{" "}
+        origin the guard refuses, and about <code>frameGuard: false</code>{" "}
+        (every such origin can call every plugin). Android also needs <code>androidx.webkit</code>
+        {" "}
+        in the app module, which <code>denext mobile add</code> adds to{" "}
+        <code>android/app/build.gradle</code> with the composed <code>MainActivity</code>.
       </p>
 
       <h2 id="crash-reporting">Crash reporting</h2>

@@ -668,3 +668,28 @@ Deno.test("capacitor.config.ts type-checks against @capacitor/cli", async () => 
     assertEquals(code, 0, err);
   });
 });
+
+Deno.test("migrate --enable-capacitor SECURITY (AU6-L8): a kept hosted config opts out of the bridge's origin guard", async () => {
+  await withTree(
+    {
+      "package.json": { name: "web", dependencies: { react: "^19", "react-dom": "^19" } },
+      "vite.config.ts": "export default {};\n",
+      "index.html": `<!doctype html><html><head><title>Web</title></head><body>` +
+        `<div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>`,
+      "src/main.tsx": "export {};\n",
+      "capacitor.config.json": {
+        appId: "io.acme.web",
+        appName: "Acme",
+        webDir: "out",
+        server: { url: "https://app.acme.io" },
+      },
+    },
+    async (dir) => {
+      const r = await migrateProject(dir, { capacitor: true, platforms: ["ios"] });
+      const config = JSON.parse(await Deno.readTextFile(join(dir, "capacitor.config.json")));
+      assertEquals(config.plugins, { DenextBridge: { frameGuard: false } });
+      assertEquals(config.server, { url: "https://app.acme.io" }, "the rest is kept");
+      assert(r.capacitor!.review.some((f) => f.reason.includes("allowedOrigins")));
+    },
+  );
+});

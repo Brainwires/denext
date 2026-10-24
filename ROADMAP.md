@@ -72,15 +72,8 @@
 
 The audit's lows that were security gaps have landed (see the CHANGELOG: manifest expiry, loopback OTA only in
 debug builds, `booted()` bound to a version, directory requests, OS-enforced `requireBiometric`,
-print confinement, `baseUrl` credentials). What is left, each with why it is not done there:
+print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mobile `openAuthSession`). What is left, each with why it is not done there:
 
-- **Bridge frame guard by origin:** refusing plugin calls from a main frame that is not the app's
-  origin breaks hosted-mode apps (a remote `server.url`) and `server.allowNavigation` flows that
-  call plugins on purpose; it needs a decision on an opt-out (and `mobile doctor --release`
-  flagging `allowNavigation`).
-- **PKCE on mobile `openAuthSession`:** requiring `code_challenge_method=S256` breaks Expo's
-  `usePKCE: false` and implicit flows; it needs a decision on the Expo-compat path
-  (`pkce: "not-applicable"`). The callback itself is bound since AU6-M3.
 - **`requireBiometric` on Deno Desktop:** the desktop keychain items have no biometric access
   control, so the gate is in the page there; it needs a runtime capability (macOS
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork.

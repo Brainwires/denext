@@ -497,7 +497,8 @@ default for `video`) lets a drag on the view scroll the list. In React Native mo
 `expo-symbols` → `<SystemIcon>`. `auth-session --scheme myapp` adds
 `openAuthSession(url, { callbackScheme })` (OAuth in an iOS ASWebAuthenticationSession / Android
 Custom Tab / web popup finished by `completeAuthSession()`, and in a Deno Desktop window the
-system browser with a loopback redirect; resolves the callback URL, PKCE + `state` are yours).
+system browser with a loopback redirect; resolves the callback URL; the URL must carry PKCE S256,
+else `pkce_required`, unless `pkce: "not-applicable"` + `reason`; `state` is yours).
 App extensions: `denext mobile add share-extension | widget --name <N> [--configurable
 <param:enum=a|b>] | live-activity --name <N>` generate the native targets behind
 `onShareReceived`, `setWidgetData`/`reloadWidgets` and
@@ -505,7 +506,10 @@ App extensions: `denext mobile add share-extension | widget --name <N> [--config
 Live reload on a device: `denext mobile dev --lan` points the app's `server.url` at
 `denext dev` for the session (restored on exit); a non-loopback host loads the dev assets only
 when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`), and a network bind requires its
-per-run token from other machines (the printed URL carries `?__denext_dev=…`). Docs:
+per-run token from other machines (the printed URL carries `?__denext_dev=…`). Native plugins answer only
+the app's own origin (plus `server.url` in a debug build): a hosted `server.url` or an
+`allowNavigation` page that calls plugins needs `plugins: { DenextBridge: { allowedOrigins: […] } }`
+(or `frameGuard: false`) in the Capacitor config. Docs:
 https://denext.dev/docs/mobile
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,

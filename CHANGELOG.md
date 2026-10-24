@@ -123,6 +123,27 @@ and this project adheres to
   secure-storage plugin. The API is unchanged. A value an older denext stored moves into the
   OS-enforced store the first time it is read; an older binary keeps the in-page gate and warns
   once.
+- **Security: the native bridge accepts plugin calls only from the app's own origin.** A page the
+  shell navigated to through `server.allowNavigation` (or a hosted `server.url`) could call every
+  installed plugin: the iOS guard checked only for the main frame, and Capacitor's Android bridge
+  is handed to every `allowNavigation` origin. Plugin calls are now accepted from the app's local
+  origin only (plus `server.url` in a debug build, for `denext mobile dev`), and from the origins
+  the Capacitor config lists in `plugins.DenextBridge.allowedOrigins`;
+  `plugins.DenextBridge.frameGuard: false` turns the origin check off. `denext mobile doctor`
+  warns about each `server.url` / `allowNavigation` origin the guard refuses, and about the
+  opt-out; `denext migrate --enable-capacitor` writes the opt-out into a kept config that loads
+  a hosted `server.url`. Android's composed `MainActivity` (generation 6) carries the guard and
+  `androidx.webkit` is added to `android/app/build.gradle`; the iOS bridge view controllers move
+  to auth-session / app-extension generation 6. Re-run your `denext mobile add` and ship a new
+  binary.
+- **Security: `openAuthSession` requires PKCE.** In the iOS / Android shell and the web popup the
+  authorization URL must carry `code_challenge` + `code_challenge_method=S256` (else
+  `pkce_required`, before anything opens), as Deno Desktop's custom-scheme flow already did, so an
+  app that registers the same callback scheme cannot redeem an intercepted code. A provider that
+  binds the callback another way passes `pkce: "not-applicable"` with a `reason` (the Clerk
+  bridge does). The Expo shims keep Expo's behaviour: `openAuthSessionAsync` with a URL without
+  PKCE (an `AuthRequest` with `usePKCE: false`) still works, with a one-time console warning
+  naming the risk.
 - **Security: printing cannot reach the app's private files.** iOS `printToPrinter` (expo-print's
   `printAsync({ printerUrl, uri })`, no dialog) printed any file the app could read to any printer
   URL; it now prints only a file in the app's Documents, Caches or temporary folder. Android

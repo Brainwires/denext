@@ -328,6 +328,13 @@ need a server) and `denext mobile add export-routes`. `denext migrate --check
 --enable-capacitor` shows all of it, the files and the commands, without writing
 or running anything.
 
+**Hosted mode.** A kept Capacitor config that loads a hosted `server.url` (the shell shows a
+remote site instead of the bundled export) gets `plugins.DenextBridge.frameGuard: false`
+written into it, and a review item: the native bridge accepts plugin calls only from the app's
+own origin by default ([the bridge's origin guard](/docs/mobile#bridge-origin-guard)), and the
+hosted page would lose its plugins. Narrow it afterwards by listing the hosted origin in
+`plugins.DenextBridge.allowedOrigins` and removing `frameGuard: false`.
+
 ---
 
 ## 4. Migrating app code

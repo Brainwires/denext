@@ -124,6 +124,31 @@ export interface CapacitorPlan {
   ignores: string[];
   /** Write `capacitor.config.ts` (false when a config of another name is kept). */
   writeConfig: boolean;
+  /**
+   * The kept config to write `plugins.DenextBridge.frameGuard: false` into: it loads a hosted
+   * `server.url` whose page calls native plugins, which the bridge's origin guard would refuse
+   * (AU6-L8). Null when there is nothing to opt out of (or the config already decides).
+   */
+  frameGuardOptOut: string | null;
+}
+
+/**
+ * Whether a kept Capacitor config loads a hosted app: a `server.url` on a host other than
+ * loopback, with no `plugins.DenextBridge` decision of its own.
+ */
+export function needsFrameGuardOptOut(values: Record<string, unknown> | null): boolean {
+  const server = values?.server as Record<string, unknown> | undefined;
+  const url = typeof server?.url === "string" ? server.url : undefined;
+  if (url === undefined) return false;
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  if (["localhost", "127.0.0.1", "[::1]", "::1"].includes(host)) return false;
+  const plugins = values?.plugins as Record<string, unknown> | undefined;
+  return typeof plugins?.DenextBridge !== "object" || plugins.DenextBridge === null;
 }
 
 /** A Capacitor app id: Java package form (Android's rule, which Capacitor enforces). */
@@ -420,6 +445,14 @@ function configFindings(
     });
   }
   if (!kept || kept.generated) return out;
+  if (needsFrameGuardOptOut(kept.values)) {
+    out.push({
+      item: kept.file,
+      reason: "it loads a hosted server.url, whose page would lose the native plugins to the " +
+        "bridge's origin guard: migrate set plugins.DenextBridge.frameGuard: false; prefer " +
+        "listing the origin in plugins.DenextBridge.allowedOrigins instead",
+    });
+  }
   const webDir = kept.values?.webDir;
   if (webDir !== CAPACITOR_WEB_DIR) {
     out.push({
@@ -477,6 +510,9 @@ export async function planCapacitor(input: CapacitorPlanInput): Promise<Capacito
     tasks: capacitorTasks(input.cli, { run: input.run, installed: input.pm !== null }),
     ignores: capacitorBuildIgnores(nativeDirsOf(kept?.values)),
     writeConfig: !kept || kept.generated,
+    frameGuardOptOut: kept && !kept.generated && needsFrameGuardOptOut(kept.values)
+      ? kept.file
+      : null,
   };
 }
 

@@ -227,8 +227,8 @@ Deno.test("memoryWarning (Android): every MainActivity overrides onTrimMemory an
   for (const set of sets) {
     const label = set.join("+") || "(none)";
     const text = await mainActivitySource("com.example.app", new Set(set));
-    // Generation 5: 3.2.0 (generation 4) keeps it instead of rewriting the forwarder away.
-    assert(text.startsWith("// denext-main-activity-template: 5 "), label);
+    // Generation 5 on: 3.2.0 (generation 4) keeps it instead of rewriting the forwarder away.
+    assert(text.startsWith("// denext-main-activity-template: 6 "), label);
     for (
       const needle of [
         "public void onTrimMemory(int level) {\n        super.onTrimMemory(level);",

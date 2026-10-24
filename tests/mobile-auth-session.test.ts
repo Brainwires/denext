@@ -17,7 +17,10 @@ import { resetDeepLinksForTesting } from "../src/mobile/deep-link.ts";
 type Any = any;
 
 const ORIGIN = "https://app.example.com";
-const AUTHORIZE = "https://auth.example.com/authorize?client_id=x&state=s1";
+/** A PKCE S256 pair's query: openAuthSession requires one (AU6-L9). */
+const PKCE =
+  "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
+const AUTHORIZE = "https://auth.example.com/authorize?client_id=x&state=s1" + PKCE;
 
 /** Define `values` on globalThis for `fn`, then restore every one and reset module state. */
 async function withGlobals(values: Record<string, unknown>, fn: () => unknown): Promise<void> {
@@ -400,7 +403,7 @@ Deno.test("completeAuthSession: posts this URL to the opener for this origin onl
 
 Deno.test("openAuthSession (native) SECURITY (AU6-M3): a callback the session did not ask for is refused", async () => {
   const url = "https://idp.example.com/authorize?client_id=c&state=st8" +
-    "&redirect_uri=" + encodeURIComponent("myapp://auth/callback");
+    "&redirect_uri=" + encodeURIComponent("myapp://auth/callback") + PKCE;
   let answer = "";
   const fake = authPlugin(() => Promise.resolve({ url: answer }));
   await inShell({ DenextAuthSession: fake.plugin }, async () => {
@@ -419,7 +422,9 @@ Deno.test("openAuthSession (native) SECURITY (AU6-M3): a callback the session di
     answer = "myapp://auth/callback#access_token=t&state=st8";
     assertEquals((await openAuthSession(url, { callbackScheme: "myapp" })).url, answer);
     // A `state` option is checked when the URL names another redirect (through the provider).
-    const via = "https://idp.example.com/authorize?redirect_uri=https%3A%2F%2Fidp.example.com%2Fcb";
+    const via =
+      "https://idp.example.com/authorize?redirect_uri=https%3A%2F%2Fidp.example.com%2Fcb" +
+      PKCE;
     answer = "myapp://auth/callback?state=wrong";
     assertEquals(
       await codeOf(
@@ -439,6 +444,42 @@ Deno.test("openAuthSession (native) SECURITY (AU6-M3): a callback the session di
         state: "mine",
       })).url,
       answer,
+    );
+  });
+});
+
+Deno.test("openAuthSession SECURITY (AU6-L9): PKCE S256 is required unless waived with a reason", async () => {
+  const fake = authPlugin(() => Promise.resolve({ url: "myapp://auth/callback?code=c&state=s1" }));
+  const bare = "https://auth.example.com/authorize?client_id=x&state=s1";
+  await inShell({ DenextAuthSession: fake.plugin }, async () => {
+    for (
+      const url of [
+        bare,
+        bare + "&code_challenge_method=S256",
+        bare + "&code_challenge=short&code_challenge_method=S256",
+        bare + PKCE.replace("S256", "plain"),
+        bare + PKCE + PKCE, // repeated parameters
+      ]
+    ) {
+      assertEquals(
+        await codeOf(openAuthSession(url, { callbackScheme: "myapp" })),
+        "pkce_required",
+        url,
+      );
+    }
+    assertEquals(fake.starts, [], "nothing was opened without PKCE");
+    // An explicit waiver needs a reason.
+    assertEquals(
+      await codeOf(openAuthSession(bare, { callbackScheme: "myapp", pkce: "not-applicable" })),
+      "invalid",
+    );
+    assertEquals(
+      (await openAuthSession(bare, {
+        callbackScheme: "myapp",
+        pkce: "not-applicable",
+        reason: "the provider binds the code to a client assertion",
+      })).url,
+      "myapp://auth/callback?code=c&state=s1",
     );
   });
 });
