@@ -12,8 +12,8 @@ import {
   useRef,
 } from "../react.ts";
 import { currentFiber } from "../../client/fiber/hooks-dispatcher.ts";
-import { type Fiber, HookBoundaryBit, setBit } from "../../client/fiber/fiber.ts";
-import { componentErrorInfo } from "../../client/fiber/fiber-utils.ts";
+import type { Fiber } from "../../client/fiber/fiber.ts";
+import { componentErrorInfo, setComponentBoundary } from "../../client/fiber/fiber-utils.ts";
 import { resetBoundary } from "../../client/fiber/boundaries.ts";
 import { options } from "./options.ts";
 
@@ -29,6 +29,23 @@ export {
   useRef,
   useState,
 } from "../react.ts";
+
+/**
+ * The fibers (both buffers) of components that called {@link useErrorBoundary} and show their
+ * children: the reconciler's component-boundary test.
+ */
+const boundaries = new WeakSet<Fiber>();
+// The twin too: a buffer created for an update this component bailed out of was never marked.
+setComponentBoundary((fiber) =>
+  boundaries.has(fiber) || (fiber.alternate !== null && boundaries.has(fiber.alternate))
+);
+
+/** Mark `fiber` and its twin as a boundary (or not, while it shows a caught error). */
+function markBoundary(fiber: Fiber, on: boolean): void {
+  for (const f of [fiber, fiber.alternate]) {
+    if (f) on ? boundaries.add(f) : boundaries.delete(f);
+  }
+}
 
 /** What Preact passes a `useErrorBoundary` callback with the error. */
 export interface ErrorInfo {
@@ -70,7 +87,7 @@ export function useErrorBoundary(
   const fiber = currentFiber;
   const error = fiber?.ext?.__error ?? undefined;
   // A boundary only while it shows its children: a caught error must not loop back here.
-  if (fiber) setBit(fiber, HookBoundaryBit, error === undefined);
+  if (fiber) markBoundary(fiber, error === undefined);
   const self = useRef<Fiber | null>(fiber);
   self.current = fiber;
   const report = useRef(callback);

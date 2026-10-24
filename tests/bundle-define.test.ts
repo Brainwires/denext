@@ -368,7 +368,7 @@ for (const define of PATHS) {
 }
 
 // The hook-boundary gate (Preact's `useErrorBoundary`): with `--define` an app the scan found no
-// use in carries no hook-boundary check in the reconciler's boundary search; one that uses it (or
+// use in carries no component-boundary seam in the reconciler's boundary search; one that uses it (or
 // a bundle no scan ran for) keeps it.
 for (const define of PATHS) {
   Deno.test(`native bundle (${label(define)}): the hook-boundary build-scan gate`, async () => {
@@ -386,17 +386,17 @@ for (const define of PATHS) {
         });
         return [...out.files.values()].join("\n");
       };
-      // HookBoundaryBit (4096) is tested against a fiber's bits only by the hook-boundary check.
-      const checksBit = (code: string) => /4096&|&4096/.test(code);
       const off = await bundle(false);
-      for (
-        const kept of define ? [await bundle(true), await bundle()] : [off, await bundle(true)]
-      ) {
-        assert(checksBit(kept), "the hook-boundary check");
-      }
+      const on = await bundle(true);
+      const unscanned = await bundle();
       if (define) {
-        assert(!checksBit(off), "the hook-boundary check in an app with no useErrorBoundary");
+        // Off, the component-boundary seam (its slot and its call) is gone; on, it stays.
+        assert(off.length < on.length, `off ${off.length} B, on ${on.length} B`);
+        assert(unscanned.length >= on.length, "an unscanned bundle keeps the seam");
         assert(!off.includes("__DENEXT_HOOK_BOUNDARIES__"), "the gate folded");
+      } else {
+        // No `--define`: every build keeps it (the runtime default reads the gate as on).
+        assertEquals(off.length, on.length);
       }
     } finally {
       __setBundleDefineForTests(undefined);

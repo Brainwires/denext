@@ -73,6 +73,27 @@ Deno.test("useErrorBoundary catches an error routed from an event handler", asyn
   await screen.unmount();
 });
 
+let bumpChild: () => void = () => {};
+function UpdatingChild() {
+  const [n, setN] = useState(0);
+  bumpChild = () => setN(n + 1);
+  if (n === 2) throw new Error("second update");
+  return h("i", null, String(n));
+}
+function StillBoundary() {
+  const [error] = useErrorBoundary();
+  return error ? h("b", null, "caught update") : h(UpdatingChild, null);
+}
+
+Deno.test("useErrorBoundary catches a child's update error while it bails out itself", async () => {
+  const screen = await render(h(StillBoundary, null));
+  await screen.act(() => bumpChild()); // the boundary bails; a fresh twin buffer renders below
+  assertEquals(screen.html(), "<i>1</i>");
+  await screen.act(() => bumpChild());
+  assertEquals(screen.html(), "<b>caught update</b>");
+  await screen.unmount();
+});
+
 Deno.test("an error the error UI throws goes to the boundary above, not back here", async () => {
   function Child(): never {
     throw new Error("first");

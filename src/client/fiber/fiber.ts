@@ -257,16 +257,10 @@ export const UnmountedBit = 1024;
  * page's head, where the server hoisted it, not in the page container (singleton-runtime.ts).
  */
 export const HoistedBit = 2048;
-/**
- * A function component that is an error boundary for its own subtree — Preact's
- * `useErrorBoundary` (`denext/preact/hooks`) sets it on the fiber it renders in, while it is
- * not showing a caught error. Carried, so a bailed-out render keeps it.
- */
-export const HookBoundaryBit = 4096;
 
 /** The bits `createWorkInProgress` carries from the current fiber onto its twin. */
 const CARRIED_BITS = StrictBit | UnderProfilerBit | ProfilerMountedBit | ShowingFallbackBit |
-  OffscreenBit | HiddenBit | HoistedBit | HookBoundaryBit;
+  OffscreenBit | HiddenBit | HoistedBit;
 /** The bits a work-in-progress fiber keeps from its own previous life (never carried). */
 const OWN_BITS = ForceRenderBit | StateUpdateBit | UnmountedBit;
 

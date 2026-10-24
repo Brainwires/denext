@@ -14,15 +14,14 @@
 import { extractDenextSurfaces } from "./extract-denext.ts";
 import { diffSurfaces } from "./diff.ts";
 import { WAIVERS } from "./waivers.ts";
+import { readBaselines } from "./spec.ts";
 import type { Baseline } from "./types.ts";
 import { fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../../", import.meta.url)).replace(/[\\/]$/, "");
 const LEDGER = `${ROOT}/tests/fixtures/react-parity-known-gaps.json`;
 
-const baseline = JSON.parse(
-  await Deno.readTextFile(`${ROOT}/tests/fixtures/react-surface.baseline.json`),
-) as Baseline;
+const baseline: Baseline = await readBaselines(ROOT);
 const denext = await extractDenextSurfaces(ROOT);
 const result = diffSurfaces(baseline.surfaces, denext, WAIVERS);
 

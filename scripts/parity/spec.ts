@@ -12,6 +12,19 @@
 
 /** The npm packages installed (with their `@types`) to source the real surface. */
 import { NEXT_AUTH_PROVIDER_MODULES } from "../../src/compat/next-auth/providers/list.ts";
+import type { Baseline, Surface } from "./types.ts";
+
+/**
+ * Preact and its ecosystem — what `denext/preact`, `denext/preact/*`, `denext/preact-iso` and
+ * `denext/signals` mirror (each ships its own `.d.ts`). Their surfaces live in their own baseline
+ * ({@linkcode PREACT_BASELINE}), so the React/Next baseline stays as it is.
+ */
+export const PREACT_PACKAGES = [
+  "preact",
+  "preact-render-to-string",
+  "preact-iso",
+  "@preact/signals",
+] as const;
 
 export const REAL_PACKAGES = [
   "react",
@@ -30,12 +43,7 @@ export const REAL_PACKAGES = [
   // NextAuth.js v4 — the line most Next apps still run — installed beside v5 under an npm
   // alias (REAL_PACKAGE_ALIASES), since the shim serves v4's server API too.
   "next-auth-v4",
-  // Preact and its ecosystem — what `denext/preact`, `denext/preact/*`, `denext/preact-iso` and
-  // `denext/signals` mirror (each ships its own `.d.ts`).
-  "preact",
-  "preact-render-to-string",
-  "preact-iso",
-  "@preact/signals",
+  ...PREACT_PACKAGES,
   "@types/react",
   "@types/react-dom",
   "@types/react-is",
@@ -405,4 +413,52 @@ export async function assertCatalogMatchesExports(root: string): Promise<void> {
         missing.join("\n  "),
     );
   }
+}
+
+/** The React/Next baseline (repo-relative). */
+export const REACT_BASELINE = "tests/fixtures/react-surface.baseline.json";
+/** The Preact baseline (repo-relative): the `preact` group's surfaces and package versions. */
+export const PREACT_BASELINE = "tests/fixtures/preact-surface.baseline.json";
+
+/** Whether a baseline surface belongs to the Preact baseline. */
+function isPreactSurface(s: Surface): boolean {
+  return PREACT_SPECIFIERS.some(([specifier]) => specifier === s.specifier);
+}
+
+/**
+ * Split a captured baseline into the React/Next one and the Preact one.
+ *
+ * @param all The whole capture.
+ * @returns Each baseline, versions and surfaces partitioned by package / specifier.
+ */
+export function splitBaseline(all: Baseline): { react: Baseline; preact: Baseline } {
+  const preactPkgs = new Set<string>(PREACT_PACKAGES);
+  const pick = (preact: boolean): Baseline => ({
+    versions: Object.fromEntries(
+      Object.entries(all.versions).filter(([p]) => preactPkgs.has(p) === preact),
+    ),
+    capturedAt: all.capturedAt,
+    surfaces: all.surfaces.filter((s) => isPreactSurface(s) === preact),
+  });
+  return { react: pick(false), preact: pick(true) };
+}
+
+/**
+ * Read the committed baselines as one: the React/Next baseline plus the Preact one (when present).
+ *
+ * @param root Repo root (absolute).
+ * @returns The merged baseline.
+ */
+export async function readBaselines(root: string): Promise<Baseline> {
+  const react = JSON.parse(await Deno.readTextFile(`${root}/${REACT_BASELINE}`)) as Baseline;
+  const preact = await Deno.readTextFile(`${root}/${PREACT_BASELINE}`).then(
+    (t) => JSON.parse(t) as Baseline,
+    () => null,
+  );
+  if (!preact) return react;
+  return {
+    versions: { ...react.versions, ...preact.versions },
+    capturedAt: react.capturedAt,
+    surfaces: [...react.surfaces, ...preact.surfaces],
+  };
 }

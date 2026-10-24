@@ -19,7 +19,6 @@ import {
   hasBit,
   HasEffect,
   HiddenBit,
-  HookBoundaryBit,
   NoLane,
   OffscreenBit,
   Placement,
@@ -134,18 +133,38 @@ export function findSuspense(fiber: Fiber): Fiber | null {
 }
 
 /**
- * Whether `fiber` is a function component made an error boundary by Preact's `useErrorBoundary`
- * (`denext/preact/hooks`). Folds to `false` in a build whose scan found no use
- * (`__DENEXT_HOOK_BOUNDARIES__`), so the seam costs such an app nothing.
+ * A compat layer's test for a component fiber that is an error boundary for its own subtree.
+ * `denext/preact/hooks` installs one for Preact's `useErrorBoundary`; nothing else does.
+ */
+let componentBoundary: ((fiber: Fiber) => boolean) | null = null;
+
+/**
+ * Install (or clear, with `null`) the component-boundary test {@link isHookBoundary} consults.
+ *
+ * @param test Whether a component fiber is currently an error boundary.
+ */
+export function setComponentBoundary(test: ((fiber: Fiber) => boolean) | null): void {
+  componentBoundary = test;
+}
+
+/**
+ * Whether `fiber` is a component a compat layer made an error boundary (Preact's
+ * `useErrorBoundary`). Every call site guards it with the `__DENEXT_HOOK_BOUNDARIES__` build-scan
+ * gate inline, so in a build whose scan found no use the call folds away and this function is
+ * not bundled at all.
  */
 export function isHookBoundary(fiber: Fiber): boolean {
-  return (typeof __DENEXT_HOOK_BOUNDARIES__ === "undefined" || __DENEXT_HOOK_BOUNDARIES__) &&
-    (fiber.bits & HookBoundaryBit) !== 0;
+  return componentBoundary !== null && componentBoundary(fiber);
 }
 
 export function findErrorBoundary(fiber: Fiber): Fiber | null {
   for (let n = fiber.return; n !== null; n = n.return) {
-    if (n.tag === "errorboundary" || isHookBoundary(n) || isClassBoundary(n)) return n;
+    if (
+      n.tag === "errorboundary" ||
+      ((typeof __DENEXT_HOOK_BOUNDARIES__ === "undefined" || __DENEXT_HOOK_BOUNDARIES__) &&
+        isHookBoundary(n)) ||
+      isClassBoundary(n)
+    ) return n;
   }
   return null;
 }
