@@ -153,6 +153,7 @@ Every path is relative to `basePath` (default `/auth`).
 | `/native/revoke`           | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                         |
 | `/native/nonce`            | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                                       |
 | `/native/:provider`        | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
+| `/native/passkey/*`        | POST        | Passkeys for an app (needs `native` and `passkeys`): `authenticate/options` + `authenticate` answer the native tokens; `register/options` + `register` under a recent bearer. |
 | `/native/mfa`              | POST        | `{ mfa_token, code[, factor_id, challenge_id] }`: finish a native `id_token` sign-in that owes a second factor.                                                               |
 | `/native/mfa-challenge`    | POST        | `{ mfa_token, factor_id }`: text a code to a verified phone factor for that pending native sign-in.                                                                           |
 | `/native/mfa-enroll`       | POST        | `{ mfa_token }` (a sign-in answered with `mfa_enroll: true`): start a first TOTP factor — `{ factor_id, secret, uri, mfa_token }`.                                            |
@@ -1572,15 +1573,15 @@ denextAuth({
 | `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
 | `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
 | `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| `androidApps`      | none                     | Android apps (`{ packageName, sha256CertFingerprints }`) whose `android:apk-key-hash:` origins are accepted   |
 | `corsOrigins`      | none                     | Web origins (also in `origins`) allowed to call the passkey endpoints from another origin, with credentials   |
 | `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
 | `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
 
 `origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
 origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) unless the caller is one of
-`corsOrigins`. A native Android app (`android:apk-key-hash:…` is accepted in the signed client
-data) has no web origin, so it can't call the routes cross-origin — such a client needs endpoints
-of your own.
+`corsOrigins`. A native app calls the [`/native/passkey/*`](#passkeys-in-a-native-app) rows
+instead.
 
 **A front end on another origin.** With the auth server at `https://auth.example.com` and the
 pages at `https://www.example.com` (one RP ID, `example.com`):
@@ -1605,6 +1606,73 @@ front end, pass the server's origin to the client calls — `signInWithPasskey({
 "https://auth.example.com" })`, `registerPasskey({ origin: … })` — which then send credentials
 (`credentials: "include"`); the session cookie is the auth server's, so the two origins must be
 same-site for the browser to send it.
+
+### Passkeys in a native app
+
+An app that runs the ceremony itself — Android's Credential Manager, iOS's `ASAuthorization` — has
+no web origin and no cookie, so it uses the `/native/passkey/*` rows, which need
+[native session mode](#native-apps-and-account-deletion) as well as `passkeys`:
+
+| Row                                                   | Body                                             | Answer                                                                                        |
+| ----------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `POST {basePath}/native/passkey/authenticate/options` | `{}`                                             | `PublicKeyCredentialRequestOptionsJSON` + `ceremonyId` (usernameless). Per-IP rate-limited.   |
+| `POST {basePath}/native/passkey/authenticate`         | `{ credential, ceremonyId }`                     | The native tokens (`/native/token`'s shape), or `{ mfa_required, mfa_token, … }` (see below). |
+| `POST {basePath}/native/passkey/register/options`     | `{}` + `Authorization: Bearer nat_…`             | `PublicKeyCredentialCreationOptionsJSON` + `ceremonyId`.                                      |
+| `POST {basePath}/native/passkey/register`             | `{ credential, ceremonyId, name? }` + the bearer | `{ ok: true, passkey }`.                                                                      |
+
+They check what the cookie rows check, with the bearer in place of the cookie: registration needs
+an access token from a recent sign-in (`403 reauth_required`), a verified address
+(`403 email_unverified`) and no SSO user; every refused assertion is the same
+`401 { error: "invalid passkey" }`. A ceremony started on these rows completes only on them, and
+one started on a cookie row never completes here. With user verification the passkey is two
+factors; a presence-only assertion (`userVerification: "preferred"`) of a user with a second factor
+answers `{ mfa_required: true, mfa_token, … }`, finished with a code at `/native/mfa`. The rows
+take no ambient credential, so a native HTTP client sends no `Origin`; a request that carries one
+must come from this app or an origin the app's `cors` allows.
+
+**Android.** Inside an app, Credential Manager reports `clientDataJSON.origin` as
+`android:apk-key-hash:` followed by the unpadded base64url SHA-256 of the app's signing
+certificate. List the app and its certificates' fingerprints in `passkeys.androidApps`; each adds
+that exact origin (nothing else — no prefix, padding or case variant matches):
+
+```ts
+// shared by denext.config.ts (appLinks) and the auth config
+export const androidApp = {
+  packageName: "com.example.app",
+  sha256CertFingerprints: [
+    "B1:85:02:F2:9E:48:F5:2C:6A:15:EA:E7:04:F1:E6:0F:1C:FF:61:56:57:99:52:5D:5B:CB:3E:9B:74:53:4E:A1",
+  ],
+};
+
+denextAuth({
+  // …
+  native: { redirectUris: ["com.example.app://auth/callback"] },
+  passkeys: { androidApps: [androidApp] }, // accepts android:apk-key-hash:sYUC8p5I9SxqFernBPHmDxz_YVZXmVJdW8s-m3RTTqE
+});
+```
+
+Android also checks that the RP ID's domain vouches for the app: its
+`/.well-known/assetlinks.json` must delegate `delegate_permission/common.get_login_creds` to that
+package and certificate. `appLinks.android` in `denext.config.ts` serves it (with
+`handle_all_urls`; `get_login_creds` is on unless `loginCredentials: false`), so pass it the same
+object — or a list, for a debug and a release build: `appLinks: { android: [androidApp,
+debugApp] }`.
+
+Getting the fingerprint:
+
+- **Debug and upload keys:** `keytool -list -v -keystore <keystore> -alias <alias>` prints
+  `SHA256: AB:CD:…` (the debug keystore is `~/.android/debug.keystore`, alias `androiddebugkey`,
+  password `android`); `./gradlew signingReport` lists every variant's.
+- **Play App Signing:** Google re-signs the release, so the installed app's origin uses Play's key.
+  Copy it from Play Console → Test and release → App integrity → App signing ("SHA-256 certificate
+  fingerprint"), and list your upload key too if you install builds signed with it.
+
+The value is either `AB:CD:…` (32 colon-separated hex pairs) or 64 hex digits; anything else is
+refused when `denextAuth()` starts, as is a hand-written `android:apk-key-hash:` entry in `origins`
+that is not exactly 43 base64url characters encoding 32 bytes.
+
+**iOS.** An `ASAuthorization` ceremony names the RP's own origin (`https://<rpId>`), already in
+`origins`; the app needs the `webcredentials` associated domain, which `appLinks.apple` serves.
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,

@@ -190,8 +190,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
-- **An Android `apk-key-hash` passkey origin can't call the passkey endpoints:** a native app has
-  no web origin for `passkeys.corsOrigins`, so it needs endpoints of its own.
+- **Native passkey rows sign in usernameless only:** `/native/passkey/*` has no step-up of a
+  pending native sign-in with a passkey (a code at `/native/mfa` finishes it), and no list or
+  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server).
 - **Passkeys verify `none`, `packed`, `tpm`, `android-key`, `apple` and `fido-u2f`
   attestation** (`android-safetynet` and `compound` register only as unattested, under
   `attestation.mds.allowUnattested`), and ES256 / RS256 / Ed25519 credential keys only. The
@@ -448,7 +449,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   runs in the iOS / Android app; the web build (sqlite-wasm) and Deno Desktop refuse
   `PRAGMA key` and encrypted stores rather than keep the data in the clear.
   `@capacitor-community/sqlite` keeps one passphrase for all of an app's databases, so
-  `PRAGMA key` with a second, different passphrase is refused; `PRAGMA rekey` is not supported.
+  `PRAGMA key` with a second, different passphrase is refused, and `rekey` / `PRAGMA rekey`
+  re-encrypts every encrypted database of the app one after another, so a crash part-way can
+  leave them split between the two passphrases (an encrypted key-value store's rotation recovers
+  by itself).
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.

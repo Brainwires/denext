@@ -1,7 +1,8 @@
 // Drives DenextStorageStore.swift (the iOS half of `openKeyValueStore()`) on macOS, in two
 // builds: against the system SQLite (`plain`: a key is refused, nothing is written in the
 // clear) and against SQLCipher (`cipher`: an encrypted store, its migration out of the plain
-// database, the file unreadable without the key, a wrong key refused). Prints `ok <check>` /
+// database, the file unreadable without the key, a wrong key refused, a rekey that moves the
+// file to a new key and leaves the old one refused). Prints `ok <check>` /
 // `FAIL <check>: why`, then `done <failures>`.
 import Foundation
 
@@ -40,6 +41,8 @@ if mode == "plain" {
     check("a refused key writes no encrypted file",
           !FileManager.default.fileExists(atPath: store.encryptedFile("secret").path))
     check("a refused key leaves the plain rows", (try? store.getMany("secret", ["token"], key: nil)) == ["PLAINTEXT-MARKER-123"])
+    check("a rekey is refused without SQLCipher",
+          code { try store.rekey("secret", key: "k1", newKey: "k2") } == "ENCRYPTION_UNAVAILABLE")
 } else {
     check("SQLCipher answers cipher_version", DenextStorageStore.cipherAvailable())
     do {
@@ -66,6 +69,22 @@ if mode == "plain" {
         try other.setMany("quoted", [("a", "b")], key: "it's")
         _ = try DenextStorageStore(folder: folder).getMany("quoted", ["a"], key: "it's")
     } == "none")
+    check("a rekey with a wrong key is refused",
+          code { try other.rekey("secret", key: "nope", newKey: "k2") } == "WRONG_KEY")
+    check("a rekey runs", code { try other.rekey("secret", key: "k1", newKey: "k2'b") } == "none")
+    check("the rekeyed store reads under the new key on the same handle",
+          (try? other.getMany("secret", ["pin", "token"], key: "k2'b")) == ["4321", "PLAINTEXT-MARKER-123"])
+    let fresh = DenextStorageStore(folder: folder)
+    check("the old key no longer opens the rekeyed file",
+          code { _ = try fresh.keys("secret", key: "k1") } == "WRONG_KEY")
+    check("a fresh handle opens it with the new key",
+          (try? fresh.getMany("secret", ["pin"], key: "k2'b")) == ["4321"])
+    try? fresh.setMany("secret", [("after", "rekey")], key: "k2'b")
+    check("it writes in WAL again after the rekey",
+          (try? fresh.getMany("secret", ["after"], key: "k2'b")) == ["rekey"])
+    let rekeyed = (try? Data(contentsOf: store.encryptedFile("secret"))) ?? Data()
+    check("the rekeyed file holds no plaintext", rekeyed.range(of: Data("PLAINTEXT-MARKER".utf8)) == nil)
+    check("a rekey to the same key is a no-op", code { try fresh.rekey("secret", key: "k2'b", newKey: "k2'b") } == "none")
 }
 print("done \(failures)")
 exit(failures == 0 ? 0 : 1)

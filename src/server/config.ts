@@ -842,7 +842,8 @@ export interface AndroidAppLinks {
   sha256CertFingerprints: string[];
   /**
    * Also delegate `get_login_creds`, so Android's Credential Manager shares this domain's
-   * saved passwords and passkeys with the app. Default `true`.
+   * saved passwords and passkeys with the app (a passkey ceremony in the app needs it).
+   * Default `true`.
    */
   loginCredentials?: boolean;
 }
@@ -854,8 +855,13 @@ export interface AndroidAppLinks {
 export interface AppLinksConfig {
   /** Serve `/.well-known/apple-app-site-association` for these iOS apps. */
   apple?: AppleAppLinks;
-  /** Serve `/.well-known/assetlinks.json` for this Android app. */
-  android?: AndroidAppLinks;
+  /**
+   * Serve `/.well-known/assetlinks.json` for this Android app, or for each app of a list (one
+   * statement each: a debug and a release build, or several apps on one domain). The same
+   * `{ packageName, sha256CertFingerprints }` objects can go to `denextAuth({ passkeys: {
+   * androidApps } })`, which accepts their passkey origins.
+   */
+  android?: AndroidAppLinks | AndroidAppLinks[];
 }
 
 /**

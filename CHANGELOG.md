@@ -26,9 +26,36 @@ and this project adheres to
   `denext doctor --install-log <file>` explains an install's failed scripts as jail failures with
   the exception to add. denext never turns the jail off for you. See
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
+- **Passkeys from an Android app.** `denextAuth({ passkeys: { androidApps: [{ packageName,
+  sha256CertFingerprints }] } })` accepts the `android:apk-key-hash:<base64url SHA-256>` origin
+  Credential Manager puts in an app's client data, derived from each signing-certificate
+  fingerprint (`keytool` / Play Console spelling, checked strictly; only that exact origin
+  matches). New cookie-less rows run the ceremonies for a native app under `native` session mode:
+  `POST {basePath}/native/passkey/authenticate/options` and `/native/passkey/authenticate` sign
+  in to the native token pair (a presence-only assertion of a user with a second factor answers
+  the `/native/mfa` pending sign-in), and `/native/passkey/register/options` and
+  `/native/passkey/register` add a passkey under a bearer from a recent sign-in. A ceremony
+  completes only on the kind of row that started it. `appLinks.android` takes a list of apps (a
+  debug and a release build), one `assetlinks.json` statement each, with the `get_login_creds`
+  relation Android needs for the app to use the domain's passkeys. See
+  https://denext.dev/docs/auth#passkeys-in-a-native-app.
+- **SQLCipher key rotation.** `rekeyKeyValueStore(name)` from `denext/mobile` rotates an encrypted
+  store's key: a new random key, the store re-encrypted with `PRAGMA rekey` (in one SQLCipher
+  transaction, the write-ahead log folded in and off for it), then the key in `secureStore`
+  replaced. The new key waits in its own `secureStore` entry until the rekey commits, so an app
+  that dies part-way loses nothing: the next use keeps whichever key opens the store. It needs the
+  storage plugin's template generation 3 (`denext mobile add storage --encrypted`, then a new
+  binary). `openSqlite()`'s databases gain `rekey(newKey)` (and `PRAGMA rekey = '…'` as the first
+  statement, so the expo-sqlite shim's apps rekey as they do on Expo) through
+  `@capacitor-community/sqlite`'s `changeEncryptionSecret`. Both refuse with
+  `ENCRYPTION_UNAVAILABLE` on the web and Deno Desktop. See
+  https://denext.dev/docs/mobile#rotating-keys.
 
 ### Changed
 
+- **`passkeys.origins` checks an `android:apk-key-hash:` entry.** It must be exactly 43 base64url
+  characters encoding 32 bytes; `denextAuth()` used to accept any text after the prefix (which no
+  real client data could match). `passkeys.androidApps` is the simpler way to list an app.
 - **denext pins runtime `3.0.0-rc.5`** (from `3.0.0-rc.3`; the Deno toolchain and the Deno
   Desktop runtime move together). It is built from Deno 2.9.8, so the stock Deno the desktop
   runtime packages with, the `setup-deno` version and the `denoland/deno` image tag denext

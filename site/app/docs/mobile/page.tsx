@@ -2484,7 +2484,8 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
         <code>storage</code> with an earlier denext re-runs <code>denext mobile add storage</code>
         {" "}
         (with{" "}
-        <code>--encrypted</code>) and ships a new binary; unedited files are upgraded in place.
+        <code>--encrypted</code>) and ships a new binary; unedited files are upgraded in place. Key
+        rotation (<code>rekeyKeyValueStore</code>) needs generation 3 (denext 4.8.1).
       </Callout>
       <Code lang="ts">
         {`import { KeyValueStoreError, openKeyValueStore } from "denext/mobile";
@@ -2528,9 +2529,60 @@ try {
         <code>PRAGMA key</code> and <code>encryptionKey</code> reject with a{" "}
         <code>SqliteEncryptionError</code>{" "}
         (<code>ENCRYPTION_UNAVAILABLE</code>) and nothing runs. sqlite-wasm would otherwise treat
-        the pragma as a no-op and leave the data unencrypted. <code>PRAGMA rekey</code>,{" "}
-        <code>hexkey</code>{" "}
+        the pragma as a no-op and leave the data unencrypted. <code>hexkey</code>{" "}
         and a key pragma that is not the first statement are refused (<code>UNSUPPORTED</code>).
+      </p>
+
+      <h3 id="rotating-keys">Rotating keys</h3>
+      <p>
+        <code>rekeyKeyValueStore(name)</code>{" "}
+        rotates an encrypted store&apos;s key: a new random 256-bit key, the store&apos;s file
+        re-encrypted under it with SQLCipher&apos;s <code>PRAGMA rekey</code>, and the key in{" "}
+        <code>secureStore</code>{" "}
+        replaced. It needs the storage template generation 3 (denext 4.8.1): re-run{" "}
+        <code>denext mobile add storage --encrypted</code>{" "}
+        and ship a new binary; an older plugin is refused with{" "}
+        <code>ENCRYPTION_UNAVAILABLE</code>. Calls made on the store while it rotates wait for the
+        new key.
+      </p>
+      <Code lang="ts">
+        {`import { rekeyKeyValueStore } from "denext/mobile";
+
+await rekeyKeyValueStore("vault"); // ENCRYPTION_UNAVAILABLE wherever encrypted stores are refused`}
+      </Code>
+      <p>
+        <strong>If the app dies part-way.</strong> The rotation writes the new key to its own{" "}
+        <code>secureStore</code>{" "}
+        entry first and leaves the store&apos;s key as it was. SQLCipher rewrites the file inside
+        one transaction whose journal holds the old pages (the write-ahead log is folded in and
+        turned off for it), so a death during the rekey leaves the file under the old key. Only
+        after the rekey commits does the new key replace the old one. If the app dies between the
+        two, the next use of the store tries the current key, then the waiting one, keeps whichever
+        opens the file and drops the other. Nothing is lost; if neither key opens it, the call
+        rejects with <code>WRONG_KEY</code> and both entries are kept.
+      </p>
+      <p>
+        <code>db.rekey(newKey)</code> (or <code>PRAGMA rekey = &apos;…&apos;</code>{" "}
+        as the first statement) changes the passphrase of a database opened with{" "}
+        <code>encryptionKey</code> or <code>PRAGMA key</code>. Because{" "}
+        <code>@capacitor-community/sqlite</code> keeps one passphrase for the whole app, its{" "}
+        <code>changeEncryptionSecret</code>{" "}
+        re-encrypts every encrypted database of the app and then stores the new passphrase; other
+        open handles reconnect under it by themselves. It is refused with <code>KEY_REQUIRED</code>
+        {" "}
+        on a database that was not keyed on this page, <code>UNSUPPORTED</code>{" "}
+        inside a transaction, and <code>ENCRYPTION_UNAVAILABLE</code>{" "}
+        on the web, on Deno Desktop and with a plugin too old to change its passphrase. The
+        passphrase is yours to keep, so store the new one in <code>secureStore</code>{" "}
+        beside the old one before calling{" "}
+        <code>rekey</code>, and drop the old one only once it resolves. After a crash, open with the
+        old passphrase and, on{" "}
+        <code>WRONG_KEY</code>, with the new one, then keep the one that worked. The plugin rewrites
+        each file in its own SQLCipher transaction, one database after another, and stores the new
+        passphrase last, so a crash in the middle of an app with several encrypted databases can
+        leave them split between the two passphrases, which the plugin cannot open together. If you
+        rotate, keep one encrypted database per app, or keep secrets in an encrypted key-value
+        store, whose rotation recovers by itself.
       </p>
 
       <h2 id="in-app-purchases">In-app purchases</h2>

@@ -31,10 +31,11 @@
 import type { AuthAdapter, PasskeyRecord } from "./adapter.ts";
 import { forgetPasskeyFactor } from "./factors.ts";
 import { sha256Hex } from "./hash.ts";
-import { base64UrlEncode, randomToken } from "./oauth.ts";
+import { base64UrlDecode, base64UrlEncode, randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { type ResolvedMds, resolveMds } from "./fido-mds.ts";
-import type { AuthConfig, AuthPasskeyConfig } from "./types.ts";
+import type { AuthConfig, AuthPasskeyAndroidApp, AuthPasskeyConfig } from "./types.ts";
+import { isAndroidPackageName } from "../app-links.ts";
 import { type CorsPolicy, normalizeCorsOrigin, resolveCors } from "../cors.ts";
 import { PASSKEY_ALGORITHMS, type PasskeyAlgorithm, WebAuthnError } from "./webauthn.ts";
 
@@ -77,7 +78,10 @@ export interface ResolvedPasskeys {
   rpId: string;
   /** The RP name. */
   rpName: string;
-  /** The accepted origins. */
+  /**
+   * The accepted origins: `passkeys.origins` (default `[canonicalOrigin]`), then the
+   * `android:apk-key-hash:` origin of every `passkeys.androidApps` signing certificate.
+   */
   origins: string[];
   /** Whether UV is required. */
   requireUserVerification: boolean;
@@ -110,6 +114,73 @@ function originMatchesRpId(origin: string, rpId: string): boolean {
     (url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1"));
   const host = url.hostname;
   return secure && (host === rpId || host.endsWith(`.${rpId}`));
+}
+
+/** The prefix of an Android app's WebAuthn origin (`clientDataJSON.origin` in a native app). */
+const APK_KEY_HASH = "android:apk-key-hash:";
+
+/**
+ * Whether `origin` is a well-formed `android:apk-key-hash:` origin: the prefix, then exactly the
+ * unpadded base64url of a 32-byte SHA-256 in its canonical spelling (re-encoding the decoded bytes
+ * gives the same text back), so a near miss or a padded variant is never accepted.
+ */
+function isApkKeyHashOrigin(origin: string): boolean {
+  if (!origin.startsWith(APK_KEY_HASH)) return false;
+  const hash = origin.slice(APK_KEY_HASH.length);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(hash)) return false;
+  const bytes = base64UrlDecode(hash);
+  return bytes.length === 32 && base64UrlEncode(bytes) === hash;
+}
+
+/**
+ * The WebAuthn origin an Android app signed with the certificate whose SHA-256 fingerprint is
+ * `fingerprint` reports in `clientDataJSON.origin`: `android:apk-key-hash:` and the unpadded
+ * base64url of the fingerprint's 32 bytes.
+ *
+ * @param fingerprint The fingerprint as `keytool -list -v` and the Play Console print it
+ * (`AB:CD:…`, 32 colon-separated hex pairs) or as 64 hex digits; nothing else.
+ * @returns The origin.
+ * @throws {Error} When `fingerprint` is not one of those two spellings.
+ */
+export function apkKeyHashOrigin(fingerprint: string): string {
+  const text = typeof fingerprint === "string" ? fingerprint.trim() : "";
+  const colon = /^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31}$/.test(text);
+  if (!colon && !/^[0-9A-Fa-f]{64}$/.test(text)) {
+    throw new Error(
+      `denextAuth: ${JSON.stringify(fingerprint)} is not a SHA-256 certificate fingerprint ` +
+        `("AB:CD:…", 32 hex pairs, or 64 hex digits).`,
+    );
+  }
+  const hex = text.replaceAll(":", "");
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return APK_KEY_HASH + base64UrlEncode(bytes);
+}
+
+/** The `android:apk-key-hash:` origins of `passkeys.androidApps`, validated (throws at config time). */
+function androidAppOrigins(apps: readonly AuthPasskeyAndroidApp[] | undefined): string[] {
+  if (apps === undefined) return [];
+  if (!Array.isArray(apps)) {
+    throw new Error(
+      "denextAuth: `passkeys.androidApps` must be a list of { packageName, sha256CertFingerprints }.",
+    );
+  }
+  return apps.flatMap((app, i) => {
+    if (!isAndroidPackageName(app?.packageName)) {
+      throw new Error(
+        `denextAuth: \`passkeys.androidApps[${i}].packageName\` must be an application id ` +
+          `(e.g. "com.example.app") — got ${JSON.stringify(app?.packageName)}.`,
+      );
+    }
+    const fingerprints = app.sha256CertFingerprints;
+    if (!Array.isArray(fingerprints) || fingerprints.length === 0) {
+      throw new Error(
+        `denextAuth: \`passkeys.androidApps[${i}].sha256CertFingerprints\` must list at least ` +
+          "one SHA-256 signing-certificate fingerprint.",
+      );
+    }
+    return fingerprints.map(apkKeyHashOrigin);
+  });
 }
 
 const resolved = new WeakMap<AuthConfig, ResolvedPasskeys | null>();
@@ -152,14 +223,18 @@ function resolve(config: AuthConfig, options: AuthPasskeyConfig): ResolvedPasske
         "must never be derived from the request's Host header.",
     );
   }
-  const origins = options.origins ?? (canonical ? [canonical] : []);
-  const webOrigins = origins.filter((o) => !o.startsWith("android:apk-key-hash:"));
-  if (origins.length === 0 || webOrigins.some((o) => !originMatchesRpId(o, rpId))) {
+  const listed = options.origins ?? (canonical ? [canonical] : []);
+  const bad = listed.filter((o) =>
+    o.startsWith(APK_KEY_HASH) ? !isApkKeyHashOrigin(o) : !originMatchesRpId(o, rpId)
+  );
+  if (listed.length === 0 || bad.length > 0) {
     throw new Error(
       `denextAuth: every \`passkeys.origins\` entry must be an https origin (http only on ` +
-        `localhost) whose host is "${rpId}" or a subdomain of it — got ${JSON.stringify(origins)}.`,
+        `localhost) whose host is "${rpId}" or a subdomain of it, or an Android ` +
+        `"${APK_KEY_HASH}<43 base64url characters>" origin — got ${JSON.stringify(listed)}.`,
     );
   }
+  const origins = [...new Set([...listed, ...androidAppOrigins(options.androidApps)])];
   const timeout = options.timeout ?? 300;
   const cors = resolvePasskeyCors(options.corsOrigins, origins);
   return {
@@ -219,6 +294,11 @@ export interface ChallengeData {
    * `origin` equal to it, completes it.
    */
   origin?: string;
+  /**
+   * Started at `/native/passkey/*` (a native app, no cookie): only those rows complete it, and
+   * they complete nothing else.
+   */
+  native?: true;
 }
 
 /**
