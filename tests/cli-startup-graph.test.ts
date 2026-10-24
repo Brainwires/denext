@@ -184,7 +184,8 @@ Deno.test("src/version.ts carries the framework VERSION", () => {
 Deno.test("every compile of the CLI goes through scripts/compile-cli.ts", async () => {
   // A binary built without `--include src/cli/lazy-modules.generated.ts` starts and prints its
   // version, but every verb fails to load; one built without the framework files the CLI reads
-  // at run time (deno.json, AGENTS.md) fails in those verbs (4.5.1: `migrate`, the MCP guide).
+  // at run time (deno.json) fails in those verbs (4.5.1: `migrate`, then still reading AGENTS.md
+  // for the MCP guide).
   // So no place spells out its own `deno compile … cli.ts`: each runs the one script.
   const files = [
     "deno.json",

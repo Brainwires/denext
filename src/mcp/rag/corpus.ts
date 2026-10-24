@@ -34,6 +34,8 @@ export interface DocChunk {
 
 /** The loaded corpus plus derived lookups. */
 export interface Corpus {
+  /** The authoring guide (AGENTS.md minus its repo-process tail), verbatim: `denext://guide`. */
+  guide: string;
   pages: DocPage[];
   chunks: DocChunk[];
   pageBySlug: Map<string, DocPage>;
@@ -50,7 +52,7 @@ export const DOCS_ORIGIN = "https://denext.dev";
 let loaded: Promise<Corpus> | null = null;
 
 /** Index the raw corpus json. */
-function build(raw: { pages: DocPage[]; chunks: DocChunk[] }): Corpus {
+function build(raw: { pages: DocPage[]; chunks: DocChunk[] }): Omit<Corpus, "guide"> {
   const pageBySlug = new Map(raw.pages.map((p) => [p.slug, p]));
   const sectionsOf = new Map<string, DocChunk[]>();
   const byId = new Map<string, DocChunk>();
@@ -80,9 +82,14 @@ export async function decodeCorpus(brotliBase64: string): Promise<unknown> {
 
 /** Load (once) and index the shipped docs corpus. */
 export function loadCorpus(): Promise<Corpus> {
-  loaded ??= import("@denext/docs-corpus").then(async (m) =>
-    build(await decodeCorpus(m.CORPUS_BROTLI_BASE64) as { pages: DocPage[]; chunks: DocChunk[] })
-  );
+  loaded ??= import("@denext/docs-corpus").then(async (m) => {
+    const raw = await decodeCorpus(m.CORPUS_BROTLI_BASE64) as {
+      guide?: string;
+      pages: DocPage[];
+      chunks: DocChunk[];
+    };
+    return { ...build(raw), guide: raw.guide ?? "" };
+  });
   return loaded;
 }
 

@@ -9,14 +9,13 @@
 // Tools (see `src/mcp/tools.ts`): `denext_check_snippet` (denext-correctness lint of a code
 // string), `denext_import_map` (Next.js→denext import lookup), `denext_generate` (scaffold),
 // `denext_doctor` (project health), `denext_codemod` (dry-run migration report). Resources
-// expose the AI-authoring guide (AGENTS.md), the import map and the offline docs
-// (`denext://docs`, `denext://docs/<slug>`) so a client can ground itself.
+// expose the AI-authoring guide (AGENTS.md minus its repo-process tail, carried by the docs
+// corpus, so it reads offline), the import map and the offline docs (`denext://docs`,
+// `denext://docs/<slug>`) so a client can ground itself.
 //
 // The protocol dispatch is a pure `dispatch(message)` → response so it is unit-testable
 // without a real stdio pipe; `runStdioServer` is the thin I/O loop over it.
 
-import { publicGuide } from "./guide.ts";
-import { readPackageFile } from "./package-file.ts";
 import { VERSION } from "../version.ts";
 import { IMPORT_RULES } from "./next-denext-map.ts";
 import { loadCorpus } from "./rag/corpus.ts";
@@ -91,7 +90,9 @@ function importMapMarkdown(): string {
 /** Read one resource's body by URI (throws for an unknown URI). */
 async function readResource(uri: string): Promise<{ mimeType: string; text: string }> {
   if (uri === "denext://guide") {
-    return { mimeType: "text/markdown", text: publicGuide(await readPackageFile("AGENTS.md")) };
+    const { guide } = await loadCorpus();
+    if (!guide) throw new Error("the docs corpus carries no authoring guide");
+    return { mimeType: "text/markdown", text: guide };
   }
   if (uri === "denext://import-map") {
     return { mimeType: "text/markdown", text: importMapMarkdown() };

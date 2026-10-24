@@ -80,7 +80,8 @@ and this project adheres to
   "soft" | "hard"`.** One policy for an unreachable OCSP responder or CRL. `"hard"` refuses the
   registration and stays the default, as the CRL check did before (`"soft"` with an offline
   `mds.blob`, as before); `"soft"` registers with a warning logged once. `mds.revocation` still
-  overrides it.
+  overrides it. Its type is exported as `AuthPasskeyRevocationPolicy` from `denext/server` and
+  `denext/auth`.
 - **The `compound` attestation format** (WebAuthn L3 §8.9): 2 to 8 statements, none itself
   `compound`, each verified by its own format; one failure refuses the registration. The result
   reports every statement (`attestationStatements`), takes its first certificate statement's type
@@ -103,11 +104,18 @@ and this project adheres to
   the desktop runtime. It runs at most once per idle period, 10 s apart, and after the first only
   when the resident memory grew by 16 MB; a request that arrives during one waits for it once (up
   to about 240 ms on a large app). Opt out with `start: { idleTrim: false }` or
-  `DENEXT_IDLE_TRIM=0`; the deploy manifest's `server.idleTrim` says whether an adapter should turn
-  it on. See https://denext.dev/docs/deployment-targets#idle-memory-trim.
+  `DENEXT_IDLE_TRIM=0` (the `start` block's type is `StartConfig`, from `denext/server`); the
+  deploy manifest's `server.idleTrim` says whether an adapter should turn it on. See
+  https://denext.dev/docs/deployment-targets#idle-memory-trim.
 
 ### Changed
 
+- **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The
+  corpus now carries the guide verbatim (AGENTS.md minus its repo-process sections, as served
+  before), so the resource works offline from a JSR install instead of fetching AGENTS.md, and
+  AGENTS.md (104 KiB, with release and commit-gate instructions meant for denext's own repository)
+  is no longer published in `@denext/denext`, keeping the package under its 19 MiB guard for
+  JSR's 20 MiB cap.
 - **Windows packaging fails closed on signing.** With `DENEXT_WINDOWS_CERT` set and no `signtool`
   on `PATH` (off Windows, or no Windows SDK), `scripts/package-windows.ts` used to warn and package
   the app unsigned, and an update of a signed install is refused unless every PE file carries its
@@ -173,6 +181,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A migrated Preact app with `node_modules` compiles its JSX with Preact's runtime.** The
+  compat (esbuild) bundle compiled every app's JSX against denext's own runtime, so the
+  `jsxImportSource: "preact"` `denext migrate` writes for a Preact or Fresh app was ignored on
+  that path: `options.vnode` / `options.event` never ran for the app's elements and a signal
+  passed as a DOM prop was not bound. The compat bundle now reads the app's `jsxImportSource` and
+  uses `preact` when it says so. `denext/preact/render-to-string` is also a prebuilt runtime file,
+  so a compatibility-mode export resolves it like every other client `denext/*` subpath.
 - **Lifecycle-script jail exceptions are narrower and land where Deno reads them** (a
   supply-chain audit of denext's jail integration):
   - on runtime `3.0.0-rc.6` and later, the built-in exceptions grant each package's download
