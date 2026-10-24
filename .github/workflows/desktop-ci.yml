@@ -70,6 +70,7 @@ on:
       - "src/build/file-lock.ts"
       - "src/build/project-locks.ts"
       - "src/build/scaffold.ts"
+      - "src/build/project-confine.ts"
       - "src/build/fallow-template.ts"
       - "src/build/pe-resources.ts"
       - "src/build/code-signing.ts"
