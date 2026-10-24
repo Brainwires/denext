@@ -45,8 +45,8 @@ import {
  * - `insecure`: the binary pins origins (`denext mobile add-ota --ota-origin`) and `baseUrl` is on
  *   none of them, or it embeds no key and `baseUrl` is neither a pinned https origin nor loopback
  *   (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);
- * - `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,
- *   or it has none after a sequenced manifest was accepted;
+ * - `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted or
+ *   the bundled UI's own manifest carries, or it has none once there is such a floor;
  * - `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS
  *   `CFBundleVersion`, Android `versionCode`);
  * - `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary

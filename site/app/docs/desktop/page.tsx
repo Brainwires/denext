@@ -1461,7 +1461,8 @@ try {
         {" "}
         is not strictly greater than the highest one accepted, or that has none after a sequenced
         release, is refused (<code>downgrade</code>), so every release needs a new sequence (the
-        default Unix time does that).
+        default Unix time does that). The bundled export's own manifest sequence is the floor before
+        any overlay was accepted, so an overlay older than the UI the app ships is refused.
       </p>
       <p>
         <strong>The export is for this OS.</strong> A manifest that names another target (

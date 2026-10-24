@@ -3320,8 +3320,10 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         refuses a lower one, or a manifest with none once it has seen one (code{" "}
         <code>downgrade</code>), so an old signed release cannot be replayed. It survives{" "}
         <code>otaReset()</code>{" "}
-        and new binaries; only a reinstall clears it. Keep sequences growing: going from Unix times
-        to a small counter locks installed apps out. <code>--min-native N</code>{" "}
+        and new binaries; only a reinstall clears it. The bundled UI's own manifest sequence is a
+        floor too, so a release older than the UI the binary ships is refused even before the device
+        accepted one. Keep sequences growing: going from Unix times to a small counter locks
+        installed apps out. <code>--min-native N</code>{" "}
         marks a UI that needs native code from app build <code>N</code>{" "}
         on: an app whose build number (iOS{" "}
         <code>CFBundleVersion</code>, as an integer or its first dot-separated part; Android{" "}

@@ -1333,3 +1333,23 @@ Deno.test("add-ota: a LAN origin declares NSLocalNetworkUsageDescription (an app
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("native templates SECURITY (AU6-M2): the downgrade floor includes the bundled UI's sequence", () => {
+  // iOS: the bundled manifest's sequence is read, and checkRelease takes the max of both floors.
+  const iosStore = OTA_IOS_FILES["DenextOtaStore.swift"];
+  assertStringIncludes(iosStore, "lazy var bundledSequence: Int64? = {");
+  assertStringIncludes(
+    body(iosStore, "static func checkRelease("),
+    "[shared.highestSequence, shared.bundledSequence].compactMap({ $0 }).max()",
+  );
+  // Android: the same, through bundledSequence().
+  const androidStore = OTA_ANDROID_FILES["DenextOtaStore.java"];
+  assertStringIncludes(androidStore, "synchronized Long bundledSequence() {");
+  const release = body(androidStore, "void checkRelease(");
+  assertStringIncludes(release, "Long bundled = bundledSequence();");
+  assertStringIncludes(
+    release,
+    "if (bundled != null && (highest == null || bundled > highest)) highest = bundled;",
+  );
+  assert(OTA_TEMPLATE_VERSION >= 10, "the generation is bumped so an older denext keeps it");
+});

@@ -848,3 +848,62 @@ Deno.test("desktop updater: an overlay is dropped once the app's bundled export 
     for (const d of [feed, data, bundled]) await Deno.remove(d, { recursive: true });
   }
 });
+
+Deno.test("desktop updater SECURITY (AU6-M1): an overlay older than the bundled export is a downgrade", async () => {
+  const { publicKey, signingKey } = await keys();
+  const feed = await exportDir("console.log('old overlay')");
+  const bundled = await exportDir("console.log('bundled, newer')");
+  const data = await tmpData();
+  // The app ships a UI stamped with sequence 200; the feed offers an older signed UI (sequence 50).
+  await writeOtaManifest(bundled, { sequence: 200 }, signingKey);
+  await writeOtaManifest(feed, { sequence: 50 }, signingKey);
+  const config = cfg(data, publicKey);
+  const restore = routeFetch(() => createOtaHandler({ dir: feed, basePath: BASE }));
+  try {
+    // First launch records the bundle; no overlay has been accepted yet.
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    assertEquals((await desktopUpdateStatus(config)).highestSequence, null);
+    const err = await assertRejects(() => checkForDesktopUpdate(config), DesktopUpdateError);
+    assertEquals((err as DesktopUpdateError).code, "downgrade");
+    const prep = await assertRejects(() => prepareDesktopUpdate(config), DesktopUpdateError);
+    assertEquals((prep as DesktopUpdateError).code, "downgrade");
+    // A newer one is offered as usual.
+    await writeOtaManifest(feed, { sequence: 201 }, signingKey);
+    assertEquals((await checkForDesktopUpdate(config)).available, true);
+  } finally {
+    restore();
+    for (const d of [feed, bundled, data]) await Deno.remove(d, { recursive: true });
+  }
+});
+
+Deno.test("desktop updater: the feed offering the bundled export itself is not an update", async () => {
+  const { publicKey, signingKey } = await keys();
+  const bundled = await exportDir("console.log('same')");
+  const data = await tmpData();
+  await writeOtaManifest(bundled, { sequence: 300 }, signingKey);
+  const config = cfg(data, publicKey);
+  const restore = routeFetch(() => createOtaHandler({ dir: bundled, basePath: BASE }));
+  try {
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    assertEquals(await checkForDesktopUpdate(config), { available: false });
+  } finally {
+    restore();
+    for (const d of [bundled, data]) await Deno.remove(d, { recursive: true });
+  }
+});
+
+Deno.test("desktop updater SECURITY (AU6-L): apply refuses a version that is not a manifest version", async () => {
+  const { publicKey } = await keys();
+  const data = await tmpData();
+  try {
+    for (const version of ["../../etc", "x/../y", "", "ABC"]) {
+      const err = await assertRejects(
+        () => applyDesktopUpdate(version, cfg(data, publicKey)),
+        DesktopUpdateError,
+      );
+      assertEquals((err as DesktopUpdateError).code, "not_staged");
+    }
+  } finally {
+    await Deno.remove(data, { recursive: true });
+  }
+});

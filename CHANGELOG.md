@@ -69,6 +69,24 @@ and this project adheres to
 
 ### Fixed
 
+- **Security: an over-the-air UI older than the bundled one is refused.** A Deno Desktop UI overlay
+  (`denext/desktop/updater`) and the mobile `DenextOta` plugin enforced the monotonic `sequence`
+  only after the first over-the-air UI was accepted, so on a fresh install (or a device that had
+  only run its bundled UI) a feed that replayed an older signed manifest could install an older UI
+  over the newer one the app ships. The bundled export's own manifest `sequence` is now the
+  downgrade floor (code `downgrade`). The desktop updater records it at launch
+  (`resolveDesktopUiDir`), and the feed offering the bundled version itself is reported as not
+  available. The native templates move to generation 10; run `denext mobile add-ota` to upgrade
+  an installed plugin.
+- **Security: `openAuthSession` in the iOS / Android shell checks the callback.** Any app on the
+  device can open a callback-scheme link while a sign-in is open (on Android, an explicit intent
+  to the app's activity), and the session resolved with the first one. The callback must now land
+  exactly (scheme, host, path) on the URL's own callback-scheme `redirect_uri` (or
+  `callbackPrefix`) and carry the URL's `state` (or the `state` option) in its query or fragment;
+  anything else rejects with code `invalid`. `callbackPrefix` and `state` now apply on mobile too.
+- `applyDesktopUpdate` refuses a version that is not a manifest version (64 hex digits) before it
+  names a staging directory.
+
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,

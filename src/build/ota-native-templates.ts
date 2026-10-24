@@ -53,8 +53,11 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * BGTask, finds it data-protected; a permission or I/O error) is not a mismatch: that request is
  * refused (or, for the stored manifest at launch, this launch serves the confirmed or bundled UI)
  * and nothing is quarantined. The bump keeps an older denext from rewriting the check away.
+ * Generation 10: the downgrade floor is raised to the bundled UI's own manifest `sequence`, so an
+ * older signed UI cannot replace a newer bundled one on a device that has not yet accepted an
+ * over-the-air UI; the bump keeps an older denext from rewriting that check away.
  */
-export const OTA_TEMPLATE_VERSION = 9;
+export const OTA_TEMPLATE_VERSION = 10;
 
 /**
  * SHA-256 of every template file denext shipped before the marker line existed, by file name:

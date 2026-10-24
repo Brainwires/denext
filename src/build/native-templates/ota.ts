@@ -713,6 +713,19 @@ final class DenextOtaStore: @unchecked Sendable {
         return version
     }()
 
+    /// The \`sequence\` stamped into the bundled UI's manifest, if any: the downgrade floor before
+    /// this device accepted any over-the-air UI. The bundled UI ships inside the code-signed app,
+    /// so its value is trusted; an older signed UI must never replace a newer bundled one.
+    lazy var bundledSequence: Int64? = {
+        guard let directory = DenextOtaStore.bundledDirectory,
+              let object = DenextOtaStore.readManifest(in: directory),
+              let number = object["sequence"] as? NSNumber,
+              number.doubleValue >= 0, number.doubleValue == Double(number.int64Value) else {
+            return nil
+        }
+        return number.int64Value
+    }()
+
     /// Whether \`value\` is 64 lowercase ASCII hex digits.
     static func isSha256(_ value: String) -> Bool {
         let utf8 = value.utf8
@@ -950,9 +963,10 @@ final class DenextOtaStore: @unchecked Sendable {
     /// binary's build number (code \`native_too_old\`); no \`nativeFingerprint\` other than this
     /// binary's (code \`native_mismatch\`), checked only when both carry one.
     static func checkRelease(sequence: Int64?, minNative: Int64?, nativeFingerprint: String?) throws {
-        if let highest = shared.highestSequence {
+        // The floor: the highest sequence accepted here, raised to the bundled UI's own.
+        if let highest = [shared.highestSequence, shared.bundledSequence].compactMap({ $0 }).max() {
             guard let sequence = sequence else {
-                throw OtaError(code: "downgrade", message: "The manifest has no sequence, but this device accepted sequence \\(highest).")
+                throw OtaError(code: "downgrade", message: "The manifest has no sequence, but this device accepted or bundles sequence \\(highest).")
             }
             guard sequence >= highest else {
                 throw OtaError(code: "downgrade", message: "The manifest's sequence \\(sequence) is older than \\(highest).")
@@ -2730,6 +2744,9 @@ final class DenextOtaStore {
     @Nullable
     private String bundledVersion;
     private boolean bundledVersionRead = false;
+    @Nullable
+    private Long bundledSequence;
+    private boolean bundledSequenceRead = false;
     private boolean launchPrepared = false;
     /** Set by {@link #cancelDownload}; the download in flight stops at its next check. */
     private volatile boolean cancelRequested = false;
@@ -2957,10 +2974,13 @@ final class DenextOtaStore {
      * this binary's (code native_mismatch), checked only when both carry one.
      */
     void checkRelease(@Nullable Long sequence, @Nullable Long minNative, @Nullable String nativeFingerprint) throws OtaException {
+        // The floor: the highest sequence accepted here, raised to the bundled UI's own.
         Long highest = highestSequence();
+        Long bundled = bundledSequence();
+        if (bundled != null && (highest == null || bundled > highest)) highest = bundled;
         if (highest != null) {
             if (sequence == null) {
-                throw new OtaException("downgrade", "The manifest has no sequence, but this device accepted sequence " + highest + ".");
+                throw new OtaException("downgrade", "The manifest has no sequence, but this device accepted or bundles sequence " + highest + ".");
             }
             if (sequence < highest) {
                 throw new OtaException("downgrade", "The manifest's sequence " + sequence + " is older than " + highest + ".");
@@ -3225,6 +3245,24 @@ final class DenextOtaStore {
             bundledVersion = isSha256(version) ? version : null;
         }
         return bundledVersion;
+    }
+
+    /**
+     * The {@code sequence} stamped into the bundled UI's manifest, if any: the downgrade floor
+     * before this device accepted any over-the-air UI. The bundled UI ships inside the signed APK,
+     * so its value is trusted; an older signed UI must never replace a newer bundled one.
+     */
+    @Nullable
+    synchronized Long bundledSequence() {
+        if (!bundledSequenceRead) {
+            bundledSequenceRead = true;
+            JSONObject manifest = parseManifest(readAsset(BUNDLED_ASSET_DIR + "/" + MANIFEST_PATH));
+            Object value = manifest == null ? null : manifest.opt("sequence");
+            bundledSequence = (value instanceof Integer || value instanceof Long) && ((Number) value).longValue() >= 0
+                ? ((Number) value).longValue()
+                : null;
+        }
+        return bundledSequence;
     }
 
     File versionDirectory(String version) {

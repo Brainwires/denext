@@ -68,6 +68,33 @@
   pinned and its hash checked, but the install has not been run; drop the KNOWN-LIMITATIONS
   clause once it passes.
 
+## Security hardening (4.8 OTA / updater / native-template audit, low)
+
+- **Mobile OTA manifest expiry:** a signed `expiresAt` (a v4 payload) refused once past
+  (`expired`), as the desktop full-app manifest has, so a feed cannot freeze a device on an old UI.
+- **Loopback OTA only in debug builds:** without an embedded key, an unsigned UI from loopback is
+  accepted in release builds too, and loopback is exempt from pinned origins. Gate it on a
+  debuggable build (Android `isDebuggable()`, an iOS debug flag the installer writes).
+- **`booted()` without a version:** with a trial pending, require the page's version to equal it,
+  so a late call from an unstamped page cannot confirm a broken UI.
+- **OTA serve check:** count only regular files as "added on the device" (a directory request, or
+  an NFC/NFD variant on APFS, should not quarantine the UI); check the platform stamp natively;
+  make `admit` fail closed outside the versions root; parse Android's `baseUrl` once (refuse `\`
+  and userinfo); run the check on `/_capacitor_file_/` paths under the UI root.
+- **Biometric-gated `secureStore` in the OS:** `requireBiometric` is a JS gate today; store such
+  items with `SecAccessControl(.biometryCurrentSet)` / a Keystore key requiring user
+  authentication with a `CryptoObject`, and say in the docs that page script can read them now.
+- **Print plugin:** confine iOS `printToPrinter`'s `path` to Documents / Caches, and turn off file
+  and content access in Android `printToFile`'s WebView (keeping remote images).
+- **Bridge frame guard by origin:** refuse plugin calls from a main frame that is not the app's
+  origin (`server.allowNavigation`, a remote `server.url`); `mobile doctor --release` flags
+  `allowNavigation`.
+- **PKCE on mobile `openAuthSession`:** require `code_challenge_method=S256` unless
+  `pkce: "not-applicable"`, as Deno Desktop does, with a path for Expo's `usePKCE: false`.
+- **Small ones:** Android transfer record names from a hash of the id (not `hashCode-length`); a
+  `secureStore` accessibility option (ThisDeviceOnly for tokens); correct the deep-link docs (an
+  explicit intent skips intent filters, so `accept` is not authentication).
+
 ## Build toolchain: waiting on `deno bundle`
 
 esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)

@@ -94,9 +94,10 @@ export interface AuthSessionOptions {
    */
   readonly timeoutMs?: number;
   /**
-   * Deno Desktop, custom-scheme callback: where the callback lands (`"myapp://auth/callback"`) when
-   * the URL's own `redirect_uri` is not a `callbackScheme` URL (a provider that redirects through
-   * its own server first). It is matched exactly on scheme, host and path.
+   * Custom-scheme callback (Deno Desktop, and the iOS / Android shell): where the callback lands
+   * (`"myapp://auth/callback"`) when the URL's own `redirect_uri` is not a `callbackScheme` URL (a
+   * provider that redirects through its own server first). It is matched exactly on scheme, host
+   * and path; a callback elsewhere is refused.
    */
   readonly callbackPrefix?: string;
   /**
@@ -108,9 +109,9 @@ export interface AuthSessionOptions {
   /** Why PKCE does not apply (required with `pkce: "not-applicable"`; kept with the session). */
   readonly reason?: string;
   /**
-   * Deno Desktop, custom-scheme callback with a {@linkcode AuthSessionOptions.callbackPrefix}: the
-   * `state` the callback must carry. (When the callback is the URL's own `redirect_uri`, the URL's
-   * `state` is checked automatically.)
+   * Custom-scheme callback (Deno Desktop, and the iOS / Android shell): the `state` the callback
+   * must carry. When the URL itself carries a `state`, it is checked automatically (in the
+   * callback's query or, on mobile, its fragment).
    */
   readonly state?: string;
   /**
@@ -292,8 +293,63 @@ function releaseClaim(url: string | undefined): void {
   claimedUntil = Date.now() + CLAIM_MS;
 }
 
+/**
+ * Why a native callback must not be trusted, or `null` when it may be: it must land exactly (scheme,
+ * host, path) on the URL's own `redirect_uri` (or `callbackPrefix`) when that is a callback-scheme
+ * URL, and carry the URL's `state` (or the `state` option) in its query or fragment. Any app on
+ * the device can open a callback-scheme link while the session is open (an explicit intent to the
+ * app's activity on Android), so a callback the session did not ask for is refused, never handed
+ * to the app as its sign-in.
+ */
+function nativeCallbackMismatch(
+  target: string,
+  callback: string,
+  scheme: string,
+  options: Pick<AuthSessionOptions, "callbackPrefix" | "state"> = {},
+): string | null {
+  const got = parseUrl(callback);
+  if (!got) return "the callback is not a URL";
+  const asked = new URL(target).searchParams;
+  return redirectMismatch(
+    got,
+    parseUrl(options.callbackPrefix ?? asked.get("redirect_uri")),
+    scheme,
+  ) ??
+    stateMismatch(got, options.state ?? asked.get("state"));
+}
+
+/** Why `got` is not the callback-scheme `expected` (scheme, host, path), or `null`. */
+function redirectMismatch(got: URL, expected: URL | undefined, scheme: string): string | null {
+  if (!expected || expected.protocol !== `${scheme}:`) return null; // redirected via a server
+  const same = got.protocol === expected.protocol && got.host === expected.host &&
+    got.pathname === expected.pathname;
+  return same ? null : "the callback does not land on the URL's redirect_uri";
+}
+
+/** Why `got` does not carry `state` (query, or fragment for an implicit flow), or `null`. */
+function stateMismatch(got: URL, state: string | null | undefined): string | null {
+  if (state === null || state === undefined) return null;
+  const carried = got.searchParams.get("state") ??
+    new URLSearchParams(got.hash.slice(1)).get("state");
+  return carried === state ? null : "the callback's state does not match the URL's state";
+}
+
+/** `value` as a URL, or `undefined` when it is absent or not one. */
+function parseUrl(value: string | null | undefined): URL | undefined {
+  if (typeof value !== "string" || value === "") return undefined;
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
+}
+
 /** The native session through the shell's `DenextAuthSession` plugin. */
-function startNative(url: string, scheme: string, ephemeral: boolean): RunningSession {
+function startNative(
+  url: string,
+  scheme: string,
+  options: AuthSessionOptions,
+): RunningSession {
   const plugin = nativePlugin<DenextAuthSessionPlugin>(PLUGIN_NAME, ["start"]);
   if (!plugin) {
     return failed(authSessionError(
@@ -303,11 +359,22 @@ function startNative(url: string, scheme: string, ephemeral: boolean): RunningSe
   }
   claimedScheme = scheme;
   const result = Promise.resolve()
-    .then(() => plugin.start({ url, callbackScheme: scheme, preferEphemeral: ephemeral }))
+    .then(() =>
+      plugin.start({
+        url,
+        callbackScheme: scheme,
+        preferEphemeral: options.preferEphemeral === true,
+      })
+    )
     .then((answer) => {
       const callback = answer?.url;
       if (typeof callback !== "string" || !callback.toLowerCase().startsWith(`${scheme}:`)) {
         throw authSessionError("unsupported", "the shell answered without a callback URL");
+      }
+      const mismatch = nativeCallbackMismatch(url, callback, scheme, options);
+      if (mismatch !== null) {
+        releaseClaim(callback); // swallowed by deep-link routing too, never routed as a link
+        throw authSessionError("invalid", mismatch);
       }
       releaseClaim(callback);
       return callback;
@@ -481,9 +548,7 @@ export async function openAuthSession(
   if (active) throw authSessionError("busy", "another auth session is still open");
   active = true;
   try {
-    const session = isNativeShell()
-      ? startNative(target, scheme, options.preferEphemeral === true)
-      : startWeb(target);
+    const session = isNativeShell() ? startNative(target, scheme, options) : startWeb(target);
     return { url: await within(session, timeoutMs) };
   } finally {
     active = false;

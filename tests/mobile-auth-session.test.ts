@@ -136,14 +136,14 @@ Deno.test("openAuthSession: one session at a time (busy), in JS before the nativ
     const first = openAuthSession(AUTHORIZE, { callbackScheme: "myapp" });
     assertEquals(await codeOf(openAuthSession(AUTHORIZE, { callbackScheme: "myapp" })), "busy");
     assertEquals(fake.starts.length, 1);
-    fake.pending.resolve({ url: "myapp://cb?code=1" });
-    assertEquals((await first).url, "myapp://cb?code=1");
+    fake.pending.resolve({ url: "myapp://cb?code=1&state=s1" });
+    assertEquals((await first).url, "myapp://cb?code=1&state=s1");
     // Settled: a new session may start.
-    const again = authPlugin(() => Promise.resolve({ url: "myapp://cb?code=2" }));
+    const again = authPlugin(() => Promise.resolve({ url: "myapp://cb?code=2&state=s1" }));
     (globalThis as Any).Capacitor.Plugins.DenextAuthSession = again.plugin;
     assertEquals(
       (await openAuthSession(AUTHORIZE, { callbackScheme: "myapp" })).url,
-      "myapp://cb?code=2",
+      "myapp://cb?code=2&state=s1",
     );
   });
 });
@@ -214,15 +214,15 @@ Deno.test("openAuthSession (native): the callback is claimed from deep-link rout
     await new Promise((r) => setTimeout(r, 0));
     const session = openAuthSession(AUTHORIZE, { callbackScheme: "myapp" });
     await new Promise((r) => setTimeout(r, 0));
-    assert(isAuthSessionCallback("myapp://auth/callback?code=1"));
+    assert(isAuthSessionCallback("myapp://auth/callback?code=1&state=s1"));
     assert(!isAuthSessionCallback("other://x"));
     // Android: the redirect intent reaches the App plugin too.
-    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1" });
+    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1&state=s1" });
     for (const fn of listeners) fn({ url: "other://open" });
-    fake.pending.resolve({ url: "myapp://auth/callback?code=1" });
+    fake.pending.resolve({ url: "myapp://auth/callback?code=1&state=s1" });
     await session;
     // The delivered callback stays claimed for a moment (it may land after the resolve)...
-    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1" });
+    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1&state=s1" });
     // ...but other links of the scheme route again once the session settled.
     for (const fn of listeners) fn({ url: "myapp://threads/1" });
     assertEquals(seen, ["other://open", "myapp://threads/1"]);
@@ -395,5 +395,50 @@ Deno.test("completeAuthSession: posts this URL to the opener for this origin onl
   }, () => {
     assertEquals(completeAuthSession(), false);
     assertEquals(closed, 1);
+  });
+});
+
+Deno.test("openAuthSession (native) SECURITY (AU6-M3): a callback the session did not ask for is refused", async () => {
+  const url = "https://idp.example.com/authorize?client_id=c&state=st8" +
+    "&redirect_uri=" + encodeURIComponent("myapp://auth/callback");
+  let answer = "";
+  const fake = authPlugin(() => Promise.resolve({ url: answer }));
+  await inShell({ DenextAuthSession: fake.plugin }, async () => {
+    // A forged deep link (another app's explicit intent) with the attacker's code and no state.
+    answer = "myapp://auth/callback?code=attacker";
+    assertEquals(await codeOf(openAuthSession(url, { callbackScheme: "myapp" })), "invalid");
+    // The right target with another state.
+    answer = "myapp://auth/callback?code=c&state=other";
+    assertEquals(await codeOf(openAuthSession(url, { callbackScheme: "myapp" })), "invalid");
+    // The right state on another path of the scheme.
+    answer = "myapp://auth/elsewhere?code=c&state=st8";
+    assertEquals(await codeOf(openAuthSession(url, { callbackScheme: "myapp" })), "invalid");
+    // The genuine callback (state in the query, or in the fragment for an implicit flow).
+    answer = "myapp://auth/callback?code=c&state=st8";
+    assertEquals((await openAuthSession(url, { callbackScheme: "myapp" })).url, answer);
+    answer = "myapp://auth/callback#access_token=t&state=st8";
+    assertEquals((await openAuthSession(url, { callbackScheme: "myapp" })).url, answer);
+    // A `state` option is checked when the URL names another redirect (through the provider).
+    const via = "https://idp.example.com/authorize?redirect_uri=https%3A%2F%2Fidp.example.com%2Fcb";
+    answer = "myapp://auth/callback?state=wrong";
+    assertEquals(
+      await codeOf(
+        openAuthSession(via, {
+          callbackScheme: "myapp",
+          callbackPrefix: "myapp://auth/callback",
+          state: "mine",
+        }),
+      ),
+      "invalid",
+    );
+    answer = "myapp://auth/callback?state=mine";
+    assertEquals(
+      (await openAuthSession(via, {
+        callbackScheme: "myapp",
+        callbackPrefix: "myapp://auth/callback",
+        state: "mine",
+      })).url,
+      answer,
+    );
   });
 });
