@@ -173,7 +173,7 @@ for (
   const [provider, mode, adapter, setup] of [
     ["sqlite", "npm", "@prisma/adapter-better-sqlite3", "bundles the compat, installs"],
     ["postgresql", "npm", "@prisma/adapter-pg", "(installs, `prisma generate`"],
-    ["sqlserver", "npm", null, "(installs, `prisma generate`"],
+    ["sqlserver", "npm", "@prisma/adapter-mssql", "(installs, `prisma generate`"],
     ["sqlite", "deno-sql", "denext/prisma-adapter", "(installs, `prisma generate`"],
     ["postgresql", "deno-sql", "denext/prisma-adapter", "(installs, `prisma generate`"],
   ] as const
@@ -234,7 +234,9 @@ Deno.test("migrate on a Fresh app reports the generated tree, Tailwind and the f
     assertStringIncludes(out, "Fresh 2.x detected");
     assertStringIncludes(out, "tailwind: ./assets/styles.css → ./assets/styles.gen.css");
     assertStringIncludes(out, "won't migrate (1)");
-    assertStringIncludes(out, "Fresh Partials");
+    // Partials migrate now (app/_fresh/partial.ts); the one won't-migrate item is the Vite plugin.
+    assertStringIncludes(out, "vite.config.ts: x()");
+    assertStringIncludes(out, "partial.ts");
     assertStringIncludes(out, "Fresh modules unchanged");
     // A root `_layout` runs inside the `_app` wrapper, both from app/layout.tsx.
     const root = await Deno.readTextFile(join(dir, "app/layout.tsx"));
