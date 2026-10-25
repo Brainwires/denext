@@ -254,6 +254,12 @@ export interface ReactNativeDevOptions {
   define: Record<string, string>;
   /** Resolve every bare package from `node_modules` (the app's `nodeResolve`). */
   resolveAllNodeModules?: boolean;
+  /**
+   * On the App Router: `app/` is the App Router's, not expo-router's routes, so the dependency
+   * bundle covers the client entries' roots instead, and a route coming or going changes nothing
+   * in it.
+   */
+  appRouter?: boolean;
 }
 
 /** Everything the unbundled dev stages share for one project. */
@@ -298,7 +304,11 @@ export interface UnbundledState {
    * npm bundle waits for so its first build already holds every package the page imports.
    */
   npmCrawl: Promise<void> | null;
-  /** compat: the graph roots already crawled (an entry is crawled once). */
+  /**
+   * compat: the graph roots already crawled (an entry is crawled once). React Native mode on the
+   * App Router: the client entries' roots (route modules, Flight islands) its dependency bundle
+   * covers, crawled with every check of it.
+   */
   readonly npmCrawledRoots: Set<string>;
   /** compat: how many times the npm bundle has been built (diagnostics and tests). */
   npmBuilds: number;

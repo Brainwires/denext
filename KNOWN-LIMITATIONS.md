@@ -480,9 +480,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   change. Resolution variants (`@2x`) are picked at load.
 - **On the App Router** (`reactNative` without `mode: "spa"`): expo-router is not available (it
   is a router, and `app/` is the App Router's; an import fails the build). react-native-web's
-  server style sheet holds every style the process has created, and a module first loaded inside
-  a streamed Suspense boundary adds its rules on the client only. `dev` uses the bundled loop
-  (rebuild and reload, no per-module hot swap). `fonts`, `rootStyle` and uniwind are the SPA
+  server style sheet holds every style the process has created, not only the page's (a streamed
+  Suspense boundary's new rules stream ahead of it). `fonts`, `rootStyle` and uniwind are the SPA
   shell's; `compatibilityMode: false` cannot be combined with it.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
   (`getWorkletContext` is undefined) and camera textures (`createCameraTextureAsync` rejects):

@@ -31,7 +31,11 @@ import {
 } from "../src/build/dev-unbundled/state.ts";
 import { transform } from "../src/build/dev-unbundled/transform.ts";
 import { onChange } from "../src/build/dev-unbundled/hmr.ts";
-import { refreshReactNativeDeps } from "../src/build/dev-unbundled/deps.ts";
+import {
+  ensureNpmBundle,
+  prewarmNpmBundle,
+  refreshReactNativeDeps,
+} from "../src/build/dev-unbundled/deps.ts";
 
 async function writeTree(root: string, files: Record<string, string>): Promise<void> {
   for (const [rel, text] of Object.entries(files)) {
@@ -75,22 +79,25 @@ export function Badge() {
   "src/dot.png": "PNG",
 };
 
-async function rnApp(): Promise<{ dir: string; st: UnbundledState }> {
+/** The app's unbundled state: SPA mode's, or (`appRouter`) the App Router's (no SPA entry). */
+async function rnApp(appRouter = false): Promise<{ dir: string; st: UnbundledState }> {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_rn_unbundled_" }));
   await writeTree(dir, APP);
-  const rn = reactNativeBundleOptions({ mode: "spa", reactNative: true }, dir, true)!;
+  const config = appRouter ? { reactNative: true } : { mode: "spa" as const, reactNative: true };
+  const rn = reactNativeBundleOptions(config, dir, true, appRouter)!;
   const st = createUnbundledState({
     projectDir: dir,
-    appDir: join(dir, "src"),
+    appDir: join(dir, appRouter ? "app" : "src"),
     configPath: join(dir, "deno.json"),
     outDir: join(dir, ".denext"),
     compat: true,
-    spaEntry: join(dir, "src/main.tsx"),
+    spaEntry: appRouter ? undefined : join(dir, "src/main.tsx"),
     define: { ...rn.define, "process.env.NODE_ENV": '"development"' },
     reactNative: {
       plugins: rn.plugins,
       platformExtensions: rn.platformExtensions,
       define: rn.define,
+      appRouter,
     },
   });
   seedReactNativeSpecs(st);
@@ -296,6 +303,47 @@ Deno.test("React Native: an edit importing a new name rebuilds the bundle before
     assert(/as goodbye\b/.test(cjs), "the new name is in the rebuilt bundle");
     assertEquals(await refreshReactNativeDeps(st), false, "settled: no second rebuild");
     assertEquals(reloads, 1);
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("React Native on the App Router: the bundle covers the client entries' roots, not app/ as routes", async () => {
+  const { dir, st } = await rnApp(true);
+  st.runtimeBuilt = Promise.resolve(); // the shared runtime is not under test
+  try {
+    await writeTree(dir, {
+      // A Server Component page: not a client root here, and `app/` is not expo-router's.
+      "app/page.tsx": 'import "server-pkg";\nexport default function Page() { return null; }\n',
+      "app/island.tsx": '"use client";\nimport { Text } from "react-native";\n' +
+        'import { broken } from "broken-pkg";\nexport const Island = [Text, broken];\n',
+      "node_modules/broken-pkg/package.json": JSON.stringify({ name: "broken-pkg", main: "i.js" }),
+      "node_modules/broken-pkg/i.js": 'export { broken } from "./missing.js";\n',
+    });
+    const island = norm(join(dir, "app/island.tsx"));
+    st.npmCheckedEpoch = st.graphEpoch;
+    prewarmNpmBundle(st, [island]);
+    assert(st.npmCrawledRoots.has(island), "the island is a root of the dependency bundle");
+    assertEquals(st.npmCheckedEpoch, -1, "a new root re-checks the bundle");
+    assertEquals(st.npmCrawl, null, "no compat npm-bundle crawl in React Native mode");
+
+    // One package that does not bundle fails only its own module, not the whole bundle.
+    await ensureNpmBundle(st);
+    assertEquals([...st.npmNames.get("react-native")!], ["Text"]);
+    assert(!st.npmSpecs.has("server-pkg"), "app/ is not crawled as expo-router routes");
+    assert(/as Text\b/.test(await Deno.readTextFile(join(st.npmDir, "react-native.js"))));
+    assertStringIncludes(
+      await Deno.readTextFile(join(st.npmDir, `${depSlug("broken-pkg")}.js`)),
+      'the npm package \\"broken-pkg\\" failed to bundle',
+    );
+
+    // A page coming or going changes nothing in the bundle; a dependency manifest does.
+    const sig = st.npmBuiltSig;
+    assert(sig !== null);
+    assertEquals(await reactNativeDepsInvalidated(st, [join(dir, "app/new/page.tsx")]), false);
+    assertEquals(st.npmBuiltSig, sig);
+    assertEquals(await reactNativeDepsInvalidated(st, [join(dir, "package.json")]), true);
   } finally {
     await esbuild.stop();
     await Deno.remove(dir, { recursive: true });
