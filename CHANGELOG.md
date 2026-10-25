@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **SAML Single Logout ends exactly the stateless session the IdP names.** Every new stateless
+  cookie session carries a random 128-bit `session.sid`. With a `saml()` provider's Single Logout
+  on, a SAML sign-in records its NameID and SessionIndex against that `sid` in the app's cache
+  store, and a verified LogoutRequest puts exactly the named sessions on a revocation list (all of
+  a NameID's sessions when it names no SessionIndex); a revoked session reads as signed out and its
+  cookie is cleared. Before, it ended every session of the user. The check is one key lookup, made
+  only for SAML sessions in an app with Single Logout on. Instances sharing a cache store share the
+  revocations; the in-memory store keeps them per instance, and `denext doctor` warns when Single
+  Logout would rely on it in production. A cookie without a `sid` (issued before) keeps working,
+  and a LogoutRequest naming a session the index doesn't know still ends every session of the user.
+  See https://denext.dev/docs/auth#saml-providers.
 - **Ready for the lifecycle-script jail.** denext's Deno runs a dependency's approved install
   script jailed (a scrubbed environment, a scratch `HOME`, writes only under `node_modules`, no
   network), on request up to runtime `3.0.0-rc.4` and by default from `3.0.0-rc.5`, which denext

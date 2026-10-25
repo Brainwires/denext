@@ -35,6 +35,7 @@ import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
 import { backendChecks } from "./doctor-backend.ts";
+import { authChecks } from "./doctor-auth.ts";
 import {
   signingReadiness,
   type SigningReadinessDeps,
@@ -740,7 +741,7 @@ export async function collectDoctorReport(
   if (depAge) checks.push(depAge);
   const jail = await jailScriptsCheck(paths.projectDir, options);
   if (jail) checks.push(jail);
-  checks.push(...await backendChecks(paths.projectDir, paths.config));
+  checks.push(...await backendChecks(paths.projectDir, paths.config), ...authChecks(paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
 }

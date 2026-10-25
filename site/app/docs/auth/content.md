@@ -452,10 +452,32 @@ SessionIndex (`session.saml`), and:
   URL as its Destination, be fresh, and be new (its ID is claimed in the shared replay cache). It
   ends the sessions its NameID started: with a `sessionStore` (and an adapter with the SSO session
   group, as the shipped ones have) exactly those its SessionIndexes name, each recorded at sign-in;
-  with stateless cookie sessions, which have no id to end one by, every session of that user signed
-  in before now (`sessionsValidAfter`). The caller's own cookie is cleared when it is one of them,
-  and the answer is a LogoutResponse signed over HTTP-Redirect to the IdP (`200` when it has no
-  SingleLogoutService).
+  with stateless cookie sessions, exactly the sessions it names too (below). The caller's own
+  cookie is cleared when it is one of them, and the answer is a LogoutResponse signed over
+  HTTP-Redirect to the IdP (`200` when it has no SingleLogoutService).
+
+**Stateless sessions and Single Logout.** Every stateless cookie session carries its own random
+id, `session.sid` (128 bits), sealed in the cookie. With Single Logout on, a `saml()` sign-in
+records which `sid` its NameID and SessionIndex started (until the session's
+`session.maxLifetime` ceiling), and a verified LogoutRequest puts exactly the named sessions on a
+revocation list: those its SessionIndexes started, or, with no SessionIndex, every session of that
+NameID. A revoked session reads as signed out and its cookie is cleared on that response. The
+check is one key lookup, made only for a SAML session read in an app with Single Logout on; an app
+without it, and a non-SAML session, make none. A cookie issued before denext minted `sid`s keeps
+working but can't be named: a LogoutRequest that names a session the index doesn't know ends
+every session of that user signed in before it (`sessionsValidAfter`) instead, so it fails
+closed.
+
+The index and the revocation list live in the app's cache store (`cache.store`). While that is the
+in-memory store, this instance keeps them in its own memory (never evicted before they expire), so
+one instance works out of the box, but a revocation reaches only the instance that received the
+LogoutRequest and is gone after a restart. Run several instances on a shared store (Postgres,
+Redis, Deno KV, or one host's SQLite file), or give denextAuth a `sessionStore`; `denext doctor`
+warns when Single Logout would rely on the in-memory store in production. A size-bounded cache
+store (the SQLite store's `maxDataEntries`, a Redis with an eviction policy) can drop an entry
+before it expires: size it so revocations stay. `revokeAllSessions(userId)` and bans already end
+stateless sessions through `sessionsValidAfter`; ending one stateless session by `sid` from your
+own code is not offered yet.
 
 The messages are checked by the same code as `/auth/v1`'s [Single Logout](#saml-single-sign-on).
 

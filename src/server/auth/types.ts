@@ -59,6 +59,14 @@ export interface AuthSession {
    */
   sessionId?: string;
   /**
+   * A stateless cookie session's own random id (128 bits, base64url), minted with the session
+   * and sealed in its cookie. SAML Single Logout names a session by it: an IdP's LogoutRequest
+   * puts exactly the sessions it names on the revocation list, and a revoked session reads as
+   * signed out. A cookie issued before denext minted it has none and can't be targeted. (A
+   * store-backed session's id is {@linkcode sessionId}.)
+   */
+  sid?: string;
+  /**
    * The native-app session family this request authenticated with — present only when the
    * caller presented a native access token (`Authorization: Bearer nat_…`, see
    * {@link AuthNativeConfig}). Such a session is never slid forward and sets no cookie.

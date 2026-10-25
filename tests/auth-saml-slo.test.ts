@@ -21,6 +21,12 @@ import {
   verifySpRedirect,
 } from "./_saml-enc-helpers.ts";
 import { requestIdOf } from "./_saml-idp.ts";
+import { type CacheStore, inMemoryCacheStore, setCacheStore } from "../src/server/cache.ts";
+import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
+import { cookieSessionOptions, resolveAuthOptions } from "../src/server/auth/options.ts";
+import { getSession } from "../src/server/session.ts";
+import { readAuthSession } from "../src/server/auth/session.ts";
+import { resetLocalSessionIndex } from "../src/server/auth/saml-revocation.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";
@@ -442,4 +448,226 @@ Deno.test("an unsigned, foreign, misdirected or replayed LogoutRequest is refuse
   const once = await idpLogoutQuery(a, { nameId: "nobody@acme.test", id: "_idp_once" });
   assertEquals((await call(a.config, new Request(`${SLO}${once}`))).res!.status, 303);
   assertEquals((await call(a.config, new Request(`${SLO}${once}`))).res!.status, 400);
+});
+
+// ---- stateless cookie sessions: a `sid` per session, revoked exactly ----------------------------
+
+/** The session as `readAuthSession` reads it for this cookie (inside a request). */
+async function readSession(config: AuthConfig, cookie: string) {
+  const ctx = createRequestContext(new Request(`${ORIGIN}/`, { headers: { cookie } }));
+  const session = await runWithContext(ctx, () => readAuthSession(config));
+  return { session, cookies: ctx.outgoingHeaders.getSetCookie() };
+}
+
+const cleared = (cookies: string[]) => cookies.some((c) => c.startsWith("__Host-denext_auth=;"));
+
+/** The id of the user a NameID signed in as. */
+async function ssoUserId(a: App, nameId: string): Promise<string> {
+  const user = await a.adapter.getUserByAccount({
+    provider: "sso:acme",
+    providerAccountId: nameId,
+  });
+  assert(user, `no user for ${nameId}`);
+  return user.id;
+}
+
+Deno.test("every new stateless session carries its own random 128-bit sid", async () => {
+  resetLocalSessionIndex();
+  const a = await app();
+  const first = await readSession(a.config, await signIn(a, "ada@acme.test", "_s1"));
+  const second = await readSession(a.config, await signIn(a, "ada@acme.test", "_s2"));
+  assertMatch(first.session?.sid ?? "", /^[A-Za-z0-9_-]{22}$/);
+  assertMatch(second.session?.sid ?? "", /^[A-Za-z0-9_-]{22}$/);
+  assert(first.session!.sid !== second.session!.sid, "each session has its own sid");
+});
+
+Deno.test("an IdP LogoutRequest for one SessionIndex revokes exactly that stateless session", async () => {
+  resetLocalSessionIndex();
+  const a = await app();
+  const first = await signIn(a, "ada@acme.test", "_s1");
+  const second = await signIn(a, "ada@acme.test", "_s2");
+  const query = await idpLogoutQuery(a, { nameId: "ada@acme.test", sessionIndexes: ["_s1"] });
+  const { res } = await call(a.config, new Request(`${SLO}${query}`));
+  assertEquals(res!.status, 303);
+  const revoked = await readSession(a.config, first);
+  assertEquals(revoked.session, null, "the named session is signed out");
+  assert(cleared(revoked.cookies), "and its cookie is cleared on that response");
+  const other = await readSession(a.config, second);
+  assert(other.session, "the same user's other session survives");
+  assert(!cleared(other.cookies));
+  const user = await a.adapter.getUser(await ssoUserId(a, "ada@acme.test"));
+  assertEquals(user?.sessionsValidAfter, undefined, "no user-wide stamp");
+});
+
+Deno.test("a NameID-only LogoutRequest revokes every SAML session of that NameID, no one else's", async () => {
+  resetLocalSessionIndex();
+  const a = await app();
+  const first = await signIn(a, "ada@acme.test", "_s1");
+  const second = await signIn(a, "ada@acme.test", "_s2");
+  const bob = await signIn(a, "bob@acme.test", "_s3");
+  const query = await idpLogoutQuery(a, { nameId: "ada@acme.test" });
+  assertEquals((await call(a.config, new Request(`${SLO}${query}`))).res!.status, 303);
+  assertEquals((await readSession(a.config, first)).session, null);
+  assertEquals((await readSession(a.config, second)).session, null);
+  assert((await readSession(a.config, bob)).session, "another NameID's session lives");
+  const user = await a.adapter.getUser(await ssoUserId(a, "ada@acme.test"));
+  assertEquals(user?.sessionsValidAfter, undefined, "revoked by sid, not by a user-wide stamp");
+});
+
+Deno.test("a forged or unsigned LogoutRequest revokes no stateless session", async () => {
+  resetLocalSessionIndex();
+  const a = await app();
+  const session = await signIn(a, "ada@acme.test", "_s1");
+  const kept = await signIn(a, "ada@acme.test", "_s2");
+  const unsigned = await redirectQuery(
+    "SAMLRequest",
+    logoutRequestXml({
+      destination: SLO,
+      issuer: IDP,
+      issueInstant: iso(Date.now()),
+      nameId: "ada@acme.test",
+      sessionIndexes: ["_s1"],
+      inResponseTo: null,
+    }),
+    a.key,
+    { unsigned: true },
+  );
+  const forged = await idpLogoutQuery({ ...a, key: await rsaKey() }, {
+    nameId: "ada@acme.test",
+    sessionIndexes: ["_s1"],
+  });
+  for (const query of [unsigned, forged]) {
+    assertEquals((await call(a.config, new Request(`${SLO}${query}`))).res!.status, 400);
+  }
+  assert((await readSession(a.config, session)).session, "nothing was revoked");
+  // The genuine one still targets exactly the named session.
+  const genuine = await idpLogoutQuery(a, { nameId: "ada@acme.test", sessionIndexes: ["_s1"] });
+  assertEquals((await call(a.config, new Request(`${SLO}${genuine}`))).res!.status, 303);
+  assertEquals((await readSession(a.config, session)).session, null);
+  assert((await readSession(a.config, kept)).session);
+});
+
+Deno.test("a revocation on one instance holds on another sharing the cache store", async () => {
+  resetLocalSessionIndex();
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/cache.db`;
+  // Two instances: their own config objects and their own handles on one SQLite cache file;
+  // the adapter (the user database) is shared, as it would be.
+  const storeA = sqliteCacheStore({ path });
+  const storeB = sqliteCacheStore({ path });
+  const a = await app();
+  const b: App = { ...a, config: { ...a.config } };
+  const on = async <T>(store: CacheStore, work: () => Promise<T>) => {
+    setCacheStore(store);
+    return await work();
+  };
+  try {
+    const first = await on(storeA, () => signIn(a, "ada@acme.test", "_s1"));
+    const second = await on(storeA, () => signIn(a, "ada@acme.test", "_s2"));
+    const query = await idpLogoutQuery(b, { nameId: "ada@acme.test", sessionIndexes: ["_s1"] });
+    const answer = await on(storeB, () => call(b.config, new Request(`${SLO}${query}`)));
+    assertEquals(answer.res!.status, 303);
+    assertEquals(
+      (await on(storeA, () => readSession(a.config, first))).session,
+      null,
+      "instance A sees the revocation instance B wrote",
+    );
+    assert((await on(storeA, () => readSession(a.config, second))).session);
+    assertEquals((await on(storeB, () => readSession(b.config, first))).session, null);
+  } finally {
+    setCacheStore(inMemoryCacheStore());
+    storeA.close();
+    storeB.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** A stateless SAML cookie as a denext from before `sid`s minted it. */
+async function legacyCookie(a: App, nameId: string): Promise<string> {
+  const options = resolveAuthOptions(a.config);
+  const ctx = createRequestContext(new Request(`${ORIGIN}/`));
+  const userId = await ssoUserId(a, nameId);
+  const now = Math.floor(Date.now() / 1000);
+  await runWithContext(ctx, async () => {
+    const session = await getSession(
+      cookieSessionOptions(a.config, options.cookies.session, options.maxAge),
+    );
+    await session.set({
+      user: { id: userId, email: nameId },
+      provider: "acme",
+      expiresAt: now + 3600,
+      v: 2,
+      issuedAt: now,
+      authTime: now,
+      authTimeMs: Date.now() - 2000,
+      amr: ["sso/saml"],
+      saml: { nameId, sessionIndex: "_legacy" },
+    });
+  });
+  return cookieOf(ctx.outgoingHeaders.getSetCookie(), "__Host-denext_auth")!;
+}
+
+Deno.test("a cookie from before sids still reads; a logout naming it ends it through the user", async () => {
+  resetLocalSessionIndex();
+  const a = await app();
+  await signIn(a, "ada@acme.test", "_s1"); // creates the SSO user
+  const legacy = await legacyCookie(a, "ada@acme.test");
+  const read = await readSession(a.config, legacy);
+  assert(read.session, "an old cookie without a sid keeps working");
+  assertEquals(read.session.sid, undefined);
+  // Its SessionIndex is in no index: the logout fails closed, ending the user's sessions.
+  const query = await idpLogoutQuery(a, {
+    nameId: "ada@acme.test",
+    sessionIndexes: ["_legacy"],
+  });
+  assertEquals((await call(a.config, new Request(`${SLO}${query}`))).res!.status, 303);
+  assertEquals((await readSession(a.config, legacy)).session, null);
+});
+
+/** A cache store that counts the revocation lookups made through it. */
+function countingStore(): { store: CacheStore; lookups: () => number } {
+  const inner = inMemoryCacheStore();
+  let lookups = 0;
+  const store: CacheStore = {
+    getData(key) {
+      if (key.startsWith("denext:auth:revoked:")) lookups++;
+      return inner.getData(key);
+    },
+    setData: (key, entry) => inner.setData(key, entry),
+    getPage: (key) => inner.getPage(key),
+    setPage: (key, page) => inner.setPage(key, page),
+    deleteByTag: (tag) => inner.deleteByTag(tag),
+    deleteByPath: (path) => inner.deleteByPath(path),
+  };
+  return { store, lookups: () => lookups };
+}
+
+Deno.test("an app without SAML Single Logout makes no revocation lookup; one with it makes one", async () => {
+  const counted = countingStore();
+  setCacheStore(counted.store);
+  try {
+    const plain = await app({ signingKey: false });
+    const user = await plain.adapter.createUser({ email: "x@y.test" });
+    const ctx = createRequestContext(new Request(`${ORIGIN}/`));
+    const { issueAuthSession } = await import("../src/server/auth/session.ts");
+    await runWithContext(
+      ctx,
+      () =>
+        issueAuthSession(plain.config, { id: user.id, email: "x@y.test" }, "credentials", {
+          amr: ["pwd"],
+        }),
+    );
+    const cookie = cookieOf(ctx.outgoingHeaders.getSetCookie(), "__Host-denext_auth")!;
+    assert((await readSession(plain.config, cookie)).session);
+    const saml = await signIn(plain, "ada@acme.test", "_s1");
+    assert((await readSession(plain.config, saml)).session);
+    assertEquals(counted.lookups(), 0, "no Single Logout configured: no lookup");
+
+    const slo = await app();
+    const session = await signIn(slo, "ada@acme.test", "_s1");
+    assert((await readSession(slo.config, session)).session);
+    assertEquals(counted.lookups(), 1, "one key lookup per read of a SAML session");
+  } finally {
+    setCacheStore(inMemoryCacheStore());
+  }
 });

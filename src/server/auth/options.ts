@@ -120,6 +120,13 @@ export interface ResolvedAuthOptions {
    * decides) — how the `ip` every auth event carries is read.
    */
   trustForwardedHeaders?: boolean;
+  /**
+   * Whether a stateless cookie session can be revoked by its `sid`: a `saml()` provider has
+   * Single Logout on (`sp.signingKey`), there is an adapter, and no `sessionStore`. Only then
+   * does a SAML sign-in record its session index and a read of a SAML session look its `sid` up
+   * on the revocation list; every other app pays nothing.
+   */
+  revocableCookies?: boolean;
 }
 
 /**
@@ -199,6 +206,7 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
   const logger = resolveLogger(config.logger);
   const basePath = normalizeBasePath(config.basePath);
   const maxAge = config.session?.maxAge ?? config.maxAge ?? DEFAULT_MAX_AGE;
+  const sessionStore = resolveSessionStore(config, logger);
   const options: ResolvedAuthOptions = {
     basePath,
     prefix: `${basePath}/`,
@@ -212,14 +220,22 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
     hasher: config.hasher ?? scryptHasher(),
     logger,
     events: config.events ?? {},
-    sessionStore: resolveSessionStore(config, logger),
+    sessionStore,
     adapter: config.adapter,
     email: resolveEmail(config.email ?? {}, basePath),
     mfa: resolveMfa(config.mfa ?? {}, config.canonicalOrigin),
     trustForwardedHeaders: config.trustForwardedHeaders,
+    revocableCookies: !sessionStore && !!config.adapter && hasSamlSingleLogout(config),
   };
   resolved.set(config, options);
   return options;
+}
+
+/** Whether a `saml()` provider of `config` has Single Logout on (an `sp.signingKey`). */
+function hasSamlSingleLogout(config: AuthConfig): boolean {
+  return (config.providers ?? []).some((p) =>
+    p?.type === "saml" && !!(p as { sp?: { signingKey?: unknown } }).sp?.signingKey
+  );
 }
 
 /**

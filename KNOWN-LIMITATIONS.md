@@ -197,15 +197,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
   CRL block registration; `attestation.revocation: "soft"` (the default with an offline `blob`)
   lets it through instead.
-- **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
-  email local part must be ASCII.
+- **Fixed profiles, by design:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator
+  supports), and an email local part must be ASCII. Both are kept on purpose, not planned to change.
 - **Native sessions:** Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` lets a cross-origin caller into Server Actions, the API batch and Live only without
   cookies** (those keep the same-origin rule, or `allowedOrigins`), and a cross-origin Live socket
   needs `canonicalOrigin`; middleware must let `OPTIONS` under `/auth` through.
-- **SAML Single Logout with stateless sessions ends every session of the user:** a cookie session
-  has no id, so an IdP's LogoutRequest naming one SessionIndex ends all of that user's sessions
-  signed in before it (a `sessionStore` ends exactly the named one).
 
 ### `next-auth` (Auth.js v5 and NextAuth.js v4) compat
 
