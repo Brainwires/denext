@@ -2,10 +2,12 @@
 //
 // The owner chain is the one the DevTools panel shows (`getOwnerStack` in
 // ./devtools-inspect.ts), nearest first: React's JSX-owner chain — the component whose render
-// created each element — when the elements came from a dev build's `jsxDEV` (which records
-// the rendering component and the JSX's source on the element, through the recorder this
-// module installs), else the component fibers above the one rendering (the render-parent
-// chain; an element made by `h()` / `createElement` carries no owner).
+// created each element. A dev build's `jsxDEV` records the rendering component and the JSX's
+// source on the element (through the recorder this module installs); an element made by
+// `h()` / `createElement` is given its owner when a render returns it: the component whose
+// render result first holds it (its `children`, or an element-valued prop) owns it, since `h()`
+// itself records nothing — it is the production path too. An element that never passed through
+// a render (the root) has none, and the chain ends there.
 // It is formatted the way React 19 formats an owner stack — one `\n    at Name (location)`
 // line per owner, the component calling `captureOwnerStack()` itself not included — so code
 // that logs or parses React's string reads this one the same way. The location is where the
@@ -23,6 +25,8 @@ import { familyIdOf } from "./refresh-runtime.ts";
 import { componentMetaOf } from "./devtools-meta.ts";
 import { clientDispatcher, currentFiber } from "./fiber/hooks-dispatcher.ts";
 import { devHydrationActive } from "./fiber/fiber-utils.ts";
+import { installRenderOwners } from "./fiber/render-component.ts";
+import { REACT_ELEMENT_TYPE } from "../runtime/react-brands.ts";
 
 /** Where a component was declared — the build-time position behind the panel's source link. */
 export interface SourceLocation {
@@ -89,6 +93,53 @@ function recordElement(el: object, source: unknown): void {
   if (source && typeof source === "object") {
     Object.defineProperty(el, "_source", { value: source, configurable: true });
   }
+}
+
+/** How deep {@linkcode stampOwners} follows nested children (a pathological tree stays cheap). */
+const MAX_STAMP_DEPTH = 64;
+
+/**
+ * Record `owner` on each element of a render result that has none yet — the ones this render
+ * made with `h()` / `createElement` — following `children` and element-valued props. An
+ * element that already has one (`jsxDEV` recorded it, or the render that made it passed it on
+ * as a prop) is left as it is, and so is what is below it.
+ */
+function stampOwners(result: unknown, owner: Fiber): void {
+  if (devHydrationActive()) stampNode(result, owner, 0);
+}
+
+function stampNode(node: unknown, owner: Fiber, depth: number): void {
+  if (depth > MAX_STAMP_DEPTH) return;
+  if (Array.isArray(node)) {
+    for (const child of node) stampNode(child, owner, depth + 1);
+  } else if (isElement(node) && !("_owner" in node) && claim(node, owner)) {
+    stampProps((node as { props?: unknown }).props, owner, depth + 1);
+  }
+}
+
+/** Record `owner` on `el`; false for a frozen element (it keeps the render-parent fallback). */
+function claim(el: object, owner: Fiber): boolean {
+  try {
+    Object.defineProperty(el, "_owner", { value: owner, configurable: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Stamp an element's `children` and its element-valued props. */
+function stampProps(props: unknown, owner: Fiber, depth: number): void {
+  if (props === null || typeof props !== "object") return;
+  const record = props as Record<string, unknown>;
+  stampNode(record.children, owner, depth);
+  for (const key in record) {
+    if (key !== "children" && isElement(record[key])) stampNode(record[key], owner, depth);
+  }
+}
+
+function isElement(value: unknown): value is object {
+  return value !== null && typeof value === "object" &&
+    (value as { $$typeof?: unknown }).$$typeof === REACT_ELEMENT_TYPE;
 }
 
 /** A JSX source as a location (`fileName` as the dev build wrote it: a path or a URL). */
@@ -196,4 +247,5 @@ export function installOwnerStack(on = true): void {
     delete d.captureOwnerStack;
     delete g[JSX_DEV];
   }
+  installRenderOwners(on ? stampOwners : null);
 }

@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **`captureOwnerStack()` follows the owner of `h()` / `createElement` elements (development).**
+  An element made without `jsxDEV` recorded no owner, so its stack (and the DevTools owner stack)
+  was the render-parent chain: a component passed through a wrapper as `children` listed the
+  wrapper. The client dev path now records the rendering component as the owner of each element
+  its render returns (its `children` and element-valued props), so the stack names the component
+  that wrote the element, as React's does. Production renders are unchanged and record nothing.
+
 - **`@react-native-community/blur`'s `blurRadius` is honoured (React Native mode).** Android's
   explicit radius (0–25 pixels) now sets the backdrop blur, overriding the one `blurAmount`
   gives; before, it was ignored.
