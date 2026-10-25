@@ -12,6 +12,7 @@
 // and reported.
 
 import { join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { posixRelative } from "./mobile-paths.ts";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
@@ -338,6 +339,7 @@ export class NativeInstaller<O extends NativeInstallOptions, R extends NativeIns
   /** Write `content` to `path` (creating its folder), or only remember it in a dry run. */
   async #store(path: string, content: string): Promise<void> {
     if (this.dryRun) return void this.#pending.set(path, content);
+    await assertInsideProject(this.opts.dir, path);
     await Deno.mkdir(join(path, ".."), { recursive: true });
     await Deno.writeTextFile(path, content);
   }

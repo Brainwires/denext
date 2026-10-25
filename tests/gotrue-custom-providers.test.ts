@@ -303,3 +303,38 @@ Deno.test("custom providers: OIDC — discovery at save, id_token verified with 
     );
   });
 });
+
+Deno.test("custom providers: an OIDC callback whose `iss` names another issuer is refused", async () => {
+  await withApp(async (app, idp) => {
+    await api(app, "/admin/custom-providers", {
+      admin: true,
+      body: {
+        provider_type: "oidc",
+        identifier: "corp",
+        name: "Corp",
+        client_id: "idp-client",
+        client_secret: "s3cret",
+        issuer: "https://idp.test",
+      },
+    });
+    // (The accepting case is the provider-flow suite's; here a second key would be throttled.)
+    /** One round with `iss` in the authorization response; the landing's fragment. */
+    const round = async (iss: string) => {
+      const started = await api(app, `/authorize?provider=custom:corp&redirect_to=${ORIGIN}/a`);
+      const idpUrl = new URL(started.headers.get("location")!);
+      idp.state.nonce = idpUrl.searchParams.get("nonce") ?? "";
+      const state = encodeURIComponent(idpUrl.searchParams.get("state")!);
+      const back = await api(
+        app,
+        `/callback?code=c&state=${state}&iss=${encodeURIComponent(iss)}`,
+        {
+          cookie: started.headers.get("set-cookie")!.split(";")[0],
+        },
+      );
+      return new URLSearchParams(new URL(back.headers.get("location")!).hash.slice(1));
+    };
+    const before = idp.state.tokenRequests.length;
+    assertEquals((await round("https://evil.example")).get("access_token"), null);
+    assertEquals(idp.state.tokenRequests.length, before, "the code is never redeemed");
+  });
+});

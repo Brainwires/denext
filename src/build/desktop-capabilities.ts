@@ -12,6 +12,7 @@
 // present is left as the user wrote it.
 
 import { basename, fromFileUrl, isAbsolute, join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
@@ -1025,7 +1026,11 @@ export async function addDesktopCapabilities(
   const diff = changed
     ? createUnifiedDiff(existing ? before : "", source, `a/${label}`, `b/${label}`)
     : "";
-  if (changed && !opts.dryRun) await Deno.writeTextFile(configPath, source);
+  if (changed && !opts.dryRun) {
+    // A config linked out of the project (a cloned repository's) is never written through.
+    await assertInsideProject(opts.dir, configPath);
+    await Deno.writeTextFile(configPath, source);
+  }
   const permissions = Object.fromEntries(
     DESKTOP_OSES.map((os) => [os, desktopPermissionFlags(names, os)]),
   ) as Record<DesktopOs, string[]>;

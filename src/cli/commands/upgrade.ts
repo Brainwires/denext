@@ -15,6 +15,7 @@ import {
 } from "../../build/upgrade.ts";
 import { projectDir } from "../shared.ts";
 import { memberDirs } from "../../build/workspace-imports.ts";
+import { assertInsideProject } from "../../build/project-confine.ts";
 import {
   DENEXT_EXCLUDE,
   type DepAgeRule,
@@ -42,27 +43,45 @@ async function configPath(dir: string): Promise<string | null> {
 async function memberConfigs(
   dir: string,
   text: string,
-): Promise<{ paths: string[]; unresolved: string[] }> {
+): Promise<{ paths: string[]; unresolved: string[]; outside: string[] }> {
+  const paths: string[] = [];
+  const unresolved: string[] = [];
+  const outside: string[] = [];
+  for (const entry of workspaceEntries(text)) {
+    const dirs = await memberDirs(dir, entry);
+    const found = (await Promise.all(dirs.map(configPath))).filter((p): p is string => !!p);
+    // A member entry (`"../other"`) or a member linked out of the project is never rewritten.
+    const inside = (await Promise.all(found.map((p) => insideProject(dir, p))))
+      .every(Boolean);
+    if (!inside) outside.push(entry);
+    else if (found.length) paths.push(...found);
+    else unresolved.push(entry);
+  }
+  return { paths: [...new Set(paths)], unresolved, outside };
+}
+
+/** The string entries of a config's `workspace` (a list, or `{ members }`); none when unparsable. */
+function workspaceEntries(text: string): string[] {
   let members: unknown;
   try {
     members = (parseJsonc(text) as { workspace?: unknown })?.workspace;
   } catch {
-    return { paths: [], unresolved: [] };
+    return [];
   }
   const list = Array.isArray(members)
     ? members
     : (members as { members?: unknown } | undefined)?.members;
-  if (!Array.isArray(list)) return { paths: [], unresolved: [] };
-  const paths: string[] = [];
-  const unresolved: string[] = [];
-  for (const entry of list) {
-    if (typeof entry !== "string") continue;
-    const dirs = await memberDirs(dir, entry);
-    const found = (await Promise.all(dirs.map(configPath))).filter((p): p is string => !!p);
-    if (found.length) paths.push(...found);
-    else unresolved.push(entry);
+  return Array.isArray(list) ? list.filter((e): e is string => typeof e === "string") : [];
+}
+
+/** Whether a write to `path` stays inside the project at `dir` (no `..`, no symlink out). */
+async function insideProject(dir: string, path: string): Promise<boolean> {
+  try {
+    await assertInsideProject(dir, path);
+    return true;
+  } catch {
+    return false;
   }
-  return { paths: [...new Set(paths)], unresolved };
 }
 
 /** The steps as aligned `name  from → to` lines (unchanged ones say so). */
@@ -110,7 +129,7 @@ export async function editorSettingUpdate(
   if (!tsgoLspByDefault(env)) return null;
   const path = join(dir, ".vscode", "settings.json");
   const info = await Deno.lstat(path).catch(() => null);
-  if (!info?.isFile) return null;
+  if (!info?.isFile || !await insideProject(dir, path)) return null;
   const before = await Deno.readTextFile(path);
   let settings: unknown;
   try {
@@ -123,29 +142,35 @@ export async function editorSettingUpdate(
   return text === null ? null : { path, text };
 }
 
+/** The `--json` document of an outcome. */
+function outcomeJson(
+  o: UpgradeOutcome,
+  files: { changedFiles: string[]; unresolved: string[]; outside: string[] },
+): Record<string, unknown> {
+  return {
+    config: o.path,
+    ...o.plan,
+    written: o.written,
+    files: files.changedFiles,
+    ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
+    ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
+    ...(o.editor ? { editorSettings: o.editor } : {}),
+    ...(files.unresolved.length ? { unresolvedMembers: files.unresolved } : {}),
+    ...(files.outside.length ? { outsideMembers: files.outside } : {}),
+  };
+}
+
 /** Print the outcome: one JSON document, or the human report. */
 function printOutcome(
   json: boolean,
   o: UpgradeOutcome,
-  files: { changedFiles: string[]; unresolved: string[] },
+  files: { changedFiles: string[]; unresolved: string[]; outside: string[] },
 ): void {
-  const { changedFiles, unresolved } = files;
-  if (json) {
-    console.log(JSON.stringify({
-      config: o.path,
-      ...o.plan,
-      written: o.written,
-      files: changedFiles,
-      ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
-      ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
-      ...(o.editor ? { editorSettings: o.editor } : {}),
-      ...(unresolved.length ? { unresolvedMembers: unresolved } : {}),
-    }));
-    return;
-  }
+  const { changedFiles, unresolved, outside } = files;
+  if (json) return void console.log(JSON.stringify(outcomeJson(o, files)));
   report(o.plan, o.path, o.check, o.written, o.now);
   reportExclude(o.dir, o.stripped, o.written);
-  reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved);
+  reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
   if (o.lock === true) console.log("deno.lock refreshed.");
   if (o.lock === false) {
@@ -207,7 +232,13 @@ export async function runUpgrade(
     return 1;
   }
   // A workspace's members pin denext too: plan over every config at once so they all agree.
-  const { files: read, unresolved } = await workspaceConfigs(dir, path);
+  if (!await insideProject(dir, path)) {
+    console.error(
+      `denext upgrade: ${path} is a symlink that leads out of the project; not changed`,
+    );
+    return 1;
+  }
+  const { files: read, unresolved, outside } = await workspaceConfigs(dir, path);
   // The `jsr:@denext/*` exemption from Deno's dependency-age hold goes first: the plan then
   // picks only versions the hold lets in.
   const files = read.map((f) => ({ ...f, ...stripDenextExclude(f.text) }));
@@ -228,7 +259,7 @@ export async function runUpgrade(
     ? await applyEditorSetting(dir, !check && ctx.flags["dry-run"] !== true)
     : null;
   const outcome = { dir, path, plan, check, written, lock, stripped, now, editor };
-  printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved });
+  printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;
   return check && changed ? 1 : 0;
 }
@@ -260,14 +291,14 @@ function upgradeFlags(ctx: CommandContext) {
 async function workspaceConfigs(
   dir: string,
   path: string,
-): Promise<{ files: { path: string; text: string }[]; unresolved: string[] }> {
+): Promise<{ files: { path: string; text: string }[]; unresolved: string[]; outside: string[] }> {
   const text = await Deno.readTextFile(path);
   const members = await memberConfigs(dir, text);
   const files = [{ path, text }];
   for (const member of members.paths) {
     if (member !== path) files.push({ path: member, text: await Deno.readTextFile(member) });
   }
-  return { files, unresolved: members.unresolved };
+  return { files, unresolved: members.unresolved, outside: members.outside };
 }
 
 /**
@@ -316,12 +347,23 @@ function reportExclude(dir: string, stripped: readonly string[], written: boolea
 }
 
 /** The workspace part of the human output: the member configs touched, and those not read. */
-function reportWorkspace(dir: string, changed: readonly string[], unresolved: readonly string[]) {
+function reportWorkspace(
+  dir: string,
+  changed: readonly string[],
+  unresolved: readonly string[],
+  outside: readonly string[],
+) {
   if (changed.length > 1) {
     console.log(`Workspace configs: ${changed.map((f) => relative(dir, f)).join(", ")}`);
   }
   for (const m of unresolved) {
     console.error(`denext upgrade: workspace member ${m} has no deno.json; its pins were not read`);
+  }
+  for (const m of outside) {
+    console.error(
+      `denext upgrade: workspace member ${m} is outside the project (or linked out of it); ` +
+        "its pins were not read or changed",
+    );
   }
 }
 

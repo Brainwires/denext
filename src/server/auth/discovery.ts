@@ -80,6 +80,12 @@ export interface ProviderEndpoints {
   jwksUrl?: string;
   /** Userinfo endpoint, when the provider has one. */
   userinfoUrl?: string;
+  /**
+   * Whether the issuer's discovery document advertises
+   * `authorization_response_iss_parameter_supported: true` (RFC 9207): its authorization
+   * responses carry `iss`, so a callback without one is refused.
+   */
+  issParamRequired?: boolean;
 }
 
 /** Options for {@link resolveProviderEndpoints}. */
@@ -116,6 +122,8 @@ interface DiscoveryDocument {
   jwks_uri?: unknown;
   /** Userinfo endpoint. */
   userinfo_endpoint?: unknown;
+  /** RFC 9207: authorization responses carry an `iss` parameter. */
+  authorization_response_iss_parameter_supported?: unknown;
 }
 
 /** What an endpoint URL from a discovery document must satisfy. */
@@ -364,6 +372,9 @@ function endpointsFromDocument(
     tokenUrl: endpointUrl(doc.token_endpoint, "token_endpoint", rules, true)!,
     jwksUrl: endpointUrl(doc.jwks_uri, "jwks_uri", rules, needsJwks),
     userinfoUrl: endpointUrl(doc.userinfo_endpoint, "userinfo_endpoint", rules, false),
+    ...(doc.authorization_response_iss_parameter_supported === true
+      ? { issParamRequired: true }
+      : {}),
   };
 }
 

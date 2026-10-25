@@ -182,6 +182,17 @@ print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mob
   option (ThisDeviceOnly for tokens) is new API and changing the default changes documented
   behaviour, so it needs a decision.
 
+## Migrators and auth providers (audit 4.8, low findings)
+
+- **`migrate` freezes the migrating machine's paths into inlined rules.** The next.config
+  evaluator keeps `HOME`, `TMPDIR`, `DENO_DIR` and the Windows profile variables; a
+  `redirects()` / `headers()` that interpolates one of them is written into `denext.config.ts`
+  with that machine's value. Pass placeholders for them, or flag such a rule for review.
+- **`denext patch` follows links inside `node_modules`.** A patch's targets are confined
+  lexically to the package folder, and the package folder is resolved through pnpm's links (which
+  may lead to a workspace package outside the app). Confine the resolved targets to the project
+  or workspace root, by real path.
+
 ## Build toolchain: waiting on `deno bundle`
 
 esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)
