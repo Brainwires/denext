@@ -353,6 +353,23 @@ CSS its `StyleSheet` builds) goes into the page's `<head>` as
 over the same classes; react-native-web on the client adopts that element. `build`, `start`,
 `export` and `dev` all do this.
 
+**Streamed Suspense boundaries:** a module first loaded inside a boundary that streams after the
+shell (a `dynamic()` / `import()`, a lazily loaded Server Component) adds its rules once the
+head has been sent. They stream ahead of that boundary's content, each rule once per response:
+a JSON block, then a constant inline script that inserts the rules into the head's sheet through
+the CSSOM, in react-native-web's group order, before the content swaps in. The content is never
+shown unstyled, and a Server Component's rules, which the client never computes, reach the page
+too. The script is allowed by its hash in the streamed response's
+[Content-Security-Policy](#under-a-content-security-policy) (denext's policy is hash-based, so
+there is no nonce to give it); an app without `reactNative` streams unchanged.
+
+**Hot updates in `dev`:** the App Router's per-module loop serves React Native mode too. The
+app's own modules are served one by one (`.web.*` first, JSX in `.js`, the defines) and every
+package import from one dependency bundle built with React Native mode's resolvers, covering
+what the route entries and the `"use client"` islands reach. Editing a component that imports
+`react-native` hot-swaps that module with its state kept (Fast Refresh); an edit that imports a
+name the dependency bundle lacks rebuilds it and reloads the page.
+
 What differs from SPA mode:
 
 - **expo-router is not available.** It is a router, and `app/` is the App Router's: an
@@ -361,11 +378,7 @@ What differs from SPA mode:
   stacks and tabs). An expo-router app runs in SPA mode.
 - **The sheet holds every style the server has created**, not only the page's:
   react-native-web keeps one sheet per process and `StyleSheet.create` runs when a module
-  loads. A module first loaded by a `dynamic()` / `import()` inside a streamed Suspense
-  boundary adds its rules after the head was sent; the client inserts them when it renders that
-  boundary.
-- **`dev` uses the bundled loop:** an edit rebuilds the compat bundles and reloads the page (no
-  per-module hot swap with state kept, which needs the SPA's dependency bundle).
+  loads.
 - **The SPA shell's options don't apply:** `rootStyle`, `fonts` (refused; load fonts with
   `next/font/local` or an `@font-face` stylesheet) and the uniwind integration, whose stylesheet
   pass is the SPA build's.
@@ -386,6 +399,8 @@ Router's default) with no `style-src 'unsafe-inline'`:
 - **React Native mode's own rules** (`TextInput`'s one-line placeholder and selection colour,
   a list's hidden scrollbar) go into a constructed style sheet the document adopts, not a
   `<style>` element.
+- **A streamed Suspense boundary's new rules** (on the App Router) go into the same sheet through
+  the CSSOM, from a constant inline script the streamed response's policy allows by its hash.
 - **Inline `style` attributes** (a style object that is not from `StyleSheet.create`, an
   animation) are `style-src-attr`, which denext's policy allows (`'unsafe-inline'` there only).
 

@@ -21,6 +21,7 @@ import {
   streamPprFlightDocument,
 } from "./document.ts";
 import { type CspSetting, resolveStreamingCsp } from "./csp.ts";
+import { streamLateStyleSheets } from "./late-style-sheets.ts";
 import { resumePageHolesFlightStream, resumePageHolesStream } from "./render-page.ts";
 import { absoluteUrl, stableBaseUrl, warnNoStableOrigin } from "./absolute-url.ts";
 import { augmentMetadataConventions } from "./augment-metadata.ts";
@@ -419,7 +420,9 @@ export async function servePprShell(
   const styles = pr.state.app.config.styleHrefsFor?.(pr.page.route);
   const shellPrefix = renderHeadContent(resumed.metadata, resumed.viewport, styles) + shell.body;
   const csp = await resolveStreamingCsp(shellPrefix, shell.routeCsp, pr.state.app.config.csp);
-  return htmlResponse(pr.state, resumed.stream, 200, csp, {
+  // Render-time style sheets (React Native mode): a hole's new rules stream ahead of it.
+  const body = streamLateStyleSheets(resumed.stream, shellPrefix);
+  return htmlResponse(pr.state, body, 200, csp, {
     "x-denext-cache": cacheState,
     "cache-control": "private, no-store",
   });

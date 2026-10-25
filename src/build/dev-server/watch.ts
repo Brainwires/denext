@@ -12,6 +12,7 @@ import type { PluginPrepareContext } from "../../plugin/mod.ts";
 import { basename, extname, join, SEPARATOR } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
 import { getUnbundled } from "./manifest.ts";
+import { reactNativeOptions } from "../../server/config.ts";
 import { broadcast, broadcastUpdate, closeReloadClients } from "./reload.ts";
 import type { DevState } from "./state.ts";
 import { watchPlatformFiles } from "./platform.ts";
@@ -23,13 +24,14 @@ import { workspaceMemberDirs } from "../workspace-imports.ts";
  * Whether a change set can be handled by Fast Refresh (re-import the route entry,
  * preserving state) rather than a full reload. Only JSX component modules qualify:
  * `.css`/assets need a stylesheet refetch, and `.ts` server/config/middleware edits need
- * the server to re-render. Empty → reload.
+ * the server to re-render. Empty → reload. In React Native mode `.js` holds JSX too.
  */
 function refreshable(st: DevState, changedPaths: string[]): boolean {
   if (changedPaths.length === 0) return false;
   const { middlewarePath, publicDir } = st.paths;
+  const component = reactNativeOptions(st.paths.config) ? /\.(tsx|jsx|js)$/ : /\.(tsx|jsx)$/;
   return changedPaths.every((p) => {
-    if (!/\.(tsx|jsx)$/.test(p)) return false;
+    if (!component.test(p)) return false;
     if (middlewarePath && p === middlewarePath) return false;
     if (publicDir && p.startsWith(publicDir)) return false;
     return true;
@@ -52,8 +54,12 @@ function cssOnly(changedPaths: string[]): boolean {
  * ON an unbundled route that changed structurally (propagated to the route entry) needs a
  * full reload.
  */
-function applyUnbundledChange(st: DevState, changedPaths: string[]): void {
-  const { updates, reload, unknownOnly } = getUnbundled(st).onChange(changedPaths);
+async function applyUnbundledChange(st: DevState, changedPaths: string[]): Promise<void> {
+  const unbundled = getUnbundled(st);
+  const { updates, reload, unknownOnly } = unbundled.onChange(changedPaths);
+  // React Native mode: an edit importing a name its dependency bundle lacks rebuilds it, and the
+  // rebuild reloads the page — a hot-swap now would link against the old bundle.
+  if (await unbundled.refreshDeps()) return;
   if (updates.length > 0 && !reload) broadcastUpdate(st, updates);
   else if (unknownOnly) broadcast(st, "refresh");
   else broadcast(st, "reload");
@@ -96,9 +102,15 @@ function applyChanges(st: DevState, changedPaths: string[]): void {
   st.devCopies.markEdited(changedPaths);
   bumpGeneration(st);
   typeCheck(st, changedPaths);
+  // React Native mode: a changed dependency manifest drops the dependency bundle (the reload
+  // such an edit gets rebuilds it).
+  void st.unbundled?.depsInvalidated(changedPaths);
   if (cssOnly(changedPaths)) broadcast(st, "css");
   else if (st.unbundledActive && refreshable(st, changedPaths)) {
-    applyUnbundledChange(st, changedPaths);
+    void applyUnbundledChange(st, changedPaths).catch((err) => {
+      console.warn(`denext: hot update failed, reloading — ${err}`);
+      broadcast(st, "reload");
+    });
   } else {
     // Bundled path: source-only edits Fast-Refresh (whole route entry); everything else
     // (assets/middleware/server) needs a full reload.

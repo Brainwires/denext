@@ -199,6 +199,19 @@ and this project adheres to
   or a `RouterContextProvider` filled with `.set` calls) into `load-context.ts` plus an
   `instrumentation.ts` that imports it. See https://denext.dev/docs/react-router#load-context-and-middleware.
 
+- **React Native mode on the App Router: streamed Suspense styles and per-module hot updates.**
+  The rules react-native-web's style sheet gains while a streamed Suspense boundary renders (a
+  module first loaded inside it) now reach the page ahead of the boundary's content, each rule once
+  per response: a JSON block and a constant inline script, allowed by its hash in the streamed
+  response's CSP, insert them into the head's `<style id="react-native-stylesheet">` through the
+  CSSOM, in react-native-web's group order, before the content swaps in. A Server Component's
+  styles inside a late boundary no longer go missing, and a client component's no longer flash
+  unstyled. In `denext dev`, the App Router's per-module loop now serves React Native mode too:
+  editing a component that imports `react-native` hot-swaps that module with its state kept (Fast
+  Refresh), as SPA mode does; an edit importing a name the dependency bundle lacks rebuilds it and
+  reloads. A package that fails to bundle for the browser fails only the modules importing it, in
+  SPA mode's loop too. See https://denext.dev/docs/react-native#on-the-app-router.
+
 ### Changed
 
 - **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The

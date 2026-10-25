@@ -224,10 +224,15 @@ function npmBundleCurrent(st: UnbundledState): boolean {
  * crawl runs in the background; {@link ensureNpmBundle} waits for it. Each root is crawled once.
  */
 export function prewarmNpmBundle(st: UnbundledState, roots: readonly string[]): void {
-  if (!st.compat || st.opts.reactNative) return;
+  if (!st.compat) return;
   const fresh = roots.map(norm).filter((abs) => !st.npmCrawledRoots.has(abs));
   if (fresh.length === 0) return;
   for (const abs of fresh) st.npmCrawledRoots.add(abs);
+  if (st.opts.reactNative) {
+    // React Native mode: the dependency bundle's own crawl takes the new roots; check it again.
+    st.npmCheckedEpoch = -1;
+    return;
+  }
   const previous = st.npmCrawl;
   const crawl: Promise<void> = (async () => {
     await previous;
@@ -267,12 +272,15 @@ export function npmErrorModule(spec: string, errors: string): string {
     `throw new Error(message);\n`;
 }
 
+/** Builds the dependency bundle for `specs` (`write: false`: a trial build, where supported). */
+type SpecsBuild = (specs: readonly string[], write: boolean) => Promise<void>;
+
 /**
  * Bisect `specs` (whose build failed with `err`) down to the specifiers that fail on their own,
- * by trial builds that write nothing. Each failing specifier lands in `out` with its errors.
+ * by trial builds. Each failing specifier lands in `out` with its errors.
  */
 async function findFailingSpecs(
-  st: UnbundledState,
+  build: SpecsBuild,
   specs: readonly string[],
   err: unknown,
   out: Map<string, string>,
@@ -284,9 +292,9 @@ async function findFailingSpecs(
   const mid = specs.length >> 1;
   for (const half of [specs.slice(0, mid), specs.slice(mid)]) {
     try {
-      await npmBuild(st, npmEntries(half), false);
+      await build(half, false);
     } catch (e) {
-      await findFailingSpecs(st, half, e, out);
+      await findFailingSpecs(build, half, e, out);
     }
   }
 }
@@ -298,20 +306,32 @@ async function findFailingSpecs(
  * served as {@link npmErrorModule}. Rethrows when no single specifier is to blame. Returns the
  * failing specifiers with their errors. Exported for testing.
  */
-export async function npmBuildIsolated(
+export function npmBuildIsolated(
   st: UnbundledState,
   specs: readonly string[],
 ): Promise<Map<string, string>> {
+  return buildIsolated(st, specs, (some, write) => npmBuild(st, npmEntries(some), write));
+}
+
+/**
+ * {@linkcode npmBuildIsolated} over any dependency-bundle build (the npm bundle, or React Native
+ * mode's, whose App Router graph may reach a package that does not bundle for the browser).
+ */
+async function buildIsolated(
+  st: UnbundledState,
+  specs: readonly string[],
+  build: SpecsBuild,
+): Promise<Map<string, string>> {
   const failures = new Map<string, string>();
   try {
-    await npmBuild(st, npmEntries(specs));
+    await build(specs, true);
     return failures;
   } catch (err) {
-    await findFailingSpecs(st, specs, err, failures);
+    await findFailingSpecs(build, specs, err, failures);
     if (failures.size === 0) throw err;
   }
   const good = specs.filter((s) => !failures.has(s));
-  if (good.length > 0) await npmBuild(st, npmEntries(good));
+  if (good.length > 0) await build(good, true);
   for (const [spec, errors] of failures) {
     console.error(`denext dev: the npm package "${spec}" failed to bundle:\n${errors}`);
     await Deno.writeTextFile(join(st.npmDir, `${depSlug(spec)}.js`), npmErrorModule(spec, errors));
@@ -381,7 +401,9 @@ async function ensureReactNativeBundle(st: UnbundledState): Promise<void> {
     // reloaded the page): the page holds the previous bundle's modules.
     const underLivePage = st.npmBuiltSig !== null;
     await ensureRuntime(st);
-    await buildReactNativeDeps(st);
+    // A package that fails to bundle fails only the modules importing it (an App Router graph
+    // may reach a server-only one).
+    await buildIsolated(st, [...st.npmSpecs], (specs) => buildReactNativeDeps(st, specs));
     st.npmBuiltSig = sig;
     if (underLivePage) {
       st.npmLiveRebuilds++;
