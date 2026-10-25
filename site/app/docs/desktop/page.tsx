@@ -2014,12 +2014,16 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>downloadToFile</code> fetches only <code>http</code>/<code>https</code>{" "}
         URLs, refuses loopback and link-local targets (<code>localhost</code>,{" "}
         <code>127.0.0.0/8</code>, <code>::1</code>, <code>169.254.0.0/16</code>,{" "}
-        <code>fe80::/10</code>, checked after DNS and again on every redirect), stops after 100 MiB
-        or 10 minutes, and leaves nothing behind on failure or a cancel. It sends the page&apos;s
-        request headers except those a browser&apos;s <code>fetch</code>{" "}
-        refuses (<code>Cookie</code>, <code>Host</code>, <code>Origin</code>, the hop-by-hop and
-        {" "}
-        <code>Sec-</code> / <code>Proxy-</code> ones), and drops <code>Authorization</code>{" "}
+        <code>fe80::/10</code>, checked after DNS and again on every redirect, a resume included),
+        stops after 100 MiB (counted over the whole file when it resumes) or 10 minutes, and leaves
+        nothing behind on a cancel. A pause, a network failure or a restart keeps the bytes so far
+        in <code>&lt;file&gt;.part</code>{" "}
+        beside the file, with a sidecar naming the URL; it is continued only for that URL and that
+        file, with an <code>If-Range</code>{" "}
+        request, else started over. It sends the page&apos;s request headers except those a
+        browser&apos;s <code>fetch</code> refuses (<code>Cookie</code>, <code>Host</code>,{" "}
+        <code>Origin</code>, the hop-by-hop and <code>Sec-</code> / <code>Proxy-</code>{" "}
+        ones), and drops <code>Authorization</code>{" "}
         on a redirect to another origin. LAN addresses (<code>
           192.168.x.x
         </code>, <code>10.x.x.x</code>, …) stay allowed, so a download from a NAS works.{" "}

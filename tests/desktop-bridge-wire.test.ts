@@ -28,6 +28,7 @@ import {
   onFileTransfer,
   pauseFileTransfer,
   resetFileTransfersForTesting,
+  resumeFileTransfer,
 } from "../src/mobile/file-transfer.ts";
 import { downloadToFile } from "../src/mobile/filesystem.ts";
 import {
@@ -395,9 +396,43 @@ const realFetch = globalThis.fetch;
 function startFileServer() {
   const body = new Uint8Array(256 * 1024).map((_, i) => i % 251);
   const gate = Promise.withResolvers<void>();
-  const state = { slowStarted: false, slowCancelled: false, sawAuth: [] as (string | null)[] };
+  const state = {
+    slowStarted: false,
+    slowCancelled: false,
+    sawAuth: [] as (string | null)[],
+    /** Each `/resumable.bin` request's `range` and `if-range`. */
+    ranges: [] as Array<[string | null, string | null]>,
+  };
   const controller = new AbortController();
   const { promise: listening, resolve } = Promise.withResolvers<number>();
+  /**
+   * A file with a strong ETag: a plain request sends 64 KiB then holds (until the client goes
+   * away); a `Range` request whose `If-Range` matches gets the rest as a 206.
+   */
+  const resumable = (req: Request): Response => {
+    const range = req.headers.get("range");
+    state.ranges.push([range, req.headers.get("if-range")]);
+    const etag = '"wire-v1"';
+    const from = Number(/^bytes=(\d+)-$/.exec(range ?? "")?.[1] ?? NaN);
+    if (Number.isFinite(from) && req.headers.get("if-range") === etag) {
+      return new Response(body.subarray(from), {
+        status: 206,
+        headers: {
+          etag,
+          "content-range": `bytes ${from}-${body.byteLength - 1}/${body.byteLength}`,
+          "content-length": String(body.byteLength - from),
+        },
+      });
+    }
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(body.subarray(0, 64 * 1024));
+      },
+    });
+    return new Response(stream, {
+      headers: { etag, "content-length": String(body.byteLength) },
+    });
+  };
   const server = Deno.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -412,6 +447,7 @@ function startFileServer() {
     if (path === "/secret.bin") {
       return new Response(body, { headers: { "content-length": String(body.byteLength) } });
     }
+    if (path === "/resumable.bin") return resumable(req);
     if (path === "/slow.bin") {
       // The first 64 KiB, then nothing until the test releases the gate (or the client goes away).
       const stream = new ReadableStream<Uint8Array>({
@@ -470,6 +506,15 @@ async function withDownloads(
   } finally {
     await files.close();
     await Deno.remove(root, { recursive: true });
+  }
+}
+
+/** Wait until the partial file at `path` holds `bytes` (the runtime wrote the first chunk). */
+async function partReaches(path: string, bytes: number, ms = 5_000): Promise<void> {
+  const end = Date.now() + ms;
+  while ((await Deno.stat(path).then((i) => i.size, () => 0)) < bytes) {
+    if (Date.now() > end) throw new Error(`partReaches: ${path} never reached ${bytes} bytes`);
+    await new Promise((r) => setTimeout(r, 10));
   }
 }
 
@@ -580,9 +625,6 @@ Deno.test({
       "running",
       files.body.byteLength,
     ]);
-    const paused = await pauseFileTransfer("wire-slow").catch((e) => e);
-    assert(isDesktopBridgeError(paused));
-    assertEquals(paused.code, "unsupported");
     assert(await cancelFileTransfer("wire-slow"));
     const err = await assertRejects(() => run, FileTransferError);
     assertEquals([err.code, err.id], ["CANCELLED", "wire-slow"]);
@@ -591,6 +633,55 @@ Deno.test({
     assertEquals(events.at(-1)?.type, "cancelled");
     // Nothing is left behind: no file and no `.part`.
     assertEquals(await filesUnder(root), []);
+    stop();
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test({
+  ...TEST,
+  name:
+    "wire: a desktop download pauses with its partial kept and resumes with a range request; a paused one cancels",
+}, async () => {
+  resetFileTransfersForTesting();
+  await withDownloads(async ({ root, files }) => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    const run = downloadToFile("https://files.test/resumable.bin", "dl/r.bin", {
+      id: "wire-pause",
+      headers: { authorization: "Bearer s3cret" },
+    });
+    run.catch(() => {});
+    await partReaches(join(root, "dl", "r.bin.part"), 64 * 1024);
+    assert(await pauseFileTransfer("wire-pause"));
+    await until(() => events.some((e) => e.type === "paused"), 5_000);
+    const paused = events.find((e) => e.type === "paused")!;
+    assertEquals([paused.state, paused.bytes, paused.resumable], ["paused", 64 * 1024, true]);
+    assertEquals(await filesUnder(root), ["dl/r.bin.part", "dl/r.bin.part.json"]);
+    assert(await resumeFileTransfer("wire-pause"));
+    const done = await run;
+    assertEquals(await Deno.readFile(done.path), files.body);
+    assertEquals(files.state.ranges, [[null, null], [`bytes=${64 * 1024}-`, '"wire-v1"']]);
+    assertEquals(await filesUnder(root), ["dl/r.bin"]);
+    assertEquals(events.at(-1)?.type, "done");
+
+    // A paused download cancelled: its partial file and sidecar are dropped.
+    const again = downloadToFile("https://files.test/resumable.bin", "dl/s.bin", {
+      id: "wire-pause-2",
+      headers: { authorization: "Bearer s3cret" },
+    });
+    again.catch(() => {});
+    await partReaches(join(root, "dl", "s.bin.part"), 64 * 1024);
+    assert(await pauseFileTransfer("wire-pause-2"));
+    await until(() => events.some((e) => e.id === "wire-pause-2" && e.type === "paused"), 5_000);
+    assert(await cancelFileTransfer("wire-pause-2"));
+    const err = await assertRejects(() => again, FileTransferError);
+    assertEquals(err.code, "CANCELLED");
+    const end = Date.now() + 3_000;
+    while ((await filesUnder(root)).length > 1 && Date.now() < end) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assertEquals(await filesUnder(root), ["dl/r.bin"]);
     stop();
   });
   resetFileTransfersForTesting();
