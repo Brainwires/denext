@@ -3,8 +3,12 @@
 
 import type { Metadata, PageProps } from "denext/server";
 
-export function metadata(props: PageProps): Metadata {
-  return { title: `denext — blog: ${props.params.slug}` };
+/** This route's params: `[slug]` is one path segment. */
+type Props = PageProps<{ slug: string }>;
+
+export async function metadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params;
+  return { title: `denext — blog: ${slug}` };
 }
 
 // Pre-render these slugs during `denext export` (static generation).
@@ -27,13 +31,14 @@ async function getPost(slug: string): Promise<Post> {
   };
 }
 
-export default async function BlogPost({ params }: PageProps) {
-  const post = await getPost(params.slug);
+export default async function BlogPost({ params }: Props) {
+  const { slug } = await params;
+  const post = await getPost(slug);
   return (
     <article>
       <h1>{post.title}</h1>
       <p class="slug">
-        slug: <code>{params.slug}</code>
+        slug: <code>{slug}</code>
       </p>
       <p>{post.body}</p>
     </article>

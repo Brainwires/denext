@@ -14,6 +14,7 @@ import {
 import { devErrorPage } from "../src/build/dev-server/error-page.ts";
 import { DevEventLog } from "../src/build/dev-events.ts";
 import type { DevState } from "../src/build/dev-server/state.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
@@ -46,7 +47,7 @@ async function fakeDeno(dir: string, raw: string): Promise<{ path: string; log: 
 /** Run the CLI from source in `cwd` with `env` added. */
 async function cli(args: string[], cwd: string, env: Record<string, string>) {
   const coverage = Deno.env.get("DENEXT_CHILD_COVERAGE");
-  const out = await new Deno.Command(Deno.execPath(), {
+  const out = await boundedOutput(Deno.execPath(), {
     args: [
       "run",
       "-A",
@@ -58,9 +59,7 @@ async function cli(args: string[], cwd: string, env: Record<string, string>) {
     ],
     cwd,
     env: { DENEXT_TOOLCHAIN_ACTIVE: "1", DENEXT_DENO: "stock", NO_COLOR: "1", ...env },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const d = new TextDecoder();
   return { code: out.code, stderr: d.decode(out.stderr) };
 }

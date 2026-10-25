@@ -4,6 +4,7 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const abs = (p: string) => fromFileUrl(new URL(`../${p}`, import.meta.url));
 
@@ -14,13 +15,11 @@ Deno.test({
   fn: async () => {
     // From the example's directory with NO --config: the example's deno.json (and only it) maps
     // `@pothos/core`, which its app/graphql/schema.ts imports.
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await boundedOutput(Deno.execPath(), {
       args: ["run", "-A", abs("cli.ts"), "graphql", "sdl"],
       cwd: abs("examples/graphql"),
       env: { NO_COLOR: "1", DENEXT_DENO: "stock" },
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     const stdout = new TextDecoder().decode(out.stdout);
     const log = stdout + new TextDecoder().decode(out.stderr);
     assert(out.success, log);

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`@denext/openapi` is required at `^0.7.0`**, the version the workspace builds against: the
+  `^0.6.0` range did not match it, so a plain `deno test` in the repository rewrote `deno.lock`.
+
 ## 0.6.0
 
 ### Added

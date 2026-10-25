@@ -13,6 +13,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { scaffoldMonorepo } from "../../src/build/scaffold-monorepo.ts";
 import { removeTempDir } from "../helpers/temp.ts";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -63,13 +64,11 @@ const RUN = TOOLCHAIN
 
 /** Run `deno <args>` in `cwd` to completion; fail with its output. */
 async function deno(args: string[], cwd: string): Promise<string> {
-  const out = await new Deno.Command(RUN.deno, {
+  const out = await boundedOutput(RUN.deno, {
     args,
     cwd,
-    stdout: "piped",
-    stderr: "piped",
     env: RUN.env,
-  }).output();
+  });
   const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
   assertEquals(out.code, 0, `deno ${args.join(" ")} failed:\n${text}`);
   return text;

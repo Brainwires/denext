@@ -24,6 +24,7 @@ import {
   sqlitePathOf,
 } from "../src/cli/db/target.ts";
 import { scriptedSql } from "./helpers/scripted-sql.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 async function project(files: Record<string, string>): Promise<string> {
   const root = await Deno.makeTempDir({ prefix: "dnx-cli-db-" });
@@ -375,7 +376,7 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
   const root = await project({ "deno.json": "{}", "migrations/1_a.sql": A });
   try {
     const run = async (...args: string[]) => {
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: [
           "run",
           "-A",
@@ -384,10 +385,8 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
           "--cwd",
           root,
         ],
-        stdout: "piped",
-        stderr: "piped",
         env: { NO_COLOR: "1", DENEXT_DENO: "stock" },
-      }).output();
+      });
       const text = (b: Uint8Array) => new TextDecoder().decode(b);
       return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
     };

@@ -5,6 +5,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { serveDir } from "@std/http/file-server";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 
@@ -13,12 +14,10 @@ const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
  * imports), returning the output dir.
  */
 async function exportApp(dir: string): Promise<{ outDir: string }> {
-  const out = await new Deno.Command(Deno.execPath(), {
+  const out = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", CLI, "export", dir],
     cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
   assert(out.success, log);
   return { outDir: join(dir, "out") };

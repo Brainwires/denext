@@ -24,6 +24,7 @@ import {
 } from "../src/build/deno-toolchain.ts";
 import { denoCacheDir } from "../src/build/desktop-runtime.ts";
 import { sha256Hex } from "./_archive-fixtures.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
@@ -456,7 +457,7 @@ async function wrapper(dir: string, code: number): Promise<{ path: string; log: 
 async function cli(args: string[], cwd: string, env: Record<string, string>) {
   // Under the coverage tasks the child's coverage joins the run's.
   const coverage = Deno.env.get("DENEXT_CHILD_COVERAGE");
-  const out = await new Deno.Command(Deno.execPath(), {
+  const out = await boundedOutput(Deno.execPath(), {
     args: [
       "run",
       "-A",
@@ -468,9 +469,7 @@ async function cli(args: string[], cwd: string, env: Record<string, string>) {
     ],
     cwd,
     env: { DENEXT_TOOLCHAIN_ACTIVE: "", ...env },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const d = new TextDecoder();
   return { code: out.code, stdout: d.decode(out.stdout), stderr: d.decode(out.stderr) };
 }

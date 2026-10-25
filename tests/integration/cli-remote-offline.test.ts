@@ -11,6 +11,7 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { contentType } from "@std/media-types";
 import { extname, fromFileUrl, join, normalize } from "@std/path";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const enabled = Deno.env.get("DENEXT_TEST_REMOTE_CLI") === "1";
@@ -63,13 +64,11 @@ Deno.test({
       await Deno.writeTextFile(join(project, "app", "page.tsx"), "export default () => null;\n");
       const cli = `${origin}/cli.ts`;
       const run = async (args: string[], env: Record<string, string> = {}) => {
-        const out = await new Deno.Command(Deno.execPath(), {
+        const out = await boundedOutput(Deno.execPath(), {
           args,
           cwd: tmp,
           env: { DENO_DIR: join(tmp, "deno-dir"), DENEXT_DENO: "stock", NO_COLOR: "1", ...env },
-          stdout: "piped",
-          stderr: "piped",
-        }).output();
+        });
         const decoder = new TextDecoder();
         return { code: out.code, out: decoder.decode(out.stdout), err: decoder.decode(out.stderr) };
       };

@@ -12,6 +12,8 @@
 // included, and keeps them open for as long as it lives. Everything the child wrote is in the pipe
 // by the time it exits, so reading stops once the pipes go quiet after the exit.
 
+import { fromFileUrl } from "@std/path";
+
 /** What {@linkcode runBounded} reports. */
 export interface BoundedResult {
   /** The child exited 0 before the deadline. */
@@ -29,6 +31,16 @@ export interface BoundedResult {
    * process holds an inherited copy of its write end (see the module comment).
    */
   readonly pipesHeld: boolean;
+  /** The child's pid, to name it when it stalls. */
+  readonly pid: number;
+  /** Its exit code (`-1` when it timed out). */
+  readonly code: number;
+  /** Its exit signal, or `null`. */
+  readonly signal: Deno.Signal | null;
+  /** stdout's raw bytes. */
+  readonly stdoutBytes: Uint8Array<ArrayBuffer>;
+  /** stderr's raw bytes. */
+  readonly stderrBytes: Uint8Array<ArrayBuffer>;
 }
 
 /** Options for {@linkcode runBounded}. */
@@ -71,8 +83,14 @@ async function killProcessTree(pid: number): Promise<void> {
   } catch { /* already gone */ }
 }
 
+/** What {@linkcode drain} has read so far. */
+interface Sink {
+  text: string;
+  readonly chunks: Uint8Array[];
+}
+
 /** Read `stream` into `sink` until it closes; `cancel()` stops it without waiting for EOF. */
-function drain(stream: ReadableStream<Uint8Array>, sink: { text: string }) {
+function drain(stream: ReadableStream<Uint8Array>, sink: Sink) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   const done = (async () => {
@@ -80,11 +98,20 @@ function drain(stream: ReadableStream<Uint8Array>, sink: { text: string }) {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) return;
+        sink.chunks.push(value);
         sink.text += decoder.decode(value, { stream: true });
       }
     } catch { /* cancelled */ }
   })();
   return { done, cancel: () => reader.cancel().catch(() => {}) };
+}
+
+/** The chunks in `sink`, joined. */
+function joined(sink: Sink): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(sink.chunks.reduce((n, c) => n + c.length, 0));
+  let at = 0;
+  for (const c of sink.chunks) out.set(c, (at += c.length) - c.length);
+  return out;
 }
 
 /** Resolve after `ms`, or as soon as `p` settles, leaving no timer behind. */
@@ -116,16 +143,25 @@ export async function runBounded(
     stdout: "piped",
     stderr: "piped",
   }).spawn();
-  const out = { text: "" };
-  const err = { text: "" };
+  const out: Sink = { text: "", chunks: [] };
+  const err: Sink = { text: "", chunks: [] };
   const reads = [drain(child.stdout, out), drain(child.stderr, err)];
-  const result = (success: boolean, timedOut: boolean, pipesHeld: boolean): BoundedResult => ({
-    success,
+  const result = (
+    status: Deno.CommandStatus | null,
+    timedOut: boolean,
+    pipesHeld: boolean,
+  ): BoundedResult => ({
+    success: status?.success ?? false,
     timedOut,
     pipesHeld,
+    pid: child.pid,
+    code: status?.code ?? -1,
+    signal: status?.signal ?? null,
     output: out.text + err.text,
     stdout: out.text,
     stderr: err.text,
+    stdoutBytes: joined(out),
+    stderrBytes: joined(err),
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<"timeout">((resolve) => {
@@ -145,11 +181,63 @@ export async function runBounded(
     ]);
     clearTimeout(grace);
     if (!drained) await Promise.all(reads.map((r) => r.cancel()));
-    return result(done.success, false, !drained);
+    return result(done, false, !drained);
   }
   await killProcessTree(child.pid);
   // A grandchild the kill could not reach may still hold the pipes: stop reading, don't wait.
   await Promise.all(reads.map((r) => r.cancel()));
   await within(child.status, 5_000);
-  return result(false, true, false);
+  return result(null, true, false);
+}
+
+/** The deadline {@linkcode boundedOutput} uses unless told otherwise: 10 minutes, a failure bound for one CLI verb on a loaded runner. */
+const OUTPUT_DEADLINE_MS = 600_000;
+
+/** {@linkcode boundedOutput}'s options: `Deno.CommandOptions` with piped output and no stdin. */
+export type BoundedOutputOptions =
+  & Pick<Deno.CommandOptions, "args" | "cwd" | "env" | "clearEnv">
+  & {
+    /** The deadline, in ms (default {@linkcode OUTPUT_DEADLINE_MS}). */
+    readonly timeoutMs?: number;
+    /** How long the pipes may stay open once the child has exited. */
+    readonly drainMs?: number;
+  };
+
+/**
+ * `new Deno.Command(cmd, options).output()` with a deadline: the same `Deno.CommandOutput`
+ * (stdout and stderr piped, stdin null), but a child still running at the deadline has its
+ * whole tree killed and the call throws, naming the command, its pid and what it printed, where
+ * `output()` would wait until the CI job's own timeout.
+ *
+ * @param cmd The executable.
+ * @param options Its arguments, working directory, environment and the deadline.
+ * @returns The child's output once it exits.
+ */
+export async function boundedOutput(
+  cmd: string | URL,
+  options: BoundedOutputOptions = {},
+): Promise<Deno.CommandOutput> {
+  const timeoutMs = options.timeoutMs ?? OUTPUT_DEADLINE_MS;
+  const program = cmd instanceof URL ? fromFileUrl(cmd) : cmd;
+  const args = options.args ?? [];
+  const r = await runBounded(program, args, {
+    cwd: options.cwd instanceof URL ? fromFileUrl(options.cwd) : options.cwd,
+    env: options.env,
+    clearEnv: options.clearEnv,
+    timeoutMs,
+    drainMs: options.drainMs,
+  });
+  if (r.timedOut) {
+    throw new Error(
+      `${[program, ...args].join(" ")} (pid ${r.pid}) still running after ${timeoutMs} ms; ` +
+        `its tree was killed. It printed:\n${r.stdout}\n${r.stderr}`,
+    );
+  }
+  return {
+    code: r.code,
+    success: r.success,
+    signal: r.signal,
+    stdout: r.stdoutBytes,
+    stderr: r.stderrBytes,
+  };
 }

@@ -11,6 +11,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -222,7 +223,7 @@ function freePort(): number {
  * non-zero → the output in the error.
  */
 async function compile(project: string, bin: string, config: string): Promise<void> {
-  const r = await new Deno.Command(Deno.execPath(), {
+  const r = await boundedOutput(Deno.execPath(), {
     args: [
       "run",
       "-A",
@@ -237,10 +238,9 @@ async function compile(project: string, bin: string, config: string): Promise<vo
     ],
     cwd: project,
     env: { NO_COLOR: "1" },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+    // A compile build on a loaded runner: a failure bound, not a latency claim.
+    timeoutMs: 900_000,
+  });
   const out = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
   assertEquals(r.code, 0, out);
 }

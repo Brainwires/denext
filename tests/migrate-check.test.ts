@@ -22,6 +22,7 @@ import {
 import { dryRunMigration, mfs, type PlannedChange } from "../src/build/migrate-io.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
 const REMIX_FIXTURE = fromFileUrl(new URL("./fixtures/remix-app", import.meta.url));
@@ -629,7 +630,7 @@ Deno.test({
     try {
       await writeTree(dir, NEXT_APP);
       const before = await snapshot(dir);
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: [
           "run",
           "--no-prompt",
@@ -641,9 +642,7 @@ Deno.test({
           "--json",
           dir,
         ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      });
       const stderr = new TextDecoder().decode(out.stderr);
       assertEquals(out.code, 0, stderr);
       const json = JSON.parse(new TextDecoder().decode(out.stdout));
@@ -669,7 +668,7 @@ Deno.test({
     try {
       await writeTree(dir, NEXT_APP);
       const before = await snapshot(dir);
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: [
           "run",
           "--no-prompt",
@@ -682,9 +681,7 @@ Deno.test({
           "--json",
           dir,
         ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      });
       const stderr = new TextDecoder().decode(out.stderr);
       assertEquals(out.code, 0, stderr);
       const json = JSON.parse(new TextDecoder().decode(out.stdout));

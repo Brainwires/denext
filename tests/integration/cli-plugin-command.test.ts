@@ -8,6 +8,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { join } from "@std/path";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 
@@ -16,12 +17,10 @@ async function runCli(
   args: string[],
   cwd?: string,
 ): Promise<{ code: number; out: string; err: string }> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+  const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", CLI, ...args],
     cwd,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const decoder = new TextDecoder();
   return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };
 }

@@ -19,6 +19,7 @@ import { prepareWire } from "../../src/runtime/wire-encode.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
 import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
 import { removeTempDir } from "../helpers/temp.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 /** The checkout as a file URL: an import map's target (a `C:\…` path is no specifier on Windows). */
@@ -129,13 +130,11 @@ function cliArgs(dir: string, args: string[]): string[] {
 
 /** Run a CLI verb to completion. */
 async function cli(dir: string, args: string[]): Promise<{ code: number; output: string }> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+  const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: cliArgs(dir, args),
     cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
     env: { NO_COLOR: "1" },
-  }).output();
+  });
   const dec = new TextDecoder();
   return { code, output: dec.decode(stdout) + dec.decode(stderr) };
 }

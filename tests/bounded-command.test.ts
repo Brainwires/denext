@@ -2,9 +2,15 @@
 // is killed, a grandchild holding the inherited pipes included, and the call returns with what
 // the child printed — where `Deno.Command#output()` would wait for those pipes to close.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { join } from "@std/path";
-import { runBounded } from "./helpers/bounded-command.ts";
+import { boundedOutput, runBounded } from "./helpers/bounded-command.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
 /**
@@ -92,4 +98,29 @@ Deno.test("runBounded: a child that exits while another process holds its pipes 
     } catch { /* gone, or never started */ }
     await removeTempDir(dir);
   }
+});
+
+Deno.test("boundedOutput: a child that exits in time gives output()'s shape", async () => {
+  const out = await boundedOutput(Deno.execPath(), {
+    args: ["eval", "console.log('out'); console.error('err'); Deno.exit(4)"],
+  });
+  assertEquals([out.code, out.success, out.signal], [4, false, null]);
+  assertEquals(new TextDecoder().decode(out.stdout), "out\n");
+  assertEquals(new TextDecoder().decode(out.stderr), "err\n");
+});
+
+Deno.test("boundedOutput: a stalled child fails with its pid and what it printed", async () => {
+  const err = await assertRejects(
+    () =>
+      boundedOutput(Deno.execPath(), {
+        args: [
+          "eval",
+          "console.log('phase: stalled'); await new Promise(() => setInterval(() => {}, 1000));",
+        ],
+        timeoutMs: 15_000,
+      }),
+    Error,
+  );
+  assertMatch(err.message, /\(pid \d+\) still running after 15000 ms; its tree was killed/);
+  assertStringIncludes(err.message, "phase: stalled");
 });

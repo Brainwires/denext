@@ -13,6 +13,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "cli.ts");
@@ -46,13 +47,11 @@ Deno.test({
       const cli = (
         verb: string[],
       ) => ["run", "-A", "--config", join(ROOT, "deno.json"), CLI, ...verb];
-      const built = await new Deno.Command(deno, {
+      const built = await boundedOutput(deno, {
         args: cli(["build", dir]),
         cwd: dir,
         env,
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      });
       const dec = new TextDecoder();
       assertEquals(built.code, 0, `${dec.decode(built.stdout)}${dec.decode(built.stderr)}`);
 
