@@ -148,7 +148,7 @@ export async function detectFresh(dir: string): Promise<FreshDetection | null> {
 // ── Scanning ─────────────────────────────────────────────────────────────────
 
 /** Every file under `abs` (relative, `/`-separated), skipping `node_modules`. */
-async function walk(abs: string, rel = ""): Promise<string[]> {
+export async function walk(abs: string, rel = ""): Promise<string[]> {
   const out: string[] = [];
   let entries: Deno.DirEntry[];
   try {
@@ -632,7 +632,7 @@ async function moveStatic(
 }
 
 /** Remove `abs` and its subdirectories when they hold no files. */
-async function removeEmptyDirs(abs: string): Promise<void> {
+export async function removeEmptyDirs(abs: string): Promise<void> {
   let entries: Deno.DirEntry[] = [];
   try {
     for await (const e of mfs.readDir(abs)) entries.push(e);

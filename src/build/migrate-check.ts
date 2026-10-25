@@ -26,7 +26,8 @@ export type MigrateSource =
   | "expo"
   | "tanstack-start"
   | "fresh"
-  | "preact";
+  | "preact"
+  | "lustre";
 
 /** Something the migration leaves to the user, with the reason. */
 export interface MigrateFinding {
@@ -301,11 +302,12 @@ function tanstackStartFindings(r: MigrateResult): MigrateFinding[] {
   ];
 }
 
-/** What a Fresh or Preact app leaves to the user (the migration's findings). */
+/** What a Fresh, Preact or Lustre app leaves to the user (the migration's findings). */
 function freshFindings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
+  const infos = [r.fresh, r.preact, r.lustre];
   return {
-    wont: [...r.fresh?.wontMigrate ?? [], ...r.preact?.wontMigrate ?? []],
-    review: [...r.fresh?.review ?? [], ...r.preact?.review ?? []],
+    wont: infos.flatMap((i) => i?.wontMigrate ?? []),
+    review: infos.flatMap((i) => i?.review ?? []),
   };
 }
 

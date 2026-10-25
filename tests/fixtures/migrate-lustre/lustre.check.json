@@ -1,0 +1,108 @@
+{
+  "schema": "denext.migrate-check/1",
+  "command": "denext migrate --denext-local-path <repo>/",
+  "source": "lustre",
+  "verdict": "review",
+  "changes": [
+    {
+      "path": ".gitignore",
+      "action": "modify"
+    },
+    {
+      "path": ".vscode/extensions.json",
+      "action": "create"
+    },
+    {
+      "path": ".vscode/settings.json",
+      "action": "create"
+    },
+    {
+      "path": "app/layout.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/lustre-app.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "denext.config.ts",
+      "action": "create"
+    },
+    {
+      "path": "deno.json",
+      "action": "create"
+    },
+    {
+      "path": "public/img/bg.txt",
+      "action": "move",
+      "from": "priv/static/img/bg.txt"
+    },
+    {
+      "path": "public/logo.svg",
+      "action": "move",
+      "from": "priv/static/logo.svg"
+    }
+  ],
+  "wontMigrate": [
+    {
+      "item": "gleam.toml: mist",
+      "reason": "an Erlang-target package; denext compiles the JavaScript target only, so code using it does not build. Move it to a server of its own, or port it to a route handler (app/api/…/route.ts)"
+    },
+    {
+      "item": "src/clock.gleam",
+      "reason": "has Erlang-only `@external` functions; calling them from the JavaScript build fails to compile"
+    },
+    {
+      "item": "src/ffi.erl",
+      "reason": "Erlang / Elixir FFI; the JavaScript build never loads it (give each external function a JavaScript implementation, `@external(javascript, …)`)"
+    },
+    {
+      "item": "server/",
+      "reason": "a separate Gleam server project (the Erlang target) is not migrated: keep running it, or port its endpoints to route handlers (app/api/…/route.ts)"
+    }
+  ],
+  "review": [
+    {
+      "item": "index.html",
+      "reason": "no longer served: app/layout.tsx is the document (its title is carried); move its stylesheets and <head> tags there, then delete it"
+    },
+    {
+      "item": "src/counter_app.css",
+      "reason": "lustre_dev_tools bundled this stylesheet; import it from app/layout.tsx (with Tailwind, set `tailwind: { input }` in denext.config.ts)"
+    },
+    {
+      "item": "gleam.toml [tools.lustre.html] (title)",
+      "reason": "the HTML lustre_dev_tools generated is app/layout.tsx now: carry stylesheets, scripts and <head> tags there (the title is carried)"
+    },
+    {
+      "item": "gleam.toml [tools.lustre.dev] (proxy)",
+      "reason": "the dev server is `denext dev`: port a `proxy` to `rewrites` in denext.config.ts or a route handler, and watched dirs are the gleam() plugin's"
+    },
+    {
+      "item": "src/live.gleam",
+      "reason": "uses lustre/server_component; to serve it from denext over the Live socket, wrap the app with defineLustreView (https://denext.dev/docs/gleam)"
+    },
+    {
+      "item": "src/widget.gleam",
+      "reason": "defines a Lustre component; it keeps working as registered, and lustreElement renders one with a prerendered shadow root if you want (https://denext.dev/docs/gleam)"
+    },
+    {
+      "item": "priv/static/counter_app.mjs",
+      "reason": "lustre_dev_tools' bundle output; denext builds its own, so delete it"
+    },
+    {
+      "item": "public/",
+      "reason": "priv/static/ moved here, so its files are served from / (was /priv/static/): update the paths the app links them by"
+    }
+  ],
+  "dependencies": {
+    "aliased": [],
+    "passthrough": [],
+    "dropped": [],
+    "flagged": []
+  }
+}

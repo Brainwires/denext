@@ -212,6 +212,18 @@ and this project adheres to
   reloads. A package that fails to bundle for the browser fails only the modules importing it, in
   SPA mode's loop too. See https://denext.dev/docs/react-native#on-the-app-router.
 
+- **`denext migrate --from lustre`: a Lustre (Gleam) web app on denext, its Gleam source
+  unchanged.** A project whose `gleam.toml` depends on `lustre` and builds for JavaScript
+  (`target = "javascript"`, or lustre_dev_tools) is detected. Migrate writes `deno.json` (the
+  `@gleam/` import map onto Gleam's build, denext's tasks) and `denext.config.ts` with
+  `plugins: [gleam()]`, which compiles the project where it is with denext's pinned Gleam; adds
+  `app/page.tsx` with an island that calls the entry module's own `main` on the element it mounts
+  on; and moves `priv/static/` to `public/`. `migrate --check` reports Erlang-target code (Erlang
+  packages, `.erl` FFI, Erlang-only `@external`s, a server project) as won't-migrate, and the
+  lustre_dev_tools settings, `index.html` and component / server-component modules (with
+  `lustreElement` / `defineLustreView` as opt-in pointers) for review. See
+  https://denext.dev/docs/migrating-lustre.
+
 ### Changed
 
 - **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The
@@ -297,8 +309,10 @@ and this project adheres to
   and members too) now has a top-level `"exclude": [".deno/"]`; add it to an existing project's
   `deno.json` by hand. The runtime will keep the copy out of the project in a later release
   (KNOWN-LIMITATIONS).
+
 - **`examples/hello` type-checks:** its `/blog/[slug]` page narrows its params with
   `PageProps<{ slug: string }>` and awaits them, as a Next.js 15 page does.
+
 - **A migrated Preact app with `node_modules` compiles its JSX with Preact's runtime.** The
   compat (esbuild) bundle compiled every app's JSX against denext's own runtime, so the
   `jsxImportSource: "preact"` `denext migrate` writes for a Preact or Fresh app was ignored on

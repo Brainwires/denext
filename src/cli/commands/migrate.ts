@@ -517,6 +517,20 @@ function reportFresh(m: NonNullable<MigrateResult["fresh"]>): void {
   printReviewNotes(m.review.map((f) => `${f.item}: ${f.reason}`), 20);
 }
 
+/** What the Lustre migration generated, and what it left to the user. */
+function reportLustre(m: NonNullable<MigrateResult["lustre"]>): void {
+  console.log(
+    `  ▸ Lustre app "${m.package}" — gleam() compiles it; app/page.tsx runs ${m.entry}'s main ` +
+      `on ${m.selector}.`,
+  );
+  if (m.staticMoved) console.log(`    priv/static/ → public/: ${m.staticMoved} file(s)`);
+  if (m.wontMigrate.length) {
+    console.log(`    ✗ won't migrate (${m.wontMigrate.length}):`);
+    for (const f of m.wontMigrate) console.log(`      · ${f.item}: ${f.reason}`);
+  }
+  printReviewNotes(m.review.map((f) => `${f.item}: ${f.reason}`), 20);
+}
+
 /** What the Preact migration found: the tooling, the routers, and the findings. */
 function reportPreact(m: NonNullable<MigrateResult["preact"]>): void {
   const routers = m.routers.length ? ` · routers: ${m.routers.join(", ")}` : "";
@@ -533,6 +547,8 @@ function reportFramework(r: MigrateResult, desktop: boolean): void {
   if (r.preact) reportPreact(r.preact);
   if (r.kind === "fresh" && r.fresh) {
     reportFresh(r.fresh);
+  } else if (r.kind === "lustre" && r.lustre) {
+    reportLustre(r.lustre);
   } else if (r.kind === "expo" && r.expo) {
     reportExpo(r);
   } else if (
@@ -562,7 +578,9 @@ async function reportSourceNote(
   codemod: boolean,
   yes: boolean,
 ): Promise<void> {
-  if (r.kind === "fresh" || r.kind === "preact") {
+  if (r.kind === "lustre") {
+    console.log("\n  Gleam source unchanged: the gleam() plugin compiles it as it is.");
+  } else if (r.kind === "fresh" || r.kind === "preact") {
     console.log(
       `\n  ${r.kind === "fresh" ? "Fresh modules" : "Source"} unchanged: \`preact\` and ` +
         "`@preact/signals` imports resolve to denext through deno.json.",
@@ -783,7 +801,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
     name: "migrate",
     summary:
       "Migrate a Next.js, Remix, React Router, TanStack Start, Vite, CRA, Expo, Fresh, Preact, " +
-      "or React app (config files)",
+      "Lustre or React app (config files)",
     positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
     flags: [
       {
@@ -791,7 +809,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         type: "string",
         valueName: "<framework>",
         help: "Force source: next | remix | react-router | vite | cra | generic | expo | " +
-          "tanstack-start | fresh | preact",
+          "tanstack-start | fresh | preact | lustre",
       },
       {
         name: "check",

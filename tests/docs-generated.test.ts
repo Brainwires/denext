@@ -63,6 +63,7 @@ Deno.test("docs: llms.txt's migrate line names every source `denext migrate` tak
     "tanstack-start": ["TanStack Start"],
     fresh: ["Fresh"],
     preact: ["Preact"],
+    lustre: ["Lustre"],
   };
   // The bullet, continuation lines included.
   const line = llmsIndex().match(/^- \*\*Migrate\*\*.*(?:\n {2}.*)*/m)?.[0] ?? "";
