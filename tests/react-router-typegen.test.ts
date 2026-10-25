@@ -172,3 +172,51 @@ export default function Team({ loaderData }: Route.ComponentProps) {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** A route with React Router middleware and a typed context key (no runtime import needed). */
+const TEAM_MIDDLEWARE = `import type { Route } from "./+types/team";
+
+const user: { readonly defaultValue?: string } = { defaultValue: "anonymous" };
+
+export const middleware: Route.MiddlewareFunction[] = [
+  async ({ params, context }, next) => {
+    context.set(user, params.id);
+    const response: Response = await next();
+    return response;
+  },
+];
+export function loader({ context }: Route.LoaderArgs) {
+  const name: string = context.get(user);
+  return { name, legacy: context.legacy };
+}
+export default function Team({ loaderData }: Route.ComponentProps) {
+  return [loaderData.name];
+}
+`;
+
+Deno.test("typegen: Route.MiddlewareFunction and a typed context.get / context.set", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_rr_typegen_mw_" });
+  try {
+    await writeApp(dir, TEAM_MIDDLEWARE);
+    await generateRouteTypes({
+      projectRoot: dir,
+      appDir: join(dir, "app"),
+      nodes: routes(),
+      rootFile: join(dir, "app", "root.ts"),
+    });
+    const team = join("app", "routes", "teams", "team.ts");
+    const ok = await check(dir, team);
+    assert(ok.ok, ok.out);
+
+    // The key's type flows through `get` and `set`.
+    await Deno.writeTextFile(
+      join(dir, team),
+      TEAM_MIDDLEWARE.replace("context.set(user, params.id);", "context.set(user, 42);"),
+    );
+    const bad = await check(dir, team);
+    assert(!bad.ok, "a value of the wrong type for the key is rejected");
+    assertStringIncludes(bad.out, "TS2345");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

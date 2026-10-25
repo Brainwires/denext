@@ -28,7 +28,13 @@ import { serverAction } from "../../runtime/action-stub.ts";
 import { registerServerMatch } from "./matches-server.ts";
 import { serverRenderMatches } from "./matches-bridge.ts";
 import { setDocumentAttrsSink } from "./document.ts";
-import { type AppLoadContext, loadContext } from "./load-context.ts";
+import { loadContext, type LoaderContext } from "./load-context.ts";
+import {
+  chainFunctions,
+  composeMiddleware,
+  type MiddlewareFunction,
+  type RouteMiddleware,
+} from "./middleware.ts";
 import type { RemixMatch } from "./client.ts";
 import {
   FORM_ACTION_HEADER,
@@ -58,7 +64,17 @@ export {
   defineLoadContext,
   type LoadContextArgs,
   type LoadContextProvider,
+  type LoaderContext,
 } from "./load-context.ts";
+// ── React Router 7's typed context + route middleware ──────────────────────────
+export {
+  createContext,
+  type RouterContext,
+  RouterContextProvider,
+  unstable_createContext,
+  unstable_RouterContextProvider,
+} from "./router-context.ts";
+export type { MiddlewareFunction, MiddlewareFunctionArgs, RouteMiddleware } from "./middleware.ts";
 export {
   type RemixRouteExport,
   remixServerBuild,
@@ -217,8 +233,11 @@ function setErrorStatus(status: number): void {
 export interface LoaderFunctionArgs {
   request: Request;
   params: Record<string, string>;
-  /** The app load context — what {@link defineLoadContext}'s provider returned for this request. */
-  context: AppLoadContext;
+  /**
+   * The app load context — what {@link defineLoadContext}'s provider returned for this
+   * request, as a `RouterContextProvider` (`context.get(key)`) carrying its properties.
+   */
+  context: LoaderContext;
 }
 /** Remix `ActionFunctionArgs` — identical shape to {@link LoaderFunctionArgs}. */
 export type ActionFunctionArgs = LoaderFunctionArgs;
@@ -270,6 +289,61 @@ async function loaderArgs(params: Record<string, string>): Promise<LoaderFunctio
   return { request, params, context: await loadContext(request, params) };
 }
 
+/** Per-request memo key for the route middleware that ran ({@link runRouteMiddleware}). */
+const MIDDLEWARE_MEMO = Symbol.for("denext.remix.middlewareMemo");
+
+/**
+ * Run a route's middleware chain ahead of its loader or action, each route's middleware once
+ * per request and parents first. The render has no single handler to wrap, so the innermost
+ * `next()` resolves at once to a stand-in `Response`: headers a middleware sets on it go onto
+ * the page's response, and returning another `Response` (or throwing one) answers the request
+ * the way a loader's thrown `Response` does — a redirect, or the error boundary at its status.
+ */
+async function runRouteMiddleware(
+  chain: readonly RouteMiddleware[],
+  request: Request,
+  params: Record<string, string>,
+): Promise<void> {
+  const memo = currentContext()?.memo;
+  let ran = memo?.get(MIDDLEWARE_MEMO);
+  if (memo && !ran) memo.set(MIDDLEWARE_MEMO, ran = new Map());
+  let previous: Promise<void> = Promise.resolve();
+  for (const route of chain) {
+    const fns = route.middleware;
+    if (!fns?.length) continue;
+    let run = ran?.get(route.id) as Promise<void> | undefined;
+    if (!run) {
+      const after = previous;
+      run = after.then(() => runRouteMiddlewareOf(fns, request, params));
+      ran?.set(route.id, run);
+    }
+    previous = run;
+  }
+  await previous;
+}
+
+/** One route's middleware around the stand-in response (see {@link runRouteMiddleware}). */
+async function runRouteMiddlewareOf(
+  fns: readonly MiddlewareFunction[],
+  request: Request,
+  params: Record<string, string>,
+): Promise<void> {
+  const context = await loadContext(request, params);
+  const standIn = new Response(null);
+  let response: Response;
+  try {
+    response = await composeMiddleware(fns, { request, params, context }, () => {
+      return Promise.resolve(standIn);
+    });
+  } catch (thrown) {
+    // A thrown redirect / Response becomes a shareable signal once (every route waiting on
+    // this chain sees the same one; a Response body can be read only once).
+    return await unwrapThrown(thrown);
+  }
+  if (response !== standIn) return await unwrapThrown(response);
+  applyResponseInit({ headers: standIn.headers });
+}
+
 /** Per-request memo key for loader results ({@link runLoaderOnce}). */
 const LOADER_MEMO = Symbol.for("denext.remix.loaderMemo");
 
@@ -283,26 +357,36 @@ export async function runLoaderOnce(
   id: string,
   loader: LoaderFunction | undefined,
   params: Record<string, string>,
+  middleware?: readonly RouteMiddleware[],
 ): Promise<unknown> {
   const memo = currentContext()?.memo;
-  if (!memo || !loader) return runLoader(loader, params);
+  if (!memo || !loader) return runLoader(loader, params, middleware);
   let byId = memo.get(LOADER_MEMO);
   if (!byId) memo.set(LOADER_MEMO, byId = new Map());
   if (byId.has(id)) return byId.get(id);
   // The pending promise is the memo: a result AND a throw (redirect/404/error) are seen by
   // every reader of this request — the loader never runs twice, non-idempotent work included.
-  const pending = runLoader(loader, params);
+  const pending = runLoader(loader, params, middleware);
   byId.set(id, pending);
   return await pending;
 }
 
-/** Run a Remix `loader` and return its unwrapped data (or `undefined` when absent). */
+/**
+ * Run a Remix `loader` and return its unwrapped data (or `undefined` when absent). The route's
+ * middleware chain (`middleware`, outermost route first) runs before it, each route's once per
+ * request.
+ */
 export async function runLoader(
   loader: LoaderFunction | undefined,
   params: Record<string, string>,
+  middleware?: readonly RouteMiddleware[],
 ): Promise<unknown> {
-  if (!loader) return undefined;
+  if (!loader && !middleware?.length) return undefined;
   try {
+    if (middleware?.length) {
+      await runRouteMiddleware(middleware, loaderRequest(currentContext()), params);
+    }
+    if (!loader) return undefined;
     return await unwrap(await loader(await loaderArgs(params)));
   } catch (thrown) {
     // A loader that THREW (`throw redirect()` / `throw json()`): honor it as Remix would.
@@ -323,6 +407,7 @@ export function bindAction(
   action: ActionFunction | undefined,
   routeId: string,
   params: Record<string, string>,
+  middleware?: readonly RouteMiddleware[],
 ): ((formData: FormData) => Promise<unknown>) | undefined {
   if (!action) return undefined;
   return serverAction(`remix:${routeId}#action`, async (formData: FormData) => {
@@ -337,6 +422,7 @@ export function bindAction(
     headers.delete("content-length");
     const request = new Request(url, { method: "POST", body: formData, headers });
     try {
+      if (middleware?.length) await runRouteMiddleware(middleware, request, params);
       const context = await loadContext(request, params);
       return await unwrap(await action({ request, params, context }));
     } catch (thrown) {
@@ -351,13 +437,18 @@ export function bindAction(
 export async function runLoaderResponse(
   loader: LoaderFunction | undefined,
   request: Request,
+  middleware?: readonly RouteMiddleware[],
 ): Promise<Response> {
   if (!loader) return new Response("Not Found", { status: 404 });
   const url = new URL(request.url);
   const params: Record<string, string> = Object.fromEntries(url.searchParams);
   try {
     const context = await loadContext(request, params);
-    return toResourceResponse(await loader({ request, params, context }));
+    return await composeMiddleware(
+      chainFunctions(middleware),
+      { request, params, context },
+      async () => toResourceResponse(await loader({ request, params, context })),
+    );
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
   }
@@ -375,11 +466,16 @@ export async function runActionResponse(
   action: ActionFunction | undefined,
   request: Request,
   params: Record<string, string> = {},
+  middleware?: readonly RouteMiddleware[],
 ): Promise<Response> {
   if (!action) return new Response("Method Not Allowed", { status: 405 });
   try {
     const context = await loadContext(request, params);
-    return toResourceResponse(await action({ request, params, context }));
+    return await composeMiddleware(
+      chainFunctions(middleware),
+      { request, params, context },
+      async () => toResourceResponse(await action({ request, params, context })),
+    );
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
   }
@@ -431,6 +527,11 @@ export interface RemixRouteOptions {
   params: Record<string, string>;
   /** The route's `shouldRevalidate` export — lets a client revalidation SKIP this loader. */
   shouldRevalidate?: ShouldRevalidateFunction;
+  /**
+   * The middleware of the route and its ancestors, outermost first (React Router's
+   * `middleware` exports), run before the loader and the action.
+   */
+  middleware?: readonly RouteMiddleware[];
 }
 
 /**
@@ -445,8 +546,8 @@ async function resolveRouteRender(
   const kept = keptLoaderData(options);
   const loaderData = kept.kept
     ? kept.data
-    : await runLoaderOnce(options.id, options.loader, options.params);
-  const formAction = bindAction(options.action, options.id, options.params);
+    : await runLoaderOnce(options.id, options.loader, options.params, options.middleware);
+  const formAction = bindAction(options.action, options.id, options.params, options.middleware);
   recordServerMatch(options.id, options.params, loaderData, options.handle);
   return { loaderData, formAction };
 }
@@ -638,6 +739,7 @@ export function remixMeta(
   id?: string,
   handle?: unknown,
   links?: LinksFunction,
+  middleware?: readonly RouteMiddleware[],
 ):
   | ((
     props: { params: Record<string, string>; searchParams: URLSearchParams },
@@ -650,8 +752,8 @@ export function remixMeta(
     let data: unknown;
     try {
       data = id
-        ? await runLoaderOnce(id, loader, props.params)
-        : await runLoader(loader, props.params);
+        ? await runLoaderOnce(id, loader, props.params, middleware)
+        : await runLoader(loader, props.params, middleware);
     } catch (err) {
       // Metadata resolves BEFORE the tree renders — outside every ErrorBoundary. A redirect
       // is a control signal the pipeline honors from here; anything else (a thrown 404

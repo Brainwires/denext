@@ -541,6 +541,12 @@ function reportFramework(r: MigrateResult, desktop: boolean): void {
     reportSpa(r, desktop);
   } else if (r.kind === "remix" && r.remix) {
     reportRemix(r.remix);
+  } else if (r.kind === "remix" && r.loadContext) {
+    console.log(
+      "  ▸ React Router — the custom server's getLoadContext → load-context.ts " +
+        "(registered by instrumentation.ts).",
+    );
+    printReviewNotes(r.loadContext.warnings, 12);
   } else if (r.pagesRouter) {
     reportPagesRouter(r);
   }

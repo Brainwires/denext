@@ -184,6 +184,21 @@ and this project adheres to
   as a public-variable prefix. A server-only variable is never in it. See
   https://denext.dev/docs/migrating-fresh.
 
+- **React Router load context and route middleware.** `createContext` and `RouterContextProvider`
+  (and their `unstable_` names) come from `denext/remix` (what `react-router` maps to) and
+  `denext/remix/server`. The `context` every loader and action gets is now a
+  `RouterContextProvider`: a `defineLoadContext` provider's plain object rides on it as
+  properties (getters stay lazy), a returned `RouterContextProvider` is used as is, and with no
+  provider each request starts with an empty one, so `context.get(key)` / `context.set(key,
+  value)` work everywhere. Under `@denext/react-router` a route's `middleware` (or
+  `unstable_middleware`) export runs outermost route first, once per request, before that route's
+  loader and action; on a resource route and a plain POST to a page's action it wraps the
+  handler, and `Route.MiddlewareFunction` is typed, with `Route.LoaderArgs` / `ActionArgs`'
+  `context` typed for `get` / `set`. The plugin takes `getLoadContext` as an option, and
+  `denext migrate` on a React Router app now carries a custom server's `getLoadContext` (an object
+  or a `RouterContextProvider` filled with `.set` calls) into `load-context.ts` plus an
+  `instrumentation.ts` that imports it. See https://denext.dev/docs/react-router#load-context-and-middleware.
+
 ### Changed
 
 - **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The
