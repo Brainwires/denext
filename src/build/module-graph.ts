@@ -31,7 +31,7 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
-import { exitedOutput } from "./exited-output.ts";
+import { boundedOutput, retryOnStall } from "./serial-child.ts";
 
 // The boundary ids and the manifest's shape live in leaf modules the server runtime imports
 // without this crawler.
@@ -401,7 +401,8 @@ export function reachableModules(info: DenoInfo, roots: string[]): DenoInfoModul
  * crawl and the CSS discovery crawl so both apply the same flags (sloppy imports, the
  * minimum-dependency-age policy) and the same temp-dir hygiene. Cached per `cache` name
  * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely. A `deno info`
- * still running after `deadlineMs` (default 10 minutes) is killed and the crawl fails.
+ * still running after `deadlineMs` (default 2 minutes) is killed and started once more; a second
+ * stall fails the crawl. One crawl runs at a time per process.
  */
 export function denoInfoGraph(
   entryFiles: string[],
@@ -459,37 +460,12 @@ async function redirectConfigArgs(tmpDir: string): Promise<string[]> {
 /** `deno info`'s output streams, both read. */
 const PIPED = { stdout: true, stderr: true } as const;
 
-/** How long one `deno info` crawl may run, by default (minutes past a cold npm install's crawl). */
-const DENO_INFO_DEADLINE_MS = 600_000;
-
 /**
- * `child`'s output, read until it exits ({@linkcode exitedOutput}); a child still running after
- * `deadlineMs` is killed and the crawl fails, naming it, rather than holding the build forever.
+ * How long one `deno info` attempt may run, by default, before it is killed and retried once (see
+ * serial-child.ts): well past a warm crawl, and a cold npm install's crawl that overruns it
+ * resumes from the cache it filled on the retry.
  */
-async function boundedInfoOutput(
-  child: Deno.ChildProcess,
-  deadlineMs: number,
-): Promise<Deno.CommandOutput> {
-  let killed = false;
-  const timer = setTimeout(() => {
-    killed = true;
-    try {
-      child.kill("SIGKILL");
-    } catch { /* it exited meanwhile */ }
-  }, deadlineMs);
-  try {
-    const out = await exitedOutput(child, PIPED);
-    if (killed) {
-      throw new Error(
-        `deno info (pid ${child.pid}) was still running after ${deadlineMs / 1000} s and was ` +
-          `killed:\n${new TextDecoder().decode(out.stderr)}`,
-      );
-    }
-    return out;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const DENO_INFO_DEADLINE_MS = 120_000;
 
 async function spawnDenoInfo(
   entryFiles: string[],
@@ -502,6 +478,15 @@ async function spawnDenoInfo(
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
     const configDir = appConfigDir();
+    const args = [
+      "info",
+      "--unstable-sloppy-imports",
+      ...minDepAgeArgs(),
+      "--json",
+      ...await redirectConfigArgs(tmpDir),
+      // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
+      toFileUrl(barrel).href,
+    ];
     const command = new Deno.Command(denoExecutable(), {
       // Run in the app's folder so Deno discovers its config (and import map) as it does for the
       // app's own commands. Without one: a process whose working directory was deleted (a test
@@ -510,23 +495,20 @@ async function spawnDenoInfo(
       ...(configDir ? { cwd: configDir } : liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
       // sloppy-imports so extensionless Next.js app imports resolve in the graph
       // crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args: [
-        "info",
-        "--unstable-sloppy-imports",
-        ...minDepAgeArgs(),
-        "--json",
-        ...await redirectConfigArgs(tmpDir),
-        // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
-        toFileUrl(barrel).href,
-      ],
+      args,
       stdin: "null",
       stdout: "piped",
       stderr: "piped",
     });
     // Read until `deno info` exits, not until its pipes close: a process spawned meanwhile by
-    // another thread (Windows) can hold them open for its whole life. One that never exits is
-    // killed at the deadline.
-    const { code, stdout, stderr } = await boundedInfoOutput(command.spawn(), deadlineMs);
+    // another thread (Windows) can hold them open for its whole life. One crawl at a time per
+    // process; one that never exits is killed at the deadline and started once more.
+    const { code, stdout, stderr } = await retryOnStall(
+      "deno info",
+      args,
+      (deadline) => boundedOutput(command.spawn(), PIPED, deadline, "deno info"),
+      deadlineMs,
+    );
     if (code !== 0) {
       throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
     }

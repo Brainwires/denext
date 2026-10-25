@@ -69,6 +69,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A `deno info` graph crawl or `deno bundle` child that stalls no longer holds a build or test
+  run for ten minutes.** On Windows such a child sometimes never exits while other Deno children
+  run beside it. Each process now runs one of them at a time (across the threads of
+  `deno test --parallel` too), kills a `deno info` still running after 2 minutes (a
+  `deno bundle` after 5) and starts it once more after a warning naming its pid and arguments;
+  a second stall fails with an error naming both pids.
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,

@@ -6,6 +6,7 @@
 // intact, which separate dynamic imports would break.
 
 import { runToExit } from "./exited-output.ts";
+import { boundedOutput, retryOnStall } from "./serial-child.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
@@ -1717,6 +1718,12 @@ interface DenoBundleRun {
   maps: Map<string, string>;
 }
 
+/**
+ * How long one `deno bundle` attempt may run before it is killed and started once more (see
+ * serial-child.ts).
+ */
+const DENO_BUNDLE_DEADLINE_MS = 300_000;
+
 async function runDenoBundle(
   entryPaths: string[],
   configPath: string,
@@ -1752,11 +1759,18 @@ async function runDenoBundle(
   for (const [name, value] of Object.entries(define)) args.push("--define", `${name}=${value}`);
   args.push(...entryPaths);
 
-  const { code, stderr } = await runToExit(denoExecutable(), {
-    args,
-    stdout: "piped",
-    stderr: "piped",
-  });
+  // One `deno bundle` at a time per process, killed at the deadline and started once more when
+  // it stalls (see serial-child.ts). Each attempt starts with no `outDir`, as the first does.
+  const { code, stderr } = await retryOnStall("deno bundle", args, async (deadline) => {
+    await Deno.remove(outDir, { recursive: true }).catch(() => {});
+    const child = new Deno.Command(denoExecutable(), {
+      args,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+    return await boundedOutput(child, { stdout: true, stderr: true }, deadline, "deno bundle");
+  }, DENO_BUNDLE_DEADLINE_MS);
   if (code !== 0) {
     throw new Error(bundleFailureMessage(code, new TextDecoder().decode(stderr)));
   }

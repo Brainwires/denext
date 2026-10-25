@@ -551,7 +551,7 @@ Deno.test({
     await Deno.chmod(fake, 0o755);
     try {
       const t0 = Date.now();
-      const { value } = await inChild<string>({
+      const { value, stderr } = await inChild<string>({
         imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
         body: `return await denoInfoGraph([${JSON.stringify(entry)}], ` +
           `{ cache: false, deadlineMs: 1_000 })` +
@@ -560,7 +560,47 @@ Deno.test({
         timeoutMs: 60_000,
       });
       assert(value.includes("was still running after 1 s and was killed"), value);
+      // Killed, retried once, killed again.
+      assert(value.includes("stalled twice"), value);
+      assert(stderr.includes("retrying once: deno info info --unstable-sloppy-imports"), stderr);
+      assertEquals(stderr.split("retrying once").length, 2, stderr);
       assert(Date.now() - t0 < 60_000, `took ${Date.now() - t0} ms`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "denoInfoGraph: concurrent crawls run one `deno info` at a time",
+  // The stand-in `deno` is a shell script.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_graph_serial_" });
+    const entries = [0, 1, 2, 3].map((i) => join(dir, `entry${i}.ts`));
+    for (const e of entries) await Deno.writeTextFile(e, "export {};\n");
+    // `mkdir` is atomic: a second `deno info` running at once finds the directory and records it.
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\nmkdir '${dir}/running' 2>/dev/null || echo x >> '${dir}/overlap'\n` +
+        `echo x >> '${dir}/runs'\nsleep 0.3\nrmdir '${dir}/running' 2>/dev/null\n` +
+        `printf '%s' '{"roots":[],"modules":[],"redirects":{}}'\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    try {
+      const { value } = await inChild<number>({
+        imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+        body: `const all = ${JSON.stringify(entries)}.map((e) => ` +
+          `denoInfoGraph([e], { cache: false }));\n` +
+          `return (await Promise.all(all)).length;`,
+        env: { DENO_BIN: fake },
+        timeoutMs: 60_000,
+      });
+      assertEquals(value, 4);
+      assertEquals((await Deno.readTextFile(join(dir, "runs"))).trim().split("\n").length, 4);
+      const overlap = await Deno.readTextFile(join(dir, "overlap")).catch(() => "");
+      assertEquals(overlap, "", "two `deno info` children ran at once");
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
