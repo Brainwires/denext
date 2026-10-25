@@ -143,7 +143,11 @@ async function spendCodeCheck(ctx: AuthRouteContext, caller: Caller): Promise<Re
 /** The second factor passed: start the native session and fire `signIn`; the tokens. */
 async function signInNative(ctx: AuthRouteContext, caller: Caller, method: string) {
   const { native, pending } = caller;
-  const snapshot = await snapshotFor(ctx.config, pending.user, pending.provider, ["ext", method]);
+  const first = pending.amr ?? ["ext"];
+  const snapshot = await snapshotFor(ctx.config, pending.user, pending.provider, [
+    ...first,
+    method,
+  ]);
   const tokens = await startNativeSession(ctx.config, native, snapshot);
   await emitAuthEvent(ctx.options, "signIn", {
     user: pending.user,
@@ -228,7 +232,7 @@ function pendingSession(pending: NativeMfaPending): AuthSession {
     expiresAt: pending.expiresAt,
     authTime: pending.authTime,
     mfaPending: true,
-    amr: ["ext"],
+    amr: pending.amr ?? ["ext"],
   };
 }
 

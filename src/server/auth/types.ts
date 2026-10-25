@@ -914,6 +914,17 @@ export interface AuthMfaConfig {
   freshness?: number;
 }
 
+/** An Android app in `passkeys.androidApps` (the shape `appLinks.android` takes). */
+export interface AuthPasskeyAndroidApp {
+  /** The application id (`com.example.app`). */
+  packageName: string;
+  /**
+   * The SHA-256 fingerprints of the certificates the app is signed with: `AB:CD:…` (32
+   * colon-separated hex pairs, as `keytool` and the Play Console print them) or 64 hex digits.
+   */
+  sha256CertFingerprints: string[];
+}
+
 /**
  * Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or
  * as the second. Every field is optional; the relying party defaults to `canonicalOrigin`.
@@ -930,10 +941,23 @@ export interface AuthPasskeyConfig {
   rpName?: string;
   /**
    * The origins a ceremony may come from, matched exactly against `clientDataJSON.origin`.
-   * Default: `[canonicalOrigin]`. Add an Android app's `android:apk-key-hash:…` origin or a
-   * second web origin here.
+   * Default: `[canonicalOrigin]`. Add a second web origin here; an Android app goes in
+   * {@linkcode androidApps} (an `android:apk-key-hash:<43 base64url characters>` entry here is
+   * accepted too, checked for that exact form).
    */
   origins?: string[];
+  /**
+   * Android apps whose passkey ceremonies are accepted: inside an app, Credential Manager
+   * reports `clientDataJSON.origin` as `android:apk-key-hash:<base64url SHA-256 of the signing
+   * certificate>`, and each listed fingerprint adds that exact origin to {@linkcode origins}.
+   * The app calls `/native/passkey/*` (with `native` sessions configured) or, from a page on
+   * this origin, the cookie rows. Android also requires the domain's `assetlinks.json` to
+   * delegate `get_login_creds` to the app: pass the same objects to `appLinks.android` in
+   * `denext.config.ts`. With Play App Signing, list Play's app signing key (Play Console → Test
+   * and release → App integrity) and the upload / debug keys you test with (`keytool -list -v
+   * -keystore <keystore>`).
+   */
+  androidApps?: AuthPasskeyAndroidApp[];
   /**
    * The web origins allowed to call the passkey endpoints from another origin — a front end
    * served apart from the auth server (`["https://www.example.com"]` for an auth server at

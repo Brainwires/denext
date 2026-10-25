@@ -100,7 +100,8 @@
  *   watch on the web).
  * - {@linkcode openKeyValueStore}: durable key-value storage in the app's data folder, which the
  *   OS does not evict the way it may evict WebView storage (`denext mobile add storage`;
- *   IndexedDB on the web). React Native mode's AsyncStorage and MMKV run on it.
+ *   IndexedDB on the web). React Native mode's AsyncStorage and MMKV run on it. An encrypted
+ *   store's key rotates with {@linkcode rekeyKeyValueStore}.
  * - {@linkcode isScreenReaderEnabled} / {@linkcode onScreenReaderChange} /
  *   {@linkcode useScreenReader}: VoiceOver / TalkBack state (`denext mobile add accessibility`;
  *   `false` on the web).
@@ -591,6 +592,7 @@ export {
   type KeyValueStoreErrorCode,
   type KeyValueStoreOptions,
   openKeyValueStore,
+  rekeyKeyValueStore,
 } from "./kv-store.ts";
 export {
   nativeViewEmbedScroller,

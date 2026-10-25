@@ -376,7 +376,10 @@ emailOtp()]` plus `sendVerificationRequest` (`smtpMailer({ host, user, pass, fro
 `denext/server`, TLS required, or your own); a magic link opens a click-to-confirm page by
 default, so a mail scanner's pre-fetch can't spend it (`magicLink({ confirm: false })` opts out). Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
 `/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
-`passkeysSupported()`) sign in usernameless or complete a pending second factor. An OAuth / OIDC
+`passkeysSupported()`) sign in usernameless or complete a pending second factor; a native app
+(with `native`) uses `/auth/native/passkey/*`, and `passkeys.androidApps: [{ packageName,
+sha256CertFingerprints }]` accepts its `android:apk-key-hash:` origin (serve the same object as
+`appLinks.android` for the `get_login_creds` assetlinks statement). An OAuth / OIDC
 provider takes `responseMode: "form_post"` (the callback is then a POST). Second factor: an
 enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `pendingMfaSession()` returns a session and posts `{ code }` to `/auth/mfa`; enrollment is
@@ -477,7 +480,7 @@ WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fall
 videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
 app's own `@sqlite.org/sqlite-wasm` on OPFS on the web; `encryptionKey` / `PRAGMA key` is SQLCipher
-in the shell and refused on the web; syncing it with a server or PowerSync:
+in the shell and refused on the web, `db.rekey(newKey)` changes it; syncing it with a server or PowerSync:
 https://denext.dev/docs/powersync) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
@@ -540,7 +543,8 @@ background playback with lock-screen / notification controls; the Media Session 
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
 `storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV;
 `--encrypted` adds SQLCipher for `openKeyValueStore(name, { encrypted: true })`, its key in
-`secureStore`, refused with `ENCRYPTION_UNAVAILABLE` wherever it cannot encrypt, the web included),
+`secureStore`, refused with `ENCRYPTION_UNAVAILABLE` wherever it cannot encrypt, the web included;
+`rekeyKeyValueStore(name)` rotates that key, crash-safe),
 `system-icons` (`<SystemIcon>`: SF Symbols in the iOS shell, Material Symbols elsewhere),
 `sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing. An exported multi-page app in the shell needs `export-routes` (Capacitor serves the root `index.html` for every extensionless path; any denext native plugin includes it, and `denext mobile doctor --release` checks it).
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy

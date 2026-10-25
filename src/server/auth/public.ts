@@ -280,6 +280,7 @@ export type {
   AuthMfaConfig,
   AuthNativeConfig,
   AuthorizedCallbackInput,
+  AuthPasskeyAndroidApp,
   AuthPasskeyConfig,
   AuthPasskeyMdsConfig,
   AuthPasskeyRevocationPolicy,

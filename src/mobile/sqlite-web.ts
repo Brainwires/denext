@@ -55,6 +55,11 @@ export interface SqliteDriver {
    * with SQLCipher has it (`@capacitor-community/sqlite` in the shell).
    */
   encrypt?(passphrase: string): Promise<void>;
+  /**
+   * Change the passphrase of a database keyed by {@linkcode encrypt} (`PRAGMA rekey`,
+   * `SqliteDatabase.rekey`): only a backing with SQLCipher has it.
+   */
+  rekey?(passphrase: string): Promise<void>;
   exec(sql: string): Promise<void>;
   run(sql: string, params: SqliteParams): Promise<SqliteRunResult>;
   query(sql: string, params: SqliteParams): Promise<SqliteRows>;

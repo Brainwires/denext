@@ -26,6 +26,7 @@ and this project adheres to
   `denext doctor --install-log <file>` explains an install's failed scripts as jail failures with
   the exception to add. denext never turns the jail off for you. See
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
+
 - **Monorepos: glob members, and the app verbs at the root.** A workspace may name its members
   with a glob (`"workspace": ["./apps/*", "./packages/*"]`): an app it covers imports its siblings
   by name in the client bundle too (the bundler's loader can't expand a glob, so denext hands it
@@ -50,19 +51,23 @@ and this project adheres to
   re-renders it with `[error, resetError]`, its callback gets `(error, errorInfo)` once that render
   commits, and `resetError()` renders the children again; an error its error UI throws goes to
   the boundary above. Before, it always returned `[undefined, reset]` and never caught.
+
 - **`denext/preact/render-to-string`**, which `preact-render-to-string` and
   `preact-render-to-string/stream` now map to: `renderToString` (also the default export and
   `render`), `renderToStaticMarkup`, `renderToStringAsync` and `renderToReadableStream`, rendered
   by denext's server renderer in Preact's markup (self-closed void elements, bare boolean and empty
   attributes, `class` over `className`, only `&`, `<` and `"` escaped, `<!--$s-->` around a
   boundary that suspended, and a synchronous render that suspends throws as Preact's does).
+
 - **Preact's `options` hooks** `vnode`, `event` and `useDebugValue` are called: `options.vnode`
   for each element `h`, `createElement`, `cloneElement` (`denext/preact`, `denext/preact/compat`)
   and Preact's JSX runtime create, `options.event` before each handler of an intrinsic element
   they create (its return value replaces the event), and `options.useDebugValue` from
   `useDebugValue` in `denext/preact/hooks`. `diffed`, `unmount`, `debounceRendering`,
   `requestAnimationFrame` and the internal hooks remain no-ops.
+
 - `denext/preact` exports `createPortal`, which Preact 11 moved into its core.
+
 - **The parity gate covers Preact**: `preact`, `preact/hooks`, `preact/compat`,
   `preact/jsx-runtime`, `preact-render-to-string` (+ `/stream`), `preact-iso` and
   `@preact/signals` are checked against preact 11.0.1, preact-render-to-string 6.8.1, preact-iso
@@ -76,17 +81,20 @@ and this project adheres to
   certificate exactly, and is current (`thisUpdate` / `nextUpdate`). A `good` or `revoked` answer
   is cached until its `nextUpdate`; a certificate with none is not asked about again for five
   minutes. A certificate reported revoked is refused.
+
 - **A soft-fail opt-in for passkey attestation revocation: `passkeys.attestation.revocation:
   "soft" | "hard"`.** One policy for an unreachable OCSP responder or CRL. `"hard"` refuses the
   registration and stays the default, as the CRL check did before (`"soft"` with an offline
   `mds.blob`, as before); `"soft"` registers with a warning logged once. `mds.revocation` still
   overrides it. Its type is exported as `AuthPasskeyRevocationPolicy` from `denext/server` and
   `denext/auth`.
+
 - **The `compound` attestation format** (WebAuthn L3 §8.9): 2 to 8 statements, none itself
   `compound`, each verified by its own format; one failure refuses the registration. The result
   reports every statement (`attestationStatements`), takes its first certificate statement's type
   and `x5c`, and under `attestation.mds` every certificate statement's chain must reach the
   authenticator's metadata roots.
+
 - **The `android-safetynet` attestation format** (§8.5): the JWS must chain to Google's root (GTS
   Root R1, pinned) with a leaf issued for `attest.android.com`, verify with that leaf, and carry
   this ceremony's nonce, `ctsProfileMatch: true` and a `timestampMs` within a minute of now. Google
@@ -108,6 +116,32 @@ and this project adheres to
   deploy manifest's `server.idleTrim` says whether an adapter should turn it on. See
   https://denext.dev/docs/deployment-targets#idle-memory-trim.
 
+- **Passkeys from an Android app.** `denextAuth({ passkeys: { androidApps: [{ packageName,
+  sha256CertFingerprints }] } })` accepts the `android:apk-key-hash:<base64url SHA-256>` origin
+  Credential Manager puts in an app's client data, derived from each signing-certificate
+  fingerprint (`keytool` / Play Console spelling, checked strictly; only that exact origin
+  matches). New cookie-less rows run the ceremonies for a native app under `native` session mode:
+  `POST {basePath}/native/passkey/authenticate/options` and `/native/passkey/authenticate` sign
+  in to the native token pair (a presence-only assertion of a user with a second factor answers
+  the `/native/mfa` pending sign-in), and `/native/passkey/register/options` and
+  `/native/passkey/register` add a passkey under a bearer from a recent sign-in. A ceremony
+  completes only on the kind of row that started it. `appLinks.android` takes a list of apps (a
+  debug and a release build), one `assetlinks.json` statement each, with the `get_login_creds`
+  relation Android needs for the app to use the domain's passkeys. See
+  https://denext.dev/docs/auth#passkeys-in-a-native-app.
+
+- **SQLCipher key rotation.** `rekeyKeyValueStore(name)` from `denext/mobile` rotates an encrypted
+  store's key: a new random key, the store re-encrypted with `PRAGMA rekey` (in one SQLCipher
+  transaction, the write-ahead log folded in and off for it), then the key in `secureStore`
+  replaced. The new key waits in its own `secureStore` entry until the rekey commits, so an app
+  that dies part-way loses nothing: the next use keeps whichever key opens the store. It needs the
+  storage plugin's template generation 3 (`denext mobile add storage --encrypted`, then a new
+  binary). `openSqlite()`'s databases gain `rekey(newKey)` (and `PRAGMA rekey = '…'` as the first
+  statement, so the expo-sqlite shim's apps rekey as they do on Expo) through
+  `@capacitor-community/sqlite`'s `changeEncryptionSecret`. Both refuse with
+  `ENCRYPTION_UNAVAILABLE` on the web and Deno Desktop. See
+  https://denext.dev/docs/mobile#rotating-keys.
+
 ### Changed
 
 - **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The
@@ -116,6 +150,7 @@ and this project adheres to
   AGENTS.md (104 KiB, with release and commit-gate instructions meant for denext's own repository)
   is no longer published in `@denext/denext`, keeping the package under its 19 MiB guard for
   JSR's 20 MiB cap.
+
 - **Windows packaging fails closed on signing.** With `DENEXT_WINDOWS_CERT` set and no `signtool`
   on `PATH` (off Windows, or no Windows SDK), `scripts/package-windows.ts` used to warn and package
   the app unsigned, and an update of a signed install is refused unless every PE file carries its
@@ -174,10 +209,15 @@ and this project adheres to
   the boundary above, as preact-iso's does (before, it rendered nothing in its place), and lets a
   suspended child wait in place. `hydrate()` hydrates prerendered markup on a page with the
   `isodata` script the first time (before, it always rendered).
+
 - `denext migrate --check` no longer lists `useErrorBoundary` or `preact-render-to-string` as
   won't-migrate; it lists `options.diffed` / `unmount` / `debounceRendering` /
   `requestAnimationFrame` and internal-hook assignments, and `preact-render-to-string/jsx` /
   `/stream-node`.
+
+- **`passkeys.origins` checks an `android:apk-key-hash:` entry.** It must be exactly 43 base64url
+  characters encoding 32 bytes; `denextAuth()` used to accept any text after the prefix (which no
+  real client data could match). `passkeys.androidApps` is the simpler way to list an app.
 
 ### Fixed
 
@@ -200,12 +240,15 @@ and this project adheres to
   that follows runs the button's action in place of the form's (React's rule), and its `FormData`
   carries the button's own name and value. A click that arrives before the on-demand form-action
   runtime has loaded is held and submitted again through the button once it has.
+
 - **A `FormData` passed to a Server Action is left as it was.** The client added its reserved
   arguments field to the caller's own `FormData`, so the same `FormData` sent twice carried the
   first call's other arguments to the server.
+
 - **A Server Action call after the dispatch chunk failed to load tries again.** The failed import
   was kept, so every action on the page failed until a reload; the next call now imports it again,
   and the page's early prefetch no longer reports an unhandled rejection.
+
 - **A production build that left out the form-action or the `useErrorBoundary` support says so.**
   `denext build` leaves each out when the app's own sources never name it (a library's code is
   not scanned). A function `action` / `formAction` rendered by such a build now reports
@@ -243,10 +286,12 @@ and this project adheres to
   and a URL where a host belongs, for every kind (it checked `netConnect` / `netListen` only), and
   the package scripts, which read the config unvalidated, refuse them too; a string where a list
   belongs (`run: "*"`) was spread character by character and now fails the build.
+
 - **`--verify-runtime` covers a cross-host package.** Packaging a Windows app on macOS or Linux (or
   a Linux app on Windows) builds from a copy of the verified runtime's backend directory, which a
   full verify only size-checked; it now re-hashes that copy against the runtime and rebuilds it on
   any difference.
+
 - **The package scripts read the config `denext export` reads.** They imported
   `denext.config.ts` only, so a project configured in `denext.config.mts` / `.js` / `.mjs`
   packaged without its capabilities' permissions, extensions and installers, and three of the four
@@ -259,6 +304,7 @@ and this project adheres to
   `deno test --parallel` too), kills a `deno info` still running after 2 minutes (a
   `deno bundle` after 5) and starts it once more after a warning naming its pid and arguments;
   a second stall fails with an error naming both pids.
+
 - **Windows builds no longer stall when many build children run at once.** Deno reads a child's
   piped output on Windows with blocking reads that each hold a thread from a small pool, so a
   child that stays quiet on stderr until it exits held one for its whole life; with enough of
@@ -276,14 +322,17 @@ and this project adheres to
   (`resolveDesktopUiDir`), and the feed offering the bundled version itself is reported as not
   available. The native templates move to generation 10; run `denext mobile add-ota` to upgrade
   an installed plugin.
+
 - **Security: `openAuthSession` in the iOS / Android shell checks the callback.** Any app on the
   device can open a callback-scheme link while a sign-in is open (on Android, an explicit intent
   to the app's activity), and the session resolved with the first one. The callback must now land
   exactly (scheme, host, path) on the URL's own callback-scheme `redirect_uri` (or
   `callbackPrefix`) and carry the URL's `state` (or the `state` option) in its query or fragment;
   anything else rejects with code `invalid`. `callbackPrefix` and `state` now apply on mobile too.
+
 - `applyDesktopUpdate` refuses a version that is not a manifest version (64 hex digits) before it
   names a staging directory.
+
 - **Security: over-the-air UI manifests expire.** A feed could keep a device on an old release
   for good by serving it forever (the newest one a device had seen is never a downgrade). `denext
   ota manifest --sign` (and `denext export` with `spa.ota` and a signing key) now stamps a signed
@@ -295,6 +344,7 @@ and this project adheres to
   expired release unless `--force`. An app whose bundled UI's manifest carries an expiry refuses a
   release without one; one bundled by older tooling keeps taking them. Re-sign the live release
   before it expires.
+
 - **Security: an unsigned over-the-air UI from loopback is refused in a release build.** Without
   an embedded key, the `DenextOta` plugin took an unsigned UI from `localhost` / `127.0.0.1` /
   `::1` in any build, and loopback was exempt from pinned origins, so with another app listening
@@ -302,15 +352,18 @@ and this project adheres to
   only in a debug build (iOS: compiled with `DEBUG`; Android: a debuggable build, which the
   emulator's `10.0.2.2` already needed). A `baseUrl` with credentials or a backslash is refused
   (`invalid`), so the origin checks and the downloader always read the same host.
+
 - **Security: `otaBooted()` from a page with no version confirms nothing.** `booted` without a
   version confirmed whatever UI was on trial, so a late call from an unstamped page could confirm
   a broken new UI and defeat the rollback watchdog. The plugin now confirms only the version the
   page names (every downloaded UI carries its manifest, so the trial page can).
+
 - **A request for a directory of a downloaded UI no longer quarantines it.** The serve check took
   any existing path the signed manifest does not list as a file added on the device, so a request
   for a folder (`/assets`), which page script can make, took the running UI out of service and
   fell back to the bundled one. Only a non-directory counts now. The OTA templates move to
   generation 11 for these four; run `denext mobile add-ota` to upgrade, then ship a new binary.
+
 - **Security: `secureStore.set(…, { requireBiometric: true })` is enforced by the OS.** The gate
   was denext's code in the page: the value sat in the secure-storage plugin, which page script (an
   XSS included) could read through `SecureStorage.internalGetItem` without a prompt. With `denext
@@ -321,6 +374,7 @@ and this project adheres to
   secure-storage plugin. The API is unchanged. A value an older denext stored moves into the
   OS-enforced store the first time it is read; an older binary keeps the in-page gate and warns
   once.
+
 - **Security: the native bridge accepts plugin calls only from the app's own origin.** A page the
   shell navigated to through `server.allowNavigation` (or a hosted `server.url`) could call every
   installed plugin: the iOS guard checked only for the main frame, and Capacitor's Android bridge
@@ -334,6 +388,7 @@ and this project adheres to
   `androidx.webkit` is added to `android/app/build.gradle`; the iOS bridge view controllers move
   to auth-session / app-extension generation 6. Re-run your `denext mobile add` and ship a new
   binary.
+
 - **Security: `openAuthSession` requires PKCE.** In the iOS / Android shell and the web popup the
   authorization URL must carry `code_challenge` + `code_challenge_method=S256` (else
   `pkce_required`, before anything opens), as Deno Desktop's custom-scheme flow already did, so an
@@ -342,6 +397,7 @@ and this project adheres to
   bridge does). The Expo shims keep Expo's behaviour: `openAuthSessionAsync` with a URL without
   PKCE (an `AuthRequest` with `usePKCE: false`) still works, with a one-time console warning
   naming the risk.
+
 - **Security: printing cannot reach the app's private files.** iOS `printToPrinter` (expo-print's
   `printAsync({ printerUrl, uri })`, no dialog) printed any file the app could read to any printer
   URL; it now prints only a file in the app's Documents, Caches or temporary folder. Android
@@ -353,6 +409,7 @@ and this project adheres to
   its parent, so a write through a link pointing outside the project would have created the
   target there. A dangling symlink anywhere on a path is now refused, as in the commands that
   write into a cloned project.
+
 - **(security) A callback without `iss` is refused when the issuer advertises RFC 9207.** When an
   OIDC provider's discovery document says `authorization_response_iss_parameter_supported:
   true`, an authorization response lacking the `iss` parameter now fails the sign-in
@@ -375,19 +432,23 @@ and this project adheres to
   names the member and leaves its pins alone. `denext patch` refuses a package name that is not
   an npm name (`../../x`, or a patch file named `..+1.0.0.patch`), which could put the patch file
   outside `patches/`.
+
 - **An OAuth / OIDC sign-in refuses an authorization response whose `iss` names another issuer**
   (RFC 9207), as Auth.js does: a response minted by one authorization server can no longer be
   replayed at another provider's callback. A response without `iss` is accepted as before; a
   plain OAuth 2.0 provider (no issuer) and Microsoft Entra ID's multi-tenant issuer (checked per
   token) ignore the parameter. This covers denext's own providers, the `next-auth/providers/*`
   modules and Supabase-style sign-ins.
+
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,
   so the page reached no npm island or action module.
+
 - **A `denext patch` of a framework file applies when the bundler reaches the file by another
   spelling of its path**, such as a Windows 8.3 short name (`C:\Users\RUNNER~1\…`): the file is
   compared with the framework root by its real path, so it is no longer bundled unpatched.
+
 - **`createTestApp` and the boundary crawl no longer hang on Windows beside another spawn.** The
   `deno info` graph crawl (an App Router `createTestApp`, `probeApp`, `denext build` / `dev`) read
   its output until the pipes closed. On Windows a process another thread of the same process
@@ -395,6 +456,7 @@ and this project adheres to
   inherits those pipes and kept them open for its whole life, so the crawl, and a
   `deno test --parallel` run, waited forever. It now reads until `deno info` exits, at most a few
   seconds past it; a grandchild it leaves behind on any OS no longer holds it either.
+
 - **The build's other short-lived children read until they exit, too.** `deno bundle` and its
   version / `--help` probes, Tailwind, the framework-deps install, the server-only import check,
   the dev type-check, the `ESBUILD_BINARY_PATH` version check, Gleam, the background-runner and
@@ -402,22 +464,26 @@ and this project adheres to
   probes and the desktop `dialogs` capability no longer wait on a pipe a concurrently spawned
   process inherited (Windows) or a grandchild kept open; they also give the child an empty stdin
   instead of the terminal's.
+
 - **A `deno info` crawl that never exits fails the build instead of hanging it.** The boundary
   and feature-scan crawl kills a `deno info` still running after 10 minutes and fails with its
   pid and stderr. The `next.config.*` evaluator (`denext migrate`, `denext ui`'s config panel)
   and the Deno Desktop runtime's verification probes read until their child exits, too, so a
   process the config left running (or one that inherited the pipes on Windows) no longer holds
   them.
+
 - **`@denext/backend` 0.7.1 serves several ranges and honours `If-Range`.** Object downloads (the
   plugin's object route and the Storage API) read `Range` as the static file handler does: several
   ranges come back as one `multipart/byteranges` answer (sorted and coalesced), an unsatisfiable
   range among satisfiable ones is dropped, and an `If-Range` that no longer names the object (a
   weak or different `ETag`, another date) gets the whole object. Before, a header with more than
   one range got the whole object and `If-Range` was ignored.
+
 - **A resumed `downloadToFile` no longer starts over behind a weak `ETag`.** The web path sent the
   response's `ETag` in `If-Range` even when it was weak, which a server must treat as a mismatch,
   so every resume downloaded the file from byte zero. It now sends a strong `ETag`, else
   `Last-Modified`, and starts over only when the response had neither.
+
 - **A download cache another user can write is refused.** The Deno toolchain, its `denort`, the
   pinned Gleam, esbuild, fastlane's Ruby and the Deno Desktop runtime are cached under `DENO_DIR`
   and run from there; a cached binary whose size and modification time match its stamp is not
@@ -427,14 +493,17 @@ and this project adheres to
   denext now checks every directory from `DENO_DIR` down: one owned by another user (root aside),
   or writable by every user without the sticky bit, stops the command with the fix (point
   `DENO_DIR` at a directory only you can write). Not checked on Windows.
+
 - **The cached Tailwind binary is re-verified before it runs.** A Tailwind standalone binary already
   in the cache ran unchecked; one changed since, or left half-written by two builds downloading at
   once (they shared one temp file), ran as is. It is now re-hashed against its pin once per
   process and re-downloaded on a mismatch, and each download writes its own temp file.
+
 - **An empty `compile.permissions.netConnect` / `netListen` is a config error.** An empty list is
   no scope to Deno, so `denext build --compile` baked that direction unscoped
   (`--allow-net-connect` with no hosts: every host), the opposite of what an empty list reads as.
   List the hosts, use `["*"]` for any, or leave the key out.
+
 - **More children read until they exit.** The desktop `secure-store` capability's credential CLI
   (inside the packaged app), the `next.config` evaluator, `denext profile`'s port lookup (beside
   the Chromium it starts) and its `adb` calls (which may start the adb server), the Deno Desktop
@@ -454,18 +523,21 @@ and this project adheres to
   exports it leaves out, and `denext dev` keeps them callable with a warning. A page from an older
   build gets the unknown-action answer, as an expired Next.js action does. Unused action stubs
   are tree-shaken from client bundles, so their ids are not shipped either.
+
 - **A realtime reconnect is replayed only under the claims it was read under (`@denext/backend`).**
   A `useTableChanges` subscriber that comes back with other claims than it left with (a changed
   role, team or tenant; a refreshed token is the same claims) gets a `resync` instead of the frames
   kept for it and a replay, so nothing read under its old grant reaches it. A subscription made
   with a token that has no `sub` is bound to that token's whole set of claims: before, every such
   token was one identity, so one could take over another's subscription key.
+
 - **The realtime reconnect journal holds keys only, and drops what expired (`@denext/backend`).**
   It no longer keeps the old row an `old: "full"` table's change carries, a key over 1 024
   characters is journaled as a resync of its table (the logical source does not bound keys), and
   entries past `replay.retentionSeconds` are dropped on the next flush even when their table went
   quiet. Before, writes could make each instance hold up to `maxChangesPerTable` old rows per
   table for as long as the table stayed quiet.
+
 - **An anonymous sign-in's auto-REST requests also count against its address (`@denext/backend`).**
   Each anonymous user had a `rest.rateLimit` budget of its own, so minting sign-ins minted budgets.
 

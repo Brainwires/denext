@@ -72,6 +72,7 @@ Deno.test({
       const out = await harness(bin, ["plain", work]);
       assertHarness(out);
       assert(out.includes("ok a key is refused without SQLCipher"), out);
+      assert(out.includes("ok a rekey is refused without SQLCipher"), out);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -121,6 +122,7 @@ let package = Package(
       assertHarness(out);
       assert(out.includes("ok the encrypted file holds no plaintext"), out);
       assert(out.includes("ok a wrong key is refused"), out);
+      assert(out.includes("ok the old key no longer opens the rekeyed file"), out);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
