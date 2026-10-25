@@ -498,9 +498,9 @@ The CLI prints up to twelve notes and a count of the rest.
   setup files) are rewritten with the runtime source, the seed runs as
   `denext task prisma:seed`, and a `new PrismaClient(<non-object>)` is flagged
   for a one-line manual adapter add. A SQLite datasource gets the `links` shim
-  over `node:sqlite`; Postgres and MySQL get `@prisma/adapter-pg` and
-  `@prisma/adapter-mariadb` (see [Databases](/docs/database)); SQL Server and
-  MongoDB are not wired.
+  over `node:sqlite`; Postgres, MySQL and SQL Server get `@prisma/adapter-pg`,
+  `@prisma/adapter-mariadb` and `@prisma/adapter-mssql` (see
+  [Databases](/docs/database)); MongoDB is not wired.
 - **Everything that is not Remix-specific** (the default Content-Security-Policy
   and response headers, uncached `fetch()` by default, class components in npm
   libraries, native addons) is exactly as documented in

@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **`denext migrate` wires a Prisma SQL Server datasource.** A `provider = "sqlserver"` schema
+  gets `@prisma/adapter-mssql` (over npm `mssql`) injected at each `new PrismaClient()`, reading
+  Prisma's `sqlserver://…` URL from the variable `url = env("…")` names, pinned in deno.json and
+  checked by the `prisma:setup` task, as Postgres and MySQL are. Before, it was left unwired with
+  a warning to add the adapter by hand. MongoDB stays unwired (Prisma 6 has no driver adapter).
+
 - **Ready for the lifecycle-script jail.** denext's Deno runs a dependency's approved install
   script jailed (a scrubbed environment, a scratch `HOME`, writes only under `node_modules`, no
   network), on request up to runtime `3.0.0-rc.4` and by default from `3.0.0-rc.5`, which denext

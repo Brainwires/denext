@@ -336,9 +336,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   located notes. A session the old server's store held does not carry over, `cspNonce` is
   `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **Prisma auto-migration wires SQLite, Postgres (CockroachDB too) and MySQL only:** a
-  `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
-  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). SQLite and Postgres
+- **Prisma auto-migration wires SQLite, Postgres (CockroachDB too), MySQL and SQL Server only:**
+  a `mongodb` datasource keeps its `new PrismaClient()` unwired (Prisma 6 has no MongoDB driver
+  adapter). SQL Server's `@prisma/adapter-mssql` (over npm `mssql`) is wired and unit-tested but
+  not yet run against a live SQL Server. SQLite and Postgres
   run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
   3.0.0-rc.1 or later; on an earlier runtime migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
