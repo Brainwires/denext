@@ -21,6 +21,7 @@ import {
 } from "../scripts/lib/serial-scan.ts";
 import {
   findVitestFiles,
+  heapEnv,
   isToolchainBuild,
   removeTempRoot,
   stockPassDeno,
@@ -323,6 +324,24 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
   assert(!isToolchainBuild({ deno: "3.0.0-rc.3" }), "upstream Deno of the same number");
   assert(!isToolchainBuild({ deno: "2.9.6" }));
   assert(!isToolchainBuild({ deno: "2.9.7" }));
+});
+
+Deno.test("test-run: heapEnv gives a Windows pass a larger V8 heap, and nothing elsewhere", () => {
+  const gib = 1024 ** 3;
+  assertEquals(heapEnv("windows", undefined, 8 * gib), {
+    DENO_V8_FLAGS: "--max-old-space-size=6144",
+  });
+  // Clamped to 4–8 GiB, and appended to flags already set.
+  assertEquals(heapEnv("windows", undefined, 2 * gib), {
+    DENO_V8_FLAGS: "--max-old-space-size=4096",
+  });
+  assertEquals(heapEnv("windows", "--stack-size=2000", 64 * gib), {
+    DENO_V8_FLAGS: "--stack-size=2000,--max-old-space-size=8192",
+  });
+  // A heap size the caller chose wins; other OSes are left alone.
+  assertEquals(heapEnv("windows", "--max-old-space-size=3000", 8 * gib), {});
+  assertEquals(heapEnv("linux", undefined, 8 * gib), {});
+  assertEquals(heapEnv("darwin", undefined, 8 * gib), {});
 });
 
 Deno.test("test-run: tempRootEnv points every platform's temp-dir variable at the root", () => {

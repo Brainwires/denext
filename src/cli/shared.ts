@@ -5,7 +5,7 @@
 // module URL) stays in `cli.ts`.
 
 import { join, resolve } from "@std/path";
-import { denoExecutable } from "../build/bundle.ts";
+import { denoExecutable } from "../build/deno-executable.ts";
 import type { CommandContext } from "./command.ts";
 import { explainBuildFailure, explainedToolOutput } from "./explain-output.ts";
 import { workspaceRootHint } from "../build/workspace-imports.ts";

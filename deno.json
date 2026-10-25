@@ -548,7 +548,11 @@
       "security/",
       "src/build/native-templates/",
       "src/cli/register.ts",
-      "src/ts/program-api.ts"
+      "src/ts/program-api.ts",
+      "src/desktop/config-types.ts",
+      "SECURITY.md",
+      "fallow-plugin-vitest.toml",
+      ".gitattributes"
     ]
   }
 }

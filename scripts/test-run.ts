@@ -276,6 +276,28 @@ export function tempRootEnv(root: string): Record<string, string> {
 }
 
 /**
+ * The `DENO_V8_FLAGS` a test pass runs with on Windows: the inherited flags plus a V8 heap of
+ * three quarters of the machine's memory (4–8 GiB). Type-checking every test file at once in the
+ * parallel pass outgrows V8's default heap on a small Windows host (a 2-CPU runner ran out of
+ * memory at 2 GB). Elsewhere, or when the flags already set a heap size, nothing changes.
+ *
+ * @param os `Deno.build.os`.
+ * @param flags The inherited `DENO_V8_FLAGS`, if any.
+ * @param totalBytes The machine's memory (`Deno.systemMemoryInfo().total`).
+ * @returns The variable to add to the pass's environment, or `{}`.
+ */
+export function heapEnv(
+  os: string,
+  flags: string | undefined,
+  totalBytes: number,
+): Record<string, string> {
+  if (os !== "windows" || flags?.includes("--max-old-space-size")) return {};
+  const mib = Math.min(8192, Math.max(4096, Math.floor((totalBytes / 1048576) * 0.75)));
+  const heap = `--max-old-space-size=${mib}`;
+  return { DENO_V8_FLAGS: flags ? `${flags},${heap}` : heap };
+}
+
+/**
  * Remove `root`, retrying while Windows reports a file in it still open (a child that is
  * exiting); a root that will not go is reported, never fatal.
  *
@@ -303,7 +325,10 @@ let runTempRoot: string | undefined;
 async function deno(args: string[], bin: string = Deno.execPath()): Promise<boolean> {
   const { success } = await new Deno.Command(bin, {
     args,
-    env: runTempRoot ? tempRootEnv(runTempRoot) : undefined,
+    env: {
+      ...(runTempRoot ? tempRootEnv(runTempRoot) : {}),
+      ...heapEnv(Deno.build.os, Deno.env.get("DENO_V8_FLAGS"), Deno.systemMemoryInfo().total),
+    },
     stdin: "null",
     stdout: "inherit",
     stderr: "inherit",
