@@ -18,7 +18,7 @@ the work is in configuration and validating the edges.
 > [!NOTE]
 > This is the Next.js guide. `denext migrate` also converts other sources, each with its own
 > guide: [Remix and React Router v7](/docs/migrating-remix),
-> [Fresh](/docs/migrating-fresh), [Preact](/docs/migrating-preact),
+> [Fresh](/docs/migrating-fresh), [Preact](/docs/migrating-preact), [Lustre](/docs/migrating-lustre),
 > [TanStack Start](/docs/tanstack-start), [Expo and React Native](/docs/coming-from-react-native),
 > and a Vite, CRA or generic React SPA (§3b below).
 
@@ -272,6 +272,12 @@ Router with its route modules and islands kept as they are. See
 A **Preact** app (Vite with `@preact/preset-vite`, preact-cli, WMR or esbuild) takes the SPA path
 with Preact, preact-iso and Preact Signals pointed at denext. See
 [Migrating from Preact](/docs/migrating-preact) and [Preact Signals](/docs/signals).
+
+### Lustre
+
+A **Lustre** app (Gleam, JavaScript target, built with lustre_dev_tools) keeps its Gleam source as
+it is: the `gleam()` plugin compiles it and a page mounts its `main` as an island. See
+[Migrating from Lustre](/docs/migrating-lustre).
 
 ---
 

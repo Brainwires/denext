@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **`denext migrate --from lustre`: a Lustre (Gleam) web app on denext, its Gleam source
+  unchanged.** A project whose `gleam.toml` depends on `lustre` and builds for JavaScript
+  (`target = "javascript"`, or lustre_dev_tools) is detected. Migrate writes `deno.json` (the
+  `@gleam/` import map onto Gleam's build, denext's tasks) and `denext.config.ts` with
+  `plugins: [gleam()]`, which compiles the project where it is with denext's pinned Gleam; adds
+  `app/page.tsx` with an island that calls the entry module's own `main` on the element it mounts
+  on; and moves `priv/static/` to `public/`. `migrate --check` reports Erlang-target code (Erlang
+  packages, `.erl` FFI, Erlang-only `@external`s, a server project) as won't-migrate, and the
+  lustre_dev_tools settings, `index.html` and component / server-component modules (with
+  `lustreElement` / `defineLustreView` as opt-in pointers) for review. See
+  https://denext.dev/docs/migrating-lustre.
 - **Ready for the lifecycle-script jail.** denext's Deno runs a dependency's approved install
   script jailed (a scrubbed environment, a scratch `HOME`, writes only under `node_modules`, no
   network), on request up to runtime `3.0.0-rc.4` and by default from `3.0.0-rc.5`, which denext

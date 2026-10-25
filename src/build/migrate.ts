@@ -59,6 +59,13 @@ import {
   transformFreshApp,
 } from "./migrate-fresh.ts";
 import {
+  detectLustre,
+  lustreAppFiles,
+  lustreConfigSource,
+  type LustreMigrateInfo,
+  transformLustreApp,
+} from "./migrate-lustre.ts";
+import {
   type PreactMigrateInfo,
   preactMigrateInfo,
   preactResolveAlias,
@@ -378,7 +385,8 @@ export interface MigrateOptions {
   proxyPrefixes?: string[];
   /**
    * Force the source framework instead of auto-detecting (`next` | `remix` | `react-router` |
-   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh` | `preact`). Reserved for ambiguous
+   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh` | `preact` | `lustre`). Reserved
+   * for ambiguous
    * cases; auto-detection is used when omitted.
    */
   from?: string;
@@ -478,7 +486,8 @@ export interface MigrateResult {
     | "expo"
     | "tanstack-start"
     | "fresh"
-    | "preact";
+    | "preact"
+    | "lustre";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -517,6 +526,8 @@ export interface MigrateResult {
   fresh?: FreshMigrateInfo;
   /** Present when {@link kind} is `"preact"` — the tooling, the routers and the findings. */
   preact?: PreactMigrateInfo;
+  /** Present when {@link kind} is `"lustre"` — the entry, the mount and what did not migrate. */
+  lustre?: LustreMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
   nextConfig?: NextConfigReport;
   /** Present with `--enable-capacitor`: the Capacitor target written and the steps to run. */
@@ -1480,6 +1491,8 @@ function capacitorSkipReason(r: MigrateResult): string {
     ? "a TanStack Start app (its server functions need a server)"
     : r.kind === "fresh"
     ? "a Fresh app (its handlers and middleware need a server)"
+    : r.kind === "lustre"
+    ? "a Lustre (Gleam) app"
     : "a Pages Router app";
   return `--enable-capacitor covers SPA, Next App Router and Expo apps; this is ${what}, ` +
     "which it does not cover yet";
@@ -1490,6 +1503,10 @@ async function migrateAnyProject(dir: string, options: MigrateOptions): Promise<
   // Fresh apps are Deno projects (no package.json), so they are recognized first.
   if (options.from === "fresh" || (!options.from && await detectFresh(dir))) {
     return await migrateFreshProject(dir, options);
+  }
+  // So are Lustre apps (a Gleam project; any package.json only carries tooling).
+  if (options.from === "lustre" || (!options.from && await detectLustre(dir))) {
+    return await migrateLustreProject(dir, options);
   }
   const deps = await readAppDeps(dir);
   return await migrateNonNextProject(dir, deps, options) ??
@@ -2009,6 +2026,67 @@ import type { DenextConfig } from "denext/server";
 export default {
 ${tailwind}} satisfies DenextConfig;
 `;
+}
+
+// ── Lustre migration ────────────────────────────────────────────────────────
+
+/**
+ * A Lustre app (Gleam, JavaScript target) → denext's App Router: the Gleam project stays as it
+ * is and the `gleam()` plugin compiles it; `app/` gets a page whose island runs the entry's own
+ * `main`, `priv/static/` moves to `public/`, and `deno.json` maps `@gleam/` onto Gleam's build.
+ */
+async function migrateLustreProject(
+  dir: string,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const detection = await detectLustre(dir);
+  if (!detection) {
+    throw new Error(
+      `no Lustre app in ${dir}: expected a gleam.toml depending on lustre, with ` +
+        '`target = "javascript"` or lustre_dev_tools',
+    );
+  }
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
+  const { info, title } = await transformLustreApp(dir, detection);
+  const imports = await buildAppRouterImports(dir, R, {});
+  imports["denext/gleam"] = R.sub("gleam");
+  imports["@gleam/"] = "./build/dev/javascript/";
+  const written: string[] = [];
+  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, null, written);
+  // Gleam's build output (the `.gitignore` is already listed when the line above wrote it).
+  const ignore = await appendGitignore(dir, ["build/"]);
+  if (ignore && !written.includes(ignore)) written.push(ignore);
+  await mfs.mkdir(join(dir, "app"), { recursive: true });
+  for (const [rel, source] of Object.entries(lustreAppFiles(GEN_MARKER, info, title))) {
+    if (!await writeIfWritable(join(dir, rel), () => source, written)) {
+      info.review.push({ item: rel, reason: "already exists and is left untouched" });
+    }
+  }
+  const configExists = !(await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => lustreConfigSource(GEN_MARKER),
+    written,
+  ));
+  if (configExists) {
+    info.review.push({
+      item: "denext.config.ts",
+      reason: 'exists and is left untouched; add gleam() from "denext/gleam" to its plugins',
+    });
+  }
+  return {
+    kind: "lustre",
+    wrote: written,
+    aliased: [],
+    passthrough: [],
+    dropped: [],
+    flagged: [],
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: !configExists,
+    pagesConfigExists: false,
+    denoJsonExists,
+    lustre: info,
+  };
 }
 
 // ── Vite SPA migration ──────────────────────────────────────────────────────

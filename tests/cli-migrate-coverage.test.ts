@@ -280,3 +280,33 @@ Deno.test("migrate on a Preact app reports the tooling, the routers and the find
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("migrate on a Lustre app reports the entry, priv/static and the findings", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_migrate_cli_lustre_" });
+  const files: Record<string, string> = {
+    "gleam.toml": `name = "app"\ntarget = "javascript"\n[dependencies]\nlustre = "5"\nmist = "5"\n`,
+    "src/app.gleam": `import lustre\npub fn main() {\n  lustre.start(app(), "#root", Nil)\n}\n`,
+    "src/ffi.erl": "-module(ffi).\n",
+    "priv/static/logo.svg": "<svg/>\n",
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, rel), text);
+  }
+  const cap = capture();
+  try {
+    await migrateCommand.run(makeCtx({ positionals: [dir] }));
+  } finally {
+    cap.restore();
+  }
+  try {
+    const out = cap.logs.join("\n");
+    assertStringIncludes(out, `Lustre app "app"`);
+    assertStringIncludes(out, "src/app.gleam's main on #root");
+    assertStringIncludes(out, "priv/static/ → public/: 1 file(s)");
+    assertStringIncludes(out, "won't migrate (2)");
+    assertStringIncludes(out, "Gleam source unchanged");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
