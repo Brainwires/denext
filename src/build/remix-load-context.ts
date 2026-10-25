@@ -9,10 +9,16 @@
 // equivalent stays an `undefined` property under a `TODO(denext migrate)` note that names
 // the file and line it came from and why it could not be carried over.
 
-import { dirname, join } from "@std/path";
+import { dirname, join, relative } from "@std/path";
 import { exists, firstExisting } from "./migrate-fs.ts";
 import { mfs } from "./migrate-io.ts";
-import { declaredNames, freeIdentifiers, GEN_HEADER, parseRouteModule } from "./remix-codegen.ts";
+import {
+  declaredNames,
+  freeIdentifiers,
+  GEN_HEADER,
+  parseRouteModule,
+  rewriteSpecifiers,
+} from "./remix-codegen.ts";
 import { applyEdits, type Ctx, type Edit, forEachChild, type Node, walkAst } from "./swc-ast.ts";
 
 /** Where a Remix app's custom server (Express/Hono) lives, most common first. */
@@ -164,6 +170,53 @@ function returnedObject(fn: Node): Node | null {
     }
   });
   return ret;
+}
+
+/**
+ * React Router 7's middleware-mode `getLoadContext`, which returns a `RouterContextProvider`:
+ * `return new RouterContextProvider(…)`, or a variable holding one that `.set(key, value)`
+ * calls fill before it is returned.
+ */
+interface ProviderReturn {
+  /** The `new …(…)` expression. */
+  init: Node;
+  /** The `<variable>.set(key, value)` calls, in source order. */
+  sets: Array<{ call: Node; key: Node; value: Node }>;
+}
+
+/** The provider a function returns (see {@link ProviderReturn}), or null. */
+function returnedProvider(fn: Node): ProviderReturn | null {
+  const body = (fn.function ?? fn).body;
+  const ret = body ? returnedExpression(body) : null;
+  if (ret?.type === "NewExpression") return { init: ret, sets: [] };
+  return ret?.type === "Identifier" ? providerVariable(body, ret.value as string) : null;
+}
+
+/** What a function body returns: an arrow's expression, else the first `return`'s argument. */
+function returnedExpression(body: Node): Node | null {
+  if (body.type !== "BlockStatement") return unwrap(body);
+  let returned: Node | null = null;
+  walkAst(body, (n) => {
+    if (!returned && n.type === "ReturnStatement" && n.argument) returned = unwrap(n.argument);
+  });
+  return returned;
+}
+
+/** The `new …(…)` a variable `name` holds and the `name.set(key, value)` calls on it. */
+function providerVariable(body: Node, name: string): ProviderReturn | null {
+  let init: Node | null = null;
+  const sets: ProviderReturn["sets"] = [];
+  walkAst(body, (n) => {
+    if (n.type === "VariableDeclarator" && n.id?.value === name) {
+      if (unwrap(n.init)?.type === "NewExpression") init = unwrap(n.init);
+    } else if (n.type === "CallExpression" && n.arguments?.length === 2) {
+      const chain = n.callee?.type === "MemberExpression" ? memberChain(n.callee) : null;
+      if (chain?.root === name && chain.path.length === 1 && chain.path[0] === "set") {
+        sets.push({ call: n, key: n.arguments[0].expression, value: n.arguments[1].expression });
+      }
+    }
+  });
+  return init ? { init, sets } : null;
 }
 
 /** The keys of an object literal. */
@@ -596,6 +649,51 @@ function keyProperty(
   return { code: `${was}${indent}${value},\n`, todo: null };
 }
 
+/** The statements of a provider-returning `getLoadContext` (see {@link ProviderReturn}). */
+function providerStatements(
+  provider: ProviderReturn,
+  server: ServerModule,
+  translator: Translator,
+): { code: string; todos: string[]; summary: string[]; fallback: boolean } {
+  const { ctx, rel } = server;
+  const at = (n: Node) => `${rel}:${lineOf(ctx, n)}`;
+  const todos: string[] = [];
+  const summary: string[] = [];
+  const lines: string[] = [];
+  const init = translator.translate(provider.init, server.scope);
+  let fallback = false;
+  if ("problem" in init) {
+    lines.push(
+      `  // TODO(denext migrate): \`${oneLine(ctx, provider.init)}\` (${
+        at(provider.init)
+      }) ${init.problem}`,
+    );
+    todos.push(at(provider.init));
+    fallback = true;
+  }
+  lines.push(`  const context = ${"text" in init ? init.text : "new RouterContextProvider()"};`);
+  for (const set of provider.sets) {
+    const key = translator.translate(set.key, server.scope);
+    const value = "problem" in key ? key : translator.translate(set.value, server.scope);
+    const keyText = oneLine(ctx, set.key);
+    if ("problem" in value) {
+      lines.push(
+        `  // TODO(denext migrate): \`${oneLine(ctx, set.call)}\` (${
+          at(set.call)
+        }) ${value.problem}`,
+      );
+      todos.push(at(set.call));
+      summary.push(`${keyText} → TODO`);
+      continue;
+    }
+    const translatedKey = "text" in key ? key.text : keyText;
+    lines.push(`  context.set(${translatedKey}, ${value.text});`);
+    summary.push(`${keyText} → wired`);
+  }
+  lines.push("  return context;");
+  return { code: lines.join("\n") + "\n", todos, summary, fallback };
+}
+
 /** One import specifier as a pruned import writes it (`a`, `b as c`, `* as ns`, a default). */
 function specifierText(s: Node): string {
   const local = s.local.value as string;
@@ -644,12 +742,18 @@ async function requestSession(): Promise<Record<string, unknown>> {
 }
 
 /** The import lines of the generated module. */
-function importLines(server: ServerModule, needs: Needs, usesBuild: boolean): string[] {
-  const lines = [
-    `import { ${
-      usesBuild ? "defineLoadContext, remixServerBuild" : "defineLoadContext"
-    } } from "denext/remix/server";`,
+function importLines(
+  server: ServerModule,
+  needs: Needs,
+  usesBuild: boolean,
+  providerClass = false,
+): string[] {
+  const runtime = [
+    "defineLoadContext",
+    ...(usesBuild ? ["remixServerBuild"] : []),
+    ...(providerClass ? ["RouterContextProvider"] : []),
   ];
+  const lines = [`import { ${runtime.join(", ")} } from "denext/remix/server";`];
   if (needs.server.size) {
     lines.push(`import { ${[...needs.server].sort().join(", ")} } from "denext/server";`);
   }
@@ -664,11 +768,16 @@ function importLines(server: ServerModule, needs: Needs, usesBuild: boolean): st
   return lines;
 }
 
-/** The `defineLoadContext(…)` call around the properties. */
-function providerSource(props: string, needs: Needs, isAsync: boolean): string {
+/** The `defineLoadContext(…)` head: `async ({ request, params }) =>`. */
+function providerHead(needs: Needs, isAsync: boolean): string {
   const args = [needs.request || needs.url ? "request" : "", needs.params ? "params" : ""]
     .filter(Boolean);
-  const head = `${isAsync ? "async " : ""}(${args.length ? `{ ${args.join(", ")} }` : ""}) =>`;
+  return `${isAsync ? "async " : ""}(${args.length ? `{ ${args.join(", ")} }` : ""}) =>`;
+}
+
+/** The `defineLoadContext(…)` call around the properties. */
+function providerSource(props: string, needs: Needs, isAsync: boolean): string {
+  const head = providerHead(needs, isAsync);
   if (!needs.url) return `export default defineLoadContext(${head} ({\n${props}}));\n`;
   return `export default defineLoadContext(${head} {\n  const requestUrl = new URL(request.url);\n` +
     `  return {\n${props}  };\n});\n`;
@@ -684,13 +793,9 @@ function providerSource(props: string, needs: Needs, isAsync: boolean): string {
  * @returns The planned module and the report notes, or null.
  */
 export async function loadContextModule(dir: string): Promise<LoadContextResult | null> {
-  const rel = await firstExisting(dir, SERVER_ENTRIES);
-  if (!rel) return null;
-  const source = await mfs.readTextFile(join(dir, rel)).catch(() => null);
-  if (source === null || !source.includes("getLoadContext")) return null;
-  const parsed = await parseRouteModule(source);
-  const fn = parsed ? findLoadContextFn(parsed.items) : null;
-  if (!parsed || !fn) return null;
+  const found = await findServerLoadContext(dir);
+  if (!found) return null;
+  const { rel, parsed, fn } = found;
   const dest = join(dir, "load-context.ts");
   if (await exists(dest)) {
     return {
@@ -701,6 +806,33 @@ export async function loadContextModule(dir: string): Promise<LoadContextResult 
   const server = analyzeServer(parsed.ctx, parsed.items, rel, fn);
   const translator = new Translator(server);
   const obj = returnedObject(fn);
+  const provider = obj ? null : returnedProvider(fn);
+  if (provider) return providerModule(dir, dest, server, translator, provider);
+  return objectModule(dir, dest, server, translator, obj);
+}
+
+/** The custom server module with a `getLoadContext`, parsed, and that function; else null. */
+async function findServerLoadContext(
+  dir: string,
+): Promise<{ rel: string; parsed: { ctx: Ctx; items: Node[] }; fn: Node } | null> {
+  const rel = await firstExisting(dir, SERVER_ENTRIES);
+  if (!rel) return null;
+  const source = await mfs.readTextFile(join(dir, rel)).catch(() => null);
+  if (source === null || !source.includes("getLoadContext")) return null;
+  const parsed = await parseRouteModule(source);
+  const fn = parsed ? findLoadContextFn(parsed.items) : null;
+  return parsed && fn ? { rel, parsed, fn } : null;
+}
+
+/** `load-context.ts` for a `getLoadContext` that returns an object literal (or one unread). */
+function objectModule(
+  dir: string,
+  dest: string,
+  server: ServerModule,
+  translator: Translator,
+  obj: Node | null,
+): LoadContextResult {
+  const { rel } = server;
   const keys = obj ? objectKeys(obj) : null;
   // The URL form nests the properties one level deeper; translate first to know which.
   const draft = keys?.map((k) => keyProperty(k, server, translator, "  "));
@@ -714,11 +846,7 @@ export async function loadContextModule(dir: string): Promise<LoadContextResult 
       "port it by hand\n";
   const helper = needs.session ? sessionHelper(server, translator) : "";
   const isAsync = /\bawait\b/.test(props);
-  const code =
-    `${GEN_HEADER}// What ${rel}'s \`getLoadContext\` gave every loader/action as \`context\`, re-derived per
-// request: denext replaced that server, so request reads come from the Fetch \`Request\` and
-// \`denext/server\`, a middleware's result is recomputed from its own expression, and what has
-// no equivalent is marked \`TODO(denext migrate)\` with where it came from.
+  const code = `${GEN_HEADER}${moduleIntro(rel)}
 ${importLines(server, needs, props.includes("remixServerBuild()")).join("\n")}
 ${helper}
 ${providerSource(props, needs, isAsync)}`;
@@ -727,6 +855,20 @@ ${providerSource(props, needs, isAsync)}`;
       .join(", ")
     : "TODO";
   const todos = rendered?.flatMap((r) => (r.todo ? [r.todo] : [])) ?? [rel];
+  const warnings = reportWarnings(rel, summary, todos);
+  return { module: { dest, code, srcDir: join(dir, dirname(rel)) }, warnings };
+}
+
+/** The comment heading a generated `load-context.ts`. */
+function moduleIntro(rel: string): string {
+  return `// What ${rel}'s \`getLoadContext\` gave every loader/action as \`context\`, re-derived per
+// request: denext replaced that server, so request reads come from the Fetch \`Request\` and
+// \`denext/server\`, a middleware's result is recomputed from its own expression, and what has
+// no equivalent is marked \`TODO(denext migrate)\` with where it came from.`;
+}
+
+/** The migrate report lines for a generated `load-context.ts`. */
+function reportWarnings(rel: string, summary: string, todos: string[]): string[] {
   const warnings = [`${rel}: getLoadContext → load-context.ts (${summary})`];
   if (todos.length > 0) {
     warnings.push(
@@ -734,5 +876,86 @@ ${providerSource(props, needs, isAsync)}`;
         `TODO(denext migrate) notes (from ${todos.join(", ")})`,
     );
   }
-  return { module: { dest, code, srcDir: join(dir, dirname(rel)) }, warnings };
+  return warnings;
+}
+
+/**
+ * `load-context.ts` for a `getLoadContext` that returns a `RouterContextProvider` (React
+ * Router 7 with middleware): the provider is rebuilt per request with each `.set(key, value)`
+ * whose value carries over.
+ */
+function providerModule(
+  dir: string,
+  dest: string,
+  server: ServerModule,
+  translator: Translator,
+  provider: ProviderReturn,
+): LoadContextResult {
+  const { rel } = server;
+  const body = providerStatements(provider, server, translator);
+  const needs = translator.needs;
+  const url = needs.url ? "  const requestUrl = new URL(request.url);\n" : "";
+  const helper = needs.session ? sessionHelper(server, translator) : "";
+  const head = providerHead(needs, /\bawait\b/.test(body.code));
+  const code = `${GEN_HEADER}${moduleIntro(rel)}
+${importLines(server, needs, body.code.includes("remixServerBuild()"), body.fallback).join("\n")}
+${helper}
+export default defineLoadContext(${head} {\n${url}${body.code}});\n`;
+  const summary = ["RouterContextProvider", ...body.summary].join(", ");
+  return {
+    module: { dest, code, srcDir: join(dir, dirname(rel)) },
+    warnings: reportWarnings(rel, summary, body.todos),
+  };
+}
+
+/** What {@link carryLoadContext} wrote and the notes for the migrate report. */
+export interface CarriedLoadContext {
+  /** The files written (`load-context.ts`, and `instrumentation.ts` when it was missing). */
+  written: string[];
+  /** Report lines: what was wired, what is left as `TODO(denext migrate)`. */
+  warnings: string[];
+}
+
+/**
+ * The React Router path of `denext migrate`: the app's sources stay where they are, so the
+ * custom server's `getLoadContext` becomes `load-context.ts` at the app root (its relative
+ * imports re-based there) and an `instrumentation.ts` that imports it, which registers it when
+ * the server boots. Returns null when the app has no custom server with a `getLoadContext`.
+ *
+ * @param dir The app root.
+ * @returns The files written and the report notes, or null.
+ */
+export async function carryLoadContext(dir: string): Promise<CarriedLoadContext | null> {
+  const result = await loadContextModule(dir);
+  if (!result) return null;
+  if (!result.module) return { written: [], warnings: result.warnings };
+  const { dest, code, srcDir } = result.module;
+  const destDir = dirname(dest);
+  const rebased = rewriteSpecifiers(code, (spec) => {
+    if (!spec.startsWith(".")) return null;
+    const next = relative(destDir, join(srcDir, spec)).replace(/\\/g, "/");
+    return next.startsWith(".") ? next : `./${next}`;
+  });
+  await mfs.writeTextFile(dest, rebased);
+  const written = [dest];
+  const warnings = [...result.warnings];
+  const instrumentation = await firstExisting(dir, ["instrumentation.ts", "instrumentation.js"]);
+  if (instrumentation === null) {
+    const path = join(dir, "instrumentation.ts");
+    await mfs.writeTextFile(
+      path,
+      `${GEN_HEADER}// Registers the app's load context (\`load-context.ts\`) when the server boots.\n` +
+        `import "./load-context.ts";\n`,
+    );
+    written.push(path);
+  } else {
+    const source = await mfs.readTextFile(join(dir, instrumentation)).catch(() => "");
+    if (!source.includes("load-context")) {
+      warnings.push(
+        `${instrumentation} already exists — add \`import "./load-context.ts";\` to it so the ` +
+          "server registers the load context",
+      );
+    }
+  }
+  return { written, warnings };
 }

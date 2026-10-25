@@ -11,6 +11,9 @@ export const SERVER_EXPORTS: Set<string> = new Set([
   "meta",
   "links",
   "handle",
+  // React Router 7's route middleware (`unstable_middleware` before 7.9).
+  "middleware",
+  "unstable_middleware",
 ]);
 
 /** The header comment stamped on every generated route module. */

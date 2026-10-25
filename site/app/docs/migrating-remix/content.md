@@ -412,7 +412,9 @@ single denext React.
   `@nasa-gcn/remix-seo` reads to generate a sitemap. What the old server read
   off the Express request and response is mapped (§6.1); a value with no
   equivalent is an `undefined` property under a `TODO(denext migrate)` note
-  that names the file and line it came from and why.
+  that names the file and line it came from and why. The `context` loaders get is
+  a React Router `RouterContextProvider` carrying those properties, so typed keys
+  from `createContext` work beside them (`context.get(key)`).
 - **Assets and Tailwind**: `import logo from "./logo.svg"` and a
   `styles.css?url` import are served under `/_denext/client/assets/`, and a
   Tailwind v3 stylesheet is compiled through the project's own `tailwindcss`.
@@ -442,6 +444,16 @@ property only a library sets), `req` or `res` passed on whole, and a spread of
 `res.locals`. A session the old server's store held does not carry over: users
 sign in again, and writes go through `getSession({ secret }).set(…)` in an
 action.
+
+A React Router 7 app keeps its sources (it runs on the `@denext/react-router`
+plugin), and `denext migrate` carries its custom server's `getLoadContext` the
+same way: `load-context.ts` at the app root, imported by a new
+`instrumentation.ts` (an existing one is left alone, with a note to add the
+import). A `getLoadContext` that returns a `RouterContextProvider` (React Router's
+middleware mode) is rebuilt per request with each `context.set(key, value)` whose
+value carries over; the others are `TODO(denext migrate)` notes. Route
+`middleware` and the plugin's own `getLoadContext` option:
+[React Router → Load context and middleware](/docs/react-router#load-context-and-middleware).
 
 ---
 

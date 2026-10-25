@@ -765,19 +765,24 @@ Deno.test("defineLoadContext: loaders/actions receive the provider's context, co
       await runActionResponse(loader, request);
     });
     assertEquals(seen.length, 3);
-    assertEquals(seen[0], { n: 1, url: "http://localhost/a" });
+    // The provider's properties, carried onto the request's RouterContextProvider.
+    assertEquals({ ...seen[0] as object }, { n: 1, url: "http://localhost/a" });
     assertEquals(seen[1], seen[0], "one getLoadContext per request");
     assertEquals(seen[2], seen[0]);
     await runWithContext(createRequestContext(new Request("http://localhost/b")), async () => {
       await runLoader(loader, {});
     });
-    assertEquals(seen[3], { n: 2, url: "http://localhost/b" }, "a new request → a new context");
+    assertEquals(
+      { ...seen[3] as object },
+      { n: 2, url: "http://localhost/b" },
+      "a new request → a new context",
+    );
   } finally {
     clearLoadContext();
   }
   const bare: unknown[] = [];
   await runLoader(({ context }: LoaderFunctionArgs) => void bare.push(context), {});
-  assertEquals(bare, [{}], "no provider → an empty context");
+  assertEquals(bare.map((c) => ({ ...c as object })), [{}], "no provider → an empty context");
 });
 
 Deno.test("remixServerBuild synthesizes a flat Remix ServerBuild from the manifest + route markers", async () => {

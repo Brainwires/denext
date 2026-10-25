@@ -99,8 +99,67 @@ export default { plugins: [reactRouter()] };`}
         <code>headers()</code> does, so it is never cached for everyone.
       </p>
 
+      <h2>Load context and middleware</h2>
+      <p>
+        Every loader, action and route middleware receives a{" "}
+        <code>context</code>. Supply it with the plugin's <code>getLoadContext</code>{" "}
+        option (React Router's <code>getLoadContext</code>, given{" "}
+        <code>&#123; request, params &#125;</code> and run once per request), or from a{" "}
+        <code>load-context.ts</code> module that calls <code>defineLoadContext</code> from{" "}
+        <code>denext/remix/server</code> and is imported by <code>instrumentation.ts</code>.{" "}
+        <code>denext migrate</code> writes both files from a custom server's{" "}
+        <code>getLoadContext</code> (<code>@react-router/express</code>'s{" "}
+        <code>createRequestHandler</code>), whether it returns an object or a{" "}
+        <code>RouterContextProvider</code>.
+      </p>
+      <Code lang="ts">
+        {`// app/context.ts
+import { createContext } from "react-router";
+export const userContext = createContext<User | null>(null);
+
+// app/root.tsx
+export const middleware: Route.MiddlewareFunction[] = [
+  async ({ request, context }, next) => {
+    context.set(userContext, await getUser(request));
+    const response = await next();
+    response.headers.set("x-app", "1");
+    return response;
+  },
+];
+
+// any loader below it
+export function loader({ context }: Route.LoaderArgs) {
+  return { user: context.get(userContext) };
+}
+
+// denext.config.ts
+export default { plugins: [reactRouter({ getLoadContext: () => ({ db }) })] };`}
+      </Code>
+      <p>
+        The <code>context</code> is always a <code>RouterContextProvider</code>: a{" "}
+        <code>getLoadContext</code>{" "}
+        object's properties ride on it (<code>context.db</code>), and typed keys from{" "}
+        <code>createContext</code> work through <code>context.get</code> /{" "}
+        <code>context.set</code>. Route <code>middleware</code> (or the older{" "}
+        <code>unstable_middleware</code>) runs outermost route first, each route's once per request,
+        before that route's loader or action; a thrown <code>redirect()</code> or{" "}
+        <code>Response</code>{" "}
+        stops the request as a loader's would. On a resource route and on a plain (no-JavaScript)
+        POST to a page's action, <code>next()</code>{" "}
+        runs the handler and resolves to its response. On a page render there is no single handler
+        to wrap, so <code>next()</code>{" "}
+        resolves at once to a stand-in response: headers set on it reach the page's response, and
+        returning a different <code>Response</code> answers like a thrown one.
+      </p>
+
       <h2>Limitations</h2>
       <ul>
+        <li>
+          On a page render, route <code>middleware</code>'s <code>next()</code>{" "}
+          resolves before the loaders run (code after it is not timed around the render), and a
+          parent route's loader may run before a child route's middleware. A{" "}
+          <code>clientMiddleware</code> export does not run.
+        </li>
         <li>
           On a client navigation, <code>serverLoader()</code>{" "}
           resolves the data the navigation already fetched: the server loader runs with the route's

@@ -334,7 +334,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   mapped, but a value built from a top-level declaration of the server file or a middleware's local
   variable, a request field with no Fetch equivalent, and `req` / `res` passed on whole are left as
   located notes. A session the old server's store held does not carry over, `cspNonce` is
-  `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat.
+  `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat. A
+  `getLoadContext` that returns a `RouterContextProvider` keeps the `context.set(key, value)` calls
+  whose value carries over; one passing `req` / `res` on (an `expressContext`) is a note.
+- **React Router route `middleware` on a page render runs ahead of the loaders, not around the
+  render.** There is no single handler to wrap, so `next()` resolves at once to a stand-in
+  response (headers set on it reach the page; another `Response` answers like a thrown one), code
+  after `next()` runs before the loaders, and a parent route's loader may run before a child
+  route's middleware. On a resource route and a plain POST to a page's action `next()` runs the
+  real handler. `clientMiddleware` does not run.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
 - **Prisma auto-migration wires SQLite, Postgres (CockroachDB too) and MySQL only:** a
   `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes

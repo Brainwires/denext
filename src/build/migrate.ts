@@ -44,6 +44,7 @@ import {
   resolveIconSource,
 } from "./mobile-icon-source.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
+import { type CarriedLoadContext, carryLoadContext } from "./remix-load-context.ts";
 import {
   isTanstackStartApp,
   readTanstackStartOptions,
@@ -505,6 +506,11 @@ export interface MigrateResult {
   spa?: SpaMigrateInfo;
   /** Present when {@link kind} is `"remix"` — the assisted route-tree transform report. */
   remix?: RemixMigrateInfo;
+  /**
+   * Present when a React Router app's custom server has a `getLoadContext`: it was carried to
+   * `load-context.ts` (registered by `instrumentation.ts`); the notes say what needs porting.
+   */
+  loadContext?: CarriedLoadContext;
   /** Present when the app uses Prisma — the Deno-client/adapter wiring report. */
   prisma?: PrismaMigrateInfo;
   /** Present when the app depends on `next-auth` — its major, the v4 APIs and adapters found. */
@@ -1808,11 +1814,17 @@ async function migrateReactRouterProject(
     written,
   ));
 
+  // The custom server's `getLoadContext` (`@react-router/express`'s `createRequestHandler`)
+  // → `load-context.ts`, registered at boot by `instrumentation.ts`.
+  const loadContext = await carryLoadContext(dir);
+  if (loadContext) written.push(...loadContext.written);
+
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
   return {
     kind: "remix",
     wrote: written,
     ...classified,
+    ...(loadContext ? { loadContext } : {}),
     pagesRouter: false,
     effect: hasEffect,
     pagesConfigWritten: !pagesConfigExists,

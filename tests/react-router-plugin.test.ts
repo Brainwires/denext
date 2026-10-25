@@ -8,7 +8,8 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { reactRouter } from "../packages/react-router/mod.ts";
+import { reactRouter, type ReactRouterOptions } from "../packages/react-router/mod.ts";
+import { clearLoadContext } from "../src/compat/remix/load-context.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createApp } from "../src/server/app.ts";
@@ -241,7 +242,7 @@ async function withRrApp(
     app: (req: Request) => Promise<Response>,
     root: string,
   ) => Promise<void>,
-  options: { pageCache?: PageCache } = {},
+  options: { pageCache?: PageCache; plugin?: ReactRouterOptions } = {},
 ): Promise<void> {
   resetPlugins();
   const tmpBase = fromFileUrl(new URL("./.tmp/", import.meta.url));
@@ -252,7 +253,7 @@ async function withRrApp(
     await applyPlugins({
       projectRoot: root,
       appDir: join(root, "app"),
-      config: { plugins: [reactRouter()] },
+      config: { plugins: [reactRouter(options.plugin)] },
       mode: "build",
       load: defaultLoader,
     });
@@ -264,6 +265,7 @@ async function withRrApp(
     });
     await run(app, root);
   } finally {
+    clearLoadContext();
     resetPlugins();
     await Deno.remove(root, { recursive: true });
   }
@@ -502,4 +504,95 @@ export default [route("about", "routes/about.tsx")];
     assertStringIncludes(second, '<p id="who">anonymous</p>');
     assert(!first.includes("alice"), "the prerendered page never carries a visitor's cookie");
   }, { pageCache: new PageCache() });
+});
+
+// React Router 7 middleware + typed context (roadmap P3): `getLoadContext` from the plugin
+// options, `createContext` keys, and `middleware` / `unstable_middleware` exports on the root, a
+// pathless layout and a page — run outermost first, once per request, before the loaders; a
+// thrown redirect stops the request; on a resource route `next()` wraps the real handler.
+Deno.test("react-router plugin: route middleware + typed context reach every loader", async () => {
+  await withRrApp({
+    "context.ts": `import { createContext } from "denext/remix";
+export const trail = createContext<string[]>([]);
+export const user = createContext<string>("anonymous");
+`,
+    "root.tsx": `import { Outlet } from "react-router";
+import { trail } from "./context.ts";
+export const middleware = [
+  async ({ context }, next) => {
+    context.set(trail, [...context.get(trail), "root"]);
+    const response = await next();
+    response.headers.set("x-root-middleware", "ran");
+    return response;
+  },
+];
+export function loader({ context }) {
+  return { depth: context.get(trail).length };
+}
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body>{children}</body></html>;
+}
+export default function App({ loaderData }: { loaderData: { depth: number } }) {
+  return <main><p id="depth">{loaderData.depth}</p><Outlet /></main>;
+}
+`,
+    "routes.ts": `import { layout, route } from ${JSON.stringify(DSL)};
+export default [
+  layout("routes/shell.tsx", [route("teams/:id", "routes/team.tsx")]),
+  route("api/trail", "routes/api.ts"),
+];
+`,
+    "routes/shell.tsx": `import { Outlet } from "react-router";
+import { trail } from "../context.ts";
+export const unstable_middleware = [({ context }) => {
+  context.set(trail, [...context.get(trail), "shell"]);
+}];
+export default function Shell() {
+  return <section><Outlet /></section>;
+}
+`,
+    "routes/team.tsx": `import { redirect } from "react-router";
+import { trail, user } from "../context.ts";
+export const middleware = [({ request, params, context }, next) => {
+  if (params.id === "blocked") throw redirect("/teams/1");
+  const who = request.headers.get("x-user");
+  if (who) context.set(user, who);
+  context.set(trail, [...context.get(trail), "team"]);
+  return next();
+}];
+export function loader({ context }) {
+  return { trail: context.get(trail).join(">"), user: context.get(user), tenant: context.tenant };
+}
+export default function Team({ loaderData }: { loaderData: { trail: string; user: string; tenant: string } }) {
+  return <p id="team">{loaderData.trail}|{loaderData.user}|{loaderData.tenant}</p>;
+}
+`,
+    "routes/api.ts": `import { trail } from "../context.ts";
+export function loader({ context }) {
+  return { trail: context.get(trail), tenant: context.tenant };
+}
+`,
+  }, async (app) => {
+    const res = await app(
+      new Request("http://localhost/teams/7", { headers: { "x-user": "alice" } }),
+    );
+    const html = await res.text();
+    assertEquals(res.status, 200);
+    // Outermost first, each route's middleware once (the metadata pass and the render share
+    // the run), then the loaders read what they set — and the config's getLoadContext value.
+    assertStringIncludes(html, '<p id="team">root&gt;shell&gt;team|alice|acme</p>');
+    assertEquals(res.headers.get("x-root-middleware"), "ran", "a header set on next()'s response");
+
+    const anonymous = await (await app(new Request("http://localhost/teams/8"))).text();
+    assertStringIncludes(anonymous, "|anonymous|acme</p>", "a key's default value");
+
+    const blocked = await app(new Request("http://localhost/teams/blocked"));
+    assertEquals(blocked.status, 302, "a middleware's thrown redirect answers the request");
+    assertEquals(blocked.headers.get("location"), "/teams/1");
+
+    // A resource route: the root's middleware wraps the loader's own response.
+    const api = await app(new Request("http://localhost/api/trail"));
+    assertEquals(await api.json(), { trail: ["root"], tenant: "acme" });
+    assertEquals(api.headers.get("x-root-middleware"), "ran");
+  }, { plugin: { getLoadContext: () => ({ tenant: "acme" }) } });
 });

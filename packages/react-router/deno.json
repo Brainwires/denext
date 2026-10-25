@@ -21,7 +21,7 @@
       "factory": "reactRouter",
       "verb": "typegen",
       "optionsType": "ReactRouterOptions",
-      "configKeys": ["appDirectory", "routesFile"]
+      "configKeys": ["appDirectory", "routesFile", "getLoadContext"]
     }
   },
   "publish": {
