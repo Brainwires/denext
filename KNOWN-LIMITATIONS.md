@@ -438,7 +438,24 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **OTA updates can't change what the app is** (Apple DPLA 3.3.1(B)); the signing key is in the
   binary, so rotating it takes a store release; the fingerprint gate can't see native code pulled
   in from outside `ios/`, `android/` and the declared plugins; an iOS web-content crash during a
-  trial is reloaded by Capacitor, not the plugin.
+  trial is reloaded by Capacitor, not the plugin. A signed manifest expires (30 days by default):
+  a release left unsigned past that is refused (`expired`) until it is re-signed, and the expiry
+  is checked against the device clock. Unsigned updates from loopback work only in a debug build.
+- **The native bridge answers only the app's own origin:** a page reached through
+  `server.allowNavigation` or a hosted `server.url` (in a release build) cannot call plugins
+  unless `plugins.DenextBridge.allowedOrigins` lists its exact origin (no wildcards) or
+  `frameGuard: false` turns the check off. On Android the guard finds Capacitor's private
+  `MessageHandler` by its type; if a future Capacitor changes that, the guard logs it and the
+  bridge keeps Capacitor's own origin rules. Plugin responses then go back through
+  `evaluateJavascript` (Capacitor's fallback path).
+- **`openAuthSession` needs PKCE** (S256) on every platform unless `pkce: "not-applicable"` with a
+  `reason`; Deno Desktop's loopback flow does not check for it yet.
+- **`secureStore`'s `requireBiometric` is OS-enforced only in a current binary** (`denext mobile
+  add biometrics` from a denext newer than 4.8.0, in a new binary): in an older binary, and in a Deno Desktop window (the desktop
+  keychain has no biometric access control yet), the gate is denext's code in the page and page
+  script can read the value. Android needs 9 or later (8 and earlier refuse it); the passcode as
+  a fallback (`allowDeviceCredential`) needs Android 11. A gated value is dropped when the enrolled
+  biometrics change, and it is never backed up.
 - **`denext fastlane` (the managed fastlane)** runs on macOS and Linux only (arm64, x64); Windows
   is not supported. Its first install needs a C compiler, because several of fastlane's gems
   build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the

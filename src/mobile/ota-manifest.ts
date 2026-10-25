@@ -20,12 +20,15 @@
  * `downgrade`), and one whose `minNative` is above the app binary's build number (code
  * `native_too_old`). The optional `nativeFingerprint` (`denext mobile fingerprint`) names the
  * native layer the UI was built for: a binary that embeds a different one refuses it (code
- * `native_mismatch`); either side without one skips that check.
+ * `native_mismatch`); either side without one skips that check. The optional `expiresAt` (Unix
+ * seconds, signed in the v4 payload) bounds how long the release is accepted: at or after it
+ * every shell refuses the manifest (code `expired`), so a feed that keeps serving an old release
+ * cannot keep a device on it unnoticed. `denext ota manifest --sign` stamps 30 days by default.
  *
  * The optional `signature` binds the release to a key the app binary embeds: an ECDSA P-256 /
  * SHA-256 signature over {@linkcode otaSignaturePayload} (the version, `required`, a hash of
- * `notes`, `sequence` / `minNative` in the v2 format, and `nativeFingerprint` too in the v3
- * format), so neither the files nor the metadata can be swapped without the private key. The native plugin recomputes the version from the file
+ * `notes`, `sequence` / `minNative` in the v2 format, `nativeFingerprint` too in the v3 format,
+ * and `expiresAt` in the v4 format), so neither the files nor the metadata can be swapped without the private key. The native plugin recomputes the version from the file
  * list and verifies the signature; the web side only forwards it.
  *
  * The optional `platform` names the target the export was built for (`denext export --platform
@@ -118,6 +121,15 @@ export interface OtaManifest {
    */
   readonly nativeFingerprint?: string;
   /**
+   * When the release stops being accepted, in Unix seconds (`denext ota manifest --expires-in
+   * <days>` / `--expires-at <RFC 3339>`; a signed manifest gets 30 days unless one is given). At
+   * or after it the native plugin, `checkForUiUpdate` and the desktop updater refuse the manifest
+   * (code `expired`): re-sign it before then. Only with a `sequence`. Not part of the version;
+   * signed in the v4 payload. A UI already installed keeps running past it: the expiry gates
+   * installing (and reporting "current"), not serving.
+   */
+  readonly expiresAt?: number;
+  /**
    * The target the export was built for (`ios`, `android`, `macos`, `windows`, `linux`): a shell
    * of another target refuses it (code `platform_mismatch`). Must match the export's
    * {@linkcode OTA_PLATFORM_PATH} stamp, which the version covers; the field is not signed, so a
@@ -147,6 +159,8 @@ export interface OtaManifestMeta {
   readonly minNative?: number;
   /** See {@linkcode OtaManifest.nativeFingerprint}. Omitted from the manifest unless a string. */
   readonly nativeFingerprint?: string;
+  /** See {@linkcode OtaManifest.expiresAt}. Omitted from the manifest unless a number. */
+  readonly expiresAt?: number;
   /**
    * See {@linkcode OtaManifest.platform}. The files must include the {@linkcode OTA_PLATFORM_PATH}
    * stamp holding the same name.
@@ -214,9 +228,12 @@ export async function otaManifestVersion(
 
 /**
  * The bytes an OTA manifest signature covers, as UTF-8 with `\n` (0x0A) separators and no
- * trailing newline. A manifest with a `nativeFingerprint` (and a `sequence`) uses the v3 format,
- * one with a `sequence` but no fingerprint v2, one without a `sequence` v1:
+ * trailing newline. A manifest with an `expiresAt` (and a `sequence`) uses the v4 format, else one
+ * with a `nativeFingerprint` (and a `sequence`) v3, one with a `sequence` but neither v2, one
+ * without a `sequence` v1:
  *
+ * - v4: `"denext-ota-v4\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "") + "\n"
+ *   + sequence + "\n" + (minNative ?? "") + "\n" + (nativeFingerprint ?? "") + "\n" + expiresAt`
  * - v3: `"denext-ota-v3\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "") + "\n"
  *   + sequence + "\n" + (minNative ?? "") + "\n" + nativeFingerprint`
  * - v2: `"denext-ota-v2\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "") + "\n"
@@ -226,17 +243,19 @@ export async function otaManifestVersion(
  * `"1"` is `required === true`, anything else `"0"`; `sha256hex` is lowercase hex of the SHA-256
  * of the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain
  * decimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the
- * empty string; `nativeFingerprint` is 64 lowercase hex digits. The version already covers every
+ * empty string; `nativeFingerprint` is 64 lowercase hex digits (the empty string in v4 when
+ * absent); `expiresAt` is a plain decimal integer (Unix seconds). The version already covers every
  * file, so the chain is files → version → signature, and none of the metadata can change under a
- * valid signature. The native `DenextOta` plugin builds the same bytes (v3 when the manifest has a
- * `sequence` and a `nativeFingerprint`, v2 with a `sequence` alone, else v1). A v2 manifest
- * (no fingerprint) is signed and verified exactly as before v3 existed.
+ * valid signature. The native `DenextOta` plugin builds the same bytes (v4 when the manifest has an
+ * `expiresAt`, else v3 when it has a `sequence` and a `nativeFingerprint`, v2 with a `sequence`
+ * alone, else v1). A v2 / v3 manifest (no expiry) is signed and verified exactly as before v4
+ * existed.
  *
  * @param manifest The version and the signed metadata.
  * @returns The payload bytes.
- * @throws RangeError when `sequence` or `minNative` is not a non-negative safe integer, when
- *   `nativeFingerprint` is not 64 lowercase hex digits, or when `minNative` /
- *   `nativeFingerprint` is set without a `sequence` (v1 cannot carry them).
+ * @throws RangeError when `sequence`, `minNative` or `expiresAt` is not a non-negative safe
+ *   integer, when `nativeFingerprint` is not 64 lowercase hex digits, or when `minNative` /
+ *   `nativeFingerprint` / `expiresAt` is set without a `sequence` (v1 cannot carry them).
  * @example
  * ```ts
  * import { otaSignaturePayload } from "denext/mobile";
@@ -247,39 +266,79 @@ export async function otaManifestVersion(
 export async function otaSignaturePayload(
   manifest: Pick<
     OtaManifest,
-    "version" | "required" | "notes" | "sequence" | "minNative" | "nativeFingerprint"
+    "version" | "required" | "notes" | "sequence" | "minNative" | "nativeFingerprint" | "expiresAt"
   >,
 ): Promise<Uint8Array> {
   const notesHash = await sha256Hex(new TextEncoder().encode(manifest.notes ?? ""));
   const required = manifest.required === true ? "1" : "0";
-  const { sequence, minNative, nativeFingerprint } = manifest;
-  if (sequence === undefined) {
-    if (minNative !== undefined || nativeFingerprint !== undefined) {
-      throw new RangeError(
-        "minNative and nativeFingerprint are only signed together with a sequence (payload v2/v3)",
-      );
-    }
-    return new TextEncoder().encode(
-      `denext-ota-v1\n${manifest.version}\n${required}\n${notesHash}`,
+  const head = `${manifest.version}\n${required}\n${notesHash}`;
+  const text = manifest.sequence === undefined
+    ? unsequencedPayload(manifest, head)
+    : sequencedPayload(manifest, head);
+  return new TextEncoder().encode(text);
+}
+
+/** The v1 payload text; throws when the manifest carries a field only v2–v4 can sign. */
+function unsequencedPayload(
+  { minNative, nativeFingerprint, expiresAt }: Pick<
+    OtaManifest,
+    "minNative" | "nativeFingerprint" | "expiresAt"
+  >,
+  head: string,
+): string {
+  if (minNative !== undefined || nativeFingerprint !== undefined || expiresAt !== undefined) {
+    throw new RangeError(
+      "minNative, nativeFingerprint and expiresAt are only signed together with a sequence " +
+        "(payload v2/v3/v4)",
     );
   }
+  return `denext-ota-v1\n${head}`;
+}
+
+/** Throw when a field the v2–v4 payloads sign is malformed. */
+function assertSignedFields(
+  { sequence, minNative, nativeFingerprint, expiresAt }: Pick<
+    OtaManifest,
+    "sequence" | "minNative" | "nativeFingerprint" | "expiresAt"
+  >,
+): void {
   if (!isReleaseInteger(sequence) || (minNative !== undefined && !isReleaseInteger(minNative))) {
     throw new RangeError("sequence and minNative must be non-negative safe integers");
   }
-  const v2 = `${manifest.version}\n${required}\n${notesHash}\n${sequence}\n${minNative ?? ""}`;
-  if (nativeFingerprint === undefined) return new TextEncoder().encode(`denext-ota-v2\n${v2}`);
-  if (!isSha256Hex(nativeFingerprint)) {
+  if (nativeFingerprint !== undefined && !isSha256Hex(nativeFingerprint)) {
     throw new RangeError("nativeFingerprint must be 64 lowercase hex digits");
   }
-  return new TextEncoder().encode(`denext-ota-v3\n${v2}\n${nativeFingerprint}`);
+  if (expiresAt !== undefined && !isReleaseInteger(expiresAt)) {
+    throw new RangeError("expiresAt must be a non-negative safe integer (Unix seconds)");
+  }
+}
+
+/** The v2 / v3 / v4 payload text of a manifest with a `sequence`; throws on a malformed field. */
+function sequencedPayload(
+  { sequence, minNative, nativeFingerprint, expiresAt }: Pick<
+    OtaManifest,
+    "sequence" | "minNative" | "nativeFingerprint" | "expiresAt"
+  >,
+  head: string,
+): string {
+  assertSignedFields({ sequence, minNative, nativeFingerprint, expiresAt });
+  const v2 = `${head}\n${sequence}\n${minNative ?? ""}`;
+  if (expiresAt !== undefined) {
+    return `denext-ota-v4\n${v2}\n${nativeFingerprint ?? ""}\n${expiresAt}`;
+  }
+  return nativeFingerprint === undefined
+    ? `denext-ota-v2\n${v2}`
+    : `denext-ota-v3\n${v2}\n${nativeFingerprint}`;
 }
 
 /**
  * Sort `files` by path and stamp the version over them, adding `meta`'s `required`, `notes`,
- * `sequence`, `minNative` and `nativeFingerprint` when given (they never change the version).
+ * `sequence`, `minNative`, `nativeFingerprint` and `expiresAt` when given (they never change the
+ * version).
  *
  * @throws RangeError when `meta.notes` is longer than {@linkcode OTA_NOTES_MAX_LENGTH}, when
- *   `sequence` / `minNative` is not a non-negative safe integer, when `nativeFingerprint` is not
+ *   `sequence` / `minNative` / `expiresAt` is not a non-negative safe integer, when `expiresAt`
+ *   is given without a `sequence`, when `nativeFingerprint` is not
  *   64 lowercase hex digits, or when a file path is not a valid manifest path
  *   ({@linkcode isOtaManifestPath}).
  */
@@ -315,18 +374,26 @@ function assertOtaMeta(meta: OtaManifestMeta): void {
       `the release notes are ${meta.notes.length} characters; the limit is ${OTA_NOTES_MAX_LENGTH}`,
     );
   }
-  for (const key of ["sequence", "minNative"] as const) {
-    const value = meta[key];
-    if (value !== undefined && !isReleaseInteger(value)) {
-      throw new RangeError(`${key} must be a non-negative safe integer, not ${value}`);
-    }
-  }
+  assertReleaseIntegers(meta);
   if (meta.nativeFingerprint !== undefined && !isSha256Hex(meta.nativeFingerprint)) {
     throw new RangeError(
       `nativeFingerprint must be 64 lowercase hex digits, not ${
         JSON.stringify(meta.nativeFingerprint)
       }`,
     );
+  }
+}
+
+/** Throw when `sequence` / `minNative` / `expiresAt` is malformed, or `expiresAt` has no sequence. */
+function assertReleaseIntegers(meta: OtaManifestMeta): void {
+  for (const key of ["sequence", "minNative", "expiresAt"] as const) {
+    const value = meta[key];
+    if (value !== undefined && !isReleaseInteger(value)) {
+      throw new RangeError(`${key} must be a non-negative safe integer, not ${value}`);
+    }
+  }
+  if (meta.expiresAt !== undefined && meta.sequence === undefined) {
+    throw new RangeError("expiresAt is only signed together with a sequence");
   }
 }
 
@@ -341,6 +408,7 @@ function metaFields(meta: OtaManifestMeta): OtaManifestMeta {
     ["sequence", isNumber],
     ["minNative", isNumber],
     ["nativeFingerprint", isString],
+    ["expiresAt", isNumber],
     ["platform", isString],
   ];
   const out: Record<string, unknown> = {};
@@ -413,7 +481,7 @@ function isManifestFile(file: unknown): file is OtaManifestFile {
  * Whether `value` has the manifest's shape: a 64-hex `version`, a non-empty `files` array of
  * `{ path, sha256, size }` (paths without control characters), and, when present, a boolean
  * `required`, a string `notes` of at most {@linkcode OTA_NOTES_MAX_LENGTH} characters,
- * non-negative safe-integer `sequence` / `minNative`, a 64-hex `nativeFingerprint`, and a string
+ * non-negative safe-integer `sequence` / `minNative` / `expiresAt`, a 64-hex `nativeFingerprint`, and a string
  * `signature`. Other keys are ignored. It checks the shape only; the native side re-checks every
  * path, recomputes the version and verifies the signature before it downloads anything.
  */
@@ -435,6 +503,22 @@ const OPTIONAL_FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
   sequence: isReleaseInteger,
   minNative: isReleaseInteger,
   nativeFingerprint: isSha256Hex,
+  expiresAt: isReleaseInteger,
   platform: isOtaPlatform,
   signature: (v) => typeof v === "string",
 };
+
+/**
+ * Whether `manifest` has expired at `now`: it carries an `expiresAt` (Unix seconds) and `now` is at
+ * or after it. A manifest without one never expires here (the native plugin also refuses one
+ * without an expiry once the app's bundled UI carries one).
+ *
+ * @param manifest The manifest.
+ * @param now The time to compare with, in ms since the epoch (default: `Date.now()`).
+ */
+export function isOtaManifestExpired(
+  manifest: Pick<OtaManifest, "expiresAt">,
+  now: number = Date.now(),
+): boolean {
+  return manifest.expiresAt !== undefined && now >= manifest.expiresAt * 1000;
+}

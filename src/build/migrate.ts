@@ -17,6 +17,7 @@ import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
 import { mfs } from "./migrate-io.ts";
+import { withCapacitorConfigValue } from "./capacitor-config.ts";
 import { applyJailExceptions, type JailReport } from "./jail-scripts.ts";
 import {
   type MappedViteEmitter,
@@ -1627,7 +1628,25 @@ async function writeCapacitorConfig(
         ),
       written,
     );
+  if (plan.frameGuardOptOut) await optOutOfFrameGuard(join(dir, plan.frameGuardOptOut), written);
   return { ...plan.info, configWritten };
+}
+
+/**
+ * Write `plugins.DenextBridge.frameGuard: false` into a kept Capacitor config that loads a hosted
+ * `server.url` (its page calls native plugins from that origin, which the bridge's origin guard
+ * refuses by default). Every other byte of a module config is kept.
+ */
+async function optOutOfFrameGuard(file: string, written: string[]): Promise<void> {
+  const source = await mfs.readTextFile(file);
+  const next = await withCapacitorConfigValue(file, source, [
+    "plugins",
+    "DenextBridge",
+    "frameGuard",
+  ], false);
+  if (next === source) return;
+  await mfs.writeTextFile(file, next);
+  written.push(file);
 }
 
 /** The TODO comment over a placeholder app id, by where it came from. */

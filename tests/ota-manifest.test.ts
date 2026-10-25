@@ -8,6 +8,7 @@ import { join } from "@std/path";
 import {
   isExcludedFromOtaManifest,
   isOtaManifest,
+  isOtaManifestExpired,
   isOtaManifestPath,
   makeOtaManifest,
   OTA_MANIFEST_PATH,
@@ -19,9 +20,12 @@ import {
 } from "../src/mobile/ota-manifest.ts";
 import {
   collectOtaManifest,
+  defaultOtaExpiry,
   defaultOtaSequence,
+  OTA_DEFAULT_EXPIRY_DAYS,
   writeOtaManifest,
 } from "../src/build/ota-manifest.ts";
+import { expiryFlags } from "../src/cli/commands/mobile.ts";
 import {
   generateOtaKeyPair,
   importOtaSigningKey,
@@ -246,6 +250,8 @@ Deno.test("denext ota: --required and --notes are declared flags", () => {
       ["notes", "string"],
       ["sign", "string"],
       ["sequence", "number"],
+      ["expires-in", "number"],
+      ["expires-at", "string"],
       ["min-native", "number"],
       ["native-fingerprint", "string"],
       ["platform", "string"],
@@ -1009,5 +1015,138 @@ Deno.test("createOtaHandler: cors answers the preflight and tags responses for a
     );
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Signature payload v4: a signed expiresAt (AU6-L1), backward compatible with v2 / v3.
+
+Deno.test("ota signature v4 (AU6-L1): the exact bytes, with and without a fingerprint", async () => {
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  assertEquals(
+    text(
+      await otaSignaturePayload({
+        version: FIXTURE_VERSION,
+        sequence: 1758700000,
+        minNative: 42,
+        nativeFingerprint: FINGERPRINT,
+        expiresAt: 1761292000,
+      }),
+    ),
+    `denext-ota-v4\n${FIXTURE_VERSION}\n0\n${EMPTY_SHA}\n1758700000\n42\n${FINGERPRINT}\n1761292000`,
+  );
+  // No fingerprint: its line stays, empty (nine lines, no trailing newline).
+  const bare = text(
+    await otaSignaturePayload({ version: FIXTURE_VERSION, sequence: 5, expiresAt: 6 }),
+  );
+  assertEquals(bare, `denext-ota-v4\n${FIXTURE_VERSION}\n0\n${EMPTY_SHA}\n5\n\n\n6`);
+  assertEquals(bare.split("\n").length, 8);
+  // An expiry needs a sequence, and must be a non-negative safe integer.
+  await assertRejects(
+    () => otaSignaturePayload({ version: FIXTURE_VERSION, expiresAt: 6 }),
+    RangeError,
+    "sequence",
+  );
+  for (const bad of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    await assertRejects(
+      () => otaSignaturePayload({ version: FIXTURE_VERSION, sequence: 1, expiresAt: bad }),
+      RangeError,
+      "expiresAt",
+    );
+  }
+});
+
+Deno.test("ota signature v4 (AU6-L1): sign/verify binds expiresAt; a manifest past it is expired", async () => {
+  const { publicKey, signingKey } = await keys();
+  const v4 = await signOtaManifest(
+    await makeOtaManifest(FILES, { sequence: 1758700000, expiresAt: 1761292000 }),
+    signingKey,
+  );
+  assertEquals(v4.expiresAt, 1761292000);
+  assert(await verifyOtaManifest(v4, publicKey));
+  assert(!await verifyOtaManifest({ ...v4, expiresAt: 1761292001 }, publicKey));
+  const { expiresAt: _dropped, ...stripped } = v4;
+  assert(!await verifyOtaManifest(stripped, publicKey), "stripping the expiry breaks it too");
+  assert(isOtaManifestExpired(v4, 1761292000_000));
+  assert(!isOtaManifestExpired(v4, 1761291999_999));
+  assert(!isOtaManifestExpired({}, Date.now()), "no expiry: never expired here");
+  await assertRejects(
+    () => makeOtaManifest(FILES, { expiresAt: 5 }),
+    RangeError,
+    "sequence",
+  );
+});
+
+Deno.test("isOtaManifest (AU6-L1): expiresAt is a non-negative safe integer", () => {
+  const base = {
+    version: FIXTURE_VERSION,
+    files: [{ path: "index.html", sha256: INDEX_HTML_SHA, size: 13 }],
+  };
+  assert(isOtaManifest({ ...base, sequence: 1, expiresAt: 2 }));
+  for (const bad of [-1, 1.5, "1", null, true, Number.MAX_SAFE_INTEGER + 1]) {
+    assert(!isOtaManifest({ ...base, sequence: 1, expiresAt: bad }), `expiresAt ${bad}`);
+  }
+});
+
+Deno.test("writeOtaManifest (AU6-L1): signing stamps a 30-day expiry unless one is given", async () => {
+  const dir = await webRoot();
+  try {
+    const { publicKey, signingKey } = await keys();
+    const before = defaultOtaExpiry();
+    const signed = await writeOtaManifest(dir, {}, signingKey);
+    assert(
+      signed.expiresAt! >= before && signed.expiresAt! <= defaultOtaExpiry(),
+      `${signed.expiresAt}`,
+    );
+    assertEquals(signed.expiresAt! - signed.sequence!, OTA_DEFAULT_EXPIRY_DAYS * 86_400);
+    assert(await verifyOtaManifest(signed, publicKey));
+    assertEquals((await writeOtaManifest(dir, { expiresAt: 4e9 }, signingKey)).expiresAt, 4e9);
+    // Unsigned: no expiry unless asked for, and one asked for brings a sequence.
+    assert(!("expiresAt" in await writeOtaManifest(dir)));
+    const asked = await writeOtaManifest(dir, { expiresAt: 4e9 });
+    assertEquals(asked.expiresAt, 4e9);
+    assert(asked.sequence !== undefined);
+    assertEquals(defaultOtaExpiry(1_758_700_000_999, 1), 1_758_700_000 + 86_400);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext ota manifest --expires-in / --expires-at (AU6-L1)", async () => {
+  const dir = await webRoot();
+  const { publicKey, privateKeyPem } = await keys();
+  const keyFile = `${dir}.key`;
+  const written = async () =>
+    JSON.parse(await Deno.readTextFile(join(dir, "_denext", "ota.json"))) as OtaManifest;
+  try {
+    await Deno.writeTextFile(keyFile, privateKeyPem);
+    await withSigningEnv(undefined, async () => {
+      const [json] = await ota(["manifest", dir], { sign: keyFile }, true);
+      assert(JSON.parse(json).expiresAt >= defaultOtaExpiry() - 5, json);
+      const lines = await ota(["manifest", dir], { sign: keyFile, "expires-in": 2 });
+      const manifest = await written();
+      assertEquals(manifest.expiresAt! - manifest.sequence!, 2 * 86_400);
+      assert(lines.some((l) => l.includes(", expires 20")), lines.join("\n"));
+      assert(await verifyOtaManifest(manifest, publicKey));
+      await ota(["manifest", dir], { sign: keyFile, "expires-at": "2099-01-01T00:00:00Z" });
+      assertEquals((await written()).expiresAt, Date.UTC(2099, 0, 1) / 1000);
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(keyFile).catch(() => {});
+  }
+  const now = Date.UTC(2026, 9, 24);
+  assertEquals(expiryFlags({}, now), {});
+  assertEquals(expiryFlags({ "expires-in": 1 }, now), { expiresAt: now / 1000 + 86_400 });
+  for (
+    const flags of [
+      { "expires-in": 1, "expires-at": "2099-01-01T00:00:00Z" },
+      { "expires-in": 0 },
+      { "expires-in": -2 },
+      { "expires-at": "tomorrow" },
+      { "expires-at": "2020-01-01T00:00:00Z" },
+    ]
+  ) {
+    assertEquals(typeof expiryFlags(flags, now), "string", JSON.stringify(flags));
   }
 });

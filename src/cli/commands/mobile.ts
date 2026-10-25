@@ -2,9 +2,10 @@
 //
 //   denext ota manifest <dir>     (re)write <dir>/_denext/ota.json for a static export
 //                                 (--required / --notes <text> / --sequence <n> /
-//                                 --min-native <n> / --native-fingerprint <fp|auto> add release
+//                                 --min-native <n> / --native-fingerprint <fp|auto> /
+//                                 --expires-in <days> / --expires-at <rfc3339> add release
 //                                 metadata, --sign <keyfile> or DENEXT_OTA_SIGNING_KEY signs it,
-//                                 stamping a sequence)
+//                                 stamping a sequence and a 30-day expiry)
 //   denext ota keygen <out>       write a P-256 signing key (<out>) and its public key (<out>.pub)
 //   denext mobile add-ota [dir]   install the native DenextOta plugin into ios/ + android/
 //                                 (--public-key <file> embeds the verifying key,
@@ -37,7 +38,8 @@
 import { parsePlatform, scanPlatformGroups } from "../../build/platform-extensions.ts";
 import { relative, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { writeOtaManifest } from "../../build/ota-manifest.ts";
+import { defaultOtaExpiry, writeOtaManifest } from "../../build/ota-manifest.ts";
+import { parseRfc3339 } from "../../build/app-update.ts";
 import type { OtaManifest } from "../../mobile/ota-manifest.ts";
 import {
   generateOtaKeyPair,
@@ -108,6 +110,7 @@ function printManifest(ctx: CommandContext, dir: string, dirArg: string, m: OtaM
         sequence: m.sequence ?? null,
         minNative: m.minNative ?? null,
         nativeFingerprint: m.nativeFingerprint ?? null,
+        expiresAt: m.expiresAt ?? null,
         platform: m.platform ?? null,
         signed: m.signature !== undefined,
       }),
@@ -118,6 +121,9 @@ function printManifest(ctx: CommandContext, dir: string, dirArg: string, m: OtaM
     (m.sequence !== undefined ? `, sequence ${m.sequence}` : "") +
     (m.minNative !== undefined ? `, min native ${m.minNative}` : "") +
     (m.nativeFingerprint !== undefined ? `, native ${m.nativeFingerprint.slice(0, 12)}` : "") +
+    (m.expiresAt !== undefined
+      ? `, expires ${new Date(m.expiresAt * 1000).toISOString().replace(/\.000Z$/, "Z")}`
+      : "") +
     (m.platform !== undefined ? `, platform ${m.platform}` : "") +
     (m.signature ? ", signed" : "");
   console.log(
@@ -154,6 +160,35 @@ async function nativeFingerprintFlag(ctx: CommandContext): Promise<string | unde
       }`,
     );
   }
+}
+
+/**
+ * `--expires-in <days>` / `--expires-at <RFC 3339>` as the manifest's `expiresAt` (Unix seconds);
+ * `{}` without either (a signed manifest then gets the 30-day default). Exits when both are given,
+ * when the value does not parse, or when it is not in the future.
+ */
+export function expiryFlags(
+  flags: Readonly<Record<string, unknown>>,
+  now: number = Date.now(),
+): { expiresAt?: number } | string {
+  const days = flags["expires-in"];
+  const at = flags["expires-at"];
+  if (days !== undefined && at !== undefined) return "pass --expires-in or --expires-at, not both";
+  let expiresAt: number | undefined;
+  if (days !== undefined) {
+    if (typeof days !== "number" || !Number.isFinite(days) || days <= 0) {
+      return "--expires-in takes a positive number of days";
+    }
+    expiresAt = defaultOtaExpiry(now, days);
+  } else if (at !== undefined) {
+    const ms = typeof at === "string" ? parseRfc3339(at) : null;
+    if (ms === null) return "--expires-at takes an RFC 3339 time, e.g. 2026-12-31T00:00:00Z";
+    expiresAt = Math.floor(ms / 1000);
+  } else {
+    return {};
+  }
+  if (expiresAt * 1000 <= now) return "the expiry must be in the future";
+  return { expiresAt };
 }
 
 /** `--platform <target>` as manifest metadata; exits on an unknown target. */
@@ -195,8 +230,12 @@ async function otaManifest(ctx: CommandContext): Promise<void> {
   const cwd = ctx.global.cwd ?? ".";
   const dir = resolve(cwd, dirArg);
   // Each key is written only when its flag is given, so a plain run stamps what it always did.
-  // A signed manifest gets a sequence (the Unix time) unless --sequence sets one.
+  // A signed manifest gets a sequence (the Unix time) unless --sequence sets one, and an expiry
+  // (30 days) unless --expires-in / --expires-at sets one.
+  const expiry = expiryFlags(ctx.flags);
+  if (typeof expiry === "string") fail(`denext ota manifest: ${expiry}`);
   const meta = {
+    ...expiry,
     ...(ctx.flags.required === true ? { required: true } : {}),
     ...(typeof ctx.flags.notes === "string" ? { notes: ctx.flags.notes } : {}),
     ...(typeof ctx.flags.sequence === "number" ? { sequence: ctx.flags.sequence } : {}),
@@ -307,8 +346,11 @@ export const otaCommand: CommandSpec = {
     "                              Also sign it (or set " + OTA_SIGNING_KEY_ENV +
     " to the PEM);\n" +
     "                              signing stamps --sequence (default: the Unix time) so apps\n" +
-    "                              refuse an older release, and --min-native <build> refuses\n" +
-    "                              app binaries older than that build number\n" +
+    "                              refuse an older release, and an expiry (default 30 days;\n" +
+    "                              --expires-in <days> / --expires-at <rfc3339>) after which\n" +
+    "                              apps refuse it (code expired; re-sign before then), and\n" +
+    "                              --min-native <build> refuses app binaries older than that\n" +
+    "                              build number\n" +
     "  denext ota manifest out --native-fingerprint auto --dir .\n" +
     "                              Also stamp the native fingerprint of the Capacitor project at\n" +
     "                              --dir; a binary embedding another one (`denext mobile\n" +
@@ -362,6 +404,19 @@ export const otaCommand: CommandSpec = {
       valueName: "<n>",
       help:
         "Release sequence (a non-negative integer that only grows; default when signing: the Unix time in seconds)",
+    },
+    {
+      name: "expires-in",
+      type: "number",
+      valueName: "<days>",
+      help:
+        "manifest: days until apps refuse this release (code expired; default when signing: 30)",
+    },
+    {
+      name: "expires-at",
+      type: "string",
+      valueName: "<rfc3339>",
+      help: "manifest: when apps start refusing this release, as an RFC 3339 time",
     },
     {
       name: "min-native",
@@ -442,14 +497,15 @@ function printReport(report: AddOtaReport, dryRun: boolean): void {
     console.log(
       `\n  Note: no public key embedded and no origin pinned (${
         report.unpinnedPlatforms.join(", ")
-      }), so OTA accepts an update from loopback only: pass --public-key, or\n` +
-        "  --ota-origin https://<your OTA server> to accept unsigned updates from it.",
+      }), so OTA accepts an update from loopback only, and only in a debug build: pass\n` +
+        "  --public-key, or --ota-origin https://<your OTA server> to accept unsigned updates from it.",
     );
   } else if (report.unsignedPlatforms.length > 0) {
     console.log(
       `\n  Note: no public key embedded (${
         report.unsignedPlatforms.join(", ")
-      }), so OTA accepts unsigned updates from the pinned origins (and loopback) only.`,
+      }), so OTA accepts unsigned updates from the pinned origins (and loopback in a debug ` +
+        "build) only.",
     );
   }
 }

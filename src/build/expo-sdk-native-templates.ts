@@ -36,11 +36,16 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 /** The Expo SDK plugin families denext writes. */
 export type ExpoSdkFamily = "calendar" | "contacts" | "print" | "brightness";
 
-/** Each family's template generation, stamped into every file of it the installer writes. */
+/**
+ * Each family's template generation, stamped into every file of it the installer writes. Print
+ * generation 2: iOS `printToPrinter` prints only a file in the app's Documents, Caches or temporary
+ * folder, and Android `printToFile`'s WebView cannot read `file:` / `content:` URLs; the bump keeps
+ * an older denext from rewriting either away.
+ */
 export const EXPO_SDK_TEMPLATE_VERSIONS: Readonly<Record<ExpoSdkFamily, number>> = {
   calendar: 2,
   contacts: 1,
-  print: 1,
+  print: 2,
   brightness: 1,
 };
 

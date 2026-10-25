@@ -287,6 +287,74 @@ const legacyBridge: Check = {
     })),
 };
 
+/**
+ * The origins a Capacitor config navigates to besides the app's own: `server.url` and each
+ * `server.allowNavigation` entry, as `https://host` (an entry without a scheme is https, as
+ * Capacitor reads it).
+ */
+function hostedOrigins(config: Record<string, unknown>): string[] {
+  const entries: string[] = [];
+  const url = at(config, "server", "url");
+  if (typeof url === "string") entries.push(url);
+  const navigation = at(config, "server", "allowNavigation");
+  if (Array.isArray(navigation)) {
+    for (const entry of navigation) if (typeof entry === "string") entries.push(entry);
+  }
+  return [...new Set(entries.map(originOf))];
+}
+
+/** `entry`'s origin (`https://` when it names no scheme), or `entry` when it does not parse. */
+function originOf(entry: string): string {
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `https://${entry}`;
+  try {
+    return new URL(withScheme).origin;
+  } catch {
+    return withScheme;
+  }
+}
+
+/**
+ * `server.url` / `server.allowNavigation` origins with the bridge's origin guard on: their pages
+ * cannot call native plugins (refused, AU6-L8) unless `plugins.DenextBridge.allowedOrigins` lists
+ * them; and `plugins.DenextBridge.frameGuard: false`, which lets every one of them.
+ */
+const bridgeOriginGuard: Check = {
+  id: "bridge-origin-guard",
+  profiles: ["store", "release"],
+  run: (p) =>
+    p.configs.flatMap(({ label, config }) => {
+      const hosted = hostedOrigins(config);
+      if (hosted.length === 0) return [];
+      if (at(config, "plugins", "DenextBridge", "frameGuard") === false) {
+        return [{
+          check: "bridge-origin-guard",
+          level: "warning" as const,
+          message: `${label}: plugins.DenextBridge.frameGuard is false, so a page on ` +
+            `${hosted.join(", ")} can call every installed native plugin`,
+          fix: "list only the origins whose pages must call plugins in " +
+            "plugins.DenextBridge.allowedOrigins and remove frameGuard: false",
+        }];
+      }
+      const listed = at(config, "plugins", "DenextBridge", "allowedOrigins");
+      const allowed = new Set(
+        (Array.isArray(listed) ? listed : []).flatMap((o) =>
+          typeof o === "string" ? [originOf(o)] : []
+        ),
+      );
+      const refused = hosted.filter((origin) => !allowed.has(origin));
+      if (refused.length === 0) return [];
+      return [{
+        check: "bridge-origin-guard",
+        level: "warning" as const,
+        message: `${label}: the bridge's origin guard is on, so a page on ${refused.join(", ")} ` +
+          "cannot call native plugins (its calls are refused)",
+        fix: "if pages there call plugins (a hosted server.url app), list them in " +
+          "plugins.DenextBridge.allowedOrigins, or opt out with plugins.DenextBridge.frameGuard: " +
+          "false; else nothing to do",
+      }];
+    }),
+};
+
 /** The bridge view controller denext generates, and the guard every current one carries. */
 const BRIDGE_VIEW_CONTROLLER = "ios/App/App/DenextBridgeViewController.swift";
 const FRAME_GUARD_CLASS = "DenextMainFrameBridgeGuard";
@@ -1394,6 +1462,7 @@ const CHECKS: readonly Check[] = [
   cleartext,
   mixedContent,
   legacyBridge,
+  bridgeOriginGuard,
   allowNavigation,
   bridgeFrameGuard,
   exportRoutes,

@@ -23,6 +23,14 @@ public let CAPPluginReturnPromise = "promise"
     public func getObject(_ key: String) -> JSObject? { nil }
     public func resolve(_ data: [String: Any] = [:]) {}
     public func reject(_ message: String, _ code: String? = nil) {}
+    public func reject(_ message: String, _ code: String?, _ error: Error?) {}
+    public func getBool(_ key: String) -> Bool? { nil }
+    public func getDouble(_ key: String) -> Double? { nil }
+    public func getArray<T>(_ key: String, _ type: T.Type) -> [T]? { nil }
+}
+
+public enum JSTypes {
+    public static func coerceDictionaryToJSObject(_ dictionary: [AnyHashable: Any]) -> JSObject? { nil }
 }
 
 @objc open class CAPPlugin: NSObject {

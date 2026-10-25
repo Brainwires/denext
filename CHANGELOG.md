@@ -266,6 +266,88 @@ and this project adheres to
   stdout read never ran and that child never exited. `deno info`, `deno bundle`, the dev
   type-check's `deno check` and the `next.config` evaluator now run with stderr discarded, and
   only a failed run is repeated once with stderr piped for its error text.
+
+- **Security: an over-the-air UI older than the bundled one is refused.** A Deno Desktop UI overlay
+  (`denext/desktop/updater`) and the mobile `DenextOta` plugin enforced the monotonic `sequence`
+  only after the first over-the-air UI was accepted, so on a fresh install (or a device that had
+  only run its bundled UI) a feed that replayed an older signed manifest could install an older UI
+  over the newer one the app ships. The bundled export's own manifest `sequence` is now the
+  downgrade floor (code `downgrade`). The desktop updater records it at launch
+  (`resolveDesktopUiDir`), and the feed offering the bundled version itself is reported as not
+  available. The native templates move to generation 10; run `denext mobile add-ota` to upgrade
+  an installed plugin.
+- **Security: `openAuthSession` in the iOS / Android shell checks the callback.** Any app on the
+  device can open a callback-scheme link while a sign-in is open (on Android, an explicit intent
+  to the app's activity), and the session resolved with the first one. The callback must now land
+  exactly (scheme, host, path) on the URL's own callback-scheme `redirect_uri` (or
+  `callbackPrefix`) and carry the URL's `state` (or the `state` option) in its query or fragment;
+  anything else rejects with code `invalid`. `callbackPrefix` and `state` now apply on mobile too.
+- `applyDesktopUpdate` refuses a version that is not a manifest version (64 hex digits) before it
+  names a staging directory.
+- **Security: over-the-air UI manifests expire.** A feed could keep a device on an old release
+  for good by serving it forever (the newest one a device had seen is never a downgrade). `denext
+  ota manifest --sign` (and `denext export` with `spa.ota` and a signing key) now stamps a signed
+  `expiresAt`, 30 days out by default (`--expires-in <days>`, `--expires-at <RFC 3339>`), in a v4
+  signature payload (`otaSignaturePayload`; v1–v3 manifests verify as before). The `DenextOta`
+  plugin, `checkForUiUpdate` / `prepareUiUpdate` and the Deno Desktop UI updater refuse a manifest
+  past it with the new code `expired`, the JS sides even when it names the UI already running (so
+  a stale feed is an error, not "current"), and `denext ota promote` / `channel` refuse an
+  expired release unless `--force`. An app whose bundled UI's manifest carries an expiry refuses a
+  release without one; one bundled by older tooling keeps taking them. Re-sign the live release
+  before it expires.
+- **Security: an unsigned over-the-air UI from loopback is refused in a release build.** Without
+  an embedded key, the `DenextOta` plugin took an unsigned UI from `localhost` / `127.0.0.1` /
+  `::1` in any build, and loopback was exempt from pinned origins, so with another app listening
+  on 127.0.0.1 (Android) a script in the page could install an unsigned UI. Loopback now passes
+  only in a debug build (iOS: compiled with `DEBUG`; Android: a debuggable build, which the
+  emulator's `10.0.2.2` already needed). A `baseUrl` with credentials or a backslash is refused
+  (`invalid`), so the origin checks and the downloader always read the same host.
+- **Security: `otaBooted()` from a page with no version confirms nothing.** `booted` without a
+  version confirmed whatever UI was on trial, so a late call from an unstamped page could confirm
+  a broken new UI and defeat the rollback watchdog. The plugin now confirms only the version the
+  page names (every downloaded UI carries its manifest, so the trial page can).
+- **A request for a directory of a downloaded UI no longer quarantines it.** The serve check took
+  any existing path the signed manifest does not list as a file added on the device, so a request
+  for a folder (`/assets`), which page script can make, took the running UI out of service and
+  fell back to the bundled one. Only a non-directory counts now. The OTA templates move to
+  generation 11 for these four; run `denext mobile add-ota` to upgrade, then ship a new binary.
+- **Security: `secureStore.set(…, { requireBiometric: true })` is enforced by the OS.** The gate
+  was denext's code in the page: the value sat in the secure-storage plugin, which page script (an
+  XSS included) could read through `SecureStorage.internalGetItem` without a prompt. With `denext
+  mobile add biometrics` (its `DenextSettings` plugin, template generation 4, in a new binary) the
+  value is now a Keychain item whose access control requires the enrolled biometrics or the
+  passcode (iOS), or is sealed under an Android Keystore key that needs the user for every use and
+  opens only through a `BiometricPrompt` `CryptoObject` (Android 9+); it is never in the
+  secure-storage plugin. The API is unchanged. A value an older denext stored moves into the
+  OS-enforced store the first time it is read; an older binary keeps the in-page gate and warns
+  once.
+- **Security: the native bridge accepts plugin calls only from the app's own origin.** A page the
+  shell navigated to through `server.allowNavigation` (or a hosted `server.url`) could call every
+  installed plugin: the iOS guard checked only for the main frame, and Capacitor's Android bridge
+  is handed to every `allowNavigation` origin. Plugin calls are now accepted from the app's local
+  origin only (plus `server.url` in a debug build, for `denext mobile dev`), and from the origins
+  the Capacitor config lists in `plugins.DenextBridge.allowedOrigins`;
+  `plugins.DenextBridge.frameGuard: false` turns the origin check off. `denext mobile doctor`
+  warns about each `server.url` / `allowNavigation` origin the guard refuses, and about the
+  opt-out; `denext migrate --enable-capacitor` writes the opt-out into a kept config that loads
+  a hosted `server.url`. Android's composed `MainActivity` (generation 6) carries the guard and
+  `androidx.webkit` is added to `android/app/build.gradle`; the iOS bridge view controllers move
+  to auth-session / app-extension generation 6. Re-run your `denext mobile add` and ship a new
+  binary.
+- **Security: `openAuthSession` requires PKCE.** In the iOS / Android shell and the web popup the
+  authorization URL must carry `code_challenge` + `code_challenge_method=S256` (else
+  `pkce_required`, before anything opens), as Deno Desktop's custom-scheme flow already did, so an
+  app that registers the same callback scheme cannot redeem an intercepted code. A provider that
+  binds the callback another way passes `pkce: "not-applicable"` with a `reason` (the Clerk
+  bridge does). The Expo shims keep Expo's behaviour: `openAuthSessionAsync` with a URL without
+  PKCE (an `AuthRequest` with `usePKCE: false`) still works, with a one-time console warning
+  naming the risk.
+- **Security: printing cannot reach the app's private files.** iOS `printToPrinter` (expo-print's
+  `printAsync({ printerUrl, uri })`, no dialog) printed any file the app could read to any printer
+  URL; it now prints only a file in the app's Documents, Caches or temporary folder. Android
+  `printToFile`'s WebView no longer reads `file:` / `content:` URLs (remote images still load).
+  The print templates move to generation 2; run `denext mobile add print`.
+
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,
