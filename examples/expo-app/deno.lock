@@ -148,7 +148,7 @@
       "jsr:@denext/photon@0.3.6": {},
       "jsr:@denext/react-router@0.5.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.8.0",
+          "jsr:@denext/denext@^4.9.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]

@@ -4,6 +4,12 @@
 
 import { assertEquals } from "@std/assert";
 import { publicSurface, SURFACE_FIXTURE } from "../scripts/public-surface.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// `publicSurface()` runs `deno doc` over every published entrypoint from this process: a stall
+// fails it at the deadline instead of holding the CI job. Under the serial child queue on a loaded
+// Windows runner the whole pass outran the default 10 minutes, so the deadline is 30.
+watchTests(1_800_000);
 
 Deno.test("public API surface matches tests/fixtures/public-surface.json (deno task surface:refresh)", async () => {
   const expected = JSON.parse(await Deno.readTextFile(SURFACE_FIXTURE)) as Record<string, string[]>;

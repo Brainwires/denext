@@ -13,6 +13,12 @@ import {
   tsTypeToSchema,
 } from "../scripts/lib/ts-to-schema.ts";
 import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "../src/server/config-keys.generated.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// The drift test re-derives the schema from a whole-repo `deno doc --json` pass in this process:
+// on a loaded Windows runner (serial child queue) that can outrun the default 10 minutes, so the
+// deadline is 30.
+watchTests(1_800_000);
 
 const STALE = "is stale — run `deno task gen:config-schema` (or `deno task docs:api`) and commit";
 

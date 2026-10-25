@@ -10,7 +10,7 @@ semver, independent of `@denext/denext`.
   `unstable_middleware` export runs outermost route first, before the loader and the action
   (around the handler on a resource route), with React Router's typed context
   (`createContext`, `context.get` / `context.set`). Route typegen adds `Route.MiddlewareFunction`
-  and types `context` for `get` / `set`. Needs the `@denext/denext` release that ships them.
+  and types `context` for `get` / `set`. Requires `@denext/denext` ^4.9.0, which ships them.
 
 ## [0.5.0] - 2026-10-19
 

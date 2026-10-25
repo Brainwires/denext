@@ -9,8 +9,10 @@ import { createTestApp, createTestClient, probeApp } from "../src/testing/mod.ts
 import { watchTests } from "./helpers/watchdog.ts";
 
 // An App Router test app crawls its graph with `deno info` in this process: a stall there fails
-// the test, naming the open subprocess, instead of holding the CI job.
-watchTests();
+// the test, naming the open subprocess, instead of holding the CI job. The plugin test builds an
+// app with prepare and build steps, which on a loaded Windows runner (serial child queue) took
+// longer than the default, so the deadline is 15 minutes.
+watchTests(900_000);
 
 const JSX = new URL("../src/jsx/jsx-runtime.ts", import.meta.url).href;
 const PAGES_ROUTER = new URL("../packages/pages-router/mod.ts", import.meta.url).href;
