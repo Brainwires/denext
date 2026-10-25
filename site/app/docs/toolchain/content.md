@@ -618,6 +618,18 @@ dependency whose exception is missing while the jail is on, and
 a dependency's failed script: which package, what the jail stopped (the network, a write outside
 `node_modules`, a real `npm` / `npx`) and the exception to add.
 
+**Behind a proxy that takes only host names.** From runtime `3.0.0-rc.6` a package's `net` may be
+a host list, and the jail's proxy chains through an `http://` proxy in `HTTPS_PROXY` /
+`HTTP_PROXY` / `ALL_PROXY`, asking it for the address the jail checked. Some corporate proxies
+refuse that. When the install log shows the runtime's warning that the proxy refused the checked
+address (or such a proxy is set in the environment) and a script failed reaching a host its
+package lists, `denext doctor --install-log` suggests
+`"supplyChain": { "jailScripts": { "upstreamByName": true } }`. With it the jail still checks the
+allow-list and refuses a name that resolves to this machine or its network, then asks the proxy
+for the name, which the proxy resolves again itself: a name whose DNS answers differently there
+can reach what the proxy reaches, and the proxy's own policy then holds. It does nothing without
+an upstream proxy, and doctor never suggests turning the jail off.
+
 | Package                                             | Why its script needs more                                                                                 | Exception                                                                                    |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `@prisma/client`                                    | postinstall runs `prisma generate` (may fetch the engines; writes the client to the generator's `output`) | `net`, Prisma's env, `write`: each `output` outside `node_modules`                           |

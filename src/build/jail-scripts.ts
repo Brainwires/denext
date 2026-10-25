@@ -897,3 +897,121 @@ export function explainJailFailures(
   }
   return out;
 }
+
+/** The first release of denext's Deno with per-package host lists and `upstreamByName`. */
+export const UPSTREAM_BY_NAME_RELEASE = "3.0.0-rc.6";
+
+/** The environment variables the jail's proxy chains through (only an `http://` proxy is). */
+const PROXY_ENV = [
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+];
+
+/**
+ * The runtime's install-log warning that an upstream proxy refused the address the jail checked:
+ * `jail-scripts: the upstream proxy refused a tunnel to <host:port> by its checked address (…)`
+ * or `… (or the server) answered <status> to a request for <host:port> by its checked address`.
+ */
+const REFUSED_BY_ADDRESS =
+  /jail-scripts: the upstream proxy (?:refused a tunnel to|\(or the server\) answered \d+ to a request for) (\S+) by its checked address/g;
+
+/** The errors a script meets when the network is out of its reach (the clamp's and the OS's). */
+const NET_SIGNS: readonly RegExp[] = [...CLAMP_SIGNS, ...OS_SIGNS]
+  .filter(([sign]) => sign === "net")
+  .map(([, re]) => re);
+
+/** The allow-list refusal: the host was never one the script may reach. */
+const NOT_LISTED = /jail-scripts: \S+ is not in this lifecycle script's network allow-list/;
+
+/** A `host`, `host:port`, `[v6]` or `[v6]:port` reduced to its lower-cased host. */
+function hostOf(target: string): string {
+  const t = target.trim().toLowerCase();
+  if (t.startsWith("[")) return t.slice(1, Math.max(1, t.indexOf("]")));
+  const colons = t.split(":").length - 1;
+  return colons === 1 ? t.slice(0, t.indexOf(":")) : t;
+}
+
+/** Whether the environment names an `http://` proxy, on a runtime that has `upstreamByName`. */
+function proxyInEnv(env: UpstreamByNameInputs["env"], version: string): boolean {
+  if (!isDenextReleaseVersion(version)) return false;
+  if (compareDenoVersions(version, UPSTREAM_BY_NAME_RELEASE) < 0) return false;
+  return PROXY_ENV.some((name) => /^http:\/\//i.test(env?.(name)?.trim() ?? ""));
+}
+
+/** A package exception's `net` host list (empty for `true` / `false` / none). */
+function hostList(exception: unknown): string[] {
+  const net = objectOf(exception)?.net;
+  return Array.isArray(net) ? net.filter((h): h is string => typeof h === "string") : [];
+}
+
+/**
+ * The listed hosts a failed script's block shows it failing to reach through the proxy: the one
+ * the runtime's warning names, else (a proxy in the environment) the whole list when the block
+ * shows a network failure that is not the allow-list's own refusal.
+ */
+function listedHostsReached(
+  listed: readonly string[],
+  refused: readonly string[],
+  proxyEnv: boolean,
+  block: string,
+): string[] {
+  const named = listed.map(hostOf).filter((h) => refused.includes(h));
+  if (named.length) return named;
+  const proxied = proxyEnv && NET_SIGNS.some((re) => re.test(block)) && !NOT_LISTED.test(block);
+  return proxied ? listed.map(hostOf) : [];
+}
+
+/** What {@linkcode upstreamByNameAdvice} reads. */
+export interface UpstreamByNameInputs {
+  /** The install's output (`denext doctor --install-log`). */
+  readonly output: string;
+  /** The project's parsed deno.json (or null). */
+  readonly denoJson: Record<string, unknown> | null;
+  /** The environment (default: none). */
+  readonly env?: (name: string) => string | undefined;
+  /** The runtime version the project installs with (default: the toolchain pin's). */
+  readonly version?: string;
+}
+
+/**
+ * When to suggest `supplyChain.jailScripts.upstreamByName`: the project installs through an
+ * upstream `http://` proxy (one named in `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` on a runtime
+ * that has the setting, or the runtime's own warning that the proxy refused the checked address),
+ * and a jailed script failed reaching a host its package's `net` host list allows. With the
+ * setting the jail still checks the allow-list and refuses names that resolve to this machine or
+ * its network, then asks the proxy for the host by name, so the proxy resolves it again itself.
+ * Never suggests turning the jail off; says nothing once the setting is on.
+ *
+ * @param inputs The install log, deno.json, environment and runtime version.
+ * @returns The advice lines (empty when it does not apply).
+ */
+export function upstreamByNameAdvice(inputs: UpstreamByNameInputs): string[] {
+  const jail = objectOf(objectOf(inputs.denoJson?.supplyChain)?.jailScripts);
+  if (jail?.upstreamByName === true) return [];
+  const packages = objectOf(jail?.packages) ?? {};
+  const text = stripAnsi(inputs.output);
+  const refused = [...text.matchAll(REFUSED_BY_ADDRESS)].map((m) => hostOf(m[1]));
+  const proxyEnv = proxyInEnv(inputs.env, inputs.version ?? toolchainPin.version);
+  if (!proxyEnv && refused.length === 0) return [];
+  const matches = [...text.matchAll(FAILED_SCRIPT)];
+  const hits = matches.flatMap((m, i) => {
+    const listed = hostList(packages[m[2]]);
+    const block = text.slice(m.index, matches[i + 1]?.index ?? text.length);
+    const hosts = listedHostsReached(listed, refused, proxyEnv, block);
+    return hosts.length ? [`${m[2]} (${hosts.join(", ")})`] : [];
+  });
+  if (hits.length === 0) return [];
+  return [
+    `${hits.join(", ")}: a jailed script failed to reach a listed host through this network's ` +
+    "proxy, which may accept only host names, not the address the jail checked",
+    '  fix: deno.json "supplyChain": { "jailScripts": { "upstreamByName": true } } asks the ' +
+    "proxy for the host by name. Trade-off: the jail still checks the allow-list and refuses a " +
+    "name that resolves to this machine or its network, but the proxy then resolves the name " +
+    "again itself, so a name whose DNS answers differently there can reach what the proxy " +
+    "reaches. Keep the jail on.",
+  ];
+}

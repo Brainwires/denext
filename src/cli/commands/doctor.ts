@@ -58,6 +58,7 @@ import {
   jailSnippet,
   readJailProject,
   requiredJailExceptions,
+  upstreamByNameAdvice,
 } from "../../build/jail-scripts.ts";
 
 /** Whether `path` is an existing directory. */
@@ -335,6 +336,15 @@ export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
   };
 }
 
+/** The process environment, never throwing (no `--allow-env`). */
+function safeEnv(name: string): string | undefined {
+  try {
+    return Deno.env.get(name);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Options for {@linkcode jailScriptsCheck}. */
 export interface JailScriptsCheckOptions {
   /** The runtime version the project installs with (default: the toolchain pin's). */
@@ -366,7 +376,8 @@ function approvesScripts(denoJson: Record<string, unknown> | null): boolean {
  * The lifecycle-script jail check: dependencies in denext's built-in list
  * (src/build/jail-exceptions.ts) that need a `supplyChain.jailScripts.packages` exception while
  * the jail is on for the project and have none, and, given an install log, the dependencies'
- * scripts it shows failing in the jail. Advisory. Null when the project has none of those
+ * scripts it shows failing in the jail (with `supplyChain.jailScripts.upstreamByName` suggested
+ * when a listed host failed through a proxy that may take only host names). Advisory. Null when the project has none of those
  * dependencies and the log (if any) shows no jail failure.
  *
  * @param dir The project directory.
@@ -379,11 +390,17 @@ export async function jailScriptsCheck(
 ): Promise<Check | null> {
   const name = "lifecycle-script jail";
   const os = options.os ?? Deno.build.os;
-  const explained = explainJailFailures(
-    jailFailures(options.installLog ?? "", os),
-    options.version,
-  );
+  const log = options.installLog ?? "";
   const project = await readJailProject(dir, options.env ? { env: options.env } : {});
+  const explained = [
+    ...explainJailFailures(jailFailures(log, os), options.version),
+    ...upstreamByNameAdvice({
+      output: log,
+      denoJson: project.denoJson,
+      env: options.env ?? safeEnv,
+      ...(options.version ? { version: options.version } : {}),
+    }),
+  ];
   const required = (await requiredJailExceptions(project, undefined, options.version))
     .filter(grantsSomething);
   const blocked = jailBlockers(project, os);
