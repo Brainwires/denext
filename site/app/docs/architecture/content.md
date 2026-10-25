@@ -242,7 +242,9 @@ opt-in via `asyncContext`: `src/build/async-context-transform.ts` brackets
 each `await`/`for await` (`const $ = __asyncScope(); try { … await __asyncAwait($, X) … }
 finally { __asyncScopeEnd($); }`) so the frame's context is restored on resume **and** the
 ambient context is restored on completion — no trailing leak, so an urgent update after a
-transition settles is never mis-scoped. The runtime primitive (`src/runtime/async-context.ts`)
+transition settles is never mis-scoped. An async generator's `yield` and `yield*` are
+bracketed the same way (a `yield*` delegate's every step runs in the frame's context), and a
+module with a top-level `await` gets a module scope that its later statements resume in. The runtime primitive (`src/runtime/async-context.ts`)
 is a first-party `AsyncContext` (`Variable` + `Snapshot`); the reconciler reads a build-swapped
 mode `const` to choose identity scoping vs the default window. Like the qrl/auto-memo passes it
 touches only the **client** bundle (the server runs the original source, and the helpers are

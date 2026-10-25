@@ -292,13 +292,42 @@ function renderWithStrictMode(
 ): VNode | null {
   const baselineLength = inst.hooks!.length;
   const result = runRenderPhase(inst, baselineLength, type, props, ref, forwardsRef);
-  return strictPass !== null && hasBit(inst, StrictBit)
-    ? strictPass(result, inst, baselineLength, type, props, ref, forwardsRef)
+  return devPass !== null
+    ? devPass(result, inst, baselineLength, type, props, ref, forwardsRef)
     : result ?? null;
 }
 
-/** The StrictMode second render pass; null until the dev path installs it. */
-let strictPass: typeof strictSecondPass | null = null;
+/**
+ * The dev pass over a render's result — StrictMode's second render, then the owner stamp; null
+ * until the dev path installs either, so production calls nothing here.
+ */
+let devPass: typeof devRenderPass | null = null;
+/** Whether StrictMode's second render is installed ({@linkcode installStrictRender}). */
+let strictOn = false;
+/** Notes the rendering component as the owner of the elements its render made (dev). */
+let ownerStamp: ((result: VNode | null, inst: Fiber) => void) | null = null;
+
+/** The installed dev pass: StrictMode's second render under a `<StrictMode>`, then the stamp. */
+function devRenderPass(
+  first: VNode | null | undefined,
+  inst: Fiber,
+  baselineLength: number,
+  type: RenderFn,
+  props: unknown,
+  ref: unknown,
+  forwardsRef: boolean,
+): VNode | null {
+  const result = strictOn && hasBit(inst, StrictBit)
+    ? strictSecondPass(first, inst, baselineLength, type, props, ref, forwardsRef)
+    : first ?? null;
+  ownerStamp?.(result, inst);
+  return result;
+}
+
+/** Point {@linkcode devPass} at the dev pass while any part of it is installed. */
+function syncDevPass(): void {
+  devPass = strictOn || ownerStamp !== null ? devRenderPass : null;
+}
 
 /**
  * StrictMode's second render pass (dev; `first` is used as is without `__denextDev`). The first
@@ -338,7 +367,22 @@ function strictSecondPass(
  * contains it.
  */
 export function installStrictRender(on = true): void {
-  strictPass = on ? strictSecondPass : null;
+  strictOn = on;
+  syncDevPass();
+}
+
+/**
+ * Install (or, with `null`, remove) the dev owner stamp: called with each component's render
+ * result, it records that component as the owner of the elements the render made. Called from
+ * the dev path only (`installOwnerStack`).
+ *
+ * @param stamp The stamp, or `null`.
+ */
+export function installRenderOwners(
+  stamp: ((result: VNode | null, inst: Fiber) => void) | null,
+): void {
+  ownerStamp = stamp;
+  syncDevPass();
 }
 
 /**

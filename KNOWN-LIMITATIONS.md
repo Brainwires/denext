@@ -21,10 +21,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
   `AsyncContext`, so an unrelated urgent update raised outside an event handler while an async
   transition is pending is treated as a transition. `asyncContext: true` scopes by identity (it
-  instruments every client `await`; `yield*` delegation and top-level `await` are not).
-- **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
-  `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
-  a server render it returns `null`.
+  instruments every client `await`, async generator `yield` / `yield*` and top-level `await`).
+  An async generator resumed by `throw()` / `return()` at a plain `yield` runs its `catch` /
+  `finally` in the caller's context, not its own, and a module whose top-level evaluation throws
+  leaves its context current.
+- **`captureOwnerStack()` returns `null` during a server render**, and an element made with
+  `h()` / `createElement` gets its owner when a render returns it (the component whose render
+  result first holds it), not when it is made: one built outside any render (a module-level
+  constant) is owned by the first component that returns it, where React gives it none, and its
+  frame carries no JSX call site.
 - **A native App Router or SPA build leaves out three runtimes the app's own sources never name**
   (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
   blur placeholders in server-only trees (kept when a source names `blurDataURL` or a
@@ -329,8 +334,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   them; an inline element (`<b>`, `<span>`, …) is closed at the end of the paragraph, heading,
   cell or item it was written in. Use an `.mdx` entry for components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
-  ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
-  file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party
+  the plain-text settings `container_name`, `hostname`, `working_dir`, `user`, `platform`,
+  `stop_signal` and `stop_grace_period`, ports, volumes, environment, depends_on, networks); the
+  rest (`command`, `healthcheck`, `labels`, …) is hand-edited, and a multi-document file is
+  read-only. A field a merge key (`<<`) supplies can be overridden, not deleted: Compose itself
+  can't drop a merged value for one service (`!reset` leaves it in place). A third-party
   plugin's form needs a published `denext.catalog.optionsSchema`; code-valued options are
   read-only.
 
@@ -351,16 +359,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   route's middleware. On a resource route and a plain POST to a page's action `next()` runs the
   real handler. `clientMiddleware` does not run.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **Prisma auto-migration wires SQLite, Postgres (CockroachDB too) and MySQL only:** a
-  `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
-  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). SQLite and Postgres
+- **Prisma auto-migration wires SQLite, Postgres (CockroachDB too), MySQL and SQL Server only:**
+  a `mongodb` datasource keeps its `new PrismaClient()` unwired (Prisma 6 has no MongoDB driver
+  adapter). SQL Server's `@prisma/adapter-mssql` (over npm `mssql`) is wired and unit-tested but
+  not yet run against a live SQL Server. SQLite and Postgres
   run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
   3.0.0-rc.1 or later; on an earlier runtime migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
   and MySQL always take theirs.
 - **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
-  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query), and reads `money` with
-  two fractional digits (`lc_monetary` `C` / `en_US`).
+  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query). `money` is read at
+  the fractional digits of `lc_monetary` as the first `money` result found it: a session that
+  changes `lc_monetary` later (`SET lc_monetary`) keeps the client's first answer.
 
 ### Fresh and Preact
 

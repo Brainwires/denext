@@ -235,8 +235,8 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
       "10) and a tint from blurType: dark* names are dark, light / xlight light, the materials " +
       "neutral. overlayColor replaces the tint, enabled={false} renders a plain view, and " +
       "reducedTransparencyFallbackColor becomes the background where backdrop-filter is " +
-      "unsupported. VibrancyView adds no vibrancy effect; blurRadius / downsampleFactor / " +
-      "autoUpdate are ignored.",
+      "unsupported. Android's blurRadius (0-25 px) overrides the radius blurAmount sets. " +
+      "VibrancyView adds no vibrancy effect; downsampleFactor / autoUpdate are ignored.",
   },
 
   "react-native-webview": {

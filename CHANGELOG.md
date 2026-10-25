@@ -224,6 +224,37 @@ and this project adheres to
   `lustreElement` / `defineLustreView` as opt-in pointers) for review. See
   https://denext.dev/docs/migrating-lustre.
 
+- **`captureOwnerStack()` follows the owner of `h()` / `createElement` elements (development).**
+  An element made without `jsxDEV` recorded no owner, so its stack (and the DevTools owner stack)
+  was the render-parent chain: a component passed through a wrapper as `children` listed the
+  wrapper. The client dev path now records the rendering component as the owner of each element
+  its render returns (its `children` and element-valued props), so the stack names the component
+  that wrote the element, as React's does. Production renders are unchanged and record nothing.
+
+- **`@react-native-community/blur`'s `blurRadius` is honoured (React Native mode).** Android's
+  explicit radius (0–25 pixels) now sets the backdrop blur, overriding the one `blurAmount`
+  gives; before, it was ignored.
+
+- **`denext ui`'s compose editor edits more of a service.** Each service form (and the
+  `/api/docker` twin's `set` operation) now writes `container_name`, `hostname`, `working_dir`,
+  `user`, `platform`, `stop_signal` and `stop_grace_period`, in place and comment-preserving like
+  `image`; clearing one deletes it. Before, those fields were hand-edited only.
+
+- **`asyncContext: true` covers `yield*` and top-level `await`.** A `yield*` in an async
+  generator now keeps the generator's context: the delegate's every step runs in it, the caller's
+  context is back while the generator is suspended, and the body after the delegation resumes in
+  it (`return()` and `throw()` are forwarded, and a delegate with no `throw` is closed with a
+  `TypeError`, as `yield*` does). Before, a generator with a `yield*` was left uninstrumented
+  whole. A module with a top-level `await` (or `for await`) gets a module scope, so its statements
+  after the `await` run in the context its evaluation started in, and an async generator that only
+  yields is instrumented too.
+
+- **`denext migrate` wires a Prisma SQL Server datasource.** A `provider = "sqlserver"` schema
+  gets `@prisma/adapter-mssql` (over npm `mssql`) injected at each `new PrismaClient()`, reading
+  Prisma's `sqlserver://…` URL from the variable `url = env("…")` names, pinned in deno.json and
+  checked by the `prisma:setup` task, as Postgres and MySQL are. Before, it was left unwired with
+  a warning to add the adapter by hand. MongoDB stays unwired (Prisma 6 has no driver adapter).
+
 ### Changed
 
 - **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The
@@ -625,6 +656,12 @@ and this project adheres to
   directory's unresolved spelling, so it refused them all with "path escapes its directory". The
   directory's real path now comes from its nearest existing ancestor, the same way the requested
   path's does. `..` and symlink escapes are still refused.
+
+- **`denext/prisma-adapter` reads Postgres `money` at the server's `lc_monetary`.** A `money`
+  value is a count of the currency's smallest unit, and the adapter divided it by 100 whatever the
+  locale: under `ja_JP` (no fractional digits) ¥1500 read as `15.00`, under `ar_KW` (three) it
+  read ten times too large. The adapter now asks the server's fractional digits once per client,
+  when a result first carries a `money` column (or an array or domain of one).
 
 ### Security
 

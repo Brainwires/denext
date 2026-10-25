@@ -92,22 +92,77 @@ Deno.test("captureOwnerStack: a jsxDEV element's stack is its JSX owners, with t
   });
 });
 
-Deno.test("captureOwnerStack: elements from h() keep the render-parent chain", async () => {
+Deno.test("captureOwnerStack: an h() element is owned by the render that made it", async () => {
   await withDev(true, async () => {
     const seen: Array<string | null> = [];
     function Child(): VNode {
       seen.push(captureOwnerStack());
       return h("span", null);
     }
-    function Layout({ children }: { children?: VNodeChildren }): VNode {
-      return h("main", null, children);
+    function Icon(): VNode {
+      seen.push(captureOwnerStack());
+      return h("i", null);
+    }
+    function Layout(
+      { children, icon }: { children?: VNodeChildren; icon?: VNodeChildren },
+    ): VNode {
+      return h("main", null, icon, h("section", null, children));
     }
     function Page(): VNode {
-      return h(Layout, null, h(Child, null));
+      return h(Layout, { icon: h(Icon, null) }, [h(Child, { key: "c" })]);
+    }
+    function App(): VNode {
+      return h("div", null, h(Page, null));
+    }
+    const screen = await render(h(App, null));
+    screen.unmount();
+    // Layout placed Child and Icon but Page wrote them (as children and as a prop), as React's
+    // owner stack says; the root element was made outside any render, so the chain ends at App.
+    assertEquals(seen.slice(0, 2), ["\n    at Page\n    at App", "\n    at Page\n    at App"]);
+  });
+});
+
+Deno.test("captureOwnerStack: a jsxDEV owner is kept, and h() elements stay unowned in production", async () => {
+  await withDev(true, async () => {
+    const seen: Array<string | null> = [];
+    function Child(): VNode {
+      seen.push(captureOwnerStack());
+      return h("span", null);
+    }
+    function Wrapper({ children }: { children?: VNodeChildren }): VNode {
+      return h("div", null, children);
+    }
+    function Page(): VNode {
+      // written with jsxDEV: its owner (Page) is recorded at creation, not re-stamped by Wrapper
+      return h(Wrapper, null, dev(Child, {}, 7));
     }
     const screen = await render(h(Page, null));
     screen.unmount();
-    assertEquals(seen[0], "\n    at Layout\n    at Page");
+    assertEquals(seen[0], "\n    at Page (app/page.tsx:7:5)");
+  });
+  await withDev(true, async () => {
+    // A frozen element can't take an owner: it renders, and keeps the render-parent fallback.
+    const seen: Array<string | null> = [];
+    function Leaf(): VNode {
+      seen.push(captureOwnerStack());
+      return h("b", null);
+    }
+    function Holder(): VNode {
+      return Object.freeze(h(Leaf, null));
+    }
+    const screen = await render(h(Holder, null));
+    screen.unmount();
+    assertEquals(seen[0], "\n    at Holder");
+  });
+  await withDev(false, async () => {
+    let made: VNode | null = null;
+    function Page(): VNode {
+      made = h("span", null);
+      return made;
+    }
+    const screen = await render(h(Page, null));
+    screen.unmount();
+    assert(made && !("_owner" in made), "no owner is recorded outside development");
   });
 });
 

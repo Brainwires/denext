@@ -8,8 +8,9 @@
 //
 // A Postgres or MySQL datasource takes the same path with that database's driver adapter
 // instead: `@prisma/adapter-pg` (over the npm `pg` driver) or `@prisma/adapter-mariadb` (over
-// the npm `mariadb` driver, which speaks MySQL too). Those are pure-JS drivers on Deno's Node
-// compat, so they need no `links` substitution and no bundled compat.
+// the npm `mariadb` driver, which speaks MySQL too), and a SQL Server one `@prisma/adapter-mssql`
+// (over the npm `mssql` driver). Those are pure-JS drivers on Deno's Node compat, so they need no
+// `links` substitution and no bundled compat.
 //
 // On denext's Deno runtime 3.0.0-rc.1 and later, whose `Deno.SQL` reports each result
 // column's type, a SQLite or Postgres datasource is wired to `denext/prisma-adapter` instead:
@@ -45,7 +46,7 @@ const SETUP_TASK = "prisma:setup";
 const SEED_TASK = "prisma:seed";
 
 /** The datasource providers denext wires a driver adapter for. */
-export type PrismaProvider = "sqlite" | "postgresql" | "mysql";
+export type PrismaProvider = "sqlite" | "postgresql" | "mysql" | "sqlserver";
 
 /** The specifier the generated code imports `denext/prisma-adapter` by. */
 const DENO_SQL_ADAPTER = "denext/prisma-adapter";
@@ -109,10 +110,27 @@ const __denextPrismaAdapter = () =>
   new __PrismaMariaDb(Deno.env.get(${JSON.stringify(envVar)}) ?? "");`,
 };
 
+/**
+ * SQL Server: Prisma's adapter over the npm `mssql` driver. It takes Prisma's own
+ * `sqlserver://host:port;database=…;user=…;password=…` URL (and its `schema=`) as is.
+ */
+const MSSQL_ADAPTER: DriverAdapter = {
+  provider: "sqlserver",
+  pkg: "@prisma/adapter-mssql",
+  target: `npm:@prisma/adapter-mssql@${PRISMA_VERSION}`,
+  className: "PrismaMssql",
+  helper: (envVar) =>
+    `import { PrismaMssql as __PrismaMssql } from "@prisma/adapter-mssql";
+// The datasource URL (\`${envVar}\`, as schema.prisma names it; Prisma's \`sqlserver://\` form).
+const __denextPrismaAdapter = () =>
+  new __PrismaMssql(Deno.env.get(${JSON.stringify(envVar)}) ?? "");`,
+};
+
 const ADAPTERS: Record<PrismaProvider, DriverAdapter> = {
   sqlite: SQLITE_ADAPTER,
   postgresql: PG_ADAPTER,
   mysql: MYSQL_ADAPTER,
+  sqlserver: MSSQL_ADAPTER,
 };
 
 /**
@@ -172,8 +190,8 @@ export function readDatasource(schema: string): PrismaDatasource {
 /**
  * The provider denext wires for a datasource `provider` (`postgres` is Prisma's alias of
  * `postgresql`; `cockroachdb` speaks the Postgres wire protocol, and Prisma takes the Postgres
- * adapter for it), or null for one it has no adapter path for (`sqlserver`, `mongodb`). A
- * schema without a readable provider is treated as SQLite, as before.
+ * adapter for it), or null for one it has no adapter path for (`mongodb`: Prisma 6 has no
+ * driver adapter for it). A schema without a readable provider is treated as SQLite, as before.
  */
 export function wiredProvider(provider: string | null): PrismaProvider | null {
   if (provider === null || provider === "sqlite") return "sqlite";
@@ -181,6 +199,7 @@ export function wiredProvider(provider: string | null): PrismaProvider | null {
     return "postgresql";
   }
   if (provider === "mysql") return "mysql";
+  if (provider === "sqlserver") return "sqlserver";
   return null;
 }
 
@@ -309,8 +328,8 @@ async function transformPrismaApp(plan: TransformPlan): Promise<PrismaMigrateInf
   if (!adapter) {
     warnings.push(
       `the datasource provider "${plan.provider}" has no driver adapter denext wires (SQLite, ` +
-        "Postgres, CockroachDB and MySQL do) — `new PrismaClient()` was left as is; pass the provider's " +
-        "driver adapter by hand (sqlserver: `@prisma/adapter-mssql`; MongoDB has none in Prisma 6).",
+        "Postgres, CockroachDB, MySQL and SQL Server do) — `new PrismaClient()` was left as is; " +
+        "pass the provider's driver adapter by hand (MongoDB has none in Prisma 6).",
     );
   }
 

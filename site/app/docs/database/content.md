@@ -359,8 +359,9 @@ from the same module tells.
 What it reads, and how:
 
 - **Postgres** results are read in Postgres' binary format and decoded to what
-  Prisma expects: `int8` and `numeric` as exact decimal strings, `money`,
-  `json` / `jsonb` text, `bytea`, `uuid`, `date`, `time`, `timetz`, `inet`,
+  Prisma expects: `int8` and `numeric` as exact decimal strings, `money` (with
+  the fractional digits of the server's `lc_monetary`, asked once per client
+  when a result first has a `money` column), `json` / `jsonb` text, `bytea`, `uuid`, `date`, `time`, `timetz`, `inet`,
   `cidr`, bit strings, enums, domains, and arrays of all of them (nested and
   with nulls). `timestamp` and `timestamptz` come back in UTC exactly — a
   wall-clock time the server process's own time zone skips (a daylight-saving
@@ -497,6 +498,7 @@ const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: Deno.env.get("DATABASE_URL") }),
 });
 // MySQL: new PrismaMariaDb(Deno.env.get("DATABASE_URL")!) from "@prisma/adapter-mariadb"
+// SQL Server: new PrismaMssql(Deno.env.get("DATABASE_URL")!) from "@prisma/adapter-mssql"
 ```
 
 `denext migrate` wires it from the schema: it reads the `datasource` block's
@@ -512,10 +514,11 @@ datasource to `denext/prisma-adapter` instead (above): no `pg` dependency.
 
 A `cockroachdb` datasource takes the Postgres path: CockroachDB speaks the
 Postgres wire protocol, so migrate injects `@prisma/adapter-pg` the same way.
-A `sqlserver` or `mongodb` datasource is not wired: migrate rewrites the schema
-and imports, leaves `new PrismaClient()` as it is and says so. For SQL Server
-pass `@prisma/adapter-mssql` by hand; Prisma 6 has no driver adapter for
-MongoDB. `tests/e2e/prisma-server-db.e2e.test.ts` migrates a Prisma app and
+A `sqlserver` datasource takes `@prisma/adapter-mssql` (over the npm `mssql`
+driver), which reads Prisma's own `sqlserver://host:port;database=…` URL from
+the variable the schema names. A `mongodb` datasource is not wired: migrate
+rewrites the schema and imports, leaves `new PrismaClient()` as it is and says
+so; Prisma 6 has no driver adapter for MongoDB. `tests/e2e/prisma-server-db.e2e.test.ts` migrates a Prisma app and
 runs it against a live Postgres, CockroachDB and MySQL (CRUD, relations,
 transactions, raw queries, `migrate deploy`, a built and served app) when
 `DENEXT_E2E_POSTGRES_URL` / `DENEXT_E2E_COCKROACH_URL` / `DENEXT_E2E_MYSQL_URL`

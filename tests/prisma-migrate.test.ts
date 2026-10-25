@@ -393,14 +393,43 @@ Deno.test("prisma migrate: a mysql datasource gets @prisma/adapter-mariadb", asy
   await Deno.remove(dir, { recursive: true });
 });
 
-Deno.test("prisma migrate: an unwired provider keeps its constructions and says why", async () => {
+Deno.test("prisma migrate: a sqlserver datasource gets @prisma/adapter-mssql", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "sqlserver"\n  url = env("MSSQL_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT, prismaAdapter: "npm" });
+  assertEquals(r.prisma?.provider, "sqlserver");
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-mssql");
+  assertEquals(r.prisma?.clientModules, ["app/db.server.ts"]);
+  assert(!r.prisma?.warnings.some((w) => w.includes("has no driver adapter")));
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(db, `import { PrismaMssql as __PrismaMssql } from "@prisma/adapter-mssql";`);
+  assertStringIncludes(db, `new __PrismaMssql(Deno.env.get("MSSQL_URL") ?? "")`);
+  assertStringIncludes(db, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+  const deno = await denoJson(dir);
+  assertEquals((deno as { links?: string[] }).links, undefined);
+  assertEquals(deno.imports?.["@prisma/adapter-mssql"], "npm:@prisma/adapter-mssql@6.19.3");
+  assertStringIncludes(
+    await read(dir, "scripts/denext-prisma-setup.ts"),
+    `const URL_VAR = "MSSQL_URL";`,
+  );
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate (deno-sql): SQL Server keeps its npm adapter", async () => {
   const dir = await scaffoldPrismaApp(`provider = "sqlserver"\n  url = env("DATABASE_URL")`);
+  const r = await migrateProject(dir, DENO_SQL);
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-mssql");
+  assert(!("denext/prisma-adapter" in ((await denoJson(dir)).imports ?? {})));
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: an unwired provider keeps its constructions and says why", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "mongodb"\n  url = env("DATABASE_URL")`);
   const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT, prismaAdapter: "npm" });
   assertEquals(r.prisma?.adapter, null);
   assertEquals(r.prisma?.clientModules, []);
-  assert(r.prisma?.warnings.some((w) => w.includes(`"sqlserver" has no driver adapter`)));
+  assert(r.prisma?.warnings.some((w) => w.includes(`"mongodb" has no driver adapter`)));
   const db = await read(dir, "app/db.server.ts");
-  assertStringIncludes(db, "new PrismaClient()", "no SQLite adapter forced onto SQL Server");
+  assertStringIncludes(db, "new PrismaClient()", "no SQLite adapter forced onto MongoDB");
   assert(!db.includes("__denextPrismaAdapter"));
   await Deno.remove(dir, { recursive: true });
 });
@@ -418,6 +447,7 @@ Deno.test("prisma migrate: readDatasource / wiredProvider", () => {
   assertEquals(wiredProvider(null), "sqlite");
   assertEquals(wiredProvider("postgres"), "postgresql");
   assertEquals(wiredProvider("mysql"), "mysql");
+  assertEquals(wiredProvider("sqlserver"), "sqlserver");
   assertEquals(wiredProvider("mongodb"), null);
   assertEquals(wiredProvider("cockroachdb"), "postgresql");
 });
