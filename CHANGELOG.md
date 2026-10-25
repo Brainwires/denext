@@ -26,6 +26,12 @@ and this project adheres to
   `denext doctor --install-log <file>` explains an install's failed scripts as jail failures with
   the exception to add. denext never turns the jail off for you. See
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
+- **`denext doctor --install-log` suggests `supplyChain.jailScripts.upstreamByName`** when a
+  jailed script failed to reach a host its package's `net` list allows and the install went
+  through an upstream `http://` proxy (the runtime's warning that the proxy refused the checked
+  address, or `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` on runtime `3.0.0-rc.6` or later), with
+  the trade-off: the jail still refuses names that resolve to internal addresses, but the proxy
+  resolves the name again itself. It never suggests turning the jail off.
 
 ### Changed
 

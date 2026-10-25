@@ -22,6 +22,8 @@ import {
   npmPackageName,
   npmrcValue,
   readJailSetting,
+  UPSTREAM_BY_NAME_RELEASE,
+  upstreamByNameAdvice,
 } from "../src/build/jail-scripts.ts";
 import { compareDenoVersions } from "../src/build/deno-version.ts";
 import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
@@ -385,6 +387,116 @@ Deno.test("jail: an install log's jail failures are recognised and explained", (
       "error: This deno subcommand is not allowed in a jailed npm lifecycle script (jail-scripts).",
   );
   assertEquals(deno[0].signs, ["deno"]);
+});
+
+/** A host-listed package's script failing through a proxy that refused the checked address. */
+const PROXY_LOG = `\x1b[33mWarning\x1b[0m jail-scripts: the upstream proxy refused a tunnel to ` +
+  `storage.googleapis.com:443 by its checked address (403 Forbidden); if this network's proxy ` +
+  `only accepts host names, set "upstreamByName": true in supplyChain.jailScripts in deno.json.
+error: script 'postinstall' in 'puppeteer@24.1.0' failed with exit code 1
+stderr:
+Error: fetch failed
+`;
+
+/** deno.json with a host list for puppeteer (and `extra` merged into jailScripts). */
+function hostListed(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    supplyChain: {
+      jailScripts: { packages: { puppeteer: { net: ["storage.googleapis.com"] } }, ...extra },
+    },
+  };
+}
+
+Deno.test("jail: upstreamByName is suggested when a listed host failed through a name-only proxy", () => {
+  const advice = upstreamByNameAdvice({ output: PROXY_LOG, denoJson: hostListed(), env: NO_ENV });
+  const text = advice.join("\n");
+  assertStringIncludes(text, "puppeteer (storage.googleapis.com)");
+  assertStringIncludes(text, '"jailScripts": { "upstreamByName": true }');
+  assertStringIncludes(text, "refuses a name that resolves to this machine or its network");
+  assertStringIncludes(text, "resolves the name again itself");
+  assertStringIncludes(text, "Keep the jail on");
+  assertFalse(text.includes('"jailScripts": false'), "never suggests turning the jail off");
+  // already on, or no host list (whole network / unlisted package): nothing to suggest
+  assertEquals(
+    upstreamByNameAdvice({ output: PROXY_LOG, denoJson: hostListed({ upstreamByName: true }) }),
+    [],
+  );
+  for (const net of [true, ["example.com"]]) {
+    const denoJson = { supplyChain: { jailScripts: { packages: { puppeteer: { net } } } } };
+    assertEquals(upstreamByNameAdvice({ output: PROXY_LOG, denoJson, env: NO_ENV }), []);
+  }
+  assertEquals(upstreamByNameAdvice({ output: PROXY_LOG, denoJson: null }), []);
+  // no proxy in sight: a failed download is not a proxy problem
+  const plain = INSTALL_LOG;
+  assertEquals(upstreamByNameAdvice({ output: plain, denoJson: hostListed(), env: NO_ENV }), []);
+  // a proxy named in the environment, on a runtime that has the setting
+  const proxyEnv = (n: string) => n === "HTTPS_PROXY" ? "http://proxy.corp:3128" : undefined;
+  const viaEnv = upstreamByNameAdvice({
+    output: plain,
+    denoJson: hostListed(),
+    env: proxyEnv,
+    version: UPSTREAM_BY_NAME_RELEASE,
+  });
+  assertStringIncludes(viaEnv.join("\n"), "puppeteer (storage.googleapis.com)");
+  assertFalse(viaEnv.join("\n").includes("proxy.corp"), "the proxy URL is never echoed");
+  // ...but not before that runtime, nor for an https:// proxy the jail doesn't chain through
+  assertEquals(
+    upstreamByNameAdvice({ output: plain, denoJson: hostListed(), env: proxyEnv, version: RC5 }),
+    [],
+  );
+  const httpsProxy = (n: string) => n === "HTTPS_PROXY" ? "https://proxy.corp" : undefined;
+  assertEquals(
+    upstreamByNameAdvice({
+      output: plain,
+      denoJson: hostListed(),
+      env: httpsProxy,
+      version: UPSTREAM_BY_NAME_RELEASE,
+    }),
+    [],
+  );
+  // a host outside the allow-list is the list's problem, not the proxy's
+  const unlisted = "error: script 'postinstall' in 'puppeteer@24.1.0' failed with exit code 1\n" +
+    "jail-scripts: cdn.example.com:443 is not in this lifecycle script's network allow-list\n" +
+    "Error: fetch failed\n";
+  assertEquals(
+    upstreamByNameAdvice({
+      output: unlisted,
+      denoJson: hostListed(),
+      env: proxyEnv,
+      version: UPSTREAM_BY_NAME_RELEASE,
+    }),
+    [],
+  );
+  // the status form of the warning, and an IPv6 / bracketed host
+  const status = "jail-scripts: the upstream proxy (or the server) answered 400 to a request " +
+    "for [2001:db8::1]:443 by its checked address; …\n" +
+    "error: script 'install' in 'mirror-pkg@1.0.0' failed with exit code 1\n";
+  const v6 = upstreamByNameAdvice({
+    output: status,
+    denoJson: {
+      supplyChain: { jailScripts: { packages: { "mirror-pkg": { net: ["[2001:db8::1]"] } } } },
+    },
+  });
+  assertStringIncludes(v6.join("\n"), "mirror-pkg (2001:db8::1)");
+});
+
+Deno.test("doctor: the jail check suggests upstreamByName from an install log", async () => {
+  const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
+  const dir = await project({ "deno.json": hostListed(), "package.json": { dependencies: {} } });
+  try {
+    const check = await jailScriptsCheck(dir, { version: RC5, env: NO_ENV, installLog: PROXY_LOG });
+    assertEquals([check?.ok, check?.critical], [false, false]);
+    assertStringIncludes(check!.detail, "puppeteer@24.1.0's postinstall script failed");
+    assertStringIncludes(check!.detail, '"upstreamByName": true');
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify(hostListed({ upstreamByName: true })),
+    );
+    const set = await jailScriptsCheck(dir, { version: RC5, env: NO_ENV, installLog: PROXY_LOG });
+    assertFalse(set!.detail.includes("upstreamByName"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("doctor: the jail check flags a missing exception, then passes once it is written", async () => {

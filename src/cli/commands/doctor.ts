@@ -54,6 +54,7 @@ import {
   jailSnippet,
   readJailProject,
   requiredJailExceptions,
+  upstreamByNameAdvice,
 } from "../../build/jail-scripts.ts";
 
 /** Whether `path` is an existing directory. */
@@ -331,6 +332,15 @@ export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
   };
 }
 
+/** The process environment, never throwing (no `--allow-env`). */
+function safeEnv(name: string): string | undefined {
+  try {
+    return Deno.env.get(name);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Options for {@linkcode jailScriptsCheck}. */
 export interface JailScriptsCheckOptions {
   /** The runtime version the project installs with (default: the toolchain pin's). */
@@ -345,7 +355,8 @@ export interface JailScriptsCheckOptions {
  * The lifecycle-script jail check: dependencies in denext's built-in list
  * (src/build/jail-exceptions.ts) that need a `supplyChain.jailScripts.packages` exception while
  * the jail is on for the project and have none, and, given an install log, the dependencies'
- * scripts it shows failing in the jail. Advisory. Null when the project has none of those
+ * scripts it shows failing in the jail (with `supplyChain.jailScripts.upstreamByName` suggested
+ * when a listed host failed through a proxy that may take only host names). Advisory. Null when the project has none of those
  * dependencies and the log (if any) shows no jail failure.
  *
  * @param dir The project directory.
@@ -357,8 +368,17 @@ export async function jailScriptsCheck(
   options: JailScriptsCheckOptions = {},
 ): Promise<Check | null> {
   const name = "lifecycle-script jail";
-  const explained = explainJailFailures(jailFailures(options.installLog ?? ""));
+  const log = options.installLog ?? "";
   const project = await readJailProject(dir, options.env ? { env: options.env } : {});
+  const explained = [
+    ...explainJailFailures(jailFailures(log)),
+    ...upstreamByNameAdvice({
+      output: log,
+      denoJson: project.denoJson,
+      env: options.env ?? safeEnv,
+      ...(options.version ? { version: options.version } : {}),
+    }),
+  ];
   const required = await requiredJailExceptions(project);
   if (required.length === 0 && explained.length === 0) return null;
   const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
