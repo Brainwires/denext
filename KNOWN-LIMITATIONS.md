@@ -21,7 +21,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
   `AsyncContext`, so an unrelated urgent update raised outside an event handler while an async
   transition is pending is treated as a transition. `asyncContext: true` scopes by identity (it
-  instruments every client `await`; `yield*` delegation and top-level `await` are not).
+  instruments every client `await`, async generator `yield` / `yield*` and top-level `await`).
+  An async generator resumed by `throw()` / `return()` at a plain `yield` runs its `catch` /
+  `finally` in the caller's context, not its own, and a module whose top-level evaluation throws
+  leaves its context current.
 - **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
   `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
   a server render it returns `null`.

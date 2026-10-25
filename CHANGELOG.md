@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **`asyncContext: true` covers `yield*` and top-level `await`.** A `yield*` in an async
+  generator now keeps the generator's context: the delegate's every step runs in it, the caller's
+  context is back while the generator is suspended, and the body after the delegation resumes in
+  it (`return()` and `throw()` are forwarded, and a delegate with no `throw` is closed with a
+  `TypeError`, as `yield*` does). Before, a generator with a `yield*` was left uninstrumented
+  whole. A module with a top-level `await` (or `for await`) gets a module scope, so its statements
+  after the `await` run in the context its evaluation started in, and an async generator that only
+  yields is instrumented too.
+
 - **`denext migrate` wires a Prisma SQL Server datasource.** A `provider = "sqlserver"` schema
   gets `@prisma/adapter-mssql` (over npm `mssql`) injected at each `new PrismaClient()`, reading
   Prisma's `sqlserver://…` URL from the variable `url = env("…")` names, pinned in deno.json and

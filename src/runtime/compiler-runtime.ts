@@ -15,11 +15,13 @@ export { MEMO_CACHE_SENTINEL, useMemoCache };
 
 /**
  * The AsyncContext helpers the `asyncContext` build transform's output
- * imports: a scope per async function body, plus the `await` / `for await` / `yield`
- * wrappers that carry the scope across each suspension point.
+ * imports: a scope per async function body (and per module with a top-level `await`), plus
+ * the `await` / `for await` / `yield` / `yield*` wrappers that carry the scope across each
+ * suspension point.
  */
 export {
   __asyncAwait,
+  __asyncDelegate,
   __asyncIter,
   __asyncResume,
   __asyncScope,
