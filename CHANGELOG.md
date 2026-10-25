@@ -255,6 +255,24 @@ and this project adheres to
   checked by the `prisma:setup` task, as Postgres and MySQL are. Before, it was left unwired with
   a warning to add the adapter by hand. MongoDB stays unwired (Prisma 6 has no driver adapter).
 
+- **SAML Single Logout ends exactly the stateless session the IdP names.** Every new stateless
+  cookie session carries its own random 128-bit id, sealed in its httpOnly cookie and left out of
+  `/auth/session` and every client-facing session shape. With a `saml()` provider's Single Logout on, a SAML
+  sign-in records its NameID and SessionIndex against that id in the auth adapter, and a verified
+  LogoutRequest puts exactly the named sessions on the adapter's revocation list (all of a NameID's
+  sessions when it names no SessionIndex); a revoked session reads as signed out and its cookie is
+  cleared. Before, it ended every session of the user. The check is one query per request, made
+  only for SAML sessions in an app with Single Logout on. Revocations are durable rows, kept until
+  the session would have expired, so every instance on the database sees them. New optional
+  adapter methods `recordSsoSessionIndex`, `listSsoSessionIndexBySessionIndex`,
+  `listSsoSessionIndexByNameId`, `revokeSids` and `isSidRevoked`, implemented by
+  `sqliteAuthAdapter`, `postgresAuthAdapter` (migration `0009_auth_sso_cookie_sessions`),
+  `backendAuthAdapter` and `inMemoryAuthAdapter`. An adapter without them (an Auth.js adapter)
+  keeps the user-wide logout, and `denext doctor` says so, as it does for the in-memory adapter.
+  A cookie without an id (issued before) keeps working, and a LogoutRequest naming a session the
+  index doesn't know still ends every session of the user. See
+  https://denext.dev/docs/auth#saml-providers.
+
 ### Changed
 
 - **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The

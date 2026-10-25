@@ -920,6 +920,38 @@ const SSO_CASES: Record<string, Case> = {
     assertEquals(await adapter.claimSamlMessageId!("old", at(60)), true);
     assertEquals(await adapter.claimSamlMessageId!("m1", at(60)), false);
   },
+  "the SAML session index finds cookie sessions by SessionIndex and by NameID": async (adapter) => {
+    const exp = at(3600);
+    await adapter.recordSsoSessionIndex!("p1", "alice", "_i1", "s1", exp);
+    await adapter.recordSsoSessionIndex!("p1", "alice", "_i2", "s2", exp);
+    await adapter.recordSsoSessionIndex!("p1", "bob", "_i1", "s3", exp);
+    await adapter.recordSsoSessionIndex!("p1", "alice", "_i1", "s4", at(-1));
+    await adapter.recordSsoSessionIndex!("p1", "alice", undefined, "s5", exp);
+    assertEquals(await adapter.listSsoSessionIndexBySessionIndex!("p1", "alice", "_i1"), [
+      { providerId: "p1", nameId: "alice", sessionIndex: "_i1", sid: "s1", expiresAt: exp },
+    ]);
+    const alice = await adapter.listSsoSessionIndexByNameId!("p1", "alice");
+    assertEquals(alice.map((r) => r.sid).sort(), ["s1", "s2", "s5"]);
+    assertEquals(alice.find((r) => r.sid === "s5"), {
+      providerId: "p1",
+      nameId: "alice",
+      sid: "s5",
+      expiresAt: exp,
+    });
+    assertEquals(await adapter.listSsoSessionIndexByNameId!("p2", "alice"), []);
+    assertEquals(await adapter.listSsoSessionIndexBySessionIndex!("p1", "alice", "_none"), []);
+  },
+  "revokeSids keeps a revocation until it expires, never shortening it": async (adapter) => {
+    await adapter.revokeSids!(["a", "b"], at(60));
+    assertEquals(await adapter.isSidRevoked!("a"), true);
+    assertEquals(await adapter.isSidRevoked!("b"), true);
+    assertEquals(await adapter.isSidRevoked!("c"), false);
+    await adapter.revokeSids!(["old"], at(-5));
+    assertEquals(await adapter.isSidRevoked!("old"), false, "an expired revocation is over");
+    await adapter.revokeSids!(["a"], at(-5));
+    assertEquals(await adapter.isSidRevoked!("a"), true, "a later, shorter write keeps it");
+    await adapter.revokeSids!([], at(60));
+  },
 };
 
 const LIFECYCLE_CASES: Record<string, Case> = {

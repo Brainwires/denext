@@ -193,6 +193,13 @@ print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mob
   may lead to a workspace package outside the app). Confine the resolved targets to the project
   or workspace root, by real path.
 
+## Auth (`denextAuth`)
+
+- **`revokeSession(sid)` for stateless cookie sessions.** A stateless session's own id and the
+  adapter's revocation list (`revokeSids` / `isSidRevoked`) now back SAML Single Logout; let
+  app code end one stateless session by id through them too ("sign out this device" without a
+  `sessionStore`).
+
 ## Build toolchain: waiting on `deno bundle`
 
 esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)

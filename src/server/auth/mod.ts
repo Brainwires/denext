@@ -363,7 +363,7 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
   config = forBuildPhase(config);
   validateConfig(config);
   activeConfig = config;
-  return {
+  const plugin: DenextPlugin = {
     name: "denext-auth",
     setup(ctx) {
       ctx.addRequestHandler((request) => {
@@ -388,7 +388,14 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
       if (typeof ctx.addCommand === "function") ctx.addCommand(createAuthCommand(config));
     },
   };
+  // `denext doctor` reads the config off the plugin structurally (its own copy of this module
+  // may not be the app's), e.g. to warn about SAML Single Logout over an in-memory store.
+  Object.defineProperty(plugin, AUTH_PLUGIN_CONFIG, { value: config });
+  return plugin;
 }
+
+/** The key the `denextAuth()` plugin object carries its config under (non-enumerable). */
+const AUTH_PLUGIN_CONFIG = Symbol.for("denext.auth.pluginConfig");
 
 /** The resolved options plus the configured store, or throw: revocation needs one. */
 function requireSessionStore(

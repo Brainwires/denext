@@ -34,6 +34,12 @@
  * session slide and caps it at `session.maxLifetime`. A cookie without `at` (issued before it)
  * never slides.
  *
+ * **Single Logout of a stateless session.** Each stateless payload carries its own random `sid`.
+ * Where a `saml()` provider has Single Logout on (with no store, and an adapter that keeps the
+ * session index and revocation list), a SAML sign-in records its session index and a read of a SAML session checks its `sid` against the revocation list
+ * (`saml-revocation.ts`): an IdP's LogoutRequest ends exactly the sessions it names. A cookie
+ * without a `sid` (issued before it) still reads, but can't be named.
+ *
  * @module
  */
 
@@ -46,13 +52,26 @@ import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } fr
 import { keepsAuthLevel, sessionExpired, type SessionStore } from "./session-store.ts";
 import { ssoSessionAllowed } from "./sso-user.ts";
 import { recordSamlSession } from "./saml-sessions.ts";
+import {
+  cookieRevocationOf,
+  cookieSessionRevoked,
+  newSessionId,
+  recordCookieSessionIndex,
+} from "./saml-revocation.ts";
 import type { AuthConfig, AuthSession, AuthSessionSaml, AuthUser } from "./types.ts";
 
 /**
- * What the signed cookie carries: the payload (stateless), or a store id — with the sign-in time
- * in epoch milliseconds (`at`) for a store that keeps none (see the module doc).
+ * What the signed cookie carries: the payload (stateless, with its own `sid` from 4.9), or a store
+ * id — with the sign-in time in epoch milliseconds (`at`) for a store that keeps none (see the
+ * module doc).
  */
-type CookieData = AuthSession | { sid: string; at?: number };
+type StoreCookie = { sid: string; at?: number };
+type CookieData = AuthSession | StoreCookie;
+
+/** Whether the cookie data is a store id (it carries no `user`) rather than a stateless payload. */
+function isStoreCookie(data: CookieData): data is StoreCookie {
+  return !("user" in data) && typeof data.sid === "string";
+}
 
 /** The signed-cookie options for this config's session cookie. */
 function sessionOptions(config: AuthConfig) {
@@ -78,7 +97,7 @@ function withCookieSignIn(
   data: CookieData,
   stored: AuthSession | undefined,
 ): AuthSession | undefined {
-  if (!stored || keepsAuthLevel(store) || !("sid" in data)) return stored;
+  if (!stored || keepsAuthLevel(store) || !isStoreCookie(data)) return stored;
   const at = data.at;
   if (typeof at !== "number" || !Number.isFinite(at)) return stored;
   return { ...stored, authTime: Math.floor(at / 1000), authTimeMs: at };
@@ -86,7 +105,7 @@ function withCookieSignIn(
 
 /** The store id in a cookie payload, or `undefined` for a stateless payload. */
 function storeId(data: CookieData | null): string | undefined {
-  return data && "sid" in data && typeof data.sid === "string" ? data.sid : undefined;
+  return data && isStoreCookie(data) ? data.sid : undefined;
 }
 
 /**
@@ -133,7 +152,7 @@ async function resolveSession(
 ): Promise<AuthSession | null> {
   if (!data) return null;
   const store = options.sessionStore;
-  if (!store) return "sid" in data ? null : liveSession(data, options);
+  if (!store) return isStoreCookie(data) ? null : liveSession(data, options);
   const sid = storeId(data);
   if (!sid) return null; // a stateless cookie is not honored once a store is configured
   const stored = liveSession(withCookieSignIn(store, data, await store.get(sid)), options);
@@ -282,10 +301,37 @@ export async function readAuthSession(config: AuthConfig): Promise<AuthSession |
   const options = resolveAuthOptions(config);
   const session = await getSession<CookieData>(sessionOptions(config));
   const resolved = await resolveSession(session.data, options);
-  if (!resolved) return null;
+  if (!resolved || !(await liveCookieSid(options, resolved, session))) return null;
   const verdict = await userVerdict(options, resolved);
   if (verdict === "dead") await deleteDeadSession(options, resolved);
   return verdict === "ok" ? resolved : null;
+}
+
+/**
+ * Whether a stateless SAML session's `sid` is still live: not on the Single Logout revocation
+ * list. Looked up only when this app can revoke cookie sessions (`revocableCookies`) and only for
+ * a SAML session carrying a `sid`; anything else passes without a lookup. A revoked session's
+ * cookie is cleared on this response. An adapter that can't answer reads as signed out for this
+ * request (the cookie is kept, so the session comes back once the adapter does).
+ */
+async function liveCookieSid(
+  options: ResolvedAuthOptions,
+  session: AuthSession,
+  cookie: { clear(): void },
+): Promise<boolean> {
+  if (!options.revocableCookies || !session.saml || !session.sid || session.sessionId) return true;
+  let revoked: boolean;
+  try {
+    revoked = await cookieSessionRevoked(cookieRevocationOf(options.adapter)!, session.sid);
+  } catch (error) {
+    options.logger.error("denextAuth: the session revocation list could not be read", error);
+    return false;
+  }
+  if (!revoked) return true;
+  try {
+    cookie.clear();
+  } catch { /* the response's headers are already out: the next request clears it */ }
+  return false;
 }
 
 /** How {@link issueAuthSession} marks the session it mints. */
@@ -409,7 +455,10 @@ export async function issueAuthSession(
   const payload = await buildSessionPayload(config, user, provider, issue);
   const session = await getSession<CookieData>(sessionOptions(config));
   if (!options.sessionStore) {
+    // Every stateless session carries its own id, so Single Logout can name exactly this one.
+    payload.sid = newSessionId();
     await session.set(payload);
+    await recordCookieSamlSession(options, payload);
     return payload;
   }
   // Store-backed: a fresh random id per login (no fixation), the payload server-side.
@@ -418,6 +467,31 @@ export async function issueAuthSession(
   await session.set(storeCookie(options.sessionStore, sid, payload));
   await recordSamlSession(options, payload, sid);
   return { ...payload, sessionId: sid };
+}
+
+/**
+ * Record a stateless SAML session's index (provider, NameID, SessionIndex → `sid`) for Single
+ * Logout, until its absolute ceiling — when this app can revoke cookie sessions. Best effort: a
+ * session left out of the index is ended by a LogoutRequest through its user instead
+ * (`sessionsValidAfter`), so a failure is logged and the sign-in stands.
+ */
+async function recordCookieSamlSession(
+  options: ResolvedAuthOptions,
+  session: AuthSession,
+): Promise<void> {
+  if (!options.revocableCookies || !session.saml || !session.sid) return;
+  const signedIn = session.authTime ?? Math.floor(Date.now() / 1000);
+  try {
+    await recordCookieSessionIndex(
+      cookieRevocationOf(options.adapter)!,
+      session.provider,
+      session.saml,
+      session.sid,
+      signedIn + options.maxLifetime,
+    );
+  } catch (error) {
+    options.logger.error("denextAuth: recording a SAML session for Single Logout failed", error);
+  }
 }
 
 /**
