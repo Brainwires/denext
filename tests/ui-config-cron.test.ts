@@ -19,6 +19,11 @@ import {
 import { jobHistoryRecorder, readJobHistory } from "../src/server/job-history.ts";
 import { browserPost, formContaining } from "./helpers/browser-form.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// The panel runs its discovery and history children from this process: a stalled one fails its
+// test instead of holding the CI job.
+watchTests();
 
 // What these tests check is what the panel renders FROM a listing, so the discovery child must
 // finish. The panel's own 15 s deadline is for a person waiting on a page; a release gate at load

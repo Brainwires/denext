@@ -7,9 +7,9 @@ import { join } from "@std/path";
 import { createTestApp, createTestClient, probeApp } from "../src/testing/mod.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
-// Each test builds an app in this process: a stall (CI windows-tests, runtime 3.0.0-rc.5) fails
-// the test within minutes, naming the subprocess it waits on, instead of holding the job.
-watchTests(300_000);
+// Each test crawls and builds an app in this process: a stall (CI windows-tests, runtime
+// 3.0.0-rc.5) fails the test, naming the subprocess it waits on, instead of holding the job.
+watchTests();
 
 const JSX = new URL("../src/jsx/jsx-runtime.ts", import.meta.url).href;
 

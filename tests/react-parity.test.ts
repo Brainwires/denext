@@ -23,10 +23,11 @@ import type { Baseline } from "../scripts/parity/types.ts";
 import { fromFileUrl } from "@std/path";
 import { watchTests } from "./helpers/watchdog.ts";
 
-// The surface test runs `deno doc` once per compat module: a stall (CI windows-tests, runtime
-// 3.0.0-rc.5) fails it at the deadline, naming the `deno doc` it waits on, instead of holding the
-// job.
-watchTests();
+// The surface extraction runs `deno doc` children from this process, one per catalog module,
+// serially: a stall (CI windows-tests, runtime 3.0.0-rc.5) fails it at the deadline, naming the
+// `deno doc` it waits on, instead of holding the CI job. About 20 s on a healthy runner but more
+// than 10 minutes on a machine at load 400, so the deadline is 30 minutes rather than the default.
+watchTests(1_800_000);
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url)).replace(/[\\/]$/, "");
 const LEDGER = `${ROOT}/tests/fixtures/react-parity-known-gaps.json`;
