@@ -117,6 +117,14 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   and the route assertions are real failures. Bump a bed's SHA
   deliberately and say why in the commit (the pin comment names what the newer
   upstream needs).
+- **`deno task ts7:diff`** compares TypeScript 6 with TypeScript 7 on the repo and its examples:
+  it runs `deno check` on the toolchain twice per target, with `DENEXT_NATIVE_CHECK=0` (the
+  in-process TypeScript 6) and `DENEXT_NATIVE_CHECK=1` (the native TypeScript 7 checker), and
+  reports the diagnostics only one compiler gives, or gives with another message
+  (`scripts/ts7-diff.ts`). Name targets to narrow it (`deno task ts7:diff . examples/hello`);
+  `--out` / `--json` write the report, `--fail-on-diff` exits 1 on any difference. In CI it is
+  dispatch-only: `gh workflow run ts7-diff.yml --ref <branch> [-f targets="…"]`, with the report in
+  the job summary and the `ts7-diff` artifact.
 - **Running the suites on Windows: keep the temp directory on the checkout's drive.** The tests
   write temp projects that import this checkout, and Deno 2.9 resolves a config's `file:` targets
   on another drive as `file:///C:/D:/…`, so with the checkout on `D:` and `%TEMP%` on `C:` they

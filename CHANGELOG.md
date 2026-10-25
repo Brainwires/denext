@@ -154,6 +154,13 @@ and this project adheres to
   `ENCRYPTION_UNAVAILABLE` on the web and Deno Desktop. See
   https://denext.dev/docs/mobile#rotating-keys.
 
+- **Plugin kit: the edited files, and the dev error overlay.** A prepare step re-run by an edit
+  under `denext dev` gets the matching changed files as `changed` on its context, and a plugin's
+  context has `reportDevError(title, error)`, which shows an error in the dev error overlay (App
+  Router dev; `undefined` elsewhere). `@denext/graphql` uses both: each dev schema reload logs the
+  edited files, and a failed reload is shown in the overlay. A failing prepare step's log line now
+  names its plugin on a dev re-run too. See https://denext.dev/docs/plugins.
+
 ### Changed
 
 - **The MCP `denext://guide` resource reads the authoring guide from `@denext/docs-corpus`.** The
@@ -538,6 +545,13 @@ and this project adheres to
   class, or a `memo(Class)`, differed from the server's). A split class or `lazy()` island's
   stand-in no longer adds a level, and a hydration that suspends on its chunk (at the root, or
   under a Suspense boundary) no longer shifts the ids of the render that retries it.
+
+- **Desktop `fs` works before the app's data directory exists, behind a symlinked path.** On first
+  launch the data, cache or documents directory may not exist yet, and on macOS its path crosses a
+  symlink (`/var` → `/private/var`). The `fs` capability judged every path against that
+  directory's unresolved spelling, so it refused them all with "path escapes its directory". The
+  directory's real path now comes from its nearest existing ancestor, the same way the requested
+  path's does. `..` and symlink escapes are still refused.
 
 ### Security
 

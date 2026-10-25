@@ -343,6 +343,8 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         );
       let getYoga = yogaFor(ended.signal);
       let stale = false;
+      // The edited files since the last reload (project-relative), for the reload's log line.
+      let edits = new Set<string>();
       const reload = () => {
         stale = false;
         ended.abort();
@@ -350,10 +352,13 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         getSchema = once(() => resolveSchema(reloadFrom!.source, ctx));
         getYoga = yogaFor(ended.signal);
         getSdl = sdlOnce();
+        traceReload(getSchema(), [...edits], ctx);
+        edits = new Set();
       };
       if (reloadFrom) {
-        ctx.addPrepareStep(() => {
+        ctx.addPrepareStep((prep) => {
           stale = true; // reloaded by the next request, after the dev server applied the edit
+          for (const file of prep.changed ?? []) edits.add(relative(ctx.projectRoot, file));
         }, { watch: options.watch ?? defaultSchemaWatch(reloadFrom.watch) });
       }
 
@@ -547,6 +552,26 @@ async function reloadSourceOf(
       '(`schema: "./app/graphql/schema.ts"`) to reload it on an edit.',
   );
   return null;
+}
+
+/**
+ * Log a dev schema reload's outcome, naming the edited files: one line when the new schema
+ * resolved; the error when it did not, shown in the dev error overlay too. Until the next edit
+ * every request answers with that error, so the overlay keeps it in view.
+ */
+function traceReload(
+  schema: Promise<GraphQLSchema>,
+  edits: readonly string[],
+  ctx: PluginContext,
+): void {
+  const after = edits.length > 0 ? ` after an edit to ${edits.join(", ")}` : "";
+  schema.then(
+    () => console.info(`[@denext/graphql] schema reloaded${after}`),
+    (error) => {
+      console.error(`[@denext/graphql] schema reload failed${after}:`, error);
+      ctx.reportDevError?.(`GraphQL schema reload failed${after}`, error);
+    },
+  );
 }
 
 /** The dev watch globs for a schema module path (see {@linkcode GraphqlOptions.watch}). */

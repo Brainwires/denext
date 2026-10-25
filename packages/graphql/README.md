@@ -178,6 +178,11 @@ relative imports to the module that exports it and re-imports that module after 
 cannot trace (built in the config itself, or imported through an alias) needs a restart, and a dev
 notice says so.
 
+Each reload logs one line naming the edited files (`[@denext/graphql] schema reloaded after an edit
+to app/graphql/schema.ts`). A reload that fails (a syntax error, a schema that no longer builds)
+logs the error with the same files and shows it in the dev error overlay; requests answer with that
+error until the next edit.
+
 ## Options
 
 | Option                | Default                | What                                                                               |

@@ -45,7 +45,10 @@ async function isSymlink(path: string): Promise<boolean> {
  * @returns Whether the real target is within the real `base`.
  */
 async function realWithin(base: string, candidate: string): Promise<boolean> {
-  const realBase = await Deno.realPath(base).catch(() => resolve(base));
+  // The base may not exist yet (an app's data dir before its first write). Its real path then comes
+  // from its nearest existing ancestor, exactly as the candidate's does, so a symlinked ancestor
+  // (macOS's `/var` → `/private/var`) resolves the same way on both sides of the comparison.
+  const realBase = await realPathOf(resolve(base)) ?? resolve(base);
   const realTarget = await realPathOf(candidate);
   return realTarget !== undefined && isWithin(realBase, realTarget);
 }
@@ -164,7 +167,7 @@ function reservedSegment(dataDir: string, target: string): string | undefined {
 export async function refuseReservedDataPath(dataDir: string, target: string): Promise<void> {
   let hit = reservedSegment(resolve(dataDir), resolve(target));
   if (hit === undefined) {
-    const realData = await Deno.realPath(dataDir).catch(() => undefined);
+    const realData = await realPathOf(resolve(dataDir));
     const realTarget = await realPathOf(resolve(target));
     if (realData !== undefined && realTarget !== undefined) {
       hit = reservedSegment(realData, realTarget);

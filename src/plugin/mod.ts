@@ -85,6 +85,12 @@ export interface PluginPrepareContext {
   readonly outDir: string;
   /** The resolved project config. */
   readonly config: DenextConfig;
+  /**
+   * Under `denext dev`, on a re-run an edit caused: the absolute paths of the changed files that
+   * matched this step's {@linkcode PrepareStepOptions.watch} globs. Absent at dev startup and at
+   * `denext build` / `export`, where no edit caused the run.
+   */
+  readonly changed?: readonly string[];
 }
 
 /**
@@ -173,6 +179,13 @@ export interface PluginContext {
   readonly mode: PluginMode;
   /** Load a module by absolute file path (dev: source; prod: built output). */
   readonly load: ModuleLoader;
+  /**
+   * Under `denext dev` (App Router), show an error in the browser's dev error overlay, titled
+   * `title`, with the error's message, stack and first in-project frame. For a failure the plugin
+   * meets outside a request (a reload after an edit) that the developer would otherwise see only
+   * in the terminal. `undefined` in every other pipeline; it does not log, so log as well.
+   */
+  readonly reportDevError?: (title: string, error: unknown) => void;
   /** Contribute a hook that adds/adjusts routes in every scanned manifest. */
   addRouteSynthesizer(fn: RouteSynthesizer): void;
   /** Contribute a request handler that can claim unmatched requests. */
@@ -298,6 +311,8 @@ export interface ApplyPluginsBase {
   mode: PluginMode;
   /** Module loader exposed to each plugin. */
   load: ModuleLoader;
+  /** The dev error overlay's reporter ({@linkcode PluginContext.reportDevError}); dev only. */
+  reportDevError?: (title: string, error: unknown) => void;
 }
 
 /**
@@ -363,6 +378,7 @@ function pluginContext(
     config: base.config,
     mode: base.mode,
     load: base.load,
+    ...(base.reportDevError ? { reportDevError: base.reportDevError } : {}),
     addRouteSynthesizer: (fn) => sinks.synthesizer(fn),
     addRequestHandler: (handler) => sinks.requestHandler(handler),
     addBuildStep: (step) => sinks.buildStep(step),
@@ -749,26 +765,28 @@ export function getPluginPrepareWatchDirs(projectRoot: string): string[] {
 }
 
 /**
- * Re-run each prepare step whose `watch` globs match one of `changedPaths` (absolute). Returns true
- * if any step ran — the dev server uses that to trigger a reload after regeneration. A step with no
- * `watch` globs never re-runs here (it only ran at startup).
+ * Re-run each prepare step whose `watch` globs match one of `changedPaths` (absolute), telling it
+ * the matching paths ({@linkcode PluginPrepareContext.changed}). Returns true if any step ran — the
+ * dev server uses that to trigger a reload after regeneration. A step with no `watch` globs never
+ * re-runs here (it only ran at startup).
  */
 export async function runMatchingPrepareSteps(
   context: PluginPrepareContext,
   changedPaths: readonly string[],
 ): Promise<boolean> {
   let ran = false;
-  for (const { step, watch } of prepareSteps) {
+  for (const { step, watch, plugin } of prepareSteps) {
     if (watch.length === 0) continue;
     const patterns = watch.map((g) =>
       globToRegExp(resolveGlob(context.projectRoot, g), { globstar: true })
     );
-    if (!changedPaths.some((p) => patterns.some((re) => re.test(p)))) continue;
+    const changed = changedPaths.filter((p) => patterns.some((re) => re.test(p)));
+    if (changed.length === 0) continue;
     ran = true;
     try {
-      await step(context);
+      await step({ ...context, changed });
     } catch (error) {
-      console.error(`denext: a plugin prepare step failed:`, error);
+      console.error(`denext: the ${plugin} plugin's prepare step failed:`, error);
     }
   }
   return ran;

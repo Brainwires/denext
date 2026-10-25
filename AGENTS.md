@@ -1141,7 +1141,8 @@ its `emitFile({ fileName, source })` publishes a file at the site root like Vite
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb); a router plugin whose pages come from its own route tree also calls
-`ctx.servesRoutes?.()`, so the app needs no `app/`. Declare it as `plugins: [myPlugin()]`. See
+`ctx.servesRoutes?.()`, so the app needs no `app/`. In dev a prepare step's re-run gets the edited
+files as `changed`, and `ctx.reportDevError?.(title, err)` shows a failure in the dev error overlay. Declare it as `plugins: [myPlugin()]`. See
 the [plugin guide](https://denext.dev/docs/plugins) and
 [`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).
 

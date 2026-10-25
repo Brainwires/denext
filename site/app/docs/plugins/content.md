@@ -186,8 +186,25 @@ ctx.addPrepareStep(
 ```
 
 A step whose globs match a dev change is re-run before the reload, so the reloaded page sees
-the fresh output. A step with no `watch` globs runs only at startup/build. A throwing step is
-logged, never fatal.
+the fresh output; on that re-run its context's `changed` lists the edited files its globs matched
+(absolute paths; absent at startup and at build). A step with no `watch` globs runs only at
+startup/build. A throwing step is logged, never fatal.
+
+A failure a plugin meets outside a request, such as a reload after an edit, can reach the browser
+too: under `denext dev` (App Router) `ctx.reportDevError(title, error)` shows it in the dev error
+overlay with its stack and first in-project frame. It is `undefined` in every other pipeline and
+does not log, so log as well:
+
+```ts
+ctx.addPrepareStep(async ({ changed }) => {
+  try {
+    await regenerate();
+  } catch (error) {
+    console.error(`my-plugin: regeneration failed after an edit to ${changed?.join(", ")}`, error);
+    ctx.reportDevError?.("my-plugin: regeneration failed", error);
+  }
+}, { watch: ["schema/**"] });
+```
 
 ### Seam 4 — teardown
 

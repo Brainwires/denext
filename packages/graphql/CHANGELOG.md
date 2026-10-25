@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A dev schema reload says what it did.** Each reload logs one line naming the edited files
+  (`[@denext/graphql] schema reloaded after an edit to app/graphql/schema.ts`). A reload that fails
+  logs the error with the same files and shows it in the dev error overlay (through the plugin
+  kit's `reportDevError`, denext 4.9); requests answer with that error until the next edit. On an
+  older denext the overlay part is skipped.
+
 ## 0.6.0
 
 ### Added

@@ -86,6 +86,7 @@ function startInstrumentation(st: DevState, onLoaded: () => void): void {
         config: st.paths.config ?? {},
         mode: "dev",
         load: st.load,
+        reportDevError: (title, error) => broadcastError(st, title, error),
       });
       // The startup rebuild's codegen, under the build-dir lock (held per rebuild, not per session).
       await withBuildDirLock(st.paths.projectDir, () =>
