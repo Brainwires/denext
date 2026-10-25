@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **`revokeSession(id)` ends one stateless cookie session too, and `currentSessionId()` names
+  the current one.** Without a `sessionStore`, `revokeSession` puts the session's own `sid` on the
+  auth adapter's revocation list (the one SAML Single Logout writes) until the session would have
+  ended, so "sign out this device" works on every instance sharing the database; with a store it
+  deletes the record as before. It throws, naming the adapters that keep the list, when the
+  adapter lacks `revokeSids` / `isSidRevoked` (an Auth.js adapter) or there is none.
+  `currentSessionId()` (`denext/server`) returns the current request's id (the store id, else the
+  `sid`) for server code only; `/auth/session` and the client hooks never carry it. Stateless reads
+  check the list only once the app has revoked a session this way (a durable marker row each
+  process caches: for good once seen, 10 seconds while missing), so an app that never does pays at
+  most one lookup per process every 10 seconds. See https://denext.dev/docs/auth#revocation.
 - **SAML Single Logout ends exactly the stateless session the IdP names.** Every new stateless
   cookie session carries its own random 128-bit id, sealed in its httpOnly cookie and left out of
   `/auth/session` and every client-facing session shape. With a `saml()` provider's Single Logout on, a SAML

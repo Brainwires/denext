@@ -464,7 +464,7 @@ LogoutRequest puts exactly the named sessions on a revocation list: those its Se
 started, or, with no SessionIndex, every session of that NameID. A revoked session reads as signed
 out and its cookie is cleared on that response. The check is one query, at most once per request,
 made only for a SAML session read in an app with Single Logout on; an app without it, and a
-non-SAML session, make none. A cookie issued before denext minted session ids keeps working but
+non-SAML session, make none unless the app revokes sessions by id ([`revokeSession`](#revocation)). A cookie issued before denext minted session ids keeps working but
 can't be named: a LogoutRequest that names a session the index doesn't know ends every session of
 that user signed in before it (`sessionsValidAfter`) instead, so it fails closed.
 
@@ -598,7 +598,13 @@ which is what keeps an active user's expiry sliding forward.
 ### Revocation
 
 ```ts
-import { denextAuth, revokeAllSessions, revokeSession, sqliteSessionStore } from "denext/server";
+import {
+  currentSessionId,
+  denextAuth,
+  revokeAllSessions,
+  revokeSession,
+  sqliteSessionStore,
+} from "denext/server";
 
 denextAuth({
   // …
@@ -607,8 +613,9 @@ denextAuth({
 
 // After a password change — "sign out everywhere":
 await revokeAllSessions(session.user.id);
-// "Sign out this device" (session.sessionId is set when store-backed):
-await revokeSession(session.sessionId!);
+// "Sign out this device": the current session's id, read on the server only.
+const id = await currentSessionId(); // string | null
+if (id) await revokeSession(id);
 ```
 
 `revokeAllSessions(userId)` ends stateless cookie sessions too, through the user record: it
@@ -619,8 +626,29 @@ stamp is set by a password reset, the pre-account-hijacking eviction, account de
 after it is unaffected, and the stamp never moves back. The comparison is to the second, so
 a session signed in during the very second of the stamp survives it. It needs an `adapter`
 (the time is stored on the user, in every adapter: memory, SQLite, Postgres);
-`revokeAllSessions` throws with neither an adapter nor a `sessionStore`, and `revokeSession`
-(one session by id) needs the store. Both fire the `sessionRevoked` event.
+`revokeAllSessions` throws with neither an adapter nor a `sessionStore`. Both fire the
+`sessionRevoked` event.
+
+`revokeSession(id)` ends one session. Store-backed, `id` is the session's `sessionId` and its
+record is deleted. Stateless (no `sessionStore`), `id` is the session's own `sid` and goes on the
+auth adapter's revocation list, the one [SAML Single Logout](#saml-providers) writes, until the
+session would have ended anyway (`session.maxLifetime`); every instance on the same database then
+reads that session as signed out and clears its cookie. That needs an adapter with the list
+(`sqliteAuthAdapter`, `postgresAuthAdapter`, `backendAuthAdapter`; `inMemoryAuthAdapter` for one
+process), and `revokeSession` throws with an adapter that lacks it (an Auth.js adapter) or with
+none. `currentSessionId()` returns the current request's id (`sessionId`, else `sid`; `null`
+when signed out, for a bearer session, or for a cookie from before denext minted ids). It is
+server-only: `/auth/session` and the client hooks never carry it, so don't pass it to the
+browser yourself.
+
+**What the check costs.** A stateless read looks its `sid` up (one indexed query, at most once per
+request) only once the app has revoked a session this way: the first `revokeSession(id)` also
+writes a durable marker row to the list, and each process caches whether it exists, for good
+once seen and for 10 seconds while it is missing. An app that never revokes a single stateless
+session pays one lookup per process every 10 seconds at most, and one whose adapter has no list
+pays nothing. The instance that revokes enforces it at once; another instance enforces the very
+first revocation an app ever makes within those 10 seconds, and every later one at once. SAML
+sessions under Single Logout are checked on every read regardless.
 
 A user who can no longer sign in needs no revocation to be signed out: with an `adapter`, every read
 of a cookie session — `auth()`, `requireAuth()`, `requireSession()`, the `/auth/*` endpoints —

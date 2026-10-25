@@ -38,7 +38,9 @@
  * Where a `saml()` provider has Single Logout on (with no store, and an adapter that keeps the
  * session index and revocation list), a SAML sign-in records its session index and a read of a SAML session checks its `sid` against the revocation list
  * (`saml-revocation.ts`): an IdP's LogoutRequest ends exactly the sessions it names. A cookie
- * without a `sid` (issued before it) still reads, but can't be named.
+ * without a `sid` (issued before it) still reads, but can't be named. `revokeSession(sid)` puts
+ * any stateless session on the same list; once an app has done that, every stateless read checks
+ * its `sid` (`sid-revocation.ts`).
  *
  * @module
  */
@@ -58,6 +60,7 @@ import {
   newSessionId,
   recordCookieSessionIndex,
 } from "./saml-revocation.ts";
+import { revocationsInUse, type SidRevocationAdapter, sidRevocationOf } from "./sid-revocation.ts";
 import type { AuthConfig, AuthSession, AuthSessionSaml, AuthUser } from "./types.ts";
 
 /**
@@ -308,21 +311,25 @@ export async function readAuthSession(config: AuthConfig): Promise<AuthSession |
 }
 
 /**
- * Whether a stateless SAML session's `sid` is still live: not on the Single Logout revocation
- * list. Looked up only when this app can revoke cookie sessions (`revocableCookies`) and only for
- * a SAML session carrying a `sid`; anything else passes without a lookup. A revoked session's
- * cookie is cleared on this response. An adapter that can't answer reads as signed out for this
- * request (the cookie is kept, so the session comes back once the adapter does).
+ * Whether a stateless session's `sid` is still live: not on the auth adapter's revocation list.
+ * A SAML session under Single Logout (`revocableCookies`) is looked up on every read; any other
+ * stateless session only once the app has revoked one by id (`revokeSession(sid)`, see
+ * `sid-revocation.ts`), so an app that never does pays no per-request query. A store-backed
+ * session, a cookie without a `sid` and an adapter with no revocation list pass without a lookup.
+ * A revoked session's cookie is cleared on this response. An adapter that can't answer reads as
+ * signed out for this request (the cookie is kept, so the session comes back once it does).
  */
 async function liveCookieSid(
   options: ResolvedAuthOptions,
   session: AuthSession,
   cookie: { clear(): void },
 ): Promise<boolean> {
-  if (!options.revocableCookies || !session.saml || !session.sid || session.sessionId) return true;
+  const adapter = sidRevocationOf(options.adapter);
+  if (!adapter || !session.sid || session.sessionId) return true;
   let revoked: boolean;
   try {
-    revoked = await cookieSessionRevoked(cookieRevocationOf(options.adapter)!, session.sid);
+    revoked = await sidChecked(options, session, adapter) &&
+      await cookieSessionRevoked(adapter, session.sid);
   } catch (error) {
     options.logger.error("denextAuth: the session revocation list could not be read", error);
     return false;
@@ -332,6 +339,19 @@ async function liveCookieSid(
     cookie.clear();
   } catch { /* the response's headers are already out: the next request clears it */ }
   return false;
+}
+
+/**
+ * Whether a stateless session's `sid` must be looked up: always for a SAML session under Single
+ * Logout, else once the app has revoked a session by id.
+ */
+async function sidChecked(
+  options: ResolvedAuthOptions,
+  session: AuthSession,
+  adapter: SidRevocationAdapter,
+): Promise<boolean> {
+  if (options.revocableCookies && session.saml) return true;
+  return await revocationsInUse(adapter);
 }
 
 /** How {@link issueAuthSession} marks the session it mints. */

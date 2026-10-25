@@ -18,6 +18,7 @@
 export {
   activeAuthConfig,
   auth,
+  currentSessionId,
   denextAuth,
   pendingMfaSession,
   requireAuth,
