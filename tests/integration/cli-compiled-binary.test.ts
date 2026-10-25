@@ -11,6 +11,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { compiledCli } from "./_compiled-cli.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const enabled = Deno.env.get("DENEXT_TEST_COMPILED_CLI") === "1";
 
@@ -30,15 +31,13 @@ export default {
 `;
 
 async function run(bin: string, args: string[], cwd: string) {
-  const { code, stdout, stderr } = await new Deno.Command(bin, {
+  const { code, stdout, stderr } = await boundedOutput(bin, {
     args,
     cwd,
     // The pinned child resolves the pins from JSR: a release younger than Deno's minimum
     // dependency age would otherwise be refused there.
     env: { DENEXT_MIN_DEP_AGE: "0" },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const decoder = new TextDecoder();
   return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };
 }

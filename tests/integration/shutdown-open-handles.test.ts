@@ -11,6 +11,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -75,14 +76,11 @@ function freePort(): number {
 
 /** Run the CLI to completion; fail with its output. */
 async function cli(dir: string, args: string[]): Promise<void> {
-  const r = await new Deno.Command(Deno.execPath(), {
+  const r = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", "--config", join(dir, "deno.json"), join(FW, "cli.ts"), ...args],
     cwd: dir,
     env: { NO_COLOR: "1" },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const dec = new TextDecoder();
   assertEquals(r.code, 0, dec.decode(r.stdout) + dec.decode(r.stderr));
 }

@@ -16,6 +16,7 @@ import {
   writeMergedModuleConfig,
 } from "../src/build/module-config.ts";
 import { denoJson } from "../src/build/scaffold.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 Deno.test("acquireFwdepsInstall: serializes concurrent installs, skips when already done", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_fwlock_" });
@@ -208,7 +209,7 @@ Deno.test("a re-exec the CLI may not spawn fails with the way out, not NotCapabl
     );
     await Deno.writeTextFile(join(dir, "app", "page.tsx"), "export default () => null;\n");
     const root = fromFileUrl(new URL("..", import.meta.url));
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await boundedOutput(Deno.execPath(), {
       args: [
         "run",
         "--config",
@@ -222,12 +223,10 @@ Deno.test("a re-exec the CLI may not spawn fails with the way out, not NotCapabl
         ".",
       ],
       cwd: dir,
-      stdin: "null", // no terminal: Deno cannot ask for --allow-run, so the CLI refuses up front
-      stdout: "piped",
-      stderr: "piped",
+      // stdin is null (no terminal): Deno cannot ask for --allow-run, so the CLI refuses up front
       // On stock Deno: the module gate's refusal, past the toolchain gate's (scaffold-start.test.ts).
       env: { NO_COLOR: "1", DENEXT_DENO: "stock" },
-    }).output();
+    });
     const stderr = new TextDecoder().decode(out.stderr);
     assert(out.code !== 0, stderr);
     assert(!stderr.includes("NotCapable"), stderr);

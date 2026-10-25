@@ -9,6 +9,7 @@ import { fromFileUrl, join } from "@std/path";
 import { buildRegistry } from "../src/cli/register.ts";
 import { plainText } from "../src/cli/command.ts";
 import { readCommandCache, writeCommandCache } from "../src/cli/command-cache.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 const DENO_JSON = fromFileUrl(new URL("../deno.json", import.meta.url));
@@ -78,12 +79,10 @@ async function runCli(
   cwd?: string,
 ): Promise<{ code: number; out: string; err: string }> {
   const run = () =>
-    new Deno.Command(Deno.execPath(), {
+    boundedOutput(Deno.execPath(), {
       args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
       cwd,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
   // A child the OS killed (a signal, under a loaded full-suite run) says nothing about the CLI:
   // run it once more. A CLI that exits on its own, with any code, is never retried.
   let result = await run();

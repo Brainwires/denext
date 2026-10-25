@@ -291,6 +291,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A `denext create` project excludes `.deno/`.** Deno runtime 3.0.0-rc.5's type-check writes
+  `.deno/npm-compat` into the project root, `@jsr/*` packages' `_test.ts` files included, and a
+  later `deno test` with default discovery ran them. The scaffolded `deno.json` (a monorepo's root
+  and members too) now has a top-level `"exclude": [".deno/"]`; add it to an existing project's
+  `deno.json` by hand. The runtime will keep the copy out of the project in a later release
+  (KNOWN-LIMITATIONS).
+- **`examples/hello` type-checks:** its `/blog/[slug]` page narrows its params with
+  `PageProps<{ slug: string }>` and awaits them, as a Next.js 15 page does.
 - **A migrated Preact app with `node_modules` compiles its JSX with Preact's runtime.** The
   compat (esbuild) bundle compiled every app's JSX against denext's own runtime, so the
   `jsxImportSource: "preact"` `denext migrate` writes for a Preact or Fresh app was ignored on

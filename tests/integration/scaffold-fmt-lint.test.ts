@@ -12,6 +12,7 @@ import {
 } from "../../src/build/scaffold.ts";
 import { scaffoldMonorepo } from "../../src/build/scaffold-monorepo.ts";
 import { isToolchainBuild, toolchainDeno } from "../../scripts/test-run.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 /** The feature switches `denext create` offers. */
 const FEATURES = [
@@ -88,13 +89,11 @@ async function denoOnce(
   args: string[],
   cwd: string,
 ): Promise<{ ok: boolean; output: string; code: number }> {
-  const r = await new Deno.Command(DENO, {
+  const r = await boundedOutput(DENO, {
     args,
     cwd,
-    stdout: "piped",
-    stderr: "piped",
     env: { NO_COLOR: "1" },
-  }).output();
+  });
   const text = new TextDecoder();
   // The exit code and signal too: a run killed from outside (a loaded CI host, a timeout) prints
   // nothing of its own, and the failure should say so rather than look like a lint finding.

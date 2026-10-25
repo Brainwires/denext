@@ -385,6 +385,14 @@ export const SCAFFOLD_COMPILER_OPTIONS: Readonly<Record<string, unknown>> = {
   lib: ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"],
 };
 
+/**
+ * A scaffold's top-level `exclude`: what no subcommand (`test`, `lint`, `fmt`, `check`) should
+ * walk. `.deno/` is where Deno runtime 3.0.0-rc.5's type-check leaves an `npm-compat` copy of
+ * `@jsr/*` packages, their `_test.ts` files included, which `deno test`'s default discovery would
+ * otherwise run.
+ */
+export const SCAFFOLD_EXCLUDE: readonly string[] = [".deno/"];
+
 /** A scaffold's `lint`: denext's lint plugin, at the scaffold's version. */
 export const SCAFFOLD_LINT: Readonly<Record<string, unknown>> = {
   plugins: [`${dep}/lint-plugin`],
@@ -416,6 +424,7 @@ export function denoJson(opts: ScaffoldOptions): string {
     imports: scaffoldImports(opts),
     // A monorepo lints every member with the root's plugin.
     ...(member ? {} : { lint: SCAFFOLD_LINT }),
+    exclude: [...SCAFFOLD_EXCLUDE],
   };
   if (opts.desktop) {
     // Read by `deno desktop` when packaging the native binary.

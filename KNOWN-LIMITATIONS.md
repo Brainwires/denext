@@ -96,6 +96,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
+- **Runtime 3.0.0-rc.5's type-check leaves `.deno/npm-compat` in the project root.** It holds
+  an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
+  `deno test` with default discovery would run those. A `denext create` project's `deno.json`
+  excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
+  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in rc.6 or later by keeping the
+  copy out of the project.
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,

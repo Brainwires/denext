@@ -446,6 +446,11 @@
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.117.2",
     "tus-js-client": "npm:tus-js-client@4.3.1"
   },
+  "test": {
+    "exclude": [
+      ".deno/"
+    ]
+  },
   "fmt": {
     "useTabs": false,
     "lineWidth": 100,
@@ -455,6 +460,7 @@
     "proseWrap": "preserve",
     "exclude": [
       ".denext/",
+      ".deno/",
       "examples/*/.denext/",
       "examples/**/*.gen.ts",
       "examples/*/android/",
@@ -487,6 +493,7 @@
     ],
     "exclude": [
       ".denext/",
+      ".deno/",
       "examples/*/.denext/",
       "examples/**/*.gen.ts",
       "site/.denext/",

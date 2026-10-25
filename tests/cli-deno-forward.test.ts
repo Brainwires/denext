@@ -18,6 +18,7 @@ import {
 import { denoPathEnv } from "../src/cli/deno-path.ts";
 import { makeCompletionsCommand } from "../src/cli/commands/completions.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const ROOT = dirname(dirname(fromFileUrl(import.meta.url)));
 const CLI = join(ROOT, "cli.ts");
@@ -283,13 +284,11 @@ async function runCli(
   cwd: string,
   env: Record<string, string> = {},
 ): Promise<{ code: number; out: string; err: string }> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+  const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
     cwd,
     env: { DENEXT_DENO: "stock", NO_COLOR: "1", ...env },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const decoder = new TextDecoder();
   return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };
 }

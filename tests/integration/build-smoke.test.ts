@@ -10,6 +10,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { build } from "../../src/build/build.ts";
 import { bundleSupportsDefine, frameworkRoot } from "../../src/build/bundle.ts";
 import { nativeAnalyzeMeta } from "../../src/build/sourcemap-attribution.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
@@ -803,11 +804,9 @@ Deno.test({
       `try { await ensureBundleSupport(); console.log("NO_ERROR"); }` +
       `catch (e) { console.log("ERR:" + e.message); }`;
 
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await boundedOutput(Deno.execPath(), {
       args: ["eval", code],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     const text = new TextDecoder().decode(out.stdout);
 
     assertStringIncludes(text, "requires Deno 2");
@@ -836,11 +835,9 @@ Deno.test({
       `let second = "failed"; try { await ensureBundleSupport(); second = "ok"; } catch {}` +
       `console.log("first=" + first + " second=" + second);`;
 
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await boundedOutput(Deno.execPath(), {
       args: ["eval", code],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     const text = new TextDecoder().decode(out.stdout);
     assertStringIncludes(text, "first=failed second=ok");
   } finally {

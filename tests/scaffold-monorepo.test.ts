@@ -66,6 +66,7 @@ Deno.test("monorepo root deno.json: explicit members, root-only fields, shared o
   assertEquals((root.compilerOptions as Json).jsxImportSource, "denext");
   assertEquals((root.lint as Json).plugins, [`jsr:@denext/denext@^${VERSION}/lint-plugin`]);
   assert(((root.fmt as Json).exclude as string[]).includes("**/.denext/"));
+  assertEquals(root.exclude, [".deno/"]);
   const tasks = root.tasks as Record<string, string>;
   assertEquals(tasks.dev, "deno task --cwd apps/web dev");
   assertEquals(tasks.build, "deno task --cwd apps/web build");

@@ -19,6 +19,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -209,14 +210,13 @@ async function run(
   cwd: string,
   env: Record<string, string> = {},
 ): Promise<{ code: number; out: string }> {
-  const r = await new Deno.Command(cmd, {
+  const r = await boundedOutput(cmd, {
     args,
     cwd,
     env: { NO_COLOR: "1", ...env },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+    // A compile build on a loaded runner: a failure bound, not a latency claim.
+    timeoutMs: 900_000,
+  });
   return { code: r.code, out: dec.decode(r.stdout) + dec.decode(r.stderr) };
 }
 

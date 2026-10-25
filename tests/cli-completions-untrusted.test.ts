@@ -9,6 +9,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { writeCommandCache } from "../src/cli/command-cache.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 
@@ -32,14 +33,11 @@ export default {
 
 /** `denext completions <shell>` run in `dir`. */
 async function completions(dir: string, shell: string): Promise<string> {
-  const out = await new Deno.Command(Deno.execPath(), {
+  const out = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", CLI, "completions", shell],
     cwd: dir,
     env: { DENEXT_DENO: "stock", NO_COLOR: "1" },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const stdout = new TextDecoder().decode(out.stdout);
   assertEquals(out.code, 0, new TextDecoder().decode(out.stderr));
   return stdout;

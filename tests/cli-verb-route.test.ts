@@ -20,6 +20,7 @@ import { routeUnknownVerb } from "../src/cli/verb-route.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import { defaultLoader } from "../src/server/mod.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const ROOT = dirname(dirname(fromFileUrl(import.meta.url)));
 const CLI = join(ROOT, "cli.ts");
@@ -233,13 +234,11 @@ async function runCli(
   args: string[],
   cwd: string,
 ): Promise<{ code: number; out: string; err: string }> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+  const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
     cwd,
     env: { DENEXT_DENO: "stock", NO_COLOR: "1" },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const decoder = new TextDecoder();
   return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };
 }

@@ -19,6 +19,7 @@ import {
   SCAFFOLD_COMPILER_OPTIONS,
   SCAFFOLD_DENEXT_CLI,
   SCAFFOLD_DENEXT_DEP,
+  SCAFFOLD_EXCLUDE,
   SCAFFOLD_LINT,
   type ScaffoldFile,
   type ScaffoldOptions,
@@ -103,6 +104,7 @@ function monorepoRootDenoJson(opts: ScaffoldOptions): string {
     compilerOptions: SCAFFOLD_COMPILER_OPTIONS,
     fmt: { exclude: BUILD_OUTPUT },
     lint: { ...SCAFFOLD_LINT, exclude: BUILD_OUTPUT },
+    exclude: [...SCAFFOLD_EXCLUDE],
   };
   return JSON.stringify(config, null, 2) + "\n";
 }

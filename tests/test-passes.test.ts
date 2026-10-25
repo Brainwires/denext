@@ -15,6 +15,7 @@ import {
 import { resolveDenoToolchain } from "../src/build/deno-toolchain.ts";
 import { currentDenoIdentity, isDenextDenoVersion } from "../src/build/deno-version.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 
@@ -152,12 +153,11 @@ Deno.test({
       `import { expect, test, vi } from "vitest";\nimport { viaVitest } from "./mod.ts";\n` +
         `test("vitest", () => { vi.useFakeTimers(); expect(viaVitest()).toBe("vitest"); });\n`,
     );
-    const out = await new Deno.Command(deno, {
+    const out = await boundedOutput(deno, {
       args: ["run", "-A", CLI, "test", "--coverage=cov"],
       cwd: root,
       env: { DENEXT_DENO: deno, NO_COLOR: "1" },
-      stdin: "null",
-    }).output();
+    });
     const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
     assert(out.success, log);
     const lcov = await Deno.readTextFile(join(root, "cov", "lcov.info"));

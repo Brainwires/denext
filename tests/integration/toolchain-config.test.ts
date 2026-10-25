@@ -12,6 +12,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, isAbsolute, join, toFileUrl } from "@std/path";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "cli.ts");
@@ -90,7 +91,7 @@ Deno.test({
       await Deno.mkdir(app);
       await scaffold(app);
       const w = await toolchainWrapper(tmp);
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: ["task", "build"],
         cwd: app,
         env: {
@@ -99,9 +100,7 @@ Deno.test({
           DENEXT_TOOLCHAIN_PIN_FILE: await foreignPin(tmp),
           NO_COLOR: "1",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      });
       const d = new TextDecoder();
       const stderr = d.decode(out.stderr);
       assert(!stderr.includes("not a dependency"), stderr);
