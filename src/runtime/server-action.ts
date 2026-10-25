@@ -108,15 +108,65 @@ export function setServerReferenceDecorator(
 const actionNames = /* @__PURE__ */ processShared("actionNames", () => new Map<string, string>());
 
 /**
- * The opaque, build-stable id of an exported server function: a hash of
- * `moduleId#exportName`, so the wire id does not spell out the module path and export
- * name (an enumeration aid) while staying identical across processes and replicas.
+ * Mints an action id from its `module#export` key with the build's secret (installed by
+ * src/server/action-ids.ts, which holds `node:crypto` out of this isomorphic module); `null` for
+ * a build that predates salted ids.
+ */
+const idMinter = /* @__PURE__ */ processShared("actionIdMinter", () => ({
+  mint: null as ((key: string) => string | null) | null,
+}));
+
+/**
+ * Install the server's action-id minter (src/server/action-ids.ts).
+ *
+ * @param mint Returns the salted id for a `module#export` key, or `null` for the legacy id.
+ */
+export function setActionIdMinter(mint: (key: string) => string | null): void {
+  idMinter.mint = mint;
+}
+
+/**
+ * The opaque id of an exported server function: an HMAC of `moduleId#exportName` under the
+ * build's secret (src/server/action-ids.ts), so the wire id neither spells out the module path
+ * and export name nor can be computed from the source, and is identical across the processes
+ * and replicas that serve one build. With no minter installed, or for a build that recorded no
+ * secret, the legacy unsalted hash.
  */
 export function actionIdFor(moduleId: string, exportName: string): string {
   const key = `${moduleId}#${exportName}`;
-  const id = `a${djb2(key)}${djb2([...key].reverse().join(""))}`;
+  const id = idMinter.mint?.(key) ?? `a${djb2(key)}${djb2([...key].reverse().join(""))}`;
   actionNames.set(id, key);
   return id;
+}
+
+/**
+ * Exports `tagServerExports` tagged itself, by the `module#export` key it tagged them for: a
+ * later pass (a new build's secret in the same process) re-tags them, where a `serverAction`
+ * ref with its own id is left alone.
+ */
+const autoTagged = /* @__PURE__ */ processShared(
+  "autoTaggedServerExports",
+  () => new WeakMap<object, string>(),
+);
+
+/** The process's policy for exports no module references (see {@linkcode tagServerExports}). */
+const exposure = /* @__PURE__ */ processShared("serverActionExposure", () => ({
+  // Dev: register them anyway (an edit that adds the import must not need a restart) and warn
+  // when one is called. Production refuses them.
+  permissive: false,
+  // Ids registered only because of `permissive`, by their `module#export` key.
+  unreferenced: new Map<string, string>(),
+  warned: new Set<string>(),
+}));
+
+/**
+ * Whether exports of `"use server"` modules that no module imports stay callable (dev, with a
+ * warning when one is called) or are refused like an unknown id (production, the default).
+ *
+ * @param permissive True in `denext dev`.
+ */
+export function setUnreferencedActionsPermissive(permissive: boolean): void {
+  exposure.permissive = permissive;
 }
 
 /** The `module#export` an opaque action id was minted for (dev diagnostics), if known. */
@@ -135,36 +185,81 @@ export function describeActionId(id: string): string | undefined {
  * @param mod The imported `"use server"` module namespace.
  * @param moduleId The module's stable id.
  * @param scope The registry to register into (dev: a platform target's); `""` is the global one.
+ * @param exposed The export names the app's modules reference (the build's import analysis);
+ *   the others are tagged but not registered (see {@linkcode setUnreferencedActionsPermissive}).
+ *   Omitted: every export is registered (a build that recorded no analysis).
  */
 export function tagServerExports(
   mod: Record<string, unknown>,
   moduleId: string,
   scope = "",
+  exposed?: Iterable<string>,
 ): void {
+  const reachable = exposed ? new Set(exposed) : null;
   for (const [name, value] of Object.entries(mod)) {
     // A `createChannel` export (an object, not a function): assign its id and register it.
     // It is NOT an action — a channel is never HTTP-callable, only subscribed to.
     if (isChannel(value)) {
       if (!value.denextChannelId) registerChannelIfLoaded(actionIdFor(moduleId, name), value);
-      continue;
+    } else if (typeof value === "function") {
+      tagExport(value as ActionHandler, moduleId, name, scope, !reachable || reachable.has(name));
     }
-    if (typeof value !== "function") continue;
-    const id = actionIdFor(moduleId, name);
-    // A `serverAction("id", fn)` ref (or one re-exported from another module) keeps its own id.
-    const tagged = (value as { denextActionId?: unknown }).denextActionId;
-    if (tagged !== undefined && tagged !== id) continue;
-    registryFor(scope).set(id, value as ActionHandler);
-    if (tagged !== undefined) continue;
-    Object.defineProperty(value, "denextActionId", {
-      value: id,
-      enumerable: false,
-      configurable: true,
-    });
-    shared.decorateReference?.(value as ActionHandler, id);
-    // A `defineSubscription` export: its definition is registered (and made live-readable).
-    const def = (value as { [SUBSCRIPTION_DEF]?: SubscriptionDef })[SUBSCRIPTION_DEF];
-    if (def) registerSubscription(id, def);
   }
+}
+
+/**
+ * How `fn` is tagged already: with `id` (`"current"`), not at all or by an earlier pass of
+ * {@linkcode tagServerExports} under another secret (`"none"`), or with an id of its own — a
+ * `serverAction("id", fn)` ref, or one re-exported from another module (`"foreign"`, kept).
+ */
+function existingTag(fn: ActionHandler, id: string, key: string): "current" | "none" | "foreign" {
+  const tagged = (fn as { denextActionId?: unknown }).denextActionId;
+  if (tagged === undefined) return "none";
+  if (tagged === id) return "current";
+  return autoTagged.get(fn) === key ? "none" : "foreign";
+}
+
+/** Tag and register one function export of a `"use server"` module (see the caller). */
+function tagExport(
+  fn: ActionHandler,
+  moduleId: string,
+  name: string,
+  scope: string,
+  referenced: boolean,
+): void {
+  const id = actionIdFor(moduleId, name);
+  const key = `${moduleId}#${name}`;
+  const tagged = existingTag(fn, id, key);
+  if (tagged === "foreign") return;
+  registerExport(scope, id, key, fn, referenced);
+  if (tagged === "current") return;
+  Object.defineProperty(fn, "denextActionId", { value: id, enumerable: false, configurable: true });
+  autoTagged.set(fn, key);
+  shared.decorateReference?.(fn, id);
+  // A `defineSubscription` export: its definition is registered (and made live-readable).
+  const def = (fn as { [SUBSCRIPTION_DEF]?: SubscriptionDef })[SUBSCRIPTION_DEF];
+  if (def && registryFor(scope).has(id)) registerSubscription(id, def);
+}
+
+/**
+ * Register the export `key` under `id` when a module references it; one no module references is
+ * refused (left out, so a request naming it is an unknown action) unless the process is
+ * permissive (dev), which registers it and remembers to warn when it is called.
+ */
+function registerExport(
+  scope: string,
+  id: string,
+  key: string,
+  handler: ActionHandler,
+  referenced: boolean,
+): void {
+  if (referenced || exposure.permissive) {
+    registryFor(scope).set(id, handler);
+    if (referenced) exposure.unreferenced.delete(id);
+    else exposure.unreferenced.set(id, key);
+    return;
+  }
+  registryFor(scope).delete(id);
 }
 
 /**
@@ -199,7 +294,7 @@ const taggedServers = /* @__PURE__ */ processShared("taggedServers", () => new S
  *   its own module instances; `""` (production) is the global registry.
  */
 export async function tagServerModules(
-  servers: Iterable<[string, { url: string }]>,
+  servers: Iterable<[string, { url: string; exposed?: readonly string[] }]>,
   load?: (url: string) => Promise<unknown>,
   scope = "",
 ): Promise<void> {
@@ -211,7 +306,7 @@ export async function tagServerModules(
     [...servers].map(async ([moduleId, ref]) => {
       if (taggedServers.has(key(moduleId))) return;
       const mod = load ? await load(ref.url) : await detachedFromRequest(() => import(ref.url));
-      tagServerExports(mod as Record<string, unknown>, moduleId, scope);
+      tagServerExports(mod as Record<string, unknown>, moduleId, scope, ref.exposed);
       // `forgetTaggedServers` ran while this module loaded: what loaded may be the pre-edit
       // instance, so leave it untagged and let the next pass load the current one.
       if (generation === shared.serverTagGeneration) taggedServers.add(key(moduleId));
@@ -238,7 +333,18 @@ export function forgetTaggedServers(): void {
  * @param scope Dev: the requesting target's registry, consulted before the global one.
  */
 export function getServerAction(id: string, scope = ""): ActionHandler | undefined {
-  return (scope ? scopedRegistries.get(scope)?.get(id) : undefined) ?? registry.get(id);
+  const handler = (scope ? scopedRegistries.get(scope)?.get(id) : undefined) ?? registry.get(id);
+  const unreferenced = handler && exposure.unreferenced.get(id);
+  if (unreferenced && !exposure.warned.has(id)) {
+    exposure.warned.add(id);
+    console.warn(
+      `denext: the Server Action ${unreferenced} was called, but no module imports it. ` +
+        "A production build exposes only the actions the app's modules import (directly or " +
+        "through a re-export), so this call would get an unknown-action 404 there: import it " +
+        "where it is used.",
+    );
+  }
+  return handler;
 }
 
 // Action ids explicitly opted in to invocation over the Live WebSocket channel

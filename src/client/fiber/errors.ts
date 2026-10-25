@@ -14,6 +14,16 @@ export const ERR_ASYNC_COMPONENT = 3;
 // Code 4 (`memo()` of a class component) is retired: memo(Class) renders, as in React.
 /** A class component rendered with the class runtime off (or after it failed to load). */
 export const ERR_CLASS_DISABLED = 5;
+/**
+ * A function-valued `action` / `formAction` rendered in a build whose scan of the app's sources
+ * found none, so the form-action runtime was left out (the `__DENEXT_FORM_ACTIONS__` gate).
+ */
+export const ERR_FORM_ACTIONS_OFF = 6;
+/**
+ * Preact's `useErrorBoundary` called in a build whose scan of the app's sources found no use, so
+ * the reconciler's hook-boundary seam was left out (the `__DENEXT_HOOK_BOUNDARIES__` gate).
+ */
+export const ERR_HOOK_BOUNDARIES_OFF = 7;
 
 /** A full error text: the named component (may be empty) and the fiber it was raised at. */
 export type ErrorText = (name: string, fiber?: Fiber | null) => string;

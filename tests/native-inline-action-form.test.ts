@@ -15,6 +15,7 @@ import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { actionIdFor, forgetTaggedServers } from "../src/runtime/server-action.ts";
 import { writeNativeActionFormFixture } from "./helpers/native-action-form-fixture.ts";
+import { serverModuleIdFor } from "../src/build/boundary-ids.ts";
 import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
@@ -80,6 +81,7 @@ Deno.test({
       // The build's bound-action key stays on the server.
       const manifest = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "manifest.json")));
       assert(typeof manifest.serverActionsKey === "string", "the build recorded a key");
+      assert(typeof manifest.actionIdSecret === "string", "the build recorded its id secret");
       for (
         const path of [
           "/manifest.json",
@@ -92,6 +94,7 @@ Deno.test({
         const res = await fetch(server.origin + path);
         const text = await res.text();
         assert(!text.includes(manifest.serverActionsKey), `${path} serves the key`);
+        assert(!text.includes(manifest.actionIdSecret), `${path} serves the id secret`);
       }
     } finally {
       await server.close();
@@ -174,11 +177,15 @@ Deno.test({
   sanitizeResources: false,
 }, async () => {
   const dir = await fixture({ static: true });
+  // The export runs in its own process: the shared secret a deploy that builds more than once
+  // sets makes its ids the ones this process (a server of another build) mints.
+  Deno.env.set("DENEXT_ACTION_ID_SECRET", "export-and-server-share-this");
   try {
     const { outDir } = await exportInChild(dir);
     const html = await Deno.readTextFile(join(outDir, "index.html"));
     assertEquals(formAction(html, "inline"), `/_denext/action/${compatId(dir)}`);
   } finally {
+    Deno.env.delete("DENEXT_ACTION_ID_SECRET");
     // Every fixture's action module has the same id (`app/actions.ts`): let the next be tagged.
     forgetTaggedServers();
     await Deno.remove(dir, { recursive: true }).catch(() => {});
@@ -217,6 +224,16 @@ Deno.test({
       assertEquals(tampered.status, 404);
       await tampered.body?.cancel();
       assert(!(await (await fetch(server.origin + "/")).text()).includes("evil"));
+      // An export no module imports is refused like an unknown id, under its real id.
+      const actionsUrl = toFileUrl(join(dir, "app", "actions.ts")).href;
+      const unreferenced = actionIdFor(
+        serverModuleIdFor(join(dir, "app"), actionsUrl),
+        "addUnreferenced",
+      );
+      const refused = await postForm(server.origin, `/_denext/action/${unreferenced}`, "sneak");
+      assertEquals(refused.status, 404);
+      await refused.body?.cancel();
+      assert(!(await (await fetch(server.origin + "/")).text()).includes("unreferenced:"));
     } finally {
       await server.close();
     }

@@ -116,6 +116,9 @@ function buildManifestFor(
     // only by the server (`DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` overrides it for replicas built
     // separately).
     serverActionsKey: generateServerActionsKey(),
+    // Mints the Server Action ids (src/server/action-ids.ts): new per build, read only by the
+    // server. Absent when `DENEXT_ACTION_ID_SECRET` set it, which the server then needs too.
+    ...(ctx.actionIdSecret ? { actionIdSecret: ctx.actionIdSecret } : { actionIdSecretEnv: true }),
     ...(pinnedId ? { buildIdPinned: true } : {}),
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,

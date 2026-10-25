@@ -110,7 +110,10 @@ export function encodeActionArgs(
       headers: { "content-type": "application/json" },
     };
   }
-  const fd = args[fdIndex] as FormData;
+  // A copy: the caller's FormData is theirs (it may be read again, or sent again with other
+  // arguments, and the server reads the FIRST meta field).
+  const fd = new FormData();
+  for (const [name, value] of args[fdIndex] as FormData) fd.append(name, value);
   const others = args.map((a, i) => (i === fdIndex ? null : a));
   fd.append(META_FIELD, JSON.stringify({ fdIndex, ...wireEnvelope("others", others, prepare) }));
   return { body: fd, headers: {} };

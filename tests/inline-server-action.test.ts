@@ -39,7 +39,7 @@ export default function Page() {
   assertStringIncludes(code, "inlineServerReference as _dnxServerRef");
   assertStringIncludes(code, "const add = _dnxInlineAction0;");
   assert(
-    /const _dnxInlineAction0 = _dnxServerRef\("a[a-z0-9]+", async function add\(fd: FormData\) \{\s*"use server";/
+    /const _dnxInlineAction0 = _dnxServerRef\("a[\w-]+", async function add\(fd: FormData\) \{\s*"use server";/
       .test(code),
     code,
   );
@@ -52,8 +52,8 @@ Deno.test("a module-scope inline action is registered in place, exports kept", a
 export const remove = async () => { "use server"; return 2; };
 `;
   const { code } = await transformInlineServerActions(src, MOD);
-  assert(/export const save = _dnxServerRef\("a[a-z0-9]+", async function save\(\)/.test(code));
-  assert(/export const remove = _dnxServerRef\("a[a-z0-9]+", async \(\) =>/.test(code), code);
+  assert(/export const save = _dnxServerRef\("a[\w-]+", async function save\(\)/.test(code));
+  assert(/export const remove = _dnxServerRef\("a[\w-]+", async \(\) =>/.test(code), code);
   assert(!code.includes("_dnxInlineAction"), "nothing hoisted at module scope");
 });
 
@@ -87,7 +87,7 @@ Deno.test("an inline action that closes over a component's values gets them boun
   const { code } = await transformInlineServerActions(src, MOD);
   // The hoisted function takes the values it reads first, in a stable (sorted) order.
   assert(
-    /const _dnxInlineAction0 = _dnxServerRef\("a[a-z0-9]+", \(id, prefix, \.\.\.args\) => \(async function del\(\)/
+    /const _dnxInlineAction0 = _dnxServerRef\("a[\w-]+", \(id, prefix, \.\.\.args\) => \(async function del\(\)/
       .test(code),
     code,
   );

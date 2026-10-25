@@ -56,7 +56,9 @@ export function serverAction<A extends unknown[], R>(
  * @returns The stub.
  */
 export function clientActionStub<A extends unknown[], R>(id: string): ServerActionRef<A, R> {
-  void loadActionDispatch(); // the page has an action: fetch its dispatch while the user reads
+  // The page has an action: fetch its dispatch while the user reads (a failure is retried, and
+  // reported, by the first call).
+  loadActionDispatch().catch(() => {});
   return actionReference<A, R>(id, callAction);
 }
 
@@ -70,7 +72,30 @@ function callAction(id: string, args: unknown[]): Promise<unknown> {
 /** The client dispatch chunk, imported once. */
 let actionDispatch: Promise<typeof import("../client/action-dispatch.ts")> | undefined;
 
-/** {@linkcode actionDispatch}, imported on first use. */
+/**
+ * {@linkcode actionDispatch}, imported on first use. A chunk that fails to load (a dropped
+ * connection, a deploy that replaced it) is not remembered: the next call imports it again
+ * instead of every action failing until the page reloads.
+ */
 function loadActionDispatch(): Promise<typeof import("../client/action-dispatch.ts")> {
-  return actionDispatch ??= import("../client/action-dispatch.ts");
+  return actionDispatch ??= importDispatch().catch((err) => {
+    actionDispatch = undefined;
+    throw err;
+  });
+}
+
+/** The dispatch chunk's import (a test seam: {@linkcode __setActionDispatchImportForTests}). */
+let importDispatch = () => import("../client/action-dispatch.ts");
+
+/**
+ * Test seam: replace the dispatch chunk's import (`null` restores it) and forget a loaded one, so
+ * a test can fail a load and see the next call retry it.
+ *
+ * @param load The import to use, or `null` for the real one.
+ */
+export function __setActionDispatchImportForTests(
+  load: (() => Promise<typeof import("../client/action-dispatch.ts")>) | null,
+): void {
+  importDispatch = load ?? (() => import("../client/action-dispatch.ts"));
+  actionDispatch = undefined;
 }

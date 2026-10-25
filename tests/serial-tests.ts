@@ -13,6 +13,7 @@
 export const SERIAL_TESTS: readonly string[] = [
   // Sets and restores DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY around each case (the bound-action key).
   "tests/action-bound.test.ts",
+  "tests/action-ids-exposure.test.ts",
   "tests/auth-example.test.ts",
   "tests/backend-identity.test.ts",
   "tests/backend-postgres.test.ts",
@@ -55,6 +56,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/integration/example-notes.test.ts",
   "tests/integration/example-offline-sync.test.ts",
   "tests/integration/rate-limit-header-server.test.ts",
+  "tests/integration/server-action-stubs.test.ts",
   "tests/jail-scripts.test.ts",
   "tests/job-discovery.test.ts",
   "tests/legacy-migrate-job.test.ts",
@@ -65,6 +67,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/mobile-build.test.ts",
   "tests/mobile-fastlane.test.ts",
   "tests/mobile-sentry.test.ts",
+  "tests/native-inline-action-form.test.ts",
   "tests/next-auth-react-v4.test.ts",
   "tests/next-auth-v4-app.test.ts",
   "tests/next-auth-v4.test.ts",

@@ -8,7 +8,7 @@ import { boundaryRefLoader, compatModuleMapFromManifest } from "../next-compat-l
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
-import { tagServerModules } from "../../runtime/server-action.ts";
+import { setUnreferencedActionsPermissive, tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import {
   type BoundaryManifest,
@@ -18,6 +18,12 @@ import {
 import { type ProjectPaths, routeId } from "../paths.ts";
 import { parseServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
 import { setBuildServerActionsKey } from "../../server/action-bound.ts";
+import {
+  ACTION_ID_SECRET_ENV,
+  actionIdSecretFromEnv,
+  setBuildActionIdSecret,
+  setLegacyActionIds,
+} from "../../server/action-ids.ts";
 
 /** What `denext start` reads from `manifest.json` (absent/old fields fall back). */
 export interface BuildInfo {
@@ -54,6 +60,27 @@ function installBuildKey(key: string): void {
   }
 }
 
+/**
+ * Install the secret the build minted its Server Action ids under: the recorded one, the
+ * environment's when the build used it (it must be set here too), or — for a build from before
+ * salted ids — the legacy ids its client bundle carries.
+ */
+function installActionIdSecret(bm: { actionIdSecret?: unknown; actionIdSecretEnv?: unknown }) {
+  if (typeof bm.actionIdSecret === "string" && bm.actionIdSecret) {
+    setBuildActionIdSecret(bm.actionIdSecret);
+  } else if (bm.actionIdSecretEnv === true) {
+    setBuildActionIdSecret(null);
+    if (!actionIdSecretFromEnv()) {
+      console.error(
+        `denext: this build minted its Server Action ids under ${ACTION_ID_SECRET_ENV}, which ` +
+          "is not set here: set the same value, or every action request gets a 404.",
+      );
+    }
+  } else {
+    setLegacyActionIds(true);
+  }
+}
+
 /** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
 export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
   const info: BuildInfo = {
@@ -72,6 +99,7 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
     // The key this build seals bound Server Action values under (unless the env sets one).
     if (typeof bm.serverActionsKey === "string") installBuildKey(bm.serverActionsKey);
+    installActionIdSecret(bm);
     info.nextCompat = bm.nextCompat === true;
     if (typeof bm.buildId === "string" && bm.buildId) info.buildId = bm.buildId;
     info.buildIdPinned = bm.buildIdPinned === true;
@@ -187,6 +215,9 @@ export async function resolveFlightBoundary(
   // the single keyed server bundle (the whole app's islands cost one module load, not one
   // import per island).
   const tagLoad = boundaryRefLoader(load);
+  // Production refuses the actions no module imports (a dev server earlier in this process, as
+  // in a test run, may have left the process permissive).
+  setUnreferencedActionsPermissive(false);
   await timed("tagServerModules", () => tagServerModules(boundary.server, tagLoad));
   // Import + tag the islands now, before the server listens, so the FIRST request doesn't
   // pay for it.
