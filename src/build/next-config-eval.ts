@@ -12,7 +12,7 @@
 
 import { resolve, toFileUrl } from "@std/path";
 import { denoExecutable } from "./bundle.ts";
-import { exitedOutput } from "./exited-output.ts";
+import { exitedOutput, type StderrMode } from "./exited-output.ts";
 
 /** The evaluation deadline when neither the caller nor the environment sets one. */
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -237,63 +237,83 @@ export async function evalNextConfigProgram(
   // line — to plant keys or code in what the caller writes — can't forge the result.
   const marker = `${options.marker}${crypto.randomUUID()}:`;
   const program = options.program.replaceAll(options.marker, marker);
-  let output: Deno.CommandOutput;
-  try {
-    const child = new Deno.Command(denoExecutable(), {
-      args: [
-        "run",
-        "--no-prompt",
-        // A `next.config.js` written as CommonJS (`module.exports = …`) with no
-        // `"type": "module"` package.json is the common Next.js shape; without detection it
-        // fails with "module is not defined".
-        "--unstable-detect-cjs",
-        // No remote modules and no downloads: an evaluated config can import the project's own
-        // files and the packages already in its node_modules, nothing from a registry or a URL.
-        // npm resolution runs outside the permission sandbox, so --no-remote alone doesn't stop
-        // an `npm:` import (an .npmrc can point it at any host, carrying data in the name);
-        // --cached-only and a manual node_modules dir do.
-        "--no-remote",
-        "--cached-only",
-        "--node-modules-dir=manual",
-        `--allow-read=${dir}`,
-        "--allow-env",
-        "--allow-sys",
-        "-",
-        toFileUrl(file).href,
-      ],
-      cwd: dir,
-      clearEnv: true,
-      env: evalEnv(),
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-      signal,
-    }).spawn();
-    const dismissReaper = tieToParent(child.pid, timeoutMs + REAPER_GRACE_MS);
+  // stdout carries the result; stderr is discarded unless the evaluation fails, then the
+  // evaluator runs once more with it piped for the error text (see quietThenExplain: a quiet
+  // stderr pipe held for a child's whole life starves other children's reads on Windows).
+  const evaluate = async (
+    stderr: StderrMode,
+  ): Promise<Deno.CommandOutput | NextConfigEvalResult> => {
     try {
-      const writer = child.stdin.getWriter();
-      await writer.write(new TextEncoder().encode(program)).catch(() => {});
-      await writer.close().catch(() => {});
-      // Until the evaluator exits: a process the config left running must not hold this up.
-      output = await exitedOutput(child, { stdout: true, stderr: true });
-    } finally {
-      await dismissReaper?.();
+      const child = new Deno.Command(denoExecutable(), {
+        args: [
+          "run",
+          "--no-prompt",
+          // A `next.config.js` written as CommonJS (`module.exports = …`) with no
+          // `"type": "module"` package.json is the common Next.js shape; without detection it
+          // fails with "module is not defined".
+          "--unstable-detect-cjs",
+          // No remote modules and no downloads: an evaluated config can import the project's
+          // own files and the packages already in its node_modules, nothing from a registry or
+          // a URL. npm resolution runs outside the permission sandbox, so --no-remote alone
+          // doesn't stop an `npm:` import (an .npmrc can point it at any host, carrying data in
+          // the name); --cached-only and a manual node_modules dir do.
+          "--no-remote",
+          "--cached-only",
+          "--node-modules-dir=manual",
+          `--allow-read=${dir}`,
+          "--allow-env",
+          "--allow-sys",
+          "-",
+          toFileUrl(file).href,
+        ],
+        cwd: dir,
+        clearEnv: true,
+        env: evalEnv(),
+        stdin: "piped",
+        stdout: "piped",
+        stderr,
+        signal,
+      }).spawn();
+      const dismissReaper = tieToParent(child.pid, timeoutMs + REAPER_GRACE_MS);
+      try {
+        const writer = child.stdin.getWriter();
+        await writer.write(new TextEncoder().encode(program)).catch(() => {});
+        await writer.close().catch(() => {});
+        // Read until the evaluator exits, not until its pipes close: a process the config left
+        // running (or, on Windows, one another thread spawned meanwhile) can hold them open.
+        return await exitedOutput(child, { stdout: true, stderr: stderr === "piped" });
+      } finally {
+        await dismissReaper?.();
+      }
+    } catch (err) {
+      if (signal.aborted) return { ok: false, reason: `timed out after ${timeoutMs} ms` };
+      // Spawning `deno` needs run permission; without it the config was never looked at.
+      if (err instanceof Deno.errors.NotCapable || err instanceof Deno.errors.PermissionDenied) {
+        return { ok: false, reason: NEXT_CONFIG_NEEDS_RUN };
+      }
+      return { ok: false, reason: `could not run the evaluator: ${(err as Error).message}` };
     }
-  } catch (err) {
-    if (signal.aborted) return { ok: false, reason: `timed out after ${timeoutMs} ms` };
-    // Spawning `deno` needs run permission; without it the config was never looked at.
-    if (err instanceof Deno.errors.NotCapable || err instanceof Deno.errors.PermissionDenied) {
-      return { ok: false, reason: NEXT_CONFIG_NEEDS_RUN };
+  };
+  // A complete marker line wins even when the deadline fired while the child was exiting.
+  const read = (output: Deno.CommandOutput): NextConfigEvalResult | Error => {
+    try {
+      return { ok: true, value: readMarker(output.stdout, marker) };
+    } catch (err) {
+      return err as Error;
     }
-    return { ok: false, reason: `could not run the evaluator: ${(err as Error).message}` };
-  }
-  try {
-    // A complete marker line wins even when the deadline fired while the child was exiting.
-    return { ok: true, value: readMarker(output.stdout, marker) };
-  } catch (err) {
-    const why = signal.aborted
-      ? `timed out after ${timeoutMs} ms`
-      : `${(err as Error).message} (exit code ${output.code})`;
-    return failure(why, output.stderr);
-  }
+  };
+  const first = await evaluate("null");
+  if ("ok" in first) return first;
+  const result = read(first);
+  if (!(result instanceof Error)) return result;
+  // Past the deadline there is no time left to run it again for its stderr.
+  if (signal.aborted) return { ok: false, reason: `timed out after ${timeoutMs} ms` };
+  const again = await evaluate("piped");
+  if ("ok" in again) return again;
+  const second = read(again);
+  if (!(second instanceof Error)) return second;
+  const why = signal.aborted
+    ? `timed out after ${timeoutMs} ms`
+    : `${second.message} (exit code ${again.code})`;
+  return failure(why, again.stderr);
 }

@@ -536,3 +536,118 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name:
+    "denoInfoGraph: a `deno info` that never exits is killed at the deadline and the crawl fails",
+  // The stand-in `deno` is a shell script.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_graph_stuck_" });
+    const entry = join(dir, "entry.ts");
+    await Deno.writeTextFile(entry, "export {};\n");
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(fake, `#!/bin/sh\nexec sleep 120\n`);
+    await Deno.chmod(fake, 0o755);
+    try {
+      const t0 = Date.now();
+      const { value, stderr } = await inChild<string>({
+        imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+        body: `return await denoInfoGraph([${JSON.stringify(entry)}], ` +
+          `{ cache: false, deadlineMs: 1_000 })` +
+          `.then(() => "returned", (e) => String(e));`,
+        env: { DENO_BIN: fake },
+        timeoutMs: 60_000,
+      });
+      assert(value.includes("was still running after 1 s and was killed"), value);
+      // Killed, retried once, killed again.
+      assert(value.includes("stalled twice"), value);
+      assert(stderr.includes("retrying once: deno info info --unstable-sloppy-imports"), stderr);
+      assertEquals(stderr.split("retrying once").length, 2, stderr);
+      assert(Date.now() - t0 < 60_000, `took ${Date.now() - t0} ms`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "denoInfoGraph: concurrent crawls run one `deno info` at a time",
+  // The stand-in `deno` is a shell script.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_graph_serial_" });
+    const entries = [0, 1, 2, 3].map((i) => join(dir, `entry${i}.ts`));
+    for (const e of entries) await Deno.writeTextFile(e, "export {};\n");
+    // `mkdir` is atomic: a second `deno info` running at once finds the directory and records it.
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\nmkdir '${dir}/running' 2>/dev/null || echo x >> '${dir}/overlap'\n` +
+        `echo x >> '${dir}/runs'\nsleep 0.3\nrmdir '${dir}/running' 2>/dev/null\n` +
+        `printf '%s' '{"roots":[],"modules":[],"redirects":{}}'\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    try {
+      const { value } = await inChild<number>({
+        imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+        body: `const all = ${JSON.stringify(entries)}.map((e) => ` +
+          `denoInfoGraph([e], { cache: false }));\n` +
+          `return (await Promise.all(all)).length;`,
+        env: { DENO_BIN: fake },
+        timeoutMs: 60_000,
+      });
+      assertEquals(value, 4);
+      assertEquals((await Deno.readTextFile(join(dir, "runs"))).trim().split("\n").length, 4);
+      const overlap = await Deno.readTextFile(join(dir, "overlap")).catch(() => "");
+      assertEquals(overlap, "", "two `deno info` children ran at once");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+// `deno info` runs with stderr discarded (a quiet stderr pipe held for the crawl's whole life
+// starves other children's reads on Windows); only a failed crawl runs again with stderr piped,
+// for the error text. A fake `deno` logs how its stderr was opened (POSIX shell).
+Deno.test({
+  name: "deno info: stderr is discarded, and piped only on a re-run after a failure",
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_fake_info_" }));
+  try {
+    const fake = join(dir, "deno");
+    const log = join(dir, "log");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\n` +
+        `if [ /dev/fd/2 -ef /dev/null ]; then echo null >> "${log}"; else echo piped >> "${log}"; fi\n` +
+        `if [ -f "${dir}/fail" ]; then echo "boom: the graph is broken" >&2; exit 3; fi\n` +
+        `echo '{"roots":[],"modules":[],"redirects":{}}'\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    await Deno.writeTextFile(join(dir, "a.ts"), "export const a = 1;\n");
+    const { value } = await inChild<{ ok: string[]; failed: string; failLog: string[] }>({
+      imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+      env: { DENO_BIN: fake },
+      body: `
+        const read = async () => (await Deno.readTextFile(${
+        JSON.stringify(log)
+      })).trim().split("\\n");
+        await denoInfoGraph([${JSON.stringify(join(dir, "a.ts"))}], { cache: false });
+        const ok = await read();
+        await Deno.remove(${JSON.stringify(log)});
+        await Deno.writeTextFile(${JSON.stringify(join(dir, "fail"))}, "");
+        const failed = await denoInfoGraph([${JSON.stringify(join(dir, "a.ts"))}], { cache: false })
+          .then(() => "resolved", (e) => e.message);
+        return { ok, failed, failLog: await read() };
+      `,
+    });
+    assertEquals(value.ok, ["null"], "a clean crawl runs once, stderr discarded");
+    assertEquals(value.failLog, ["null", "piped"], "a failed crawl runs again with stderr piped");
+    assert(value.failed.startsWith("deno info failed (3):\n"), value.failed);
+    assert(value.failed.includes("boom: the graph is broken"), value.failed);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

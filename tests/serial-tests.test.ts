@@ -27,6 +27,8 @@ import {
   tempRootEnv,
   testPasses,
   wantsCoverage,
+  WATCHDOG_PRELOAD,
+  withWatchdog,
 } from "../scripts/test-run.ts";
 import { fromFileUrl, join } from "@std/path";
 
@@ -137,6 +139,22 @@ Deno.test("test-run: the serial files leave the parallel pass and run on their o
     "tests/integration/b.test.ts",
   ]);
   assertEquals(testPasses(["tests/other/"], serial).serial, null);
+});
+
+Deno.test("test-run: the stock passes preload the per-test stall watchdog", async () => {
+  assertEquals(withWatchdog(["test", "-A", "tests/a.test.ts", "--", "x"], "w.ts"), [
+    "test",
+    "--preload",
+    "w.ts",
+    "-A",
+    "tests/a.test.ts",
+    "--",
+    "x",
+  ]);
+  assertEquals(withWatchdog(null), null);
+  // The default is the preload module itself, by absolute path (any working directory).
+  assertEquals(withWatchdog(["test"])?.[2], WATCHDOG_PRELOAD);
+  assert((await Deno.stat(WATCHDOG_PRELOAD)).isFile);
 });
 
 Deno.test("test-run: a flag's separate value stays with its flag; `--` args reach both passes", () => {

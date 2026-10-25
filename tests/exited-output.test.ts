@@ -146,3 +146,15 @@ Deno.test({
     }
   },
 });
+
+Deno.test("quietThenExplain: runs once with stderr discarded; a failure runs again piped", async () => {
+  const { quietThenExplain } = await import("../src/build/exited-output.ts");
+  const output = (code: number) => ({ code, success: code === 0 } as Deno.CommandOutput);
+  const modes: string[] = [];
+  const ok = await quietThenExplain((mode) => (modes.push(mode), Promise.resolve(output(0))));
+  assertEquals([ok.code, modes], [0, ["null"]]);
+  modes.length = 0;
+  let n = 0;
+  const failed = await quietThenExplain((mode) => (modes.push(mode), Promise.resolve(output(++n))));
+  assertEquals([failed.code, modes], [2, ["null", "piped"]], "the re-run's output is returned");
+});

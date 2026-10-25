@@ -115,3 +115,25 @@ export async function runToExit(
     graceMs,
   );
 }
+
+/** How a child's stderr is spawned by {@linkcode quietThenExplain}. */
+export type StderrMode = "null" | "piped";
+
+/**
+ * Run a child with its stderr discarded and, only when it fails, once more with stderr piped, for
+ * the error text. A pipe nobody reads until the exit is not free on Windows: Deno reads each piped
+ * stream with a blocking read that holds one of a small pool of threads for as long as the stream
+ * stays quiet, and with enough such children alive at once the read another child's busy stdout
+ * needs never runs, so that child fills its pipe and never exits. A child that is quiet on stderr
+ * until it exits (`deno info`, `deno bundle`, `deno check`) therefore runs with no stderr pipe; the
+ * failure re-run costs a second run only when something is already wrong.
+ *
+ * @param run Runs the child to its end with the given stderr mode.
+ * @returns The first run's output when it exited 0, else the re-run's (stderr readable).
+ */
+export async function quietThenExplain(
+  run: (stderr: StderrMode) => Promise<Deno.CommandOutput>,
+): Promise<Deno.CommandOutput> {
+  const first = await run("null");
+  return first.code === 0 ? first : await run("piped");
+}

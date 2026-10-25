@@ -227,6 +227,19 @@ and this project adheres to
   readers took a config that threw at import for a missing one and packaged with the defaults.
   They now load the first config file that exists and fail on one that does not load.
 
+- **A `deno info` graph crawl or `deno bundle` child that stalls no longer holds a build or test
+  run for ten minutes.** On Windows such a child sometimes never exits while other Deno children
+  run beside it. Each process now runs one of them at a time (across the threads of
+  `deno test --parallel` too), kills a `deno info` still running after 2 minutes (a
+  `deno bundle` after 5) and starts it once more after a warning naming its pid and arguments;
+  a second stall fails with an error naming both pids.
+- **Windows builds no longer stall when many build children run at once.** Deno reads a child's
+  piped output on Windows with blocking reads that each hold a thread from a small pool, so a
+  child that stays quiet on stderr until it exits held one for its whole life; with enough of
+  them alive (`deno test --parallel`, a build that crawls and bundles at once), a busy child's
+  stdout read never ran and that child never exited. `deno info`, `deno bundle`, the dev
+  type-check's `deno check` and the `next.config` evaluator now run with stderr discarded, and
+  only a failed run is repeated once with stderr piped for its error text.
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,
@@ -248,6 +261,12 @@ and this project adheres to
   probes and the desktop `dialogs` capability no longer wait on a pipe a concurrently spawned
   process inherited (Windows) or a grandchild kept open; they also give the child an empty stdin
   instead of the terminal's.
+- **A `deno info` crawl that never exits fails the build instead of hanging it.** The boundary
+  and feature-scan crawl kills a `deno info` still running after 10 minutes and fails with its
+  pid and stderr. The `next.config.*` evaluator (`denext migrate`, `denext ui`'s config panel)
+  and the Deno Desktop runtime's verification probes read until their child exits, too, so a
+  process the config left running (or one that inherited the pipes on Windows) no longer holds
+  them.
 - **`@denext/backend` 0.7.1 serves several ranges and honours `If-Range`.** Object downloads (the
   plugin's object route and the Storage API) read `Range` as the static file handler does: several
   ranges come back as one `multipart/byteranges` answer (sorted and coalesced), an unsatisfiable

@@ -28,6 +28,7 @@ import { startUiServer } from "../src/ui/server.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 import { UI_JS } from "../src/ui/client.ts";
 import { fromFileUrl } from "@std/path";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 
 /** The named references the renderer (or literal markup) emits. */
 const NAMED: Record<string, string> = {
@@ -413,14 +414,11 @@ function reachableWithout(graph: GraphJson, cut: (specifier: string) => boolean)
 }
 
 Deno.test("the flip adds exactly the three view modules to the UI server's graph", async () => {
-  const output = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", "src/ui/server.ts"],
+  const output = await quietDeno(["info", "--json", "src/ui/server.ts"], {
     cwd: fromFileUrl(new URL("../", import.meta.url)),
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  assert(output.success, new TextDecoder().decode(output.stderr));
-  const graph = JSON.parse(new TextDecoder().decode(output.stdout)) as GraphJson;
+  });
+  assert(output.success, output.stderr);
+  const graph = JSON.parse(output.stdout) as GraphJson;
   const all = graph.modules.map((m) => m.specifier);
   // Cut the edges into the view layer: everything it reaches (the JSX runtime, the string
   // renderer) must still be reached without it — so the flip added those two files and nothing

@@ -10,6 +10,7 @@ import { join } from "@std/path";
 import { generateRouteTypes, paramsType } from "../packages/react-router/src/typegen.ts";
 import { buildRouteTree } from "../packages/react-router/src/route-tree.ts";
 import { index, layout, route } from "../packages/react-router/routes.ts";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 
 Deno.test("typegen: params from the full pattern; a layout's descendants' are optional", () => {
   assertEquals(paramsType(""), "{}");
@@ -72,15 +73,8 @@ export default function Team({ loaderData, actionData, params }: Route.Component
 `;
 
 async function check(dir: string, file: string): Promise<{ ok: boolean; out: string }> {
-  const r = await new Deno.Command(Deno.execPath(), {
-    args: ["check", "-q", file],
-    cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-    env: { NO_COLOR: "1" },
-  }).output();
-  const dec = new TextDecoder();
-  return { ok: r.success, out: dec.decode(r.stdout) + dec.decode(r.stderr) };
+  const r = await quietDeno(["check", "-q", file], { cwd: dir, env: { NO_COLOR: "1" } });
+  return { ok: r.success, out: r.stdout + r.stderr };
 }
 
 const routes = () =>

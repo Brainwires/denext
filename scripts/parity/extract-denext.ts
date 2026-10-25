@@ -13,19 +13,48 @@
 // the arity check rather than inventing a mismatch. This is the "internals may vary"
 // contract: name presence and value-ness are enforced; internal typing is not.
 
+import { exitedOutput } from "../../src/build/exited-output.ts";
 import { CATALOG } from "./spec.ts";
 import type { CallSig, Surface, SurfaceSymbol } from "./types.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-/** Run `deno doc --json` over one file and return its flat symbol list. */
-async function docFor(absFile: string): Promise<Json[]> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+/** How long one `deno doc` may run before it is killed and the extraction fails, naming it. */
+const DOC_DEADLINE_MS = 300_000;
+
+/**
+ * Run `deno doc --json` over one file and return its flat symbol list. The pipes are read until
+ * the child exits ({@linkcode exitedOutput}), not until every copy of their write ends closes: on
+ * Windows a process another thread spawns at that moment can hold one for as long as it lives.
+ * A child still running past {@linkcode DOC_DEADLINE_MS} is killed and named.
+ */
+export async function docFor(absFile: string, deadlineMs = DOC_DEADLINE_MS): Promise<Json[]> {
+  const child = new Deno.Command(Deno.execPath(), {
     args: ["doc", "--json", absFile],
+    stdin: "null",
     stdout: "piped",
     stderr: "piped",
-  }).output();
+  }).spawn();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch { /* exited meanwhile */ }
+      reject(
+        new Error(`deno doc (pid ${child.pid}) still running after ${deadlineMs} ms: ${absFile}`),
+      );
+    }, deadlineMs);
+  });
+  const output = exitedOutput(child, { stdout: true, stderr: true });
+  let result: Deno.CommandOutput;
+  try {
+    result = await Promise.race([output, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+  const { code, stdout, stderr } = result;
   if (code !== 0) {
     throw new Error(`deno doc failed for ${absFile}: ${new TextDecoder().decode(stderr)}`);
   }

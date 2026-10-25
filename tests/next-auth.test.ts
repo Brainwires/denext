@@ -1082,8 +1082,11 @@ Deno.test("next-auth: with an extension table, revokeAllSessions and a ban end d
   const guard = await a.run(() => requireAuth(new Request(`${ORIGIN}/admin`), { role: "editor" }));
   assertEquals(guard.value, null, "the stored role reaches the session");
 
-  // Signed in a minute ago (a row's sign-in time is its expiry less maxAge), then revoked.
-  for (const row of sessions.values()) row.expires = new Date(row.expires.getTime() - 60_000);
+  // Revoked a millisecond or more after the sign-in. The session cookie carries the sign-in
+  // time to the millisecond (it wins over the row's expiry less maxAge), and a revocation ends
+  // only the sessions signed in BEFORE it: run in the sign-in's own millisecond, it ends none.
+  const signedIn = Date.now();
+  while (Date.now() <= signedIn) await new Promise((r) => setTimeout(r, 1));
   await a.run(() => revokeAllSessions("u1"));
   assertEquals(await readSession(), null, "signed out everywhere");
   assertEquals(sessions.size, 0, "the dead row is deleted");
