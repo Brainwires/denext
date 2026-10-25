@@ -17,6 +17,7 @@ import {
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
 import type { DenextConfig } from "../src/server/config.ts";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 
 const REPO = fromFileUrl(new URL("../", import.meta.url));
 
@@ -143,14 +144,11 @@ Deno.test({
     await syncDesktopAppConfigAt(dir, { desktop: { app: { identifier: "com.example.g" } } });
     // A file URL, not a path: `deno info` reads `C:\…` as a URL whose scheme is `c:`.
     const root = toFileUrl(join(dir, "desktop.ts")).href;
-    const out = await new Deno.Command(Deno.execPath(), {
-      args: ["info", "--json", "--config", join(dir, "deno.json"), root],
+    const out = await quietDeno(["info", "--json", "--config", join(dir, "deno.json"), root], {
       cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    assert(out.success, new TextDecoder().decode(out.stderr));
-    const graph = JSON.parse(new TextDecoder().decode(out.stdout)) as {
+    });
+    assert(out.success, out.stderr);
+    const graph = JSON.parse(out.stdout) as {
       modules: Array<{ specifier: string; error?: string }>;
     };
     const failed = graph.modules.filter((m) => m.error);

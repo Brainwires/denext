@@ -23,6 +23,7 @@ import {
 } from "../src/build/gleam.ts";
 import type { PluginContext, PluginPrepareStep } from "../src/plugin/mod.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 import { DenoToolchainDownloadError, DenoToolchainHashError } from "../src/build/deno-toolchain.ts";
 import { ensureGleamToolchain, GLEAM_PREFETCH } from "../src/build/gleam-toolchain.ts";
 
@@ -38,13 +39,12 @@ async function appWithFixture(dir = "gleam"): Promise<string> {
 /** `deno check` `source` in `app` (whose deno.json maps `@gleam/`); its diagnostics. */
 async function check(app: string, source: string): Promise<{ ok: boolean; out: string }> {
   await Deno.writeTextFile(join(app, "use.ts"), source);
-  const out = await new Deno.Command(Deno.execPath(), {
+  const out = await quietDeno(
     // `--reload`: the unpatched check of the same files must not leave its module cache behind.
-    args: ["check", "--reload", "--config", join(app, "deno.json"), join(app, "use.ts")],
-    cwd: app,
-    env: { NO_COLOR: "1" },
-  }).output();
-  const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+    ["check", "--reload", "--config", join(app, "deno.json"), join(app, "use.ts")],
+    { cwd: app, env: { NO_COLOR: "1" } },
+  );
+  const text = out.stdout + out.stderr;
   return { ok: out.success, out: text };
 }
 

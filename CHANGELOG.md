@@ -75,6 +75,13 @@ and this project adheres to
   `deno test --parallel` too), kills a `deno info` still running after 2 minutes (a
   `deno bundle` after 5) and starts it once more after a warning naming its pid and arguments;
   a second stall fails with an error naming both pids.
+- **Windows builds no longer stall when many build children run at once.** Deno reads a child's
+  piped output on Windows with blocking reads that each hold a thread from a small pool, so a
+  child that stays quiet on stderr until it exits held one for its whole life; with enough of
+  them alive (`deno test --parallel`, a build that crawls and bundles at once), a busy child's
+  stdout read never ran and that child never exited. `deno info`, `deno bundle`, the dev
+  type-check's `deno check` and the `next.config` evaluator now run with stderr discarded, and
+  only a failed run is repeated once with stderr piped for its error text.
 - **The `"use client"` / `"use server"` files inside npm packages are found for a project on
   another Windows drive than the working directory.** esbuild names such a file by its absolute
   path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,

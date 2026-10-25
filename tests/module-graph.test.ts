@@ -606,3 +606,48 @@ Deno.test({
     }
   },
 });
+
+// `deno info` runs with stderr discarded (a quiet stderr pipe held for the crawl's whole life
+// starves other children's reads on Windows); only a failed crawl runs again with stderr piped,
+// for the error text. A fake `deno` logs how its stderr was opened (POSIX shell).
+Deno.test({
+  name: "deno info: stderr is discarded, and piped only on a re-run after a failure",
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_fake_info_" }));
+  try {
+    const fake = join(dir, "deno");
+    const log = join(dir, "log");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\n` +
+        `if [ /dev/fd/2 -ef /dev/null ]; then echo null >> "${log}"; else echo piped >> "${log}"; fi\n` +
+        `if [ -f "${dir}/fail" ]; then echo "boom: the graph is broken" >&2; exit 3; fi\n` +
+        `echo '{"roots":[],"modules":[],"redirects":{}}'\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    await Deno.writeTextFile(join(dir, "a.ts"), "export const a = 1;\n");
+    const { value } = await inChild<{ ok: string[]; failed: string; failLog: string[] }>({
+      imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+      env: { DENO_BIN: fake },
+      body: `
+        const read = async () => (await Deno.readTextFile(${
+        JSON.stringify(log)
+      })).trim().split("\\n");
+        await denoInfoGraph([${JSON.stringify(join(dir, "a.ts"))}], { cache: false });
+        const ok = await read();
+        await Deno.remove(${JSON.stringify(log)});
+        await Deno.writeTextFile(${JSON.stringify(join(dir, "fail"))}, "");
+        const failed = await denoInfoGraph([${JSON.stringify(join(dir, "a.ts"))}], { cache: false })
+          .then(() => "resolved", (e) => e.message);
+        return { ok, failed, failLog: await read() };
+      `,
+    });
+    assertEquals(value.ok, ["null"], "a clean crawl runs once, stderr discarded");
+    assertEquals(value.failLog, ["null", "piped"], "a failed crawl runs again with stderr piped");
+    assert(value.failed.startsWith("deno info failed (3):\n"), value.failed);
+    assert(value.failed.includes("boom: the graph is broken"), value.failed);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
