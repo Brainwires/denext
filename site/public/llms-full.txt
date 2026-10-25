@@ -36,7 +36,9 @@ emit correct denext instead of Next.js.
    to the `@denext/tanstack-start` plugin, Start's options carried into `tanstackStart({ … })`.
    A **Fresh** app (Fresh 2's `jsr:@fresh/core`, or 1.x's `$fresh/`) keeps its `routes/` and
    `islands/`: migrate generates `app/` + `middleware.ts` around them (`denext/fresh/server` runs
-   the handlers, middleware and layouts as Fresh does), marks islands `"use client"`, moves
+   the handlers, middleware, layouts and `main.ts`'s app builder as Fresh does; `<Partial>`
+   regions update in place under `f-client-nav` / `f-partial`; `csp()` merges into denext's
+   policy; `import.meta.env` becomes `denext/fresh/env`, public variables only), marks islands `"use client"`, moves
    `static/` to `public/` and maps `fresh`, `preact` and `@preact/signals` to denext
    (`denext/fresh`, `denext/signals`) in its `deno.json`. A **Preact** app (Vite's
    `@preact/preset-vite`, preact-cli, WMR or esbuild) takes the SPA path with the same Preact

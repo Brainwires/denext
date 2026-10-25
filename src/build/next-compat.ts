@@ -391,6 +391,8 @@ function preactRuntimeEntries(u: EntryUrl): Record<string, string> {
     "signals": u("src/compat/preact/signals.ts"),
     "fresh": u("src/compat/fresh/mod.ts"),
     "fresh-runtime": u("src/compat/fresh/runtime.ts"),
+    "fresh-partial": u("src/compat/fresh/partial.ts"),
+    "fresh-env": u("src/compat/fresh/env.ts"),
   };
 }
 
@@ -920,6 +922,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/signals": "signals.js",
   "denext/fresh": "fresh.js",
   "denext/fresh/runtime": "fresh-runtime.js",
+  "denext/fresh/partial": "fresh-partial.js",
+  "denext/fresh/env": "fresh-env.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
   ...expoRuntimeFiles(),
   // React Native mode's shell overlay (see react-native.ts).

@@ -10,6 +10,28 @@ and this project adheres to
 
 ### Added
 
+- **Fresh parity: Partials, `main.ts`'s app builder, `csp()` and `import.meta.env`.** A migrated
+  Fresh app's `<Partial name>` regions now update in place: inside `f-client-nav`, a link fetches
+  its `f-partial` URL (else its `href`) with `?fresh-partial=true`, a `<button f-partial>` fetches
+  its URL, and a `<form>` with an explicit `f-partial` / `action` / `formaction` submits there;
+  each region of the answer replaces, appends to or prepends to the one of its name (`mode`),
+  islands inside it hydrate, and a link pushes its `href`. The answer is the page's Flight
+  payload, parsed through the app's client registry (`denext/fresh/partial`); `ctx.isPartial`
+  reads the parameter and a partial request's `ctx.redirect()` keeps it. `denext migrate` gives
+  the app its own `fresh/runtime` (`app/_fresh/`), whose `Partial` is a client component.
+  `main.ts`'s `app.appWrapper()`, `app.layout()` (with `skipAppWrapper` /
+  `skipInheritedLayouts`), `app.route()`, `app.onError()`, `app.notFound()`, `app.mountApp()` and
+  `app.ws()` now run, as does a code handler's `ctx.render(<jsx />)`: the generated root layout
+  renders the wrapper and layouts, `app/fresh-app-route/page.tsx` renders code-registered pages,
+  and `not-found.tsx` the `notFound()` route; `app.use("/admin/*", …)` and `"*"` scope as in
+  Fresh. Fresh's `csp()` merges its directives into denext's own policy for a page (a `*-src`
+  adds its sources to denext's, others replace; `reportOnly`, `reportTo`), and sends Fresh's
+  policy on a handler's own response. `import.meta.env` (Vite's `MODE`, `DEV`, `PROD`, `SSR`,
+  `BASE_URL` and the public variables) is `denext/fresh/env`, on the server and in islands:
+  migrate rewrites `import.meta.env` and Fresh's inlined `Deno.env.get("FRESH_PUBLIC_…")` /
+  `process.env.FRESH_PUBLIC_…` to it, and `FRESH_PUBLIC_` joins `NEXT_PUBLIC_` / `DENEXT_PUBLIC_`
+  as a public-variable prefix. A server-only variable is never in it. See
+  https://denext.dev/docs/migrating-fresh.
 - **Ready for the lifecycle-script jail.** denext's Deno runs a dependency's approved install
   script jailed (a scrubbed environment, a scratch `HOME`, writes only under `node_modules`, no
   network), on request up to runtime `3.0.0-rc.4` and by default from `3.0.0-rc.5`, which denext

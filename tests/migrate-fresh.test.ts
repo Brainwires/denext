@@ -95,6 +95,7 @@ document.addEventListener("click", () => {});
 export const app = new App();
 app.use(staticFiles());
 app.get("/api2/:name", (ctx) => new Response(ctx.params.name));
+app.notFound(() => new Response("nothing", { status: 404 }));
 app.fsRoutes();
 `,
   "utils.ts": `import { createDefine } from "fresh";
@@ -110,11 +111,11 @@ export default define.page(function App({ Component }) {
 export default define.middleware((ctx) => { ctx.state.shared = "hi"; return ctx.next(); });
 `,
   "routes/index.tsx": `import { useSignal } from "@preact/signals";
-import { Head } from "fresh/runtime";
+import { Head, Partial } from "fresh/runtime";
 import Counter from "../islands/Counter.tsx";
 export default function Home() {
   const count = useSignal(3);
-  return <div><Head><title>Home</title></Head><Counter count={count} /></div>;
+  return <div f-client-nav><Head><title>Home</title></Head><Partial name="main"><Counter count={count} /></Partial></div>;
 }
 `,
   "routes/api/[name].tsx": `import { define } from "../../utils.ts";
@@ -149,6 +150,10 @@ export default function Counter(props: { count: Signal<number> }) {
 export default function Theme() { return <i />; }
 `,
   "components/Button.tsx": `export function Button(props) { return <button {...props} />; }\n`,
+  "components/Env.tsx": `// Reads Vite's env and a Fresh public variable.
+export const mode = (import.meta as any).env.MODE;
+export const greeting = Deno.env.get("FRESH_PUBLIC_GREETING");
+`,
   "static/logo.svg": `<svg/>\n`,
   "static/img/a.txt": `a\n`,
 };
@@ -408,14 +413,39 @@ export { handler as GET, handler as POST };
     );
     const root = await read(dir, "app/layout.tsx");
     assertStringIncludes(root, `import "../assets/styles.gen.css";\nimport "../assets/extra.css";`);
-    assertStringIncludes(root, `freshLayout(layout, { id: "_app", app: true })`);
+    assertStringIncludes(root, `freshLayout(layout, { id: "_app", app: true, main })`);
+    assertStringIncludes(root, `import * as main from "../main.ts";`);
+    const notFound = await read(dir, "app/not-found.tsx");
+    assertStringIncludes(notFound, `import * as page from "../routes/_error.tsx";`);
+    assertStringIncludes(notFound, `freshNotFound(page, { id: "_error", main })`);
+    // What main.ts registers in code renders at one generated page.
     assertStringIncludes(
-      await read(dir, "app/not-found.tsx"),
-      `import * as page from "../routes/_error.tsx";`,
+      await read(dir, "app/fresh-app-route/page.tsx"),
+      `export default freshAppPage();`,
+    );
+    // <Partial> is a client component: the app's own fresh/runtime re-exports it from a
+    // "use client" module, and the import map points fresh/runtime there.
+    assertStringIncludes(
+      await read(dir, "app/_fresh/runtime.ts"),
+      `export * from "denext/fresh/runtime";`,
+    );
+    assertStringIncludes(
+      await read(dir, "app/_fresh/partial.ts"),
+      `"use client";\nexport { Partial } from "denext/fresh/partial";`,
+    );
+    // import.meta.env and a Fresh public read point at denext/fresh/env.
+    assertEquals(
+      await read(dir, "components/Env.tsx"),
+      `// Reads Vite's env and a Fresh public variable.
+import { env as importMetaEnv } from "denext/fresh/env";
+export const mode = importMetaEnv.MODE;
+export const greeting = importMetaEnv.FRESH_PUBLIC_GREETING;
+`,
     );
 
     const mw = await read(dir, "middleware.ts");
     assertStringIncludes(mw, `import * as main from "./main.ts";`);
+    assertStringIncludes(mw, `  appRoute: "/fresh-app-route",\n`);
     assertStringIncludes(mw, `{ id: "", prefix: "/", mod: mw0 }`);
     assertStringIncludes(mw, `{ id: "(marketing)", mod: layout0 }`);
     assertStringIncludes(mw, `pattern: "/@:version/:path*", mod: route`);
@@ -453,6 +483,10 @@ export { handler as GET, handler as POST };
     assertEquals(deno.imports["@/"], "./");
     assertEquals(deno.imports.vite, undefined);
     assertStringIncludes(deno.imports.fresh, "src/compat/fresh/mod.ts");
+    for (const k of ["fresh/runtime", "@fresh/core/runtime", "$fresh/runtime.ts"]) {
+      assertEquals(deno.imports[k], "./app/_fresh/runtime.ts", k);
+    }
+    assertStringIncludes(deno.imports["denext/fresh/runtime"], "src/compat/fresh/runtime.ts");
     assertStringIncludes(deno.imports["@preact/signals"], "src/compat/preact/signals.ts");
     assertStringIncludes(deno.imports["preact/hooks"], "src/compat/preact/hooks.ts");
     assertStringIncludes(deno.tasks.dev, "cli.ts dev");
@@ -511,6 +545,26 @@ Deno.test("migrate: a Fresh 1.x app — (req, ctx) handlers, fresh.gen.ts / main
     assertEquals(deno.tasks.preview, undefined);
     assert(f.wontMigrate.some((w) => w.item === "fresh.config.ts: kvOAuthPlugin()"));
     assert(f.review.some((w) => w.item === "./assets/styles.css"));
+  });
+});
+
+Deno.test("migrate: main.ts with a root _layout and no _app — the root layout runs main.ts's wrapper", async () => {
+  await withTree({
+    "deno.json": { imports: { "fresh": "jsr:@fresh/core@^2.3.3" } },
+    "main.ts": `import { App } from "fresh";
+export const app = new App().appWrapper(({ Component }) => Component()).fsRoutes();
+`,
+    "routes/_layout.tsx":
+      `export default function L({ Component }) { return <main><Component /></main>; }\n`,
+    "routes/index.tsx": `export default function Home() { return <p>home</p>; }\n`,
+  }, async (dir) => {
+    await migrateProject(dir, { denextLocalPath: REPO });
+    const root = await read(dir, "app/layout.tsx");
+    assertStringIncludes(root, `import * as main from "../main.ts";`);
+    assertStringIncludes(root, `const App = freshLayout({}, { id: "_app", app: true, main });`);
+    assertStringIncludes(root, "return await App({ children: await Layout({ children }) });");
+    // No _404 / _error and no app.notFound(): no not-found page.
+    assertEquals(await exists(dir, "app/not-found.tsx"), false);
   });
 });
 

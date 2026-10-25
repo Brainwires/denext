@@ -84,8 +84,9 @@ precedence is applied), so a script can see what was read.
 
 ## Public variables: the browser side
 
-Only variables whose name starts with **`NEXT_PUBLIC_`** or **`DENEXT_PUBLIC_`**
-can reach the browser; everything else stays server-only, whatever it contains.
+Only variables whose name starts with **`NEXT_PUBLIC_`** or **`DENEXT_PUBLIC_`** (or
+**`FRESH_PUBLIC_`**, a migrated Fresh app's prefix) can reach the browser; everything else stays
+server-only, whatever it contains.
 They are read with `publicEnv()`, which works on both sides:
 
 ```tsx

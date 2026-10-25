@@ -1,7 +1,10 @@
 // Fresh 2's built-in middleware (`staticFiles`, `trailingSlashes`, `csrf`, `cors`, `csp`,
-// `ipFilter`) for a migrated app's `main.ts`. Isomorphic: they only touch `ctx`.
+// `ipFilter`) for a migrated app's `main.ts`. They run in the generated `middleware.ts`, but stay
+// importable from the browser (an island may import `fresh`): no static server import.
 
+import type { RequestContext } from "../../server/request-context.ts";
 import type { Context } from "./context.ts";
+import { CONTINUE_HEADER } from "./constants.ts";
 import { HttpError } from "./http-error.ts";
 import type { MiddlewareFn as Mw } from "./types.ts";
 
@@ -148,23 +151,138 @@ export function cors<State>(options?: CORSOptions<State>): Mw<State> {
 
 /** {@link csp} options. */
 export interface CSPOptions {
-  /** Report-only. */
+  /** Send the policy as `Content-Security-Policy-Report-Only` (nothing is enforced). */
   reportOnly?: boolean;
-  /** Where violations are reported. */
+  /** Where violations are reported (`report-to` / `report-uri`, `Reporting-Endpoints`). */
   reportTo?: string;
-  /** Extra directives. */
+  /** Directives that add to or replace the defaults (`"img-src 'self' https://cdn.example"`). */
   csp?: string[];
+  /**
+   * Fresh: replace `'unsafe-inline'` with a per-request nonce. denext allows its own inline
+   * styles by hash and runs no inline script, so this drops `'unsafe-inline'`.
+   */
+  useNonce?: boolean;
 }
 
 /**
- * Fresh's content-security-policy middleware. denext sends its own policy (the `csp` config
- * key, strict by default), so this only continues; set the directives there instead.
+ * Fresh's default directives. `script-src` / `style-src` carry `'unsafe-inline'` for Fresh's own
+ * inline boot script; denext needs none (see {@link mergeCsp}).
+ */
+const FRESH_CSP_DEFAULTS = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
+  "img-src 'self' data:",
+  "media-src 'self' data: blob:",
+  "worker-src 'self' blob:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "upgrade-insecure-requests",
+];
+
+/** A directive's name (its first token). */
+const directiveName = (d: string): string => d.trim().split(/\s+/)[0];
+
+/** The directives a {@link csp} middleware sends: the defaults, overridden by `options.csp`. */
+function freshDirectives(options: CSPOptions): { defaults: string[]; own: string[] } {
+  const own = options.csp ?? [];
+  const named = new Set(own.map(directiveName));
+  const defaults = FRESH_CSP_DEFAULTS.filter((d) => !named.has(directiveName(d)));
+  if (options.reportTo) own.push("report-to csp-endpoint", `report-uri ${options.reportTo}`);
+  return { defaults, own };
+}
+
+/** A fetch directive (`*-src`), whose sources add to denext's own. */
+const isSourceList = (name: string): boolean => name.endsWith("-src");
+
+/**
+ * Sources merged: denext's, then the new ones. A list allowing `'unsafe-inline'` drops its
+ * hashes and nonces, which would switch `'unsafe-inline'` off (CSP Level 2).
+ */
+function unionSources(base: string[], extra: string[]): string[] {
+  const out = [...base];
+  for (const s of extra) if (!out.includes(s)) out.push(s);
+  return out.includes("'unsafe-inline'")
+    ? out.filter((s) => !s.startsWith("'sha256-") && !s.startsWith("'nonce-"))
+    : out;
+}
+
+/**
+ * Merge Fresh's directives into the policy denext computed for a page: a `*-src` directive adds
+ * its sources to denext's (which keep the page's own scripts and styles working), any other
+ * replaces denext's (`frame-ancestors`, `form-action`, …) or is added. Fresh's default
+ * `'unsafe-inline'` is left out (denext allows its own inline styles by hash), as is every
+ * `'unsafe-inline'` under `useNonce`. With no denext policy (`csp: "off"`, or a response a
+ * handler made), the policy is Fresh's own.
  *
- * @param _options The policy (unused).
+ * @param policy The policy denext computed (undefined: none).
+ * @param options The `csp()` options.
+ * @returns The policy to send.
+ */
+export function mergeCsp(policy: string | undefined, options: CSPOptions = {}): string {
+  const { defaults, own } = freshDirectives(options);
+  const inline = (d: string) => options.useNonce ? d.replaceAll(" 'unsafe-inline'", "") : d;
+  if (policy === undefined) return [...defaults, ...own].map(inline).join("; ");
+  const merged = new Map<string, string[]>();
+  for (const d of policy.split(";").map((p) => p.trim()).filter(Boolean)) {
+    merged.set(directiveName(d), d.split(/\s+/).slice(1));
+  }
+  const fresh = [...defaults.map((d) => d.replaceAll(" 'unsafe-inline'", "")), ...own];
+  for (const d of fresh.map(inline)) {
+    const [name, ...sources] = d.trim().split(/\s+/);
+    const base = merged.get(name);
+    merged.set(
+      name,
+      base && isSourceList(name) && !sources.includes("'none'")
+        ? unionSources(base, sources)
+        : sources,
+    );
+  }
+  return [...merged].map(([name, sources]) => [name, ...sources].join(" ")).join("; ");
+}
+
+/** The server's current request context, through the bridge it installs (none in a browser). */
+function requestContext(): RequestContext | undefined {
+  return (globalThis as { __denextCurrentRequestContext?: () => RequestContext | undefined })
+    .__denextCurrentRequestContext?.();
+}
+
+/**
+ * Fresh's content-security-policy middleware. A page denext renders gets denext's own policy
+ * (strict by default, the `csp` config key) with these directives merged in ({@link mergeCsp});
+ * any other response gets Fresh's policy as Fresh sends it. `reportOnly` sends it as
+ * `Content-Security-Policy-Report-Only` instead, and `reportTo` adds the reporting endpoint.
+ *
+ * @param options The policy.
  * @returns The middleware.
  */
-export function csp<State>(_options?: CSPOptions): Mw<State> {
-  return (ctx) => ctx.next();
+export function csp<State>(options: CSPOptions = {}): Mw<State> {
+  const header = options.reportOnly
+    ? "content-security-policy-report-only"
+    : "content-security-policy";
+  return async (ctx) => {
+    const res = await ctx.next();
+    if (options.reportTo) {
+      res.headers.set("reporting-endpoints", `csp-endpoint="${options.reportTo}"`);
+    }
+    const rc = requestContext();
+    if (!res.headers.has(CONTINUE_HEADER) || !rc) {
+      res.headers.set(header, mergeCsp(undefined, options));
+      return res;
+    }
+    // The page renders after this middleware: adjust the policy denext computes for it.
+    rc.cspTransform = (policy) => {
+      const merged = mergeCsp(policy, options);
+      if (!options.reportOnly) return merged;
+      rc.outgoingHeaders.set(header, merged);
+      return undefined;
+    };
+    return res;
+  };
 }
 
 /** {@link ipFilter} rules: addresses or IPv4 CIDR ranges. */
