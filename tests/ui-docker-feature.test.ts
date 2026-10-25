@@ -826,6 +826,43 @@ Deno.test("compose editor: a merge key's fields are shown as inherited, and a se
   }
 });
 
+Deno.test("compose editor: the plain-text settings render and post", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
+    const body = await (await get(h, "/docker?tab=services")).text();
+    for (const field of ["container_name", "hostname", "working_dir", "user", "platform"]) {
+      assertStringIncludes(body, `name="${field}"`);
+    }
+    const preview = await previewEdit(h, {
+      service: "web",
+      op: "apply",
+      working_dir: "/srv",
+      stop_signal: "SIGINT",
+    });
+    assertEquals(JSON.parse(confirmFields(preview).ops), [
+      { op: "set", service: "web", field: "working_dir", value: "/srv" },
+      { op: "set", service: "web", field: "stop_signal", value: "SIGINT" },
+    ]);
+    const res = await post(h, "/docker", confirmFields(preview));
+    assertEquals(res.status, 303);
+    await res.body?.cancel();
+    assertEquals(
+      await composeOnDisk(h),
+      "x-base: &base\n  image: nginx\nservices:\n  web:\n    <<: *base\n" +
+        "    working_dir: /srv\n    stop_signal: SIGINT\n",
+    );
+    const bad = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "set", service: "web", field: "privileged", value: "true" }],
+    });
+    assertEquals(bad.status, 400);
+    assertStringIncludes(await bad.text(), "unknown field");
+  } finally {
+    await stop(h);
+  }
+});
+
 Deno.test("compose editor: adding a port previews a diff and writes nothing", async () => {
   const h = await ui();
   try {

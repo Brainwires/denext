@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **`denext ui`'s compose editor edits more of a service.** Each service form (and the
+  `/api/docker` twin's `set` operation) now writes `container_name`, `hostname`, `working_dir`,
+  `user`, `platform`, `stop_signal` and `stop_grace_period`, in place and comment-preserving like
+  `image`; clearing one deletes it. Before, those fields were hand-edited only.
+
 - **`asyncContext: true` covers `yield*` and top-level `await`.** A `yield*` in an async
   generator now keeps the generator's context: the delegate's every step runs in it, the caller's
   context is back while the generator is suspended, and the body after the delegation resumes in

@@ -454,6 +454,23 @@ function findCommented(
 
 type Raw = Record<string, unknown>;
 
+/**
+ * The plain-text service settings the editor writes besides `image` / `restart` / `build`: each
+ * one a single scalar in the Compose spec.
+ */
+export const SETTING_FIELDS = [
+  "container_name",
+  "hostname",
+  "working_dir",
+  "user",
+  "platform",
+  "stop_signal",
+  "stop_grace_period",
+] as const;
+
+/** One of {@linkcode SETTING_FIELDS}. */
+export type SettingField = typeof SETTING_FIELDS[number];
+
 /** One service as the Docker panel shows it: an active one, or one written out as comments. */
 export interface ComposeService {
   /** The service's key under `services:`. */
@@ -464,6 +481,8 @@ export interface ComposeService {
   build?: unknown;
   /** `restart:`, when set to a scalar. */
   restart?: string;
+  /** The {@linkcode SETTING_FIELDS} the service sets to a scalar, by name. */
+  settings: Partial<Record<SettingField, string>>;
   /** `ports:` entries in order; a long-syntax (mapping) entry is its JSON text. */
   ports: string[];
   /** `environment:` entries in order; a variable without a value has value `""`. */
@@ -722,6 +741,7 @@ function describe(
     ...(isScalar(v.image) ? { image: text(v.image) } : {}),
     ...(v.build !== undefined ? { build: v.build } : {}),
     ...(isScalar(v.restart) ? { restart: text(v.restart) } : {}),
+    settings: settingsOf(v),
     ports: texts(v.ports),
     environment: envEntries(v.environment),
     envForm: Array.isArray(v.environment) ? "list" : "map",
@@ -734,6 +754,13 @@ function describe(
     line: index + 1,
     ...provenance,
   };
+}
+
+/** The {@linkcode SETTING_FIELDS} a service sets to a scalar. */
+function settingsOf(v: Raw): Partial<Record<SettingField, string>> {
+  const out: Partial<Record<SettingField, string>> = {};
+  for (const field of SETTING_FIELDS) if (isScalar(v[field])) out[field] = text(v[field]);
+  return out;
 }
 
 /** The condition each long-form dependency sets. */

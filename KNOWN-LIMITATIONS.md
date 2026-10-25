@@ -325,8 +325,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   them; an inline element (`<b>`, `<span>`, …) is closed at the end of the paragraph, heading,
   cell or item it was written in. Use an `.mdx` entry for components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
-  ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
-  file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party
+  the plain-text settings `container_name`, `hostname`, `working_dir`, `user`, `platform`,
+  `stop_signal` and `stop_grace_period`, ports, volumes, environment, depends_on, networks); the
+  rest (`command`, `healthcheck`, `labels`, …) is hand-edited, and a multi-document file is
+  read-only. A field a merge key (`<<`) supplies can be overridden, not deleted: Compose itself
+  can't drop a merged value for one service (`!reset` leaves it in place). A third-party
   plugin's form needs a published `denext.catalog.optionsSchema`; code-valued options are
   read-only.
 

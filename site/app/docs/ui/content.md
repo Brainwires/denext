@@ -512,7 +512,8 @@ Below the regeneration form, every service in the compose file gets its own form
 source order: `image` (text), `restart` (`no`, `always`, `on-failure`, `unless-stopped`, or the
 file's own value — `on-failure:<n>` is accepted too), `build` (its context path, plus a
 `dockerfile` and a `target` — setting either writes a mapping `build:` — and a row editor for
-the build args), and row editors for `ports`,
+the build args), the plain-text settings `container_name`, `hostname`, `working_dir`, `user`,
+`platform`, `stop_signal` and `stop_grace_period` (cleared to delete), and row editors for `ports`,
 `environment`, `depends_on` (a picker of the file's other services, and for each dependency the
 `condition` it waits for), `volumes` and `networks` (one the top-level `networks:` doesn't
 declare gets a warning, like an undeclared named volume). A long-syntax port or volume (a
@@ -553,7 +554,8 @@ writes one the file did not report (a `400` otherwise).
 Anchors, aliases and merge keys are followed:
 
 - A service lists the fields it takes from a merge key (`<<`), and setting one writes an
-  override into the service.
+  override into the service. Clearing one is refused: Compose has no way to drop a merged
+  value for one service (`!reset` leaves it in place), so edit the anchor instead.
 - Editing a list or map that an alias (`ports: *shared`) or a merge key supplies gives the
   service its own copy of it, with the edit applied.
 - A service written as an alias (`web2: *web`) or as a flow mapping (`web: { image: x }`) is

@@ -31,6 +31,8 @@ import {
   type DependsCondition,
   inspectCompose,
   readCompose,
+  SETTING_FIELDS,
+  type SettingField,
 } from "../../build/compose-edit.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
@@ -437,10 +439,16 @@ function formOps(get: Get, model: ComposeModel): ComposeOp[] | string {
   return removal ? [...ops, removal] : `unknown compose operation ${JSON.stringify(button)}`;
 }
 
-/** `image` / `restart`: set when changed, delete when cleared. */
+/** The scalar fields the service form posts. */
+type ScalarField = "image" | "restart" | "build" | SettingField;
+
+/** Every {@linkcode ScalarField}, in the form's order. */
+const SCALAR_FIELDS: readonly ScalarField[] = ["image", "restart", "build", ...SETTING_FIELDS];
+
+/** `image` / `restart` / `build` / a setting: set when changed, delete when cleared. */
 function scalarEdits(get: Get, svc: ComposeService): ComposeOp[] {
   const ops: ComposeOp[] = [];
-  for (const field of ["image", "restart", "build"] as const) {
+  for (const field of SCALAR_FIELDS) {
     const posted = get(field)?.trim();
     if (posted === undefined || posted === scalarOf(svc, field)) continue;
     ops.push({ op: "set", service: svc.name, field, value: posted === "" ? null : posted });
@@ -449,8 +457,9 @@ function scalarEdits(get: Get, svc: ComposeService): ComposeOp[] {
 }
 
 /** A scalar field's current text (`""` when unset; `build` is the build context). */
-function scalarOf(svc: ComposeService, field: "image" | "restart" | "build"): string {
-  if (field !== "build") return svc[field] ?? "";
+function scalarOf(svc: ComposeService, field: ScalarField): string {
+  if (field === "image" || field === "restart") return svc[field] ?? "";
+  if (field !== "build") return svc.settings[field] ?? "";
   if (typeof svc.build === "string") return svc.build;
   return isRecord(svc.build) ? textOf(svc.build.context) : "";
 }
@@ -701,18 +710,18 @@ function restartAllowed(value: string, svc: ComposeService): boolean {
 
 /**
  * `set`: `image` (any string, or `null`) / `restart` (a known policy, or `null`) / `build` (a
- * context path, or `null`; not over a mapping `build:`).
+ * context path, or `null`) / a plain-text setting (any string, or `null`).
  */
 function checkSet(o: Dict, svc: ComposeService): ComposeOp | string {
   const { field, value } = o;
-  if (field !== "image" && field !== "restart" && field !== "build") {
-    return `unknown field ${JSON.stringify(field ?? null)} (expected image | restart | build)`;
+  if (!SCALAR_FIELDS.includes(field as ScalarField)) {
+    return `unknown field ${JSON.stringify(field ?? null)} (expected ${SCALAR_FIELDS.join(" | ")})`;
   }
   if (value !== null && typeof value !== "string") return `${field} needs a string or null`;
   if (field === "restart" && value !== null && !restartAllowed(value, svc)) {
     return `unknown restart policy ${JSON.stringify(value)}`;
   }
-  return { op: "set", service: svc.name, field, value };
+  return { op: "set", service: svc.name, field: field as ScalarField, value };
 }
 
 /** `ports`: add a mapping, or update/remove a row the file has. */
@@ -1457,8 +1466,28 @@ function ScalarFields(
     h(Field, { id: `${id}-image`, label: "image" }, image),
     h(Field, { id: `${id}-restart`, label: "restart" }, restart),
     h(BuildEditor, { svc, id, disabled }),
+    ...SETTING_FIELDS.map((field) =>
+      labelledInput(
+        `${id}-${field}`,
+        field,
+        field,
+        svc.settings[field] ?? "",
+        SETTING_HINTS[field],
+      )
+    ),
   );
 }
+
+/** Each setting's placeholder. */
+const SETTING_HINTS: Record<SettingField, string> = {
+  container_name: "optional — a fixed container name",
+  hostname: "optional — the container's hostname",
+  working_dir: "optional — e.g. /app",
+  user: "optional — e.g. 1000:1000",
+  platform: "optional — e.g. linux/amd64",
+  stop_signal: "optional — e.g. SIGINT",
+  stop_grace_period: "optional — e.g. 30s",
+};
 
 /**
  * `build`: the context, the Dockerfile and target (setting either writes a mapping `build:`),
