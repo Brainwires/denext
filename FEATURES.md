@@ -676,7 +676,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   in-place upgrade keyed on the app identifier, Authenticode-signed) and
   `.zip`. — `src/build/desktop-installers.ts`.
 - **denext's pinned Deno Desktop runtime** — `run`, `dev`, `package` and the
-  scripts build on a prebuilt runtime (Deno 2.9.7 plus the laufey patches)
+  scripts build on a prebuilt runtime (Deno 2.9.8 plus the laufey patches)
   pinned by URL, size and SHA-256, downloaded once, verified before extraction,
   extracted safely and cached for offline use, with optional `gh attestation`
   provenance pinned to the release workflow and tag; `deno task

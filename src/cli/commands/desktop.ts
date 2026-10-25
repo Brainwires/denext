@@ -47,10 +47,13 @@ import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-p
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
 import {
   DESKTOP_RUNTIME_ATTEST_ENV,
+  DESKTOP_RUNTIME_PIN,
   DESKTOP_RUNTIME_VERIFY_ENV,
+  type DesktopRuntimePin,
   projectDesktopBackend,
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
+import { needsNoLegacyAbortFlag } from "../../build/deno-version.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopWindowExitHint } from "../../build/desktop-vc-runtime.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
@@ -670,19 +673,22 @@ export function packageScriptAge(text: string): PackageScriptAge {
 /**
  * The warnings for a stale packaging script: one predating denext 3.1 builds on the stock runtime,
  * one predating the 2.9.7-denext.21 pin (a macOS script calling `deno desktop` itself) builds without the pinned
- * runtime's `--unstable-no-legacy-abort`, one copying the VC++ runtime itself (a Windows script
+ * runtime's `--unstable-no-legacy-abort` (only while the pinned runtime predates 3.0.0-rc.5, where
+ * that is the default), one copying the VC++ runtime itself (a Windows script
  * predating `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, and a `--format` is
  * not passed to a script that cannot read it.
  *
  * @param name The script's file name (`package-linux.ts`).
  * @param age What it supports.
  * @param format The `--format` value, when given.
+ * @param pin The runtime pin (its `version` decides whether the runtime flags still matter).
  * @returns The lines to print (none for a current script).
  */
 export function packageScriptWarnings(
   name: string,
   age: PackageScriptAge,
   format: string | undefined,
+  pin: Pick<DesktopRuntimePin, "version"> = DESKTOP_RUNTIME_PIN,
 ): string[] {
   const out: string[] = [];
   if (!age.runtime) {
@@ -692,7 +698,7 @@ export function packageScriptWarnings(
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );
-  } else if (!age.runtimeFlags) {
+  } else if (!age.runtimeFlags && needsNoLegacyAbortFlag(pin.version)) {
     out.push(
       `  ⚠ scripts/${name} does not pass the pinned runtime's flags (desktopRuntimeDenoFlags): ` +
         "the app is built without --unstable-no-legacy-abort, so it aborts request.signal after " +

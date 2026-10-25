@@ -7,6 +7,7 @@
 //
 // Dev/CLI only: nothing here reaches a client bundle.
 
+import { quietThenExplain, runToExit } from "../build/exited-output.ts";
 import { denoExecutable } from "../build/bundle.ts";
 import { parseDiagnostics, type SourceDiagnostic } from "../build/explain/parse.ts";
 
@@ -58,16 +59,21 @@ export function typeCheckArgs(request: Omit<TypeCheckRequest, "signal">): string
  */
 export async function checkTypes(request: TypeCheckRequest): Promise<TypeCheckResult | null> {
   try {
-    const { code, stderr } = await new Deno.Command(denoExecutable(), {
-      args: typeCheckArgs(request),
-      cwd: request.projectDir,
-      stdout: "null",
-      stderr: "piped",
-      signal: request.signal,
-    }).output();
+    // The report is on stderr, which is piped only for a check that failed (quietThenExplain):
+    // a clean check, the usual case, holds no quiet stderr pipe for its whole run.
+    const output = await quietThenExplain((stderr) => {
+      if (stderr === "piped" && request.signal?.aborted) throw new Error("stopped");
+      return runToExit(denoExecutable(), {
+        args: typeCheckArgs(request),
+        cwd: request.projectDir,
+        stdout: "null",
+        stderr,
+        signal: request.signal,
+      });
+    });
     if (request.signal?.aborted) return null;
-    if (code === 0) return { ok: true, text: "", diagnostics: [] };
-    const text = new TextDecoder().decode(stderr).trim();
+    if (output.code === 0) return { ok: true, text: "", diagnostics: [] };
+    const text = new TextDecoder().decode(output.stderr).trim();
     return { ok: false, text, diagnostics: parseDiagnostics(text, request.projectDir) };
   } catch {
     return null;

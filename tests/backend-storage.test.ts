@@ -121,6 +121,67 @@ Deno.test("fs storage: sign → PUT → complete → signed GET (full, Range, HE
   }
 });
 
+Deno.test("fs storage: several ranges, and If-Range, as the static handler reads them", async () => {
+  const app = await backendApp({ buckets: { docs } });
+  try {
+    const bucket = storage.bucket("docs", { service: true });
+    await bucket.upload("abc.txt", "abcdefghijklmnopqrstuvwxyz", { contentType: "text/plain" });
+    const url = await bucket.createSignedUrl("abc.txt", { expiresIn: 60 });
+    const full = await app.call(url);
+    const etag = full.headers.get("etag")!;
+    const modified = full.headers.get("last-modified")!;
+    await full.body?.cancel();
+
+    // Two ranges (given out of order, one coalescing with a third) → multipart/byteranges.
+    const multi = await app.call(url, { headers: { range: "bytes=20-22, 0-1, 2-3" } });
+    assertEquals(multi.status, 206);
+    const type = multi.headers.get("content-type")!;
+    const boundary = /^multipart\/byteranges; boundary=(\S+)$/.exec(type)![1];
+    const body = await multi.text();
+    assertEquals(
+      Number(multi.headers.get("content-length")),
+      new TextEncoder().encode(body).length,
+    );
+    assertEquals(
+      body,
+      `--${boundary}\r\ncontent-type: text/plain\r\ncontent-range: bytes 0-3/26\r\n\r\nabcd` +
+        `\r\n--${boundary}\r\ncontent-type: text/plain\r\ncontent-range: bytes 20-22/26\r\n\r\nuvw` +
+        `\r\n--${boundary}--\r\n`,
+    );
+    const head = await app.call(url, {
+      method: "HEAD",
+      headers: { range: "bytes=20-22, 0-1, 2-3" },
+    });
+    assertEquals([head.status, head.headers.get("content-length"), await head.text()], [
+      206,
+      multi.headers.get("content-length"),
+      "",
+    ]);
+    // A suffix range, and one unsatisfiable spec among satisfiable ones is dropped.
+    const tail = await app.call(url, { headers: { range: "bytes=-3, 900-" } });
+    assertEquals([tail.status, tail.headers.get("content-range"), await tail.text()], [
+      206,
+      "bytes 23-25/26",
+      "xyz",
+    ]);
+
+    const ranged = async (ifRange: string) => {
+      const res = await app.call(url, { headers: { range: "bytes=24-", "if-range": ifRange } });
+      return [res.status, await res.text()];
+    };
+    assertEquals(await ranged(etag), [206, "yz"]);
+    assertEquals(await ranged(modified), [206, "yz"]);
+    assertEquals(await ranged(`W/${etag}`), [200, "abcdefghijklmnopqrstuvwxyz"]);
+    assertEquals(await ranged('"another-version"'), [200, "abcdefghijklmnopqrstuvwxyz"]);
+    assertEquals(await ranged("Thu, 01 Jan 1998 00:00:00 GMT"), [
+      200,
+      "abcdefghijklmnopqrstuvwxyz",
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
 Deno.test("fs storage: a signed PUT waits in the staging place until its completion", async () => {
   const app = await backendApp({ buckets: { docs } });
   try {

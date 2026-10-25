@@ -5,8 +5,9 @@
 // build), so the islands are the very modules that bundle renders.
 
 import { assert, assertEquals } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { join, resolve, toFileUrl } from "@std/path";
 import {
+  importGraph,
   npmBoundaryByImporter,
   npmSpecifierToBare,
   packageNameOfPath,
@@ -22,6 +23,7 @@ import {
 } from "../src/build/module-graph.ts";
 import { compatModuleList } from "../src/build/pipeline-shared.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
+import { withSubstDrive } from "./helpers/subst-drive.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
 // Builds in this process: a stalled one fails its test instead of holding the CI job.
@@ -141,6 +143,61 @@ Deno.test("npm boundary: an unbuildable graph answers nothing (the app's own bou
   } finally {
     removeTempDirSync(root);
   }
+});
+
+// A build run from one Windows drive over files on another: esbuild has no relative form for them,
+// so its metafile names them absolutely (`C:/…`). That colon is the drive's, not a plugin
+// namespace's — the walk skipped every such module, so a project on another drive than the working
+// directory reached no npm island at all. Plain strings: this runs on every OS.
+Deno.test("importGraph: a file on another drive (absolute in the metafile) is walked, a namespace is not", () => {
+  const root = "D:/work";
+  const page = "C:/app/page.tsx";
+  const lib = "C:/app/node_modules/ui-lib/cjs/index.js";
+  const graph = importGraph({
+    inputs: {
+      [page]: { bytes: 1, imports: [{ path: lib, kind: "import-statement" }] },
+      [lib]: {
+        bytes: 1,
+        imports: [
+          { path: "C:\\app\\node_modules\\ui-lib\\cjs\\provider.js", kind: "require-call" },
+          { path: "react", kind: "require-call", external: true },
+          { path: "denext-empty:x.css", kind: "import-statement" },
+        ],
+      },
+      "src/local.ts": { bytes: 1, imports: [] },
+      "denext-empty:x.css": { bytes: 1, imports: [] },
+    },
+    outputs: {},
+  }, root);
+  assertEquals([...graph.keys()], [page, lib, "src/local.ts"].map((p) => resolve(root, p)));
+  assertEquals(graph.get(resolve(root, page)), [resolve(root, lib)]);
+  assertEquals(graph.get(resolve(root, lib)), [
+    resolve(root, "C:\\app\\node_modules\\ui-lib\\cjs\\provider.js"),
+  ]);
+});
+
+Deno.test({
+  name: "npm boundary: a project on another drive than the working directory (subst) is walked",
+  ignore: Deno.build.os !== "windows",
+  fn: async () => {
+    const root = await fixture();
+    try {
+      await withSubstDrive(root, async (drive) => {
+        const page = join(drive, "app/page.tsx");
+        const cjs = join(drive, "node_modules/ui-lib/cjs");
+        const found = await npmBoundaryByImporter([page]);
+        // esbuild reports the package's files by their real path (the mapped drive's target).
+        const real = (p: string) => Deno.realPath(p);
+        assertEquals(found.get(page), {
+          client: [await real(join(cjs, "provider.js"))],
+          server: [await real(join(cjs, "actions.js"))],
+          packages: ["ui-lib"],
+        });
+      });
+    } finally {
+      removeTempDirSync(root);
+    }
+  },
 });
 
 Deno.test("npmSpecifierToBare: import-map npm specifiers become package paths", () => {

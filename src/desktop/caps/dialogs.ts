@@ -40,6 +40,7 @@
  * @module
  */
 
+import { exitedOutput } from "../../build/exited-output.ts";
 import { basename } from "@std/path";
 import { allExtensions } from "@std/media-types";
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
@@ -206,7 +207,8 @@ async function defaultRun(
   } catch {
     return { code: null, stdout: "" };
   }
-  const { code, stdout } = await child.output();
+  // Read until exit: a process spawned meanwhile (a sidecar) can inherit the pipe on Windows.
+  const { code, stdout } = await exitedOutput(child, { stdout: true, stderr: false });
   return { code, stdout: new TextDecoder().decode(stdout) };
 }
 

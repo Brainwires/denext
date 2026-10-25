@@ -36,10 +36,12 @@ import {
   sweepLeftovers,
 } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
+import { runToExit } from "./exited-output.ts";
 import {
   currentDenoIdentity,
   type DenoIdentity,
   denoReleaseVersion,
+  needsNoLegacyAbortFlag,
   parseDenoVersionOutput,
 } from "./deno-version.ts";
 import { denoSupportsNetSplit, NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
@@ -377,7 +379,7 @@ export type CaptureRunner = (
 ) => Promise<{ code: number; text: string }>;
 
 const capture: CaptureRunner = async (cmd, args) => {
-  const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped" }).output();
+  const out = await runToExit(cmd, { args });
   const d = new TextDecoder();
   return { code: out.code, text: d.decode(out.stdout) + d.decode(out.stderr) };
 };
@@ -1133,22 +1135,25 @@ export async function resolveDesktopRuntimeEnv(
 
 /**
  * The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime
- * build) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it:
- * `--unstable-no-legacy-abort`, which the runtime keeps from the compiled app's metadata (from
- * 2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not
+ * build) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it. A runtime before
+ * `3.0.0-rc.5` gets `--unstable-no-legacy-abort`, which it keeps from the compiled app's metadata
+ * (from 2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not
  * delivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under
- * `denext start` and a `build --compile` binary. The stock runtime (an empty env) gets none: it
- * ignores the setting. A flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.
+ * `denext start` and a `build --compile` binary. From `3.0.0-rc.5` that is the runtime's default,
+ * so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A
+ * flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.
  *
  * @param runtimeEnv The `deno desktop` child's runtime env (`DENORT_DESKTOP_BIN` set: not stock).
  * @param denoFlags The flags the command already passes (`desktop.denoFlags`).
+ * @param pin The runtime pin (its `version` decides whether the flag is still needed).
  * @returns The flags, to splice in before the entry.
  */
 export function desktopRuntimeDenoFlags(
   runtimeEnv: Readonly<Record<string, string>>,
   denoFlags: readonly string[] = [],
+  pin: { readonly version: string } = DESKTOP_RUNTIME_PIN,
 ): string[] {
-  if (!runtimeEnv.DENORT_DESKTOP_BIN) return [];
+  if (!runtimeEnv.DENORT_DESKTOP_BIN || !needsNoLegacyAbortFlag(pin.version)) return [];
   return ["--unstable-no-legacy-abort"].filter((flag) => !denoFlags.includes(flag));
 }
 

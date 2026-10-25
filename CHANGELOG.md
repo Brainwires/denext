@@ -8,6 +8,118 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Ready for the lifecycle-script jail.** denext's Deno runs a dependency's approved install
+  script jailed (a scrubbed environment, a scratch `HOME`, writes only under `node_modules`, no
+  network), on request up to runtime `3.0.0-rc.4` and by default from `3.0.0-rc.5`, which denext
+  now pins (see Changed). denext now
+  carries a reviewed list of the packages whose scripts need more (puppeteer, Playwright's browser
+  packages, Cypress, Electron, Prisma's engines and client, sharp, better-sqlite3, sqlite3, canvas,
+  keytar, node-pty, re2, node-sass, `@sentry/cli`, chromedriver, ffmpeg-static,
+  `@tensorflow/tfjs-node`, msw, lefthook, simple-git-hooks), each with the narrowest
+  `supplyChain.jailScripts.packages` exception (`net`, the environment variables it reads, the
+  project directories it writes). `denext migrate`, `create` / `init` and `add` write the missing
+  ones into deno.json when the jail is on for the project (comments kept; migrate lists them for
+  review, and prints the JSON when it keeps a hand-authored deno.json), and only say which will be
+  needed while the jail is off. `denext doctor` flags a listed dependency with no exception, and
+  `denext doctor --install-log <file>` explains an install's failed scripts as jail failures with
+  the exception to add. denext never turns the jail off for you. See
+  https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
+
+### Changed
+
+- **denext pins runtime `3.0.0-rc.5`** (from `3.0.0-rc.3`; the Deno toolchain and the Deno
+  Desktop runtime move together). It is built from Deno 2.9.8, so the stock Deno the desktop
+  runtime packages with, the `setup-deno` version and the `denoland/deno` image tag denext
+  generates are now 2.9.8 (`deno upgrade --version 2.9.8` for `denext desktop package`).
+  `3.0.0-rc.5` brings:
+  - two Deno 3.0 defaults. `Deno.serve`'s `request.signal` aborts only when a response is not
+    delivered (the client went away, or the request timed out), in `deno run`, `serve`, `test`,
+    workers and compiled programs, with no legacy-behavior notice; code that relied on the abort
+    after every delivered response opts back in with `--unstable-legacy-abort`,
+    `"unstable": ["legacy-abort"]` or `DENO_LEGACY_ABORT=1` (the handler's `info.completed` says a
+    response was delivered). `--unstable-no-legacy-abort` is accepted and does nothing, so denext
+    no longer passes it to the toolchain, a `build --compile` binary or a Deno Desktop build on
+    this runtime (it still does on an older toolchain, and the `"no-legacy-abort"` entry that
+    `create` / `migrate` write stays for stock Deno 2.9), and `denext desktop package` no longer
+    warns about a macOS packaging script that does not call `desktopRuntimeDenoFlags`. And an
+    approved dependency's lifecycle script runs jailed (see Added); `--no-jail-scripts`,
+    `jail-scripts=false` in `.npmrc` or `"supplyChain": { "jailScripts": false }` opts out;
+  - type-aware lint rules, off by default: `deno lint --type-aware` (or
+    `"lint": { "typeAware": true }`) also runs typescript-eslint's `no-floating-promises`,
+    `no-misused-promises`, `await-thenable` and the rest of its type-aware defaults through a
+    pinned tsgolint shipped in the CLI zip;
+  - `--unstable-idle-trim` (or `DENO_UNSTABLE_IDLE_TRIM=1`): a full GC and `malloc_trim` once the
+    event loop goes idle, so a server's memory returns to the OS after a burst (glibc Linux only;
+    opt-in);
+  - on Windows a spawned child inherits only its own handles, so a process spawned at the same
+    moment no longer keeps another spawn's output pipe open (its `.output()` used to wait for the
+    unrelated process to exit), and a workspace member's import map can map a module on another
+    drive (it resolved to a path under the root's drive);
+  - Deno 2.9.8: X.509 v1 TLS certificates handled as OpenSSL does, safer npm symlinking, zsh
+    completions, `mock.reset()`, and the distrusted eMudhra CAs removed;
+  - page downloads from a custom-scheme app origin (`desktop.app.origin`) on every backend: WebKit
+    (WKWebView on macOS, WebKitGTK on Linux) now downloads a `Content-Disposition: attachment`
+    response, and CEF and WebView2 an `<a download>` link to the app's scheme, each through the
+    platform's save dialog (KNOWN-LIMITATIONS drops the WebKit entry, and the kitchen sink's window
+    test now runs the attachment check on every backend);
+  - rustls-webpki 0.103.16 in the desktop runtime;
+  - a build with Rust 1.99.1.
+
+### Fixed
+
+- **A `deno info` graph crawl or `deno bundle` child that stalls no longer holds a build or test
+  run for ten minutes.** On Windows such a child sometimes never exits while other Deno children
+  run beside it. Each process now runs one of them at a time (across the threads of
+  `deno test --parallel` too), kills a `deno info` still running after 2 minutes (a
+  `deno bundle` after 5) and starts it once more after a warning naming its pid and arguments;
+  a second stall fails with an error naming both pids.
+- **Windows builds no longer stall when many build children run at once.** Deno reads a child's
+  piped output on Windows with blocking reads that each hold a thread from a small pool, so a
+  child that stays quiet on stderr until it exits held one for its whole life; with enough of
+  them alive (`deno test --parallel`, a build that crawls and bundles at once), a busy child's
+  stdout read never ran and that child never exited. `deno info`, `deno bundle`, the dev
+  type-check's `deno check` and the `next.config` evaluator now run with stderr discarded, and
+  only a failed run is repeated once with stderr piped for its error text.
+- **The `"use client"` / `"use server"` files inside npm packages are found for a project on
+  another Windows drive than the working directory.** esbuild names such a file by its absolute
+  path (`C:/…`), and the walk took that drive colon for a plugin namespace and skipped the module,
+  so the page reached no npm island or action module.
+- **A `denext patch` of a framework file applies when the bundler reaches the file by another
+  spelling of its path**, such as a Windows 8.3 short name (`C:\Users\RUNNER~1\…`): the file is
+  compared with the framework root by its real path, so it is no longer bundled unpatched.
+- **`createTestApp` and the boundary crawl no longer hang on Windows beside another spawn.** The
+  `deno info` graph crawl (an App Router `createTestApp`, `probeApp`, `denext build` / `dev`) read
+  its output until the pipes closed. On Windows a process another thread of the same process
+  spawned at that moment (an esbuild service in a parallel `deno test` file, a server, a sidecar)
+  inherits those pipes and kept them open for its whole life, so the crawl, and a
+  `deno test --parallel` run, waited forever. It now reads until `deno info` exits, at most a few
+  seconds past it; a grandchild it leaves behind on any OS no longer holds it either.
+- **The build's other short-lived children read until they exit, too.** `deno bundle` and its
+  version / `--help` probes, Tailwind, the framework-deps install, the server-only import check,
+  the dev type-check, the `ESBUILD_BINARY_PATH` version check, Gleam, the background-runner and
+  `desktop.preload` bundles, `build --compile` signing, the `denext ui` logs and signing-identity
+  probes and the desktop `dialogs` capability no longer wait on a pipe a concurrently spawned
+  process inherited (Windows) or a grandchild kept open; they also give the child an empty stdin
+  instead of the terminal's.
+- **A `deno info` crawl that never exits fails the build instead of hanging it.** The boundary
+  and feature-scan crawl kills a `deno info` still running after 10 minutes and fails with its
+  pid and stderr. The `next.config.*` evaluator (`denext migrate`, `denext ui`'s config panel)
+  and the Deno Desktop runtime's verification probes read until their child exits, too, so a
+  process the config left running (or one that inherited the pipes on Windows) no longer holds
+  them.
+- **`@denext/backend` 0.7.1 serves several ranges and honours `If-Range`.** Object downloads (the
+  plugin's object route and the Storage API) read `Range` as the static file handler does: several
+  ranges come back as one `multipart/byteranges` answer (sorted and coalesced), an unsatisfiable
+  range among satisfiable ones is dropped, and an `If-Range` that no longer names the object (a
+  weak or different `ETag`, another date) gets the whole object. Before, a header with more than
+  one range got the whole object and `If-Range` was ignored.
+- **A resumed `downloadToFile` no longer starts over behind a weak `ETag`.** The web path sent the
+  response's `ETag` in `If-Range` even when it was weak, which a server must treat as a mismatch,
+  so every resume downloaded the file from byte zero. It now sends a strong `ETag`, else
+  `Last-Modified`, and starts over only when the response had neither.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added

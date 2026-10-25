@@ -359,9 +359,10 @@ function toolchainVersion(): string | undefined {
  * The flags only a toolchain compile gets (`version`: the toolchain's, `undefined` off it):
  * `--exclude-unused-npm` embeds only the npm packages the server's graph reaches, not the whole
  * lockfile snapshot (the framework's build tools are no part of the server), and the toolchain's
- * runtime flags are baked into the binary's metadata (`--unstable-no-legacy-abort`: the server runs
- * as under `denext start`; the toolchain's denort keeps it from 2.9.7-denext.21, so the first
- * request prints no legacy-abort notice).
+ * runtime flags are baked into the binary's metadata (`--unstable-no-legacy-abort` before runtime
+ * 3.0.0-rc.5, where it became the default: the server runs as under `denext start`; the
+ * toolchain's denort keeps it from 2.9.7-denext.21, so the first request prints no legacy-abort
+ * notice).
  *
  * @param version The toolchain version this process runs on, or `undefined`.
  * @returns The flags (none off the toolchain).

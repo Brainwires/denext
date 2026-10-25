@@ -24,8 +24,8 @@
   too (an exact match would fail the sign-in closed).
 - **Back to stock Deno once it carries the runtime changes.** Upstreaming them to denoland/deno
   and littledivy/laufey is the maintainer's own work, not tracked here. When stock Deno carries
-  them, drop the runtime download, the Deno 2.9.7 pin and the cross-host backend directory
-  (2.9.7's CLI looks a prebuilt backend up under the host's executable name), and archive the
+  them, drop the runtime download, the Deno 2.9.8 pin and the cross-host backend directory
+  (2.9.8's CLI looks a prebuilt backend up under the host's executable name), and archive the
   forks.
 
 ## Mobile and React Native

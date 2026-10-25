@@ -21,6 +21,7 @@
 // bump ./version.ts and the ESBUILD_NPM table in ./binary.ts, and pin a toolchain whose zip
 // carries that release.
 
+import { runToExit } from "../exited-output.ts";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile, readFileSync, unlink, writeFile } from "node:fs";
@@ -101,7 +102,7 @@ function ensureServiceIsRunning(): Promise<Service> {
 async function checkOverrideVersion(path: string): Promise<void> {
   let reported: string;
   try {
-    const out = await new Deno.Command(path, { args: ["--version"], stdin: "null" }).output();
+    const out = await runToExit(path, { args: ["--version"], stdin: "null" });
     reported = new TextDecoder().decode(out.stdout).trim();
   } catch (err) {
     throw new Error(

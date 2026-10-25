@@ -1928,16 +1928,6 @@ const downloadChecks: Check[] = [
   [
     "downloads: a Content-Disposition: attachment response lands where the save dialog puts it",
     async ({ setup }) => {
-      // The WebKit backends (macOS WKWebView, Linux WebKitGTK) open no save dialog for an
-      // attachment served from the app's custom-scheme origin, whatever its type, at the top
-      // level or in a frame, and log no refusal; WebView2 and CEF download it. The runtime's own
-      // download test covers an http origin only. A runtime gap, reported until it is fixed.
-      if (setup.os !== "windows" && setup.backend !== "cef") {
-        throw new Skip(
-          "runtime gap: the WebKit webview does not download a custom-scheme origin's " +
-            "Content-Disposition: attachment response (no save dialog, no refusal logged)",
-        );
-      }
       // A top-level navigation to the attachment, as a plain link or `location.href` makes one:
       // the response becomes a download and the page stays where it is.
       const text = await saveThroughDialog(setup, "attachment", ATTACHMENT_NAME, () => {

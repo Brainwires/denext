@@ -416,9 +416,11 @@ as under `denext start`). With `DENEXT_DENO=stock` (or another `deno` through
 `DENEXT_DENO=<path>`), `deno compile` picks its own runtime, Deno's stock
 `denort`, which has no `Deno.SQL`.
 
-A compiled binary keeps `--unstable-no-legacy-abort` (from `2.9.7-denext.21`),
-so it behaves as `denext start` does and prints no `request.signal` notice on
-its first request.
+A compiled binary behaves as `denext start` does: its `request.signal` aborts
+only when a response is not delivered, and it prints no `request.signal` notice
+on its first request. That is the toolchain's default from `3.0.0-rc.5`; an
+older toolchain compiles in `--unstable-no-legacy-abort` (kept from
+`2.9.7-denext.21`).
 
 **What does not compile:**
 

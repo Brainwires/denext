@@ -111,15 +111,19 @@ is not the pinned build (stock Deno that inherited the marker inside `denext tas
 `-denext.N` that a `toolchain link` from before a denext upgrade still points at) switches to the
 pinned one.
 
-The switch also passes the toolchain's runtime flag, `--unstable-no-legacy-abort`: `request.signal`
-aborts only when a response is not delivered, and Deno prints no legacy-abort notice on the first
-request. A server verb (`dev`, `start`, `profile`) started on the toolchain directly (the `deno`
-that `toolchain link` puts on PATH, or a `deno task` step running it) checks whether it has that
-flag, with one loopback request, and re-runs once on the same binary with it when it does not.
-Without `--allow-run` it keeps serving in-process, so the `deno.json` that `denext create` and
-`denext migrate` write carries `"unstable": ["no-legacy-abort"]`, which turns the flag on for every
-`deno` that reads the config (a least-privilege `start` task included). Add it to an older
-project's `deno.json` (the Setup page of `denext ui` offers to), beside any features already listed.
+From runtime `3.0.0-rc.5`, `request.signal` aborts only when a response is not delivered (the
+client went away or the request timed out) by default, and Deno prints no legacy-abort notice; code
+that relied on the old abort after every delivered response opts back in with
+`--unstable-legacy-abort`, `"unstable": ["legacy-abort"]` or `DENO_LEGACY_ABORT=1` (use the
+handler's `info.completed` to learn that a response was delivered). An older toolchain needs
+`--unstable-no-legacy-abort` for that, which the switch passes to it. A server verb (`dev`,
+`start`, `profile`) started on such a toolchain directly (the `deno` that `toolchain link` puts on
+PATH, or a `deno task` step running it) checks whether it has that flag, with one loopback
+request, and re-runs once on the same binary with it when it does not. The `deno.json` that
+`denext create` and `denext migrate` write carries `"unstable": ["no-legacy-abort"]`, which turns
+the new behavior on for stock Deno 2.9 and older toolchains too (a least-privilege `start` task
+included); `3.0.0-rc.5` and later accept it and do nothing. Add it to an older project's
+`deno.json` (the Setup page of `denext ui` offers to), beside any features already listed.
 
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
@@ -388,7 +392,7 @@ The toolchain installs it beside `deno` under the same rule as the compiler (its
 whole directory must hash to the pin's `tsgoLsp` entry, else it is refused and never installed),
 and `denext toolchain status` prints a `typescript lsp` line for it.
 
-It is the default editor backend. From runtime `3.0.0-rc.3` (the pinned build) it is the runtime's
+It is the default editor backend. From runtime `3.0.0-rc.3` (so in the pinned build too) it is the runtime's
 own default: its `deno lsp` runs TypeScript 7 with no setting at all, or with an empty
 `deno.unstable` list (what editors send by default). denext still writes the entry, which earlier
 runtimes need:
@@ -403,11 +407,11 @@ runtimes need:
 A `deno.unstable` the project already sets, an empty list included, is never changed. To keep the
 TypeScript 6 service:
 
-| Where              | How                                                                                                                                           |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way)                                    |
-| One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"` (before `3.0.0-rc.3`, an empty list too)     |
-| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade` (on `3.0.0-rc.3` this alone keeps TypeScript 7) |
+| Where              | How                                                                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way)                                      |
+| One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"` (before `3.0.0-rc.3`, an empty list too)       |
+| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade` (from `3.0.0-rc.3` this alone keeps TypeScript 7) |
 
 The editor runs whichever `deno` it finds, so point it at the toolchain: `denext toolchain link`
 puts it on `PATH`, or set the Deno extension's `deno.path` to what `denext toolchain path` prints.
@@ -483,7 +487,8 @@ and Arm64 (`desktop-ci`). What works:
 Not on Windows: `denext fastlane` and iOS builds (both need macOS).
 
 A `deno.json` `file:` target on another drive (an app on `C:` importing a checkout on `D:`, as
-`migrate --denext-local-path` writes) resolves on the toolchain from runtime `3.0.0-rc.3`. Stock
+`migrate --denext-local-path` writes) resolves on the toolchain from runtime `3.0.0-rc.3`, and a
+workspace member's mapping to a module on another drive from `3.0.0-rc.5`. Stock
 Deno 2.9 still resolves it as `file:///C:/D:/…`, so under `DENEXT_DENO=stock` keep the project and
 its `file:` targets on one drive.
 
@@ -520,6 +525,95 @@ they are out, add it back to the project's `deno.json`, knowing it lets any just
 "minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
 ```
 
+## Supply chain: lifecycle-script jail
+
+An approved dependency's lifecycle script (`preinstall`, `install`, `postinstall`, approved with
+`--allow-scripts` or deno.json `allowScripts`) runs **jailed** on denext's Deno: a scrubbed
+environment (no `GITHUB_TOKEN`, `NPM_TOKEN` or other credentials), a scratch `HOME` removed after
+the script, writes only beneath `node_modules`, no credential files, no network, every `deno` it
+starts clamped to the same limits, and the OS confining the whole process tree where it can
+(Landlock and seccomp on Linux, `sandbox-exec` on macOS). A compromised package's install script
+then can't read your tokens, phone home or rewrite your project. The project's own scripts (the
+root `package.json`, workspace members) are your code and are not jailed.
+
+- **The default.** From runtime `3.0.0-rc.5` the jail is on unless the project turns it off.
+  Earlier runtimes (the `3.0.0-rc.3` and `rc.4` pins) jail only on request: `--jail-scripts`,
+  `jail-scripts=true` in `.npmrc` (or `npm_config_jail_scripts=true`), deno.json
+  `"supplyChain": { "jailScripts": true }`, or `paranoid`.
+- **Opting out** (not recommended): `--no-jail-scripts`, `jail-scripts=false` in `.npmrc` or
+  `npm_config_jail_scripts=false`, or deno.json `"supplyChain": { "jailScripts": false }`. Where
+  sources disagree the stricter one wins, so a `.npmrc` can't quietly undo what deno.json asks for;
+  under `paranoid` every opt-out is an error. denext never turns the jail off for you.
+- **Per-package exceptions** keep the jail on and widen it for one package: environment variables
+  passed through, extra writable directories (relative to deno.json; create them first, Linux
+  skips a missing one) and the network. There is no per-host network list; a node-pre-gyp
+  package's declared `binary.host` is allowed by itself.
+
+```json
+{
+  "supplyChain": {
+    "jailScripts": {
+      "packages": {
+        "puppeteer": {
+          "net": true,
+          "env": ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"]
+        },
+        "msw": { "write": ["public"] }
+      }
+    }
+  }
+}
+```
+
+An exceptions object counts as asking for the jail: on Windows, where the OS can't confine the
+script's other programs, an install then prints a one-line warning saying so.
+
+**denext writes the exceptions for you.** `denext migrate`, `denext create` / `init` (next to an
+existing `package.json`) and `denext add` find the dependencies in denext's built-in list below
+and, when the jail is on for the project, add the narrowest exception each needs to deno.json
+(your comments and existing entries stay). On a runtime that jails only on request they say which
+dependencies will need one and write nothing, since an exceptions object would itself turn the
+jail on. `migrate` lists each exception in its review notes (`--check` too); when it keeps a
+hand-authored deno.json it prints the JSON to add instead. `denext doctor` flags a listed
+dependency whose exception is missing while the jail is on, and
+`denext doctor --install-log install.log` (from `denext install 2>&1 | tee install.log`) explains
+a dependency's failed script: which package, what the jail stopped (the network, a write outside
+`node_modules`, a real `npm` / `npx`) and the exception to add.
+
+| Package                                             | Why its script needs more                                                                                 | Exception                                                                                    |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `@prisma/client`                                    | postinstall runs `prisma generate` (may fetch the engines; writes the client to the generator's `output`) | `net`, Prisma's env, `write`: each `output` outside `node_modules`                           |
+| `@prisma/engines` (with `prisma`, `@prisma/client`) | postinstall downloads the engines from binaries.prisma.sh                                                 | `net`, `PRISMA_*` mirror and engine-path env                                                 |
+| `@sentry/cli`                                       | downloads the binary when the platform package is missing                                                 | `net`, `SENTRYCLI_*`                                                                         |
+| `@tensorflow/tfjs-node`                             | downloads libtensorflow                                                                                   | `net`                                                                                        |
+| `better-sqlite3`                                    | `prebuild-install` from GitHub, else node-gyp                                                             | `net` (or leave it unapproved: the toolchain serves better-sqlite3 over the built-in SQLite) |
+| `canvas`                                            | `prebuild-install` from GitHub (canvas 3), else node-gyp                                                  | `net`                                                                                        |
+| `chromedriver`                                      | downloads chromedriver into its package                                                                   | `net`, `CHROMEDRIVER_*`                                                                      |
+| `cypress`                                           | downloads the Cypress app into `~/.cache/Cypress`                                                         | `net`, `CYPRESS_CACHE_FOLDER` / `_INSTALL_BINARY` / `_DOWNLOAD_MIRROR`                       |
+| `electron`                                          | downloads Electron and unpacks it into its package                                                        | `net`, `ELECTRON_*` mirror / skip env                                                        |
+| `ffmpeg-static`                                     | downloads ffmpeg into its package                                                                         | `net`, `FFMPEG_BINARIES_URL`                                                                 |
+| `keytar`                                            | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                        |
+| `lefthook`                                          | `lefthook install` writes `.git/hooks`                                                                    | `write`: the repository's `.git/hooks`                                                       |
+| `msw`                                               | copies `mockServiceWorker.js` into `msw.workerDirectory`                                                  | `write`: those directories                                                                   |
+| `node-pty`                                          | node-gyp build when no prebuilt binary matches                                                            | `net`                                                                                        |
+| `node-sass`                                         | downloads the libsass binding from GitHub                                                                 | `net`, `SASS_BINARY_*`                                                                       |
+| `playwright-chromium`, `-firefox`, `-webkit`        | download their browser into the Playwright cache                                                          | `net`, `PLAYWRIGHT_BROWSERS_PATH` / `_DOWNLOAD_HOST` / `_SKIP_BROWSER_DOWNLOAD`              |
+| `puppeteer`                                         | downloads Chrome for Testing into `~/.cache/puppeteer`                                                    | `net`, `PUPPETEER_CACHE_DIR` / `_DOWNLOAD_BASE_URL` / `_SKIP_DOWNLOAD`                       |
+| `re2`                                               | downloads a prebuilt binding from GitHub, else node-gyp                                                   | `net`                                                                                        |
+| `sharp`                                             | before 0.33 downloads libvips; later only a build from source needs the network                           | `net`, `SHARP_*_GLOBAL_LIBVIPS`                                                              |
+| `simple-git-hooks`                                  | writes `.git/hooks`                                                                                       | `write`: the repository's `.git/hooks`                                                       |
+| `sqlite3`                                           | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                        |
+
+The packages that download a browser or app into a cache under your home (puppeteer, Playwright's
+browser packages, Cypress) get the network, but the jail's scratch `HOME` is removed after the
+script: point the cache variable (`PUPPETEER_CACHE_DIR`, `PLAYWRIGHT_BROWSERS_PATH`,
+`CYPRESS_CACHE_FOLDER`) at a directory in the project and add it to `write`, or skip the download
+there and fetch the browser afterwards with the tool's own command (`playwright install`,
+`puppeteer browsers install chrome`). A build from source with
+node-gyp downloads the Node.js headers (`npm_config_nodedir` points it at local ones). Not listed,
+because they need nothing: `esbuild` (its binary is an optional dependency), `bcrypt`, `playwright`
+(no install script), `husky` 9 (the project's own `prepare`) and `bufferutil`.
+
 ## Notes: how denext's Deno build is kept current
 
 <a id="versions"></a>**Versions.** Up to `2.9.7-denext.22` each build was named after the Deno release it
@@ -527,9 +621,9 @@ was built from plus `-denext.N`. From `3.0.0-rc.1` (then `3.0.0-rc.2`, …) the 
 version, which names no Deno release; `3.0.0` final carries Deno's planned 3.0 milestone. The two
 schemes sort in release order by semver (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.10` <
 `3.0.0`), and denext accepts both: a pin, a `Deno.version.deno` and a `DENO_BIN` are compared that
-way. The Deno release a build is made from is the pin's `deno` field (2.9.7 for every build so
-far): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
-[Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.7 exactly" check use. Releases are tagged
+way. The Deno release a build is made from is the pin's `deno` field (2.9.7 up to `3.0.0-rc.3`,
+2.9.8 from `3.0.0-rc.4`): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
+[Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.8 exactly" check use. Releases are tagged
 `denext-runtime-v<version>` on [Brainwires/deno](https://github.com/Brainwires/deno/releases). The
 toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
 stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
@@ -540,25 +634,25 @@ denext's Deno carries an identity marker: `Deno.build.denext` (its version, a st
 upstream Deno) and a last line in `deno --version`:
 
 ```
-deno 3.0.0-rc.3 (stable, release, aarch64-apple-darwin)
-v8 14.9.1
+deno 3.0.0-rc.5 (stable, release, aarch64-apple-darwin)
+v8 15.0.245.2-rusty
 typescript 6.0.3
-denext 3.0.0-rc.3 (Brainwires)
+denext 3.0.0-rc.5 (Brainwires)
 ```
 
 denext recognises its toolchain and the `deno` a desktop build runs by that marker (in its own
 process by `Deno.build.denext`, for another binary by the `--version` line): whether a command
 already runs on the toolchain, `denext toolchain status`, `denext doctor`, the native type check,
-the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.7
+the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.8
 exactly" check and the direction-split network flags. An upstream `3.0.0-rc.N` or `3.0.0` is stock
 Deno whatever its number. A build from before the marker is recognised by its version only:
 `2.9.7-denext.N`, or exactly the pinned toolchain while the pin predates the marker (`3.0.0-rc.2`
 and earlier). A runtime release from `3.0.0-rc.3` must record the marker in its manifest
 (`cli.identity`), or `deno task desktop:pin-runtime` refuses it.
 
-**Tracking Deno.** The toolchain is Deno's latest release (2.9.7) plus denext's patches — `Deno.SQL`,
+**Tracking Deno.** The toolchain is Deno's latest release (2.9.8) plus denext's patches — `Deno.SQL`,
 Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
-published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we
+published (as `2.9.7-denext.N`, then `3.0.0-rc.N`) with SHA-256 sums and build attestations. Between Deno releases we
 review what Deno's main branch has gained and take the fixes that matter: `2.9.7-denext.16` took the
 read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
 skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update, and
@@ -575,10 +669,22 @@ release is adopted by rebasing the patches onto it and cutting a new release (`-
 `2.9.7-denext.22`, the fork's own `3.0.0-rc.N` from then on). `3.0.0-rc.2` adds
 `--max-memory` / `--max-cpu-time` / `--max-time` and `--allow-net-connect` /
 `--allow-net-listen`, and takes the rustls / rustls-webpki / webpki-roots security fixes.
-`3.0.0-rc.3` (the build denext pins today) adds the identity marker above, makes TypeScript 7 the
+`3.0.0-rc.3` adds the identity marker above, makes TypeScript 7 the
 language server's own default, keeps a `--watch` child's IPC channel across restarts, resolves a
 `file:` link on another Windows drive, checks the files after `deno check --`, and gives the native
-check's TS2307 Deno's `deno add` hint. Deno's next minor
+check's TS2307 Deno's `deno add` hint. `3.0.0-rc.4` is built from Deno 2.9.8 (X.509 v1 TLS
+certificates handled as OpenSSL does, safer npm symlinking, zsh completions, `mock.reset()`, the
+distrusted eMudhra CAs removed). `3.0.0-rc.5` (the build denext pins today) makes two Deno 3.0
+behaviors the default: `request.signal` aborts only when a response is not delivered
+(`--unstable-legacy-abort` or `DENO_LEGACY_ABORT=1` restores the old abort), and an approved
+dependency's lifecycle script runs [jailed](#supply-chain-lifecycle-script-jail). It adds
+type-aware lint rules (`deno lint --type-aware`, or `"lint": { "typeAware": true }`: typescript-eslint's
+`no-floating-promises`, `no-misused-promises`, `await-thenable` and others through a pinned tsgolint
+shipped in the CLI zip; off by default) and `--unstable-idle-trim` (a full GC and `malloc_trim`
+when the event loop goes idle, so a server's memory returns to the OS after a burst; glibc Linux
+only). On Windows a spawned child inherits only its own handles, so a concurrent spawn no longer
+keeps another's output pipe open (`.output()` waited for the unrelated process to exit), and a
+workspace member's import map can map a module on another drive. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 
 **Support across denext releases.** The patches are carried forward from release to release. Each

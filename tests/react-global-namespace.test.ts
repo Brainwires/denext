@@ -7,6 +7,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 
 const ROOT = new URL("../", import.meta.url);
 const at = (p: string) => new URL(p, ROOT).href;
@@ -44,14 +45,11 @@ async function check(dir: string, withGlobal: boolean): Promise<{ code: number; 
     },
   };
   await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(config));
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
-    args: ["check", "--config", join(dir, "deno.json"), toFileUrl(join(dir, "app.tsx")).href],
-    cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  const dec = new TextDecoder();
-  return { code, out: dec.decode(stdout) + dec.decode(stderr) };
+  const { code, stdout, stderr } = await quietDeno(
+    ["check", "--config", join(dir, "deno.json"), toFileUrl(join(dir, "app.tsx")).href],
+    { cwd: dir },
+  );
+  return { code, out: stdout + stderr };
 }
 
 /** A fresh project dir (one per check: deno's check cache can keep a failed result across

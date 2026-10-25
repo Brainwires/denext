@@ -27,6 +27,7 @@ import { resolveProject } from "../src/build/paths.ts";
 import type { BuildInfo } from "../src/build/prod-server/manifest.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 
 const FW = new URL("../", import.meta.url);
 
@@ -67,14 +68,12 @@ interface DenoInfo {
 
 /** Run `deno info --json` on `root` (with `config`, when given). */
 async function denoInfo(root: string, config?: string): Promise<DenoInfo> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", ...(config ? ["--config", config] : []), root],
-    cwd: fromFileUrl(FW),
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  assertEquals(code, 0, new TextDecoder().decode(stderr));
-  return JSON.parse(new TextDecoder().decode(stdout));
+  const { code, stdout, stderr } = await quietDeno(
+    ["info", "--json", ...(config ? ["--config", config] : []), root],
+    { cwd: fromFileUrl(FW) },
+  );
+  assertEquals(code, 0, stderr);
+  return JSON.parse(stdout);
 }
 
 /** Add to `reached` every module `info`'s roots reach through code imports. */

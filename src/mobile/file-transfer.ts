@@ -458,6 +458,19 @@ export interface PageTransferSpec {
   readonly options: FileTransferOptions;
 }
 
+/**
+ * The validator a resumed download's `If-Range` carries: a strong `ETag`, else `Last-Modified`,
+ * else none (the download then starts over). A weak `ETag` never matches in `If-Range`
+ * (RFC 9110 §13.1.5), so sending one would restart every resume from byte zero.
+ *
+ * @param headers The response's headers.
+ * @returns The validator, or `null` when the response has none `If-Range` can use.
+ */
+export function ifRangeValidator(headers: Headers): string | null {
+  const etag = headers.get("etag")?.trim();
+  if (etag && !etag.startsWith("W/")) return etag;
+  return headers.get("last-modified");
+}
 /** The total a response announces for the rest of the body, plus where it starts. */
 function announced(res: Response, from: number): number | null {
   const range = /\/(\d+)\s*$/.exec(res.headers.get("content-range") ?? "");
@@ -646,7 +659,7 @@ class PageDownload implements PageTransfer {
   async #receive(res: Response): Promise<number> {
     const from = this.info.bytes;
     const start = from > 0 && continuesAt(res, from) ? from : 0;
-    this.#validator = res.headers.get("etag") ?? res.headers.get("last-modified");
+    this.#validator = ifRangeValidator(res.headers);
     const total = announced(res, start);
     const writer = await writing(() => this.sink.open(start));
     let bytes = start;

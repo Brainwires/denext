@@ -20,7 +20,7 @@ import {
   uploadFile,
   writeFile,
 } from "../src/mobile/mod.ts";
-import { resetFileTransfersForTesting } from "../src/mobile/file-transfer.ts";
+import { ifRangeValidator, resetFileTransfersForTesting } from "../src/mobile/file-transfer.ts";
 import {
   type Any,
   fakePlugin,
@@ -113,7 +113,10 @@ function pattern(size: number, from = 0): Uint8Array<ArrayBuffer> {
  * A fetch serving `size` bytes in 1 KiB chunks, one chunk per `gate()` the test opens (so it can
  * pause part-way). Ranges are honoured unless `ignoreRange`; requests are recorded.
  */
-function streamingFetch(size: number, opts: { ignoreRange?: boolean } = {}) {
+function streamingFetch(
+  size: number,
+  opts: { ignoreRange?: boolean; validators?: Record<string, string> } = {},
+) {
   const requests: Array<{ url: string; headers: Headers }> = [];
   let release: (() => void) | null = null;
   let pending = 0;
@@ -142,7 +145,7 @@ function streamingFetch(size: number, opts: { ignoreRange?: boolean } = {}) {
       new Response(body, {
         status: partial ? 206 : 200,
         headers: {
-          etag: '"e1"',
+          ...(opts.validators ?? { etag: '"e1"' }),
           "content-length": String(size - start),
           ...(partial ? { "content-range": `bytes ${start}-${size - 1}/${size}` } : {}),
         },
@@ -456,6 +459,38 @@ Deno.test("downloadToFile (web): streams into OPFS with progress, pauses and res
     assertEquals([info?.state, info?.file, info?.total], ["done", "data/dl/f.bin", 5120]);
     assertEquals(await forgetFileTransfer("w1"), true);
     assertEquals((await fileTransfers()).length, 0);
+  }, { fetch: server.fetch });
+});
+
+Deno.test("ifRangeValidator: a strong ETag, else Last-Modified; a weak ETag is never sent", () => {
+  const date = "Wed, 21 Oct 2026 07:28:00 GMT";
+  const v = (h: Record<string, string>) => ifRangeValidator(new Headers(h));
+  assertEquals(v({ etag: '"abc"', "last-modified": date }), '"abc"');
+  assertEquals(v({ etag: 'W/"abc"', "last-modified": date }), date);
+  assertEquals(v({ etag: 'W/"abc"' }), null);
+  assertEquals(v({ "last-modified": date }), date);
+  assertEquals(v({}), null);
+});
+
+Deno.test("downloadToFile (web): a weak ETag resumes on Last-Modified, not from zero", async () => {
+  const date = "Wed, 21 Oct 2026 07:28:00 GMT";
+  const server = streamingFetch(3 * 1024, {
+    validators: { etag: 'W/"weak"', "last-modified": date },
+  });
+  await withOpfs(async () => {
+    const done = downloadToFile("https://x.test/w.bin", "w.bin", { id: "w9" });
+    await server.step(1);
+    await pauseFileTransfer("w9");
+    await until(() => server.requests.length === 1);
+    await settle();
+    assertEquals(await resumeFileTransfer("w9"), true);
+    await server.drain();
+    assertEquals(await done, { path: "data/w.bin" });
+    assertEquals(server.requests[1].headers.get("range"), "bytes=1024-");
+    assertEquals(server.requests[1].headers.get("if-range"), date);
+    const file = await readFile("w.bin", { encoding: "base64" });
+    assertEquals(Uint8Array.from(atob(file), (c) => c.charCodeAt(0)), pattern(3 * 1024));
+    await forgetFileTransfer("w9");
   }, { fetch: server.fetch });
 });
 

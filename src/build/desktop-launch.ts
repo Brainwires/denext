@@ -42,7 +42,7 @@ export interface DesktopLaunchBuildInput {
   readonly permissionFlags: readonly string[];
   /** `desktop.denoFlags`. */
   readonly denoFlags: readonly string[];
-  /** The pinned runtime's flags (`desktopRuntimeDenoFlags`; `--unstable-no-legacy-abort`). */
+  /** The pinned runtime's flags (`desktopRuntimeDenoFlags`; none from runtime 3.0.0-rc.5). */
   readonly runtimeFlags?: readonly string[];
   /** The extension `--include`s and the npm args (`desktopIncludeArgs` + `desktopNpmArgs`). */
   readonly extraArgs: readonly string[];
@@ -251,7 +251,7 @@ export interface DesktopLaunchPlanInput {
   readonly denoFlags: readonly string[];
   /**
    * The build's runtime env (`resolveDesktopRuntimeEnv`): on the pinned runtime the build gets its
-   * flags (`--unstable-no-legacy-abort`), as the packaging scripts do; none when empty (stock).
+   * flags (`desktopRuntimeDenoFlags`), as the packaging scripts do; none when empty (stock).
    */
   readonly runtimeEnv?: Readonly<Record<string, string>>;
   /** The entry to build, relative to the project. */

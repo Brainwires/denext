@@ -8,6 +8,7 @@ import {
   LOAD_NEXT_CONFIG,
   type NextConfigEvalResult,
 } from "../src/build/next-config-eval.ts";
+import { inChild } from "./helpers/isolated.ts";
 
 const MARKER = "__TEST_NEXT_CONFIG__";
 
@@ -378,4 +379,47 @@ Deno.test("an npm import reaches no registry, and the parent's environment stays
     Deno.env.delete("NEXT_PUBLIC_EVAL_TEST");
     await server.shutdown();
   }
+});
+
+Deno.test({
+  name:
+    "evalNextConfigProgram: returns once the evaluator exits while a process it left holds its output",
+  // The stand-in `deno` is a shell script. On Windows the holder is a process another thread of
+  // the test process spawned meanwhile (it inherits the pipe); the read is the same.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_next_eval_held_" });
+    const app = join(dir, "app");
+    await Deno.mkdir(app);
+    await Deno.writeTextFile(join(app, "next.config.mjs"), "export default {};\n");
+    const pidFile = join(dir, "pid");
+    // The reaper (`deno eval`) waits on its stdin until dismissed. The evaluator (`deno run -`)
+    // answers on the run's marker line and exits, leaving a process with its stdout and stderr.
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\nif [ "$1" = eval ]; then exec cat > /dev/null; fi\n` +
+        `m=$(cat | grep -o '${MARKER}[0-9a-f-]*:' | head -n 1)\n` +
+        `sleep 120 &\necho $! > '${pidFile}'\nprintf '%s{"held":true}\\n' "$m"\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    try {
+      const t0 = Date.now();
+      const { value } = await inChild<NextConfigEvalResult>({
+        imports: `import { evalNextConfigProgram } from "@repo/src/build/next-config-eval.ts";`,
+        body: `return await evalNextConfigProgram({ dir: ${JSON.stringify(app)}, ` +
+          `file: "next.config.mjs", marker: ${JSON.stringify(MARKER)}, timeoutMs: 50_000, ` +
+          `program: ${JSON.stringify(echo())} });`,
+        env: { DENO_BIN: fake },
+        timeoutMs: 60_000,
+      });
+      assertEquals(value, { ok: true, value: { held: true } });
+      assert(Date.now() - t0 < 45_000, `took ${Date.now() - t0} ms`);
+    } finally {
+      try {
+        Deno.kill(Number((await Deno.readTextFile(pidFile)).trim()), "SIGKILL");
+      } catch { /* gone, or never started */ }
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });

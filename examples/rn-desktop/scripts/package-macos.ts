@@ -49,7 +49,7 @@
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
- * Deno version it was built for (`deno upgrade --version 2.9.7`).
+ * Deno version it was built for (`deno upgrade --version 2.9.8`).
  *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
@@ -130,7 +130,7 @@ async function buildApp(out: string, target?: string): Promise<void> {
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
     ...denoFlags,
-    // The pinned runtime keeps --unstable-no-legacy-abort: no Deno.serve legacy-abort notice.
+    // The pinned runtime's own flags (--unstable-no-legacy-abort before 3.0.0-rc.5; none after).
     ...desktopRuntimeDenoFlags(env, denoFlags),
     "--include",
     "out",

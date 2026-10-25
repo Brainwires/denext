@@ -31,6 +31,8 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
+import { boundedOutput, retryOnStall } from "./serial-child.ts";
+import { quietThenExplain, type StderrMode } from "./exited-output.ts";
 
 // The boundary ids and the manifest's shape live in leaf modules the server runtime imports
 // without this crawler.
@@ -399,11 +401,13 @@ export function reachableModules(info: DenoInfo, roots: string[]): DenoInfoModul
  * parsed graph plus the entries' resolved specifiers. Shared by the boundary/hydration
  * crawl and the CSS discovery crawl so both apply the same flags (sloppy imports, the
  * minimum-dependency-age policy) and the same temp-dir hygiene. Cached per `cache` name
- * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely.
+ * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely. A `deno info`
+ * still running after `deadlineMs` (default 2 minutes) is killed and started once more; a second
+ * stall fails the crawl. One crawl runs at a time per process.
  */
 export function denoInfoGraph(
   entryFiles: string[],
-  opts: { cache?: boolean | string } = {},
+  opts: { cache?: boolean | string; deadlineMs?: number } = {},
 ): Promise<ModuleGraph> {
   const name = cacheNameOf(opts.cache);
   const wanted = entryFiles.map((f) => toFileUrl(f).href);
@@ -419,7 +423,7 @@ export function denoInfoGraph(
     const pending = graphInFlight.get(key);
     if (pending) return pending;
   }
-  const run = spawnDenoInfo(entryFiles).then((graph) => {
+  const run = spawnDenoInfo(entryFiles, opts.deadlineMs).then((graph) => {
     if (name) {
       const entries = new Set(wanted);
       // Keep the largest graph: a later, smaller request must not evict the superset.
@@ -454,8 +458,16 @@ async function redirectConfigArgs(tmpDir: string): Promise<string[]> {
   return ["--config", await prepareConfig(tmpDir, { configPath, importMap })];
 }
 
+/**
+ * How long one `deno info` attempt may run, by default, before it is killed and retried once (see
+ * serial-child.ts): well past a warm crawl, and a cold npm install's crawl that overruns it
+ * resumes from the cache it filled on the retry.
+ */
+const DENO_INFO_DEADLINE_MS = 120_000;
+
 async function spawnDenoInfo(
   entryFiles: string[],
+  deadlineMs: number = DENO_INFO_DEADLINE_MS,
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
   graphSpawns++;
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });
@@ -464,31 +476,53 @@ async function spawnDenoInfo(
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
     const configDir = appConfigDir();
-    const command = new Deno.Command(denoExecutable(), {
-      // Run in the app's folder so Deno discovers its config (and import map) as it does for the
-      // app's own commands. Without one: a process whose working directory was deleted (a test
-      // that removed its temp cwd) can't spawn `deno info` from it; run from the first entry's
-      // folder instead.
-      ...(configDir ? { cwd: configDir } : liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
-      // sloppy-imports so extensionless Next.js app imports resolve in the graph
-      // crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args: [
-        "info",
-        "--unstable-sloppy-imports",
-        ...minDepAgeArgs(),
-        "--json",
-        ...await redirectConfigArgs(tmpDir),
-        // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
-        toFileUrl(barrel).href,
-      ],
-      stdout: "piped",
-      stderr: "piped",
-    });
-    const { code, stdout, stderr } = await command.output();
-    if (code !== 0) {
-      throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
+    const args = [
+      "info",
+      "--unstable-sloppy-imports",
+      ...minDepAgeArgs(),
+      "--json",
+      ...await redirectConfigArgs(tmpDir),
+      // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
+      toFileUrl(barrel).href,
+    ];
+    const spawn = (stderr: StderrMode) =>
+      new Deno.Command(denoExecutable(), {
+        // Run in the app's folder so Deno discovers its config (and import map) as it does for
+        // the app's own commands. Without one: a process whose working directory was deleted (a
+        // test that removed its temp cwd) can't spawn `deno info` from it; run from the first
+        // entry's folder instead.
+        ...(configDir ? { cwd: configDir } : liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
+        // sloppy-imports so extensionless Next.js app imports resolve in the graph
+        // crawl (permissive fallback; see runDenoBundle in bundle.ts).
+        args,
+        stdin: "null",
+        stdout: "piped",
+        stderr,
+      }).spawn();
+    // Read until `deno info` exits, not until its pipes close: a process spawned meanwhile by
+    // another thread (Windows) can hold them open for its whole life. One crawl at a time per
+    // process; one that never exits is killed at the deadline and started once more. stderr is
+    // discarded unless the crawl fails (see quietThenExplain): a quiet stderr pipe held for the
+    // crawl's whole life is what starves other children's reads on Windows.
+    const output = await quietThenExplain((mode) =>
+      retryOnStall(
+        "deno info",
+        args,
+        (deadline) =>
+          boundedOutput(
+            spawn(mode),
+            { stdout: true, stderr: mode === "piped" },
+            deadline,
+            "deno info",
+          ),
+        deadlineMs,
+      )
+    );
+    if (output.code !== 0) {
+      const stderr = new TextDecoder().decode(output.stderr);
+      throw new Error(`deno info failed (${output.code}):\n${stderr}`);
     }
-    const info = JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo;
+    const info = JSON.parse(new TextDecoder().decode(output.stdout)) as DenoInfo;
     renameCopies(info, activeRedirects()?.originals ?? {});
     // The barrel's dependency list maps each entry as WRITTEN (`file://…` of the given path)
     // to the specifier `deno info` reports for it (resolved/realpath'd), so BFS roots match

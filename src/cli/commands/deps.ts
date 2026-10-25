@@ -4,7 +4,9 @@
 // changes — keeping one tool for the whole dependency workflow.
 
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { commandCwd, denoGlobalArgs, spawnDenoAndExit } from "../shared.ts";
+import { commandCwd, denoGlobalArgs, relayingSignals, spawnDenoAndExit } from "../shared.ts";
+import { denoExecutable } from "../../build/bundle.ts";
+import { applyJailExceptions, npmPackageName } from "../../build/jail-scripts.ts";
 
 function runDeno(
   sub: string,
@@ -27,7 +29,7 @@ const GLEAM_SPEC = "gleam:";
  */
 async function runAdd(ctx: CommandContext): Promise<never> {
   const gleamPkgs = ctx.rest.filter((a) => a.startsWith(GLEAM_SPEC));
-  if (gleamPkgs.length === 0) return runDeno("add", ctx);
+  if (gleamPkgs.length === 0) return await addNpm(ctx);
   const { addGleamPackages } = await import("../../build/gleam.ts");
   const ok = await addGleamPackages(
     commandCwd(ctx),
@@ -36,8 +38,53 @@ async function runAdd(ctx: CommandContext): Promise<never> {
   if (!ok) Deno.exit(1);
   const rest = ctx.rest.filter((a) => !a.startsWith(GLEAM_SPEC));
   if (!rest.some((a) => !a.startsWith("-"))) Deno.exit(0);
-  return runDeno("add", { ...ctx, rest });
+  return await addNpm({ ...ctx, rest });
 }
+
+/**
+ * The npm packages a `deno add` argument list names: `npm:` specifiers, and bare names under
+ * `--npm`.
+ *
+ * @param args `denext add`'s arguments.
+ * @returns The package names.
+ */
+export function addedNpmPackages(args: readonly string[]): string[] {
+  const bareIsNpm = args.includes("--npm");
+  return args.filter((a) => !a.startsWith("-")).flatMap((a) => {
+    const name = npmPackageName(a) ??
+      (bareIsNpm && !/^[a-z]+:/.test(a) ? npmPackageName(`npm:${a}`) : null);
+    return name ? [name] : [];
+  });
+}
+
+/**
+ * `deno add` with the lifecycle-script jail prepared: the exceptions the added packages need
+ * (src/build/jail-exceptions.ts) go into deno.json first, since `deno add` runs the approved
+ * install scripts itself; when it fails with the jail on, a hint says how to have it explained.
+ */
+async function addNpm(ctx: CommandContext): Promise<never> {
+  const cwd = commandCwd(ctx);
+  const jail = await applyJailExceptions(cwd, { deps: addedNpmPackages(ctx.rest) })
+    .catch(() => null);
+  const [first, ...more] = jail?.lines ?? [];
+  if (first) console.error(`denext add: ${[first, ...more.map((l) => `  ${l}`)].join("\n")}`);
+  const child = new Deno.Command(denoExecutable(), {
+    args: ["add", ...denoGlobalArgs(ctx), ...ctx.rest],
+    cwd,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  const { code } = await relayingSignals(child);
+  if (code !== 0 && jail?.effective) console.error(JAIL_FAILURE_HINT);
+  Deno.exit(code);
+}
+
+/** What `denext add` prints when the install fails with the jail on. */
+export const JAIL_FAILURE_HINT = "denext add: if a dependency's install script failed above " +
+  "(error: script '…' failed), the lifecycle-script jail may have stopped it; " +
+  "`denext install 2>&1 | tee install.log`, then `denext doctor --install-log install.log` " +
+  "explains it and names the exception to add";
 
 export const addCommand: CommandSpec = {
   name: "add",

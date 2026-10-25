@@ -9,6 +9,7 @@
 // resolves within the iOS budget. Each task is also its own event, so the page can run one on
 // demand (`runBackgroundTask(name)` → `dispatchEvent`).
 
+import { runToExit } from "./exited-output.ts";
 import { join, toFileUrl } from "@std/path";
 
 /** The project folder holding the task modules. */
@@ -169,12 +170,12 @@ const denoBundle: BackgroundBundler = async (entry, outFile, cwd) => {
   // Loaded here, not at the top: `mobile add` imports this module's constants, and the
   // bundler module drags the whole client build in.
   const { denoExecutable } = await import("./bundle.ts");
-  const { code, stderr } = await new Deno.Command(denoExecutable(), {
+  const { code, stderr } = await runToExit(denoExecutable(), {
     args,
     cwd,
     stdout: "piped",
     stderr: "piped",
-  }).output();
+  });
   if (code !== 0) {
     throw new Error(
       `bundling background/ for the Background Runner failed:\n${new TextDecoder().decode(stderr)}`,

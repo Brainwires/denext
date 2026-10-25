@@ -4,7 +4,11 @@
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
-import { type DenoIdentity, isDenextDenoVersion } from "../build/deno-version.ts";
+import {
+  type DenoIdentity,
+  isDenextDenoVersion,
+  needsNoLegacyAbortFlag,
+} from "../build/deno-version.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
@@ -640,12 +644,17 @@ export async function toolchainConfigArgs(
  * prints a warning on the first such request. The request context's own signal
  * (`requestSignal()`) still aborts once a response is delivered, from `info.completed`.
  *
+ * From runtime `3.0.0-rc.5` that is Deno's default (the flag is accepted and does nothing), so a
+ * toolchain of that version or newer gets no flags.
+ *
  * @param marker The toolchain the child runs (`DENEXT_TOOLCHAIN_ACTIVE`): a version, or `path`
  *   for a `DENEXT_DENO=<path>` binary of unknown version (which gets none: it may predate them).
  * @returns The flags.
  */
 export function toolchainRuntimeFlags(marker: string | undefined): string[] {
-  return marker && marker !== "path" ? ["--unstable-no-legacy-abort"] : [];
+  return marker && marker !== "path" && needsNoLegacyAbortFlag(marker)
+    ? ["--unstable-no-legacy-abort"]
+    : [];
 }
 
 /**

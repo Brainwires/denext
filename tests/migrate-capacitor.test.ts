@@ -8,6 +8,7 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { dirname, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 import { checkMigration } from "../src/build/migrate-check.ts";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 import {
   appIdFromPackageName,
   type CapacitorStep,
@@ -650,13 +651,10 @@ Deno.test("capacitor.config.ts type-checks against @capacitor/cli", async () => 
     );
     // Not `--cached-only`: an uncached @capacitor/cli is fetched into the Deno cache, so a
     // fresh CI runner checks the config instead of skipping it.
-    const { code, stderr } = await new Deno.Command(Deno.execPath(), {
-      args: ["check", "--node-modules-dir=none", "capacitor.config.ts"],
-      cwd: probe,
-      stdout: "null",
-      stderr: "piped",
-    }).output();
-    const err = new TextDecoder().decode(stderr);
+    const { code, stderr: err } = await quietDeno(
+      ["check", "--node-modules-dir=none", "capacitor.config.ts"],
+      { cwd: probe, stdout: "null" },
+    );
     const unavailable = code !== 0 &&
       /not found in cache|Could not find|error sending request|failed to fetch|Import .* failed/i
         .test(err);

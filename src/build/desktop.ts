@@ -156,7 +156,7 @@ export { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
 
 // denext's pinned Deno Desktop runtime (downloaded + SHA-256-verified into the Deno cache): the
 // `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` env the scaffolded package scripts set on `deno desktop`,
-// and the flags a build on it gets (`--unstable-no-legacy-abort`).
+// and the flags a build on it gets (`--unstable-no-legacy-abort` before runtime 3.0.0-rc.5).
 export { desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
 
 // The installers the scaffolded package scripts build from a finished bundle (`desktop.installers`,

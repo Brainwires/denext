@@ -366,6 +366,23 @@ function capacitorFindings(r: MigrateResult): { wont: MigrateFinding[]; review: 
   return { wont: [], review: r.capacitor?.review ?? [] };
 }
 
+/**
+ * The lifecycle-script jail exceptions to review: each one written into deno.json (it widens the
+ * jail for that package) or left for the user to add.
+ */
+function jailFindings(r: MigrateResult): MigrateFinding[] {
+  const j = r.jailScripts;
+  if (j?.action !== "written" && j?.action !== "manual") return [];
+  return j.missing.map((req) => ({
+    item: `lifecycle-script jail: ${req.entry.name}`,
+    reason:
+      (j.action === "written"
+        ? `exception ${JSON.stringify(req.exception)} written to deno.json`
+        : `add the exception ${JSON.stringify(req.exception)} to deno.json by hand`) +
+      `: ${req.entry.reason}`,
+  }));
+}
+
 /** Every finding for a successful dry run, split into won't-migrate and review. */
 function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const next = nextConfigFindings(r);
@@ -391,6 +408,7 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...expo.review,
       ...appIconFindings(r),
       ...cap.review,
+      ...jailFindings(r),
     ],
   };
 }

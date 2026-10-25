@@ -333,6 +333,18 @@ Deno.test("maybeReexecToolchain on the toolchain: no re-run when the flag is on,
   assertEquals(leaked.probes(), 1);
 });
 
+Deno.test("maybeReexecToolchain on a 3.0.0-rc.5+ toolchain: no probe, no re-run (the new abort is its default)", async () => {
+  for (const version of ["3.0.0-rc.5", "3.0.0"]) {
+    const { d, seen, probes } = onToolchain(true, {
+      denoVersion: version,
+      denext: version,
+      vars: { DENEXT_TOOLCHAIN_ACTIVE: version },
+    });
+    assertEquals(await maybeReexecToolchain(true, d), false);
+    assertEquals([probes(), seen.spawned.length], [0, 0], version);
+  }
+});
+
 Deno.test("maybeReexecToolchain on the toolchain: nothing to check off a serving verb, a DENEXT_DENO path or stock", async () => {
   // No probe given: the verb serves nothing, or this process may not spawn its own Deno.
   const quiet = onToolchain(true, { legacyAbort: undefined });

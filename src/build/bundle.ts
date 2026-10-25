@@ -5,6 +5,8 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
+import { quietThenExplain, runToExit } from "./exited-output.ts";
+import { boundedOutput, retryOnStall } from "./serial-child.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
@@ -181,11 +183,11 @@ async function probeBundleSupport(): Promise<void> {
   const deno = denoExecutable();
   let versionText: string;
   try {
-    const out = await new Deno.Command(deno, {
+    const out = await runToExit(deno, {
       args: ["--version"],
       stdout: "piped",
       stderr: "null",
-    }).output();
+    });
     versionText = new TextDecoder().decode(out.stdout);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -228,11 +230,11 @@ export function bundleSupportsDefine(): Promise<boolean> {
 /** {@linkcode bundleSupportsDefine}'s probe: `deno bundle --help` lists `--define`. */
 async function probeBundleDefine(): Promise<boolean> {
   try {
-    const out = await new Deno.Command(denoExecutable(), {
+    const out = await runToExit(denoExecutable(), {
       args: ["bundle", "--help"],
       stdout: "piped",
       stderr: "null",
-    }).output();
+    });
     return out.success && /--define\b/.test(new TextDecoder().decode(out.stdout));
   } catch {
     return false;
@@ -1716,6 +1718,12 @@ interface DenoBundleRun {
   maps: Map<string, string>;
 }
 
+/**
+ * How long one `deno bundle` attempt may run before it is killed and started once more (see
+ * serial-child.ts).
+ */
+const DENO_BUNDLE_DEADLINE_MS = 300_000;
+
 async function runDenoBundle(
   entryPaths: string[],
   configPath: string,
@@ -1751,13 +1759,30 @@ async function runDenoBundle(
   for (const [name, value] of Object.entries(define)) args.push("--define", `${name}=${value}`);
   args.push(...entryPaths);
 
-  const { code, stderr } = await new Deno.Command(denoExecutable(), {
-    args,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (code !== 0) {
-    throw new Error(bundleFailureMessage(code, new TextDecoder().decode(stderr)));
+  // One `deno bundle` at a time per process, killed at the deadline and started once more when
+  // it stalls (see serial-child.ts). Each attempt starts with no `outDir`, as the first does. The
+  // output goes to `outDir`, so stdout is discarded, and stderr too unless the bundle fails (see
+  // quietThenExplain): a quiet pipe held for the bundle's whole life starves other children's
+  // reads on Windows.
+  const output = await quietThenExplain((mode) =>
+    retryOnStall("deno bundle", args, async (deadline) => {
+      await Deno.remove(outDir, { recursive: true }).catch(() => {});
+      const child = new Deno.Command(denoExecutable(), {
+        args,
+        stdin: "null",
+        stdout: "null",
+        stderr: mode,
+      }).spawn();
+      return await boundedOutput(
+        child,
+        { stdout: false, stderr: mode === "piped" },
+        deadline,
+        "deno bundle",
+      );
+    }, DENO_BUNDLE_DEADLINE_MS)
+  );
+  if (output.code !== 0) {
+    throw new Error(bundleFailureMessage(output.code, new TextDecoder().decode(output.stderr)));
   }
   const files = new Map<string, string>();
   const maps = new Map<string, string>();

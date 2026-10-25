@@ -491,7 +491,10 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
   assert(stale !== current && !stale.includes("desktopRuntimeDenoFlags"), "template shape moved");
   const age = packageScriptAge(stale);
   assertEquals(age, { runtime: true, formats: true, runtimeFlags: false, vcRuntime: true });
-  const lines = packageScriptWarnings("package-macos.ts", age, undefined);
+  // Under a pinned runtime before 3.0.0-rc.5 the flag matters, so the script is flagged.
+  const lines = packageScriptWarnings("package-macos.ts", age, undefined, {
+    version: "3.0.0-rc.4",
+  });
   assertEquals(lines.length, 1);
   assertStringIncludes(
     lines[0],
@@ -499,6 +502,12 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
   );
   assertStringIncludes(lines[0], "--unstable-no-legacy-abort");
   assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
+  // From 3.0.0-rc.5 (the current pin) the new abort is the runtime's default: nothing to warn of.
+  assertEquals(packageScriptWarnings("package-macos.ts", age, undefined), []);
+  assertEquals(
+    packageScriptWarnings("package-macos.ts", age, undefined, { version: "3.0.0-rc.5" }),
+    [],
+  );
   // A pre-3.1 script gets the older warning only (regenerating fixes both).
   const legacy = packageScriptWarnings(
     "package-macos.ts",
