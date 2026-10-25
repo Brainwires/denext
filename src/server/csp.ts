@@ -31,6 +31,7 @@
 import type { CspSetting, RouteCsp } from "./segment-config.ts";
 import { swapRuntimeHash } from "./swap-runtime.ts";
 import { mintedScriptWorkerNonce, scriptWorkerNonce } from "../runtime/script.ts";
+import { currentContext } from "./request-context.ts";
 
 export type { CspSetting, RouteCsp };
 
@@ -190,6 +191,8 @@ export async function computeStreamingCsp(
  * @param html The fully buffered document.
  * @param routeCsp The route's resolved {@link CspSetting} (may be undefined).
  * @param globalCsp The app-wide default {@link CspSetting} (may be undefined).
+ * A compat middleware's per-request adjustment (`RequestContext.cspTransform`) applies last.
+ *
  * @returns The `Content-Security-Policy` value, or `undefined` to emit no header.
  */
 export async function resolveCsp(
@@ -198,9 +201,16 @@ export async function resolveCsp(
   globalCsp: CspSetting | undefined,
 ): Promise<string | undefined> {
   const effective = routeCsp ?? globalCsp ?? "strict";
-  if (effective === "off") return undefined;
-  if (effective === "strict") return await computeCsp(html);
-  return await computeCsp(html, effective);
+  const policy = effective === "off"
+    ? undefined
+    : await computeCsp(html, effective === "strict" ? undefined : effective);
+  return requestCsp(policy);
+}
+
+/** The policy after the request's own adjustment (`RequestContext.cspTransform`), if any. */
+function requestCsp(policy: string | undefined): string | undefined {
+  const transform = currentContext()?.cspTransform;
+  return transform ? transform(policy) : policy;
 }
 
 /**
@@ -221,7 +231,8 @@ export async function resolveStreamingCsp(
   globalCsp: CspSetting | undefined,
 ): Promise<string | undefined> {
   const effective = routeCsp ?? globalCsp ?? "strict";
-  if (effective === "off") return undefined;
-  if (effective === "strict") return await computeStreamingCsp(shellHtml);
-  return await computeStreamingCsp(shellHtml, effective);
+  const policy = effective === "off"
+    ? undefined
+    : await computeStreamingCsp(shellHtml, effective === "strict" ? undefined : effective);
+  return requestCsp(policy);
 }

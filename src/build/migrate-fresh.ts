@@ -3,11 +3,16 @@
 //
 // The route modules keep their Fresh shape and stay where they are (`routes/`, `islands/`,
 // `components/`): code reading files relative to `import.meta.url` keeps working, and nothing in
-// them is rewritten. The migration generates the denext side around them —
+// them is rewritten but Vite's `import.meta.env` (and an island's inlined `FRESH_PUBLIC_*` read),
+// which point at `denext/fresh/env`. The migration generates the denext side around them —
 //   • `app/`: a `page.tsx` per page route, a `route.ts` per handler-only route, a `layout.tsx`
-//     per `_layout` (and the root one for `_app`), `not-found.tsx` for `_404` / `_error`;
-//   • `middleware.ts`: `main.ts`'s middleware and code routes, the `_middleware` files and each
-//     page route's handler, run as Fresh runs them (`denext/fresh/server`);
+//     per `_layout` (and the root one for `_app` and `main.ts`'s app wrapper and layouts),
+//     `not-found.tsx` for `_404` / `_error` / `app.notFound()`, the page `main.ts`'s code-
+//     registered pages render at, and `app/_fresh/` (the app's `fresh/runtime`, whose `<Partial>`
+//     is a client component) when the app uses Partials;
+//   • `middleware.ts`: `main.ts`'s middleware, handlers, code routes and error handlers, the
+//     `_middleware` files and each page route's handler, run as Fresh runs them
+//     (`denext/fresh/server`);
 // — marks each island `"use client"`, moves `static/` to `public/`, carries the stylesheets
 // `client.ts` imported (and Tailwind) into the root layout, removes Fresh's own entry files
 // (`fresh.gen.ts`, `dev.ts`, a 1.x `main.ts`, `vite.config.ts`, `client.ts`), and maps `fresh`,
@@ -22,11 +27,15 @@ import { exists } from "./migrate-fs.ts";
 import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
 import { mfs } from "./migrate-io.ts";
 import {
+  APP_ROUTE_FOLDER,
   appFolder,
+  appRoutePageSource,
   bareRootLayoutSource,
   fileKind,
   folderUrl,
   FRESH_GEN_HEADER,
+  FRESH_PARTIAL_SHIM,
+  FRESH_RUNTIME_SHIM,
   type FreshFile,
   freshPattern,
   importPath,
@@ -68,6 +77,11 @@ export interface FreshMigrateInfo {
   wontMigrate: FreshFinding[];
   /** What migrates but needs a look. */
   review: FreshFinding[];
+  /**
+   * Import-map entries that replace the default Fresh aliases: `fresh/runtime` (and its other
+   * spellings) pointed at the app's `app/_fresh/runtime.ts` when the app uses Partials.
+   */
+  importOverrides: Record<string, string>;
 }
 
 /** The Fresh app `dir` holds, or null. */
@@ -297,6 +311,8 @@ interface GenFile {
 interface Plan {
   dir: string;
   v1: boolean;
+  /** The Fresh 2 `main.ts` (absolute), once known. */
+  main: string | null;
   roles: Roles;
   gen: GenFile[];
   mwRoutes: MiddlewareRouteSpec[];
@@ -410,21 +426,33 @@ function rootLayout(plan: Plan, css: string[]): GenFile {
   const file = join("app", "layout.tsx");
   const target = abs(plan, file);
   const { app, rootLayout: layout } = plan.roles;
-  if (!app && !layout) return { path: file, source: bareRootLayoutSource(target, css) };
+  if (!app && !layout) {
+    return { path: file, source: bareRootLayoutSource(target, css, plan.main) };
+  }
   if (app && !layout) {
     return {
       path: file,
-      source: layoutSource(target, app, abs(plan, app.path), plan.v1, true, css),
+      source: layoutSource(target, app, abs(plan, app.path), plan.v1, true, css, plan.main),
     };
   }
   return { path: file, source: composedRootSource(plan, target, css) };
 }
 
-/** A root layout running the `_app` wrapper (when there is one) around the root `_layout`. */
+/** The root layout's `App` wrapper line (the `_app` file and / or `main.ts`), if any. */
+function appWrapperLine(plan: Plan): string[] {
+  const { app } = plan.roles;
+  if (!app && !plan.main) return [];
+  const opts = ['id: "_app"', "app: true", ...(plan.v1 ? ["v1: true"] : [])];
+  if (plan.main) opts.push("main");
+  return [`const App = freshLayout(${app ? "app" : "{}"}, { ${opts.join(", ")} });`];
+}
+
+/** A root layout running the `_app` wrapper (and `main.ts`'s) around the root `_layout`. */
 function composedRootSource(plan: Plan, target: string, css: string[]): string {
   const { app, rootLayout: layout } = plan.roles;
   const rel = (p: string) => importPath(target, abs(plan, p));
   const v1 = plan.v1 ? ", v1: true" : "";
+  const wrapper = appWrapperLine(plan);
   const lines = [
     FRESH_GEN_HEADER +
     `// The Fresh ${app ? "app wrapper and the " : ""}root layout routes/_layout.`,
@@ -432,12 +460,13 @@ function composedRootSource(plan: Plan, target: string, css: string[]): string {
     `import { freshLayout } from "denext/fresh/server";`,
     `import * as layout from "${rel(layout!.path)}";`,
     ...(app ? [`import * as app from "${rel(app.path)}";`] : []),
+    ...(plan.main ? [`import * as main from "${importPath(target, plan.main)}";`] : []),
     "",
     `const Layout = freshLayout(layout, { id: ""${v1} });`,
-    ...(app ? [`const App = freshLayout(app, { id: "_app", app: true${v1} });`] : []),
+    ...wrapper,
     "",
     "export default async function RootLayout({ children }: { children?: unknown }) {",
-    app
+    wrapper.length
       ? "  return await App({ children: await Layout({ children }) });"
       : "  return await Layout({ children });",
     "}",
@@ -446,12 +475,47 @@ function composedRootSource(plan: Plan, target: string, css: string[]): string {
   return lines.join("\n");
 }
 
-/** Plan `not-found.tsx`: the root `_404`, else the root `_error` / `_500` (for a 404). */
-function planNotFound(plan: Plan): void {
+/**
+ * Plan `not-found.tsx`: the root `_404`, else the root `_error` / `_500` (for a 404), else
+ * `main.ts`'s `app.notFound()`.
+ */
+function planNotFound(plan: Plan, mainSource: string | null): void {
   const mod = plan.roles.notFound ?? plan.roles.errors.find((e) => e.dir === "") ?? null;
-  if (!mod) return;
+  const codeNotFound = mainSource !== null && /\.notFound\s*\(/.test(mainSource);
+  if (!mod && !codeNotFound) return;
   const file = join("app", "not-found.tsx");
-  claim(plan, file, notFoundSource(abs(plan, file), mod, abs(plan, mod.path), plan.v1), mod.path);
+  const source = notFoundSource(
+    abs(plan, file),
+    mod,
+    mod ? abs(plan, mod.path) : null,
+    plan.v1,
+    codeNotFound ? plan.main : null,
+  );
+  claim(plan, file, source, mod?.path ?? "main.ts");
+}
+
+/** Plan the page `main.ts`'s code-registered pages render at (see `freshAppPage`). */
+function planAppRoutePage(plan: Plan): string {
+  claim(plan, join("app", APP_ROUTE_FOLDER, "page.tsx"), appRoutePageSource(plan.v1), "main.ts");
+  return `/${APP_ROUTE_FOLDER}`;
+}
+
+/** The import-map keys a migrated app's `fresh/runtime` goes by. */
+const RUNTIME_SPECIFIERS = ["fresh/runtime", "@fresh/core/runtime", "$fresh/runtime.ts"];
+
+/**
+ * When a source renders `<Partial>`: plan the app's own `fresh/runtime` (`app/_fresh/`), whose
+ * `Partial` is a client component, and point the runtime's import-map keys at it.
+ */
+async function planPartials(plan: Plan, files: string[]): Promise<Record<string, string>> {
+  for (const rel of files) {
+    const source = await mfs.readTextFile(join(plan.dir, rel)).catch(() => "");
+    if (!/<Partial\b/.test(source)) continue;
+    claim(plan, join("app", "_fresh", "runtime.ts"), FRESH_RUNTIME_SHIM, rel);
+    claim(plan, join("app", "_fresh", "partial.ts"), FRESH_PARTIAL_SHIM, rel);
+    return Object.fromEntries(RUNTIME_SPECIFIERS.map((k) => [k, "./app/_fresh/runtime.ts"]));
+  }
+  return {};
 }
 
 // ── Islands, static files, entry files ───────────────────────────────────────
@@ -479,6 +543,53 @@ async function markIslands(dir: string, localIslands: string[]): Promise<string[
     if (next !== null) await mfs.writeTextFile(path, next);
   }
   return files;
+}
+
+// ── import.meta.env ─────────────────────────────────────────────────────────
+
+/** Vite's `import.meta.env` (also cast: `(import.meta as any).env`). */
+const META_ENV = /\(\s*import\.meta(?:\s+as\s+[\w$.<>[\], ]+)?\s*\)\.env\b|\bimport\.meta\.env\b/g;
+
+/** Fresh's inlined public reads: `Deno.env.get("FRESH_PUBLIC_X")`, `process.env.FRESH_PUBLIC_X`. */
+const PUBLIC_ENV_READ =
+  /\bDeno\.env\.get\(\s*(["'])(FRESH_PUBLIC_\w+)\1\s*\)|\bprocess\.env\.(FRESH_PUBLIC_\w+)\b/g;
+
+/** The identifier the rewritten reads use, and its import. */
+const ENV_ID = "importMetaEnv";
+const ENV_IMPORT = `import { env as ${ENV_ID} } from "denext/fresh/env";\n`;
+
+/** `line` inserted after a module's leading comments, shebang and directives. */
+function withLeadingImport(source: string, line: string): string {
+  const head =
+    /^(?:#![^\n]*\n)?(?:\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/|["']use (?:client|server)["'];?[^\n]*\n))*/
+      .exec(source)?.[0] ?? "";
+  return source.slice(0, head.length) + line + source.slice(head.length);
+}
+
+/**
+ * Point a module's `import.meta.env` and Fresh's inlined `FRESH_PUBLIC_*` reads (which an island
+ * runs in the browser; on the server they read the same variable) at `denext/fresh/env`. Null
+ * when there is nothing to rewrite.
+ */
+export function rewriteEnvReads(source: string): string | null {
+  const next = source.replace(META_ENV, ENV_ID)
+    .replace(PUBLIC_ENV_READ, (_m, _q, a, b) => `${ENV_ID}.${a ?? b}`);
+  if (next === source) return null;
+  return new RegExp(`\\b${ENV_ID}\\b`).test(source) ? next : withLeadingImport(next, ENV_IMPORT);
+}
+
+/** Rewrite the env reads of the app's sources (not Vite's config); the files changed. */
+async function rewriteEnv(dir: string, files: string[]): Promise<string[]> {
+  const changed: string[] = [];
+  for (const rel of files.filter((f) => !/^vite\.config\./.test(f))) {
+    const path = join(dir, rel);
+    const source = await mfs.readTextFile(path).catch(() => null);
+    const next = source === null ? null : rewriteEnvReads(source);
+    if (next === null) continue;
+    await mfs.writeTextFile(path, next);
+    changed.push(rel);
+  }
+  return changed;
 }
 
 /** The Tailwind directive (v4's `@import "tailwindcss"` or a v3 `@tailwind` line). */
@@ -667,10 +778,10 @@ interface SourceRule {
 const SOURCE_RULES: SourceRule[] = [
   ...PREACT_SOURCE_RULES,
   {
-    re: /<Partial\b|\bf-client-nav\b|\bf-partial\b/,
-    item: "Fresh Partials",
-    reason: "denext has no partial navigation: a link loads the next page in full " +
-      "(<Partial> renders its children; f-client-nav / f-partial do nothing)",
+    re: /\bf-view-transition\b/,
+    item: "f-view-transition",
+    reason: "partial navigation runs on denext without the View Transitions wrapper; the swapped " +
+      "regions update in place",
   },
   {
     re: /<script\b[^>]*dangerouslySetInnerHTML/,
@@ -680,49 +791,26 @@ const SOURCE_RULES: SourceRule[] = [
       "instrumentation-client.ts, or allow it in `csp.scriptSrc` in denext.config.ts",
   },
   {
-    re: /\bisPartial\b/,
-    item: "ctx.isPartial",
-    reason: "always false on denext (no partial requests)",
-  },
-  {
     re: /\.upgrade\s*\(|Deno\.upgradeWebSocket\s*\(/,
     item: "WebSocket upgrade",
     reason: "ctx.upgrade() needs the raw request: it works under `denext start` / `dev`, not on " +
       "every deploy target; denext's Live channels (denext/live) are the portable alternative",
   },
   {
-    re: /\bimport\.meta\b[^;\n]{0,24}\.env\b/,
-    item: "import.meta.env",
-    reason: "Vite's import.meta.env is not defined on denext's server; read Deno.env (server) " +
-      "or publicEnv() from denext (browser) instead",
-  },
-  {
-    re: /FRESH_PUBLIC_/,
-    item: "FRESH_PUBLIC_ variables",
-    reason: "denext exposes DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables to the browser through " +
-      "publicEnv() from denext; rename them",
-  },
-  {
     re: /\bDeno\.env\b/,
     only: "island",
     item: "Deno.env in an island",
-    reason: "an island runs in the browser, where Deno.env is undefined; pass the value as a " +
-      "prop, or use publicEnv() from denext",
+    reason: "an island runs in the browser, where Deno.env is undefined (a literal " +
+      "FRESH_PUBLIC_* read was rewritten to denext/fresh/env); pass the value as a prop, or use " +
+      "publicEnv() from denext",
   },
   {
-    re: /\bcsp\s*\(/,
-    only: "main",
-    item: "csp() middleware",
-    reason: "denext sends its own Content-Security-Policy (the `csp` config key, strict by " +
-      "default); set the directives there — Fresh's csp() does nothing on denext",
-  },
-  {
-    re: /\.(?:appWrapper|layout|onError|notFound|mountApp|route|islands)\s*\(/,
+    re: /\.islands\s*\(/,
     only: "main",
     item: "main.ts",
     wont: true,
-    reason: "app.appWrapper / layout / onError / notFound / route / mountApp / islands are not " +
-      "run on denext; move them to routes/ files (_app, _layout, _error, _404, a route)",
+    reason: 'app.islands() is not run on denext: islands are the "use client" files ' +
+      "(islands/ and (_islands) folders); move the components there",
   },
   {
     re: /new\s+App\s*\(\s*\{[^}]*basePath/,
@@ -784,7 +872,7 @@ export function droppedFreshImports(imports: Record<string, string>): string[] {
 
 /**
  * The specifiers a migrated Fresh app's import map aliases to denext: Fresh's server and runtime
- * modules (Fresh 2's and 1.x's), Preact, its hooks / compat / JSX runtime, and Preact Signals.
+ * modules (Fresh 2's and 1.x's; the partial navigation and `import.meta.env` ones), Preact, its hooks / compat / JSX runtime, and Preact Signals.
  *
  * @param sub Resolves a `denext/<sub>` entry (`R.sub`).
  * @returns The import-map entries.
@@ -793,6 +881,8 @@ export function freshAliasImports(sub: (s: string) => string): Record<string, st
   return {
     "denext/fresh": sub("fresh"),
     "denext/fresh/runtime": sub("fresh/runtime"),
+    "denext/fresh/partial": sub("fresh/partial"),
+    "denext/fresh/env": sub("fresh/env"),
     "denext/fresh/server": sub("fresh/server"),
     "fresh": sub("fresh"),
     "fresh/runtime": sub("fresh/runtime"),
@@ -961,6 +1051,7 @@ export async function transformFreshApp(
   const plan: Plan = {
     dir,
     v1,
+    main: null,
     roles: rolesOf(scan.files, findings),
     gen: [],
     mwRoutes: [],
@@ -973,14 +1064,19 @@ export async function transformFreshApp(
   for (const route of plan.roles.routes) planRoute(plan, route);
   plan.mwRoutes.sort((a, b) => byMatchOrder(a, b));
   planLayouts(plan);
-  planNotFound(plan);
 
   const islands = await markIslands(dir, scan.localIslands);
+  const envFiles = await rewriteEnv(dir, sourcesBefore);
+  const importOverrides = await planPartials(plan, sourcesBefore);
   const staticTailwind = await moveStatic(plan);
   const clientCss = await carryClientEntry(plan);
   await dropViteConfig(plan);
   if (v1) await dropFreshConfig(plan);
   const main = await dropFreshEntries(plan);
+  plan.main = main;
+  const mainSource = main ? await mfs.readTextFile(main).catch(() => null) : null;
+  planNotFound(plan, mainSource);
+  const appRoute = main ? planAppRoutePage(plan) : undefined;
 
   const { tailwind, css } = await layoutStylesheets(dir, clientCss, staticTailwind);
   plan.gen.unshift(rootLayout(plan, css));
@@ -998,10 +1094,21 @@ export async function transformFreshApp(
       })),
       layouts: plan.roles.layouts.map((l) => ({ file: l, abs: abs(plan, l.path) })),
       routes: plan.mwRoutes,
+      appRoute,
     }),
   });
   await writeGenerated(plan, written);
   await scanFindings(plan, new Set(islands), sourcesBefore);
+  if (envFiles.length > 0) {
+    plan.review.push({
+      item: "import.meta.env",
+      reason: "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL " +
+        "and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only " +
+        "variables are not in it: read Deno.env). PROD is true under `denext start`, where " +
+        "your source runs in place, not from Vite's build output: check code that picks a " +
+        `file path by it (${envFiles.join(", ")})`,
+    });
+  }
   if (tailwind && staticTailwind && v1) {
     plan.review.push({
       item: tailwind.input,
@@ -1019,5 +1126,6 @@ export async function transformFreshApp(
     tailwind,
     wontMigrate: plan.wont,
     review: plan.review,
+    importOverrides,
   };
 }

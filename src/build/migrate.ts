@@ -1985,6 +1985,7 @@ async function migrateFreshProject(dir: string, options: MigrateOptions): Promis
   Object.assign(imports, aliases);
   const written: string[] = [];
   const fresh = await transformFreshApp(dir, detection, written);
+  Object.assign(imports, fresh.importOverrides);
   const before = (detection.config.imports ?? {}) as Record<string, string>;
   const removed = droppedFreshImports(before);
   const configPath = detection.configPath ?? join(dir, "deno.json");

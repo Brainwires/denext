@@ -25,6 +25,14 @@
       "action": "create"
     },
     {
+      "path": "app/_fresh/partial.ts",
+      "action": "create"
+    },
+    {
+      "path": "app/_fresh/runtime.ts",
+      "action": "create"
+    },
+    {
       "path": "app/api/[name]/route.ts",
       "action": "create"
     },
@@ -34,6 +42,10 @@
     },
     {
       "path": "app/docs/[...rest]/page.tsx",
+      "action": "create"
+    },
+    {
+      "path": "app/fresh-app-route/page.tsx",
       "action": "create"
     },
     {
@@ -55,6 +67,10 @@
     {
       "path": "client.ts",
       "action": "delete"
+    },
+    {
+      "path": "components/Env.tsx",
+      "action": "modify"
     },
     {
       "path": "denext.config.ts",
@@ -109,6 +125,10 @@
     {
       "item": "routes/raw.ts",
       "reason": "its URL pattern /@:version/:path* has no app/ folder equivalent: middleware.ts answers it with the route's handler"
+    },
+    {
+      "item": "import.meta.env",
+      "reason": "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only variables are not in it: read Deno.env). PROD is true under `denext start`, where your source runs in place, not from Vite's build output: check code that picks a file path by it (components/Env.tsx)"
     }
   ],
   "dependencies": {

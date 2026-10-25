@@ -11,9 +11,14 @@ import { envAll, envGet } from "./env-safe.ts";
 /**
  * Prefixes that mark an environment variable as safe to expose to the browser.
  * `NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is
- * the denext-native prefix. Any other variable stays server-only.
+ * the denext-native prefix; `FRESH_PUBLIC_` is Fresh's, for a migrated Fresh app. Any other
+ * variable stays server-only.
  */
-export const PUBLIC_ENV_PREFIXES: readonly string[] = ["NEXT_PUBLIC_", "DENEXT_PUBLIC_"];
+export const PUBLIC_ENV_PREFIXES: readonly string[] = [
+  "NEXT_PUBLIC_",
+  "DENEXT_PUBLIC_",
+  "FRESH_PUBLIC_",
+];
 
 /** The DOM id of the JSON island holding the public env for client hydration. */
 export const PUBLIC_ENV_ID = "__denext_public_env";
@@ -51,7 +56,7 @@ export function filterPublicEnv(env: Record<string, string>): Record<string, str
  * @returns The distinct referenced public-env names.
  */
 export function extractPublicEnvRefs(source: string): string[] {
-  const re = /\b(?:NEXT_PUBLIC_|DENEXT_PUBLIC_)[A-Za-z0-9_]+/g;
+  const re = /\b(?:NEXT_PUBLIC_|DENEXT_PUBLIC_|FRESH_PUBLIC_)[A-Za-z0-9_]+/g;
   return [...new Set(source.match(re) ?? [])];
 }
 

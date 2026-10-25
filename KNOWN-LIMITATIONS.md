@@ -350,11 +350,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** Partials (`<Partial>`, `f-client-nav`) render their children and navigate as full
-  pages; `ctx.isPartial` is always `false`. `main.ts`'s `appWrapper` / `layout` / `onError` /
-  `notFound` / `route` / `mountApp` / `islands` calls, Fresh and Vite plugins and `fresh({…})`
-  options are not run, `csp()` is a no-op (denext's own CSP applies) and Vite's
-  `import.meta.env` is not defined. `denext migrate --check` lists each one it finds
+- **Fresh:** partial navigation swaps the `<Partial>` regions without Fresh's View Transitions
+  wrapper (`f-view-transition`) and takes only the answer's `<title>` from its head; browser
+  back / forward re-renders the whole page (a region's `append` / `prepend` history is not
+  replayed). `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not
+  run; `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+  files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
+  page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
+  Response body renders as the not-found page's text, at its status, so the static files in
+  `public/` still answer first. `csp({ useNonce: true })` leaves out `'unsafe-inline'` (denext
+  allows its own inline styles by hash and runs no inline script), and `import.meta.env.PROD` is
+  true under `denext start`, where the source runs in place rather than from Vite's build output.
+  `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
 - **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
   its `signal` / `computed` / `effect` (and hook forms) take no options argument.

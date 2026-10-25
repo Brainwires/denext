@@ -44,7 +44,7 @@ function ctxFor(url: string, init: RequestInit = {}, next = () => new Response("
   return ctx;
 }
 
-Deno.test("App records use() middleware and code routes; the rest is reported, not run", async () => {
+Deno.test("App records middleware, code routes, layouts and handlers; islands() is reported", async () => {
   const mw = () => new Response("mw");
   const app = new App({ basePath: "/x" })
     .use(mw)
@@ -65,7 +65,7 @@ Deno.test("App records use() middleware and code routes; the rest is reported, n
     .mountApp("/m", {})
     .islands({});
   assertEquals(app.config.basePath, "/x");
-  assertEquals(app._middlewares.map((m) => [m.path, m.fns.length]), [["/", 1], ["/api", 2]]);
+  assertEquals(app._middlewares.map((m) => [m.path, m.fns.length]), [["*", 1], ["/api", 2]]);
   assertEquals(app._routes.map((r) => r.method), [
     "GET",
     "POST",
@@ -75,15 +75,13 @@ Deno.test("App records use() middleware and code routes; the rest is reported, n
     "HEAD",
     "ALL",
   ]);
-  assertEquals(app._ignored.map((i) => i.call), [
-    "appWrapper",
-    "layout",
-    "onError",
-    "notFound",
-    "route",
-    "mountApp",
-    "islands",
-  ]);
+  assertEquals(app._appWrapper, mw);
+  assertEquals(app._layouts, [{ path: "/", component: mw, config: undefined }]);
+  assertEquals(app._errors, [{ path: "/", route: { handler: mw } }]);
+  assertEquals(app._notFound, { handler: mw });
+  assertEquals(app._pages, [{ pattern: "/r", route: {}, config: undefined }]);
+  // A mountApp() of something that is not an App adds nothing.
+  assertEquals(app._ignored.map((i) => i.call), ["islands"]);
   assertEquals(constructedApps().at(-1), app as never);
   await app.listen();
   assertThrows(() => app.handler(), Error, "denext serves the app");
@@ -240,7 +238,7 @@ Deno.test("fresh/runtime: asset, Head, Partial, CSP helpers; preact shims", asyn
   const UseCsp = () => (useCSP(() => {}), null);
   assertEquals(UseCsp(), null);
   assertEquals(await renderToString(Head({ children: "t" }) as never), "t");
-  assertEquals(await renderToString(Partial({ name: "p", children: "c" }) as never), "c");
+  assertEquals(await renderToString(preact.h(Partial as never, { name: "p" }, "c")), "c");
   assertEquals(preact.toChildArray([["a", null], "b", false] as never).length, 2);
   assertEquals(typeof preact.options, "object");
   assertEquals(typeof preact.h, "function");

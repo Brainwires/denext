@@ -6,14 +6,15 @@
 // answered with a 303, Partials, and nine islands using `@preact/signals`. `denext migrate`
 // generates `app/` and `middleware.ts` around the untouched route modules, then the app is
 // built, served, every route is fetched (pages are server-rendered: they read with JS off), and
-// the home page's counter island is hydrated and clicked in headless Chromium.
+// in headless Chromium the home page's counter island is hydrated and clicked, and a recipe
+// button (`f-partial`) swaps its `<Partial name="recipe">` region in place.
 //
 // Pin: 39b5f06 (the `2.3.3` release tag). `www/` is a member of the repo's Deno workspace;
 // `prepare` makes it a standalone app (the root import map folded into `www/deno.json`, the
 // workspace config removed), as a project created with `@fresh/init` is. `afterMigrateEdit`
-// applies the one hand fix `migrate --check` reports: the docs route reads Vite's
-// `import.meta.env.PROD`, which denext's server does not define (the source runs in place, so
-// the development branch is the right one). The `/@version/path` route proxies GitHub at
+// applies the one hand fix `migrate --check` reports: the docs route picks a file path by Vite's
+// `import.meta.env.PROD` (migrate points it at `denext/fresh/env`, where it is true under
+// `denext start`), but the source runs in place, so the development branch is the right one. The `/@version/path` route proxies GitHub at
 // request time, so it is not asserted.
 // NETWORK-REQUIRED (GitHub fetch + JSR/npm downloads): `deno task test:migration-bed`.
 
@@ -31,11 +32,11 @@ async function standalone(app: string): Promise<void> {
   await Deno.remove(join(app, "..", "deno.lock"));
 }
 
-/** The docs route's Vite-only `import.meta.env.PROD` → the in-place (development) branch. */
+/** The docs route's build-output path pick (`import.meta.env.PROD`) → the in-place branch. */
 async function dropViteEnv(app: string): Promise<void> {
   const file = join(app, "routes", "docs", "[...slug].tsx");
   const source = await Deno.readTextFile(file);
-  const fixed = source.replace("(import.meta as any).env.PROD", "false");
+  const fixed = source.replace("importMetaEnv.PROD", "false");
   if (fixed === source) throw new Error("fresh-www bed: the import.meta.env line moved");
   await Deno.writeTextFile(file, fixed);
 }
@@ -110,6 +111,12 @@ const FRESH_WWW: Bed = {
     interact: {
       click: 'button[title="Add 1"]',
       until: '[...document.querySelectorAll(".tabular-nums")].some((e) => e.textContent === "4")',
+    },
+    // A Partial: the button fetches /recipes/lemonade?fresh-partial=true and swaps the region.
+    navigate: {
+      click: 'button[f-partial="/recipes/lemonade"]',
+      until: 'document.body.textContent.includes("1 ¾ cups white sugar") && ' +
+        'document.body.textContent.includes("Interactive island")',
     },
   },
 };
