@@ -113,10 +113,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `denext build` / `export`; otherwise (and in `denext dev` and a next-compat drop-in) it stays in
   the page bundle. A module-level `hydrate` default is not read (only the usage-site directive). A
   class or `lazy()` component renders eagerly; when split, it holds the page's hydration until its
-  chunk lands, and a `useId` below it may differ from the server's. An `on*Capture` handler in a
-  `client:interaction` island misses the event that woke it. While a split island's chunk loads,
-  the gesture is held at its wrapper and replayed: a capture-phase listener above the island sees
-  it twice. `client:only` skips SSR by definition.
+  chunk lands (inside a Suspense boundary, the boundary renders it on the client instead). Events
+  held while a split island's chunk loads replay as synthetic copies (`isTrusted` false), and a
+  held `submit` that nothing cancels submits its form without its submitter. A listener on
+  `window` itself sees a held event twice. `client:only` skips SSR by definition.
 - **In SPA mode the directives defer the mount, not hydration.** There is no server HTML to keep
   inert, so the directives defer the component's mount and split its code instead. A module-level
   `hydrate` default is read only from a module imported by a relative path (not through an

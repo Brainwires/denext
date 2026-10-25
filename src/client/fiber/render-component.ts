@@ -270,9 +270,7 @@ function prepareRenderProps(inst: Fiber): unknown {
     const ov = dh.propOverrides(inst);
     if (ov) props = { ...(props as Record<string, unknown>), ...ov };
   }
-  if (inst.idScope === undefined) {
-    inst.idScope = enterScope(inst.idParentScope ?? rootScope());
-  }
+  inst.idScope ??= enterScope(inst.idParentScope ?? rootScope());
   return props;
 }
 
@@ -394,6 +392,9 @@ export function renderComponent(inst: Fiber): VNode | null {
   const profT0 = devtoolsHooks?.profiler ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
+    // Before the class branch: a class is a `useId` level of its own too (its id scope), as
+    // every server renderer counts it.
+    const props = prepareRenderProps(inst);
     // The flag is the FIRST operand on purpose: with class components compiled out, the
     // whole branch folds away and `renderClassFiber` (hence the class runtime) is dropped
     // from the bundle — a plain `isClassComponent(...)` test would keep it referenced.
@@ -409,7 +410,6 @@ export function renderComponent(inst: Fiber): VNode | null {
       type = target.fn as RenderFn;
       forwardsRef = target.forwardsRef;
     }
-    const props = prepareRenderProps(inst);
     // An isomorphic island (iso-island.ts) renders its wrapper in place of the component.
     const island = islandRender?.(inst, rawType, props as Record<string, unknown>);
     if (island) {
