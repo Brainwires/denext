@@ -100,6 +100,9 @@ Deno.test("pg-binary: numeric at every scale and sign", () => {
   assertEquals(bin.decodeNumeric(numeric(0, 0, 0xf000, 0)), "-Infinity");
   assertEquals(bin.decodeMoney(i64(-150n)), "-1.50");
   assertEquals(bin.decodeMoney(i64(123405n)), "1234.05");
+  assertEquals(bin.moneyDecoder(0)(i64(-1500n)), "-1500");
+  assertEquals(bin.moneyDecoder(3)(i64(1234005n)), "1234.005");
+  assertEquals(bin.moneyDecoder(3)(i64(-5n)), "-0.005");
 });
 
 Deno.test("pg-binary: dates, times and timestamps in UTC", () => {
@@ -497,6 +500,40 @@ Deno.test("adapter: Postgres results decoded from binary, user-type kinds looked
   assert(log.includes("raw select x"));
   assertEquals(db.getConnectionInfo(), { schemaName: "app", supportsRelationJoins: true });
   assertEquals([db.provider, db.adapterName], ["postgres", "denext/prisma-adapter"]);
+});
+
+Deno.test("adapter: money is read at lc_monetary's fractional digits, asked once", async () => {
+  const columns = [
+    col({ name: "price", typeOid: 790 }),
+    col({ name: "prices", typeOid: 791, typeKind: "array", baseTypeOid: 790, baseType: "money" }),
+  ];
+  const lookup = "select scale('1'::money::numeric)::int4";
+  const { client, log } = fakeClient({
+    "select x": rows([[i64(1500n), array(790, [2], [i64(7n), i64(-3n)])]], { columns }),
+    [lookup]: rows([[0]], { columns: [col({ name: "scale" })] }),
+  });
+  const db = new DenoSqlAdapter(client, postgresDriver(undefined), () => Promise.resolve());
+  const r = await db.queryRaw(query("select x"));
+  assertEquals(r.columnTypes, [T.Numeric, T.NumericArray]);
+  assertEquals(r.rows, [["1500", ["7", "-3"]]]);
+  await db.queryRaw(query("select x"));
+  assertEquals(log.filter((l) => l === `unsafe ${lookup}`).length, 1);
+  // A result without a money column asks nothing.
+  const plain = fakeClient({ "select y": rows([[i64(1n)]], { columns: [col({ typeOid: 20 })] }) });
+  const db2 = new DenoSqlAdapter(plain.client, postgresDriver(undefined), () => Promise.resolve());
+  await db2.queryRaw(query("select y"));
+  assert(!plain.log.includes(`unsafe ${lookup}`));
+});
+
+Deno.test("postgres: a money column without a scale lookup reads two digits", async () => {
+  const codec = await pg.columnCodec(col({ typeOid: 790 }), noKinds);
+  assertEquals(codec.decode(i64(-150n)), "-1.50");
+  const scaled = await pg.columnCodec(
+    col({ typeOid: 16700, typeKind: "domain", baseTypeOid: 790 }),
+    noKinds,
+    () => Promise.resolve(3),
+  );
+  assertEquals([scaled.type, scaled.decode(i64(1005n))], [T.Numeric, "1.005"]);
 });
 
 Deno.test("adapter: an unknown user type's kind may be missing", async () => {

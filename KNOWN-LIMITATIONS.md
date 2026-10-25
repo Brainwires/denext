@@ -345,8 +345,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
   and MySQL always take theirs.
 - **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
-  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query), and reads `money` with
-  two fractional digits (`lc_monetary` `C` / `en_US`).
+  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query). `money` is read at
+  the fractional digits of `lc_monetary` as the first `money` result found it: a session that
+  changes `lc_monetary` later (`SET lc_monetary`) keeps the client's first answer.
 
 ### Fresh and Preact
 

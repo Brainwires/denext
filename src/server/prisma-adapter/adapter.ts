@@ -54,9 +54,16 @@ export function resultColumns(rows: SqlRows<unknown>): SqlColumn[] {
   return rows.columns;
 }
 
-/** The Postgres driver; `kinds` caches `pg_type.typtype` of user types. */
+/** `money`'s fractional digits under the session's `lc_monetary` (money → numeric keeps them). */
+const MONEY_SCALE_SQL = "select scale('1'::money::numeric)::int4";
+
+/**
+ * The Postgres driver; `kinds` caches `pg_type.typtype` of user types, `moneyScale` the
+ * fractional digits of `lc_monetary`, asked once, when a result first carries a `money` column.
+ */
 export function postgresDriver(schema: string | undefined): Driver {
   const kinds = new Map<number, string | null>();
+  let moneyScale: Promise<number> | undefined;
   return {
     provider: "postgres",
     args: (q) => q.args.map((arg, i) => pg.mapPostgresArg(arg, q.argTypes[i] ?? UNKNOWN_ARG)),
@@ -71,8 +78,19 @@ export function postgresDriver(schema: string | undefined): Driver {
         }
         return kinds.get(oid) ?? null;
       };
+      const scaleOf = () =>
+        moneyScale ??= Promise.resolve(conn.unsafe(MONEY_SCALE_SQL).values()).then(
+          (r) => {
+            const digits = Number(r[0]?.[0]);
+            return Number.isInteger(digits) && digits >= 0 && digits <= 10 ? digits : 2;
+          },
+          (e) => {
+            moneyScale = undefined; // a failed lookup is asked again next time
+            throw e;
+          },
+        );
       const codecs: pg.Codec[] = [];
-      for (const column of columns) codecs.push(await pg.columnCodec(column, kindOf));
+      for (const column of columns) codecs.push(await pg.columnCodec(column, kindOf, scaleOf));
       return {
         columnNames: columns.map((c) => c.name),
         columnTypes: codecs.map((c) => c.type),

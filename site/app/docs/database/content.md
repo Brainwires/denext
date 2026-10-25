@@ -359,8 +359,9 @@ from the same module tells.
 What it reads, and how:
 
 - **Postgres** results are read in Postgres' binary format and decoded to what
-  Prisma expects: `int8` and `numeric` as exact decimal strings, `money`,
-  `json` / `jsonb` text, `bytea`, `uuid`, `date`, `time`, `timetz`, `inet`,
+  Prisma expects: `int8` and `numeric` as exact decimal strings, `money` (with
+  the fractional digits of the server's `lc_monetary`, asked once per client
+  when a result first has a `money` column), `json` / `jsonb` text, `bytea`, `uuid`, `date`, `time`, `timetz`, `inet`,
   `cidr`, bit strings, enums, domains, and arrays of all of them (nested and
   with nulls). `timestamp` and `timestamptz` come back in UTC exactly — a
   wall-clock time the server process's own time zone skips (a daylight-saving

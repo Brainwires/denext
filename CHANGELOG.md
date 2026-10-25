@@ -187,6 +187,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext/prisma-adapter` reads Postgres `money` at the server's `lc_monetary`.** A `money`
+  value is a count of the currency's smallest unit, and the adapter divided it by 100 whatever the
+  locale: under `ja_JP` (no fractional digits) ¥1500 read as `15.00`, under `ar_KW` (three) it
+  read ten times too large. The adapter now asks the server's fractional digits once per client,
+  when a result first carries a `money` column (or an array or domain of one).
+
 - **A migrated Preact app with `node_modules` compiles its JSX with Preact's runtime.** The
   compat (esbuild) bundle compiled every app's JSX against denext's own runtime, so the
   `jsxImportSource: "preact"` `denext migrate` writes for a Preact or Fresh app was ignored on
