@@ -38,6 +38,7 @@ and this project adheres to
   `denext doctor --install-log <file>` explains an install's failed scripts as jail failures with
   the exception to add. denext never turns the jail off for you. See
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
+
 - **`denext doctor --install-log` suggests `supplyChain.jailScripts.upstreamByName`** when a
   jailed script failed to reach a host its package's `net` list allows and the install went
   through an upstream `http://` proxy (the runtime's warning that the proxy refused the checked
@@ -278,6 +279,18 @@ and this project adheres to
   A cookie without an id (issued before) keeps working, and a LogoutRequest naming a session the
   index doesn't know still ends every session of the user. See
   https://denext.dev/docs/auth#saml-providers.
+
+- **`revokeSession(id)` ends one stateless cookie session too, and `currentSessionId()` names
+  the current one.** Without a `sessionStore`, `revokeSession` puts the session's own `sid` on the
+  auth adapter's revocation list (the one SAML Single Logout writes) until the session would have
+  ended, so "sign out this device" works on every instance sharing the database; with a store it
+  deletes the record as before. It throws, naming the adapters that keep the list, when the
+  adapter lacks `revokeSids` / `isSidRevoked` (an Auth.js adapter) or there is none.
+  `currentSessionId()` (`denext/server`) returns the current request's id (the store id, else the
+  `sid`) for server code only; `/auth/session` and the client hooks never carry it. Stateless reads
+  check the list only once the app has revoked a session this way (a durable marker row each
+  process caches: for good once seen, 10 seconds while missing), so an app that never does pays at
+  most one lookup per process every 10 seconds. See https://denext.dev/docs/auth#revocation.
 
 ### Changed
 

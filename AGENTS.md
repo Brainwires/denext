@@ -395,7 +395,8 @@ SSO: `saml()` signs in through a SAML 2.0 identity provider on `/auth/*`, and
 multi-tenant app (keyed on `tid` + `oid`). `passkeys: { attestation: { mds: {} } }` checks new
 passkeys against the FIDO Metadata Service (OCSP, then CRL revocation; fail-closed unless
 `attestation.revocation: "soft"`). A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
-slides. `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
+slides. `revokeSession(id)` with `currentSessionId()` (server-only) signs out one device, a
+stateless session too (the adapter's revocation list). `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
 (id and owner, never the token). Full guide: https://denext.dev/docs/auth
 
 Per-request facts from anywhere on the server (`denext/server`): `clientIp()` (the proxy's last

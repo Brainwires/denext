@@ -63,8 +63,9 @@ export interface AuthSession {
    * and sealed in its httpOnly cookie; `/auth/session` and the client hooks leave it out.
    * SAML Single Logout names a session by it: an IdP's LogoutRequest puts exactly the sessions it
    * names on the auth adapter's revocation list, and a revoked session reads as signed out. A
-   * cookie issued before denext minted it has none and can't be targeted. (A store-backed
-   * session's id is {@linkcode sessionId}.)
+   * cookie issued before denext minted it has none and can't be targeted. `revokeSession(sid)`
+   * ends the session through the same list, and `currentSessionId()` reads it on the server.
+   * (A store-backed session's id is {@linkcode sessionId}.)
    */
   sid?: string;
   /**

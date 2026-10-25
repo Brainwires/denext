@@ -51,8 +51,9 @@ import {
 } from "./native.ts";
 import { currentContext, headers } from "../request-context.ts";
 import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
-import { keepsAuthLevel, type SessionStore } from "./session-store.ts";
+import { keepsAuthLevel } from "./session-store.ts";
 import { endUserSessions, readAuthSession, refreshLiveSession } from "./session.ts";
+import { revokeStatelessSid, sidRevocationOf } from "./sid-revocation.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 
@@ -397,35 +398,64 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
 /** The key the `denextAuth()` plugin object carries its config under (non-enumerable). */
 const AUTH_PLUGIN_CONFIG = Symbol.for("denext.auth.pluginConfig");
 
-/** The resolved options plus the configured store, or throw: revocation needs one. */
-function requireSessionStore(
-  fn: string,
-): { options: ResolvedAuthOptions; store: SessionStore } {
-  const config = currentConfig();
-  const options = config ? resolveAuthOptions(config) : undefined;
-  if (!options?.sessionStore) {
-    throw new Error(
-      `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
-        "so one session can't be revoked by id (`revokeAllSessions(userId)` ends them all " +
-        "through an adapter). Pass `sessionStore` (e.g. `sqliteSessionStore()`) to denextAuth " +
-        "to revoke single sessions.",
-    );
-  }
-  return { options, store: options.sessionStore };
-}
-
 /**
- * Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so
- * its cookie stops authenticating immediately — "sign out this device". Fires the
- * `sessionRevoked` event. Requires `denextAuth({ sessionStore })`; throws when sessions
- * are stateless.
+ * Revoke one session by id, so its cookie stops authenticating from the next read — "sign out
+ * this device". Fires the `sessionRevoked` event.
+ *
+ * - **Store-backed** (`denextAuth({ sessionStore })`): `sessionId` is the session's
+ *   {@link AuthSession.sessionId}; its record is deleted from the store.
+ * - **Stateless** (no `sessionStore`): `sessionId` is the session's own
+ *   {@link AuthSession.sid}; it goes on the auth adapter's revocation list (`revokeSids`) until
+ *   the session would have ended anyway (`session.maxLifetime`), and every read of a stateless
+ *   session checks that list from then on (`isSidRevoked`, at most once per request). Until an
+ *   app first revokes a session this way its reads make no such query. Needs an adapter with the
+ *   list: `sqliteAuthAdapter`, `postgresAuthAdapter`, `inMemoryAuthAdapter` (one process) or
+ *   `backendAuthAdapter()`; throws with one that lacks it (an Auth.js adapter) or with none.
+ *
+ * {@link currentSessionId} gives the current request's id; never send it to the browser.
  *
  * @param sessionId The session to end.
  */
 export async function revokeSession(sessionId: string): Promise<void> {
-  const { options, store } = requireSessionStore("revokeSession");
-  await store.delete(sessionId);
+  const config = currentConfig();
+  const options = config ? resolveAuthOptions(config) : undefined;
+  if (typeof sessionId !== "string" || sessionId === "") {
+    throw new TypeError("revokeSession: pass the session's id (a non-empty string)");
+  }
+  if (options?.sessionStore) {
+    await options.sessionStore.delete(sessionId);
+    await emitAuthEvent(options, "sessionRevoked", { sessionId });
+    return;
+  }
+  const adapter = sidRevocationOf(options?.adapter);
+  if (!options || !adapter) {
+    throw new Error(
+      "revokeSession: no `sessionStore` is configured and the auth adapter keeps no revocation " +
+        "list (`revokeSids` / `isSidRevoked`), so a stateless cookie session can't be revoked " +
+        "by id. Use one of denext's adapters (`sqliteAuthAdapter`, `postgresAuthAdapter`, " +
+        "`backendAuthAdapter()`), or pass `sessionStore` to denextAuth; " +
+        "`revokeAllSessions(userId)` ends every session of a user through any adapter.",
+    );
+  }
+  await revokeStatelessSid(adapter, sessionId, Math.floor(Date.now() / 1000) + options.maxLifetime);
   await emitAuthEvent(options, "sessionRevoked", { sessionId });
+}
+
+/**
+ * The id of the current request's cookie session — what {@link revokeSession} takes: the store
+ * id of a store-backed session ({@link AuthSession.sessionId}), else a stateless session's own
+ * {@link AuthSession.sid}. `null` when signed out (or still owing a second factor), for a
+ * stateless cookie issued before denext minted ids, and for a bearer (native app or access
+ * token) session. Server-only: keep it out of anything sent to the browser
+ * (`GET {basePath}/session` and the client hooks never carry it); list a user's devices by it
+ * on the server.
+ *
+ * @returns The session id, or `null`.
+ */
+export async function currentSessionId(): Promise<string | null> {
+  const session = await auth();
+  if (!session || session.nativeSessionId) return null;
+  return session.sessionId ?? session.sid ?? null;
 }
 
 /**

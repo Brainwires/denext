@@ -27,6 +27,7 @@ import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import { cookieSessionOptions, resolveAuthOptions } from "../src/server/auth/options.ts";
 import { getSession } from "../src/server/session.ts";
 import { readAuthSession } from "../src/server/auth/session.ts";
+import { REVOCATIONS_MARKER } from "../src/server/auth/sid-revocation.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";
@@ -651,17 +652,27 @@ Deno.test("a cookie from before sids still reads; a logout naming it ends it thr
 });
 
 /** An in-memory adapter that counts its revocation lookups. */
-function countingAdapter(): { adapter: AuthAdapter; lookups: () => number } {
+/**
+ * An adapter counting the revocation lookups of session ids, and apart from them those of the
+ * marker `revokeSession(sid)` writes (src/server/auth/sid-revocation.ts).
+ */
+function countingAdapter(): {
+  adapter: AuthAdapter;
+  lookups: () => number;
+  markerLookups: () => number;
+} {
   const inner = inMemoryAuthAdapter();
   let lookups = 0;
+  let markerLookups = 0;
   const adapter: AuthAdapter = {
     ...inner,
     isSidRevoked(sid) {
-      lookups++;
+      if (sid === REVOCATIONS_MARKER) markerLookups++;
+      else lookups++;
       return inner.isSidRevoked!(sid);
     },
   };
-  return { adapter, lookups: () => lookups };
+  return { adapter, lookups: () => lookups, markerLookups: () => markerLookups };
 }
 
 Deno.test("an app without SAML Single Logout makes no revocation lookup; one with it makes one", async () => {
@@ -682,6 +693,8 @@ Deno.test("an app without SAML Single Logout makes no revocation lookup; one wit
   const saml = await signIn(plain, "ada@acme.test", "_s1");
   assert((await readSession(plain.config, saml)).session);
   assertEquals(plainCount.lookups(), 0, "no Single Logout configured: no lookup");
+  // Whether the app ever revoked a session by id: asked once per process (then cached).
+  assertEquals(plainCount.markerLookups(), 1);
 
   const counted = countingAdapter();
   const slo = await app({ adapter: counted.adapter });

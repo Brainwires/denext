@@ -141,7 +141,7 @@ const REVOKED_READS = Symbol("denext.auth.revokedReads");
  * @returns `true` when it was revoked.
  */
 export function cookieSessionRevoked(
-  adapter: CookieRevocationAdapter,
+  adapter: Pick<CookieRevocationAdapter, "isSidRevoked">,
   sid: string,
 ): Promise<boolean> {
   const memo = currentContext()?.memo;
