@@ -132,7 +132,7 @@ creates its triggers and publication under the lock of `backend_migrations` too.
 something prints one line for it:
 
 ```text
-[denext] postgresAuthAdapter: applied 8 migrations to auth_migrations (0001_auth_tables … 0008_auth_sessions_valid_after)
+[denext] postgresAuthAdapter: applied 9 migrations to auth_migrations (0001_auth_tables … 0009_auth_sso_cookie_sessions)
 ```
 
 The server's `NOTICE`s (`relation … already exists, skipping`) are silenced inside those

@@ -699,7 +699,7 @@ export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): A
     state.now,
   );
   const { deleteUser } = deletionMethods(state);
-  return {
+  const adapter: AuthAdapter = {
     ...userMethods(state),
     ...accountMethods(state),
     ...verificationMethods(state),
@@ -724,4 +724,7 @@ export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): A
       closeState(state);
     },
   };
+  // `denext doctor` recognizes it structurally: per-process state, never for production.
+  Object.defineProperty(adapter, Symbol.for("denext.auth.inMemoryAdapter"), { value: true });
+  return adapter;
 }

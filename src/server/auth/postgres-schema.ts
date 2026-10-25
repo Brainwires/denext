@@ -167,6 +167,22 @@ ALTER TABLE ${p}auth_api_tokens ADD COLUMN sso_session BOOLEAN;
     sql: `
 ALTER TABLE ${p}auth_users ADD COLUMN sessions_valid_after BIGINT;
 `,
+  }, {
+    // SAML Single Logout of stateless cookie sessions: which session (sid) a SAML sign-in
+    // started, and the sessions an IdP's LogoutRequest revoked, kept until they expire.
+    name: "0009_auth_sso_cookie_sessions",
+    sql: `
+CREATE TABLE IF NOT EXISTS ${p}auth_sso_cookie_sessions (
+  sid TEXT PRIMARY KEY, provider_id TEXT NOT NULL, name_id TEXT NOT NULL, session_index TEXT,
+  expires_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_sso_cookie_sessions_name
+  ON ${p}auth_sso_cookie_sessions (provider_id, name_id, session_index);
+CREATE INDEX IF NOT EXISTS auth_sso_cookie_sessions_expiry
+  ON ${p}auth_sso_cookie_sessions (expires_at);
+CREATE TABLE IF NOT EXISTS ${p}auth_revoked_sessions (
+  sid TEXT PRIMARY KEY, expires_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_revoked_sessions_expiry ON ${p}auth_revoked_sessions (expires_at);
+`,
   }];
 }
 

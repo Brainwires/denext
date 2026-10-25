@@ -22,7 +22,7 @@
  */
 
 import type { AdapterUser, AuthAdapter, SsoProviderRecord, SsoProviderWrite } from "./adapter.ts";
-import type { SsoMethods } from "./memory-sso.ts";
+import type { SsoIndexMethods, SsoMethods } from "./memory-sso.ts";
 import {
   ACCOUNT_MAP,
   API_TOKEN_MAP,
@@ -40,6 +40,7 @@ import {
   patchUser,
   spendBackupCode,
   SSO_PROVIDER_MAP,
+  SSO_SESSION_INDEX_MAP,
   SSO_SESSION_MAP,
   toRow,
   USER_MAP,
@@ -705,6 +706,54 @@ function ssoMethods(db: Pg): SsoMethods {
   };
 }
 
+/** SAML Single Logout's session index and revocation list. */
+function ssoIndexMethods(db: Pg): SsoIndexMethods {
+  const index = db.t("auth_sso_cookie_sessions");
+  const revoked = db.t("auth_revoked_sessions");
+  const select = (where: string, params: unknown[]) =>
+    db.records(
+      SSO_SESSION_INDEX_MAP,
+      `SELECT * FROM ${index} WHERE ${where} AND expires_at > $${params.length + 1}`,
+      [...params, db.now()],
+    );
+  return {
+    async recordSsoSessionIndex(providerId, nameId, sessionIndex, sid, expiresAt) {
+      await db.run(`DELETE FROM ${index} WHERE expires_at <= $1`, [db.now()]);
+      await db.upsert("auth_sso_cookie_sessions", {
+        sid,
+        provider_id: providerId,
+        name_id: nameId,
+        session_index: sessionIndex ?? null,
+        expires_at: expiresAt,
+      }, ["sid"]);
+    },
+    listSsoSessionIndexBySessionIndex: (providerId, nameId, sessionIndex) =>
+      select("provider_id = $1 AND name_id = $2 AND session_index = $3", [
+        providerId,
+        nameId,
+        sessionIndex,
+      ]),
+    listSsoSessionIndexByNameId: (providerId, nameId) =>
+      select("provider_id = $1 AND name_id = $2", [providerId, nameId]),
+    async revokeSids(sids, expiresAt) {
+      await db.run(`DELETE FROM ${revoked} WHERE expires_at <= $1`, [db.now()]);
+      for (const sid of sids) {
+        await db.run(
+          `INSERT INTO ${revoked} AS r (sid, expires_at) VALUES ($1, $2) ON CONFLICT (sid) ` +
+            "DO UPDATE SET expires_at = CASE WHEN EXCLUDED.expires_at > r.expires_at " +
+            "THEN EXCLUDED.expires_at ELSE r.expires_at END",
+          [sid, expiresAt],
+        );
+      }
+    },
+    isSidRevoked: async (sid) =>
+      (await db.rows(`SELECT sid FROM ${revoked} WHERE sid = $1 AND expires_at > $2`, [
+        sid,
+        db.now(),
+      ])).length > 0,
+  };
+}
+
 /** The `/auth/v1` OAuth server, stored providers and Web3 nonces (shared SQL). */
 function oauthServerMethods(db: Pg): SqlOAuthServerGroups {
   return sqlOAuthServerGroups({
@@ -724,6 +773,7 @@ const GROUPS = [
   nativeMethods,
   passkeyMethods,
   ssoMethods,
+  ssoIndexMethods,
   oauthServerMethods,
 ];
 

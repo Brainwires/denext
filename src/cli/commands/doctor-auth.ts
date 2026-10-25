@@ -1,10 +1,12 @@
 // `denext doctor`'s denextAuth checks. SAML Single Logout of stateless cookie sessions keeps its
-// session index and revocation list in the app's cache store; the in-memory store is per
-// instance, so a production deployment of several instances would revoke a session on one
-// instance only. The config is read off the plugin object structurally (the CLI's copy of the
-// auth module may not be the app's).
+// session index and revocation list in the auth adapter: an adapter without those methods leaves
+// it off (a LogoutRequest ends every session of the user), and the in-memory adapter keeps them
+// per process, lost on a restart and unseen by other instances. The config is read off the plugin
+// object structurally (the CLI's copy of the auth module may not be the app's).
 
 import type { DenextConfig } from "../../server/config.ts";
+import type { AuthAdapter } from "../../server/auth/adapter.ts";
+import { cookieRevocationOf } from "../../server/auth/saml-revocation.ts";
 
 /** One doctor line (the shape `doctor.ts` prints). */
 export interface AuthCheck {
@@ -16,10 +18,12 @@ export interface AuthCheck {
 
 /** The key `denextAuth()` puts its config under on the plugin object. */
 const AUTH_PLUGIN_CONFIG = Symbol.for("denext.auth.pluginConfig");
+/** The key `inMemoryAuthAdapter()` marks its adapter with. */
+const IN_MEMORY_ADAPTER = Symbol.for("denext.auth.inMemoryAdapter");
 
 /** The structural slice of an auth config this check reads. */
 interface AuthConfigSlice {
-  adapter?: unknown;
+  adapter?: AuthAdapter;
   sessionStore?: unknown;
   session?: { strategy?: string };
   providers?: { type?: string; sp?: { signingKey?: unknown } }[];
@@ -34,38 +38,45 @@ function authConfigOf(config: DenextConfig | null): AuthConfigSlice | null {
   return null;
 }
 
-/** Whether SAML Single Logout would revoke stateless cookie sessions through the cache store. */
-function revokesCookieSessions(auth: AuthConfigSlice): boolean {
+/** Whether a `saml()` provider's Single Logout would end stateless cookie sessions. */
+function logsOutCookieSessions(auth: AuthConfigSlice): boolean {
   if (!auth.adapter || auth.sessionStore || auth.session?.strategy === "database") return false;
   return (auth.providers ?? []).some((p) => p?.type === "saml" && !!p.sp?.signingKey);
 }
 
-function envSet(name: string): boolean {
-  try {
-    return !!Deno.env.get(name);
-  } catch {
-    return false;
+/** What is wrong with the adapter for Single Logout of cookie sessions, or `null`. */
+function adapterProblem(adapter: AuthAdapter): string | null {
+  if (!cookieRevocationOf(adapter)) {
+    return "the auth adapter keeps no SAML session index (`recordSsoSessionIndex` … " +
+      "`isSidRevoked`), so an IdP's LogoutRequest ends every session of the user instead of " +
+      "the one it names — use sqliteAuthAdapter, postgresAuthAdapter or backendAuthAdapter";
   }
+  if ((adapter as unknown as Record<symbol, unknown>)[IN_MEMORY_ADAPTER] === true) {
+    return "the in-memory auth adapter keeps the SAML session index and revocation list in this " +
+      "process: a restart forgets them and another instance never sees them — use " +
+      "sqliteAuthAdapter, postgresAuthAdapter or backendAuthAdapter in production";
+  }
+  return null;
 }
 
-/** Whether an app-provided store object is the built-in in-memory one. */
-function inMemoryObject(store: object): string | null {
-  const name = (store as { constructor?: { name?: string } }).constructor?.name;
-  return name === "InMemoryCache" ? "an in-memory `cache.store`" : null;
-}
-
-/** Whether the default store would be the in-memory one: on Deno Deploy. */
-function deployDefault(config: DenextConfig): string | null {
-  const onDeploy = envSet("DENO_DEPLOYMENT_ID") || config.deploy?.adapter?.name === "deno-deploy";
-  return onDeploy ? "Deno Deploy (the in-memory cache store by default)" : null;
-}
-
-/** Why the production cache store would be the in-memory one, or `null` when it won't. */
-function inMemoryReason(config: DenextConfig): string | null {
-  const store = config.cache?.store;
-  if (store === "memory") return '`cache: { store: "memory" }`';
-  if (store && typeof store === "object") return inMemoryObject(store);
-  return store === "sqlite" ? null : deployDefault(config);
+/**
+ * The SAML Single Logout check: a warning (never critical) when stateless SAML sessions can't be
+ * revoked exactly (the adapter lacks the session index) or only in this process (the in-memory
+ * adapter).
+ *
+ * @param config The loaded `denext.config`.
+ * @returns The check, or `null` when no `saml()` provider logs out cookie sessions.
+ */
+export function samlLogoutStoreCheck(config: DenextConfig | null): AuthCheck | null {
+  const auth = authConfigOf(config);
+  if (!auth?.adapter || !logsOutCookieSessions(auth)) return null;
+  const problem = adapterProblem(auth.adapter);
+  return {
+    name: "saml logout store",
+    ok: problem === null,
+    detail: problem ?? "SAML Single Logout revocations live in the auth adapter",
+    critical: false,
+  };
 }
 
 /**
@@ -77,27 +88,4 @@ function inMemoryReason(config: DenextConfig): string | null {
 export function authChecks(config: DenextConfig | null): AuthCheck[] {
   const check = samlLogoutStoreCheck(config);
   return check ? [check] : [];
-}
-
-/**
- * The SAML Single Logout store check: a warning (never critical) when stateless SAML sessions
- * would keep their revocation list in the in-memory cache store in production.
- *
- * @param config The loaded `denext.config`.
- * @returns The check, or `null` when no `saml()` provider revokes cookie sessions.
- */
-export function samlLogoutStoreCheck(config: DenextConfig | null): AuthCheck | null {
-  const auth = authConfigOf(config);
-  if (!config || !auth || !revokesCookieSessions(auth)) return null;
-  const reason = inMemoryReason(config);
-  return {
-    name: "saml logout store",
-    ok: reason === null,
-    detail: reason === null
-      ? "SAML Single Logout revocations live in the cache store"
-      : `SAML Single Logout keeps its revocation list in memory (${reason}): with more than one ` +
-        "instance a LogoutRequest revokes the session on one of them only — set `cache.store` " +
-        "to a shared store (Postgres, Redis, Deno KV) or give denextAuth a `sessionStore`",
-    critical: false,
-  };
 }

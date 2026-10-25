@@ -122,6 +122,7 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
           "0006_auth_sso_metadata_validity",
           "0007_auth_sso_session_records",
           "0008_auth_sessions_valid_after",
+          "0009_auth_sso_cookie_sessions",
         ]);
         for (let round = 0; round < 10; round++) {
           const ref = {

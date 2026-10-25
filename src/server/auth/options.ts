@@ -18,6 +18,7 @@ import { scryptHasher } from "./hasher.ts";
 import { isProductionEnv, type SessionOptions } from "../session.ts";
 import { currentContext } from "../request-context.ts";
 import type { SessionStore } from "./session-store.ts";
+import { cookieRevocationOf } from "./saml-revocation.ts";
 import type {
   AuthConfig,
   AuthCookieConfig,
@@ -122,7 +123,8 @@ export interface ResolvedAuthOptions {
   trustForwardedHeaders?: boolean;
   /**
    * Whether a stateless cookie session can be revoked by its `sid`: a `saml()` provider has
-   * Single Logout on (`sp.signingKey`), there is an adapter, and no `sessionStore`. Only then
+   * Single Logout on (`sp.signingKey`), the adapter keeps the session index and revocation list
+   * (`recordSsoSessionIndex` … `isSidRevoked`), and there is no `sessionStore`. Only then
    * does a SAML sign-in record its session index and a read of a SAML session look its `sid` up
    * on the revocation list; every other app pays nothing.
    */
@@ -225,7 +227,8 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
     email: resolveEmail(config.email ?? {}, basePath),
     mfa: resolveMfa(config.mfa ?? {}, config.canonicalOrigin),
     trustForwardedHeaders: config.trustForwardedHeaders,
-    revocableCookies: !sessionStore && !!config.adapter && hasSamlSingleLogout(config),
+    revocableCookies: !sessionStore && hasSamlSingleLogout(config) &&
+      cookieRevocationOf(config.adapter) !== null,
   };
   resolved.set(config, options);
   return options;

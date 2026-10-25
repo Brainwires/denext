@@ -89,6 +89,7 @@ export type {
   SsoAttributeMappingKey,
   SsoProviderRecord,
   SsoProviderWrite,
+  SsoSessionIndexRecord,
   SsoSessionRecord,
   VerificationPurpose,
   VerificationTokenRecord,

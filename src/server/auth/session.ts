@@ -35,8 +35,8 @@
  * never slides.
  *
  * **Single Logout of a stateless session.** Each stateless payload carries its own random `sid`.
- * Where a `saml()` provider has Single Logout on (and there is no store), a SAML sign-in records
- * its session index and a read of a SAML session checks its `sid` against the revocation list
+ * Where a `saml()` provider has Single Logout on (with no store, and an adapter that keeps the
+ * session index and revocation list), a SAML sign-in records its session index and a read of a SAML session checks its `sid` against the revocation list
  * (`saml-revocation.ts`): an IdP's LogoutRequest ends exactly the sessions it names. A cookie
  * without a `sid` (issued before it) still reads, but can't be named.
  *
@@ -52,7 +52,12 @@ import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } fr
 import { keepsAuthLevel, sessionExpired, type SessionStore } from "./session-store.ts";
 import { ssoSessionAllowed } from "./sso-user.ts";
 import { recordSamlSession } from "./saml-sessions.ts";
-import { cookieSessionRevoked, newSessionId, recordCookieSessionIndex } from "./saml-revocation.ts";
+import {
+  cookieRevocationOf,
+  cookieSessionRevoked,
+  newSessionId,
+  recordCookieSessionIndex,
+} from "./saml-revocation.ts";
 import type { AuthConfig, AuthSession, AuthSessionSaml, AuthUser } from "./types.ts";
 
 /**
@@ -306,8 +311,8 @@ export async function readAuthSession(config: AuthConfig): Promise<AuthSession |
  * Whether a stateless SAML session's `sid` is still live: not on the Single Logout revocation
  * list. Looked up only when this app can revoke cookie sessions (`revocableCookies`) and only for
  * a SAML session carrying a `sid`; anything else passes without a lookup. A revoked session's
- * cookie is cleared on this response. A store that can't answer reads as signed out for this
- * request (the cookie is kept, so the session comes back once the store does).
+ * cookie is cleared on this response. An adapter that can't answer reads as signed out for this
+ * request (the cookie is kept, so the session comes back once the adapter does).
  */
 async function liveCookieSid(
   options: ResolvedAuthOptions,
@@ -317,7 +322,7 @@ async function liveCookieSid(
   if (!options.revocableCookies || !session.saml || !session.sid || session.sessionId) return true;
   let revoked: boolean;
   try {
-    revoked = await cookieSessionRevoked(session.sid);
+    revoked = await cookieSessionRevoked(cookieRevocationOf(options.adapter)!, session.sid);
   } catch (error) {
     options.logger.error("denextAuth: the session revocation list could not be read", error);
     return false;
@@ -475,13 +480,14 @@ async function recordCookieSamlSession(
   session: AuthSession,
 ): Promise<void> {
   if (!options.revocableCookies || !session.saml || !session.sid) return;
-  const signedIn = session.authTimeMs ?? Date.now();
+  const signedIn = session.authTime ?? Math.floor(Date.now() / 1000);
   try {
     await recordCookieSessionIndex(
+      cookieRevocationOf(options.adapter)!,
       session.provider,
       session.saml,
       session.sid,
-      signedIn + options.maxLifetime * 1000,
+      signedIn + options.maxLifetime,
     );
   } catch (error) {
     options.logger.error("denextAuth: recording a SAML session for Single Logout failed", error);

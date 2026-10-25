@@ -18,10 +18,11 @@
  *
  * Which sessions end: with a `sessionStore` and an adapter that keeps the SSO session group, a
  * SAML sign-in recorded its session (`saml-sessions.ts`), and exactly the named ones are deleted.
- * With stateless cookie sessions, a SAML sign-in recorded its session's `sid` in the session
- * index (`saml-revocation.ts`), and exactly the named `sid`s go on the revocation list: those the
- * SessionIndexes started, or with no SessionIndex every session of that NameID. A target neither
- * resolves (a cookie from before `sid`s, an index entry the store lost) fails closed: every
+ * With stateless cookie sessions and an adapter that keeps the session index, a SAML sign-in
+ * recorded its session's `sid` (`saml-revocation.ts`), and exactly the named `sid`s go on the
+ * adapter's revocation list: those the SessionIndexes started, or with no SessionIndex every
+ * session of that NameID. A target the index can't resolve (a cookie from before `sid`s, a pruned
+ * row), or an adapter without the index, fails closed: every
  * session of the user that NameID is linked to, signed in before now, is ended
  * (`sessionsValidAfter`). The caller's own cookie is cleared too when it is one of them.
  *
@@ -56,7 +57,7 @@ import {
 } from "./routes-shared.ts";
 import { readForm, SLO_TX, spFor, ssoProviderOf } from "./routes-saml.ts";
 import { COOKIE_SESSION_PREFIX, samlSessionStoreOf } from "./saml-sessions.ts";
-import { revokeCookieSessions } from "./saml-revocation.ts";
+import { cookieRevocationOf, revokeCookieSessions } from "./saml-revocation.ts";
 import { clearAuthSession, endUserSessions, readAuthSession } from "./session.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { type AuthSession, isSamlProvider, type SamlProvider } from "./types.ts";
@@ -231,7 +232,7 @@ async function endStoredSessions(
   return mine.length > 0;
 }
 
-/** {@linkcode revokeCookieSessions}, with a store failure logged and read as unresolved. */
+/** {@linkcode revokeCookieSessions}, with an adapter failure logged and read as unresolved. */
 async function revokedCookieSids(
   ctx: AuthRouteContext,
   providerId: string,
@@ -239,7 +240,12 @@ async function revokedCookieSids(
   sessionIndexes: string[],
 ): Promise<string[] | null> {
   try {
-    return await revokeCookieSessions(providerId, nameId, sessionIndexes);
+    return await revokeCookieSessions(
+      cookieRevocationOf(ctx.options.adapter)!,
+      providerId,
+      nameId,
+      sessionIndexes,
+    );
   } catch (error) {
     ctx.options.logger.error(
       "denextAuth: the session revocation list could not be written; ending every session " +
