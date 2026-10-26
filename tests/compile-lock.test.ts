@@ -204,6 +204,15 @@ Deno.test("carryNpmrc: copies the app's .npmrc, drops a stale copy; never embedd
     await carryNpmrc(dir, compile);
     assert(!await exists(join(compile, ".npmrc")));
     await carryNpmrc(dir, compile); // nothing to remove either
+    if (Deno.build.os !== "windows") {
+      // An older, world-readable copy (registry tokens) is made owner-only on the next compile:
+      // Deno applies `mode` to an existing file too.
+      await Deno.writeTextFile(join(dir, ".npmrc"), "//registry.example/:_authToken=t\n");
+      await Deno.writeTextFile(join(compile, ".npmrc"), "old\n", { mode: 0o644 });
+      await Deno.chmod(join(compile, ".npmrc"), 0o644);
+      await carryNpmrc(dir, compile);
+      assertEquals((await Deno.stat(join(compile, ".npmrc"))).mode! & 0o777, 0o600);
+    }
   });
   assert(neverEmbedded(".npmrc"));
 });

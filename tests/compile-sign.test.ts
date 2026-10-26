@@ -11,12 +11,16 @@ import {
   notarytoolSubmitArgs,
   osslsigncodeArgs,
   parseNotaryResult,
+  powershellArgs,
   signingReadiness,
   signingReadinessLines,
   signingReady,
   signtoolArgs,
+  storeImportScript,
+  storeRemoveScript,
   windowsCertificate,
   windowsSignTool,
+  withSigntoolCertificate,
 } from "../src/build/code-signing.ts";
 import {
   compileSignRequested,
@@ -156,7 +160,7 @@ Deno.test("Windows certificate: a .pfx (with its password), else a store thumbpr
     windowsCertificate(envOf({ DENEXT_WINDOWS_CERT_THUMBPRINT: "ab" }), false),
     undefined,
   );
-  assertEquals(signtoolArgs(["a.exe"], pfx, "http://ts"), [
+  assertEquals(signtoolArgs(["a.exe"], { kind: "pfx", path: "c.pfx" }, "http://ts"), [
     "signtool",
     "sign",
     "/f",
@@ -167,10 +171,16 @@ Deno.test("Windows certificate: a .pfx (with its password), else a store thumbpr
     "http://ts",
     "/td",
     "sha256",
-    "/p",
-    "pw",
     "a.exe",
   ]);
+  // signtool takes a password only as `/p` on its command line: never built.
+  let refused = "";
+  try {
+    signtoolArgs(["a.exe"], pfx, "http://ts");
+  } catch (err) {
+    refused = String(err);
+  }
+  assertStringIncludes(refused, "withSigntoolCertificate");
   assertEquals(signtoolArgs(["a.exe"], thumb).slice(2, 4), ["/sha1", "abcdef"]);
   const ossl = osslsigncodeArgs("in.exe", "out.exe", "c.pfx", "/tmp/pass", "http://ts");
   assertEquals(ossl, [
@@ -535,11 +545,72 @@ await signCompiledBinary(${JSON.stringify(bin)}, {
   },
 });
 
-Deno.test("signCompiledBinary (Windows, signtool): a failure's message has the password redacted", async () => {
-  const { run, calls } = recorder(() => ({
-    code: 1,
-    stderr: "SignTool Error: bad password s3cret",
-  }));
+const THUMB = "AB".repeat(20);
+const CHAIN = "CD".repeat(20);
+
+/** A fake PowerShell for the certificate-store import: records each call and its stdin. */
+function storeFake(importAnswer: Partial<SignCommandResult> = {}) {
+  const calls: Array<{ cmd: string[]; stdin: string; script: string }> = [];
+  const synced: string[][] = [];
+  /** The script a `-EncodedCommand` carries (UTF-16LE, base64). */
+  const scriptOf = (cmd: readonly string[]) => {
+    const bytes = Uint8Array.from(atob(cmd[cmd.length - 1]), (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-16le").decode(bytes);
+  };
+  const run = (cmd: readonly string[], stdin: string) => {
+    const script = scriptOf(cmd);
+    calls.push({ cmd: [...cmd], stdin, script });
+    return Promise.resolve(
+      script.includes("Import-PfxCertificate")
+        ? {
+          code: 0,
+          stdout: JSON.stringify({ sha1: THUMB.toLowerCase(), added: [THUMB, CHAIN] }),
+          stderr: "",
+          ...importAnswer,
+        }
+        : { code: 0, stdout: "", stderr: "" },
+    );
+  };
+  return { calls, synced, run, runSync: (cmd: readonly string[]) => synced.push([...cmd]) };
+}
+
+Deno.test("signCompiledBinary (Windows, signtool): the .pfx password is on no command line", async () => {
+  const { run, calls } = recorder();
+  const store = storeFake();
+  const result = await signCompiledBinary(
+    "C:/app.exe",
+    { explicit: true, target: WIN, projectDir: "." },
+    {
+      run,
+      os: "windows",
+      has: (c) => Promise.resolve(c === "signtool"),
+      env: envOf({ DENEXT_WINDOWS_CERT: "C:/c.pfx", DENEXT_WINDOWS_CERT_PASSWORD: "s3cret" }),
+      store,
+    },
+  );
+  assert(result?.signed);
+  // signtool signs by the imported certificate's thumbprint, with no password at all.
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].cmd.slice(0, 4), ["signtool", "sign", "/sha1", THUMB]);
+  assert(!calls[0].cmd.some((a) => a.includes("s3cret") || a === "/p"), calls[0].cmd.join(" "));
+  // PowerShell imported the .pfx with the password on its stdin (base64 of the UTF-8 bytes),
+  // then removed exactly what it added, keys included.
+  assertEquals(store.calls.length, 2);
+  const [imported, removed] = store.calls;
+  assertEquals(imported.stdin, btoa("s3cret"));
+  for (const call of store.calls) {
+    assert(!call.cmd.some((a) => a.includes("s3cret")), "never in PowerShell's argv");
+    assert(!call.script.includes("s3cret"), "never in the script it runs");
+  }
+  assertStringIncludes(imported.script, "Import-PfxCertificate -FilePath $path");
+  assertStringIncludes(imported.script, "$path = 'C:/c.pfx'");
+  assertStringIncludes(removed.script, `'${THUMB}', '${CHAIN}'`);
+  assertStringIncludes(removed.script, "-DeleteKey");
+});
+
+Deno.test("signCompiledBinary (Windows, signtool): a failed signtool still removes the imported certificate", async () => {
+  const { run } = recorder(() => ({ code: 1, stderr: "SignTool Error: no timestamp" }));
+  const store = storeFake();
   const err = await assertRejects(
     () =>
       signCompiledBinary("C:/app.exe", { explicit: true, target: WIN, projectDir: "." }, {
@@ -547,14 +618,113 @@ Deno.test("signCompiledBinary (Windows, signtool): a failure's message has the p
         os: "windows",
         has: (c) => Promise.resolve(c === "signtool"),
         env: envOf({ DENEXT_WINDOWS_CERT: "c.pfx", DENEXT_WINDOWS_CERT_PASSWORD: "s3cret" }),
+        store,
       }),
     Error,
   );
-  assertEquals(calls[0].cmd.slice(-3), ["/p", "s3cret", "C:/app.exe"]);
-  assertEquals(calls[0].secrets, ["s3cret"]);
+  assertStringIncludes(err.message, "no timestamp");
   assert(!err.message.includes("s3cret"), err.message);
-  assertStringIncludes(err.message, "/p *** C:/app.exe");
-  assertStringIncludes(err.message, "bad password ***");
+  assertEquals(store.calls.length, 2, "imported, then removed");
+  assertStringIncludes(store.calls[1].script, "Remove-Item");
+});
+
+Deno.test("withSigntoolCertificate: a failed import says so without the password; nothing to remove", async () => {
+  const store = storeFake({ code: 1, stdout: "", stderr: "The password s3cret is wrong" });
+  let signed = false;
+  const err = await assertRejects(
+    () =>
+      withSigntoolCertificate({ kind: "pfx", path: "c.pfx", password: "s3cret" }, () => {
+        signed = true;
+        return Promise.resolve();
+      }, store),
+    Error,
+  );
+  assert(!signed);
+  assertStringIncludes(err.message, "could not import c.pfx");
+  assert(!err.message.includes("s3cret"), err.message);
+  assertEquals(store.calls.length, 1);
+  // Anything that is not a thumbprint in the answer is refused, never spliced into a script.
+  const odd = storeFake({ stdout: JSON.stringify({ sha1: THUMB, added: ["x'; rm -r C:/"] }) });
+  await assertRejects(
+    () =>
+      withSigntoolCertificate(
+        { kind: "pfx", path: "c.pfx", password: "pw" },
+        () => Promise.resolve(),
+        odd,
+      ),
+    Error,
+    "unexpected import result",
+  );
+  // No password (or a thumbprint): no import, the certificate is passed through.
+  const none = storeFake();
+  const seen: unknown[] = [];
+  await withSigntoolCertificate({ kind: "pfx", path: "c.pfx" }, (c) => {
+    seen.push(c);
+    return Promise.resolve();
+  }, none);
+  await withSigntoolCertificate({ kind: "thumbprint", sha1: THUMB }, (c) => {
+    seen.push(c);
+    return Promise.resolve();
+  }, none);
+  assertEquals(none.calls, []);
+  assertEquals(seen, [{ kind: "pfx", path: "c.pfx" }, { kind: "thumbprint", sha1: THUMB }]);
+  // Only certificates the import added are ever removed; quoting survives a path with a quote.
+  assertStringIncludes(storeImportScript("C:/it's.pfx"), "$path = 'C:/it''s.pfx'");
+  assertEquals(storeRemoveScript([]).includes("@()"), true);
+});
+
+Deno.test({
+  name: "withSigntoolCertificate (Windows): imports the .pfx for the signing, then removes it",
+  ignore: Deno.build.os !== "windows",
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const pfx = join(dir, "test.pfx");
+    const ps = async (script: string) => {
+      const [cmd, ...args] = powershellArgs(script);
+      const out = await new Deno.Command(cmd, { args, stdin: "null", stderr: "inherit" })
+        .output();
+      return new TextDecoder().decode(out.stdout).trim();
+    };
+    const inStore = async (sha1: string) =>
+      (await ps(`Test-Path -LiteralPath 'Cert:\\CurrentUser\\My\\${sha1}'`)) === "True";
+    // A throwaway code-signing certificate, exported to a password-protected .pfx and taken out
+    // of the store again, so the import below is what puts it there.
+    const sha1 = await ps([
+      "$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=denext signing test' " +
+      "-CertStoreLocation Cert:\\CurrentUser\\My -KeyExportPolicy Exportable",
+      "$pw = ConvertTo-SecureString -String 'p@ss wörd' -AsPlainText -Force",
+      `Export-PfxCertificate -Cert $c -FilePath '${pfx}' -Password $pw | Out-Null`,
+      'Remove-Item -LiteralPath ("Cert:\\CurrentUser\\My\\" + $c.Thumbprint) -DeleteKey',
+      "$c.Thumbprint",
+    ].join("\n"));
+    try {
+      assert(/^[0-9A-F]{40}$/.test(sha1), sha1);
+      assert(!(await inStore(sha1)));
+      const seen = await withSigntoolCertificate(
+        { kind: "pfx", path: pfx, password: "p@ss wörd" },
+        async (c) => {
+          assertEquals(c, { kind: "thumbprint", sha1 });
+          assert(await inStore(sha1), "in the user's store while signing");
+          return "signed";
+        },
+      );
+      assertEquals(seen, "signed");
+      assert(!(await inStore(sha1)), "removed once signing is done");
+      // A wrong password fails the import, and leaves nothing behind.
+      await assertRejects(() =>
+        withSigntoolCertificate(
+          { kind: "pfx", path: pfx, password: "wrong" },
+          () => Promise.resolve(),
+        )
+      );
+      assert(!(await inStore(sha1)));
+    } finally {
+      if (/^[0-9A-F]{40}$/.test(sha1) && await inStore(sha1)) {
+        await ps(`Remove-Item -LiteralPath 'Cert:\\CurrentUser\\My\\${sha1}' -DeleteKey`);
+      }
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
 
 Deno.test("signing readiness: what doctor and the UI report, no secret read", async () => {

@@ -658,6 +658,62 @@ and this project adheres to
 
 ### Security
 
+- **signtool never gets a `.pfx` password on its command line.** `denext build --compile --sign`
+  and the desktop package scripts passed `DENEXT_WINDOWS_CERT_PASSWORD` to `signtool` as `/p`,
+  where a process listing or process auditing records it. A password-protected `.pfx` is now
+  imported into the user's certificate store (`CurrentUser\My`, its key not exportable) by
+  PowerShell reading the password from stdin, signed with by thumbprint, and removed again, key
+  included, when signing ends, fails or is interrupted; a certificate the store already held is
+  left in place. (`osslsigncode` already read it from a 0600 file.)
+
+- **The installers verify a release's origin, not only its checksum.** `SHA256SUMS` comes from
+  the same release as the archive, so whoever can replace one can replace the other. Every
+  release archive now carries a build-provenance attestation (Sigstore, signed for
+  `publish.yml` on Brainwires/denext); with the GitHub CLI installed and signed in, `install.sh`
+  and `install.ps1` refuse an archive that fails `gh attestation verify --signer-workflow …`
+  (`DENEXT_REQUIRE_ATTESTATION=1` refuses an install that can't check it; `DENEXT_INSECURE=1`
+  installs a release from before attestations on its checksum). `install.ps1` also refuses a
+  `denext.exe` whose Authenticode signature is present but not valid.
+
+- **No cache directory in the working directory.** With neither `HOME` nor `USERPROFILE` set (or
+  a relative one), Deno's cache directory, the `command-cache` key and the Tailwind binary's
+  cache fell back to `.`, so a checked-out repository could ship a toolchain binary with a stamp
+  vouching for it, or the key that signs the verb listing. denext now uses only absolute per-user
+  directories (a relative `XDG_CACHE_HOME` / `LOCALAPPDATA` is ignored) and otherwise stops,
+  naming `DENO_DIR`. A relative `DENO_BIN` is resolved when read, not against a child's working
+  directory, and a relative `HOME` no longer makes `.deno/bin/deno` a project file.
+
+- **`denext patch` never follows a link out of the package.** A patch's targets were confined to
+  `node_modules/<pkg>` by name only, so a link inside the package (a file or a folder) carried a
+  write anywhere, and the package folder could resolve anywhere through `node_modules` links.
+  Each target is now resolved by real path and must stay inside the package's real directory (a
+  dangling link is refused), and the package itself must resolve inside the project or its
+  workspace root.
+
+- **A TUS `PATCH` that outlives its lease saves nothing.** A `PATCH` stalled past its five-minute
+  lease saved its progress over the newer `PATCH` that took the upload over, and its chunk object
+  (written under the same key as the newer one's) stayed in `.denext-tus`. Progress is now saved
+  only while the lease is still the request's; a request that lost it is refused (`409`) and
+  removes what it wrote, which now lives under keys of its own (its chunk and tail). The last
+  byte holds the lease through the completion.
+
+- **A store that ignores `Range` no longer makes a `206` carry the whole object.** The S3 driver
+  reports the range the store answered (its `Content-Range`), and the server slices a `200`
+  answer to the range it promised. An object overwritten between the `HEAD` and the `GET` (another
+  size or entity tag) is refused instead of served under the old headers.
+
+- **`denext migrate` no longer freezes this machine's paths into `denext.config.ts`.** The
+  `next.config` evaluator kept `HOME`, `TMPDIR`, `DENO_DIR` and the Windows profile variables for
+  Deno's own use, so a `redirects()` / `headers()` that interpolated one was inlined with the
+  migrating machine's value. The evaluated config now reads placeholders for them, and a rule or
+  field that carries one is left out with a note to port it by hand.
+
+- **Toolchain hardening:** `toolchain link` / `unlink` compare a link's target with the cache
+  root up to a separator (`…/denext-deno-other/…` is not denext's); the Windows `deno.cmd` shim
+  doubles a `%` in the toolchain's path so cmd can't expand it; and `build --compile` excludes env files,
+  databases and the other never-embedded files behind a link in an included directory, and a
+  linked file by its target's name too.
+
 - **A 4.9 stateless session cookie is read by a 4.8 instance, so a rolling 4.8 → 4.9 deploy and a
   rollback keep every session.** The sealed stateless payload carries the session's own id as
   `rsid`, never `sid`: 4.8 reads any cookie with a `sid` key as a store id and signs a stateless

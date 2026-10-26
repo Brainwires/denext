@@ -1110,6 +1110,28 @@ Deno.test("denoCacheDir / desktopRuntimeTarget follow Deno's own defaults", () =
   assertEquals(desktopRuntimeTarget("windows", "x86_64"), "x86_64-pc-windows-msvc");
 });
 
+Deno.test("denoCacheDir: never the working directory — no home, or a relative one, is refused", () => {
+  for (const os of ["linux", "darwin", "windows"]) {
+    const envs: Record<string, string>[] = [{}, { HOME: "." }, { HOME: "repo", USERPROFILE: "" }];
+    for (const env of envs) {
+      assertThrows(() => denoCacheDir(envOf(env), os), Error, "set DENO_DIR");
+    }
+  }
+  // A relative XDG_CACHE_HOME / LOCALAPPDATA is ignored (the XDG spec says so), not used.
+  assertEquals(
+    denoCacheDir(envOf({ HOME: "/h", XDG_CACHE_HOME: "cache" }), "linux"),
+    join("/h", ".cache", "deno"),
+  );
+  assertThrows(() => denoCacheDir(envOf({ XDG_CACHE_HOME: "cache" }), "linux"));
+  assertThrows(() => denoCacheDir(envOf({ LOCALAPPDATA: "AppData" }), "windows"));
+  // USERPROFILE is the fallback for a missing HOME; an explicit DENO_DIR always wins.
+  assertEquals(
+    denoCacheDir(envOf({ USERPROFILE: "/u" }), "linux"),
+    join("/u", ".cache", "deno"),
+  );
+  assertEquals(denoCacheDir(envOf({ DENO_DIR: "/d" }), "windows"), "/d");
+});
+
 // ---------------------------------------------------------------------------------------------
 // `denext doctor`.
 

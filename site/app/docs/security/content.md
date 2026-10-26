@@ -253,7 +253,10 @@ to a folder or a file, that leads out of the project, nor through a dangling
 one, and stop with an error naming it (`migrate` and `init` leave a `.vscode`
 linked elsewhere alone). A link that stays inside the project is followed.
 `denext upgrade` leaves a workspace member outside the project unpinned and
-names it, and `denext patch` refuses a package name that is not an npm name.
+names it, and `denext patch` refuses a package name that is not an npm name. A
+patch, which runs at every boot, writes only inside the package it names, by real
+path: a link inside the package that leads out of it (or dangles) is refused, and
+the package folder itself must resolve inside the project or its workspace root.
 
 **Project code never runs in the UI's privileged process.** Doctor, tasks,
 `next.config` evaluation, `deno add`, **and discovering the project's own CLI

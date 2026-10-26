@@ -445,9 +445,12 @@ packager's: `DENEXT_WINDOWS_CERT` (a `.pfx`) with `DENEXT_WINDOWS_CERT_PASSWORD`
 it signs with `signtool` (Windows SDK). On macOS and Linux it signs with `osslsigncode` (`brew
 install osslsigncode`, `apt install osslsigncode`), which reads the password from a private
 temporary file, never from its command line; a store thumbprint needs `signtool`. `signtool`
-takes a `.pfx` password only on its command line (`/p`), where process auditing (Sysmon, an EDR)
-on the signing machine records it: on a shared or monitored Windows signing host, import the
-certificate into the user's store and sign by `DENEXT_WINDOWS_CERT_THUMBPRINT` instead.
+takes a `.pfx` password only on its command line (`/p`), where a process listing or process
+auditing (Sysmon, an EDR) would record it, so denext never passes it there: a
+password-protected `.pfx` is imported into the user's certificate store (`CurrentUser\My`, its
+key not exportable) by PowerShell, which reads the password from its standard input, signed with
+by thumbprint, and removed again, key included, when signing ends or fails. A certificate the
+store already held is left in place.
 
 A Linux executable carries no OS signature, so `--sign` refuses a Linux target. Publish a
 checksum, or a detached signature of the archive.

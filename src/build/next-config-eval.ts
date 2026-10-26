@@ -188,6 +188,49 @@ const PASSED_ENV = new Set([
 ]);
 
 /**
+ * The variables the evaluator keeps for Deno's own use that name a place on THIS machine. The
+ * evaluated config sees each as {@linkcode machineEnvPlaceholder} instead (the child set them
+ * before it imports the config), so a `redirects()` / `headers()` that interpolates one can't
+ * freeze the migrating machine's home or temp path into a generated config; a value that
+ * carries a placeholder is the caller's to flag. `SystemRoot` stays real: Windows itself needs
+ * it inside the process.
+ */
+const MACHINE_ENV_KEYS: readonly string[] = [
+  "HOME",
+  "DENO_DIR",
+  "XDG_CACHE_HOME",
+  "USERPROFILE",
+  "LOCALAPPDATA",
+  "APPDATA",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+];
+
+/** What the evaluated config reads for the machine-path variable `key`. */
+function machineEnvPlaceholder(key: string): string {
+  return `__denext_machine_env_${key}__`;
+}
+
+/**
+ * The machine-path variables `value` (any JSON-shaped value) carries a placeholder of.
+ *
+ * @param value An evaluated config value.
+ * @returns The variable names, in {@linkcode MACHINE_ENV_KEYS} order.
+ */
+export function machineEnvIn(value: unknown): string[] {
+  const text = JSON.stringify(value) ?? "";
+  return MACHINE_ENV_KEYS.filter((key) => text.includes(machineEnvPlaceholder(key)));
+}
+
+/** Runs first in the evaluator: the machine-path variables become their placeholders. */
+const MASK_MACHINE_ENV = `
+for (const key of ${JSON.stringify(MACHINE_ENV_KEYS)}) {
+  if (Deno.env.get(key) !== undefined) Deno.env.set(key, "__denext_machine_env_" + key + "__");
+}
+`;
+
+/**
  * The evaluator's whole environment. The child starts from an empty one: the user's shell
  * may hold secrets, and a config needs only Next's public variables, the mode, and the
  * variables Deno uses to find its cache.
@@ -236,7 +279,7 @@ export async function evalNextConfigProgram(
   // config can't read (no file, no argv, no env), so a config that prints its own marker
   // line — to plant keys or code in what the caller writes — can't forge the result.
   const marker = `${options.marker}${crypto.randomUUID()}:`;
-  const program = options.program.replaceAll(options.marker, marker);
+  const program = MASK_MACHINE_ENV + options.program.replaceAll(options.marker, marker);
   // stdout carries the result; stderr is discarded unless the evaluation fails, then the
   // evaluator runs once more with it piped for the error text (see quietThenExplain: a quiet
   // stderr pipe held for a child's whole life starves other children's reads on Windows).

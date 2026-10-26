@@ -705,3 +705,38 @@ Deno.test("shellPathArg: a path as the user's shell reads it back", () => {
   assertEquals(shellPathArg("/tmp/it's", "linux"), "'/tmp/it'\\''s'");
   assertEquals(shellPathArg("/tmp/a\\b$c", "linux"), "'/tmp/a\\b$c'");
 });
+
+Deno.test("migrate: a next.config rule that reads a machine path is left out, never inlined", async () => {
+  const dir = await tempDir();
+  try {
+    await writeTree(dir, {
+      "package.json": { name: "paths", dependencies: { next: "15.3.0", react: "19.1.0" } },
+      "next.config.mjs": `export default {
+  async redirects() {
+    return [
+      { source: "/cache", destination: "/files" + (process.env.HOME ?? "") + "/x", permanent: false },
+      { source: "/old", destination: "/new", permanent: true },
+    ];
+  },
+  async headers() {
+    return [{ source: "/(.*)", headers: [{ key: "x-tmp", value: String(Deno.env.get("TMPDIR")) }] }];
+  },
+};
+`,
+      "app/layout.tsx": `export default function L({ children }) { return children; }\n`,
+      "app/page.tsx": `export default function P() { return null; }\n`,
+    });
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // The plain rule is inlined; the one reading HOME is not, and neither is this machine's path.
+    assertStringIncludes(config, '"source":"/old"');
+    assert(!config.includes('"source":"/cache"'), config);
+    assert(!config.includes("__denext_machine_env_"), config);
+    const home = Deno.env.get("HOME");
+    if (home) assert(!config.includes(home), config);
+    assertStringIncludes(config, "// redirects: a rule or value reads HOME");
+    assertStringIncludes(config, "// headers: a rule or value reads TMPDIR");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

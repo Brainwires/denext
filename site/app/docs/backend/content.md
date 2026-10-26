@@ -124,7 +124,8 @@ multipart upload reads it).
 development and single-server self-hosting. Uploads and downloads go through the plugin's own
 endpoint with signed, expiring URLs; downloads answer `Range` requests (up to 8 ranges in one
 request as `multipart/byteranges`; more get the whole object, a `200`, as nginx's `max_ranges` does,
-since each part is a separate driver read). Writes land in a temporary
+since each part is a separate driver read). A `206` carries exactly the range it names, even
+from an S3-compatible store that ignores `Range`. Writes land in a temporary
 file and are renamed into place, so a refused upload leaves nothing behind.
 
 ### From the command line
@@ -412,7 +413,9 @@ assembled object's size and first bytes again at the end. It expires 24 hours af
 (`Upload-Expires`). On S3 the bytes become parts of a multipart upload as they arrive (a remainder
 under S3's 5 MiB minimum waits as a tail object); on the filesystem each `PATCH` is a chunk,
 joined through the usual checks at the end. Progress lives in the metadata store, so any replica
-can take the next `PATCH`.
+can take the next `PATCH`. A `PATCH` holds a five-minute lease on the upload: a second one meanwhile
+is a `409`, and one that stalls past its lease and is taken over saves nothing (it is refused
+with a `409` and removes what it wrote), so a resumed client continues from the newer offset.
 
 ### Object versioning
 

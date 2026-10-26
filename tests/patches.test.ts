@@ -17,6 +17,7 @@ import {
   listPatches,
   loadDenextPatchSet,
   parsePatchFileName,
+  type PatchEntry,
   patchFileName,
   patchPlugin,
   revertNpmPatch,
@@ -407,5 +408,104 @@ Deno.test("denext: a file swc's TSX parser rejects (TS-only casts) is still abso
     assert(!/["']\.\.?\//.test(out), "no relative specifier survives");
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Make a link, or report that this machine can't (Windows without the symlink privilege). */
+async function tryLink(target: string, path: string, type: "file" | "dir"): Promise<boolean> {
+  try {
+    await Deno.symlink(target, path, { type });
+    return true;
+  } catch (err) {
+    if (Deno.build.os === "windows" && err instanceof Deno.errors.PermissionDenied) return false;
+    throw err;
+  }
+}
+
+/** A patch that rewrites `rel` in left-pad (pristine "a" → "b"), as a hostile repo could ship. */
+async function linkPatch(dir: string, rel: string): Promise<PatchEntry> {
+  await Deno.mkdir(join(dir, "patches"), { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "patches", "left-pad+1.3.0.patch"),
+    [
+      `--- a/node_modules/left-pad/${rel}`,
+      `+++ b/node_modules/left-pad/${rel}`,
+      "@@ -1 +1 @@",
+      "-a",
+      "+b",
+      "",
+    ].join("\n"),
+  );
+  return (await listPatches(dir))[0];
+}
+
+Deno.test("npm: a link inside the package never carries a patch's write outside it", async () => {
+  const { dir, installed, pristine } = await npmProject();
+  const outside = await Deno.makeTempDir({ prefix: "denext_patches_outside_" });
+  const opts = { npmPristine: () => Promise.resolve(pristine), log: () => {} };
+  try {
+    const victim = join(outside, "victim.txt");
+    await Deno.writeTextFile(victim, "a\n");
+    // A file link (`rc` → a file outside), then a directory link (`etc/` → a directory outside).
+    if (!await tryLink(victim, join(installed, "rc"), "file")) return;
+    let entry = await linkPatch(dir, "rc");
+    await assertRejects(() => applyNpmPatch(dir, entry, opts), Error, "outside the package");
+    await assertRejects(() => revertNpmPatch(dir, entry), Error, "outside the package");
+    assertEquals(await Deno.readTextFile(victim), "a\n", "the file outside is untouched");
+    assert(await tryLink(outside, join(installed, "etc"), "dir"));
+    entry = await linkPatch(dir, "etc/victim.txt");
+    await assertRejects(() => applyNpmPatch(dir, entry, opts), Error, "outside the package");
+    assertEquals(await Deno.readTextFile(victim), "a\n");
+    // A dangling link would create its target wherever it points: refused as well.
+    await Deno.symlink(join(outside, "new.txt"), join(installed, "dangling"), { type: "file" });
+    entry = await linkPatch(dir, "dangling");
+    await assertRejects(() => applyNpmPatch(dir, entry, opts), Error, "dangling link");
+    assert(!(await exists(join(outside, "new.txt"))));
+    // A link that stays inside the package is followed as before.
+    await Deno.writeTextFile(join(installed, "real.txt"), "a\n");
+    await Deno.symlink(join(installed, "real.txt"), join(installed, "alias"), { type: "file" });
+    entry = await linkPatch(dir, "alias");
+    assertEquals(await applyNpmPatch(dir, entry, opts), "applied");
+    assertEquals(await Deno.readTextFile(join(installed, "real.txt")), "b\n");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("npm: node_modules/<pkg> may link into the workspace, never elsewhere on the machine", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_patches_ws_" });
+  const opts = { log: () => {} };
+  try {
+    // A workspace: the app in apps/web, its left-pad linked (as pnpm does) to packages/left-pad.
+    await Deno.writeTextFile(join(root, "deno.json"), `{ "workspace": ["./apps/web"] }\n`);
+    const app = join(root, "apps", "web");
+    const member = join(root, "packages", "left-pad");
+    const elsewhere = await Deno.makeTempDir({ prefix: "denext_patches_elsewhere_" });
+    for (const d of [member, elsewhere]) {
+      await Deno.mkdir(d, { recursive: true });
+      await Deno.writeTextFile(
+        join(d, "package.json"),
+        `{ "name": "left-pad", "version": "1.3.0" }\n`,
+      );
+      await Deno.writeTextFile(join(d, "x.txt"), "a\n");
+    }
+    await Deno.mkdir(join(app, "node_modules"), { recursive: true });
+    if (!await tryLink(member, join(app, "node_modules", "left-pad"), "dir")) return;
+    const entry = await linkPatch(app, "x.txt");
+    assertEquals(await applyNpmPatch(app, entry, opts), "applied");
+    assertEquals(await Deno.readTextFile(join(member, "x.txt")), "b\n");
+    // The same link to a directory outside the project and its workspace is refused.
+    await Deno.remove(join(app, "node_modules", "left-pad"));
+    await Deno.symlink(elsewhere, join(app, "node_modules", "left-pad"), { type: "dir" });
+    await assertRejects(
+      () => applyNpmPatch(app, entry, opts),
+      Error,
+      "outside the project and its workspace",
+    );
+    assertEquals(await Deno.readTextFile(join(elsewhere, "x.txt")), "a\n");
+    await Deno.remove(elsewhere, { recursive: true });
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });

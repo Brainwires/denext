@@ -110,8 +110,14 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
           denext-&lt;target&gt;.tar.gz
         </code>), verifies it against the release's <code>SHA256SUMS</code> (or the per-archive{" "}
         <code>&lt;archive&gt;.sha256</code>) and refuses to install without a checksum —{" "}
-        <code>DENEXT_INSECURE=1</code> is the one loud override. It resolves the{" "}
-        <em>latest stable</em>{" "}
+        <code>DENEXT_INSECURE=1</code>{" "}
+        is the one loud override. A checksum from the same release proves integrity, not origin, so
+        every archive also carries a build-provenance attestation signed for the release workflow:
+        with the GitHub CLI (<code>gh</code>) installed and signed in, the archive must pass{" "}
+        <code>gh attestation verify</code>{" "}
+        or nothing is installed (<code>DENEXT_REQUIRE_ATTESTATION=1</code>{" "}
+        refuses an install that can't check it). On Windows, a signed <code>denext.exe</code>{" "}
+        must also carry a valid Authenticode signature. It resolves the <em>latest stable</em>{" "}
         release: release candidates are GitHub prereleases and are never "latest", so pick one with
         {" "}
         <code>DENEXT_VERSION=v&lt;version&gt;-rc.N</code>{" "}

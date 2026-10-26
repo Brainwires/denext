@@ -1,7 +1,13 @@
 // `denext build --compile`'s pure parts: the `--allow-*` it bakes, the files it never embeds and
 // the `compile` config's validation. tests/integration/compile-app.test.ts compiles and runs an app.
 
-import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   compileApp,
@@ -299,6 +305,47 @@ Deno.test({
       assertEquals(result.skipped, ["mystery"]);
     } finally {
       await removeTempDir(dir);
+    }
+  },
+});
+
+Deno.test({
+  name: "compileApp: secrets behind a link in an included directory are excluded too",
+  ignore: Deno.build.os === "windows", // the recording `deno` is a shell script
+  async fn() {
+    const dir = await builtProjectWithState();
+    const outside = await Deno.makeTempDir({ prefix: "denext_compile_linked_" });
+    try {
+      // `deno compile --include` embeds what a linked directory holds: a linked data folder with
+      // an env file and a database, a file link named innocently whose target is the `.env`,
+      // and a link cycle the walk must not loop on.
+      await Deno.writeTextFile(join(outside, ".env.production"), "SECRET=1\n");
+      await Deno.writeTextFile(join(outside, "app.db"), "");
+      await Deno.writeTextFile(join(outside, "readme.txt"), "");
+      await Deno.symlink(outside, join(outside, "loop"));
+      await Deno.writeTextFile(join(dir, ".env"), "SECRET=2\n");
+      await Deno.symlink(outside, join(dir, ".denext", "backups", "data"));
+      await Deno.symlink(join(dir, ".env"), join(dir, ".denext", "backups", "notes.txt"));
+      const record = join(dir, "argv.json");
+      const fake = join(dir, "fake-deno.sh");
+      await Deno.writeTextFile(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\n`);
+      await Deno.chmod(fake, 0o755);
+      await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+      const argv = (await Deno.readTextFile(record)).trim().split("\n");
+      const excluded = new Set(argv.flatMap((a, i) => a === "--exclude" ? [argv[i + 1]] : []));
+      for (
+        const path of [
+          ".denext/backups/data/.env.production",
+          ".denext/backups/data/app.db",
+          ".denext/backups/notes.txt",
+        ]
+      ) {
+        assert(excluded.has(path), `${path} not excluded: ${[...excluded].join(", ")}`);
+      }
+      assert(!excluded.has(".denext/backups/data/readme.txt"));
+    } finally {
+      await removeTempDir(dir);
+      await Deno.remove(outside, { recursive: true });
     }
   },
 });

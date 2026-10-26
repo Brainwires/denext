@@ -119,6 +119,84 @@ function ifRangeHolds(req: Headers, info: ObjectInfo): boolean {
 export type ObjectReader = (range?: ByteRange) => Promise<ReadableStream<Uint8Array>>;
 
 /**
+ * The bytes a {@linkcode ObjectReader} serves from what the driver read: exactly `range` (when
+ * one was asked for) of the object `info` describes. A store that ignored `Range` (answered the
+ * whole object) is sliced here, so a `206` never carries the whole object; one that answered
+ * another range is a driver error. An object that changed since `info` was read (another size or
+ * entity tag: overwritten between the `HEAD` and the `GET`) is refused rather than served under
+ * the old headers.
+ *
+ * @param info The object as `preflight` saw it.
+ * @param object What the driver's `get` returned.
+ * @param range The range asked for, if any.
+ * @returns The body to serve.
+ */
+export function servedBytes(
+  info: ObjectInfo,
+  object: StoredObject,
+  range?: ByteRange,
+): ReadableStream<Uint8Array> {
+  const refuse = (error: StorageError): never => {
+    object.body.cancel().catch(() => {});
+    throw error;
+  };
+  if (object.size !== info.size || (info.etag && object.etag && object.etag !== info.etag)) {
+    refuse(new StorageError("conflict", "the object changed while it was read; retry"));
+  }
+  if (!range) return object.body;
+  if (object.range) {
+    if (object.range.start === range.start && object.range.end === range.end) return object.body;
+    refuse(
+      new StorageError(
+        "driver_error",
+        `the store answered bytes ${object.range.start}-${object.range.end} for ${range.start}-` +
+          `${range.end}`,
+      ),
+    );
+  }
+  return sliceStream(object.body, range.start, range.end - range.start + 1);
+}
+
+/** `length` bytes of `body` from `skip` on; the rest of `body` is cancelled. */
+function sliceStream(
+  body: ReadableStream<Uint8Array>,
+  skip: number,
+  length: number,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let toSkip = skip;
+  let left = length;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      while (left > 0) {
+        const next = await reader.read();
+        if (next.done) {
+          return controller.error(new StorageError("driver_error", "the object ended early"));
+        }
+        let chunk = next.value;
+        if (toSkip >= chunk.byteLength) {
+          toSkip -= chunk.byteLength;
+          continue;
+        }
+        chunk = chunk.subarray(toSkip, toSkip + Math.min(left, chunk.byteLength - toSkip));
+        toSkip = 0;
+        left -= chunk.byteLength;
+        controller.enqueue(chunk);
+        if (left === 0) {
+          await reader.cancel().catch(() => {});
+          controller.close();
+        }
+        return;
+      }
+      controller.close();
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => {});
+    },
+  });
+}
+
+/**
  * A `200` with the whole object, a `206` with one range, or a `206` with several as one
  * `multipart/byteranges` body (RFC 9110 §14.6), each part read in turn.
  *

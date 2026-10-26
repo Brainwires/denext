@@ -28,6 +28,7 @@ import {
   secretsOf,
 } from "../packages/backend/src/runtime.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
+import { servedBytes } from "../packages/backend/src/serve.ts";
 
 const SECRET = "s".repeat(32);
 
@@ -297,4 +298,47 @@ Deno.test("runtime: unconfigured storage, unknown buckets, missing secrets, expi
   assertThrows(() => clampExpiry(0, 60), StorageError);
   assertThrows(() => clampExpiry(NaN, 60), StorageError);
   assertEquals(new StorageError("forbidden", "x").status, 403);
+});
+
+Deno.test("servedBytes: a store that ignored Range is sliced; a changed object is refused", async () => {
+  const info = { key: "k", size: 11, contentType: "text/plain", etag: "e1" };
+  const whole = () => new Blob(["hello world"]).stream();
+  const text = async (body: ReadableStream<Uint8Array>) => await new Response(body).text();
+  // The whole object for a range: only the range is served (a 206 never carries it all).
+  assertEquals(
+    await text(servedBytes(info, { ...info, body: whole() }, { start: 2, end: 4 })),
+    "llo",
+  );
+  // Split across chunks, too.
+  const chunked = new ReadableStream<Uint8Array>({
+    start(c) {
+      for (const part of ["he", "llo w", "orld"]) c.enqueue(new TextEncoder().encode(part));
+      c.close();
+    },
+  });
+  assertEquals(
+    await text(servedBytes(info, { ...info, body: chunked }, { start: 1, end: 7 })),
+    "ello wo",
+  );
+  // A store that honoured it, and no range at all: passed through.
+  const range = { start: 2, end: 4 };
+  const ranged = new Blob(["llo"]).stream();
+  assertEquals(await text(servedBytes(info, { ...info, body: ranged, range }, range)), "llo");
+  assertEquals(await text(servedBytes(info, { ...info, body: whole() })), "hello world");
+  // Another range than asked, a new size or entity tag (overwritten between HEAD and GET).
+  assertThrows(
+    () => servedBytes(info, { ...info, body: whole(), range: { start: 0, end: 4 } }, range),
+    StorageError,
+    "answered bytes 0-4",
+  );
+  assertThrows(
+    () => servedBytes(info, { ...info, size: 12, body: whole() }),
+    StorageError,
+    "changed",
+  );
+  assertThrows(
+    () => servedBytes(info, { ...info, etag: "e2", body: whole() }),
+    StorageError,
+    "changed",
+  );
 });

@@ -431,18 +431,75 @@ async function receive(
   if (!(await rt.meta.leaseResumable(row.id, row.upload_offset, lease, Date.now() + LEASE_MS))) {
     throw new StorageError("conflict", "another request is writing this upload");
   }
-  let next = row;
+  const next = await receiveUnderLease(rt, request, row, remaining, lease);
+  const finished = next.upload_offset === next.upload_length;
+  await saveUnderLease(rt, row, next, lease, finished);
+  if (finished) await complete(rt, next, bucket, caller);
+  return next;
+}
+
+/** Store the request's bytes; a failure releases the lease (if it is still ours) and throws. */
+async function receiveUnderLease(
+  rt: StorageRuntime,
+  request: Request,
+  row: ResumableRow,
+  remaining: number,
+  lease: string,
+): Promise<ResumableRow> {
   try {
     const body = limit(request.body ?? new Blob([]).stream(), remaining);
-    next = row.upload_id ? await receiveParts(rt, row, body) : await receiveChunk(rt, row, body);
-    if (next.upload_offset === next.upload_length) {
-      await complete(rt, next, bucket, caller);
-      return next;
-    }
-  } finally {
-    if (next.upload_offset !== next.upload_length) await rt.meta.saveResumable(next);
+    return row.upload_id
+      ? await receiveParts(rt, row, body, lease)
+      : await receiveChunk(rt, row, body, lease);
+  } catch (err) {
+    await rt.meta.saveResumable(row, lease);
+    throw err;
   }
-  return next;
+}
+
+/**
+ * Save `next` only while the lease is still ours: a PATCH that stalled past it and was taken
+ * over drops what it wrote (its chunk and tail live under keys of its own) and is refused. The
+ * last byte keeps the lease through the completion, so no other PATCH completes it twice. Once
+ * saved, the tail the new state replaced is removed.
+ */
+async function saveUnderLease(
+  rt: StorageRuntime,
+  row: ResumableRow,
+  next: ResumableRow,
+  lease: string,
+  finished: boolean,
+): Promise<void> {
+  if (!(await rt.meta.saveResumable(next, lease, finished ? Date.now() + LEASE_MS : undefined))) {
+    await dropUnsaved(rt, row, next);
+    throw new StorageError(
+      "conflict",
+      "this PATCH outlived its lease and another request took the upload over",
+    );
+  }
+  if (row.tail_size > 0 && (next.tail_size === 0 || tailKey(row) !== tailKey(next))) {
+    await rt.driver.remove(TUS_NAMESPACE, tailKey(row));
+  }
+}
+
+/** Where an upload's chunk is stored. */
+function chunkKey(row: ResumableRow, chunk: ResumableRow["chunks"][number]): string {
+  return chunk.key ?? `${row.id}/${chunk.offset}`;
+}
+
+/** Where an upload's tail is stored. */
+function tailKey(row: ResumableRow): string {
+  return row.tail_key ?? `${row.id}/tail`;
+}
+
+/** Remove what a PATCH that lost its lease wrote under its own keys (its chunk, its tail). */
+async function dropUnsaved(rt: StorageRuntime, row: ResumableRow, next: ResumableRow) {
+  for (const c of next.chunks.slice(row.chunks.length)) {
+    await rt.driver.remove(TUS_NAMESPACE, chunkKey(next, c));
+  }
+  if (next.tail_size > 0 && tailKey(next) !== tailKey(row)) {
+    await rt.driver.remove(TUS_NAMESPACE, tailKey(next));
+  }
 }
 
 /** A driver without multipart: the PATCH's bytes as one chunk object (all or nothing). */
@@ -450,8 +507,10 @@ async function receiveChunk(
   rt: StorageRuntime,
   row: ResumableRow,
   body: ReadableStream<Uint8Array>,
+  lease: string,
 ): Promise<ResumableRow> {
-  const key = `${row.id}/${row.upload_offset}`;
+  // Keyed by the lease too: a stalled PATCH at the same offset never overwrites a newer one's.
+  const key = `${row.id}/${row.upload_offset}.${lease}`;
   const info = await rt.driver.put(TUS_NAMESPACE, key, body, {
     contentType: "application/octet-stream",
   });
@@ -462,14 +521,14 @@ async function receiveChunk(
   return {
     ...row,
     upload_offset: row.upload_offset + info.size,
-    chunks: [...row.chunks, { offset: row.upload_offset, size: info.size }],
+    chunks: [...row.chunks, { offset: row.upload_offset, size: info.size, key }],
   };
 }
 
 /** The bytes held back from earlier PATCHes (S3), to lead the next part. */
 async function loadTail(rt: StorageRuntime, row: ResumableRow): Promise<Uint8Array[]> {
   if (row.tail_size === 0) return [];
-  const tail = await rt.driver.get(TUS_NAMESPACE, `${row.id}/tail`);
+  const tail = await rt.driver.get(TUS_NAMESPACE, tailKey(row));
   if (!tail) throw new StorageError("driver_error", "the upload's tail is missing");
   return [await readAll(tail.body, row.tail_size)];
 }
@@ -487,22 +546,23 @@ async function nextChunk(
   }
 }
 
-/** Keep what did not become a part as the tail object (or drop an old tail). */
+/**
+ * Keep what did not become a part as a new tail object, under a key of this PATCH's own (the
+ * old tail is removed once the new state is saved: `receive`).
+ */
 async function saveTail(
   rt: StorageRuntime,
   row: ResumableRow,
   pending: Uint8Array,
-): Promise<number> {
-  const key = `${row.id}/tail`;
-  if (pending.byteLength > 0) {
-    await rt.driver.put(TUS_NAMESPACE, key, new Blob([pending as BlobPart]).stream(), {
-      contentType: "application/octet-stream",
-      size: pending.byteLength,
-    });
-  } else if (row.tail_size > 0) {
-    await rt.driver.remove(TUS_NAMESPACE, key);
-  }
-  return pending.byteLength;
+  lease: string,
+): Promise<Pick<ResumableRow, "tail_size" | "tail_key">> {
+  if (pending.byteLength === 0) return { tail_size: 0, tail_key: undefined };
+  const key = `${row.id}/tail.${lease}`;
+  await rt.driver.put(TUS_NAMESPACE, key, new Blob([pending as BlobPart]).stream(), {
+    contentType: "application/octet-stream",
+    size: pending.byteLength,
+  });
+  return { tail_size: pending.byteLength, tail_key: key };
 }
 
 /** S3: the bytes become parts as they arrive; a short remainder waits as the tail object. */
@@ -510,6 +570,7 @@ async function receiveParts(
   rt: StorageRuntime,
   row: ResumableRow,
   body: ReadableStream<Uint8Array>,
+  lease: string,
 ): Promise<ResumableRow> {
   const pending = await loadTail(rt, row);
   let pendingSize = row.tail_size;
@@ -534,10 +595,9 @@ async function receiveParts(
   state = { ...state, upload_offset: row.upload_offset + received };
   if (state.upload_offset === state.upload_length) {
     if (pendingSize > 0 || state.parts.length === 0) await flush();
-    if (row.tail_size > 0) await rt.driver.remove(TUS_NAMESPACE, `${row.id}/tail`);
-    return state;
+    return { ...state, tail_size: 0, tail_key: undefined };
   }
-  return { ...state, tail_size: await saveTail(rt, row, concat(pending, pendingSize)) };
+  return { ...state, ...await saveTail(rt, row, concat(pending, pendingSize), lease) };
 }
 
 /** Upload one part from the server: the driver's own call, else its presigned URL. */
@@ -706,7 +766,7 @@ async function assembleChunks(
   row: ResumableRow,
   bucket: ResolvedBucket,
 ): Promise<ObjectInfo> {
-  const keys = row.chunks.map((c) => `${row.id}/${c.offset}`);
+  const keys = row.chunks.map((c) => chunkKey(row, c));
   let i = 0;
   let current: ReadableStreamDefaultReader<Uint8Array> | undefined;
   const joined = new ReadableStream<Uint8Array>({
@@ -748,8 +808,8 @@ async function assembleChunks(
 }
 
 async function removeChunks(rt: StorageRuntime, row: ResumableRow): Promise<void> {
-  for (const c of row.chunks) await rt.driver.remove(TUS_NAMESPACE, `${row.id}/${c.offset}`);
-  if (row.tail_size > 0) await rt.driver.remove(TUS_NAMESPACE, `${row.id}/tail`);
+  for (const c of row.chunks) await rt.driver.remove(TUS_NAMESPACE, chunkKey(row, c));
+  if (row.tail_size > 0) await rt.driver.remove(TUS_NAMESPACE, tailKey(row));
 }
 
 /**

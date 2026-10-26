@@ -6,6 +6,7 @@
 // already on the machine, synchronously, and refuses with the fix when there is nothing to run.
 
 import { basename } from "@std/path";
+import { isAbsoluteOn, userHomeDir } from "./deno-cache-dir.ts";
 
 /** What {@linkcode resolveDenoExecutable} reads from the process (injectable for tests). */
 export interface DenoExecutableSeams {
@@ -19,6 +20,8 @@ export interface DenoExecutableSeams {
   readonly standalone: boolean;
   /** Whether a regular file exists at `path`. */
   readonly isFile: (path: string) => boolean;
+  /** The working directory a relative `DENO_BIN` is resolved against (default: none). */
+  readonly cwd?: () => string;
 }
 
 /** The refusal a compiled binary gives when the machine has no Deno to run. */
@@ -67,10 +70,16 @@ function denoOnPath(seams: DenoExecutableSeams): string | null {
  */
 export function resolveDenoExecutable(seams: DenoExecutableSeams): string {
   const fromEnv = seams.env("DENO_BIN");
-  if (fromEnv) return fromEnv;
+  if (fromEnv) {
+    // Resolved now, against this process's directory: a child spawned in the project would
+    // otherwise resolve a relative path against the project's.
+    if (!seams.cwd || !/[\\/]/.test(fromEnv) || isAbsoluteOn(fromEnv, seams.os)) return fromEnv;
+    return joinFor(seams, seams.cwd(), fromEnv.replace(/^\.[\\/]+/, ""));
+  }
   const exec = seams.execPath();
   if (basename(exec).toLowerCase().replace(/\.exe$/, "") === "deno") return exec;
-  const home = seams.env("HOME") ?? seams.env("USERPROFILE");
+  // Only an absolute home: a relative HOME would make `.deno/bin/deno` the project's.
+  const home = userHomeDir(seams.env, seams.os);
   if (home) {
     const candidate = joinFor(
       seams,
@@ -98,6 +107,7 @@ function processDenoSeams(): DenoExecutableSeams {
       }
     },
     execPath: () => Deno.execPath(),
+    cwd: () => Deno.cwd(),
     os: Deno.build.os,
     standalone: (Deno.build as { standalone?: boolean }).standalone === true,
     isFile: (path) => {

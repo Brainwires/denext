@@ -152,7 +152,10 @@ The binary is cached beside Deno's own cache:
 ```
 
 `DENO_DIR` defaults to `~/Library/Caches/deno` on macOS, `~/.cache/deno` on Linux and
-`%LOCALAPPDATA%\deno` on Windows. The pinned platforms are `darwin-aarch64`, `darwin-x86_64`,
+`%LOCALAPPDATA%\deno` on Windows. Only absolute paths count: with no absolute `HOME` (or
+`USERPROFILE` / `LOCALAPPDATA`) and no `DENO_DIR`, denext stops and asks for one rather than
+use the working directory, where a checked-out repository could ship a binary and its stamp.
+The pinned platforms are `darwin-aarch64`, `darwin-x86_64`,
 `linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-aarch64` (Windows on Arm, from
 `2.9.7-denext.21`).
 

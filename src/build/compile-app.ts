@@ -29,7 +29,6 @@
 // only when the app opts in.
 
 import { basename, dirname, join, relative, resolve, toFileUrl } from "@std/path";
-import { walk } from "@std/fs";
 import type { CompileConfig } from "../server/config.ts";
 import {
   frameworkImports,
@@ -600,6 +599,36 @@ async function embeddedPaths(
   return { included: out, skipped: build.skipped };
 }
 
+/**
+ * Every file under `dir` that must not be embedded, by the path `deno compile --include` sees it
+ * at. Links are followed — what a linked directory holds is embedded through the link — and a
+ * linked file counts by its own name and by its target's (`config.txt` → `../.env` is a `.env`).
+ * `ancestors` (the real directories above this one on the walk) keeps a link cycle from looping.
+ */
+async function neverEmbeddedUnder(
+  dir: string,
+  ancestors: ReadonlySet<string> = new Set(),
+): Promise<string[]> {
+  const real = await Deno.realPath(dir).catch(() => null);
+  if (real === null || ancestors.has(real)) return [];
+  const seen = new Set([...ancestors, real]);
+  const out: string[] = [];
+  for await (const entry of Deno.readDir(dir)) {
+    const path = join(dir, entry.name);
+    let isDirectory = entry.isDirectory;
+    let target = entry.name;
+    if (entry.isSymlink) {
+      const resolved = await Deno.realPath(path).catch(() => null);
+      if (resolved === null) continue; // dangling: nothing to embed
+      isDirectory = (await Deno.stat(resolved)).isDirectory;
+      target = basename(resolved);
+    }
+    if (isDirectory) out.push(...await neverEmbeddedUnder(path, seen));
+    else if (neverEmbedded(entry.name) || neverEmbedded(target)) out.push(path);
+  }
+  return out;
+}
+
 /** The project-relative paths under `included` that must not be embedded. */
 async function excludedPaths(
   paths: ProjectPaths,
@@ -616,12 +645,12 @@ async function excludedPaths(
     const abs = join(paths.projectDir, p);
     const info = await Deno.stat(abs);
     if (!info.isDirectory) {
-      if (neverEmbedded(basename(abs))) out.add(p);
+      if (neverEmbedded(basename(abs)) || neverEmbedded(basename(await Deno.realPath(abs)))) {
+        out.add(p);
+      }
       continue;
     }
-    for await (const entry of walk(abs, { includeDirs: false, followSymlinks: false })) {
-      if (neverEmbedded(entry.name)) out.add(rel(entry.path));
-    }
+    for (const path of await neverEmbeddedUnder(abs)) out.add(rel(path));
   }
   const outRel = rel(output);
   if (!outRel.startsWith("..")) out.add(outRel);

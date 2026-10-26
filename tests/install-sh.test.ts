@@ -77,6 +77,21 @@ case "\${STUB_VERSION:-}" in 3.*) [ "$1" = "toolchain" ] && {
 exit 0
 `;
 
+/**
+ * A stub `gh` (always first on PATH, so a runner's real GitHub CLI is never asked): logs its
+ * arguments, is signed in only when `STUB_GH_AUTH` is set, and passes `attestation verify` only
+ * when `STUB_GH_VERIFY=ok`.
+ */
+const GH_STUB = `#!/bin/sh
+echo "$*" >> "$STUB_LOG.gh"
+case "$1 $2" in
+  "auth status") [ -n "$STUB_GH_AUTH" ] || exit 1; exit 0 ;;
+  "attestation verify") [ "$STUB_GH_VERIFY" = "ok" ] && exit 0
+    echo "no attestations found" >&2; exit 1 ;;
+esac
+exit 2
+`;
+
 /** A stub `uname` reporting `os` / `arch`. */
 const unameStub = (os: string, arch: string) =>
   `#!/bin/sh\ncase "$1" in -m) echo "${arch}" ;; *) echo "${os}" ;; esac\n`;
@@ -96,6 +111,8 @@ interface Run {
   calls: string[];
   /** The URLs fetched with a progress bar. */
   progress: string[];
+  /** Every invocation of the stub `gh`, in order. */
+  gh: string[];
 }
 
 /** A local "release" the stub curl serves, and a run of the script against it. */
@@ -122,6 +139,7 @@ class Release {
     await Deno.mkdir(r.stubs);
     await Deno.mkdir(r.served);
     await Deno.writeTextFile(join(r.stubs, "curl"), CURL_STUB, { mode: 0o755 });
+    await Deno.writeTextFile(join(r.stubs, "gh"), GH_STUB, { mode: 0o755 });
     await Deno.writeTextFile(
       join(r.stubs, "uname"),
       unameStub(opts.os ?? "Linux", opts.arch ?? "x86_64"),
@@ -175,6 +193,7 @@ class Release {
     await Deno.writeTextFile(`${this.log}.headers`, "");
     await Deno.writeTextFile(`${this.log}.denext`, "");
     await Deno.writeTextFile(`${this.log}.progress`, "");
+    await Deno.writeTextFile(`${this.log}.gh`, "");
     // `script` runs the installer on a pseudo-terminal (stdout and stderr both a TTY).
     const [cmd, cmdArgs] = !opts.tty
       ? ["sh", [SCRIPT, ...args]]
@@ -207,6 +226,7 @@ class Release {
       binary: join(this.install, "bin", "denext"),
       calls: (await Deno.readTextFile(`${this.log}.denext`)).split("\n").filter(Boolean),
       progress: (await Deno.readTextFile(`${this.log}.progress`)).split("\n").filter(Boolean),
+      gh: (await Deno.readTextFile(`${this.log}.gh`)).split("\n").filter(Boolean),
     };
   }
 
@@ -473,6 +493,68 @@ Deno.test("install.sh: DENEXT_ARTIFACTS installs a local build, still checksum-v
   } finally {
     await r.remove();
   }
+});
+
+Deno.test("install.sh: a signed-in gh must verify the archive's build attestation", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    // Signed in, and the attestation verifies: installed, and said so.
+    const ok = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "ok" });
+    assertEquals(ok.code, 0, ok.stderr);
+    assertStringIncludes(ok.stdout, "build attestation verified");
+    const verify = ok.gh.find((c) => c.startsWith("attestation verify"));
+    assert(verify, ok.gh.join("\n"));
+    assertStringIncludes(verify, `${ASSET} --repo Brainwires/denext`);
+    assertStringIncludes(
+      verify,
+      "--signer-workflow Brainwires/denext/.github/workflows/publish.yml",
+    );
+    // Signed in, and it does not verify (a swapped release with a matching SHA256SUMS): nothing.
+    await Deno.remove(r.install, { recursive: true });
+    const bad = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no" });
+    assertEquals(bad.code, 1);
+    assertStringIncludes(bad.stderr, "build attestation verification FAILED");
+    assertEquals(await r.installed(), false);
+    // DENEXT_INSECURE=1 installs such a release (one from before attestations) on the checksum.
+    const forced = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no", DENEXT_INSECURE: "1" });
+    assertEquals(forced.code, 0, forced.stderr);
+    assertStringIncludes(forced.stderr, "could not be verified");
+    // No signed-in gh: installed on the checksum, with a note; required, refused.
+    await Deno.remove(r.install, { recursive: true });
+    const plain = await r.run();
+    assertEquals(plain.code, 0, plain.stderr);
+    assertStringIncludes(plain.stdout, "build attestation not checked");
+    assert(!plain.gh.some((c) => c.startsWith("attestation")), plain.gh.join("\n"));
+    await Deno.remove(r.install, { recursive: true });
+    const required = await r.run({ DENEXT_REQUIRE_ATTESTATION: "1" });
+    assertEquals(required.code, 1);
+    assertStringIncludes(required.stderr, "DENEXT_REQUIRE_ATTESTATION=1 needs the GitHub CLI");
+    assertEquals(await r.installed(), false);
+    // A local DENEXT_ARTIFACTS build has no attestation to check.
+    const local = await r.run({ DENEXT_ARTIFACTS: r.served, STUB_GH_AUTH: "1" });
+    assertEquals(local.code, 0, local.stderr);
+    assertEquals(local.gh, []);
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("publish.yml: the release attests every archive's build provenance", async () => {
+  const workflow = await Deno.readTextFile(WORKFLOW);
+  const release = workflow.slice(
+    workflow.indexOf("\n  release:"),
+    workflow.indexOf("\n  package-managers:"),
+  );
+  assertStringIncludes(release, "actions/attest-build-provenance@");
+  assertStringIncludes(release, "subject-checksums: dist/SHA256SUMS");
+  assertStringIncludes(release, "id-token: write");
+  assertStringIncludes(release, "attestations: write");
+  // Attested before the release is created, so no release ever exists without it.
+  assert(
+    release.indexOf("attest-build-provenance") < release.indexOf("softprops/action-gh-release"),
+  );
 });
 
 Deno.test("install.sh: a truncated download runs nothing", { ignore: NO_SH }, async () => {
