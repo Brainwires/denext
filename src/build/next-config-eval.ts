@@ -225,8 +225,10 @@ export function machineEnvIn(value: unknown): string[] {
 
 /** Runs first in the evaluator: the machine-path variables become their placeholders. */
 const MASK_MACHINE_ENV = `
+// (in the evaluator child only: this module never changes its own process's environment)
+const childEnv = Deno.env;
 for (const key of ${JSON.stringify(MACHINE_ENV_KEYS)}) {
-  if (Deno.env.get(key) !== undefined) Deno.env.set(key, "__denext_machine_env_" + key + "__");
+  if (childEnv.get(key) !== undefined) childEnv.set(key, "__denext_machine_env_" + key + "__");
 }
 `;
 
