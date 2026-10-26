@@ -6,7 +6,7 @@ lead: Everything denext's Deno runtime adds to Deno 2.9.8, in one place. Each AP
 
 denext runs your project on its own build of Deno: the CLI, `denort` (what `deno compile` and
 `denext build --compile` build onto) and the Deno Desktop runtime, all from the public
-[Brainwires/deno](https://github.com/Brainwires/deno) fork. It is stock Deno 2.9.8 plus the
+[Brainwires/deno](https://github.com/Brainwires/deno) fork. It is upstream Deno 2.9.8 plus the
 additions below. You don't install it: denext downloads the build it pins, checks its SHA-256 and
 runs every command that needs Deno on it ([denext's Deno toolchain](/docs/toolchain)).
 
@@ -25,7 +25,7 @@ the version number alone doesn't tell them apart:
 if (Deno.build.denext) {
   console.log(`denext's Deno ${Deno.build.denext}`); // "3.0.0-rc.5"
 } else {
-  console.log("stock Deno: Deno.SQL and the other additions are not here");
+  console.log("upstream Deno: Deno.SQL and the other additions are not here");
 }
 ```
 
@@ -50,11 +50,12 @@ The versions sort in release order by semver: `2.9.7-denext.1` … `2.9.7-denext
 the rows marked "rc.6" below need it. Before the marker (`3.0.0-rc.2` and earlier) denext
 recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
-**Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno
-escape hatch, `DENEXT_DENO=stock`, and what needs the fork falls back or says why it can't. From
-denext 5.0 the plan is to require denext's runtime: the stock-Deno fallbacks go away, and features
-such as `Deno.SQL`, the jail and native TypeScript 7 stop being optional. Until 5.0 ships, nothing
-changes for a project on stock Deno.
+**Required from denext 5.0.** denext runs only on this runtime, `3.0.0-rc.5` or later: the
+stock-Deno escape hatch (`DENEXT_DENO=stock`) and every stock-Deno fallback are gone, so everything
+on this page from `3.0.0-rc.5` and earlier — `Deno.SQL`, the lifecycle-script jail, the idle trim,
+the direction-split network flags, native TypeScript 7 — is always there. A `DENEXT_DENO=<path>`
+must be a build of it (told by the identity line above); anything else is refused with the fix
+([Upgrading to 5.0](/docs/toolchain#upgrading-to-50)).
 
 ## JavaScript and TypeScript APIs
 

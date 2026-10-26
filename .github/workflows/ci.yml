@@ -31,9 +31,10 @@ name: CI
 #     (and `deno coverage`) on the toolchain it resolves the same way.
 #   - `backend-integration`: the toolchain downloaded from its release URL and SHA-256 (pinned in
 #     its env, kept equal to the pin by tests/deno-toolchain.test.ts).
-#   - Stock Deno stays under test where it is meant to: the suites' `DENEXT_DENO=stock` cases
-#     and the stock-Deno paths (npm:postgres via fromPostgresJs), and publishing (the release
-#     script's `deno publish --dry-run`, publish.yml's `deno publish`).
+#   - Upstream Deno stays where it is meant to: the postgres.js adapter (npm:postgres via
+#     fromPostgresJs, what an app on Deno Deploy uses), and publishing (the release script's
+#     `deno publish --dry-run`, publish.yml's `deno publish`). denext 5.0 refuses
+#     `DENEXT_DENO=stock`, and the suites assert that refusal.
 on:
   push:
     branches: [main, development]
@@ -489,7 +490,7 @@ jobs:
     env:
       DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
       DENEXT_TEST_POSTGIS_URL: postgres://postgres:pw@127.0.0.1:5433/postgres
-      DENEXT_TEST_POSTGRES_JS: "1" # the stock-Deno path (npm:postgres via fromPostgresJs) too
+      DENEXT_TEST_POSTGRES_JS: "1" # the postgres.js adapter (npm:postgres via fromPostgresJs) too
       DENEXT_TEST_POSTGRES_LOGICAL: "1" # wal_level = logical (set below): realtime's logical source
       DENEXT_TEST_SUPABASE_JS: "1" # the stock @supabase/supabase-js client against the app
       DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100

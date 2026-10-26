@@ -81,8 +81,8 @@ Each release carries a `SHA256SUMS` file, a `manifest.json` (URL, SHA-256 and si
 backend, plus the Deno and laufey commits it was built from) and a build provenance attestation for
 every archive.
 
-The `deno` CLI itself is **not** replaced. Your stock `deno desktop` does the build; denext points
-it at the runtime through two environment variables the CLI already reads, `DENORT_DESKTOP_BIN`
+The `deno` CLI that builds is denext's [Deno toolchain](/docs/toolchain) (denext 5.0 builds on no
+other); denext points its `deno desktop` at the runtime through two environment variables the CLI already reads, `DENORT_DESKTOP_BIN`
 (the runtime library) and `LAUFEY_DEV_DIR` (the backend hosts).
 
 Three layers carry the changes below:
@@ -865,7 +865,7 @@ Each layer has its own gate, and a release runs all of them:
   with upstream's deny flags, dlint) and the format checks, `cargo test --lib` over upstream's
   crate list, and the unit and spec test suites, with the same commands and flags as Deno's CI.
 - **The runtime, packaged and launched.** The release workflow builds every target on its own
-  runner, packages a small app with the stock `deno desktop` on both backends and launches it.
+  runner, packages a small app with the toolchain's `deno desktop` on both backends and launches it.
   An end-to-end suite then packages one app per area (the origin and memory transport, per-app
   storage, deep links and scheme ownership, the window API, drag and drop and dialogs, passkeys,
   shortcuts and DevTools, menus and notifications, full-app updates with throwaway keys), launches
@@ -897,16 +897,18 @@ target and backend the archive's URL, size and SHA-256. When `denext desktop run
 3. extracts it with a safe extractor (no absolute paths, no `..` entries, no links that leave the
    directory, no special files), writes the marker (each file's size and SHA-256) and moves the
    tree into place in one rename. Two builds racing each other are safe;
-4. runs the stock `deno desktop` with `DENORT_DESKTOP_BIN` and `LAUFEY_DEV_DIR` set.
+4. runs the toolchain's `deno desktop` with `DENORT_DESKTOP_BIN` and `LAUFEY_DEV_DIR` set.
 
 The Deno cache is `DENO_DIR` when it is set, otherwise the default Deno itself uses
 (`~/Library/Caches/deno`, `%LOCALAPPDATA%\deno`, `$XDG_CACHE_HOME/deno` or `~/.cache/deno`). The
 backend comes from `desktop.backend` in `deno.json` (`webview` by default, or `cef`).
 
-**Deno 2.9.8 exactly.** `deno desktop` embeds the runtime, so the runtime and the CLI must be the
-same Deno version. Packaging with any other version stops before the build with the fix:
-`deno upgrade --version 2.9.8`. `denext desktop run` and `dev` instead warn and build the window
-on the stock runtime (point `DENO_BIN` at a 2.9.8 binary to keep the pinned one).
+**denext's Deno, built from 2.9.8.** `deno desktop` embeds the runtime, so the `deno` that builds
+must be denext's Deno runtime (its `denext <version> (Brainwires)` identity line, `3.0.0-rc.5` or
+later) built from the runtime's Deno release. `denext desktop run`, `dev` and `package` build with
+the toolchain (`package` puts it first on the packaging script's `PATH`), as does `denext task
+desktop:package`; a plain `deno task` that runs a packaging script on an upstream `deno` stops
+before the build with the fix. denext 5.0 has no stock-runtime fallback for `run` / `dev`.
 
 **Cross-OS packaging.** 2.9.8's CLI looks a `LAUFEY_DEV_DIR` backend up under the host's
 executable name (`laufey_webview.exe` on Windows, `laufey_webview` elsewhere), then copies the
@@ -918,15 +920,15 @@ copies where the filesystem can't link), so every Linux and Windows target packa
 any difference. macOS apps package on a Mac.
 
 **`denext doctor`** reports the pinned runtime version, whether it is cached and verified on this
-machine, and whether `deno` is the version it needs.
+machine, and whether `deno` is denext's runtime built from the release it needs.
 
-| Variable                           | Effect                                                             |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.            |
-| `DENEXT_DESKTOP_RUNTIME=stock`     | The stock Deno Desktop runtime (see [Opting out](#opting-out)).    |
-| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work). |
-| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).         |
-| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | `gh attestation verify` a fresh download (`--attest-runtime`).     |
+| Variable                           | Effect                                                                |
+| ---------------------------------- | --------------------------------------------------------------------- |
+| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.               |
+| `DENEXT_DESKTOP_RUNTIME=stock`     | Refused since denext 5.0 (see [No stock runtime](#no-stock-runtime)). |
+| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work).    |
+| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).            |
+| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | `gh attestation verify` a fresh download (`--attest-runtime`).        |
 
 The provenance check accepts only an attestation from the runtime repository's release workflow
 (`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner.
@@ -954,30 +956,22 @@ CEF app out as:
   libcef.dll, ...
 ```
 
-The stock 2.9.8 CLI names the runtime `<App>.dll` and leaves `laufey.dll` in place, so denext's
+The 2.9.8-based CLI names the runtime `<App>.dll` and leaves `laufey.dll` in place, so denext's
 package script and `denext desktop run` / `dev` move the two and stamp the executable's resources
 (TypeScript, so it works from any host) whenever `laufey.dll` is in the bundle; a bundle that
 already has `<App>.runtime.dll` is used as it is. The signing step signs every PE file, both
 libraries included: a signed bootstrap loads only a client library signed with the same, trusted,
 certificate. The webview backend keeps `<App>.exe` (its host) and `<App>.dll` (the runtime).
 
-## Opting out
+## No stock runtime
 
-`DENEXT_DESKTOP_RUNTIME=stock` builds with the stock Deno Desktop runtime. Your app still builds,
-packages and runs; what the stock runtime lacks degrades instead of breaking:
-
-- The app is served from a loopback origin that changes each launch, so browser storage starts
-  empty every time. Use the `secure-store`, `fs` and `sqlite` capabilities for anything that must
-  survive a relaunch. There are no deep links and no single instance.
-- Window basics (size, position, title, show and hide) work everywhere. The rest of the window API
-  rejects `unsupported`; ask `windowCapabilities()` what the current runtime can do.
-- Capabilities that need the runtime answer `unavailable`, and the page keeps its web path: the
-  WebView clipboard, the WebView `Notification` API, the in-page context menu. File dialogs run
-  through the OS dialog programs on macOS and Windows (osascript, PowerShell); on Linux they answer
-  `unavailable` and the page keeps `<input type="file">`.
-
-Every `denext/mobile` and `denext/desktop` function is feature-detected this way, so one codebase
-works on either runtime.
+denext 5.0 removed the `DENEXT_DESKTOP_RUNTIME=stock` opt-out: every window `denext desktop run`,
+`dev` and `package` build runs on the pinned runtime (or a `DENEXT_DESKTOP_RUNTIME_DIR` build of
+it), and `stock` is refused with the fix. An app built some other way (`deno desktop` on an
+upstream Deno, outside denext) still degrades instead of breaking: it is served from a loopback
+origin that changes each launch, window calls beyond size, position, title and show / hide reject
+`unsupported`, and capabilities that need the runtime answer `unavailable` while the page keeps
+its web path. Every `denext/mobile` and `denext/desktop` function is feature-detected this way.
 
 ## Upstream first
 
@@ -1021,7 +1015,7 @@ upstream version.
 - **Reproducible CI.** The release workflow
   ([`.github/workflows/denext_runtime.yml`](https://github.com/Brainwires/deno/blob/development-denext/.github/workflows/denext_runtime.yml)
   in the Deno fork) builds every target on its own runner, checks architectures and dynamic
-  dependencies, and packages and launches a small app with the stock `deno desktop` on both
+  dependencies, and packages and launches a small app with the fork's `deno desktop` on both
   backends before anything is published. The fork's repository describes how to reproduce a
   build locally.
 - **One laufey revision.** laufey's C API is version-exact, so the `laufey` crate `libdenort`

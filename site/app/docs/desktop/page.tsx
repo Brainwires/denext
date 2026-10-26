@@ -1746,16 +1746,16 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
         of any file it changes. <code>denext desktop package</code>{" "}
-        warns when a script is stale: one from before denext 3.1 builds on the stock runtime.{" "}
-        <code>desktopRuntimeDenoFlags</code> gives a build on a pinned runtime before{" "}
-        <code>3.0.0-rc.5</code> its <code>--unstable-no-legacy-abort</code>; from{" "}
-        <code>3.0.0-rc.5</code> that behavior is the runtime&apos;s default and it returns none.
+        warns when a script is stale: one from before denext 3.1 builds without the pinned runtime.
+        {" "}
+        <code>desktopRuntimeDenoFlags</code>{" "}
+        stays exported for scripts written before 5.0 and returns no flags.
       </Callout>
       <Callout kind="note">
         <strong>The network grant by direction.</strong>{" "}
-        On the pinned runtime (3.0.0-rc.2 and later, built by denext&apos;s toolchain) the packaging
-        scripts and <code>desktop run</code> / <code>dev</code> bake{" "}
-        <code>--allow-net-connect</code> and <code>--allow-net-listen</code> in place of one{" "}
+        On the pinned runtime (built by denext&apos;s toolchain) the packaging scripts and{" "}
+        <code>desktop run</code> / <code>dev</code> bake <code>--allow-net-connect</code> and{" "}
+        <code>--allow-net-listen</code> in place of one{" "}
         <code>--allow-net</code>: the app listens only on loopback (
         <code>127.0.0.1</code>,{" "}
         <code>localhost</code>, on the port it picks at launch) and connects to loopback plus the
@@ -1763,16 +1763,16 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>dev --lan</code>&apos;s dev server). A dependency can no longer open a listener of its
         own. <code>desktop.extraPermissions.net</code> (and a sidecar&apos;s{" "}
         <code>permissions.net</code>) still grants both directions; <code>netConnect</code> /{" "}
-        <code>netListen</code> grant one. <code>DENEXT_DESKTOP_RUNTIME=stock</code>, a local{" "}
-        <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build or a stock <code>deno</code> keep the single
+        <code>netListen</code>{" "}
+        grant one. Every runtime denext 5.0 builds on has the split, so the packaging scripts and
         {" "}
-        <code>--allow-net</code>, with the directional hosts folded into it. A hand-written
-        packaging script derives the same flags with{" "}
+        <code>desktop run</code> / <code>dev</code>{" "}
+        always bake it. A hand-written packaging script derives the same flags with{" "}
         <code>desktopBuildFlags(config, os, {"{ netSplit: true }"})</code> from{" "}
-        <code>denext/desktop</code>: with <code>netSplit</code>{" "}
-        (the pinned runtime, 3.0.0-rc.2 or later) it bakes <code>--allow-net-connect</code> /{" "}
-        <code>--allow-net-listen</code>; without it (the default) it bakes the stock runtime&apos;s
-        single <code>--allow-net</code>.
+        <code>denext/desktop</code>: with <code>netSplit</code> it bakes{" "}
+        <code>--allow-net-connect</code> /{" "}
+        <code>--allow-net-listen</code>; without it (the function&apos;s default) a single{" "}
+        <code>--allow-net</code>.
       </Callout>
       <Callout kind="note">
         <strong>What is verified.</strong>{" "}
@@ -3168,20 +3168,16 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
       </p>
       <ul>
         <li>
-          <strong>Deno 2.9.8 exactly.</strong> The runtime is built from Deno 2.9.8, and{" "}
-          <code>deno desktop</code> embeds it. The toolchain is built from that release (as{" "}
-          <code>2.9.7-denext.N</code> or, from{" "}
-          <code>3.0.0-rc.1</code>, under the fork&apos;s own version), so this holds by itself; on
-          stock Deno (<code>
-            DENEXT_DENO=stock
-          </code>, or no toolchain for the host) of any other version{" "}
-          <code>denext desktop package</code> fails before the build with the fix:{" "}
-          <code>deno upgrade --version 2.9.8</code> (or <code>DENO_BIN</code>{" "}
-          pointing at a 2.9.8 binary for <code>run</code> / <code>dev</code>).{" "}
-          <code>denext desktop run</code> and <code>dev</code>{" "}
-          warn and open the window on the stock runtime instead. Every download error ends with the
-          two ways out: <code>DENEXT_DESKTOP_RUNTIME_DIR</code> or{" "}
-          <code>DENEXT_DESKTOP_RUNTIME=stock</code>.
+          <strong>denext&apos;s Deno, built from 2.9.8.</strong>{" "}
+          The runtime is built from Deno 2.9.8, and <code>deno desktop</code>{" "}
+          embeds it, so the build runs on denext&apos;s Deno toolchain built from that release.{" "}
+          <code>denext desktop run</code>, <code>dev</code> and <code>package</code> (and{" "}
+          <code>denext task desktop:package</code>) build on it; an upstream <code>deno</code>{" "}
+          (a plain <code>deno task</code>) fails before the build with the fix. denext 5.0 refuses
+          {" "}
+          <code>DENEXT_DESKTOP_RUNTIME=stock</code>; a download error ends with the one way out,
+          {" "}
+          <code>DENEXT_DESKTOP_RUNTIME_DIR</code> (a runtime build of your own).
         </li>
         <li>
           <strong>Downloaded once, verified before use.</strong>{" "}
@@ -3233,13 +3229,11 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         <li>
           <code>denext doctor</code>{" "}
           reports the pinned runtime version, whether it is cached and verified for this machine,
-          and whether <code>deno</code> is the version it needs.
+          and whether <code>deno</code> is denext&apos;s runtime built from the release it needs.
         </li>
       </ul>
       <Code lang="sh">
-        {`DENEXT_DESKTOP_RUNTIME=stock denext desktop package   # the stock runtime (no app origin,
-                                                      # deep links or single instance)
-DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local runtime build,
+        {`DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local runtime build,
                                                       # unverified (runtime development)`}
       </Code>
       <p>
@@ -3378,11 +3372,10 @@ const socket = new WebSocket(desktopWebSocketUrl("/api/events"));`}
         </a>, which <code>denext desktop</code>{" "}
         and the package scripts use by default. A packaged app with an origin and an identifier
         keeps its <code>localStorage</code>{" "}
-        across launches (checked on macOS, Linux and Windows with the webview backend). Under{" "}
-        <code>DENEXT_DESKTOP_RUNTIME=stock</code>{" "}
-        the stock runtime ignores the origin and serves the window on a loopback port (the desktop
-        entry logs that the origin is not in effect). Nothing breaks either way: the security gates
-        detect which runtime they are under.
+        across launches (checked on macOS, Linux and Windows with the webview backend). An app built
+        outside denext on an upstream Deno Desktop runtime ignores the origin and serves the window
+        on a loopback port (the desktop entry logs that the origin is not in effect); the security
+        gates detect which runtime they are under.
       </Callout>
 
       <h2 id="desktop-preload">A preload script</h2>
