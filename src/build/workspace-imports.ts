@@ -285,21 +285,6 @@ export function workspaceImportsSync(appConfigPath: string): WorkspaceImports {
 }
 
 /**
- * The workspace root's `nodeModulesDir` for the member app whose config is `appConfigPath`: Deno
- * reads it from the root alone (one `node_modules` for every member), so a stand-in config built
- * for the app must carry it. Undefined outside a workspace, for the root itself, or when the root
- * sets none.
- *
- * @param appConfigPath The app's `deno.json` / `deno.jsonc`.
- * @returns The root's value, or undefined.
- */
-export function workspaceNodeModulesDir(appConfigPath: string): unknown {
-  const appDir = resolve(dirname(appConfigPath));
-  const ws = findWorkspace(appDir);
-  return ws && ws.root !== appDir ? ws.config.nodeModulesDir : undefined;
-}
-
-/**
  * The other members of the Deno workspace `appDir` belongs to (absolute directories that
  * exist): the packages an app may import by name, which `denext dev` watches beside the app.
  * Empty outside a workspace.

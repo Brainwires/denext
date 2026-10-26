@@ -13,7 +13,11 @@ import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { enterScope, rootScope } from "../../jsx/tree-id.ts";
 import { SUSPENSE_LIST_PROP, type SuspenseListMarker } from "../../runtime/suspense.ts";
 import { PROVIDER } from "../../runtime/context.ts";
-import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
+import {
+  createFormStatusSignal,
+  FormStatusContext,
+  type FormStatusSignal,
+} from "../../runtime/form-status.ts";
 import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import { PROFILER_PROP, type ProfilerMarker } from "../../runtime/profiler.ts";
 import { toError } from "../../runtime/error-boundary.ts";
@@ -377,21 +381,35 @@ function beginHost(wip: Fiber): Fiber | null {
   return getSingletonSupport()?.adopt(wip) ? beginFragment(wip) : beginElement(wip);
 }
 
-// A DOM element: claim its server node during hydration, and — for a `<form action={fn}>` —
+/**
+ * The context a host element's children inherit: a `<form>`'s own `useFormStatus` signal over its
+ * subtree (a form submits through a function action of its own or of one of its buttons'
+ * `formAction`s: in an app that writes either, per the build's scan, every form gets one), and a
+ * button with a function `formAction` takes its form's signal, which dom-props drives.
+ */
+function formStatusScope(wip: Fiber): Fiber["inherited"] {
+  const props = wip.vnode.props ?? {};
+  if (wip.vnode.type !== "form") {
+    if (typeof props.formAction === "function") {
+      fiberExt(wip).formStatus = wip.inherited.get(FormStatusContext._id) as
+        | FormStatusSignal
+        | undefined;
+    }
+    return wip.inherited;
+  }
+  const scanned = typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__;
+  if (!scanned && typeof props.action !== "function") return wip.inherited;
+  const x = fiberExt(wip);
+  x.formStatus ??= createFormStatusSignal();
+  return new ContextScope(wip.inherited, FormStatusContext._id, x.formStatus);
+}
+
+// A DOM element: claim its server node during hydration, and — for a `<form>` with a function action —
 // establish a form-scoped pending signal seeded into descendant context so useFormStatus reads
 // the nearest form. Split out of {@linkcode beginWork}.
 function beginElement(wip: Fiber): Fiber | null {
   beginHostHydration(wip);
-  let childInherited = wip.inherited;
-  if (wip.vnode.type === "form") {
-    const props = wip.vnode.props ?? {};
-    const act = props.action ?? props.formAction;
-    if (typeof act === "function") {
-      const x = fiberExt(wip);
-      x.formStatus ??= createFormStatusSignal();
-      childInherited = new ContextScope(wip.inherited, FormStatusContext._id, x.formStatus);
-    }
-  }
+  const childInherited = formStatusScope(wip);
   reconcileChildren(
     wip,
     (wip.vnode.props?.children ?? null) as VNodeChildren,

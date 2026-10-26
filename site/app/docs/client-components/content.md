@@ -38,8 +38,15 @@ output.
 
 ### `useFormStatus` — the nearest form's pending state
 
-Scoped to the enclosing `<form action={fn}>`; two forms on one page report
-independently. `{ pending: false }` outside a form and during server rendering.
+Scoped to the enclosing `<form>` while a function action it submits runs: the form's own
+`action={fn}`, or a submit button's `formAction={fn}` (a form with no function action of its own
+included). Two forms on one page report independently. `{ pending: false }` outside a form and
+during server rendering.
+
+A submit runs the submitting button's `formAction` in place of the form's own, however the submit
+starts: a click, Enter, or `form.requestSubmit(button)`. The `FormData` and the pending state are
+taken at the submit itself, also when it comes before the on-demand form-action code has loaded
+(the submit is then held for it, never sent natively).
 
 ```tsx
 "use client";

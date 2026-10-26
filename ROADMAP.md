@@ -72,9 +72,16 @@ Low findings from the 4.8 supply-chain audit:
   - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
     copy's path in the cache folder is only known at launch). Scope it once the runtime can take
     a launch-time path.
-- **Monorepo leftover (Low):** the loader stand-in for a glob member carries the workspace's imports but none of the root's other fields
-  (`nodeModulesDir`): cover a glob-member app whose npm packages live in the root's
-  `node_modules` with a test.
+- **Monorepo leftover (Low): a glob-member app's npm packages through the esbuild loader.** The
+  stand-in config a glob member builds on (`.deno.denext-loader-<pid>.json`) loses the app's
+  package.json dependencies: `@luca/esbuild-deno-loader` reads them only beside a config named
+  `deno.json`, so a bare `import ms from "ms"` fails with "not in import map", and it looks for
+  npm packages only in `<absWorkingDir>/node_modules`, never the workspace root's hoisted one.
+  Carrying the root's `nodeModulesDir` is not enough. Map the app's (and the root's) package.json
+  dependencies into the stand-in's imports and let esbuild's own resolution walk up to the root
+  `node_modules`; the failing case is a root `deno.json` `{ "workspace": ["./apps/*"],
+  "nodeModulesDir": "manual" }`, `ms` in the root's `node_modules`, `apps/web/package.json`
+  depending on it.
 
 ## Mobile and React Native
 
@@ -199,10 +206,5 @@ From the 4.8 client-runtime and Server Actions audit; the High and Medium findin
   reaches the client as a plain `Error("notFound")` (src/client/action-dispatch.ts), so the error
   boundary renders, not `not-found.tsx`; the client has no not-found boundary for an event-path
   signal yet. Add one, then re-raise the reply's `signal` as the branded error.
-- **A held form-action submit** (one that beat the on-demand form-action chunk) builds its
-  `FormData` and starts `useFormStatus`'s pending flag when the chunk arrives, not at the submit;
-  `form.requestSubmit(button)` with no click does not run that button's function `formAction`; and
-  `useFormStatus` under a form with no function `action` of its own (only a button's
-  `formAction`) has no pending signal (src/client/form-action.ts, begin-work.ts `beginElement`).
 - **The Fragment-ref runtime chunk**, once it fails to load, leaves a no-op for the page's life
   (src/client/fiber/fragment-ref-support.ts); retry it on the next Fragment ref.

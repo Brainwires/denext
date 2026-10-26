@@ -391,8 +391,6 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
  * app needs.
  */
 const FEATURE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
-  // A function-valued `<form action>`'s submit: the on-demand form-action chunk.
-  { marker: "globalThis.FormData", what: "form-action submit runtime (form-action.ts)" },
   // Isomorphic `client:*` islands: `denext/iso-island`, imported only for a directive.
   { marker: "display:contents", what: "isomorphic island runtime (iso-island.ts)" },
   // Flight `client:*` islands: `denext/lazy`, loaded by a page with lazy islands.
@@ -444,6 +442,8 @@ const SCAN_GATE_MARKERS: ReadonlyArray<{ marker: string; what: string }> = [
   { marker: 'tagName==="IMG"', what: "blur-placeholder clearing (navigation.ts)" },
   // A function-valued `<form action>` loads the form-action chunk from the reconciler's seam.
   { marker: "./form-action-", what: "form-action seam (dom-props.ts setFormAction)" },
+  // ...and its submit takes the FormData at the submit itself (dom-props.ts beginSubmit).
+  { marker: "globalThis.FormData", what: "form-action submit (dom-props.ts beginSubmit)" },
   // A `{ pathname: "/blog/[slug]", params }` href is filled through the route-segment parser.
   { marker: '"optionalCatchAll"', what: "route-pattern href filling (router/segments.ts)" },
 ];
@@ -722,7 +722,6 @@ async function assertFlightStartupLean(clientDir: string): Promise<void> {
     // Installed eagerly once because the page's comment said "Server Component".
     ["componentDidMount", "class-component runtime (it belongs to the class-runtime-* chunk)"],
     ["display:contents", "isomorphic island runtime"],
-    ["globalThis.FormData", "form-action submit runtime (it belongs to the form-action-* chunk)"],
     // A Server Action reference's call: the on-demand action-call / action-dispatch chunks.
     ["x-denext-action", "Server Action dispatch (it belongs to the action-dispatch-* chunk)"],
     ["value too deep", "wire encoder (only the on-demand action-call chunk uses it here)"],

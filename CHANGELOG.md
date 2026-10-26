@@ -446,6 +446,12 @@ and this project adheres to
 - **`denext add` takes its jail exceptions out when the add fails.** They go into deno.json before
   `deno add` runs the install scripts; a failed add left them behind. The file is now put back
   (unless `deno add` changed it too, which is said).
+- **Function form actions: the submitting button decides, and a held submit keeps its moment.**
+  `form.requestSubmit(button)` (or Enter) with no click ran the form's own action, not the
+  button's `formAction`; a submit that beat the on-demand form-action chunk built its `FormData`
+  and started `useFormStatus`'s pending state only when the chunk arrived; and `useFormStatus`
+  under a form whose only function action is a button's `formAction` never went pending. The
+  submit is now handled at the form for both, and taken when it happens.
 - **Builds keep the project's `.npmrc` supply-chain gates.** A build child runs with a config in
   `.denext/` (`module-config.json`, `css-config.json`, the compile config), where Deno finds no
   project `.npmrc`, so `paranoid=true` or `advisory-check=required` set there did not hold for it.

@@ -55,12 +55,11 @@ function isFormActionProp(name: string, value: unknown): boolean {
   return (name === "action" || name === "formAction") && typeof value === "function";
 }
 
-/** Drop the listener a function-valued form action wired (setFormAction: a form's submit, a
- * submit button's click). */
+/** Drop a function-valued form action (setFormAction): its site, and a button's arming click. */
 function removeFormAction(el: Element, state: HostState): void {
+  delete (el as ActionEl).__dnxFA;
   const existing = state.listeners?.get("submit");
   if (!existing) return;
-  el.removeEventListener("submit", existing);
   el.removeEventListener("click", existing);
   state.listeners!.delete("submit");
 }
@@ -228,15 +227,29 @@ const hasOwn = Object.prototype.hasOwnProperty;
 /** The props of an element that had none (a fresh mount's "old" props); never written. */
 export const NO_PROPS: Record<string, unknown> = Object.freeze({});
 
+/** Where a function-valued form action is set: its action, error route and host state. */
+type FormActionSite = readonly [(payload: unknown) => void, ErrorRouter, HostState];
+
+/** A form or submit button carrying a function-valued action. */
+type ActionEl = Element & { __dnxFA?: FormActionSite; form?: ArmedForm | null };
+
+/** A form whose submit denext intercepts (one listener per form, however many actions). */
+type ArmedForm = HTMLFormElement & { __dnxFA?: FormActionSite; __dnxFS?: true };
+
+/** One submit of a function-valued form action, taken when it happened. */
+export interface FormActionSubmit {
+  /** The action to call. */
+  readonly action: (payload: unknown) => void;
+  /** Routes a thrown or rejected action to the nearest boundary. */
+  readonly onError: ErrorRouter;
+  /** The submitted `FormData` (the submitter's name/value included), as it was at the submit. */
+  readonly data: unknown;
+  /** Ends the `useFormStatus` pending state the submit started (once). */
+  readonly done: () => void;
+}
+
 /** Runs one submit of a function-valued form action (form-action.ts's `runFormAction`). */
-export type FormActionRunner = (
-  event: Event,
-  state: HostState,
-  action: (payload: unknown) => void,
-  onError: ErrorRouter,
-  el: Element,
-  held?: boolean,
-) => void;
+export type FormActionRunner = (submit: FormActionSubmit) => void;
 
 /**
  * The form-action runtime, installed by form-action.ts when it loads. Null until a
@@ -269,10 +282,12 @@ export function installFormActions(): Promise<void> {
 }
 
 /**
- * Wire a function-valued form `action` to the form's submit event. The submit is always
- * intercepted here; the work (FormData, the call, `useFormStatus`) is the on-demand
- * form-action.ts, whose load starts as soon as such a form renders, so it is in place well
- * before a person can submit. A submit that beats it waits for the load.
+ * Wire a function-valued form `action` / `formAction`. The submit is always intercepted, at the
+ * form (the submit event fires there, never at a button): a form's own action arms the form; a
+ * submit button's `formAction` arms its form once the button is in it (after this commit) and
+ * again on a click, so a submit through the button runs the button's action however it starts
+ * (a click, Enter, `form.requestSubmit(button)`). The call itself is the on-demand
+ * form-action.ts, whose load starts as soon as such an action renders.
  */
 function setFormAction(
   el: Element,
@@ -282,20 +297,79 @@ function setFormAction(
 ): void {
   removeFormAction(el, state);
   if (!runFormAction) installFormActions().catch(() => {}); // a submit retries and reports it
-  const handler: EventListener = (event) => {
-    if (runFormAction) return runFormAction(event, state, action, onError, el);
-    // Held for the runtime, never sent natively: the runner runs a held submit and re-submits a
-    // held click.
-    event.preventDefault();
-    installFormActions().then(
-      () => runFormAction!(event, state, action, onError, el, true),
-      onError,
-    );
+  (el as ActionEl).__dnxFA = [action, onError, state];
+  if (el.tagName == "FORM") return armForm(el as ArmedForm);
+  const arm = () => armForm((el as ActionEl).form);
+  queueMicrotask(arm);
+  el.addEventListener("click", arm);
+  (state.listeners ??= new Map()).set("submit", arm);
+}
+
+/** Listen for `form`'s submits (once). */
+function armForm(form: ArmedForm | null | undefined): void {
+  if (!form || form.__dnxFS) return;
+  form.__dnxFS = true;
+  form.addEventListener("submit", (event) => formSubmit(event, form));
+}
+
+/**
+ * An armed form's submit: the submitting button's `formAction`, else the form's own `action`
+ * (React's rule); neither leaves the submit native. What was submitted and `useFormStatus`'s
+ * pending state are taken now, so a submit that beats the form-action runtime holds them
+ * unchanged until it loads (the submit itself is never sent natively).
+ */
+function formSubmit(event: Event, form: ArmedForm): void {
+  const site = ((event as SubmitEvent).submitter as ActionEl | null)?.__dnxFA ?? form.__dnxFA;
+  if (!site) return;
+  event.preventDefault();
+  const submit = beginSubmit(event, form, site);
+  if (runFormAction) return runFormAction(submit);
+  installFormActions().then(() => runFormAction!(submit), (err) => {
+    submit.done();
+    site[1](err);
+  });
+}
+
+/** Start a submit: its `FormData` now, and its form's `useFormStatus` pending until `done`. */
+function beginSubmit(
+  event: Event,
+  form: ArmedForm,
+  [action, onError, state]: FormActionSite,
+): FormActionSubmit {
+  const data = submittedData(event, form);
+  const sig = state.ext?.formStatus;
+  if (sig) {
+    sig.pending++;
+    sig.data = data as FormData | null ?? null;
+    sig.method = (form.method || "post").toLowerCase();
+    sig.action = action;
+    for (const l of sig.listeners) l();
+  }
+  let settled = false;
+  const done = () => {
+    if (settled || !sig) return;
+    settled = true;
+    sig.pending = Math.max(0, sig.pending - 1);
+    if (sig.pending === 0) sig.data = sig.method = sig.action = null;
+    for (const l of sig.listeners) l();
   };
-  // A form's own action runs on its submit. A submit button's `formAction` runs from its click:
-  // the submit event fires at the form, never at the button, so the click readies the form.
-  el.addEventListener(el.tagName == "FORM" ? "submit" : "click", handler);
-  (state.listeners ??= new Map()).set("submit", handler);
+  return { action, onError, data, done };
+}
+
+/**
+ * The submitted form's `FormData`, with the submit button's own name/value as a native submit
+ * sends them; `undefined` where there is no `FormData` or the target is no form (a test shim).
+ */
+function submittedData(event: Event, form: ArmedForm): unknown {
+  const FormDataCtor = (globalThis as { FormData?: unknown }).FormData as
+    | (new (form: unknown, submitter?: unknown) => unknown)
+    | undefined;
+  if (!FormDataCtor) return undefined;
+  try {
+    return new FormDataCtor(form, (event as SubmitEvent).submitter ?? null);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
