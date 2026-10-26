@@ -10,6 +10,8 @@ import {
   SERIAL_SOURCE_EXEMPT,
   SERIAL_SOURCES,
   SERIAL_TESTS,
+  serialTestsFor,
+  WINDOWS_SERIAL_TESTS,
 } from "./serial-tests.ts";
 import {
   MUTATES,
@@ -20,6 +22,7 @@ import {
   sources,
 } from "../scripts/lib/serial-scan.ts";
 import {
+  ALLOW_SKIP_VITEST_ENV,
   findVitestFiles,
   heapEnv,
   isToolchainBuild,
@@ -27,6 +30,7 @@ import {
   stockPassDeno,
   tempRootEnv,
   testPasses,
+  vitestSkipAllowed,
   wantsCoverage,
   WATCHDOG_PRELOAD,
   withWatchdog,
@@ -395,4 +399,47 @@ Deno.test("test-run: the stock test files run on the toolchain whenever it resol
   // `DENEXT_DENO=stock` (null) and a toolchain that could not be had (false): the running Deno.
   assertEquals(stockPassDeno(null, "/usr/bin/deno"), "/usr/bin/deno");
   assertEquals(stockPassDeno(false, "/usr/bin/deno"), "/usr/bin/deno");
+});
+
+/** A call that builds or serves an app in the calling process. */
+const IN_PROCESS_BUILD =
+  /\b(?:startDevServer|startSpaDevServer|startProdServer|serveEphemeral|createTestApp|probeApp|createUnbundledDev|buildNextCompat\w*|bundleSpaInto|startBuild|esbuild\.(?:build|context))\(/;
+
+Deno.test("serial tests: a file that builds in process under watchTests() runs serially on Windows", async () => {
+  const files = await parallelSuiteFiles();
+  const serial = new Set(serialTestsFor("windows"));
+  const missing: string[] = [];
+  for (const [path, src] of files) {
+    if (!path.endsWith(".test.ts") || !src.includes("watchTests(")) continue;
+    // Calls inside a template string run in a child (`inChild`), not here.
+    const code = src.replace(/`(?:\\.|[^`\\])*`/g, "``");
+    if (IN_PROCESS_BUILD.test(code) && !serial.has(path)) missing.push(path);
+  }
+  assertEquals(missing, [], "add them to WINDOWS_SERIAL_TESTS (tests/serial-tests.ts)");
+  for (const path of WINDOWS_SERIAL_TESTS) {
+    assert(files.has(path), `${path} is listed but does not exist`);
+    assert(!SERIAL_TESTS.includes(path), `${path} is serial everywhere already`);
+  }
+  // Only Windows moves them; elsewhere the serial pass is unchanged.
+  assertEquals(serialTestsFor("darwin"), SERIAL_TESTS);
+  assertEquals(serialTestsFor("linux"), SERIAL_TESTS);
+  assertEquals(serialTestsFor("windows"), [...SERIAL_TESTS, ...WINDOWS_SERIAL_TESTS]);
+  const passes = testPasses(["tests/"], serialTestsFor("windows"));
+  for (const path of WINDOWS_SERIAL_TESTS) {
+    assert(passes.serial!.includes(path), path);
+    assert(passes.parallel!.some((a) => a.startsWith("--ignore=") && a.includes(path)), path);
+  }
+});
+
+Deno.test("test-run: DENEXT_DENO=stock fails the Vitest pass unless the skip is explicitly allowed", async () => {
+  assertEquals(ALLOW_SKIP_VITEST_ENV, "DENEXT_ALLOW_SKIP_VITEST");
+  assertEquals(vitestSkipAllowed(undefined), false);
+  assertEquals(vitestSkipAllowed(""), false);
+  assertEquals(vitestSkipAllowed("0"), false);
+  assertEquals(vitestSkipAllowed("1"), true);
+  // The pass reports the skip as a failure (never `return true` without the variable).
+  const src = await Deno.readTextFile(new URL("../scripts/test-run.ts", import.meta.url));
+  const body = src.slice(src.indexOf("async function runVitestPass("));
+  const stockBranch = body.slice(0, body.indexOf("return await deno(args, bin);"));
+  assert(stockBranch.includes("return false;"), stockBranch);
 });

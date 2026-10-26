@@ -152,3 +152,41 @@ export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
     "readSidecarChildLaunch removes DENEXT_SIDECAR_CHILD / _ARGC only when they are set, which " +
     "only a sidecar's child process (and the serial test of it) does",
 };
+
+/**
+ * The test files that build or serve an app IN the test process (a dev server, `createTestApp`,
+ * the esbuild service), where the subject needs the process itself (returned objects, a live
+ * server, module state) and so can't move to a child (`tests/helpers/bounded-build.ts`). On
+ * Windows `scripts/test-run.ts` runs them in the serial pass too: in `deno test --parallel` a
+ * long-lived child one of them spawns (the esbuild service, a server) inherits the pipes of a
+ * `deno info` / `deno bundle` another thread just started, which then never sees EOF — a stall
+ * the watchdog can only fail, not stop, since an in-process build can't be killed. Alone in the
+ * process they can't meet another thread's children. Elsewhere pipes are close-on-exec, and they
+ * stay in the parallel pass. `tests/serial-tests.test.ts` keeps the list complete.
+ */
+export const WINDOWS_SERIAL_TESTS: readonly string[] = [
+  "tests/dev-server-module-refresh.test.ts",
+  "tests/integration/next-compat-flight.test.ts",
+  "tests/npm-boundary.test.ts",
+  "tests/optimize-package-imports.test.ts",
+  "tests/platform-extensions-css.test.ts",
+  "tests/platform-extensions-dev.test.ts",
+  "tests/platform-extensions-pages-router.test.ts",
+  "tests/react-compiler-runtime.test.ts",
+  "tests/services.test.ts",
+  "tests/spa-dev-plugins.test.ts",
+  "tests/tanstack-start-mock.test.ts",
+  "tests/tanstack-start-plugin.test.ts",
+  "tests/test-app-plugins.test.ts",
+  "tests/ui-config-cron.test.ts",
+];
+
+/**
+ * The files the serial pass runs on `os`: {@linkcode SERIAL_TESTS}, plus
+ * {@linkcode WINDOWS_SERIAL_TESTS} on Windows.
+ *
+ * @param os `Deno.build.os`.
+ */
+export function serialTestsFor(os: string): readonly string[] {
+  return os === "windows" ? [...SERIAL_TESTS, ...WINDOWS_SERIAL_TESTS] : SERIAL_TESTS;
+}

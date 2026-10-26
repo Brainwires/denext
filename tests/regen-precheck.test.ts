@@ -7,10 +7,12 @@ import { join } from "@std/path";
 import { allOutputs, regen, type RegenStep, STEPS } from "../scripts/regen.ts";
 import { rewriteSerialList } from "../scripts/gen-serial-tests.ts";
 import {
+  AFFECTED_TESTS_CAP,
   DRIFT_TESTS,
   isCheckable,
   isPublishedSource,
   reachesClientBundle,
+  typeCheckArgs,
 } from "../scripts/precheck.ts";
 
 const ROOT = new URL("../", import.meta.url);
@@ -158,6 +160,22 @@ Deno.test("precheck: which changes trigger the bundle budget, doc-lint and the t
   assertFalse(isCheckable("tests/fixtures/app/page.tsx"));
   assertFalse(isCheckable("src/types.d.ts"));
   assertFalse(isCheckable("CHANGELOG.md"));
+});
+
+Deno.test("precheck: the type-check runs on denext's toolchain (TypeScript 7), never PATH's deno", async () => {
+  const args = typeCheckArgs(["src/a.ts", "tests/b.vitest.ts"]);
+  assertEquals(args.slice(0, 4), ["run", "-A", "scripts/toolchain-deno.ts", "check"]);
+  assertEquals(args.slice(4), ["cli.ts", "mod.ts", "src/a.ts", "tests/b.vitest.ts"]);
+  const src = await Deno.readTextFile(new URL("scripts/precheck.ts", ROOT));
+  assert(src.includes("deno(typeCheckArgs(checkable))"), "the step runs typeCheckArgs");
+  assertFalse(/deno\(\["check"/.test(src), "no type-check on the running Deno");
+});
+
+Deno.test("precheck: the badge check and the affected tests run, the tests capped", async () => {
+  const src = await Deno.readTextFile(new URL("scripts/precheck.ts", ROOT));
+  assert(src.includes(`["task", "badge:tests", "--check"]`));
+  assert(src.includes("affectedTests(changed, await parallelSuiteFiles())"));
+  assert(AFFECTED_TESTS_CAP > 0 && AFFECTED_TESTS_CAP <= 50);
 });
 
 Deno.test("gen-serial-tests: adds in path order, drops an entry with its comment, keeps the rest", () => {

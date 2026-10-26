@@ -11,6 +11,7 @@ import { build } from "../../src/build/build.ts";
 import { bundleSupportsDefine, frameworkRoot } from "../../src/build/bundle.ts";
 import { nativeAnalyzeMeta } from "../../src/build/sourcemap-attribution.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
+import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "../helpers/symlink.ts";
 
 const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
@@ -599,19 +600,18 @@ async function sharedChunkSizes(clientDir: string): Promise<string[]> {
 }
 
 /**
- * A temp dir with a symlink `link` → `target`, or `null` (with the reason logged) on a host that
- * can't create one. On Windows it is a junction (a symlink needs Developer Mode or a privilege).
+ * A temp dir with a symlink `link` → `target`; on Windows a junction (a symlink needs Developer
+ * Mode or a privilege). A host that can't make one ignores these tests (`IGNORE_WITHOUT_DIR_LINKS`).
  */
-async function tempSymlink(target: string): Promise<{ dir: string; link: string } | null> {
+async function tempSymlink(target: string): Promise<{ dir: string; link: string }> {
   const dir = await Deno.makeTempDir({ prefix: "denext-build-symlink-" });
   const link = join(dir, "link");
   try {
-    await Deno.symlink(target, link, { type: "junction" });
+    await symlinkDir(target, link);
     return { dir, link };
   } catch (err) {
     await Deno.remove(dir, { recursive: true });
-    console.warn(`skipped: this host can't create a directory symlink (${err})`);
-    return null;
+    throw err;
   }
 }
 
@@ -619,10 +619,14 @@ async function tempSymlink(target: string): Promise<{ dir: string; link: string 
 // project behind one; a symlinked home or workspace folder too) builds what its real path does.
 // Deno resolves the app's imports from the real location of its deno.json, so a symlinked spelling
 // of the project once reached the JSX runtime under two paths and bundled it twice (+450 B).
-Deno.test("build smoke: examples/hello built through a symlink matches its real-path build", async () => {
+Deno.test({
+  name: dirLinkTestName(
+    "build smoke: examples/hello built through a symlink matches its real-path build",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const real = await sharedChunkSizes(join((await build(EXAMPLE)).outDir, "client"));
   const made = await tempSymlink(fromFileUrl(new URL("../..", import.meta.url)));
-  if (!made) return;
   try {
     const result = await build(join(made.link, "examples", "hello"));
     const clientDir = join(result.outDir, "client");
@@ -638,9 +642,13 @@ Deno.test("build smoke: examples/hello built through a symlink matches its real-
 // prefix test between the two put the whole framework "outside" the app. Every build-time feature
 // scan then read the framework's sources and matched, installing every gated runtime (the class,
 // Activity, ViewTransition, singleton and iso-island runtimes: +5.5 KB over hello's shared graph).
-Deno.test("build smoke: an app that maps denext through a symlink installs no unused runtime", async () => {
+Deno.test({
+  name: dirLinkTestName(
+    "build smoke: an app that maps denext through a symlink installs no unused runtime",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const made = await tempSymlink(fromFileUrl(new URL("../..", import.meta.url)));
-  if (!made) return;
   try {
     const app = join(made.dir, "app");
     await Deno.mkdir(app);

@@ -209,6 +209,12 @@ export interface DevState extends DevInspectState {
   lastEmittedManifest: RouteManifest | null;
 
   /**
+   * The typed-module emit in flight (or the last one, settled): fire-and-forget for requests, but
+   * awaitable, so whoever removes the project (a test's temp dir, on Windows) can let it land.
+   */
+  typedEmit: Promise<void> | null;
+
+  /**
    * Unbundled dev loop (Vite-class per-module HMR): serves each source module
    * transformed-but-unbundled at its own URL and hot-swaps a single edited module in
    * place (~5ms) instead of re-bundling the whole route (~hundreds of ms) through
@@ -366,6 +372,7 @@ export function createDevState(options: DevServerOptions): DevState {
     manifest: null,
     manifestInFlight: null,
     lastEmittedManifest: null,
+    typedEmit: null,
     unbundledOptIn: options.unbundled ?? (Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0"),
     unbundled: null,
     unbundledActive: false,

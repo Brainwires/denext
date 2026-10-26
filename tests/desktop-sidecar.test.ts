@@ -32,6 +32,7 @@ import {
   workerSidecarLauncher,
 } from "../src/desktop/sidecar-launch.ts";
 import type { SidecarExit } from "../src/desktop/sidecar.ts";
+import { onFreePort } from "./helpers/port.ts";
 
 // ── fakes ────────────────────────────────────────────────────────────────────────────────────
 
@@ -603,12 +604,26 @@ sc.onShutdown(async () => { console.log("shutting down"); await new Promise((r) 
 server.listen(Number(process.env.PORT), "127.0.0.1", () => { console.log("listening", process.env.PORT); sc.ready(); });
 `;
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (l.addr as Deno.NetAddr).port;
-  l.close();
-  return port;
+/**
+ * A worker sidecar of `entry` on a free port, once it signalled ready (`definition` gets the
+ * port). A port taken between the pick and the bind fails the start with the sidecar's output,
+ * and is retried on another.
+ */
+function readyWorker(
+  entry: string,
+  definition: (port: number) => SidecarDefinition,
+) {
+  return onFreePort(async (port) => {
+    const ctx = realCtx(definition(port), { port });
+    const inst = await workerSidecarLauncher({ entry })(ctx);
+    try {
+      await until(() => ctx.readySignals === 1);
+    } catch (err) {
+      await inst.stop(0);
+      throw new Error(`${(err as Error).message}; the sidecar printed:\n${ctx.lines.join("\n")}`);
+    }
+    return { port, ctx, inst };
+  });
 }
 
 /** Wait until `check` holds (real time, bounded). */
@@ -622,12 +637,11 @@ async function until(check: () => boolean, ms = 10_000): Promise<void> {
 
 Deno.test("worker launcher: a node:http backend runs in a worker with its own argv/env/bootstrap", async () => {
   const { dir, entry } = await sidecarModule(NODE_SERVER);
-  const port = freePort();
-  const definition = def({ args: ["--port", "{port}"], env: { MODE: "desktop" }, port });
-  const ctx = realCtx(definition, { port });
-  const inst = await workerSidecarLauncher({ entry })(ctx);
+  const { port, ctx, inst } = await readyWorker(
+    entry,
+    (port) => def({ args: ["--port", "{port}"], env: { MODE: "desktop" }, port }),
+  );
   try {
-    await until(() => ctx.readySignals === 1);
     const body = await (await fetch(`http://127.0.0.1:${port}/`)).json();
     assertEquals(body, {
       argv: ["--port", String(port)],
@@ -652,10 +666,7 @@ Deno.test("worker launcher: an uncaught error and process.exit end the worker, n
   const { dir, entry } = await sidecarModule(NODE_SERVER);
   try {
     for (const [path, expected] of [["/crash", /boom/], ["/exit", /^7$/]] as const) {
-      const port = freePort();
-      const ctx = realCtx(def({ port }), { port });
-      const inst = await workerSidecarLauncher({ entry })(ctx);
-      await until(() => ctx.readySignals === 1);
+      const { port, inst } = await readyWorker(entry, (port) => def({ port }));
       await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
       const exit = await inst.exited;
       assertMatch(String(exit.error ?? exit.code), expected);

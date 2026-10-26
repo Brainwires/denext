@@ -12,11 +12,15 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
+import { onFreePort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
 const PG_URL = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const DRAIN_MS = 3000;
+
+/** What the slow route prints when its handler starts: the test signals only after it. */
+const SLOW_STARTED = "fixture: slow handler started";
 
 /** The fixture: a slow route and an instrumentation module that opens a pool at boot. */
 const FILES: Record<string, string> = {
@@ -40,6 +44,7 @@ const FILES: Record<string, string> = {
 }
 `,
   "app/api/slow/route.ts": `export async function GET(): Promise<Response> {
+  console.log("${SLOW_STARTED}");
   await new Promise((r) => setTimeout(r, 1500));
   return new Response("slow done");
 }
@@ -66,14 +71,6 @@ export async function onShutdown() {
 `,
 };
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
-
 /** Run the CLI to completion; fail with its output. */
 async function cli(dir: string, args: string[]): Promise<void> {
   const r = await boundedOutput(Deno.execPath(), {
@@ -90,12 +87,22 @@ async function cli(dir: string, args: string[]): Promise<void> {
  * Ctrl-C (or, with `kind: "break"`, Ctrl-Break) on Windows: the request's body, how long the
  * process took to exit after the signal, and its output. Fails if it outlives the deadline by far.
  */
-async function startThenStop(
+function startThenStop(
   dir: string,
   env: Record<string, string>,
   kind: "c" | "break" = "c",
 ): Promise<{ text: string; exitMs: number; output: string }> {
-  const port = freePort();
+  // A port taken between the pick and the bind fails the start (before any signal): retried.
+  return onFreePort((port) => startThenStopOn(port, dir, env, kind));
+}
+
+/** {@linkcode startThenStop} on `port`. */
+async function startThenStopOn(
+  port: number,
+  dir: string,
+  env: Record<string, string>,
+  kind: "c" | "break",
+): Promise<{ text: string; exitMs: number; output: string }> {
   const server = spawnStoppable(
     Deno.execPath(),
     [
@@ -132,7 +139,12 @@ async function startThenStop(
     }
     assert(!exited, `start exited early:\n${output}`);
     const inFlight = fetch(`${origin}/api/slow`).then((r) => r.text());
-    await new Promise((r) => setTimeout(r, 300)); // the handler is running
+    // Signal once the handler is running (it says so), not after a fixed wait a loaded machine
+    // may not have reached it by.
+    for (let i = 0; i < 600 && !output.includes(SLOW_STARTED) && !exited; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assertStringIncludes(output, SLOW_STARTED, "the slow handler never started");
     const signalled = performance.now();
     await server.stop(kind);
     const text = await inFlight;

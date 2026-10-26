@@ -1,7 +1,8 @@
 // `deno test` in three passes: every test file in parallel except the ones that change
 // process-wide state (`tests/serial-tests.ts`), then those one at a time, so no test reads an
-// environment variable or working directory another test file set for itself; then the Vitest
-// files (`tests/**/*.vitest.ts`) on denext's Deno toolchain.
+// environment variable or working directory another test file set for itself (on Windows, the
+// files that build in the test process too: `WINDOWS_SERIAL_TESTS`); then the Vitest files
+// (`tests/**/*.vitest.ts`) on denext's Deno toolchain.
 //
 //   deno run -A scripts/test-run.ts [--ignore=a/,b.ts] [--vitest-allow-env=A,B] [deno test flags...]
 //     [paths...] [-- args]
@@ -17,8 +18,10 @@
 // a `.vitest.ts` file up, so stock `deno test` (and every task that runs it directly) is
 // unaffected; this script finds them under `tests/` and runs them with the toolchain binary —
 // the running Deno when it already is one, else the pinned build `resolveDenoToolchain` downloads
-// and verifies. `DENEXT_DENO=stock` skips that pass with a note; any other reason the toolchain
-// is unavailable fails it. Outside CI (`CI` unset) that pass runs with `--no-check`: one
+// and verifies. `DENEXT_DENO=stock` cannot run that pass, so it FAILS it — a run that silently
+// covered none of the Vitest files must not read as green — unless `DENEXT_ALLOW_SKIP_VITEST=1`
+// says the skip is meant (then it is skipped with a note); any other reason the toolchain is
+// unavailable fails it. Outside CI (`CI` unset) that pass runs with `--no-check`: one
 // `DENO_DIR` holds one type-check cache, which each Deno version wipes when the other opened it.
 //
 // The parallel and serial passes run on the toolchain too whenever it resolves (the running Deno
@@ -48,7 +51,7 @@
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative } from "@std/path";
-import { SERIAL_TESTS } from "../tests/serial-tests.ts";
+import { SERIAL_TESTS, serialTestsFor } from "../tests/serial-tests.ts";
 import { resolveDenoToolchain, TOOLCHAIN_ENV } from "../src/build/deno-toolchain.ts";
 import {
   currentDenoIdentity,
@@ -336,11 +339,37 @@ async function deno(args: string[], bin: string = Deno.execPath()): Promise<bool
   return success;
 }
 
-/** The Vitest pass: true when it passed or was skipped on purpose. */
+/** The variable that lets `DENEXT_DENO=stock` skip the Vitest pass instead of failing it. */
+export const ALLOW_SKIP_VITEST_ENV = "DENEXT_ALLOW_SKIP_VITEST";
+
+/**
+ * Whether a Vitest pass that can't run (`DENEXT_DENO=stock`: no Vitest API) counts as passed:
+ * only when {@linkcode ALLOW_SKIP_VITEST_ENV} is `1`. Otherwise it fails, so a run that covered
+ * none of the Vitest files never reports success.
+ *
+ * @param allow The variable's value.
+ * @returns Whether the skip is allowed.
+ */
+export function vitestSkipAllowed(allow: string | undefined): boolean {
+  return allow === "1";
+}
+
+/** The Vitest pass: true when it passed, or was skipped with the skip explicitly allowed. */
 async function runVitestPass(args: string[], bin: string | null): Promise<boolean> {
   if (bin === null) {
-    console.error(`test-run: ${TOOLCHAIN_ENV}=stock — skipping the Vitest test files.`);
-    return true;
+    if (vitestSkipAllowed(Deno.env.get(ALLOW_SKIP_VITEST_ENV))) {
+      console.error(
+        `test-run: ${TOOLCHAIN_ENV}=stock — skipping the Vitest test files ` +
+          `(${ALLOW_SKIP_VITEST_ENV}=1).`,
+      );
+      return true;
+    }
+    console.error(
+      `test-run: ${TOOLCHAIN_ENV}=stock can't run the Vitest test files (they need denext's Deno ` +
+        `toolchain): the Vitest pass FAILS. Run on the toolchain, or set ` +
+        `${ALLOW_SKIP_VITEST_ENV}=1 to skip it on purpose.`,
+    );
+    return false;
   }
   return await deno(args, bin);
 }
@@ -369,7 +398,8 @@ async function toolchainFor(): Promise<string | null | false> {
 /** Every pass, in order; false when any failed (or the toolchain coverage needs is missing). */
 async function runPasses(): Promise<boolean> {
   const ci = (Deno.env.get("CI") ?? "") !== "";
-  const passes = testPasses(Deno.args, SERIAL_TESTS, await findVitestFiles(), ci);
+  // On Windows the files that build in the test process run serially too (tests/serial-tests.ts).
+  const passes = testPasses(Deno.args, serialTestsFor(Deno.build.os), await findVitestFiles(), ci);
   // Every pass runs on the toolchain when it resolves; with coverage it must (its `deno coverage`
   // merges the passes' profiles).
   const coverage = wantsCoverage(splitArgs(Deno.args).flags);

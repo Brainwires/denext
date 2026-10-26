@@ -10,6 +10,7 @@ import {
   resetDesktopAuthSessionForTesting,
 } from "../src/desktop/auth-session-runtime.ts";
 import { startDesktopAuthSession } from "../src/desktop/auth-session.ts";
+import { onFreePort } from "./helpers/port.ts";
 
 const TOKEN = "per-launch-token-abcdef";
 const ENDPOINT = "http://127.0.0.1:8000/_denext/desktop/auth-session";
@@ -32,28 +33,38 @@ function req(body: unknown): Request {
   });
 }
 
-/** A port nothing listens on right now. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (l.addr as Deno.NetAddr).port;
-  l.close();
-  return port;
+/** The session's answer on a port another process took after the pick: a fresh port is tried. */
+class PortTaken extends Error {}
+
+/**
+ * Run `session(port)` on a free port; when the session answers `port_in_use` (the port was taken
+ * between the pick and the listen), again on another (onFreePort).
+ */
+function onFreeLoopback(session: (port: number) => Promise<Response>) {
+  return onFreePort(async (port) => {
+    resetDesktopAuthSessionForTesting();
+    const res = await session(port);
+    if (res.status === 409) {
+      const body = await res.clone().json().catch(() => ({}));
+      if (body.code === "port_in_use") throw new PortTaken(`port ${port} was taken`);
+    }
+    return { port, res };
+  }, { retryIf: (err) => err instanceof PortTaken });
 }
 
 Deno.test("loopbackPort: listens on that port; the redirect keeps its host and gains the port", async () => {
-  resetDesktopAuthSessionForTesting();
-  const port = freePort();
   let sent: string | undefined;
   let browser: Promise<string> | undefined;
-  const openBrowser = (url: string) => {
-    sent = new URL(url).searchParams.get("redirect_uri")!;
-    const hit = new URL(`http://127.0.0.1:${port}/auth/callback?code=c0de&state=s1`);
-    browser = fetch(hit).then((r) => r.text());
-  };
-  const res = await handleDesktopAuthSession(
-    req({ authUrl: authUrl("http://localhost/auth/callback"), loopbackPort: port }),
-    TOKEN,
-    openBrowser,
+  const { port, res } = await onFreeLoopback((port) =>
+    handleDesktopAuthSession(
+      req({ authUrl: authUrl("http://localhost/auth/callback"), loopbackPort: port }),
+      TOKEN,
+      (url: string) => {
+        sent = new URL(url).searchParams.get("redirect_uri")!;
+        const hit = new URL(`http://127.0.0.1:${port}/auth/callback?code=c0de&state=s1`);
+        browser = fetch(hit).then((r) => r.text());
+      },
+    )
   );
   assertEquals(res.status, 200);
   // The provider compares the redirect with the registered one: `localhost` stays `localhost`.
@@ -63,19 +74,19 @@ Deno.test("loopbackPort: listens on that port; the redirect keeps its host and g
 });
 
 Deno.test("loopbackPort: a redirect that already names the same port is accepted", async () => {
-  resetDesktopAuthSessionForTesting();
-  const port = freePort();
   let sent: string | undefined;
-  const res = await handleDesktopAuthSession(
-    req({
-      authUrl: authUrl(`http://127.0.0.1:${port}/cb`),
-      loopbackPort: port,
-      timeoutMs: 50,
-    }),
-    TOKEN,
-    (url) => {
-      sent = new URL(url).searchParams.get("redirect_uri")!;
-    },
+  const { port, res } = await onFreeLoopback((port) =>
+    handleDesktopAuthSession(
+      req({
+        authUrl: authUrl(`http://127.0.0.1:${port}/cb`),
+        loopbackPort: port,
+        timeoutMs: 50,
+      }),
+      TOKEN,
+      (url) => {
+        sent = new URL(url).searchParams.get("redirect_uri")!;
+      },
+    )
   );
   assertEquals(res.status, 408); // nobody came back: the timeout
   assertEquals(sent, `http://127.0.0.1:${port}/cb`);

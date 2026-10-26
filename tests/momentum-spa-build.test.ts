@@ -7,13 +7,7 @@
 
 import { assertEquals } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { bundleSpaInto } from "../src/build/spa/bundle.ts";
-import { resolveProject } from "../src/build/paths.ts";
-import { watchTests } from "./helpers/watchdog.ts";
-
-// The SPA bundles run in this process: a stalled one fails its test instead of holding the CI
-// job.
-watchTests();
+import { inChild } from "./helpers/isolated.ts";
 
 const ROOT = new URL("../", import.meta.url);
 
@@ -88,10 +82,16 @@ async function buildAndRun(
         },
       }),
     );
-    const paths = await resolveProject(dir);
     const clientDir = join(dir, "out");
     await Deno.mkdir(clientDir);
-    await bundleSpaInto(paths, join(dir, "src", "main.tsx"), clientDir, false);
+    // The SPA bundle runs in a bounded child process: an in-process build that stalls (the Windows
+    // pipe-inheritance class, tests/helpers/bounded-build.ts) can't be stopped.
+    await inChild({
+      imports: `import { bundleSpaInto } from "@repo/src/build/spa/bundle.ts";\n` +
+        `import { resolveProject } from "@repo/src/build/paths.ts";`,
+      body: `await bundleSpaInto(await resolveProject(${JSON.stringify(dir)}), ` +
+        `${JSON.stringify(join(dir, "src", "main.tsx"))}, ${JSON.stringify(clientDir)}, false);`,
+    });
     await localizeChunks(clientDir);
     const run = await new Deno.Command(Deno.execPath(), {
       args: ["run", "--no-config", "--allow-read", toFileUrl(join(clientDir, "index.js")).href],

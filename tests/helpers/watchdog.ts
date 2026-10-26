@@ -351,13 +351,54 @@ export async function stallMessage(
 
 type TestFn = (t: Deno.TestContext) => void | Promise<void>;
 
-/** `fn` failing once it runs past `ms`. */
-function bounded(name: string, fn: TestFn, ms: number): TestFn {
+/**
+ * The key a test function carries to tell `deno test` which source location to report for it
+ * instead of the `Deno.test()` call site (as `@std/testing/bdd` does). Without it every test
+ * registered through this module's wrapper is reported at the wrapper, in this file.
+ */
+const TEST_LOCATION = Symbol.for("Deno.test.location");
+
+/** This module's URL: frames in it are the wrapper, never the test's registration site. */
+const SELF = import.meta.url;
+
+/**
+ * The first `file:`/`http(s):` location in `stack` outside this module (`url:line:col`), or
+ * `undefined`: where the test file called `Deno.test`.
+ *
+ * @param stack An `Error().stack` taken inside the wrapper.
+ */
+export function registrationSite(stack: string | undefined): string | undefined {
+  for (const line of (stack ?? "").split("\n").slice(1)) {
+    const m = /((?:file|https?):\/\/\S+?:\d+:\d+)\)?\s*$/.exec(line);
+    if (m && !m[1].startsWith(`${SELF}:`)) return m[1];
+  }
+  return undefined;
+}
+
+/** `site` as a short path for a message: relative to the working directory when under it. */
+function shortSite(site: string): string {
+  try {
+    const cwd = new URL(`file://${Deno.cwd().replaceAll("\\", "/").replace(/^\/?/, "/")}/`).href;
+    return site.startsWith(cwd) ? site.slice(cwd.length) : site;
+  } catch {
+    return site;
+  }
+}
+
+/**
+ * `fn` failing once it runs past `ms` (never, when `ms` is 0), reported at `site`: the location
+ * `deno test` prints for it is the test file's, and a stall's message names the file and the test.
+ */
+function bounded(name: string, fn: TestFn, ms: number, site: string | undefined): TestFn {
+  const own = (fn as unknown as Record<symbol, unknown>)[TEST_LOCATION];
+  const at = typeof own === "string" ? own : site;
   const wrapped = async (t: Deno.TestContext) => {
+    if (ms <= 0) return await fn(t);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stall = new Promise<never>((_, reject) => {
       timer = realSetTimeout(() => {
-        stallMessage(name, ms).then((m) => reject(new Error(m)), reject);
+        const label = at ? `${shortSite(at)}: ` : "";
+        stallMessage(name, ms).then((m) => reject(new Error(`${label}${m}`)), reject);
       }, ms);
     });
     try {
@@ -367,11 +408,12 @@ function bounded(name: string, fn: TestFn, ms: number): TestFn {
     }
   };
   Object.defineProperty(wrapped, "name", { value: fn.name });
+  if (at) Object.defineProperty(wrapped, TEST_LOCATION, { value: at });
   return wrapped;
 }
 
-/** `Deno.test`'s arguments, its test function bounded (every overload). */
-function boundArgs(args: unknown[], ms: number): unknown[] {
+/** `Deno.test`'s arguments, its test function bounded (every overload) and located at `site`. */
+function boundArgs(args: unknown[], ms: number, site?: string): unknown[] {
   const at = args.findLastIndex((a) => typeof a === "function");
   if (at !== -1) {
     const fn = args[at] as TestFn;
@@ -380,16 +422,20 @@ function boundArgs(args: unknown[], ms: number): unknown[] {
       ? first
       : (first as { name?: string } | undefined)?.name ?? fn.name;
     const out = [...args];
-    out[at] = bounded(name, fn, ms);
+    out[at] = bounded(name, fn, ms, site);
     return out;
   }
   const def = args[0] as Deno.TestDefinition;
-  return [{ ...def, fn: bounded(def.name, def.fn, ms) }, ...args.slice(1)];
+  return [{ ...def, fn: bounded(def.name, def.fn, ms, site) }, ...args.slice(1)];
 }
+
+/** Test seam: {@linkcode boundArgs}. */
+export const boundArgsForTest = boundArgs;
 
 /**
  * Wrap `Deno.test` (each test registered gets the deadline current at its registration; none when
- * it is 0) and `Deno.Command`, once per isolate.
+ * it is 0) and `Deno.Command`, once per isolate. Every test keeps its own file's location in the
+ * report, deadline or not.
  */
 function install(): void {
   const s = settings();
@@ -398,10 +444,19 @@ function install(): void {
   trackSubprocesses();
   const original = Deno.test;
   const call = (register: (...a: unknown[]) => void) => (...args: unknown[]) =>
-    register(...(s.deadline > 0 ? boundArgs(args, s.deadline) : args));
+    register(...boundArgs(args, s.deadline, registrationSite(new Error().stack)));
   const test = call(original as (...a: unknown[]) => void) as typeof Deno.test;
   test.ignore = call(original.ignore as (...a: unknown[]) => void) as typeof Deno.test.ignore;
   test.only = call(original.only as (...a: unknown[]) => void) as typeof Deno.test.only;
+  // The lifecycle hooks (`Deno.test.beforeEach` / `afterEach` / `beforeAll` / `afterAll`) are
+  // registered as they are: a wrapper without them would leave a file's hooks undefined.
+  const hooks = ["beforeAll", "afterAll", "beforeEach", "afterEach"] as const;
+  for (const hook of hooks) {
+    const fn = (original as unknown as Record<string, unknown>)[hook];
+    if (typeof fn === "function") {
+      (test as unknown as Record<string, unknown>)[hook] = fn.bind(original);
+    }
+  }
   Object.defineProperty(Deno, "test", { value: test, configurable: true, writable: true });
 }
 

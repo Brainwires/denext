@@ -11,13 +11,14 @@ import * as esbuild from "../src/build/esbuild/mod.ts";
 import { serverStubPlugin } from "../src/build/next-compat.ts";
 import { clientImportMap, generateServerStub } from "../src/build/client-imports.ts";
 import { findServerOnlyLeaks } from "../src/build/server-only-scan.ts";
+import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "./helpers/symlink.ts";
 
 /**
- * A real temp dir `real` and a symlink `link` to it (in a second temp dir), or `null` when this
- * host can't create one: the test then logs why it skips. On Windows it is a junction, which
- * needs no privilege.
+ * A real temp dir `real` and a symlink `link` to it (in a second temp dir); a junction on Windows,
+ * which needs no privilege. A host that can't make one ignores these tests
+ * (`IGNORE_WITHOUT_DIR_LINKS`).
  */
-async function linkedDir(): Promise<{ real: string; link: string; cleanup: () => void } | null> {
+async function linkedDir(): Promise<{ real: string; link: string; cleanup: () => void }> {
   const real = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-leak-real-" }));
   const hold = await Deno.makeTempDir({ prefix: "denext-leak-link-" });
   const cleanup = () => {
@@ -26,18 +27,19 @@ async function linkedDir(): Promise<{ real: string; link: string; cleanup: () =>
   };
   const link = join(hold, "link");
   try {
-    await Deno.symlink(real, link, { type: "junction" });
+    await symlinkDir(real, link);
   } catch (err) {
     cleanup();
-    console.warn(`skipped: this host can't create a directory symlink (${err})`);
-    return null;
+    throw err;
   }
   return { real, link, cleanup };
 }
 
-Deno.test("serverStubPlugin: an action registered through a symlink is stubbed", async () => {
+Deno.test({
+  name: dirLinkTestName("serverStubPlugin: an action registered through a symlink is stubbed"),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const made = await linkedDir();
-  if (!made) return;
   try {
     await Deno.writeTextFile(
       join(made.real, "known.ts"),
@@ -79,9 +81,13 @@ Deno.test("serverStubPlugin: an action registered through a symlink is stubbed",
   }
 });
 
-Deno.test("findServerOnlyLeaks: a leak is caught whichever side is named through a symlink", async () => {
+Deno.test({
+  name: dirLinkTestName(
+    "findServerOnlyLeaks: a leak is caught whichever side is named through a symlink",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const made = await linkedDir();
-  if (!made) return;
   try {
     await Deno.mkdir(join(made.real, "app"));
     await Deno.writeTextFile(
@@ -112,9 +118,13 @@ Deno.test("findServerOnlyLeaks: a leak is caught whichever side is named through
   }
 });
 
-Deno.test("clientImportMap: a server module named through a symlink is stubbed at its real URL too", async () => {
+Deno.test({
+  name: dirLinkTestName(
+    "clientImportMap: a server module named through a symlink is stubbed at its real URL too",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const made = await linkedDir();
-  if (!made) return;
   const scratch = await Deno.makeTempDir({ prefix: "denext-leak-map-" });
   try {
     await Deno.writeTextFile(join(made.real, "act.ts"), `"use server";\nexport const a = 1;\n`);

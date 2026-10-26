@@ -5,6 +5,7 @@ import {
   retryOnStall,
   serialChild,
   serialChildTurns,
+  spawnExclusive,
 } from "../src/build/serial-child.ts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -28,6 +29,52 @@ Deno.test("serialChild: concurrent callers run one at a time, in call order", as
   assertEquals(order, [0, 1, 2, 3, 4]);
   assertEquals(results, [0, 10, 20, 30, 40]);
   assertEquals(serialChildTurns() - before, 5);
+});
+
+Deno.test("spawnExclusive: on Windows a long-lived spawn waits out a running child's turn", async () => {
+  const events: string[] = [];
+  const before = serialChildTurns();
+  let release: (() => void) | undefined;
+  const held = serialChild(async () => {
+    events.push("info started");
+    await new Promise<void>((r) => release = r);
+    events.push("info exited");
+  });
+  // The turn starts once the process lock is free (another test file may hold it).
+  while (!release) await sleep(5);
+  const spawned = spawnExclusive(() => {
+    events.push("service spawned");
+    return 7;
+  }, "windows");
+  await sleep(30);
+  assertEquals(events, ["info started"], "the spawn waits while the child holds its pipes");
+  release!();
+  assertEquals(await spawned, 7);
+  await held;
+  assertEquals(events, ["info started", "info exited", "service spawned"]);
+  // The spawn's turn is not a child's: the turn counter counts children only.
+  assertEquals(serialChildTurns() - before, 1);
+  // A failed spawn frees the turn.
+  await assertRejects(
+    () =>
+      spawnExclusive(() => {
+        throw new Error("no binary");
+      }, "windows"),
+    Error,
+    "no binary",
+  );
+  assertEquals(await serialChild(() => Promise.resolve("next")), "next");
+});
+
+Deno.test("spawnExclusive: elsewhere it spawns at once, even during a child's turn", async () => {
+  let release: (() => void) | undefined;
+  const held = serialChild(() => new Promise<void>((r) => release = r));
+  while (!release) await sleep(5);
+  for (const os of ["darwin", "linux"] as const) {
+    assertEquals(await spawnExclusive(() => os, os), os);
+  }
+  release!();
+  await held;
 });
 
 Deno.test("serialChild: a failed turn passes its error on and frees the queue", async () => {

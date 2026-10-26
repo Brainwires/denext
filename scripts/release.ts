@@ -9,6 +9,7 @@
 //   deno task release 2.0.0-rc.5 --dry      # preview every step; write/commit nothing
 //   deno task release 2.0.0-rc.5 --full-gate  # run the whole local suite at step 5
 //   deno task release 2.0.0-rc.5 --confirm --resume-from corpus  # finish a stopped release
+//   deno task release 2.0.0-rc.5 --confirm --resume-from tag --regate  # … re-running both gates
 //
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
@@ -43,6 +44,9 @@
 // stopped: run the same command again. It sees the release commit on HEAD and the tags already
 // made, and runs only the remaining steps (scripts/lib/release-publish.ts): `corpus` (publish and
 // wait for @denext/docs-corpus), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
+// Every resume requires the gate-pass marker step 5 records (in the git directory: the release,
+// the CI-green base commit and the gated tree's hash), matching the tree it would publish; without
+// one it refuses, and `--regate` re-runs step 0 and step 5 on the tree first.
 //
 // After tagging, every release gets a `development → main` PR so main catches up to the
 // tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
@@ -51,7 +55,7 @@
 // run `deno task docs:build`, then rsync the built `site/out/` to your docs host.
 
 import { exists, walk } from "@std/fs";
-import { join, relative } from "@std/path";
+import { join, relative, resolve } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
 import {
   desktopCiVerdict,
@@ -70,13 +74,18 @@ import {
 import { jsrHasVersion, missingPins } from "./lib/jsr-pins.ts";
 import {
   detectResume,
+  gateMarkerName,
+  type GatePass,
+  gateRefusal,
   pinRefusal,
   publishFrom,
   type PublishStep,
+  readGatePass,
   realPublishDeps,
   ReleaseAbort,
   releaseSubject,
   resumeFromArg,
+  writeGatePass,
 } from "./lib/release-publish.ts";
 
 export { pinRefusal };
@@ -415,26 +424,28 @@ function unreleasedEntries(text: string, marker: string): number {
 }
 
 async function main(): Promise<void> {
-  const { version, dry, confirmed, fullGate, resumeFrom } = parseReleaseArgs();
+  const { version, dry, confirmed, fullGate, resumeFrom, regate } = parseReleaseArgs();
   const branch = await capture("git", "rev-parse", "--abbrev-ref", "HEAD");
   const tag = `v${version}`;
   if (dry) return await dryRun(version, tag, branch);
   const target = { version, tag, branch };
   const resume = resumeFrom ?? await detectResume(target, realPublishDeps(REPO_ROOT));
-  if (resume) return await resumeRelease(target, resume, confirmed);
+  if (resume) return await resumeRelease(target, resume, { confirmed, regate, fullGate });
   await checkPreconditions(tag, branch);
-  await checkCi(branch, false);
+  const base = await capture("git", "rev-parse", "HEAD");
+  await checkCi(branch, false, base);
   console.log(`\n=== Releasing denext ${version} ===\n`);
   await prepareRelease(version, false);
   // Step 0 refuses a HEAD whose ci.yml `check` job (fmt + lint + the whole suite) is not green.
   await runGate(version, fullGate);
-  if (await confirmRelease(tag, branch, confirmed)) await publish(version, tag, branch);
+  await recordGatePass({ version, base, tree: await worktreeTree() });
+  if (await confirmRelease(target, confirmed)) await publish(version, tag, branch);
 }
 
 /** `--dry`: preview steps 1–2 regardless of tree state; skip the gate; write nothing. */
 async function dryRun(version: string, tag: string, branch: string): Promise<void> {
   console.log(`\n=== Releasing denext ${version}  (dry run) ===\n`);
-  await checkCi(branch, true);
+  await checkCi(branch, true, await capture("git", "rev-parse", "HEAD"));
   await prepareRelease(version, true);
   console.log("3. docs:api          (skipped — dry run)");
   console.log("3b. badge:tests      (skipped — dry run)");
@@ -473,6 +484,7 @@ function parseReleaseArgs(): {
   confirmed: boolean;
   fullGate: boolean;
   resumeFrom: PublishStep | undefined;
+  regate: boolean;
 } {
   const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
   const version = Deno.args.find((a, i) =>
@@ -481,7 +493,7 @@ function parseReleaseArgs(): {
   if (!version) {
     die(
       "usage: deno task release <version> [--confirm] [--dry] [--full-gate] " +
-        "[--resume-from <step>]",
+        "[--resume-from <step> [--regate]]",
     );
   }
   if (!VERSION_RE.test(version!)) die(`"${version}" is not a valid semver (e.g. 2.0.0-rc.5)`);
@@ -497,21 +509,24 @@ function parseReleaseArgs(): {
     confirmed: flags.has("--confirm"),
     fullGate: flags.has("--full-gate"),
     resumeFrom,
+    regate: flags.has("--regate"),
   };
 }
 
 /**
  * Finish a release that stopped in step 6: from `step`, with a clean tree and the release commit
- * on HEAD (`commit` makes it from the prepared tree instead).
+ * on HEAD (`commit` makes it from the prepared tree instead). Every resume requires a recorded
+ * gate pass for exactly the tree it publishes ({@linkcode requireGatePass}).
  */
 async function resumeRelease(
   target: { version: string; tag: string; branch: string },
   step: PublishStep,
-  confirmed: boolean,
+  opts: { confirmed: boolean; regate: boolean; fullGate: boolean },
 ): Promise<void> {
   console.log(`\n=== Resuming the release of denext ${target.version} at step "${step}" ===\n`);
   if (step === "commit") {
-    if (!await confirmRelease(target.tag, target.branch, confirmed)) return;
+    await requireGatePass(target, step, opts);
+    if (!await confirmRelease(target, opts.confirmed)) return;
     return await publish(target.version, target.tag, target.branch);
   }
   if (await capture("git", "status", "--porcelain")) {
@@ -521,7 +536,98 @@ async function resumeRelease(
   if (subject !== releaseSubject(target.version)) {
     die(`HEAD is "${subject}", not the release commit "${releaseSubject(target.version)}".`);
   }
+  const tagged = await capture("git", "rev-parse", "--verify", "--quiet", `${target.tag}^{commit}`);
+  if (tagged && tagged !== await capture("git", "rev-parse", "HEAD")) {
+    die(
+      `${target.tag} exists here but is not HEAD (${tagged.slice(0, 12)}): delete the stale ` +
+        "tag or check out the release commit it names, then resume.",
+    );
+  }
+  await requireGatePass(target, step, opts);
   await publishSteps(target, step);
+}
+
+/** Where the gate-pass marker lives: the git directory (never in the tree, never committed). */
+async function gateMarkerPath(version: string): Promise<string> {
+  const path = await capture("git", "rev-parse", "--git-path", gateMarkerName(version));
+  if (!path) die("could not locate the git directory for the gate-pass marker.");
+  return resolve(REPO_ROOT, path);
+}
+
+/** Record that step 0 and step 5 passed for `pass.base` and `pass.tree`. */
+async function recordGatePass(pass: GatePass): Promise<void> {
+  await writeGatePass(await gateMarkerPath(pass.version), pass);
+  console.log(
+    `\n5. Gate passed: recorded tree ${pass.tree.slice(0, 12)} on ${pass.base.slice(0, 12)}.`,
+  );
+}
+
+/**
+ * The tree `git add -A` would commit right now, hashed through a copy of the index (the real
+ * index is untouched; the copy keeps its stat data, so unchanged files are not re-hashed).
+ */
+async function worktreeTree(): Promise<string> {
+  const index = await Deno.makeTempFile({ prefix: "denext-release-index-" });
+  try {
+    await Deno.copyFile(
+      resolve(REPO_ROOT, await capture("git", "rev-parse", "--git-path", "index")),
+      index,
+    );
+    const env = { GIT_INDEX_FILE: index };
+    const add = await new Deno.Command("git", { args: ["add", "-A"], cwd: REPO_ROOT, env })
+      .output();
+    if (add.code !== 0) die("git add -A (into a scratch index) failed.");
+    const out = await new Deno.Command("git", {
+      args: ["write-tree"],
+      cwd: REPO_ROOT,
+      env,
+      stdout: "piped",
+    }).output();
+    if (out.code !== 0) die("git write-tree failed.");
+    return new TextDecoder().decode(out.stdout).trim();
+  } finally {
+    await Deno.remove(index).catch(() => {});
+  }
+}
+
+/**
+ * The base commit and tree a release at `step` publishes: before the release commit, HEAD and
+ * the prepared working tree; after it, the release commit's parent and its tree.
+ */
+async function currentGateState(version: string, step: PublishStep): Promise<GatePass> {
+  if (step === "commit") {
+    return { version, base: await capture("git", "rev-parse", "HEAD"), tree: await worktreeTree() };
+  }
+  return {
+    version,
+    base: await capture("git", "rev-parse", "HEAD^"),
+    tree: await capture("git", "rev-parse", "HEAD^{tree}"),
+  };
+}
+
+/**
+ * Refuse to resume at `step` unless a gate pass is recorded for exactly the base and tree it
+ * would publish. `--regate` re-runs step 0 (CI on the base) and step 5 (the local gate, plus doc
+ * lint) on the tree as it is, and records the pass when both are green.
+ */
+async function requireGatePass(
+  target: { version: string; tag: string; branch: string },
+  step: PublishStep,
+  opts: { regate: boolean; fullGate: boolean },
+): Promise<void> {
+  const current = await currentGateState(target.version, step);
+  if (opts.regate) {
+    await checkCi(target.branch, false, current.base);
+    await runReleaseGate(opts.fullGate);
+    if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
+    const after = await currentGateState(target.version, step);
+    if (after.tree !== current.tree) die("the gate changed the tree — release aborted.");
+    return await recordGatePass(current);
+  }
+  const recorded = await readGatePass(await gateMarkerPath(target.version));
+  const refusal = gateRefusal(recorded, current, target, step);
+  if (refusal) die(refusal);
+  console.log(`0. Gate pass recorded for tree ${current.tree.slice(0, 12)} — resuming.`);
 }
 
 /** Run the publish steps from `step`, turning a stop into the abort message. */
@@ -564,8 +670,7 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
  * (scripts/release-ci.ts). A real run aborts
  * otherwise; `--dry` reports and goes on.
  */
-async function checkCi(branch: string, dry: boolean): Promise<void> {
-  const sha = await capture("git", "rev-parse", "HEAD");
+async function checkCi(branch: string, dry: boolean, sha: string): Promise<void> {
   const verdicts = await Promise.all(
     [
       releaseCiVerdict,
@@ -706,7 +811,9 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
  */
 async function refreshLocks(): Promise<void> {
   console.log("\n4. Refreshing deno.lock (deno cache mod.ts) and the example locks' links…");
-  await run("deno", "cache", "mod.ts");
+  if (await run("deno", "cache", "mod.ts") !== 0) {
+    die("deno cache mod.ts failed — release aborted (changes left in tree).");
+  }
   if (await run("deno", "task", "sync:example-locks") !== 0) {
     die("sync:example-locks failed — release aborted (changes left in tree).");
   }
@@ -733,7 +840,11 @@ export function gateCommand(fullGate: boolean): string[] {
 }
 
 /** Show the diff and ask (unless `--confirm`); false aborts with the tree left as prepared. */
-async function confirmRelease(tag: string, branch: string, confirmed: boolean): Promise<boolean> {
+async function confirmRelease(
+  target: { version: string; tag: string; branch: string },
+  confirmed: boolean,
+): Promise<boolean> {
+  const { version, tag, branch } = target;
   console.log("\n=== Prepared. Review the changes: ===");
   await run("git", "--no-pager", "diff", "--stat");
   if (confirmed) {
@@ -745,8 +856,10 @@ async function confirmRelease(tag: string, branch: string, confirmed: boolean): 
   );
   if (answer !== null && ["yes", "y"].includes(answer.trim().toLowerCase())) return true;
   console.log(
-    "\nAborted — nothing committed or pushed. Prepared changes remain in your working " +
-      "tree (run `git checkout .` and `git clean -n` to discard, or commit by hand).",
+    "\nAborted — nothing committed or pushed. Prepared changes remain in your working tree. " +
+      "Run `git checkout .` and `git clean -n` to discard them, or release them as gated with\n" +
+      `  deno task release ${version} --resume-from commit\n` +
+      "(the gate pass is recorded for exactly this tree; a changed tree is refused).",
   );
   return false;
 }
@@ -784,6 +897,15 @@ async function publish(version: string, tag: string, branch: string): Promise<vo
     [["git", "add", "-A"], "git add failed"],
     [["git", "commit", "-m", releaseSubject(version)], "git commit failed"],
   ]);
+  // The commit must be exactly the gated tree (a hook, or a write between the gate and the commit,
+  // would publish something the gate never saw).
+  const refusal = gateRefusal(
+    await readGatePass(await gateMarkerPath(version)),
+    await currentGateState(version, "corpus"),
+    { version, tag, branch },
+    "corpus",
+  );
+  if (refusal) die(refusal);
   await publishSteps({ version, tag, branch }, "corpus");
 }
 

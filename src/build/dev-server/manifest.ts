@@ -105,11 +105,15 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
     st.lastEmittedManifest = manifest;
     // Per-rebuild build-dir lock (Cargo's watch model): a concurrent `denext build` writing the
     // same typed modules is waited out, not interleaved.
-    void withBuildDirLock(
+    // Kept on the state (never awaited here) so a caller removing the project can let it land.
+    st.typedEmit = withBuildDirLock(
       st.paths.projectDir,
       () =>
         emitTypedModules(manifest, { outDir: st.paths.outDir, configPath: st.paths.configPath }),
-    ).catch((err) => console.warn(`denext: typed modules not refreshed — ${err}`));
+    ).then(
+      () => {},
+      (err) => console.warn(`denext: typed modules not refreshed — ${err}`),
+    );
   }
   return manifest;
 }

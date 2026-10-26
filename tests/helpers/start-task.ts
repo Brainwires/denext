@@ -4,6 +4,8 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
+import { spawnExclusive } from "../../src/build/serial-child.ts";
+import { addrInUse, onFreePort } from "./port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 
@@ -31,14 +33,6 @@ function taskArgs(task: string, dir: string): { flags: string[]; args: string[] 
   };
 }
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
-
 /** The `deno` a task runs on, and its environment. */
 export interface Runner {
   readonly deno: string;
@@ -62,7 +56,13 @@ export async function buildTask(dir: string, cfg: TaskConfig, run: Runner = STOC
   assertEquals(out.code, 0, `build failed:\n${dec.decode(out.stdout)}${dec.decode(out.stderr)}`);
 }
 
-/** Run the `start` task's exact flags, fetch `/`, and stop the server; the page and output. */
+/** A start that lost its port to another process between the pick and the bind. */
+class PortTaken extends Error {}
+
+/**
+ * Run the `start` task's exact flags, fetch `/`, and stop the server; the page and output. A port
+ * taken between the pick and the bind is retried on another.
+ */
 export async function startTask(
   dir: string,
   cfg: TaskConfig,
@@ -71,14 +71,33 @@ export async function startTask(
 ): Promise<{ html: string; output: string }> {
   const { flags, args } = taskArgs(cfg.tasks.start, dir);
   assert(!flags.some((f) => f === "-A" || f.startsWith("--allow-run")), cfg.tasks.start);
-  const port = freePort();
-  const child = new Deno.Command(run.deno, {
-    args: ["run", ...flags, ...args, "--port", String(port)],
-    cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-    env: run.env,
-  }).spawn();
+  return await onFreePort(async (port) => {
+    const served = await startTaskOn(port, dir, run, flags, args, path);
+    if (!served.html && addrInUse(served.output)) throw new PortTaken(served.output);
+    return served;
+  }, { retryIf: (err) => err instanceof PortTaken });
+}
+
+/** {@linkcode startTask} on `port`. */
+async function startTaskOn(
+  port: number,
+  dir: string,
+  run: Runner,
+  flags: string[],
+  args: string[],
+  path: string,
+): Promise<{ html: string; output: string }> {
+  // A long-lived child: on Windows it is never created while this process's `deno info` /
+  // `deno bundle` children hold pipes it would inherit (src/build/serial-child.ts).
+  const child = await spawnExclusive(() =>
+    new Deno.Command(run.deno, {
+      args: ["run", ...flags, ...args, "--port", String(port)],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+      env: run.env,
+    }).spawn()
+  );
   let output = "";
   const drain = async (stream: ReadableStream<Uint8Array>) => {
     const decoder = new TextDecoder();

@@ -6,29 +6,33 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { canonicalPath } from "../src/build/canonical-path.ts";
 import { isFrameworkSource, localModulesOutside } from "../src/build/module-graph.ts";
+import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "./helpers/symlink.ts";
 
 const REPO = dirname(fromFileUrl(new URL("../deno.json", import.meta.url)));
 
 /**
- * A fresh temp dir holding a symlink `link` to `target`, or `null` when this host can't create
- * one: the test then logs why it skips. On Windows it is a junction, which needs no privilege.
+ * A fresh temp dir holding a symlink `link` to `target` (a junction on Windows, which needs no
+ * privilege). A host that can't make one ignores these tests (`IGNORE_WITHOUT_DIR_LINKS`).
  */
-async function symlinkTo(target: string): Promise<{ dir: string; link: string } | null> {
+async function symlinkTo(target: string): Promise<{ dir: string; link: string }> {
   const dir = await Deno.makeTempDir({ prefix: "denext-symlink-" });
   const link = join(dir, "link");
   try {
-    await Deno.symlink(target, link, { type: "junction" });
+    await symlinkDir(target, link);
   } catch (err) {
     await Deno.remove(dir, { recursive: true });
-    console.warn(`skipped: this host can't create a directory symlink (${err})`);
-    return null;
+    throw err;
   }
   return { dir, link };
 }
 
-Deno.test("canonicalPath resolves a symlink and normalises a path that does not exist", async () => {
+Deno.test({
+  name: dirLinkTestName(
+    "canonicalPath resolves a symlink and normalises a path that does not exist",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const made = await symlinkTo(REPO);
-  if (!made) return;
   try {
     assertEquals(
       canonicalPath(join(made.link, "deno.json")),
@@ -46,9 +50,13 @@ Deno.test("canonicalPath resolves a symlink and normalises a path that does not 
   }
 });
 
-Deno.test("isFrameworkSource recognises the framework's source through a symlinked checkout", async () => {
+Deno.test({
+  name: dirLinkTestName(
+    "isFrameworkSource recognises the framework's source through a symlinked checkout",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const made = await symlinkTo(REPO);
-  if (!made) return;
   try {
     assertEquals(isFrameworkSource(join(made.link, "src/compat/react.ts")), true);
     assertEquals(isFrameworkSource(join(made.link, "mod.ts")), true);
@@ -58,7 +66,12 @@ Deno.test("isFrameworkSource recognises the framework's source through a symlink
   }
 });
 
-Deno.test("localModulesOutside: a project reached through a symlink keeps its own modules inside", async () => {
+Deno.test({
+  name: dirLinkTestName(
+    "localModulesOutside: a project reached through a symlink keeps its own modules inside",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
   const root = await Deno.makeTempDir({ prefix: "denext-outside-" });
   try {
     const app = join(root, "app");
@@ -72,14 +85,8 @@ Deno.test("localModulesOutside: a project reached through a symlink keeps its ow
       'import { helper } from "./helper.ts";\nimport { ui } from "../../shared/ui.ts";\n' +
         "export default () => helper + ui;\n",
     );
-    let link: string;
-    try {
-      link = join(root, "link");
-      await Deno.symlink(app, link, { type: "junction" });
-    } catch (err) {
-      console.warn(`skipped: this host can't create a directory symlink (${err})`);
-      return;
-    }
+    const link = join(root, "link");
+    await symlinkDir(app, link);
     const real = Deno.realPathSync(app);
     for (const projectDir of [app, link, real]) {
       for (const pageDir of [app, link, real]) {
