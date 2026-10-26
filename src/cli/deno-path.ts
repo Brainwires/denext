@@ -101,6 +101,46 @@ function inside(dir: string, root: string): boolean {
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
+/** The toolchain cache root, or `undefined` when there is no per-user cache directory. */
+function cacheRootOrNone(env: (name: string) => string | undefined): string | undefined {
+  try {
+    return denoToolchainCacheRoot(env);
+  } catch {
+    return undefined; // no absolute HOME
+  }
+}
+
+/** Write a shim directory for `deno` under `shimRoot`; `null` when it can't be written. */
+async function writtenShim(shimRoot: string, deno: string, os: string): Promise<string | null> {
+  const dir = join(shimRoot, slug(deno));
+  try {
+    await writeShim(dir, deno, os);
+    return dir;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The directory whose `deno` is `deno`: its own, when it is the toolchain's `deno` in the cache,
+ * else a shim directory written for it — `null` when none can be (no per-user cache directory,
+ * an unwritable one).
+ */
+async function shimDirFor(
+  deno: string,
+  os: string,
+  env: (name: string) => string | undefined,
+  options: DenoPathOptions,
+): Promise<string | null> {
+  const cacheRoot = options.cacheRoot ?? cacheRootOrNone(env);
+  const own = dirname(deno);
+  const isToolchain = basename(deno).toLowerCase() === exeName(os) && cacheRoot !== undefined &&
+    inside(own, cacheRoot);
+  if (isToolchain) return own;
+  const shimRoot = options.shimRoot ?? (cacheRoot && join(cacheRoot, "path-shims"));
+  return shimRoot === undefined ? null : await writtenShim(shimRoot, deno, os);
+}
+
 /**
  * The environment to add to a child so `deno` on its PATH is `deno` — the binary denext runs it
  * on — with every other PATH lookup unchanged (see the module header). Empty when `deno` is not
@@ -123,16 +163,8 @@ export async function denoPathEnv(
   const current = env("PATH") ?? "";
   const found = onPath(current, exeName(os), delimiter);
   if (found !== null && sameFile(found, deno)) return {};
-  const cacheRoot = options.cacheRoot ?? denoToolchainCacheRoot(env);
-  let dir = dirname(deno);
-  if (basename(deno).toLowerCase() !== exeName(os) || !inside(dir, cacheRoot)) {
-    dir = join(options.shimRoot ?? join(cacheRoot, "path-shims"), slug(deno));
-    try {
-      await writeShim(dir, deno, os);
-    } catch {
-      return {};
-    }
-  }
+  const dir = await shimDirFor(deno, os, env, options);
+  if (dir === null) return {};
   return { PATH: current === "" ? dir : `${dir}${delimiter}${current}` };
 }
 
