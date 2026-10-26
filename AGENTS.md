@@ -1283,9 +1283,10 @@ denext ships tooling so agents get it right the first time:
 All work lands on `development`, and releases are cut there with
 `deno task release <version>` (which tags `v<version>` and pushes). The script
 first refuses unless ci.yml's heavy jobs (`integration`, `next-compat`, `coverage`,
-with `check`, `backend-integration`, `ios-export-router`, `windows-resolve`, `windows-tests`, `macos-tests` and `cargo-audit`) are green on HEAD: a push to `development`
+with `check`, `backend-integration`, `ios-export-router`, `windows-resolve`, `windows-tests`, `macos-tests`, `cargo-audit` and `bundle-budget`, and no other job failed) are green on HEAD: a push to `development`
 skips them, so dispatch ci.yml on the commit first
-(`gh workflow run ci.yml --ref development`, then wait for it). It also refuses unless the newest
+(`gh workflow run ci.yml --ref development`, then wait for it). Only a finished push or dispatch run
+of exactly HEAD counts (never a `pull_request` run, which tests a merge ref). It also refuses unless the newest
 desktop-ci.yml run on HEAD (Windows / macOS / Linux desktop suites, installers, install.ps1 /
 install.sh) finished with every job green (`DESKTOP_CI_JOBS` in `scripts/release-ci.ts` names the
 ones that must exist): a push runs desktop-ci only when its `paths` filter matches, so dispatch it
@@ -1298,7 +1299,10 @@ both (`gh workflow run e2e.yml --ref development`, `gh workflow run desktop-wind
 development`). Last, the newest native-plugins.yml run on HEAD must have built both apps green
 (`NATIVE_PLUGINS_JOBS`: `android`, `ios`; a push runs it only when a native template or installer
 changes, so dispatch it: `gh workflow run native-plugins.yml --ref development`). Wait for all
-five. Active `development` runs ahead of `main` by design.
+five. Active `development` runs ahead of `main` by design. A release that stopped resumes with the
+same command (or `--resume-from <step>`), but only with the gate-pass marker the release records
+when the CI gate and its local gate pass, for exactly the tree it publishes (`--regate` re-runs
+both); never make the `release:` commit by hand.
 
 **`main` must always be exactly what is published.** So **cutting a version is not
 done until `development` is merged into `main`** — the release flow is: tag

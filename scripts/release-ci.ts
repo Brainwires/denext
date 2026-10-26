@@ -16,6 +16,10 @@
 // `gh workflow run desktop-ci.yml --ref development`, `gh workflow run e2e.yml --ref development`,
 // `gh workflow run desktop-window.yml --ref development` and
 // `gh workflow run native-plugins.yml --ref development`.
+// Only a finished `push` or `workflow_dispatch` run whose head commit IS the release commit counts:
+// a `pull_request` run tests the PR's merge ref (the base branch plus HEAD), not HEAD, and a queued
+// or in-progress run has no verdict yet. Every job of the counted run must have passed (or been
+// skipped); the required lists only make a job that went missing refuse rather than pass unseen.
 
 /** The ci.yml jobs a release needs green on the commit it is cut from. */
 export const RELEASE_CI_JOBS: readonly string[] = [
@@ -29,6 +33,7 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "windows-tests",
   "macos-tests",
   "cargo-audit",
+  "bundle-budget",
 ];
 
 /**
@@ -85,6 +90,8 @@ const HEAVY_JOBS = ["integration", "next-compat", "coverage", "backend-integrati
 export interface CiRun {
   readonly databaseId: number;
   readonly event: string;
+  /** The commit the run checked out (a `pull_request` run's is the PR head, not what it tests). */
+  readonly headSha: string;
   readonly status: string;
   readonly conclusion: string;
   readonly createdAt: string;
@@ -143,8 +150,8 @@ function ranHeavyJobs(jobs: readonly CiJob[]): boolean {
 }
 
 /**
- * Check ci.yml on `sha`: the newest run on it that ran the heavy jobs must have finished with every
- * {@linkcode RELEASE_CI_JOBS} job green.
+ * Check ci.yml on `sha`: the newest finished push or dispatch run of exactly `sha` that ran the
+ * heavy jobs must have every {@linkcode RELEASE_CI_JOBS} job green and no other job failed.
  *
  * @param sha The commit to release (HEAD).
  * @param gh How `gh` is reached (default: the GitHub CLI).
@@ -153,21 +160,49 @@ export async function releaseCiVerdict(sha: string, gh: GhJson = ghJson): Promis
   for (const run of await workflowRuns("ci.yml", sha, gh)) {
     const jobs = await runJobs(run, gh);
     if (!ranHeavyJobs(jobs)) continue; // a plain push run: look further back
-    if (run.status !== "completed") {
-      return { ok: false, reason: `ci.yml ${run.event} run on ${sha} is ${run.status}`, run };
-    }
-    const unmet = unmetCiJobs(jobs);
-    return unmet.length === 0
-      ? { ok: true, reason: `ci.yml ${run.event} run is green on ${sha}`, run }
-      : { ok: false, reason: `ci.yml ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+    return jobsVerdict("ci.yml", run, jobs, RELEASE_CI_JOBS, sha);
   }
   return {
     ok: false,
-    reason: `no ci.yml run on ${sha} ran the heavy jobs (${HEAVY_JOBS.join(", ")})`,
+    reason: `no ci.yml run of ${sha} has finished (push or dispatch) with the heavy jobs ` +
+      `(${HEAVY_JOBS.join(", ")})`,
   };
 }
 
-/** `workflow`'s runs on `sha`, newest first. */
+/** The events whose runs test the commit itself (a `pull_request` run tests a merge ref). */
+const COUNTED_EVENTS: readonly string[] = ["push", "workflow_dispatch"];
+
+/**
+ * Whether `run` can vouch for `sha`: a finished push or dispatch run whose head commit is `sha`.
+ *
+ * @param run A run `gh run list --commit <sha>` returned.
+ * @param sha The commit to release.
+ */
+export function countedRun(run: CiRun, sha: string): boolean {
+  return COUNTED_EVENTS.includes(run.event) && run.headSha === sha && run.status === "completed";
+}
+
+/**
+ * The verdict on one counted run: every `required` job green, and no other job failed (a job
+ * the list does not name, such as a new one, must not fail unseen).
+ */
+function jobsVerdict(
+  workflow: string,
+  run: CiRun,
+  jobs: readonly CiJob[],
+  required: readonly string[],
+  sha: string,
+): CiVerdict {
+  const others = jobs.filter((j) =>
+    !required.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
+  ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
+  const unmet = [...unmetCiJobs(jobs, required), ...others];
+  return unmet.length === 0
+    ? { ok: true, reason: `${workflow} ${run.event} run is green on ${sha}`, run }
+    : { ok: false, reason: `${workflow} ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+}
+
+/** `workflow`'s counted runs on `sha` ({@linkcode countedRun}), newest first. */
 async function workflowRuns(workflow: string, sha: string, gh: GhJson): Promise<CiRun[]> {
   const runs = await gh([
     "run",
@@ -179,9 +214,10 @@ async function workflowRuns(workflow: string, sha: string, gh: GhJson): Promise<
     "--limit",
     "20",
     "--json",
-    "databaseId,event,status,conclusion,createdAt,url",
+    "databaseId,event,headSha,status,conclusion,createdAt,url",
   ]) as CiRun[];
-  return runs.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return runs.filter((run) => countedRun(run, sha))
+    .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /** The jobs of `run`. */
@@ -192,8 +228,8 @@ async function runJobs(run: CiRun, gh: GhJson): Promise<CiJob[]> {
 }
 
 /**
- * The verdict on `workflow`'s newest run on `sha` (a push or a dispatch): it must have finished
- * with every `required` job green and no other job failed.
+ * The verdict on `workflow`'s newest finished push or dispatch run of `sha`: it must have every
+ * `required` job green and no other job failed.
  */
 async function newestRunVerdict(
   workflow: string,
@@ -202,18 +238,10 @@ async function newestRunVerdict(
   gh: GhJson,
 ): Promise<CiVerdict> {
   const [run] = await workflowRuns(workflow, sha, gh);
-  if (!run) return { ok: false, reason: `no ${workflow} run on ${sha}` };
-  if (run.status !== "completed") {
-    return { ok: false, reason: `${workflow} ${run.event} run on ${sha} is ${run.status}`, run };
+  if (!run) {
+    return { ok: false, reason: `no ${workflow} run of ${sha} has finished (push or dispatch)` };
   }
-  const jobs = await runJobs(run, gh);
-  const others = jobs.filter((j) =>
-    !required.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
-  ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
-  const unmet = [...unmetCiJobs(jobs, required), ...others];
-  return unmet.length === 0
-    ? { ok: true, reason: `${workflow} ${run.event} run is green on ${sha}`, run }
-    : { ok: false, reason: `${workflow} ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+  return jobsVerdict(workflow, run, await runJobs(run, gh), required, sha);
 }
 
 /**

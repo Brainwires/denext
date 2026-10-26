@@ -22,6 +22,7 @@
 // carries that release.
 
 import { runToExit } from "../exited-output.ts";
+import { spawnExclusive } from "../serial-child.ts";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile, readFileSync, unlink, writeFile } from "node:fs";
@@ -128,11 +129,15 @@ async function startService(): Promise<Service> {
   // good as its word, so ask it first and refuse with a message that names the variable.
   if (binary.source === "env") await checkOverrideVersion(binary.path);
   const defaultWD = Deno.cwd();
-  const child = spawn(binary.path, [`--service=${ESBUILD_VERSION}`, "--ping"], {
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "inherit"],
-    cwd: defaultWD,
-  });
+  // Long-lived: on Windows it must not be created while a `deno info` / `deno bundle` child of
+  // this process runs, or it inherits and holds that child's pipes (serial-child.ts).
+  const child = await spawnExclusive(() =>
+    spawn(binary.path, [`--service=${ESBUILD_VERSION}`, "--ping"], {
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "inherit"],
+      cwd: defaultWD,
+    })
+  );
   const { readFromStdout, afterClose, service } = common.createChannel({
     writeToStdin(bytes) {
       child.stdin!.write(bytes, (err) => {

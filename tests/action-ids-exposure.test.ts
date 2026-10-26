@@ -41,6 +41,27 @@ import { type GraphModule, referencedActionExports } from "../src/build/action-r
 import { buildBoundaryManifest, resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { deserializeBoundary, serializeBoundary } from "../src/build/boundary-manifest.ts";
 
+/**
+ * The process-wide action-id state these tests change (`setBuildActionIdSecret`,
+ * `setLegacyActionIds`, `setUnreferencedActionsPermissive`), restored after every test: a test
+ * that fails half-way must not leave the next one — or another file in this process — minting ids
+ * under its secret.
+ */
+const SHARED_STATE = ["actionIdSecret", "serverActionExposure"].map((name) =>
+  Symbol.for(`denext.shared.${name}`)
+);
+let saved: Array<Record<string, unknown> | undefined> = [];
+Deno.test.beforeEach(() => {
+  const slots = globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>;
+  saved = SHARED_STATE.map((key) => slots[key] && { ...slots[key] });
+});
+Deno.test.afterEach(() => {
+  const slots = globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>;
+  SHARED_STATE.forEach((key, i) => {
+    if (saved[i] && slots[key]) Object.assign(slots[key], saved[i]);
+  });
+});
+
 const ORIGIN = "http://app.test";
 const SECRET_A = "build-secret-aaaaaaaaaaaaaaaaaaaaaaaa";
 const SECRET_B = "build-secret-bbbbbbbbbbbbbbbbbbbbbbbb";
@@ -424,4 +445,31 @@ Deno.test("a new build's secret re-tags the exports; a serverAction ref keeps it
   } finally {
     setBuildActionIdSecret(null);
   }
+});
+
+/** The build secret ids are minted under right now (the process-wide state's `build`). */
+function currentBuildSecret(): unknown {
+  const slot = (globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>)[
+    Symbol.for("denext.shared.actionIdSecret")
+  ];
+  return slot?.build;
+}
+
+let secretBefore: unknown;
+let leftBehind = false;
+Deno.test("action-id state: a test that leaves a build secret set (as a failed one would)…", () => {
+  secretBefore = currentBuildSecret();
+  leftBehind = true;
+  setBuildActionIdSecret("left-behind-secret-cccccccccccccccc");
+  setUnreferencedActionsPermissive(true);
+});
+
+Deno.test("…hands the next test the state as it was (afterEach restores it)", () => {
+  if (!leftBehind) return; // shuffled ahead of the test above: nothing was left to restore
+  assertEquals(currentBuildSecret(), secretBefore);
+  // The exposure policy is back too: production refuses unreferenced exports.
+  const slot = (globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>)[
+    Symbol.for("denext.shared.serverActionExposure")
+  ];
+  assertEquals(slot?.permissive, false);
 });

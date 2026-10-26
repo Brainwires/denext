@@ -13,13 +13,17 @@ import {
 import { memberPin, RUNTIME_MEMBERS } from "../scripts/lib/jsr-pins.ts";
 import {
   detectResume,
+  gateMarkerName,
+  gateRefusal,
   type PublishDeps,
   publishFrom,
+  readGatePass,
   ReleaseAbort,
   releaseSubject,
   resumeCommand,
   resumeFromArg,
   waitForJsrVersion,
+  writeGatePass,
 } from "../scripts/lib/release-publish.ts";
 
 const VERSION = await corpusVersion();
@@ -224,4 +228,82 @@ Deno.test("release resume: a fresh tree is not a resume; --resume-from is valida
     () => Promise.resolve().then(() => resumeFromArg(["--resume-from", "x"])),
     ReleaseAbort,
   );
+});
+
+Deno.test("release resume: no recorded gate pass refuses every resume, naming --regate", () => {
+  const current = { version: VERSION, base: "a".repeat(40), tree: "b".repeat(40) };
+  for (const step of ["commit", "corpus", "tag", "push", "pr"] as const) {
+    const refusal = gateRefusal(null, current, TARGET, step);
+    assert(refusal, `${step} resumed without a gate pass`);
+    assertStringIncludes(refusal, "never passed");
+    assertStringIncludes(refusal, `--resume-from ${step} --regate`);
+  }
+});
+
+Deno.test("release resume: a gate pass covers only its own version, base and tree", () => {
+  const pass = { version: VERSION, base: "a".repeat(40), tree: "b".repeat(40) };
+  assertEquals(gateRefusal(pass, { ...pass }, TARGET, "tag"), null);
+  // A release commit made by hand on a tree the gate never saw (the old "commit by hand" hint).
+  assertStringIncludes(
+    gateRefusal(pass, { ...pass, tree: "c".repeat(40) }, TARGET, "corpus")!,
+    "tree changed since the gates passed",
+  );
+  assertStringIncludes(
+    gateRefusal(pass, { ...pass, base: "d".repeat(40) }, TARGET, "push")!,
+    "but this release is cut on",
+  );
+  assertStringIncludes(
+    gateRefusal({ ...pass, version: "0.0.1" }, pass, TARGET, "pr")!,
+    "is for 0.0.1",
+  );
+});
+
+Deno.test("release resume: the gate-pass marker round-trips; a missing or bad one reads null", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-gate-marker-" });
+  try {
+    const path = `${dir}/${gateMarkerName(VERSION)}`;
+    assertEquals(await readGatePass(path), null);
+    const pass = { version: VERSION, base: "a".repeat(40), tree: "b".repeat(40) };
+    await writeGatePass(path, pass);
+    assertEquals(await readGatePass(path), pass);
+    await Deno.writeTextFile(path, '{"version": 1}');
+    assertEquals(await readGatePass(path), null);
+    await Deno.writeTextFile(path, "not json");
+    assertEquals(await readGatePass(path), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("release: the gate pass is recorded after both gates and required by every resume", async () => {
+  const src = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
+  const body = (fn: string) => {
+    const start = src.indexOf(`async function ${fn}(`);
+    assert(start >= 0, fn);
+    return src.slice(start, src.indexOf("\n}\n", start));
+  };
+  const main = body("main");
+  // Fresh release: CI gate, then the local gate, then the marker, then (and only then) publish.
+  const order = ["checkCi(", "runGate(", "recordGatePass(", "confirmRelease("].map((s) =>
+    main.indexOf(s)
+  );
+  assert(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1])), String(order));
+  // A resume returns before any of that, so it must check the marker itself: on the `commit`
+  // path before the commit, on every other path before the publish steps.
+  const resume = body("resumeRelease");
+  const commitPath = resume.slice(resume.indexOf(`if (step === "commit")`));
+  assert(
+    commitPath.indexOf("requireGatePass(") < commitPath.indexOf("publish("),
+    "commit resume checks the marker before committing",
+  );
+  assert(
+    resume.lastIndexOf("requireGatePass(") < resume.indexOf("publishSteps("),
+    "every other resume checks the marker before publishing",
+  );
+  // The fresh path re-checks the commit it made against the marker before publishing.
+  const publish = body("publish");
+  assert(publish.indexOf("gateRefusal(") < publish.indexOf("publishSteps("));
+  // No "commit by hand" escape hatch, and `deno cache` is fail-stop.
+  assert(!src.includes("commit by hand"));
+  assert(/if \(await run\("deno", "cache", "mod\.ts"\) !== 0\)/.test(src));
 });

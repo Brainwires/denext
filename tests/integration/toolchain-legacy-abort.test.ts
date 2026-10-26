@@ -14,19 +14,12 @@ import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
+import { onFreePort } from "../helpers/port.ts";
 
 const ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "cli.ts");
 
 const TOOLCHAIN = cachedToolchain();
-
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
 
 Deno.test({
   name: "denext start on the pinned toolchain serves without Deno's legacy-abort notice",
@@ -55,43 +48,47 @@ Deno.test({
       const dec = new TextDecoder();
       assertEquals(built.code, 0, `${dec.decode(built.stdout)}${dec.decode(built.stderr)}`);
 
-      const port = freePort();
-      const child = new Deno.Command(deno, {
-        args: cli(["start", dir, "--port", String(port), "--hostname", "127.0.0.1"]),
-        cwd: dir,
-        env,
-        stdout: "piped",
-        stderr: "piped",
-      }).spawn();
-      let output = "";
-      const drain = async (stream: ReadableStream<Uint8Array>) => {
-        const decoder = new TextDecoder();
-        for await (const chunk of stream) output += decoder.decode(chunk, { stream: true });
-      };
-      const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
-      let exited = false;
-      child.status.then(() => exited = true);
-      const bodies: unknown[] = [];
-      try {
-        // Generous: a loaded machine takes a while to load the app's modules.
-        for (let i = 0; i < 1200 && !exited && bodies.length === 0; i++) {
-          try {
-            const res = await fetch(`http://127.0.0.1:${port}/api/sig`);
-            if (res.status === 200) bodies.push(await res.json());
-            else await res.body?.cancel();
-          } catch { /* not listening yet */ }
-          if (bodies.length === 0) await new Promise((r) => setTimeout(r, 100));
+      // A port taken between the pick and the bind is retried on another (onFreePort).
+      const { bodies, output } = await onFreePort(async (port) => {
+        const child = new Deno.Command(deno, {
+          args: cli(["start", dir, "--port", String(port), "--hostname", "127.0.0.1"]),
+          cwd: dir,
+          env,
+          stdout: "piped",
+          stderr: "piped",
+        }).spawn();
+        let output = "";
+        const drain = async (stream: ReadableStream<Uint8Array>) => {
+          const decoder = new TextDecoder();
+          for await (const chunk of stream) output += decoder.decode(chunk, { stream: true });
+        };
+        const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
+        let exited = false;
+        child.status.then(() => exited = true);
+        const bodies: unknown[] = [];
+        try {
+          // Generous: a loaded machine takes a while to load the app's modules.
+          for (let i = 0; i < 1200 && !exited && bodies.length === 0; i++) {
+            try {
+              const res = await fetch(`http://127.0.0.1:${port}/api/sig`);
+              if (res.status === 200) bodies.push(await res.json());
+              else await res.body?.cancel();
+            } catch { /* not listening yet */ }
+            if (bodies.length === 0) await new Promise((r) => setTimeout(r, 100));
+          }
+          if (bodies.length === 0) throw new Error(`denext start never served:\n${output}`);
+          // A second request after the first was delivered: the notice prints on the first
+          // response whose signal was read, so it is out by now if it is coming at all.
+          const res = await fetch(`http://127.0.0.1:${port}/api/sig`);
+          bodies.push(await res.json());
+          await new Promise((r) => setTimeout(r, 300));
+        } finally {
+          if (!exited) child.kill("SIGTERM");
+          await child.status;
+          await drained;
         }
-        // A second request after the first was delivered: the notice prints on the first
-        // response whose signal was read, so it is out by now if it is coming at all.
-        const res = await fetch(`http://127.0.0.1:${port}/api/sig`);
-        bodies.push(await res.json());
-        await new Promise((r) => setTimeout(r, 300));
-      } finally {
-        if (!exited) child.kill("SIGTERM");
-        await child.status;
-        await drained;
-      }
+        return { bodies, output };
+      });
       assertEquals(bodies, [{ aborted: false }, { aborted: false }], output);
       assert(!output.includes("(legacy behavior)"), output);
     } finally {

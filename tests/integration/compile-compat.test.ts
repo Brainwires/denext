@@ -12,6 +12,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
+import { onFreePort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -209,14 +210,6 @@ async function writeFiles(dir: string, files: Record<string, string>): Promise<v
   }
 }
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
-
 /**
  * Build and compile `project` into `bin` with the CLI running under `config` (the drop-in's own
  * deno.json maps nothing the CLI imports, as a real one run through the installed CLI); exits
@@ -251,9 +244,16 @@ interface Served {
   stop(): Promise<string>;
 }
 
-/** Start `bin` in `cwd` on a free port and wait until `/` answers 200. */
-async function serve(bin: string, cwd: string): Promise<Served> {
-  const port = freePort();
+/**
+ * Start `bin` in `cwd` on a free port and wait until `/` answers 200; a port taken between the
+ * pick and the bind is retried on another.
+ */
+function serve(bin: string, cwd: string): Promise<Served> {
+  return onFreePort((port) => serveOn(port, bin, cwd));
+}
+
+/** {@linkcode serve} on `port`. */
+async function serveOn(port: number, bin: string, cwd: string): Promise<Served> {
   const child = new Deno.Command(bin, {
     cwd,
     env: { NO_COLOR: "1", PORT: String(port) },

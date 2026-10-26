@@ -19,6 +19,12 @@
 // once, after one line on stderr naming its pid and arguments; a second stall fails with an error
 // naming both pids. `DENEXT_CHILD_DEADLINE_MS` replaces the deadlines (`0`: none), for a cold
 // cache on a slow link (a first Docker build).
+//
+// A LONG-LIVED child (the esbuild service, a server a test starts) is spawned through
+// {@linkcode spawnExclusive}: on Windows it takes the same turn, so it is never created while a
+// `deno info` / `deno bundle` child of this process holds its pipes, and so can't inherit (and
+// hold open for its whole life) the write end of that child's stdout. Elsewhere pipes are created
+// close-on-exec and it spawns at once, as before.
 
 import { join } from "@std/path";
 import { exitedOutput, type PipedStreams } from "./exited-output.ts";
@@ -231,8 +237,13 @@ async function lockProcess(): Promise<Deno.FsFile | null> {
  * @returns What `fn` returns.
  */
 export function serialChild<T>(fn: () => Promise<T>): Promise<T> {
+  return takeTurn(fn, true);
+}
+
+/** {@linkcode serialChild}'s turn; `count` adds it to {@linkcode serialChildTurns}. */
+function takeTurn<T>(fn: () => Promise<T>, count: boolean): Promise<T> {
   const run = tail.then(async () => {
-    turns++;
+    if (count) turns++;
     const lock = await lockProcess();
     try {
       return await fn();
@@ -247,6 +258,25 @@ export function serialChild<T>(fn: () => Promise<T>): Promise<T> {
   });
   tail = run.catch(() => {});
   return run;
+}
+
+/**
+ * Spawn a long-lived child: `spawn` (which starts it synchronously and returns it) runs, on
+ * Windows, inside a {@linkcode serialChild} turn of this process — never while a `deno info` /
+ * `deno bundle` child of this process is running, whose pipe handles a child created meanwhile
+ * would inherit and hold open. The turn ends as soon as `spawn` returns. On other systems (pipes
+ * are close-on-exec there) `spawn` runs at once, unchanged.
+ *
+ * @param spawn Starts the child.
+ * @param os The system (default `Deno.build.os`; tests pass one).
+ * @returns What `spawn` returned.
+ */
+export async function spawnExclusive<T>(
+  spawn: () => T,
+  os: typeof Deno.build.os = Deno.build.os,
+): Promise<T> {
+  if (os !== "windows") return spawn();
+  return await takeTurn(() => Promise.resolve().then(spawn), false);
 }
 
 function writeStderr(line: string): void {

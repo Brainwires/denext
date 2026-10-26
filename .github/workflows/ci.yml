@@ -54,6 +54,9 @@ jobs:
   # `integration` job) so this job stays the short critical path.
   check:
     runs-on: ubuntu-latest
+    # Every job has a limit (the default is 6 h, held by a stall). Sized from recent green runs:
+    # check ≤ 15 min, integration / next-compat ≤ 3, coverage ≤ 52; about 3× / +40 min margin.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -115,10 +118,14 @@ jobs:
         # .github/badges/tests.json drifts from the number of Deno.test cases.
         # Regenerate with `deno task badge:tests` and commit. The README shows `main`'s
         # badge and the release script refreshes it before the tag, so the check runs
-        # where it is displayed — `main` and the development → main PR — not on every
-        # push to `development`, where the pre-commit hook no longer regenerates it
-        # (a per-commit badge put parallel commits in conflict at nearly every rebase).
-        if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+        # where it is displayed — `main` and the development → main PR — and on a manual
+        # dispatch, the run `deno task release` counts (scripts/release-ci.ts), so the commit a
+        # release is cut from is checked too; not on every push to `development`, where the
+        # pre-commit hook no longer regenerates it (a per-commit badge put parallel commits in
+        # conflict at nearly every rebase).
+        if: >-
+          github.ref == 'refs/heads/main' || github.event_name == 'pull_request' ||
+          github.event_name == 'workflow_dispatch'
         run: deno task badge:tests --check
 
   # The client bundle budget on every event, pushes to `development` included: the shared-chunk
@@ -204,6 +211,7 @@ jobs:
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -243,6 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -282,6 +291,7 @@ jobs:
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 90
     services:
       postgres:
         image: pgvector/pgvector:pg17

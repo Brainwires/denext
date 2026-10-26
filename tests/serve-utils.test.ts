@@ -31,59 +31,73 @@ Deno.test("binds the requested port when it is free", async () => {
   await server.shutdown();
 });
 
-Deno.test("falls back to the next port when the first is in use", async () => {
-  // Occupy a fixed port first.
-  let first = -1;
-  const a = serveWithPortFallback(
-    { port: 4599, onListen: ({ port }) => (first = port) },
-    ok,
-  );
-  assertEquals(first, 4599);
+/**
+ * A server on a port the OS picked (never a fixed one: the parallel pass runs other servers),
+ * and that port.
+ */
+function onAnyPort(): { server: Deno.HttpServer; port: number } {
+  let port = -1;
+  const server = serveWithPortFallback({ port: 0, onListen: (addr) => (port = addr.port) }, ok);
+  assert(port > 0);
+  return { server, port };
+}
 
-  // A second server on the same port should fall back to 4600.
+Deno.test("falls back to the next port when the first is in use", async () => {
+  // Occupy a port first.
+  const { server: a, port: first } = onAnyPort();
+
+  // A second server on the same port falls back to a later one (the next free one: the port right
+  // after may be another process's).
   let second = -1;
   const b = serveWithPortFallback(
-    { port: 4599, onListen: ({ port }) => (second = port) },
+    { port: first, onListen: ({ port }) => (second = port) },
     ok,
   );
-  assertEquals(second, 4600);
+  assert(second > first, `fell back to ${second} from ${first}`);
 
   await a.shutdown();
   await b.shutdown();
 });
 
 Deno.test("strict mode fails immediately on an in-use port (no fallback)", async () => {
-  let first = -1;
-  const a = serveWithPortFallback(
-    { port: 4620, onListen: ({ port }) => (first = port) },
-    ok,
-  );
-  assertEquals(first, 4620);
+  const { server: a, port: first } = onAnyPort();
 
   let threw = false;
   let boundElsewhere = false;
   try {
-    const b = serveWithPortFallback({ port: 4620, strict: true }, ok);
+    const b = serveWithPortFallback({ port: first, strict: true }, ok);
     boundElsewhere = true;
     await b.shutdown();
   } catch (e) {
     threw = e instanceof Deno.errors.AddrInUse;
   }
   assertEquals(threw, true);
-  assertEquals(boundElsewhere, false); // never fell back to 4621
+  assertEquals(boundElsewhere, false); // never fell back to the next port
 
   await a.shutdown();
 });
 
 Deno.test("throws AddrInUse when no port is free within the range", async () => {
+  // Fill two adjacent ports: one the OS picked, and the one after it (another pick when that one
+  // is someone else's).
   const servers: Deno.HttpServer[] = [];
-  // Fill ports 4610 and 4611.
-  servers.push(serveWithPortFallback({ port: 4610, maxAttempts: 1 }, ok));
-  servers.push(serveWithPortFallback({ port: 4611, maxAttempts: 1 }, ok));
+  let base = -1;
+  for (let attempt = 0; attempt < 20 && base < 0; attempt++) {
+    const { server, port } = onAnyPort();
+    try {
+      servers.push(server, serveWithPortFallback({ port: port + 1, maxAttempts: 1 }, ok));
+      base = port;
+    } catch (e) {
+      if (!(e instanceof Deno.errors.AddrInUse)) throw e;
+      servers.length = 0;
+      await server.shutdown();
+    }
+  }
+  assert(base > 0, "no two adjacent free ports in 20 tries");
 
   let threw = false;
   try {
-    serveWithPortFallback({ port: 4610, maxAttempts: 2 }, ok);
+    serveWithPortFallback({ port: base, maxAttempts: 2 }, ok);
   } catch (e) {
     threw = e instanceof Deno.errors.AddrInUse;
   }

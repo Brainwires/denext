@@ -14,6 +14,7 @@ import { scaffoldMonorepo } from "../../src/build/scaffold-monorepo.ts";
 import { removeTempDir } from "../helpers/temp.ts";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
+import { onFreePort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -74,14 +75,6 @@ async function deno(args: string[], cwd: string): Promise<string> {
   return text;
 }
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
-
 /** A running `denext <verb>` in `cwd`, its origin, and how to stop it. */
 interface Server {
   readonly origin: string;
@@ -91,10 +84,19 @@ interface Server {
 
 /**
  * Start `denext <verb> . --port <p>` from this checkout in `cwd` with `flags`, and wait until `/`
- * answers 200.
+ * answers 200; a port taken between the pick and the bind is retried on another.
  */
-async function serve(verb: "start" | "dev", flags: string[], cwd: string): Promise<Server> {
-  const port = freePort();
+function serve(verb: "start" | "dev", flags: string[], cwd: string): Promise<Server> {
+  return onFreePort((port) => serveOn(verb, flags, cwd, port));
+}
+
+/** {@linkcode serve} on `port`. */
+async function serveOn(
+  verb: "start" | "dev",
+  flags: string[],
+  cwd: string,
+  port: number,
+): Promise<Server> {
   const child = new Deno.Command(RUN.deno, {
     args: [
       "run",
@@ -169,6 +171,22 @@ async function loadIslandGraph(server: Server): Promise<void> {
   assertStringIncludes(button, "ui-button");
 }
 
+/** Read `reader` onto `events` until `until` matches it or `deadline` passes (or the stream ends). */
+async function readUntil(
+  reader: ReadableStreamDefaultReader<string>,
+  events: string,
+  until: RegExp,
+  deadline: number,
+): Promise<string> {
+  while (!until.test(events) && Date.now() < deadline) {
+    const timer = new Promise<null>((r) => setTimeout(() => r(null), 5_000));
+    const next = await Promise.race([reader.read(), timer]);
+    if (next?.done) break;
+    if (next) events += next.value;
+  }
+  return events;
+}
+
 /** The dev reload stream's events after `act`, until one matches `until` (or a minute passes). */
 async function eventsAfter(
   server: Server,
@@ -177,15 +195,13 @@ async function eventsAfter(
 ): Promise<string> {
   const reload = await server.get("/_denext/reload");
   const reader = reload.body!.pipeThrough(new TextDecoderStream()).getReader();
-  await new Promise((r) => setTimeout(r, 500));
-  await act();
-  let events = "";
+  // The stream's first frame (`retry:`) is written once this subscriber is registered: act only
+  // then, or the event can go out before the subscription and never arrive.
   const deadline = Date.now() + 60_000;
-  while (!until.test(events) && Date.now() < deadline) {
-    const timer = new Promise<null>((r) => setTimeout(() => r(null), 5_000));
-    const next = await Promise.race([reader.read(), timer]);
-    if (next && !next.done) events += next.value;
-  }
+  const opened = await readUntil(reader, "", /retry:/, deadline);
+  assertStringIncludes(opened, "retry:", "the reload stream never opened");
+  await act();
+  const events = await readUntil(reader, opened, until, deadline);
   await reader.cancel();
   return events;
 }

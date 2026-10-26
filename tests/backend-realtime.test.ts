@@ -288,8 +288,20 @@ Deno.test("realtime: a burst of 500 inserts is coalesced into one re-read per id
     // instead of racing the 16 ms timer and a wall-clock deadline on a loaded machine. The
     // counts below still prove the burst was one flush with one re-read per identity.
     await engine.flush();
-    await until(() => changesOf(ca).length === 250 && changesOf(cb).length === 250, 60_000);
-    await until(() => changesOf(ca2).length === 250, 60_000);
+    // Wait for the condition itself: a loaded Windows runner took more than a minute to deliver
+    // the burst. The cap only keeps a lost frame from waiting out the test's own deadline, and the
+    // error says how far each subscription got.
+    const counts = () =>
+      `250 changes per subscription: ca ${changesOf(ca).length}, ca2 ${changesOf(ca2).length}, ` +
+      `cb ${changesOf(cb).length} (flushes ${engine.stats.flushes - before.flushes}, rereads ` +
+      `${engine.stats.rereads - before.rereads})`;
+    await until(
+      () =>
+        changesOf(ca).length === 250 && changesOf(cb).length === 250 &&
+        changesOf(ca2).length === 250,
+      300_000,
+      counts,
+    );
     const stats = engine.stats;
     assertEquals(stats.notifications - before.notifications, 500);
     assertEquals(stats.flushes - before.flushes, 1, "one burst");

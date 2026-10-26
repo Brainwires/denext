@@ -401,6 +401,19 @@ and this project adheres to
   `req.protocol` or `req.hostname`:** their translations follow denext's proxy trust
   (`trustForwardedHeaders`), not Express's `trust proxy`, so the report asks to check them behind
   a proxy.
+- **The release gate can't be skipped (contributors).** `deno task release` records a gate-pass
+  marker (the release, the CI-green base commit and the gated tree's hash, in the git directory)
+  when its CI gate and local gate pass, and every resume — `--resume-from`, a `release:` commit on
+  HEAD, a local tag — refuses without one matching the tree it would publish (`--regate` re-runs
+  both gates); `deno cache` failing now stops it too. The CI gate counts only a finished push or
+  dispatch run of exactly HEAD (never a `pull_request` run), requires `bundle-budget`, and refuses
+  any other failed job; ci.yml checks the test-count badge on dispatched runs. Every job of the
+  gated workflows has a `timeout-minutes`. The pre-push precheck type-checks on denext's toolchain
+  (TypeScript 7), checks the test badge and runs the changed files' own tests
+  (`scripts/affected-tests.ts`). `scripts/test-run.ts` fails a Vitest pass `DENEXT_DENO=stock`
+  can't run unless `DENEXT_ALLOW_SKIP_VITEST=1`. On Windows the esbuild service is spawned outside
+  any running `deno info` / `deno bundle` child of the process (it inherited their pipes), and the
+  test files that build in the test process run serially.
 
 - **A `denext create` project excludes `.deno/`.** Deno runtime 3.0.0-rc.5's type-check writes
   `.deno/npm-compat` into the project root, `@jsr/*` packages' `_test.ts` files included, and a

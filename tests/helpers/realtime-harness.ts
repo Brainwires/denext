@@ -160,11 +160,20 @@ export function changesOf(conn: TestConn): TableChange[] {
   return conn.frames.flatMap((frame) => frame.changes ?? []);
 }
 
-/** Wait until `done()` (bounded), polling every 5 ms. */
-export async function until(done: () => boolean, ms = 15_000, what = "condition"): Promise<void> {
+/**
+ * Wait until `done()` (bounded), polling every 5 ms. `what` names the condition in the timeout
+ * error; a function is called then, so the error can say how far it got.
+ */
+export async function until(
+  done: () => boolean,
+  ms = 15_000,
+  what: string | (() => string) = "condition",
+): Promise<void> {
   const deadline = Date.now() + ms;
   while (!done()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${typeof what === "function" ? what() : what}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }

@@ -18,6 +18,7 @@ import { encodeActionArgs } from "../../src/client/action-dispatch.ts";
 import { prepareWire } from "../../src/runtime/wire-encode.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
 import { ACTION_ID_SECRET_ENV } from "../../src/server/action-ids.ts";
+import { onFreePort } from "../helpers/port.ts";
 import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
 import { removeTempDir } from "../helpers/temp.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
@@ -181,17 +182,16 @@ async function assertNoSecret(root: string): Promise<Map<string, string>> {
   return files;
 }
 
-/** A free localhost port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
+/**
+ * A long-running CLI server (`start` / `dev`) on a free port, ready to answer `/`; a port taken
+ * between the pick and the bind is retried on another.
+ */
+function server(dir: string, verb: "start" | "dev") {
+  return onFreePort((port) => serverOn(dir, verb, port));
 }
 
-/** A long-running CLI server (`start` / `dev`) on a free port, ready to answer `/`. */
-async function server(dir: string, verb: "start" | "dev") {
-  const port = freePort();
+/** {@linkcode server} on `port`. */
+async function serverOn(dir: string, verb: "start" | "dev", port: number) {
   const child = new Deno.Command(Deno.execPath(), {
     args: cliArgs(dir, [verb, "--port", String(port)]),
     cwd: dir,

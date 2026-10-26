@@ -283,3 +283,77 @@ export function realPublishDeps(cwd: string): PublishDeps {
     log: (line) => console.log(line),
   };
 }
+
+/**
+ * What a passed gate recorded (scripts/release.ts writes it when step 0's CI gate and step 5's
+ * local gate both pass): the release, the commit CI was green on, and the tree the local gate
+ * ran on — the tree the release commit must have.
+ */
+export interface GatePass {
+  version: string;
+  /** The commit step 0 found CI green on: HEAD before the release commit, its parent after. */
+  base: string;
+  /** The tree the local gate passed on (`git write-tree` of the prepared working tree). */
+  tree: string;
+}
+
+/** The marker's file name, kept in the git directory so `git add -A` can never sweep it in. */
+export function gateMarkerName(version: string): string {
+  return `denext-release-gate-${version}.json`;
+}
+
+/** Record a passed gate at `path`. */
+export async function writeGatePass(path: string, pass: GatePass): Promise<void> {
+  await Deno.writeTextFile(path, JSON.stringify(pass, null, 2) + "\n");
+}
+
+/** The gate pass recorded at `path`, or `null` when there is none (or it does not parse). */
+export async function readGatePass(path: string): Promise<GatePass | null> {
+  try {
+    const value = JSON.parse(await Deno.readTextFile(path));
+    const ok = typeof value?.version === "string" && typeof value?.base === "string" &&
+      typeof value?.tree === "string";
+    return ok ? value as GatePass : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The refusal for publishing `current` (the release's base commit and tree as they are now)
+ * without a matching gate pass, or `null` when `recorded` covers exactly that base and tree. A
+ * resume never skips the gates: a release commit made by hand after a failed gate, a tree changed
+ * since the gate, or a base CI never passed on all refuse here.
+ *
+ * @param recorded The marker {@linkcode readGatePass} found, or `null`.
+ * @param current The base and tree the release would publish.
+ * @param target The release.
+ * @param step The step being resumed (named in the message).
+ */
+export function gateRefusal(
+  recorded: GatePass | null,
+  current: GatePass,
+  target: ReleaseTarget,
+  step: PublishStep,
+): string | null {
+  const regate = `deno task release ${target.version} --confirm --resume-from ${step} --regate`;
+  const how =
+    `Re-run both gates on this tree (CI on ${current.base.slice(0, 12)}, then the local ` +
+    `gate) with:\n  ${regate}`;
+  if (!recorded) {
+    return `no passed gate is recorded for ${target.version}: refusing to publish a tree the CI ` +
+      `and local gates never passed. ${how}`;
+  }
+  if (recorded.version !== target.version) {
+    return `the recorded gate pass is for ${recorded.version}, not ${target.version}. ${how}`;
+  }
+  if (recorded.base !== current.base) {
+    return `the gates passed on base ${recorded.base.slice(0, 12)}, but this release is cut on ` +
+      `${current.base.slice(0, 12)}. ${how}`;
+  }
+  if (recorded.tree !== current.tree) {
+    return `the tree changed since the gates passed (gated ${recorded.tree.slice(0, 12)}, now ` +
+      `${current.tree.slice(0, 12)}). ${how}`;
+  }
+  return null;
+}

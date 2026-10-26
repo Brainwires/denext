@@ -6,12 +6,17 @@
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { createTestApp, createTestClient } from "../src/testing/mod.ts";
-import { watchTests } from "./helpers/watchdog.ts";
+import { type ChildRequest, type ChildResponse, requestsInChild } from "./helpers/bounded-build.ts";
 
-// createTestApp crawls and builds the app in this process: a stalled one fails its test instead
-// of holding the CI job.
-watchTests();
+/**
+ * `requests` against the app in `dir`, through `createTestApp` in a bounded child process (an
+ * in-process build that stalls can't be stopped).
+ */
+async function serve(dir: string, requests: readonly ChildRequest[]): Promise<ChildResponse[]> {
+  const out = await requestsInChild(dir, requests);
+  if (out.refused !== undefined) throw new Error(`createTestApp refused the app: ${out.refused}`);
+  return out.responses;
+}
 
 const u = (rel: string) => new URL(rel, import.meta.url).href;
 const JSX = u("../src/jsx/jsx-runtime.ts");
@@ -175,57 +180,62 @@ export default freshPage(mod, { id: "render" });`,
 
 Deno.test("Fresh 2: middleware state, page data, layouts, code routes, route handlers", async () => {
   await withApp(FRESH2, async (dir) => {
-    const client = createTestClient(await createTestApp(dir));
-    const home = await client.get("/?n=4");
+    const [home, api, posted, code, raw, old, blog, toHome, bare, render] = await serve(dir, [
+      ["/?n=4"],
+      ["/api/fresh"],
+      ["/api/x", { method: "POST", json: {} }],
+      ["/api2/code"],
+      ["/@1.2.3/a/b.ts"],
+      ["/old"],
+      ["/blog/hi"],
+      ["/blog/home"],
+      ["/bare"],
+      ["/render"],
+    ]);
     assertEquals(home.status, 200);
     assertStringIncludes(home.text, "home 5 hello From middleware");
     assertStringIncludes(home.text, "<title>From middleware</title>");
     assertStringIncludes(home.text, '<main id="app">');
-    assertEquals(home.headers.get("x-page"), "1");
-    assertEquals(home.headers.get("x-fresh-mw"), "/");
+    assertEquals(home.headers["x-page"], "1");
+    assertEquals(home.headers["x-fresh-mw"], "/");
 
-    const api = await client.get("/api/fresh");
     assertEquals(api.text, "Hello fresh hello");
-    assertEquals(api.headers.get("x-fresh-mw"), "/api/fresh");
-    assertEquals((await client.post("/api/x", { json: {} })).text, '{"posted":"x"}');
-    assertEquals((await client.get("/api2/code")).text, "code route code hello");
-    const raw = await client.get("/@1.2.3/a/b.ts");
+    assertEquals(api.headers["x-fresh-mw"], "/api/fresh");
+    assertEquals(posted.text, '{"posted":"x"}');
+    assertEquals(code.text, "code route code hello");
     assertEquals(raw.text, "raw 1.2.3 a/b.ts");
 
-    const old = await client.get("/old");
     assertEquals(old.status, 307);
-    assertEquals(old.headers.get("location"), "/evil.example/x");
+    assertEquals(old.headers["location"], "/evil.example/x");
 
-    const blog = await client.get("/blog/hi");
     assertStringIncludes(blog.text, '<section id="blog"><article>post hi</article></section>');
-    const toHome = await client.get("/blog/home");
     assertEquals(toHome.status, 303);
 
-    const bare = await client.get("/bare");
     assertStringIncludes(bare.text, '<p id="bare">bare page</p>');
     assertEquals(bare.text.includes('<main id="app">'), false);
 
-    assertStringIncludes((await client.get("/render")).text, "<b>rendered jsx</b>");
+    assertStringIncludes(render.text, "<b>rendered jsx</b>");
   });
 });
 
 Deno.test("Fresh 2: a POST re-renders the page; HttpError and errors render the error pages", async () => {
   await withApp(FRESH2, async (dir) => {
-    const client = createTestClient(await createTestApp(dir));
-    const posted = await client.post("/", { form: { v: "42" } });
+    const [posted, missing, unknown, boom, apiMissing] = await serve(dir, [
+      ["/", { method: "POST", form: { v: "42" } }],
+      ["/missing"],
+      ["/no/such/page"],
+      ["/boom"],
+      ["/api/nope"],
+    ]);
     assertEquals(posted.status, 201);
     assertStringIncludes(posted.text, "home posted 42");
 
-    const missing = await client.get("/missing");
     assertEquals(missing.status, 404);
     assertStringIncludes(missing.text, "error page 404");
-    const unknown = await client.get("/no/such/page");
     assertEquals(unknown.status, 404);
     assertStringIncludes(unknown.text, "error page 404");
-    const boom = await client.get("/boom");
     assertEquals(boom.status, 500);
     assertStringIncludes(boom.text, "error page 500");
-    const apiMissing = await client.get("/api/nope");
     assertEquals(apiMissing.status, 404);
   });
 });
@@ -276,14 +286,17 @@ export default freshPage(mod, { id: "greet/[name]", v1: true });`,
 
 Deno.test("Fresh 1.x: (req, ctx) handlers, ctx.render(data), defineRoute, _404", async () => {
   await withApp(FRESH1, async (dir) => {
-    const client = createTestClient(await createTestApp(dir));
-    const home = await client.get("/", { headers: { "x-user": "ada" } });
+    const [home, greet, gone, nope] = await serve(dir, [
+      ["/", { headers: { "x-user": "ada" } }],
+      ["/greet/bob"],
+      ["/?gone"],
+      ["/nope"],
+    ]);
     assertStringIncludes(home.text, "hi ada on /");
-    assertStringIncludes((await client.get("/greet/bob")).text, "greet bob anon");
-    const gone = await client.get("/?gone");
+    assertStringIncludes(greet.text, "greet bob anon");
     assertEquals(gone.status, 404);
     assertStringIncludes(gone.text, "nothing at /");
-    assertStringIncludes((await client.get("/nope")).text, "nothing at /nope");
+    assertStringIncludes(nope.text, "nothing at /nope");
   });
 });
 
@@ -327,21 +340,27 @@ export { h as GET, h as PUT, h as PATCH, h as DELETE };`,
 
 Deno.test("without middleware.ts the page and route handler run the handler themselves", async () => {
   await withApp(NO_MIDDLEWARE, async (dir) => {
-    const client = createTestClient(await createTestApp(dir));
-    assertStringIncludes((await client.get("/d/7")).text, "data id=7");
-    const redirected = await client.get("/d/7?mode=redirect");
+    const [data, redirected, missing, teapot, plain, api, conflict, del, patch] = await serve(dir, [
+      ["/d/7"],
+      ["/d/7?mode=redirect"],
+      ["/d/7?mode=missing"],
+      ["/d/7?mode=teapot"],
+      ["/d/7?mode=plain"],
+      ["/api/3"],
+      ["/api/3", { method: "PUT" }],
+      ["/api/3", { method: "DELETE" }],
+      ["/api/3", { method: "PATCH" }],
+    ]);
+    assertStringIncludes(data.text, "data id=7");
     assertEquals([redirected.status, redirected.location], [307, "/elsewhere"]);
-    const missing = await client.get("/d/7?mode=missing");
     assertEquals(missing.status, 404);
     assertStringIncludes(missing.text, "not found page");
-    const teapot = await client.get("/d/7?mode=teapot");
     assertEquals(teapot.status, 418);
     assertStringIncludes(teapot.text, "error 418");
-    assertStringIncludes((await client.get("/d/7?mode=plain")).text, "data raw=true");
-    assertEquals((await client.get("/api/3")).text, "api 3");
-    const conflict = await client.request("/api/3", { method: "PUT" });
+    assertStringIncludes(plain.text, "data raw=true");
+    assertEquals(api.text, "api 3");
     assertEquals([conflict.status, conflict.text], [409, "conflict"]);
-    assertEquals((await client.request("/api/3", { method: "DELETE" })).status, 405);
-    assertEquals((await client.request("/api/3", { method: "PATCH" })).status, 500);
+    assertEquals(del.status, 405);
+    assertEquals(patch.status, 500);
   });
 });
