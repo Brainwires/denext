@@ -32,6 +32,7 @@ import {
 } from "../src/compat/fresh/runtime.ts";
 import { type Context, createFreshRequest } from "../src/compat/fresh/context.ts";
 import { constructedApps } from "../src/compat/fresh/app.ts";
+import { env } from "../src/compat/fresh/env.ts";
 import * as preact from "../src/compat/preact/mod.ts";
 import { useErrorBoundary } from "../src/compat/preact/hooks.ts";
 import * as compat from "../src/compat/preact/compat.ts";
@@ -85,6 +86,89 @@ Deno.test("App records middleware, code routes, layouts and handlers; islands() 
   assertEquals(constructedApps().at(-1), app as never);
   await app.listen();
   assertThrows(() => app.handler(), Error, "denext serves the app");
+});
+
+Deno.test("App: mountApp prefixes a sub-app's middleware, routes, pages, layouts and errors", () => {
+  const h = () => new Response("x");
+  const load = () => Promise.resolve({ handler: h });
+  const sub = new App()
+    .use(h)
+    .use("/inner", h)
+    .get("/", h)
+    .get("users/:id", h)
+    .route("/p", load)
+    .route("/q")
+    .layout("/", h)
+    .onError("/e", h)
+    .appWrapper(h)
+    .notFound(h);
+  const host = new App().mountApp("/api/", sub);
+  assertEquals(host._middlewares.map((m) => m.path), ["/api/*", "/api/inner"]);
+  assertEquals(host._routes.map((r) => r.pattern), ["/api", "/api/users/:id"]);
+  assertEquals(host._pages, [
+    { pattern: "/api/p", route: load, config: undefined },
+    { pattern: "/api/q", route: {}, config: undefined },
+  ]);
+  assertEquals(host._layouts.map((l) => l.path), ["/api"]);
+  assertEquals(host._errors.map((e) => e.path), ["/api/e"]);
+  // The sub-app's wrapper and not-found route replace the host's.
+  assertEquals([host._appWrapper, host._notFound], [h, { handler: h }]);
+  // Mounted at the root, "/" stays "/"; a sub-app without a wrapper keeps the host's.
+  const own = () => new Response("own");
+  const root = new App().appWrapper(own).notFound(own).mountApp("", new App().get("/", h));
+  assertEquals(root._routes.map((r) => r.pattern), ["/"]);
+  assertEquals([root._appWrapper, root._notFound], [own, { handler: own }]);
+});
+
+Deno.test("App: ws() is a GET route that upgrades; constructedApps() is empty before any app", () => {
+  const handlers = { message: () => {} };
+  const app = new App().ws("/sock", handlers, { idleTimeout: 5 });
+  assertEquals(app._routes.map((r) => [r.method, r.pattern]), [["GET", "/sock"]]);
+  const calls: unknown[] = [];
+  const upgraded = new Response("up");
+  const ctx = { upgrade: (...args: unknown[]) => (calls.push(args), upgraded) };
+  assertEquals((app._routes[0].fns[0] as (c: unknown) => Response)(ctx), upgraded);
+  assertEquals(calls, [[handlers, { idleTimeout: 5 }]]);
+  const key = Symbol.for("denext.fresh.apps");
+  const g = globalThis as { [key: symbol]: unknown };
+  const saved = g[key];
+  delete g[key];
+  try {
+    assertEquals(constructedApps(), []);
+  } finally {
+    g[key] = saved;
+  }
+});
+
+Deno.test("denext/fresh/env: in the browser the page's variables and the dev flags", () => {
+  const g = globalThis as { document?: unknown; __denextDev?: boolean };
+  g.document = {
+    getElementById: () => ({ textContent: JSON.stringify({ FRESH_PUBLIC_UNIT: "page" }) }),
+  };
+  g.__denextDev = true;
+  try {
+    assertEquals([env.FRESH_PUBLIC_UNIT, env.MODE, env.DEV, env.PROD, env.SSR], [
+      "page",
+      "development",
+      true,
+      false,
+      false,
+    ]);
+    // Read once: a later change to the page is not picked up.
+    g.document = { getElementById: () => null };
+    assertEquals(env.FRESH_PUBLIC_UNIT, "page");
+    // Symbols and unknown names read as absent.
+    const sym = Symbol("x");
+    assertEquals((env as unknown as Record<symbol, unknown>)[sym], undefined);
+    assertEquals(sym in env, false);
+    assertEquals(["MODE" in env, "NOPE" in env], [true, false]);
+    assertEquals(Object.getOwnPropertyDescriptor(env, "NOPE"), undefined);
+    assertEquals(Object.getOwnPropertyDescriptor(env, sym), undefined);
+    assertEquals(Object.getOwnPropertyDescriptor(env, "MODE")?.value, "development");
+  } finally {
+    delete g.document;
+    delete g.__denextDev;
+  }
 });
 
 Deno.test("Fresh middleware: staticFiles, trailingSlashes, csp continue or redirect", async () => {
