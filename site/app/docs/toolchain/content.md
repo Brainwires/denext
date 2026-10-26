@@ -156,6 +156,15 @@ The binary is cached beside Deno's own cache:
 `linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-aarch64` (Windows on Arm, from
 `2.9.7-denext.21`).
 
+On Linux the binaries are built for glibc and need glibc 2.35 or later: Ubuntu 22.04+, Debian
+12+, Fedora 36+, RHEL / Rocky / AlmaLinux 10, current Arch and openSUSE Tumbleweed. RHEL 9,
+Amazon Linux 2023, Debian 11, Ubuntu 20.04 and musl-based distributions (Alpine) can't run them.
+Before downloading the toolchain or the Deno Desktop runtime on Linux, denext reads the host's C
+library (`getconf GNU_LIBC_VERSION`, else `ldd --version`) and stops with that list on musl or an
+older glibc, rather than downloading a binary that then fails with `GLIBC_2.35 not found`.
+`denext doctor` reports the same check (`linux libc`). On such a host, run denext in a container
+(`debian:12`, `ubuntu:24.04`).
+
 - The download goes to a temporary file in that same directory. Its SHA-256 is checked against
   the pin before it is extracted, made executable or renamed. A mismatch deletes the file
   unexecuted and the command stops with the refusal and the fix.
@@ -579,7 +588,9 @@ root `package.json`, workspace members) are your code and are not jailed.
 - **Opting out** (not recommended): `--no-jail-scripts`, `jail-scripts=false` in `.npmrc` or
   `npm_config_jail_scripts=false`, or deno.json `"supplyChain": { "jailScripts": false }`. Where
   sources disagree the stricter one wins, so a `.npmrc` can't quietly undo what deno.json asks for;
-  under `paranoid` every opt-out is an error. denext never turns the jail off for you.
+  under `paranoid` every opt-out is an error. denext never turns the jail off for you. The
+  user-level `~/.npmrc` (or npm's `userconfig`) counts as one more source, for the runtime and for
+  denext's planning and `doctor` alike.
 - **Per-package exceptions** keep the jail on and widen it for one package: environment variables
   passed through, extra writable directories (relative to deno.json; create them first, Linux
   skips a missing one) and the network. From runtime `3.0.0-rc.6` `net` also takes the hosts the
@@ -647,7 +658,8 @@ says so, and reads only Deno's own permission errors in an install log as the ja
 `EPERM` on Windows is usually a locked file).
 
 **denext writes the exceptions for you.** `denext migrate`, `denext create` / `init` (next to an
-existing `package.json`) and `denext add` find the dependencies in denext's built-in list below
+existing `package.json`) and `denext add` (which takes them out again when `deno add` fails, unless
+`deno add` changed deno.json itself) find the dependencies in denext's built-in list below
 and, when the jail is on for the project, add the narrowest exception each needs to deno.json
 (your comments and existing entries stay): on runtime `3.0.0-rc.6` and later the package's
 download hosts instead of `net: true`, and the browser packages' cache under `~`. In a workspace

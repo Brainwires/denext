@@ -321,14 +321,17 @@ not their full text (a dev build, `denext dev`, and `denext/testing` throw the f
 | 5    | A class component with the class runtime off, or after it failed to load           |
 | 6    | A function `action` / `formAction` in a build whose scan saw none (names the prop) |
 | 7    | Preact's `useErrorBoundary` in a build whose scan saw none                         |
+| 8    | A route-pattern href (`/blog/[slug]` + `params`) in a build whose scan saw none    |
+| 9    | A server-rendered blur placeholder in a build whose scan saw none                  |
 
 **Fix.** Reproduce it under `denext dev` for the full message, the component stack and the
-dev warnings; the component the production error names is where to start. Codes 6 and 7 come
-only from a production build: `denext build` leaves the form-action runtime and the
-hook-boundary support out of an app whose own sources never name `action` / `formAction` or
-`useErrorBoundary` (a library's code is not scanned), so `denext dev` does not reproduce them.
-Name the prop or the hook once in the app's own code, for example where the library's component
-is used, and rebuild.
+dev warnings; the component the production error names is where to start. Codes 6 to 9 come
+only from a production build: `denext build` leaves the form-action runtime, the hook-boundary
+support, the route-pattern href filling and the blur-placeholder clearing out of an app whose
+own sources never name `action` / `formAction`, `useErrorBoundary`, a `[segment]` pathname with
+`params`, or `placeholder="blur"` (a library's code is not scanned), so `denext dev` does not
+reproduce them. Name the prop, the hook or the pattern once in the app's own code, for example
+where the library's component is used, and rebuild.
 
 ## `ReferenceError: window is not defined` (or `document`, `localStorage`)
 

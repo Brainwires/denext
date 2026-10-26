@@ -103,8 +103,30 @@ function validateBridgeOrigins(origins: unknown, fail: Fail): void {
         `desktop.app.bridgeOrigins[${i}]`,
         'must be an origin ("https://idp.example"), "<scheme>://*" or "*"',
       );
+    } else if (entry.trim() === "*" || /:\/\/\*$/.test(entry.trim())) {
+      warnOnce(bridgeWildcardWarning(i, entry.trim()));
     }
   });
+}
+
+/** The warning for a wildcard `desktop.app.bridgeOrigins` entry (`*`, `<scheme>://*`). */
+function bridgeWildcardWarning(index: number, entry: string): string {
+  const what = entry === "*"
+    ? "every document the window loads"
+    : `every ${entry.slice(0, -4)} origin`;
+  return `denext.config: desktop.app.bridgeOrigins[${index}] is "${entry}": the native bridge ` +
+    `answers ${what}, not only the app's own origin. Each binding still has to list the origin ` +
+    "(bind(…, { origins })), but list exact origins here unless you need the wildcard.";
+}
+
+/** Warnings already printed by this process (a config is validated more than once). */
+const warned = new Set<string>();
+
+/** `console.warn` a message once per process. */
+function warnOnce(message: string): void {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message);
 }
 
 /** `desktop.app.allowedNavigationOrigins`: exact origins (no wildcards). */

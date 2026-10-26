@@ -890,7 +890,9 @@ target and backend the archive's URL, size and SHA-256. When `denext desktop run
 1. reuses `<Deno cache>/denext-desktop-runtime/<version>/<target>-<backend>/` when that directory
    carries a marker matching the pin and every recorded file is present at its recorded size. No
    network is needed after the first download. `--verify-runtime` (or
-   `DENEXT_DESKTOP_RUNTIME_VERIFY=1`) re-hashes every file instead;
+   `DENEXT_DESKTOP_RUNTIME_VERIFY=1`) re-hashes every file instead, and so does the first use a
+   week after the last full check (recorded in `.denext-verified-at`), so a same-size change to a
+   cached file is caught without the flag too;
 2. otherwise streams the archive into a private temp directory, refusing it the moment it grows
    past its pinned size, and checks the size and SHA-256 before anything touches it. Nothing is
    extracted from an unverified archive;

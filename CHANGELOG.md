@@ -426,6 +426,35 @@ and this project adheres to
 
 ### Fixed
 
+- **A route-pattern href or a blur placeholder the build's scan missed says so.** A library's
+  `<Link href={{ pathname: "/blog/[slug]", params }}>` in an app whose own sources write none
+  navigated to the literal pattern, and a library's server-rendered `placeholder="blur"` stayed
+  painted; they now report `denext: error 8` / `error 9`, as the form-action and hook-boundary
+  gates do (errors 6 and 7).
+- **Live handshakes waiting on `live.authorize` count against the connection caps.** A slow hook
+  let one address hold any number of pending handshakes past `live.limits.maxConnectionsPerIp`
+  (each was re-checked only after the hook); a pending handshake now holds its slot, in the total
+  too.
+- **A workspace member outside the root is skipped.** A `"../x"` member, which Deno refuses, was
+  still read for its imports and named oddly in the workspace-root hints.
+- **A cached Deno Desktop runtime is re-hashed once a week.** Without `--verify-runtime` only file
+  sizes were checked, so a same-size change by another local process went unnoticed; the first use
+  seven days after the last full check now re-hashes every file (and re-downloads on a mismatch).
+- **A wildcard `desktop.app.bridgeOrigins` entry warns.** `"*"` and `"<scheme>://*"` open the
+  native bridge past the app's own origin; config validation now says so (once per process), and
+  the desktop guide documents both forms.
+- **`denext add` takes its jail exceptions out when the add fails.** They go into deno.json before
+  `deno add` runs the install scripts; a failed add left them behind. The file is now put back
+  (unless `deno add` changed it too, which is said).
+- **The user-level `~/.npmrc` counts for the lifecycle-script jail.** The runtime reads
+  `jail-scripts` / `paranoid` from it, but denext's exception planning and `denext doctor` read
+  only the project's `.npmrc` and the environment, so a jail turned off (or `paranoid` turned on)
+  there was misreported. npm's `userconfig` setting names another file.
+- **An unsupported Linux host stops before the download, not after it.** denext's Linux binaries
+  need glibc 2.35 or later; on musl (Alpine) or an older glibc (RHEL 9, Amazon Linux 2023, Debian
+  11, Ubuntu 20.04) the toolchain and the Deno Desktop runtime downloaded, verified and then failed
+  to exec with `GLIBC_2.35 not found`. denext now probes the host's C library first and stops with
+  the supported distributions named; `denext doctor` reports it as `linux libc`.
 - **`build --compile` with a frozen lock fails closed.** When the compile rewrote the lock copy
   in another lockfile version (an older lock under a newer Deno) or left it unreadable, the frozen
   check was skipped and the binary built anyway; it is now refused with the fix.
@@ -658,6 +687,10 @@ and this project adheres to
 
 ### Security
 
+- **`denext ui`'s `/config/next` panel no longer offers to translate a value that reads this
+  machine's paths.** A `next.config` value or rule built from `HOME`, `TMPDIR`, `USERPROFILE` and
+  the like was shown and translated with the evaluating machine's path in it; it is now held back
+  and listed for a hand port, as `denext migrate` does.
 - **A 4.9 stateless session cookie is read by a 4.8 instance, so a rolling 4.8 → 4.9 deploy and a
   rollback keep every session.** The sealed stateless payload carries the session's own id as
   `rsid`, never `sid`: 4.8 reads any cookie with a `sid` key as a store id and signs a stateless

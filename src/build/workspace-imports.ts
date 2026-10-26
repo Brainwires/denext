@@ -6,7 +6,7 @@
 // carry: the root's imports, each member's `exports` under its `name`, and each member's own
 // imports scoped to its directory.
 
-import { dirname, isAbsolute, join, resolve, toFileUrl } from "@std/path";
+import { dirname, isAbsolute, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { CONFIG_FILES } from "./config-files.ts";
 
@@ -72,10 +72,20 @@ function memberDirsSync(root: string, entry: string): string[] {
   return out.sort();
 }
 
-/** Every member directory a workspace root lists (resolved, de-duplicated). */
+/**
+ * Every member directory a workspace root lists (resolved, de-duplicated), but none outside the
+ * root (`../x`): Deno refuses such a member, so its imports are never read and no hint names it.
+ */
 function allMemberDirs(root: string, members: readonly string[]): string[] {
   const dirs = new Set<string>();
-  for (const entry of members) for (const d of memberDirsSync(root, entry)) dirs.add(resolve(d));
+  const base = resolve(root);
+  for (const entry of members) {
+    for (const d of memberDirsSync(root, entry)) {
+      const dir = resolve(d);
+      const rel = relative(base, dir);
+      if (!/^\.\.(?:[\\/]|$)/.test(rel) && !isAbsolute(rel)) dirs.add(dir);
+    }
+  }
   return [...dirs];
 }
 

@@ -24,6 +24,16 @@ export const ERR_FORM_ACTIONS_OFF = 6;
  * the reconciler's hook-boundary seam was left out (the `__DENEXT_HOOK_BOUNDARIES__` gate).
  */
 export const ERR_HOOK_BOUNDARIES_OFF = 7;
+/**
+ * A route-pattern href (`{ pathname: "/blog/[slug]", params }`) in a build whose scan of the app's
+ * sources found none, so the pattern filling was left out (the `__DENEXT_HREF_PARAMS__` gate).
+ */
+export const ERR_HREF_PARAMS_OFF = 8;
+/**
+ * A server-rendered blur placeholder in a build whose scan of the app's sources found none, so
+ * its clearing was left out (the `__DENEXT_IMAGE_BLUR__` gate).
+ */
+export const ERR_IMAGE_BLUR_OFF = 9;
 
 /** A full error text: the named component (may be empty) and the fiber it was raised at. */
 export type ErrorText = (name: string, fiber?: Fiber | null) => string;

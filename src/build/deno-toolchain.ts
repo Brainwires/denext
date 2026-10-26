@@ -55,6 +55,7 @@ import {
 import { ESBUILD_VERSION } from "./esbuild/version.ts";
 import { currentDenoIdentity, type DenoIdentity, isPinnedDenextDeno } from "./deno-version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
+import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 
 /** The esbuild a toolchain archive carries beside `deno` (2.9.7-denext.17 on). */
 export interface DenoToolchainEsbuild {
@@ -640,6 +641,8 @@ export interface EnsureDenoToolchainOptions {
   readonly log?: (line: string) => void;
   /** Test seam. */
   readonly fetch?: typeof fetch;
+  /** Test seam: the host OS and C library the Linux check sees ({@linkcode assertLinuxLibc}). */
+  readonly host?: { readonly os?: string; readonly libc?: LinuxLibc };
 }
 
 /** A verified toolchain binary. */
@@ -841,6 +844,11 @@ async function install(
   opts: EnsureDenoToolchainOptions,
 ): Promise<void> {
   const { dir, exe, version, target, artifact } = slot;
+  // A Linux build of denext's Deno on a host that can't run it (musl, an older glibc): say so
+  // before downloading it, rather than after, when it fails to exec.
+  if (slot.minGlibc !== undefined && slot.os === "linux") {
+    await assertLinuxLibc(`denext's ${slot.what} ${version}`, slot.minGlibc, opts.host);
+  }
   await Deno.mkdir(dir, { recursive: true });
   await sweepLeftovers(dir);
   const scratch = await Deno.makeTempDir({ dir, prefix: ".tmp-" });
@@ -882,6 +890,11 @@ export interface CacheSlot extends DownloadNames {
   readonly os: string;
   readonly version: string;
   readonly target: string;
+  /**
+   * The glibc a Linux binary needs ({@linkcode minGlibcFor}), checked against the host before a
+   * download; absent for a binary with no such need (the static musl Gleam).
+   */
+  readonly minGlibc?: string;
 }
 
 /**
@@ -969,7 +982,17 @@ export async function ensureDenoToolchain(
   const dir = binaryDir(root, version, target);
   const os = options.os ?? Deno.build.os;
   const exe = exeName(os);
-  const slot = { root, dir, exe, os, version, target, artifact, what: "Deno toolchain" };
+  const slot = {
+    root,
+    dir,
+    exe,
+    os,
+    version,
+    target,
+    artifact,
+    what: "Deno toolchain",
+    minGlibc: minGlibcFor(pin),
+  };
   const cached = await ensureCached(slot, options);
   return { deno: join(dir, exe), version, target, cached };
 }

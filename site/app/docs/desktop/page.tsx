@@ -3199,7 +3199,8 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           <strong>Offline after the first download.</strong>{" "}
           A cached runtime is reused without the network (a size check against the marker;{" "}
           <code>--verify-runtime</code>{" "}
-          re-hashes every file). With no cache and no network the build stops and says so.
+          re-hashes every file, as does the first use a week after the last full check). With no
+          cache and no network the build stops and says so.
         </li>
         <li>
           <strong>Provenance, optionally.</strong> <code>--attest-runtime</code> also runs{" "}
@@ -3294,8 +3295,12 @@ export default {
           handlers) serves the app origin only. To let another document call a binding, such as an
           identity provider page the window navigates to, list its origin in{" "}
           <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
-          <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
-          <code>dev</code> write the same <code>app.json</code>.
+          <code>bind(name, fn, {"{ origins }"})</code>. Two wildcard forms exist:{" "}
+          <code>"&lt;scheme&gt;://*"</code> (every origin of that scheme, such as{" "}
+          <code>"https://*"</code>) and <code>"*"</code>{" "}
+          (every document the window loads). Each widens the bridge past the app, so config
+          validation warns about them; list exact origins unless you need one.{" "}
+          <code>denext desktop run</code> and <code>dev</code> write the same <code>app.json</code>.
         </li>
         <li>
           <strong>The window stays on the app origin</strong>{" "}

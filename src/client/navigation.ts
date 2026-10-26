@@ -6,6 +6,7 @@
 // inside functions so it can be imported safely on the server.
 
 import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
+import { ERR_HREF_PARAMS_OFF, ERR_IMAGE_BLUR_OFF, reconcilerError } from "./fiber/errors.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { fillPattern, parsePattern, type RouteParams } from "../router/segments.ts";
@@ -519,6 +520,20 @@ function installBlurClearing(): void {
   }, true);
 }
 
+/**
+ * The blur placeholders' clearing at boot — off (a define the build sets from a scan for
+ * `placeholder="blur"`) in an app that renders none, when the clearing and the image-blur helpers
+ * fold out of the bundle. A page that has one in such a build (a library's
+ * `<Image placeholder="blur">`) reports error 9 rather than leave the placeholder painted.
+ *
+ * @param doc The page's document.
+ * @internal Exported for tests.
+ */
+export function installBlurGate(doc: Document): void {
+  if (typeof __DENEXT_IMAGE_BLUR__ === "undefined" || __DENEXT_IMAGE_BLUR__) installBlurClearing();
+  else if (doc.querySelector(`img[${BLUR_ATTR}]`)) reportError(reconcilerError(ERR_IMAGE_BLUR_OFF));
+}
+
 /** Install global click + popstate handlers (idempotent per page load). */
 function installNavigation(): void {
   const w = globalThis as unknown as {
@@ -536,9 +551,7 @@ function installNavigation(): void {
     event.preventDefault();
     navigate((anchor as HTMLAnchorElement).href);
   });
-  // Off (a define the build sets from a scan for `placeholder="blur"`) in an app that renders
-  // no blur placeholder: the clearing and the image-blur helpers then fold out of the bundle.
-  if (typeof __DENEXT_IMAGE_BLUR__ === "undefined" || __DENEXT_IMAGE_BLUR__) installBlurClearing();
+  installBlurGate(document);
 
   committedHref = location.href;
   globalThis.addEventListener("popstate", (event) => {
@@ -758,9 +771,12 @@ export type HrefInput =
 function fillPathname(pathname: string, params: Record<string, string | string[]>): string {
   // Folds to `pathname` in a build whose scan found no route-pattern href (the
   // `__DENEXT_HREF_PARAMS__` define), taking the route-segment parser with it.
-  return typeof __DENEXT_HREF_PARAMS__ === "undefined" || __DENEXT_HREF_PARAMS__
-    ? fillPattern(parsePattern(pathname), params as RouteParams)
-    : pathname;
+  if (typeof __DENEXT_HREF_PARAMS__ === "undefined" || __DENEXT_HREF_PARAMS__) {
+    return fillPattern(parsePattern(pathname), params as RouteParams);
+  }
+  // A pattern the scan didn't see (a library's Link): say so rather than navigate to it literally.
+  if (pathname.includes("[")) reportError(reconcilerError(ERR_HREF_PARAMS_OFF, pathname));
+  return pathname;
 }
 
 /** Format a {@linkcode UrlObject}/{@linkcode TypedUrlObject} (or pass a string through). */

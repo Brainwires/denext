@@ -341,6 +341,12 @@ no denext equivalent, each with a one-line pointer to where the behaviour went i
 each button posts the honored value to `/config` as an ordinary section edit, so it lands
 in the same diff-then-confirm path as everything else.
 
+A value or rule that reads a path of this machine (`HOME`, `TMPDIR`, `DENO_DIR`, `USERPROFILE`,
+`APPDATA`, …) is held back, as `denext migrate` holds it back: the evaluator hands the config
+placeholders for those variables, and what carries one is listed under "Reads this machine's
+paths" with no Translate button, so your home or temp path never lands in `denext.config.ts`. A
+rule list keeps its other rules.
+
 ## Plugins
 
 `/plugins` lists the first-party catalog —

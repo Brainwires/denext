@@ -88,6 +88,8 @@ export interface JailInputs {
   readonly denoJson?: Record<string, unknown> | null;
   /** The project's `.npmrc` text (or null). */
   readonly npmrc?: string | null;
+  /** The user-level `.npmrc` text (`~/.npmrc`, or npm's `userconfig`), or null. */
+  readonly userNpmrc?: string | null;
   /** The environment (default: none). */
   readonly env?: (name: string) => string | undefined;
 }
@@ -143,6 +145,12 @@ export function readJailSetting(inputs: JailInputs): JailSetting {
     ],
     [".npmrc paranoid", boolValue(npmrcValue(npmrc, "paranoid")) === true ? true : undefined],
     [".npmrc jail-scripts", boolValue(npmrcValue(npmrc, "jail-scripts"))],
+    // The user-level file: the runtime reads it too (after the project's).
+    [
+      "~/.npmrc paranoid",
+      boolValue(npmrcValue(inputs.userNpmrc ?? "", "paranoid")) === true ? true : undefined,
+    ],
+    ["~/.npmrc jail-scripts", boolValue(npmrcValue(inputs.userNpmrc ?? "", "jail-scripts"))],
     [
       "npm_config_paranoid",
       boolValue(npmEnv(inputs.env, "paranoid")) === true ? true : undefined,
@@ -297,6 +305,20 @@ function processEnv(name: string): string | undefined {
 }
 
 /**
+ * Where the user-level `.npmrc` is: npm's `userconfig` setting from the environment, else
+ * `.npmrc` in the home directory (`HOME`, or `USERPROFILE` on Windows); null with neither.
+ *
+ * @param env The environment.
+ * @returns The path, or null.
+ */
+export function userNpmrcPath(env: (name: string) => string | undefined): string | null {
+  const configured = npmEnv(env, "userconfig");
+  if (configured) return configured;
+  const home = env("HOME") ?? env("USERPROFILE");
+  return home ? join(home, ".npmrc") : null;
+}
+
+/**
  * Read what the jail planning needs from a project: its config, package.json, dependencies and
  * jail settings.
  *
@@ -324,10 +346,13 @@ export async function readJailProject(
   }
   const own = appDir === root ? null : await configIn(fs, appDir);
   const ignoredMemberConfig = own?.denoJson?.supplyChain !== undefined ? own.configPath : null;
+  const env = options.env ?? processEnv;
+  const userNpmrc = userNpmrcPath(env);
   const setting = readJailSetting({
     denoJson,
     npmrc: await readOr(fs, join(root, ".npmrc")),
-    env: options.env ?? processEnv,
+    userNpmrc: userNpmrc === null ? null : await readOr(fs, userNpmrc),
+    env,
   });
   return {
     dir: root,
@@ -613,6 +638,8 @@ export interface JailReport {
   readonly missing: readonly JailRequirement[];
   /** The config file written (action `written`). */
   readonly configPath?: string;
+  /** That file's text before the write (action `written`), to put back when the install fails. */
+  readonly before?: string;
   /** The `supplyChain` JSON to add by hand (action `manual`). */
   readonly snippet?: string;
   /** What to tell the user, one line each. */
@@ -767,11 +794,10 @@ export async function applyJailExceptions(
   const base = { effective, required, missing };
   const early = unwrittenReport(base, project.setting, refused);
   if (early) return early;
-  const written = options.edit === false || project.configPath === null ? null : await editedConfig(
-    await fs.readTextFile(project.configPath),
-    project.denoJson,
-    missing,
-  );
+  const before = project.configPath === null ? "" : await fs.readTextFile(project.configPath);
+  const written = options.edit === false || project.configPath === null
+    ? null
+    : await editedConfig(before, project.denoJson, missing);
   if (written === null) {
     const snippet = jailSnippet(missing);
     return {
@@ -793,6 +819,7 @@ export async function applyJailExceptions(
     ...base,
     action: "written",
     configPath: project.configPath!,
+    before,
     lines: [
       `deno.json: supplyChain.jailScripts exception${missing.length === 1 ? "" : "s"} for ` +
       `${names(missing)} (their install scripts need more than the lifecycle-script jail allows; ` +

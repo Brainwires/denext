@@ -31,7 +31,14 @@ import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop
 import { readJson } from "../../build/json-edit.ts";
 import { DENEXT_EXCLUDE } from "../../build/dep-age.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
-import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
+import { DENO_TOOLCHAIN, denoToolchainStatus } from "../../build/deno-toolchain.ts";
+import {
+  type LinuxLibc,
+  linuxLibcProblem,
+  minGlibcFor,
+  probeLinuxLibc,
+  SUPPORTED_LINUX,
+} from "../../build/linux-libc.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
 import { backendChecks } from "./doctor-backend.ts";
@@ -678,6 +685,35 @@ export async function denoToolchainCheck(
 }
 
 /**
+ * On Linux, whether denext's Deno binaries (the toolchain, `denort`, the Deno Desktop runtime) run
+ * on this host: glibc at or above the pin's minimum, not musl. `null` off Linux.
+ *
+ * @param options Test seams: the host OS and the probe's answer.
+ * @returns The check, or `null`.
+ */
+export async function linuxLibcCheck(
+  options: { os?: string; libc?: LinuxLibc } = {},
+): Promise<Check | null> {
+  if ((options.os ?? Deno.build.os) !== "linux") return null;
+  const libc = options.libc ?? await probeLinuxLibc();
+  const min = minGlibcFor(DENO_TOOLCHAIN);
+  const problem = linuxLibcProblem(libc, min);
+  const found = libc.kind === "glibc"
+    ? `glibc ${libc.version}`
+    : libc.kind === "musl"
+    ? "musl"
+    : "unknown (no getconf / ldd answer)";
+  return {
+    name: "linux libc",
+    ok: problem === null,
+    detail: problem === null
+      ? `${found} (denext's Deno needs glibc ${min} or later)`
+      : `${problem}; supported: ${SUPPORTED_LINUX}`,
+    critical: false,
+  };
+}
+
+/**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
  */
@@ -704,7 +740,11 @@ export async function collectDoctorReport(
   dir: string,
   options: { installLog?: string } = {},
 ): Promise<DoctorReport> {
-  const checks: Check[] = [denoVersionCheck(), await denoToolchainCheck(dir)];
+  const checks: Check[] = [
+    denoVersionCheck(),
+    await denoToolchainCheck(dir),
+    ...[await linuxLibcCheck()].filter((c): c is Check => c !== null),
+  ];
 
   // resolveProject loads + validates denext.config and throws on a malformed one; catch it
   // so `doctor` reports config *correctness* as a failed check, not a crash before any print.
