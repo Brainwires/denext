@@ -48,9 +48,9 @@
  * against the app (App ID, team, expiry, the entitlements it grants) before anything is built.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
- * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
- * Deno version it was built for (`deno upgrade --version 2.9.8`).
- *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it builds with
+ * denext's Deno toolchain: run it with `denext desktop package` or `denext task <this task>`
+ * (a plain `deno task` runs the `deno` on PATH, which is refused unless it is denext's).
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
@@ -95,7 +95,6 @@ const {
   desktopNpmArgs,
   desktopPackageFlags,
   desktopRun: run,
-  desktopRuntimeDenoFlags,
   desktopRuntimeEnv,
   desktopWithAppVersion,
   macosCodesignArgs,
@@ -120,8 +119,6 @@ async function buildApp(out: string, target?: string): Promise<void> {
   await Deno.remove(out, { recursive: true }).catch(() => {});
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   const env = await desktopRuntimeEnv(import.meta.url, target);
-  // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
-  const denoFlags = await desktopDenoFlagArgs(import.meta.url);
   const cmd = [
     "deno",
     "desktop",
@@ -129,9 +126,8 @@ async function buildApp(out: string, target?: string): Promise<void> {
     // prompt the packaged GUI has no TTY to answer.
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
-    ...denoFlags,
-    // The pinned runtime's own flags (--unstable-no-legacy-abort before 3.0.0-rc.5; none after).
-    ...desktopRuntimeDenoFlags(env, denoFlags),
+    // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
+    ...await desktopDenoFlagArgs(import.meta.url),
     "--include",
     "out",
     ...await desktopIncludeArgs(import.meta.url),
