@@ -1,4 +1,4 @@
-// Stopping a `denext dev` the UI may not have started (`src/ui/dev-stop.ts`).
+// Stopping a `denext dev` the UI may not have started (`packages/ui/src/dev-stop.ts`).
 //
 // The platform matrix is pure, so it is asserted directly rather than by spawning anything. The
 // behavioural tests drive the stop through its seams — a recording `kill`, a recording `run`, a
@@ -15,7 +15,7 @@ import {
   stopDevServer,
   type StopDevServerDeps,
   treeKillCommand,
-} from "../src/ui/dev-stop.ts";
+} from "../packages/ui/src/dev-stop.ts";
 
 /** A pid this suite must never signal for real; every kill goes through the recorder. */
 const PID = 2147483646;

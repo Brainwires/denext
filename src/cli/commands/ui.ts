@@ -1,7 +1,7 @@
 // `denext ui` — the project-management GUI, served on loopback by the CLI (the `vue ui` model).
 //
-// It ships inside the package, works on a fresh clone, and never evaluates the project's own
-// modules: every piece of work it does — including discovering the verbs the project
+// The UI itself is the `@denext/ui` package, loaded on the first run (src/cli/ui-package.ts); it
+// works on a fresh clone and never evaluates the project's own modules: every piece of work it does — including discovering the verbs the project
 // contributes, which is `denext commands --json` in a child — goes out as a `deno` subprocess
 // (`src/ui/proc.ts`), so the verb is `loadsModules: false` and neither the bundler nor the
 // user's config ever enters this process's module graph.
@@ -15,12 +15,9 @@ import { projectDir } from "../shared.ts";
 import { installShutdown } from "../shutdown.ts";
 import { openBrowser } from "../../ui/open.ts";
 import { workspaceVerbTarget } from "../../build/workspace-imports.ts";
-import {
-  DEFAULT_UI_PORT,
-  startUiServer,
-  type UiServer,
-  type UiServerOptions,
-} from "../../ui/server.ts";
+import { DEFAULT_UI_PORT } from "../../ui/constants.ts";
+import { loadUiPackage } from "../ui-package.ts";
+import type { UiServer, UiServerOptions } from "@denext/ui";
 
 /**
  * The servers this verb currently has running. `run` resolves only when its server drains, so a
@@ -67,7 +64,7 @@ function uiPort(ctx: CommandContext): number | undefined {
 }
 
 /**
- * The {@linkcode startUiServer} options a parsed `denext ui` invocation asks for — `--offline`
+ * The `startUiServer` options a parsed `denext ui` invocation asks for — `--offline`
  * among them, which keeps the UI and every denext-CLI process it starts off the network — a
  * process a project verb spawns on its own is not reached (it combines freely with
  * `--read-only`).
@@ -154,13 +151,14 @@ export const uiCommand: CommandSpec = {
     {
       name: "ui-dev",
       type: "boolean",
-      help: "Internal: watch src/ui and reload open pages on change",
+      help: "Internal: watch @denext/ui's sources and reload open pages on change",
     },
   ],
   run: async (ctx) => {
     const controller = new AbortController();
     const options = await uiTargetOptions(uiServerOptions(ctx, controller.signal));
     installShutdown(controller);
+    const { startUiServer } = await loadUiPackage("denext ui");
     const server = await startUiServer(options);
     activeUiServers.add(server);
     if (ctx.global.json) {

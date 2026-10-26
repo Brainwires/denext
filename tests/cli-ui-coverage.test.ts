@@ -5,7 +5,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { activeUiServers, uiCommand, uiTargetOptions } from "../src/cli/commands/ui.ts";
-import { DEFAULT_UI_PORT } from "../src/ui/server.ts";
+import { DEFAULT_UI_PORT } from "../packages/ui/src/server.ts";
 import { openCommand } from "../src/ui/open.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 import type { GlobalFlags } from "../src/cli/command.ts";

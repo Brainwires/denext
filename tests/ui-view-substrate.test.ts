@@ -1,4 +1,4 @@
-// The component substrate of `denext ui` (src/ui/view.ts, the page shell in src/ui/layout.ts and
+// The component substrate of `denext ui` (src/ui/view.ts, the page shell in packages/ui/src/layout.ts and
 // the shared pieces in src/ui/components.ts): a rendered fragment nests inside a component tree
 // without double escaping, attacker text is escaped in children and attributes, `renderPage`
 // takes every view shape, a throwing view is the server's hardened 500, the layout and the shared
@@ -8,7 +8,13 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
-import { htmlResponse, type RawHtml, renderPage, toHtml, UI_NAV_SECTIONS } from "../src/ui/html.ts";
+import {
+  htmlResponse,
+  type RawHtml,
+  renderPage,
+  toHtml,
+  UI_NAV_SECTIONS,
+} from "../packages/ui/src/html.ts";
 import {
   DiffBlock,
   FileDetails,
@@ -21,12 +27,12 @@ import {
   SourceBlock,
   Table,
 } from "../src/ui/components.ts";
-import { layout, type LayoutOptions, UI_CSS_PATH, UI_JS_PATH } from "../src/ui/layout.ts";
+import { layout, type LayoutOptions, UI_CSS_PATH, UI_JS_PATH } from "../packages/ui/src/layout.ts";
 import { Raw, renderView } from "../src/ui/view.ts";
-import { UI_ROUTES } from "../src/ui/routes.ts";
-import { startUiServer } from "../src/ui/server.ts";
+import { UI_ROUTES } from "../packages/ui/src/routes.ts";
+import { startUiServer } from "../packages/ui/src/server.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { UI_JS } from "../src/ui/client.ts";
+import { UI_JS } from "../packages/ui/src/client.ts";
 import { fromFileUrl } from "@std/path";
 import { quietDeno } from "./helpers/quiet-deno.ts";
 
@@ -414,7 +420,7 @@ function reachableWithout(graph: GraphJson, cut: (specifier: string) => boolean)
 }
 
 Deno.test("the flip adds exactly the three view modules to the UI server's graph", async () => {
-  const output = await quietDeno(["info", "--json", "src/ui/server.ts"], {
+  const output = await quietDeno(["info", "--json", "packages/ui/src/server.ts"], {
     cwd: fromFileUrl(new URL("../", import.meta.url)),
   });
   assert(output.success, output.stderr);
@@ -423,10 +429,16 @@ Deno.test("the flip adds exactly the three view modules to the UI server's graph
   // Cut the edges into the view layer: everything it reaches (the JSX runtime, the string
   // renderer) must still be reached without it — so the flip added those two files and nothing
   // else, however the rest of the UI graph grows around them.
-  const isView = (s: string) => /\/src\/ui\/(view|layout|components)\.ts$/.test(s);
+  const isView = (s: string) =>
+    /\/(src\/ui|packages\/ui\/src)\/(view|layout|components)\.ts$/.test(s);
   const without = reachableWithout(graph, isView);
-  const added = all.filter((s) => !without.has(s)).map((s) => s.replace(/^.*\/src\//, "src/"));
-  assertEquals(added.sort(), ["src/ui/components.ts", "src/ui/layout.ts", "src/ui/view.ts"]);
+  const root = new URL("../", import.meta.url).href;
+  const added = all.filter((s) => !without.has(s)).map((s) => s.slice(root.length));
+  assertEquals(added.sort(), [
+    "packages/ui/src/layout.ts",
+    "src/ui/components.ts",
+    "src/ui/view.ts",
+  ]);
   assert(
     all.some((s) => s.endsWith("src/jsx/render-to-string.ts")),
     "the renderer was in the graph",

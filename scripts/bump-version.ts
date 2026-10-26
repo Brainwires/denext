@@ -15,10 +15,12 @@
 //   - mod.ts                 export const VERSION
 //   - src/version.ts         the CLI's dependency-free copy of VERSION
 //   - packages/*/deno.json   the @denext/denext peer-dependency pins (all subpaths), and the
-//                            version of packages/docs-corpus, which IS denext's version
-//   - deno.json              the exact `jsr:@denext/docs-corpus@<version>` import (denext X.Y.Z
-//                            ships with @denext/docs-corpus X.Y.Z, rc versions included); both
-//                            are set outright even when they had drifted from the old version
+//                            versions of packages/docs-corpus and packages/ui, which ARE denext's
+//                            version (and @denext/ui's exact `jsr:@denext/denext@<version>`)
+//   - deno.json              the exact `jsr:@denext/docs-corpus@<version>` and
+//                            `jsr:@denext/ui@<version>` imports (denext X.Y.Z ships with both at
+//                            X.Y.Z, rc versions included); all are set outright even when they
+//                            had drifted from the old version
 //   - ROADMAP.md             the "development is <version>" status line
 //
 // And at a STABLE release only: the prerelease specifiers the docs teach with — README.md,
@@ -193,15 +195,23 @@ export async function bumpVersion(
   };
 }
 
-/** The docs corpus's version and denext's exact import of it (scripts/lib/docs-corpus-package.ts). */
+/**
+ * The same-version members' versions and the exact pins between them and denext
+ * (scripts/lib/jsr-pins.ts `SAME_VERSION_MEMBERS`): the docs corpus and denext's import of it,
+ * and `@denext/ui` with denext's import of it and its own import of denext.
+ */
 const CORPUS_SPOTS: Array<[file: string, re: RegExp]> = [
   ["packages/docs-corpus/deno.json", /(?<="version":\s*")[^"]*(?=")/],
   ["deno.json", /(?<="jsr:@denext\/docs-corpus@)[^"]*(?=")/],
+  ["packages/ui/deno.json", /(?<="version":\s*")[^"]*(?=")/],
+  ["packages/ui/deno.json", /(?<="jsr:@denext\/denext@)[^"]*(?=")/],
+  ["deno.json", /(?<="jsr:@denext\/ui@)[^"]*(?=")/],
 ];
 
 /**
- * Set `@denext/docs-corpus`'s version (and denext's pin of it) to `newVersion` where the
- * old-version replace did not: a spot that had drifted from `oldVersion`. One hit per spot set.
+ * Set the same-version members' versions (and the exact pins between them and denext) to
+ * `newVersion` where the old-version replace did not: a spot that had drifted from `oldVersion`.
+ * One hit per spot set.
  */
 async function syncCorpusVersion(
   oldVersion: string,
@@ -212,7 +222,7 @@ async function syncCorpusVersion(
   for (const [file, re] of CORPUS_SPOTS) {
     const text = await readOrNull(join(ROOT, file));
     const current = text === null ? null : re.exec(text)?.[0];
-    if (current === undefined) throw new Error(`${file}: no @denext/docs-corpus version to set`);
+    if (current === undefined) throw new Error(`${file}: no ${re.source} version to set`);
     if (current === null || current === oldVersion || current === newVersion) continue;
     if (!dry) await Deno.writeTextFile(join(ROOT, file), text!.replace(re, newVersion));
     out.push({ file, hits: 1 });

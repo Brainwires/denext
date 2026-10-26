@@ -1,7 +1,8 @@
-// The release's publish half (step 6 of scripts/release.ts), resumable: publish
-// `@denext/docs-corpus` <version> and wait for JSR to list it, then tag `v<version>`, push, and
-// hand over the `development → main` PR. A release that stopped part-way — JSR slow to list the
-// corpus, a network error, a closed terminal — is picked up where it stopped: run
+// The release's publish half (step 6 of scripts/release.ts), resumable: publish the members whose
+// version is denext's (`@denext/docs-corpus` and `@denext/ui` <version>, SAME_VERSION_MEMBERS) and
+// wait for JSR to list them, then tag `v<version>`, push, and hand over the `development → main`
+// PR. A release that stopped part-way — JSR slow to list them, a network error, a closed
+// terminal — is picked up where it stopped: run
 // `deno task release <version>` again (it sees the release commit and the tags already made) or
 // name the step with `--resume-from <step>`.
 
@@ -12,7 +13,13 @@ import {
 } from "./docs-corpus-package.ts";
 import { type Fetch, jsrHasVersion, type MemberPin, memberPin, missingPins } from "./jsr-pins.ts";
 
-/** The publish steps, in order. `commit` is the release commit the earlier steps prepared. */
+/** The `@denext/ui` member (packages/ui): the `denext ui` / `denext dashboard` web UI. */
+export const UI_MEMBER = "ui";
+
+/**
+ * The publish steps, in order. `commit` is the release commit the earlier steps prepared;
+ * `corpus` publishes every same-version member (`@denext/docs-corpus` and `@denext/ui`).
+ */
 export const PUBLISH_STEPS = ["commit", "corpus", "tag", "push", "pr"] as const;
 
 /** One publish step. */
@@ -171,44 +178,76 @@ async function corpusState(version: string, deps: PublishDeps): Promise<"missing
   return corpus.state;
 }
 
+/** Whether JSR lists `pin`; a JSR that cannot be asked aborts the release. */
+async function listed(pin: MemberPin, deps: PublishDeps): Promise<boolean> {
+  return await jsrHasVersion(pin.name, pin.version, deps.fetch).catch((err: Error) => {
+    throw new ReleaseAbort(`could not check ${pin.name}: ${err.message}`);
+  });
+}
+
+/** `@denext/ui`'s pin, which must be at the release's version (the bump moves both). */
+async function uiPin(target: ReleaseTarget, deps: PublishDeps): Promise<MemberPin> {
+  const pin = await memberPin(UI_MEMBER, deps.root);
+  if (pin.version !== target.version) {
+    throw new ReleaseAbort(
+      `${pin.name} is at ${pin.version}, not ${target.version} — the bump moves both ` +
+        "(scripts/bump-version.ts)",
+    );
+  }
+  return pin;
+}
+
 /**
- * The corpus step: unless JSR has `@denext/docs-corpus` <version> with this corpus, tag
- * `docs-corpus-v<version>` (unless it exists), push the branch and that tag, and wait for JSR to
- * list it — then check that what JSR serves is this tree's corpus.
+ * The same-version members this release must still publish: `@denext/docs-corpus` unless JSR has
+ * <version> with this corpus (another corpus aborts), `@denext/ui` unless JSR lists <version>.
  */
-async function corpusStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+async function pendingMembers(target: ReleaseTarget, deps: PublishDeps): Promise<MemberPin[]> {
+  const pending: MemberPin[] = [];
   if (await corpusState(target.version, deps) === "published") {
     deps.log(`   ${CORPUS_PACKAGE}@${target.version} is on JSR with this corpus`);
-    return;
-  }
-  const corpus = await memberPin("docs-corpus", deps.root);
+  } else pending.push(await memberPin("docs-corpus", deps.root));
+  const ui = await uiPin(target, deps);
+  if (await listed(ui, deps)) deps.log(`   ${ui.name}@${ui.version} is on JSR`);
+  else pending.push(ui);
+  return pending;
+}
+
+/**
+ * The corpus step: tag each same-version member JSR does not have yet (`docs-corpus-v<version>`,
+ * `ui-v<version>`, unless the tag exists), push the branch and those tags, and wait for JSR to
+ * list every one — then check that the corpus JSR serves is this tree's. The tags are pushed
+ * together, so their publish runs overlap instead of queueing one wait behind the other.
+ */
+async function corpusStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+  const pending = await pendingMembers(target, deps);
+  if (pending.length === 0) return;
   const resume = resumeCommand(target, "corpus");
-  const tag = await tagState(corpus.tag, deps);
-  deps.log(
-    `   ${corpus.name}@${corpus.version} is not on JSR: publishing it first (${corpus.tag})`,
-  );
-  if (!tag.local) {
-    const args = ["tag", "-a", corpus.tag, "-m", `${corpus.name} ${corpus.version}`];
-    await gitOrAbort(deps, args, `git tag ${corpus.tag} failed`, resume);
+  const tags: Array<{ pin: MemberPin; remote: boolean }> = [];
+  for (const pin of pending) {
+    deps.log(`   ${pin.name}@${pin.version} is not on JSR: publishing it first (${pin.tag})`);
+    const tag = await tagState(pin.tag, deps);
+    if (!tag.local) {
+      const args = ["tag", "-a", pin.tag, "-m", `${pin.name} ${pin.version}`];
+      await gitOrAbort(deps, args, `git tag ${pin.tag} failed`, resume);
+    }
+    tags.push({ pin, remote: tag.remote });
   }
   await gitOrAbort(deps, ["push", "origin", target.branch], "git push (branch) failed", resume);
-  if (!tag.remote) {
-    await gitOrAbort(
-      deps,
-      ["push", "origin", corpus.tag],
-      `git push (${corpus.tag}) failed`,
-      resume,
-    );
+  for (const { pin, remote } of tags) {
+    if (remote) continue;
+    await gitOrAbort(deps, ["push", "origin", pin.tag], `git push (${pin.tag}) failed`, resume);
   }
-  if (!await waitForJsrVersion(corpus.name, corpus.version, deps)) {
-    throw new ReleaseAbort(
-      `${corpus.tag} is pushed but jsr.io does not list ${corpus.name}@${corpus.version} yet ` +
-        `(check publish.yml's run). The release commit is pushed; once JSR lists it, resume:\n` +
-        `  ${resume}`,
-    );
+  for (const { pin } of tags) {
+    if (!await waitForJsrVersion(pin.name, pin.version, deps)) {
+      throw new ReleaseAbort(
+        `${pin.tag} is pushed but jsr.io does not list ${pin.name}@${pin.version} yet ` +
+          `(check publish.yml's run). The release commit is pushed; once JSR lists it, resume:\n` +
+          `  ${resume}`,
+      );
+    }
   }
-  // Listed is not enough: what JSR serves must be this tree's corpus.
-  await corpusState(target.version, deps);
+  // Listed is not enough for the corpus: what JSR serves must be this tree's corpus.
+  if (pending.some((pin) => pin.name === CORPUS_PACKAGE)) await corpusState(target.version, deps);
 }
 
 /** The tag step: refuse while a pinned member is not on JSR, else tag `v<version>`. */

@@ -1,4 +1,4 @@
-// The dev server's retained output (`src/ui/dev-log.ts`).
+// The dev server's retained output (`packages/ui/src/dev-log.ts`).
 //
 // This buffer is what makes a started dev server visible at all: SSE frames only reach a page
 // that is already listening, and both a no-JS navigation and a JS-on panel swap end that
@@ -6,7 +6,7 @@
 // isolation, and that clearing one project does not touch another.
 
 import { assert, assertEquals } from "@std/assert";
-import { clearDevLog, devLog, devLogText, recordDevLine } from "../src/ui/dev-log.ts";
+import { clearDevLog, devLog, devLogText, recordDevLine } from "../packages/ui/src/dev-log.ts";
 
 Deno.test("dev-log: lines come back in order, as text for a <pre>", () => {
   const dir = `/tmp/denext-dev-log-order-${crypto.randomUUID()}`;

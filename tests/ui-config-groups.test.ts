@@ -16,8 +16,8 @@ import {
   isConfigGroup,
   ownedElsewhere,
   visibleSections,
-} from "../src/ui/features/config-groups.ts";
-import { matchesTerms, matchNote } from "../src/ui/filter.ts";
+} from "../packages/ui/src/features/config-groups.ts";
+import { matchesTerms, matchNote } from "../packages/ui/src/filter.ts";
 
 /** Every top-level key the config schema describes. */
 function schemaKeys(): string[] {

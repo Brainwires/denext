@@ -12,9 +12,9 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { exists, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
-import { type DoctorCheck, setDoctorRunner } from "../src/ui/features/setup.ts";
-import { envExampleSource, envNamesIn, scanEnvUsage } from "../src/ui/env-scan.ts";
-import { readDenoConfig, taskMap } from "../src/ui/tasks.ts";
+import { type DoctorCheck, setDoctorRunner } from "../packages/ui/src/features/setup.ts";
+import { envExampleSource, envNamesIn, scanEnvUsage } from "../packages/ui/src/env-scan.ts";
+import { readDenoConfig, taskMap } from "../packages/ui/src/tasks.ts";
 import { FEATURES } from "../src/cli/commands/create.ts";
 
 /** The step ids, in the order Setup must present them. */

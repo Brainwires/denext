@@ -34,7 +34,7 @@ import type {
 import { postgresEnvironment as environment } from "./helpers/postgres-env.ts";
 import { verifyPassword } from "../src/server/auth/password.ts";
 import { isBanned } from "../src/server/auth/ban.ts";
-import { startUiServer } from "../src/ui/server.ts";
+import { startUiServer } from "../packages/ui/src/server.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 

@@ -196,7 +196,7 @@ Deno.test("--json prints the listing document the UI consumes", async () => {
     });
     assertEquals(codes, [0]);
     // Pretty-printed, so the document opens and closes on bare brace lines — which is how
-    // `src/ui/features/commands.ts` lifts it out of the child's combined output.
+    // `packages/ui/src/features/commands.ts` lifts it out of the child's combined output.
     assert(out.startsWith("{\n"), out.slice(0, 40));
     assert(out.trimEnd().endsWith("\n}"));
     const listing = JSON.parse(out) as { project: { name: string }[]; timedOut: boolean };

@@ -11,7 +11,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { exists, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
-import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/database.ts";
+import { type DbChildRunner, setDbChildRunner } from "../packages/ui/src/features/database.ts";
 import type { DbEnvelope, DbReplies, DbReply, DbTableInfo } from "../src/ui/database/protocol.ts";
 
 /** A project that uses Postgres (the Database section applies). */

@@ -1,4 +1,4 @@
-// `denext ui` in a real browser — the first thing that ever EXECUTES `src/ui/client.ts`.
+// `denext ui` in a real browser — the first thing that ever EXECUTES `packages/ui/src/client.ts`.
 //
 // Every other UI test drives the server the way a JavaScript-disabled browser would: real form
 // posts, real `303`s. That is the guarantee the UI is built around, and it is well covered. But
@@ -12,7 +12,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../../packages/ui/src/server.ts";
 import { assertNoConsoleErrors, collectConsoleErrors, launchBrowser, pollFor } from "./harness.ts";
 
 /** A project directory with a `deno.json`. */

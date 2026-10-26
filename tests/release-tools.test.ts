@@ -4,7 +4,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
-import { publishedFiles } from "./_published-files.ts";
+import { publishedFiles, publishedMemberFiles } from "./_published-files.ts";
 import {
   bumpVersion,
   currentVersionPattern,
@@ -46,9 +46,14 @@ Deno.test("bumpVersion (dry) finds the current version in the target files and r
     result.changed.some((c) => c.file === "packages/docs-corpus/deno.json"),
     "the docs corpus's version moves with denext's",
   );
+  // So is @denext/ui: its manifest (its version and its exact import of denext) moves too.
   assert(
-    result.changed.find((c) => c.file === "deno.json")!.hits >= 2,
-    "root deno.json: the version and the jsr:@denext/docs-corpus@<version> import",
+    result.changed.find((c) => c.file === "packages/ui/deno.json")!.hits >= 2,
+    "@denext/ui's version and its jsr:@denext/denext@<version> import move with denext's",
+  );
+  assert(
+    result.changed.find((c) => c.file === "deno.json")!.hits >= 3,
+    "root deno.json: the version and the docs-corpus and ui <version> imports",
   );
   assert(result.total >= result.changed.length);
   const out = await captured(() => printBumpResult(result, true));
@@ -294,13 +299,31 @@ Deno.test("the release gate re-checks only the release's own changes unless --fu
 
 Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async () => {
   // JSR refuses a package over 20 MiB at upload (its hard limit), after the tag is pushed
-  // (4.0.0's first two publishes). Sum what `deno publish` sends against a guard below that limit.
-  // The guard was 19 MiB; 4.9.0 grew past it, so it is 19.6 MiB while the quota increase asked of
-  // JSR on 2026-10-25 is pending. Splitting the package is 5.0 work.
+  // (4.0.0's first two publishes). Sum what `deno publish` sends against a guard 1 MiB below that
+  // limit. 4.9.0 grew past it (19.3 MiB); moving the `denext ui` web UI into @denext/ui brought it
+  // back under.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
-  assert(mib < 19.6, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+  assert(mib < 19, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+});
+
+Deno.test("the @denext/ui package stays small, and ships what it imports", async () => {
+  // The UI left @denext/denext to keep it under JSR's cap; it must not become the next package to
+  // reach it (it is under 1 MiB). And every module the package reaches is in its publish set.
+  const files = await publishedMemberFiles("ui");
+  if (!files) return;
+  const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
+  assert(mib < 4, `@denext/ui is ${mib.toFixed(2)} MiB; keep it well under JSR's 20 MiB cap`);
+  assert(files.has("mod.ts") && files.has("deno.json") && files.has("src/server.ts"));
+  for (const [file] of files) {
+    if (!file.endsWith(".ts")) continue;
+    const text = await Deno.readTextFile(new URL(`../packages/ui/${file}`, import.meta.url));
+    for (const m of text.matchAll(/(?:from|import\()\s*"(\.[^"]+)"/g)) {
+      const target = new URL(m[1], new URL(`https://ui.invalid/${file}`)).pathname.slice(1);
+      assert(files.has(target), `${file} imports ${m[1]}, which @denext/ui does not publish`);
+    }
+  }
 });
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */

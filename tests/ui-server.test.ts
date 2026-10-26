@@ -4,16 +4,16 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { basename, fromFileUrl, join } from "@std/path";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import { cliInvocation } from "../src/ui/proc.ts";
-import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
+import { projectTasks, UI_ROUTES } from "../packages/ui/src/routes.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { DATABASE_NAV_HREF, toHtml, UI_NAV, UI_TITLE_HEADER } from "../src/ui/html.ts";
+import { DATABASE_NAV_HREF, toHtml, UI_NAV, UI_TITLE_HEADER } from "../packages/ui/src/html.ts";
 import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { DiffBlock, OpForm } from "../src/ui/components.ts";
 import { Raw, renderView } from "../src/ui/view.ts";
-import { decodePatch } from "../src/ui/features/config.ts";
+import { decodePatch } from "../packages/ui/src/features/config.ts";
 import { FormField, readWidget } from "../src/ui/form/render.ts";
 import { branchFor, itemSchema, loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
 import { widgetFor } from "../src/ui/form/widget.ts";

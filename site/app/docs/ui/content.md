@@ -5,8 +5,11 @@ lead: denext ui serves a loopback GUI for the project in front of you — a sche
 ---
 
 `denext ui` is a browser GUI for the project you are standing in — the `vue ui` idea,
-served by denext's own CLI. It ships inside the package, works on a fresh clone with
-nothing installed, and binds loopback only.
+served by denext's own CLI. It works on a fresh clone with nothing installed, and binds
+loopback only. The UI itself is the `@denext/ui` package, pinned to exactly the CLI's version and
+loaded the first time `denext ui` or `denext dashboard` runs: the `denext` binary carries it, and a
+CLI run from JSR fetches it once (`deno cache jsr:@denext/ui@<version>` fetches it ahead), after
+which it works offline. Without a network on that first run the verb stops and says so.
 
 ```sh
 denext ui                    # serve the current project and open a browser
@@ -377,7 +380,7 @@ the options interface the package exports (see
 filled in.
 
 The plugin's call is read and written through
-[`src/build/call-args-edit.ts`](https://github.com/Brainwires/denext/blob/main/src/build/call-args-edit.ts):
+[`packages/ui/src/edit/call-args-edit.ts`](https://github.com/Brainwires/denext/blob/main/packages/ui/src/edit/call-args-edit.ts):
 the same swc splice as the config writer, so the config is never evaluated and every byte an
 edit does not touch — comments, the other plugins, the code around the call — stays.
 `openapi()` becomes `openapi({ path: "/spec.json" })`; an existing `openapi({ … })` has
@@ -528,7 +531,7 @@ takes a name and an image, a build context or both. **Named volumes and networks
 drops the top-level `volumes:` and `networks:` entries; dropping one a service still uses is
 refused.
 
-Nothing is regenerated. [`src/build/compose-edit.ts`](https://github.com/Brainwires/denext/blob/main/src/build/compose-edit.ts)
+Nothing is regenerated. [`packages/ui/src/edit/compose-edit.ts`](https://github.com/Brainwires/denext/blob/main/packages/ui/src/edit/compose-edit.ts)
 parses the file with `@std/yaml` to validate it, locates each service and field line by line
 with an indentation-aware scan keyed on the parsed names, splices only the lines an edit
 touches, then re-parses the result and compares it with the same change applied to the

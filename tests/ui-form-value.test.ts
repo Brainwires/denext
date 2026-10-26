@@ -29,7 +29,7 @@ import {
   OpButton,
   type OpButtonOptions,
 } from "../src/ui/form/control.ts";
-import { toHtml } from "../src/ui/html.ts";
+import { toHtml } from "../packages/ui/src/html.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Raw, type RawHtml, renderView } from "../src/ui/view.ts";
 

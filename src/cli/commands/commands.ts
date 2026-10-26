@@ -10,7 +10,7 @@
 //   * `denext --help` imports nothing: it lists what THIS verb last found, from the cache
 //     it writes, and points here when there is no listing to trust.
 //   * `denext ui` shells out to THIS verb as a `deno` subprocess, so project code never runs
-//     inside the UI's privileged server (see `src/ui/features/commands.ts`).
+//     inside the UI's privileged server (see `packages/ui/src/features/commands.ts`).
 //
 // Because a plugin `setup()` is arbitrary user code that may leave a timer, a watcher or a
 // listener open, the verb ALWAYS `Deno.exit`s once it has printed: a leaked handle can neither

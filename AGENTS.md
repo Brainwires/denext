@@ -483,6 +483,9 @@ own verbs. It works with JavaScript disabled, and
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
 discovery child. `--offline` keeps the UI and every process it starts off the network.
+The UI itself is the `@denext/ui` package, pinned to the CLI's own version and loaded on the first
+`denext ui` / `denext dashboard` (the `denext` binary embeds it; a CLI run from JSR fetches it once,
+then works offline; `deno cache jsr:@denext/ui@<version>` fetches it ahead).
 Docs: https://denext.dev/docs/ui
 
 **A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `runtimePlatform()`

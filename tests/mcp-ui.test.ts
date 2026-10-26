@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { UI_ROUTES } from "../src/ui/routes.ts";
+import { UI_ROUTES } from "../packages/ui/src/routes.ts";
 import { panelOf, UI_PANELS } from "../src/ui/panels.ts";
 import { UI_TOOL_NAMES, UiBridge, uiCallRefusal, uiTools } from "../src/mcp/ui.ts";
 import { TOOL_GROUPS, TOOLS } from "../src/mcp/tools.ts";

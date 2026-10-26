@@ -21,7 +21,7 @@ import {
   uiSafeUnder,
   writeFileAtomic,
 } from "../src/ui/security.ts";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
 

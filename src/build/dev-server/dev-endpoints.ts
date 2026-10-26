@@ -182,7 +182,7 @@ const EVENT_KINDS: readonly DevEventKind[] = ["error", "console", "request", "hm
  * GET /_denext/dev-state — the recent dev events (server errors + browser console), plus the
  * server's identity (`pid`, `projectDir`). The identity is what lets an out-of-process reader
  * that found this origin through `.denext/dev.json` prove the server answering is the one that
- * file describes, before it signals the pid the file names (`src/ui/dev-stop.ts`).
+ * file describes, before it signals the pid the file names (`@denext/ui`'s `src/dev-stop.ts`).
  */
 export function devStateResponse(st: DevLogHost, url: URL): Response {
   const kindParam = url.searchParams.get("kind") as DevEventKind | null;

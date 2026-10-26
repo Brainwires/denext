@@ -1,0 +1,18 @@
+{
+  "name": "@denext/ui",
+  "version": "4.8.0",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "imports": {
+    "@denext/denext": "jsr:@denext/denext@4.8.0",
+    "@std/encoding": "jsr:@std/encoding@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0",
+    "@std/jsonc": "jsr:@std/jsonc@^1.0.0",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/yaml": "jsr:@std/yaml@^1.0.0"
+  },
+  "denext": { "catalog": { "kind": "library" } },
+  "publish": {
+    "include": ["mod.ts", "src/", "README.md", "CHANGELOG.md", "LICENSE", "deno.json"]
+  }
+}

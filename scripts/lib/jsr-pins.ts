@@ -1,8 +1,9 @@
 // The workspace members `@denext/denext` imports at run time. `deno publish` rewrites each bare
 // `@denext/<name>` specifier to `jsr:@denext/<name>@^<that member's version>` (`@denext/docs-corpus`
-// to the exact `jsr:@denext/docs-corpus@<denext's version>` root deno.json maps it to), so a
-// denext release is broken on arrival when one of those versions is not on JSR yet (4.1.0's
-// `@denext/og`). The release script refuses to tag until every pin resolves (scripts/release.ts).
+// and `@denext/ui` to the exact `jsr:@denext/<name>@<denext's version>` root deno.json maps them
+// to), so a denext release is broken on arrival when one of those versions is not on JSR yet (4.1.0's
+// `@denext/og`). The release script refuses to tag until every pin resolves
+// (scripts/release.ts).
 
 import { fromFileUrl, join } from "@std/path";
 
@@ -12,7 +13,14 @@ const ROOT = fromFileUrl(new URL("../../", import.meta.url));
  * The `packages/<dir>` members the published framework imports (tests/release-tools.test.ts
  * checks this list against the published sources' `@denext/*` specifiers).
  */
-export const RUNTIME_MEMBERS: readonly string[] = ["avif", "docs-corpus", "og", "photon"];
+export const RUNTIME_MEMBERS: readonly string[] = ["avif", "docs-corpus", "og", "photon", "ui"];
+
+/**
+ * The `packages/<dir>` members whose version IS denext's: denext X.Y.Z imports exactly
+ * `@denext/<name>` X.Y.Z, `deno task bump` moves them with denext, and the release publishes each
+ * one (`<dir>-v<version>`) before it tags `v<version>` (scripts/lib/release-publish.ts).
+ */
+export const SAME_VERSION_MEMBERS: readonly string[] = ["docs-corpus", "ui"];
 
 /** One pinned member: its JSR name, the version a release would pin, and its release tag. */
 export interface MemberPin {

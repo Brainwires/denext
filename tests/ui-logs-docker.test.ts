@@ -8,8 +8,8 @@
 // The same paths run against a fake Engine in tests/ui-logs.test.ts.
 
 import { assert, assertEquals } from "@std/assert";
-import { containerLogs, projectServices, socketGet } from "../src/ui/logs/engine.ts";
-import { relayHandler } from "../src/ui/logs/relay.ts";
+import { containerLogs, projectServices, socketGet } from "../packages/ui/src/logs/engine.ts";
+import { relayHandler } from "../packages/ui/src/logs/relay.ts";
 
 const SOCKET = Deno.env.get("DENEXT_TEST_DOCKER_SOCKET") ?? "/var/run/docker.sock";
 const IMAGE = Deno.env.get("DENEXT_TEST_DOCKER_IMAGE") ?? "postgres:17-alpine";

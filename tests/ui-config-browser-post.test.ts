@@ -13,8 +13,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
-import type { UiContext } from "../src/ui/html.ts";
-import { configPanel } from "../src/ui/features/config.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
+import { configPanel } from "../packages/ui/src/features/config.ts";
 import { browserPost, formsWith, unescapeAttr as unescape } from "./helpers/browser-form.ts";
 
 /** A config that sets a few keys in every view, and one key the schema does not know. */

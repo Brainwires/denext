@@ -12,7 +12,7 @@
 // rendered; and nothing writes project files.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import {
   DASH_COOKIE,
   DASH_LOGIN_COOKIE,
@@ -20,9 +20,9 @@ import {
   DashboardGate,
   dashboardLogin,
   LoginLimiter,
-} from "../src/ui/dashboard.ts";
+} from "../packages/ui/src/dashboard.ts";
 import { UI_CSRF_FIELD, uiOriginAllowed } from "../src/ui/security.ts";
-import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/database.ts";
+import { type DbChildRunner, setDbChildRunner } from "../packages/ui/src/features/database.ts";
 import type { DbEnvelope, DbReply } from "../src/ui/database/protocol.ts";
 
 const PASSWORD = "correct horse battery staple";

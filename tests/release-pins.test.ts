@@ -13,7 +13,13 @@ import {
   moduleSourceHash,
   publishedSourceHash,
 } from "../scripts/lib/docs-corpus-package.ts";
-import { jsrHasVersion, memberPin, missingPins, RUNTIME_MEMBERS } from "../scripts/lib/jsr-pins.ts";
+import {
+  jsrHasVersion,
+  memberPin,
+  missingPins,
+  RUNTIME_MEMBERS,
+  SAME_VERSION_MEMBERS,
+} from "../scripts/lib/jsr-pins.ts";
 import { pinRefusal } from "../scripts/release.ts";
 import { publishedFiles } from "./_published-files.ts";
 
@@ -127,6 +133,21 @@ Deno.test("docs-corpus version: it is denext's version, and denext imports exact
   // No caret: an older denext must never resolve a newer corpus. The workspace member satisfies
   // the exact specifier locally only while the versions match.
   assertEquals(root.imports[CORPUS_PACKAGE], `jsr:${CORPUS_PACKAGE}@${root.version}`);
+});
+
+Deno.test("ui version: denext's version, pinned exactly both ways", async () => {
+  const root = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
+  const ui = JSON.parse(
+    await Deno.readTextFile(new URL("../packages/ui/deno.json", import.meta.url)),
+  );
+  assertEquals(ui.name, "@denext/ui");
+  assertEquals(ui.version, root.version, "deno task bump moves @denext/ui with denext");
+  // denext X.Y.Z loads exactly @denext/ui X.Y.Z, which imports exactly @denext/denext X.Y.Z: the
+  // UI is built on denext's internals (`internal/ui-host`), so the pair must never mix versions.
+  assertEquals(root.imports["@denext/ui"], `jsr:@denext/ui@${root.version}`);
+  assertEquals(ui.imports["@denext/denext"], `jsr:@denext/denext@${root.version}`);
+  assertEquals(root.exports["./internal/ui-host"], "./src/ui/host.ts");
+  assert(SAME_VERSION_MEMBERS.includes("ui") && RUNTIME_MEMBERS.includes("ui"));
 });
 
 Deno.test("docs-corpus version: the module's source hash, and the manifest's version", async () => {

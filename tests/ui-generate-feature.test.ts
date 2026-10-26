@@ -8,11 +8,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { generatePanel } from "../src/ui/features/generate.ts";
-import type { UiContext } from "../src/ui/html.ts";
+import { generatePanel } from "../packages/ui/src/features/generate.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
 import { GENERATE_KINDS } from "../src/build/generate.ts";
 import { stubExit } from "./_cli-coverage-helpers.ts";
 import { symlinkDir } from "./helpers/symlink.ts";

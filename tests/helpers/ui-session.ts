@@ -6,7 +6,7 @@
 // the CSRF token from the cookie's secret the way the server does.
 
 import { deriveCsrf, UI_COOKIE } from "../../src/ui/security.ts";
-import type { UiServer } from "../../src/ui/server.ts";
+import type { UiServer } from "../../packages/ui/src/server.ts";
 
 /** What one handshake left a test holding. */
 export interface UiCredentials {

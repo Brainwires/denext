@@ -718,7 +718,7 @@ function dashboardService(options: StackOptions, port: number): string {
 /**
  * The dashboard's log relay: the only service with the Docker socket. It answers the dashboard
  * alone (a network of their own, no published port) and only two GETs, for this project's own
- * services: their names and their logs (`src/ui/logs/relay.ts`). It runs as root to read the
+ * services: their names and their logs (`@denext/ui`'s `src/logs/relay.ts`). It runs as root to read the
  * socket; `DOCKER_SOCKET` in `.env` points it at another one (rootless Docker, Podman).
  */
 function dashboardLogsService(options: StackOptions): string {

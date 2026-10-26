@@ -10,8 +10,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
-import type { UiContext } from "../src/ui/html.ts";
-import { desktopPanel, shellQuote } from "../src/ui/features/desktop.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
+import { desktopPanel, shellQuote } from "../packages/ui/src/features/desktop.ts";
 
 /** A project, optionally scaffolded for desktop packaging. */
 async function project(scaffolded: boolean): Promise<string> {

@@ -4,15 +4,15 @@
 // cross-site, and under `--read-only` — before its handler runs. And every route that answers a
 // GET must leave the project directory byte for byte as it found it: a read never writes.
 //
-// The table is read from `src/ui/routes.ts`, so a route added later is covered the day it
+// The table is read from `packages/ui/src/routes.ts`, so a route added later is covered the day it
 // appears, and a route that slips out of the central chain (`server.ts`) fails here by name.
 
 import { assert, assertEquals } from "@std/assert";
 import { walk } from "@std/fs";
 import { join, relative } from "@std/path";
 import { encodeHex } from "@std/encoding/hex";
-import { UI_ROUTES } from "../src/ui/routes.ts";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { UI_ROUTES } from "../packages/ui/src/routes.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import { isMutation, UI_CSRF_HEADER } from "../src/ui/security.ts";
 
 /** A started server and the credentials a browser would be holding after the handshake. */

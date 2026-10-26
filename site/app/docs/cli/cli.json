@@ -2572,7 +2572,7 @@
         {
           "name": "ui-dev",
           "type": "boolean",
-          "description": "Internal: watch src/ui and reload open pages on change"
+          "description": "Internal: watch @denext/ui's sources and reload open pages on change"
         }
       ],
       "positionals": [

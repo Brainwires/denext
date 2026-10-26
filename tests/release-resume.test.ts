@@ -187,6 +187,73 @@ Deno.test("release resume: a stopped corpus wait names the command that resumes 
   assertEquals(await detectResume(TARGET, d), "pr");
 });
 
+Deno.test("release publish: @denext/ui is tagged with the corpus, and both are awaited", async () => {
+  const git = new FakeGit();
+  const listing = await pinnedListing(false);
+  const ui = await memberPin("ui");
+  delete listing[ui.name];
+  const jsr = new FakeJsr(listing);
+  // JSR lists the corpus after 20 minutes and the UI after 40: the release waits for both.
+  const { d, logs, elapsed } = deps(git, jsr, (now) => {
+    if (now >= 20 * MINUTE) jsr.list(CORPUS_PACKAGE, VERSION);
+    if (now >= 40 * MINUTE) jsr.list(ui.name, VERSION);
+  });
+  await publishFrom(TARGET, "corpus", d);
+  const corpus = await memberPin("docs-corpus");
+  assertEquals(git.calls, [
+    `tag -a ${corpus.tag} -m ${corpus.name} ${corpus.version}`,
+    `tag -a ${ui.tag} -m ${ui.name} ${ui.version}`,
+    // One branch push, then both member tags together: their publish runs overlap.
+    "push origin development",
+    `push origin ${corpus.tag}`,
+    `push origin ${ui.tag}`,
+    `tag -a ${TARGET.tag} -m denext ${VERSION}`,
+    "push origin development",
+    `push origin ${TARGET.tag}`,
+  ]);
+  assertEquals(ui.tag, `ui-v${VERSION}`);
+  assert(elapsed() >= 40 * MINUTE, "waited for the UI too");
+  assert(logs.some((l) => l.includes(`${ui.name}@${VERSION} is not on JSR`)), logs.join("\n"));
+});
+
+Deno.test("release publish: a @denext/ui JSR already lists is not published again", async () => {
+  const git = new FakeGit();
+  const jsr = new FakeJsr(await pinnedListing(true));
+  const { d, logs } = deps(git, jsr);
+  await publishFrom(TARGET, "corpus", d);
+  assertEquals(git.calls, [
+    `tag -a ${TARGET.tag} -m denext ${VERSION}`,
+    "push origin development",
+    `push origin ${TARGET.tag}`,
+  ]);
+  assert(logs.some((l) => l.includes(`@denext/ui@${VERSION} is on JSR`)), logs.join("\n"));
+});
+
+Deno.test("release publish: a @denext/ui at another version than the release's stops it", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    for (const dir of RUNTIME_MEMBERS) {
+      const pin = await memberPin(dir);
+      const version = dir === "ui" ? "0.0.1" : pin.version;
+      await Deno.mkdir(`${root}/packages/${dir}`, { recursive: true });
+      await Deno.writeTextFile(
+        `${root}/packages/${dir}/deno.json`,
+        JSON.stringify({ name: pin.name, version }),
+      );
+    }
+    const git = new FakeGit();
+    const { d } = deps(git, new FakeJsr(await pinnedListing(true)));
+    const err = await assertRejects(
+      () => publishFrom(TARGET, "corpus", { ...d, root }),
+      ReleaseAbort,
+    );
+    assertStringIncludes(err.message, `@denext/ui is at 0.0.1, not ${VERSION}`);
+    assertEquals(git.calls, [], "nothing tagged or pushed");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("release resume: a failed push resumes at the push, with the tag already made", async () => {
   const git = new FakeGit();
   const jsr = new FakeJsr(await pinnedListing(true));

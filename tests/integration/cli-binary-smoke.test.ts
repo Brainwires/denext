@@ -1,6 +1,6 @@
 // The installed `denext` binary, verb by verb, with nothing but the binary: `--version`,
 // `migrate --check` and `migrate` on a small Next.js app, `create`, `generate`, `routes`,
-// `patch … denext`, `build` and the MCP server. A `deno compile`d CLI carries only the files scripts/compile-cli.ts embeds;
+// `patch … denext`, `build`, the MCP server and `denext ui` (its embedded `@denext/ui`). A `deno compile`d CLI carries only the files scripts/compile-cli.ts embeds;
 // the 4.5.1 binary embedded no `deno.json`, so `migrate` stopped at "could not read the framework
 // version" and the MCP server answered version 0.0.0 with no `denext://guide`, while every test
 // that ran the CLI from source passed.
@@ -124,6 +124,38 @@ Deno.test({
         assertEquals(byId.get(1)?.result?.serverInfo?.version, VERSION, err);
         const guide = byId.get(2)?.result?.contents?.[0]?.text as string | undefined;
         assert(guide?.startsWith("# Writing denext apps"), JSON.stringify(byId.get(2)) + err);
+      });
+
+      await t.step("ui serves from the @denext/ui the binary embeds", async () => {
+        // `denext ui` loads @denext/ui by a dynamic import; `deno compile` embeds it, so the
+        // binary serves the UI without fetching the package.
+        const child = new Deno.Command(bin, {
+          args: ["ui", "--no-open", "--json", "--port", "0"],
+          cwd: tmp,
+          env: { NO_COLOR: "1" },
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+        }).spawn();
+        try {
+          const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+          let text = "";
+          while (!text.includes("\n")) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            text += value;
+          }
+          reader.releaseLock();
+          const { url } = JSON.parse(text.split("\n")[0]) as { url: string };
+          const res = await fetch(url, { redirect: "manual" });
+          await res.body?.cancel();
+          assert(res.status < 400, `GET ${url}: ${res.status}`);
+        } finally {
+          child.kill("SIGTERM");
+          await child.status;
+          await child.stderr.cancel().catch(() => {});
+          await child.stdout.cancel().catch(() => {});
+        }
       });
 
       const app = join(tmp, "app");

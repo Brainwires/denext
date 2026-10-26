@@ -20,9 +20,14 @@ import {
   relayToken,
   secretValues,
   setDockerRunner,
-} from "../src/ui/logs/source.ts";
-import { relayHandler, startLogsRelay } from "../src/ui/logs/relay.ts";
-import { demux, type EngineGet, projectServices, timestamped } from "../src/ui/logs/engine.ts";
+} from "../packages/ui/src/logs/source.ts";
+import { relayHandler, startLogsRelay } from "../packages/ui/src/logs/relay.ts";
+import {
+  demux,
+  type EngineGet,
+  projectServices,
+  timestamped,
+} from "../packages/ui/src/logs/engine.ts";
 
 const PASSWORD = "dashboard password 1234";
 
@@ -338,7 +343,7 @@ Deno.test("the real docker runner: a machine without docker gets the hint, not a
   // docker on any OS.
   const empty = await Deno.makeTempDir({ prefix: "dnx-no-docker-" });
   try {
-    const source = new URL("../src/ui/logs/source.ts", import.meta.url).href;
+    const source = new URL("../packages/ui/src/logs/source.ts", import.meta.url).href;
     const code = `const { setDockerRunner } = await import(${JSON.stringify(source)});
 const real = setDockerRunner(() => Promise.reject(new Error("unused")));
 try { await real(["--version"], ".", undefined); console.log("ran"); }

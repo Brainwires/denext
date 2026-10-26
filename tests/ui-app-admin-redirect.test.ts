@@ -5,7 +5,7 @@
 // fetch.
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { adminStatus, appProbe } from "../src/ui/app-admin.ts";
+import { adminStatus, appProbe } from "../packages/ui/src/app-admin.ts";
 
 /** A loopback server for the test's lifetime. */
 function serve(handler: (req: Request) => Response): { url: string; close: () => Promise<void> } {

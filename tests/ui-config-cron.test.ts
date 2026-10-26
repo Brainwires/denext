@@ -8,14 +8,14 @@
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
-import type { UiContext } from "../src/ui/html.ts";
-import { parseJsonDocument } from "../src/ui/child-json.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
+import { parseJsonDocument } from "../packages/ui/src/child-json.ts";
 import {
   cronPanel,
   nextRuns,
   setCronDiscoveryBudget,
   setCronHistoryBudget,
-} from "../src/ui/features/config-cron.ts";
+} from "../packages/ui/src/features/config-cron.ts";
 import { jobHistoryRecorder, readJobHistory } from "../src/server/job-history.ts";
 import { browserPost, formContaining } from "./helpers/browser-form.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";

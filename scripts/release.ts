@@ -33,8 +33,9 @@
 //      lint + the full suite) green on HEAD, so only the release's own changes are re-checked —
 //      fmt, lint and RELEASE_DELTA_TESTS. publish.yml runs the same delta gate on the tagged
 //      release commit (scripts/publish-verify.ts). `--full-gate` runs `deno task check` instead.
-//   6. confirm  → git add -A, commit; when @denext/docs-corpus <version> is not on JSR, tag
-//      docs-corpus-v<version>, push branch + that tag and wait for JSR to list it; REFUSE to tag
+//   6. confirm  → git add -A, commit; for each same-version member not on JSR yet
+//      (@denext/docs-corpus, @denext/ui: scripts/lib/jsr-pins.ts SAME_VERSION_MEMBERS), tag
+//      <member>-v<version>, push branch + those tags and wait for JSR to list them; REFUSE to tag
 //      while any workspace member denext imports at run time (scripts/lib/jsr-pins.ts) pins a
 //      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
 //      v<version> and push branch + tag
@@ -43,7 +44,7 @@
 // version with backoff for up to 3 hours —, a failed push, a closed terminal) resumes where it
 // stopped: run the same command again. It sees the release commit on HEAD and the tags already
 // made, and runs only the remaining steps (scripts/lib/release-publish.ts): `corpus` (publish and
-// wait for @denext/docs-corpus), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
+// wait for @denext/docs-corpus and @denext/ui), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
 // Every resume requires the gate-pass marker step 5 records (in the git directory: the release,
 // the CI-green base commit and the gated tree's hash), matching the tree it would publish; without
 // one it refuses, and `--regate` re-runs step 0 and step 5 on the tree first.
@@ -71,7 +72,13 @@ import {
   type CorpusRelease,
   corpusReleaseState,
 } from "./lib/docs-corpus-package.ts";
-import { jsrHasVersion, missingPins } from "./lib/jsr-pins.ts";
+import {
+  jsrHasVersion,
+  type MemberPin,
+  memberPin,
+  missingPins,
+  SAME_VERSION_MEMBERS,
+} from "./lib/jsr-pins.ts";
 import {
   detectResume,
   gateMarkerName,
@@ -457,8 +464,9 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
     return null;
   });
   if (missing) {
-    // The corpus is pinned at the release's version (step 6 publishes it), not the tree's.
-    const others = missing.filter((p) => p.name !== CORPUS_PACKAGE);
+    // The same-version members are pinned at the release's version (step 6 publishes them), not
+    // the tree's.
+    const others = await notReleasedHere(missing);
     console.log(
       others.length
         ? `6. JSR pins not published yet: ${others.map((p) => p.tag).join(", ")}`
@@ -472,6 +480,17 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
           : corpusOnJsr
           ? "already on JSR (its source hash must match the regenerated corpus)"
           : `not on JSR — a real run publishes docs-corpus-v${version} first`
+      }`,
+    );
+    const ui = await memberPin("ui");
+    const uiOnJsr = await jsrHasVersion(ui.name, version).catch(() => null);
+    console.log(
+      `6. ${ui.name}@${version}: ${
+        uiOnJsr === null
+          ? "could not ask JSR"
+          : uiOnJsr
+          ? "already on JSR"
+          : `not on JSR — a real run publishes ui-v${version} first`
       }`,
     );
   }
@@ -654,14 +673,22 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
   }
   const existing = await capture("git", "tag", "--list", tag);
   if (existing) die(`tag ${tag} already exists`);
-  // The release publishes a new docs corpus itself (step 6); any other unpublished pin stops it
-  // here, before anything changes.
-  const others = (await missingPins()).filter((p) => p.name !== CORPUS_PACKAGE);
+  // The release publishes the same-version members itself (step 6); any other unpublished pin
+  // stops it here, before anything changes.
+  const others = await notReleasedHere(await missingPins());
   const refusal = pinRefusal(others, tag);
   if (refusal) die(refusal);
   if (branch !== "development") {
     console.warn(`release: warning — on branch "${branch}", not "development".`);
   }
+}
+
+/** The missing pins a release does not publish itself (all but the same-version members). */
+async function notReleasedHere(missing: MemberPin[]): Promise<MemberPin[]> {
+  const own = new Set(
+    await Promise.all(SAME_VERSION_MEMBERS.map(async (dir) => (await memberPin(dir)).name)),
+  );
+  return missing.filter((p) => !own.has(p.name));
 }
 
 /**
@@ -778,14 +805,7 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   for (const task of RELEASE_REGEN_TASKS) {
     if (await run("deno", "task", task) !== 0) die(`${task} failed — release aborted.`);
   }
-  const corpus = await checkCorpus(version);
-  console.log(
-    `3a. ${CORPUS_PACKAGE}@${version}: ${
-      corpus.state === "missing"
-        ? "not on JSR yet — step 6 publishes it"
-        : "already on JSR with this corpus"
-    }`,
-  );
+  await checkSameVersionMembers(version);
   console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");
   if (await run("deno", "task", "badge:tests") !== 0) {
     die("badge:tests failed — release aborted (changes left in tree).");
@@ -801,6 +821,11 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
   if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
     die("publish dry-run failed — release aborted BEFORE tagging.");
+  }
+  // @denext/ui publishes from its own config (step 6 tags ui-v<version> before v<version>).
+  const uiDry = ["publish", "--dry-run", "--allow-dirty", "--config", "packages/ui/deno.json"];
+  if (await run("deno", ...uiDry) !== 0) {
+    die("@denext/ui publish dry-run failed — release aborted BEFORE tagging.");
   }
 }
 
@@ -872,6 +897,25 @@ async function runSteps(steps: Array<[string[], string]>): Promise<void> {
 }
 
 /**
+ * Step 3a's check of the members whose version is denext's: the corpus (its JSR state, see
+ * {@linkcode checkCorpus}) and `@denext/ui`, which must be at `version` (the bump moves both).
+ */
+async function checkSameVersionMembers(version: string): Promise<void> {
+  const corpus = await checkCorpus(version);
+  console.log(
+    `3a. ${CORPUS_PACKAGE}@${version}: ${
+      corpus.state === "missing"
+        ? "not on JSR yet — step 6 publishes it"
+        : "already on JSR with this corpus"
+    }`,
+  );
+  const ui = await memberPin("ui");
+  if (ui.version !== version) {
+    die(`${ui.name} is at ${ui.version}, not ${version} — the bump moves both. Release aborted.`);
+  }
+}
+
+/**
  * The corpus's release state for `version` (scripts/lib/docs-corpus-package.ts); aborts when JSR
  * cannot be asked, the corpus is not at `version`, or JSR has `version` with another corpus.
  */
@@ -887,7 +931,8 @@ async function checkCorpus(
 
 /**
  * Step 6: the release commit, then the resumable publish steps (scripts/lib/release-publish.ts):
- * publish `@denext/docs-corpus` <version> unless JSR has it with this corpus, refuse the tag
+ * publish `@denext/docs-corpus` <version> unless JSR has it with this corpus and `@denext/ui`
+ * <version> unless JSR lists it, refuse the tag
  * while any pinned member is not on JSR, then tag, push, and hand over the PR. A stop names the
  * command that resumes it.
  */

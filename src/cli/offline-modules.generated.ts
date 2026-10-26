@@ -293,6 +293,7 @@ import "../server/prisma-adapter/mod.ts";
 import "../spa-island.ts";
 import "../standalone/mod.ts";
 import "../testing/mod.ts";
+import "../ui/host.ts";
 import "../ui/kit.ts";
 import "../updates/mod.ts";
 import "../virtual-masonry.ts";

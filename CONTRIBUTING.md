@@ -334,6 +334,7 @@ exactly that package.
 | `@denext/lightningcss`        | `lightningcss-v*`        | `packages/lightningcss/deno.json`        |
 | `@denext/swc`                 | `swc-v*`                 | `packages/swc/deno.json`                 |
 | `@denext/docs-corpus`         | `docs-corpus-v*`         | `packages/docs-corpus/deno.json`         |
+| `@denext/ui`                  | `ui-v*`                  | `packages/ui/deno.json`                  |
 
 A release is: **`deno task release <version>`** on `development`, then the
 `development → main` merge. The script does the bump, the changelog roll, the
@@ -341,8 +342,8 @@ generated-doc refresh, the gate, the tag and the push; you do the merge and the
 docs deploy.
 
 **Release order: what denext pins publishes first.** `deno publish` rewrites each bare
-`@denext/<member>` import the framework makes at run time (`@denext/docs-corpus`, `@denext/og`,
-`@denext/avif`, `@denext/photon`: `RUNTIME_MEMBERS` in `scripts/lib/jsr-pins.ts`) to a `jsr:`
+`@denext/<member>` import the framework makes at run time (`@denext/docs-corpus`, `@denext/ui`,
+`@denext/og`, `@denext/avif`, `@denext/photon`: `RUNTIME_MEMBERS` in `scripts/lib/jsr-pins.ts`) to a `jsr:`
 specifier, so each of those versions must be on JSR before the `v*` tag. `@denext/og`,
 `@denext/avif` and `@denext/photon` keep their own semver and are pinned as
 `jsr:@denext/<member>@^<that member's version>`: the release script refuses to start while one of
@@ -360,6 +361,19 @@ the corpus itself: at step 6 it commits, tags and pushes `docs-corpus-v<version>
 to list it, then tags `v<version>`. When JSR already has that version (a resumed release), it goes
 on only if the published source hash equals the local corpus's, and otherwise refuses; it never
 picks another version.
+
+`@denext/ui` (`packages/ui`: the `denext ui` / `denext dashboard` web UI) follows the same rule:
+**denext X.Y.Z loads exactly `@denext/ui` X.Y.Z** (root `deno.json` maps `@denext/ui` to
+`jsr:@denext/ui@<denext's version>`, loaded by a literal dynamic import in
+`src/cli/ui-package.ts`), and `@denext/ui` X.Y.Z imports exactly `jsr:@denext/denext@X.Y.Z` (its
+`internal/ui-host` export, the framework modules the UI is built on; not a public API). `deno task
+bump` moves all three spots with denext's version. At step 6 the release tags and pushes
+`ui-v<version>` together with `docs-corpus-v<version>` and waits for JSR to list both before it tags
+`v<version>`. Publishing it first keeps it older than the denext that pins it, so Deno's minimum
+dependency age never holds it back from a denext the hold already let in. `@denext/ui`'s own
+publish names `@denext/denext` X.Y.Z before that version exists: JSR does not check a dependency
+at upload (4.1.0 shipped pinning an unpublished `@denext/og`), and the pair resolves once
+`v<version>` is published.
 
 **Prerequisites (one-time, per package).** The JSR package exists and is
 **linked to this GitHub repo** in its JSR settings — that link is what lets

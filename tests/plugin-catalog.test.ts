@@ -94,7 +94,7 @@ Deno.test("plugin catalog: kinds, verbs and libraries have the expected shape", 
     }
   }
   assertEquals(plugins.map((e) => e.verb).filter(Boolean).sort(), VERBS, "plugin CLI verbs");
-  assertEquals(entries.length - plugins.length, 6, "six packages are plain libraries");
+  assertEquals(entries.length - plugins.length, 7, "seven packages are plain libraries");
 });
 
 Deno.test("plugin catalog: every row carries a plain-text title and blurb", () => {
@@ -119,5 +119,9 @@ Deno.test("plugin catalog: every package's @denext/denext range is the framework
   const version = (JSON.parse(Deno.readTextFileSync("deno.json")) as { version: string }).version;
   const ranged = entries.filter((e) => e.denext !== undefined);
   assert(ranged.length >= 8, "the plugins carry their denext range");
-  for (const e of ranged) assertEquals(e.denext, `^${version}`, `${e.name}'s @denext/denext range`);
+  for (const e of ranged) {
+    // @denext/ui is built on denext's internals, so it pins exactly the denext it ships with.
+    const want = e.name === "@denext/ui" ? version : `^${version}`;
+    assertEquals(e.denext, want, `${e.name}'s @denext/denext range`);
+  }
 });

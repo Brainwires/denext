@@ -9,12 +9,12 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import { stampOf, UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { setProcRunner } from "../src/ui/features/plugins.ts";
-import { setJsrClient } from "../src/ui/features/plugin-search.ts";
-import { sanitizeOptionsSchema } from "../src/ui/features/third-party-options.ts";
+import { setProcRunner } from "../packages/ui/src/features/plugins.ts";
+import { setJsrClient } from "../packages/ui/src/features/plugin-search.ts";
+import { sanitizeOptionsSchema } from "../packages/ui/src/features/third-party-options.ts";
 import type { ProcResult, RunDenoOptions } from "../src/ui/proc.ts";
 import type { JsrMetaResult, JsrSearchResult } from "../src/ui/jsr.ts";
 

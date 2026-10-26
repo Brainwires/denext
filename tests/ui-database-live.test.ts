@@ -11,10 +11,10 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { fakeDevJson, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
-import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/database.ts";
+import { type DbChildRunner, setDbChildRunner } from "../packages/ui/src/features/database.ts";
 import type { DbEnvelope, DbReply } from "../src/ui/database/protocol.ts";
-import { setAppFetch } from "../src/ui/app-admin.ts";
-import { setDockerRunner } from "../src/ui/logs/source.ts";
+import { setAppFetch } from "../packages/ui/src/app-admin.ts";
+import { setDockerRunner } from "../packages/ui/src/logs/source.ts";
 
 const KEY = "sb_secret_live_test_key";
 

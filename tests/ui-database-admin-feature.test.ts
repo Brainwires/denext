@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
-import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/database.ts";
+import { type DbChildRunner, setDbChildRunner } from "../packages/ui/src/features/database.ts";
 import type { DbEnvelope, DbReply } from "../src/ui/database/protocol.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 

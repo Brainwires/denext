@@ -8,8 +8,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
-import type { UiContext } from "../src/ui/html.ts";
-import { desktopPanel } from "../src/ui/features/desktop.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
+import { desktopPanel } from "../packages/ui/src/features/desktop.ts";
 import { listSigningIdentities, type SigningIdentity } from "../src/ui/signing.ts";
 
 vi.mock("../src/ui/signing.ts", async (importOriginal: () => Promise<object>) => ({

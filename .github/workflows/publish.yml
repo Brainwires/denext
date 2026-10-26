@@ -25,8 +25,10 @@ name: Publish to JSR
 #   git tag lightningcss-v1.0.0-rc.72 && git push origin lightningcss-v1.0.0-rc.72  # @denext/lightningcss
 #   git tag swc-v76.0.0      && git push origin swc-v76.0.0          # @denext/swc
 #   git tag docs-corpus-v4.3.0 && git push origin docs-corpus-v4.3.0  # @denext/docs-corpus
-#   (its version IS denext's: the release script tags docs-corpus-v<version> itself for every
-#   denext release and waits for JSR to list it before it tags v<version>: see scripts/release.ts)
+#   git tag ui-v4.9.0         && git push origin ui-v4.9.0           # @denext/ui
+#   (their versions ARE denext's: the release script tags docs-corpus-v<version> and
+#   ui-v<version> itself for every denext release and waits for JSR to list them before it tags
+#   v<version>: see scripts/release.ts)
 #   (likewise avif-v* / og-v* / sqlite-v*)
 #
 # Bump the version in that package's deno.json before tagging — JSR rejects
@@ -53,6 +55,7 @@ on:
       - "lightningcss-v*" # @denext/lightningcss
       - "swc-v*" # @denext/swc
       - "docs-corpus-v*" # @denext/docs-corpus
+      - "ui-v*" # @denext/ui
 
 permissions:
   contents: read
@@ -115,6 +118,7 @@ jobs:
             lightningcss-v*) cfg=packages/lightningcss/deno.json ;;
             swc-v*)          cfg=packages/swc/deno.json ;;
             docs-corpus-v*)  cfg=packages/docs-corpus/deno.json ;;
+            ui-v*)           cfg=packages/ui/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
           esac

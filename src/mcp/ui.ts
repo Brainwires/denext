@@ -6,7 +6,7 @@
 // twins over 127.0.0.1: it presents the launch token once (the handshake), holds the session
 // cookie, and sends every mutation with a same-origin `Origin` and the CSRF token derived from
 // that cookie, so the loopback, handshake, origin, CSRF and `--read-only` gates of
-// ../ui/security.ts and ../ui/server.ts all apply unchanged.
+// ../ui/security.ts and @denext/ui's server (packages/ui/src/server.ts) all apply unchanged.
 //
 // On top of them, a two-step confirm: a request that changes something (any method but GET) is
 // sent only as a preview (`op: "preview"`, which the panels answer with what would change) or

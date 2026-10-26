@@ -8,12 +8,12 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { dockerPanel } from "../src/ui/features/docker.ts";
-import type { UiContext } from "../src/ui/html.ts";
-import { applyComposeEdits, readCompose } from "../src/build/compose-edit.ts";
+import { dockerPanel } from "../packages/ui/src/features/docker.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
+import { applyComposeEdits, readCompose } from "../packages/ui/src/edit/compose-edit.ts";
 import {
   detectDockerMode,
   DOCKER_SENTINEL,

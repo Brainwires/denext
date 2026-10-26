@@ -9,9 +9,12 @@
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
-import type { UiContext } from "../src/ui/html.ts";
-import { configPanel } from "../src/ui/features/config.ts";
-import { type NextConfigRead, setNextConfigEvaluator } from "../src/ui/features/config-next.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
+import { configPanel } from "../packages/ui/src/features/config.ts";
+import {
+  type NextConfigRead,
+  setNextConfigEvaluator,
+} from "../packages/ui/src/features/config-next.ts";
 import { loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
 import { widgetFor } from "../src/ui/form/widget.ts";
 import { encode } from "../src/ui/form/value.ts";

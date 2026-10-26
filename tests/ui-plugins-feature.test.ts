@@ -8,10 +8,10 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../packages/ui/src/server.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { setProcRunner } from "../src/ui/features/plugins.ts";
+import { setProcRunner } from "../packages/ui/src/features/plugins.ts";
 import type { ProcResult, RunDenoOptions } from "../src/ui/proc.ts";
 import { FILE_SYMLINKS } from "./helpers/symlink.ts";
 

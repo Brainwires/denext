@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { tagVersionProblem } from "../scripts/publish-tag.ts";
+import { SAME_VERSION_MEMBERS } from "../scripts/lib/jsr-pins.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -15,6 +16,7 @@ Deno.test("tagVersionProblem: the tag must name the config's version under its p
     null,
   );
   assertEquals(tagVersionProblem("og-v0.2.0", "packages/og/deno.json", "0.2.0"), null);
+  assertEquals(tagVersionProblem("ui-v4.9.0", "packages/ui/deno.json", "4.9.0"), null);
   assertStringIncludes(
     tagVersionProblem("docs-corpus-v4.3.0", "packages/docs-corpus/deno.json", "4.3.1")!,
     "is at 4.3.1",
@@ -35,7 +37,14 @@ Deno.test("publish.yml checks the tag before it verifies or publishes", async ()
   assert(check < yml.indexOf("run: deno publish --config"), "before the publish");
   assert(check < yml.indexOf("run: deno run -A scripts/publish-verify.ts"), "before the gate");
   // Every package tag publish.yml maps resolves to that package's own directory.
+  const mapped = new Set<string>();
   for (const [, prefix, dir] of yml.matchAll(/^\s+([a-z-]+)-v\*\)\s+cfg=packages\/([a-z-]+)\//gm)) {
     assertEquals(prefix, dir, `${prefix}-v* publishes packages/${dir}`);
+    mapped.add(dir);
+  }
+  // The members a release publishes itself before its v-tag are among them, and fire the run.
+  for (const dir of SAME_VERSION_MEMBERS) {
+    assert(mapped.has(dir), `publish.yml maps ${dir}-v*`);
+    assertStringIncludes(yml, `- "${dir}-v*"`);
   }
 });

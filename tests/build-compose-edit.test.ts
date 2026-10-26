@@ -6,7 +6,7 @@ import {
   type ComposeService,
   inspectCompose,
   readCompose,
-} from "../src/build/compose-edit.ts";
+} from "../packages/ui/src/edit/compose-edit.ts";
 import { renderCompose } from "../src/build/docker-template.ts";
 
 const GEN = renderCompose({ mode: "server" });

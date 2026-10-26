@@ -8,7 +8,7 @@
 // string API to round-trip through.
 //
 // Everything here is plain server-rendered HTML with real submit buttons, so the editor works
-// with JavaScript disabled; `src/ui/client.ts` upgrades the same submits to a fragment swap. No
+// with JavaScript disabled; `@denext/ui`'s `src/client.ts` upgrades the same submits to a fragment swap. No
 // inline `<script>`, no `on*` attribute — clean under the UI's `script-src 'self'`.
 
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";

@@ -9,7 +9,7 @@
 // attribute value, and writes attributes in prop order, so the markup is stable however
 // `deno fmt` wraps the source.
 //
-// Layout uses inline `style=` attributes where `src/ui/styles.ts` has no class: the UI's CSP
+// Layout uses inline `style=` attributes where `@denext/ui`'s `src/styles.ts` has no class: the UI's CSP
 // sets `style-src-attr 'unsafe-inline'` for exactly this (it still forbids inline `<style>`).
 
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";

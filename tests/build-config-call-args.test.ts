@@ -4,7 +4,7 @@ import {
   type CallTarget,
   readCallArguments,
   setCallArguments,
-} from "../src/build/call-args-edit.ts";
+} from "../packages/ui/src/edit/call-args-edit.ts";
 import { parseModule } from "../src/build/swc-ast.ts";
 import { fromFileUrl } from "@std/path";
 

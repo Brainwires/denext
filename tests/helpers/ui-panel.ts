@@ -6,7 +6,7 @@
 // `ui-session.ts`; this is the project-and-request half.
 
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../../src/ui/server.ts";
+import { startUiServer, type UiServer } from "../../packages/ui/src/server.ts";
 import { UI_CSRF_HEADER } from "../../src/ui/security.ts";
 import { uiHandshake } from "./ui-session.ts";
 

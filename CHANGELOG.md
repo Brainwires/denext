@@ -350,6 +350,17 @@ and this project adheres to
 
 ### Changed
 
+- **The `denext ui` / `denext dashboard` web UI is its own package, `@denext/ui`.** It kept
+  `@denext/denext` growing toward JSR's 20 MiB package cap (19.3 MiB; 18.5 MiB without it). The
+  CLI loads it on the first `denext ui` / `denext dashboard` / `denext dashboard-logs` run by a
+  dynamic import pinned to exactly its own version (`jsr:@denext/ui@<version>`; `deno task bump`
+  moves the pin): the `denext` binary embeds it, `deno cache` of the CLI caches it, and a CLI run
+  from JSR fetches it once, then works offline. Without a network on that first fetch the verb
+  says what to do (`deno cache jsr:@denext/ui@<version>`). Nothing changes in the UI, and project
+  code still never runs in its process. `denext/ui-kit` stays in `@denext/denext`. The release
+  publishes `@denext/ui` (`ui-v<version>`) with `@denext/docs-corpus`, before the `v<version>`
+  tag.
+
 - **The MCP `denext://guide` resource works offline from a JSR install.** It reads the authoring
   guide from `@denext/docs-corpus`, which now carries the guide verbatim (AGENTS.md minus its
   repo-process sections, as served before), so the resource works offline from a JSR install instead

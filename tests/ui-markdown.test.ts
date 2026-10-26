@@ -8,7 +8,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { inlineMarkdown } from "../src/ui/markdown.ts";
 import { renderView } from "../src/ui/view.ts";
-import { toHtml } from "../src/ui/html.ts";
+import { toHtml } from "../packages/ui/src/html.ts";
 
 /** The prose as it reaches the page. */
 function render(text: string): string {

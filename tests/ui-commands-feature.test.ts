@@ -20,9 +20,9 @@ import {
   setCommandRunner,
   type UiCommandInfo,
   type UiCommandRunner,
-} from "../src/ui/features/commands.ts";
-import type { UiContext } from "../src/ui/html.ts";
-import { startUiServer } from "../src/ui/server.ts";
+} from "../packages/ui/src/features/commands.ts";
+import type { UiContext } from "../packages/ui/src/html.ts";
+import { startUiServer } from "../packages/ui/src/server.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 
