@@ -906,9 +906,9 @@ backend comes from `desktop.backend` in `deno.json` (`webview` by default, or `c
 **denext's Deno, built from 2.9.8.** `deno desktop` embeds the runtime, so the `deno` that builds
 must be denext's Deno runtime (its `denext <version> (Brainwires)` identity line, `3.0.0-rc.5` or
 later) built from the runtime's Deno release. `denext desktop run`, `dev` and `package` build with
-the toolchain (`package` puts it first on the packaging script's `PATH`), as does `denext task
-desktop:package`; a plain `deno task` that runs a packaging script on an upstream `deno` stops
-before the build with the fix. denext 5.0 has no stock-runtime fallback for `run` / `dev`.
+the toolchain (`package` puts it first on the packaging script's `PATH`), as does the scaffolded
+`desktop:package` task, which runs `denext desktop package`; a task of your own that runs a
+packaging script on an upstream `deno` stops before the build with the fix. denext 5.0 has no stock-runtime fallback for `run` / `dev`.
 
 **Cross-OS packaging.** 2.9.8's CLI looks a `LAUFEY_DEV_DIR` backend up under the host's
 executable name (`laufey_webview.exe` on Windows, `laufey_webview` elsewhere), then copies the

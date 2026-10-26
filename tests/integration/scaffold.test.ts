@@ -1,7 +1,13 @@
 // `denext create` scaffolding: the generated file set/content, and that the
 // generated app actually type-checks against the framework.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { join } from "@std/path";
 import * as esbuild from "../../src/build/esbuild/mod.ts";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
@@ -250,8 +256,10 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   assertStringIncludes(dj.tasks.export, "export .");
   assertStringIncludes(dj.tasks.desktop, "desktop run .");
   // `desktop:package` runs the packaging script (which exports, builds with `out/`
-  // embedded, code-signs, and can do multi-arch + notarization).
-  assertStringIncludes(dj.tasks["desktop:package"], "scripts/package-macos.ts");
+  // embedded, code-signs, and can do multi-arch + notarization) through `denext desktop
+  // package`, on denext's runtime: a plain `deno task` never runs the script on another Deno.
+  // The trailing `--` hands a task's own arguments (`--arch universal`) to the script.
+  assertMatch(dj.tasks["desktop:package"], /\/cli desktop package \. --$/);
   assertEquals(dj.desktop.app.identifier, "com.example.denext");
   assertStringIncludes(files.find((f) => f.path === ".gitignore")!.content, "dist/");
   // App-icon convention: an icons/ folder with instructions.
@@ -261,10 +269,13 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   // The packaging script is scaffolded and covers sign + universal + notarize.
   assertPackagingScript(files, "scripts/package-macos.ts", MACOS_PACKAGING_KEYWORDS);
   // Linux packaging: a package-linux.ts + its task.
-  assertStringIncludes(dj.tasks["desktop:package:linux"], "scripts/package-linux.ts");
+  assertMatch(dj.tasks["desktop:package:linux"], /\/cli desktop package \. --target-os linux --$/);
   assertPackagingScript(files, "scripts/package-linux.ts", LINUX_PACKAGING_KEYWORDS);
   // Windows packaging: a package-windows.ts + its task.
-  assertStringIncludes(dj.tasks["desktop:package:windows"], "scripts/package-windows.ts");
+  assertMatch(
+    dj.tasks["desktop:package:windows"],
+    /\/cli desktop package \. --target-os windows --$/,
+  );
   assertPackagingScript(files, "scripts/package-windows.ts", WINDOWS_PACKAGING_KEYWORDS);
 });
 

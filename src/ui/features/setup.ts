@@ -21,7 +21,6 @@
 // a completed write answers `303` back to `/setup#step-<id>`, and a preview re-renders the
 // page with the diff in place. `ui.js` upgrades the same forms to fetch + panel swap.
 
-import { parse as parseJsonc } from "@std/jsonc";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { setJsonValue } from "../../build/json-edit.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
@@ -29,12 +28,7 @@ import { generateArtifact } from "../../build/generate.ts";
 import { offlineNote, pinEligibleFiles } from "../../build/eligible-pins.ts";
 import { MONOREPO_CONFIGS, scaffoldMonorepo } from "../../build/scaffold-monorepo.ts";
 import { jsrAvailable } from "../jsr.ts";
-import {
-  DENEXT_UNSTABLE,
-  denoJson,
-  scaffoldProject,
-  withDenextUnstable,
-} from "../../build/scaffold.ts";
+import { denoJson, scaffoldProject } from "../../build/scaffold.ts";
 import { type DevInfo, readDevInfo } from "../../mcp/dev-client.ts";
 import { FEATURES } from "../../cli/commands/create.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
@@ -119,7 +113,6 @@ async function surveyProject(dir: string): Promise<Survey> {
     scanEnvUsage(dir),
   ]);
   const missing = DENO_JSON_KEYS.filter((path) => !hasAt(deno?.data ?? null, path));
-  if (lacksDenextUnstable(deno?.data ?? null)) missing.push(["unstable"]);
   return {
     dir,
     kind: classify(entries, deno, pkg),
@@ -212,24 +205,6 @@ function valueAt(root: Record<string, unknown> | null, path: readonly string[]):
     node = (node as Record<string, unknown>)[key];
   }
   return node;
-}
-
-/** `source` parsed as JSONC when it is an object, else `null`. */
-function parseJsonObject(source: string): Record<string, unknown> | null {
-  try {
-    const value = parseJsonc(source);
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Whether a config's `unstable` list lacks one of denext's ({@linkcode DENEXT_UNSTABLE}). */
-function lacksDenextUnstable(root: Record<string, unknown> | null): boolean {
-  const list = valueAt(root, ["unstable"]);
-  return !DENEXT_UNSTABLE.every((f) => Array.isArray(list) && list.includes(f));
 }
 
 /** Whether `path` is present (and not `undefined`). */
@@ -544,10 +519,7 @@ async function opDenoJson(ctx: UiContext, s: Survey, form: FormData): Promise<Op
 async function mergeDenoJson(source: string, missing: string[][]): Promise<string | null> {
   let current = source;
   for (const path of missing) {
-    // `unstable` is merged, never replaced: the project's own features stay.
-    const value = path.length === 1 && path[0] === "unstable"
-      ? withDenextUnstable(valueAt(parseJsonObject(current), path))
-      : valueAt(templateJson(), path);
+    const value = valueAt(templateJson(), path);
     if (value === undefined) continue;
     const result = await setJsonValue(current, path, value);
     if (!result.ok) return null;

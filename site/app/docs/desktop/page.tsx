@@ -63,10 +63,14 @@ export default function Desktop() {
       <p>
         The scaffolded <code>denext task desktop</code> / <code>denext task desktop:package</code>
         {" "}
-        (and{" "}
-        <code>desktop:package:linux</code>) tasks still work and wrap the same scripts (with Deno
-        installed, <code>deno task desktop</code>{" "}
-        runs them too); the verbs above are the first-class equivalents.
+        (and <code>desktop:package:linux</code> /{" "}
+        <code>desktop:package:windows</code>) tasks run the verbs above (<code>
+          denext desktop run
+        </code>, <code>denext desktop package</code> with <code>--target-os</code>), so a plain{" "}
+        <code>deno task</code>{" "}
+        runs them on denext's runtime too; arguments after a packaging task reach its script (<code>
+          denext task desktop:package --arch universal
+        </code>).
       </p>
       <p>
         The generated <code>desktop.ts</code>{" "}

@@ -26,8 +26,19 @@ and this project adheres to
     fallback and its `<DENO_DIR>/denext-esbuild/` cache are gone (delete the directory).
   - `denext desktop run` / `dev` no longer fall back to the stock Deno Desktop runtime, and every
     desktop build needs denext's Deno built from the runtime's release; `denext desktop package`
-    now puts the toolchain first on the packaging script's PATH. A plain `deno task
-    desktop:package` on upstream Deno is refused: use `denext task desktop:package`.
+    now puts the toolchain first on the packaging script's PATH. A task that runs a
+    `scripts/package-*.ts` straight on upstream Deno is refused. The `desktop:package` (`:linux`,
+    `:windows`) tasks `denext create --desktop` writes now run `denext desktop package`
+    (`--target-os linux|windows`), so a plain `deno task desktop:package` works; arguments after it
+    still reach the script (`--arch universal`). `denext upgrade` rewrites the
+    `deno run -A scripts/package-*.ts` tasks an older `create` wrote, and reports one edited by
+    hand.
+  - `build()`, `createTestApp()` and `probeApp()` check the runtime once per process before doing
+    anything, and throw a `denext:` error naming 5.0 and `denext toolchain install` on any other
+    Deno (they used to start and fail later, or run on it).
+  - `"unstable": ["no-legacy-abort"]` is retired (the runtime's default): `denext create` and
+    `denext migrate` no longer write it, and `denext upgrade` (or a `migrate` re-run over its own
+    `deno.json`) removes it. The `denext ui` Setup page no longer asks for it.
     `desktopRuntimeDenoFlags` stays exported for older scripts and returns no flags.
   - A least-privilege process that can't start the toolchain (`start` launched by a plain
     `deno task` on another Deno) is always refused, never run on that Deno.

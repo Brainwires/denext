@@ -13,7 +13,11 @@ import {
   satisfies,
   type UpgradeLookups,
 } from "../src/build/upgrade.ts";
-import { denoDirExcludeUpdate, runUpgrade } from "../src/cli/commands/upgrade.ts";
+import {
+  denoDirExcludeUpdate,
+  retiredConfigUpdate,
+  runUpgrade,
+} from "../src/cli/commands/upgrade.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 import CATALOG from "../src/plugin/catalog.json" with { type: "json" };
 
@@ -383,6 +387,64 @@ Deno.test("denext upgrade adds the .deno/ exclude and the jail exceptions an old
   const check = await runIn({ check: true }, true, undefined, { "package.json": pkg });
   assertEquals(check.file, CONFIG);
   assertEquals(JSON.parse(check.out).denoExclude, { written: false });
+});
+
+/** CONFIG as a pre-5.0 `denext create --desktop` wrote it: no-legacy-abort, raw packaging tasks. */
+const LEGACY_CONFIG = CONFIG.replace(
+  '"start": "deno run -A jsr:@denext/denext@3.0.0/cli start ."',
+  '"start": "deno run -A jsr:@denext/denext@3.0.0/cli start .",\n' +
+    '    "desktop:package": "deno run -A scripts/package-macos.ts",\n' +
+    '    "desktop:package:linux": "deno run -A scripts/package-linux.ts",\n' +
+    '    "desktop:package:windows": "deno run -A scripts/package-windows.ts --no-sign"',
+).replace('"tasks": {', '"unstable": ["kv", "no-legacy-abort"],\n  "tasks": {');
+
+Deno.test("denext upgrade drops no-legacy-abort and points the scaffold's packaging tasks at denext desktop package (5.0)", async () => {
+  const run = await runIn({}, false, undefined, { "deno.json": LEGACY_CONFIG });
+  assertEquals(run.code, 0);
+  const doc = JSON.parse(run.file.replace(/^\s*\/\/.*$/m, ""));
+  assertEquals(doc.unstable, ["kv"]);
+  // Rewritten over the CLI the other tasks run, after the pin moved to 3.2.0.
+  assertEquals(
+    doc.tasks["desktop:package"],
+    "deno run -A jsr:@denext/denext@^3.2.0/cli desktop package . --",
+  );
+  assertEquals(
+    doc.tasks["desktop:package:linux"],
+    "deno run -A jsr:@denext/denext@^3.2.0/cli desktop package . --target-os linux --",
+  );
+  // Edited by hand: left alone, and said so.
+  assertEquals(
+    doc.tasks["desktop:package:windows"],
+    "deno run -A scripts/package-windows.ts --no-sign",
+  );
+  assert(run.out.includes('Removed "no-legacy-abort"'), run.out);
+  assert(run.out.includes("Rewrote desktop:package, desktop:package:linux"), run.out);
+  assert(
+    run.out.includes("desktop:package:windows in deno.json runs a scripts/package-*.ts"),
+    run.out,
+  );
+  // --dry-run only says so; --json lists it.
+  const dry = await runIn({ "dry-run": true }, false, undefined, { "deno.json": LEGACY_CONFIG });
+  assertEquals(dry.file, LEGACY_CONFIG);
+  assert(dry.out.includes('Would remove "no-legacy-abort"'), dry.out);
+  const json = await runIn({ check: true }, true, undefined, { "deno.json": LEGACY_CONFIG });
+  const retired = JSON.parse(json.out).retiredConfig;
+  assertEquals(retired.length, 1);
+  assertEquals(retired[0].unstable, ["no-legacy-abort"]);
+  assertEquals(retired[0].manual, ["desktop:package:windows"]);
+  assertEquals(retired[0].written, false);
+});
+
+Deno.test("retiredConfigUpdate: the key goes once empty; nothing to do is null; no CLI task is manual", async () => {
+  const only = await retiredConfigUpdate('{\n  // mine\n  "unstable": ["no-legacy-abort"]\n}\n');
+  assert(only?.text.includes("// mine"), only?.text);
+  assertEquals(JSON.parse(only!.text.replace(/^\s*\/\/.*$/m, "")).unstable, undefined);
+  assertEquals(await retiredConfigUpdate('{"unstable":["kv"],"tasks":{"dev":"x"}}'), null);
+  assertEquals(await retiredConfigUpdate("not json"), null);
+  const noCli = await retiredConfigUpdate(
+    '{"tasks":{"desktop:package":"deno run -A scripts/package-macos.ts"}}',
+  );
+  assertEquals([noCli?.tasks, noCli?.manual], [[], ["desktop:package"]]);
 });
 
 Deno.test("denoDirExcludeUpdate: added once, comments kept; a non-list exclude is left alone", async () => {

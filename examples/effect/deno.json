@@ -8,8 +8,7 @@
   },
   "nodeModulesDir": "auto",
   "unstable": [
-    "sloppy-imports",
-    "no-legacy-abort"
+    "sloppy-imports"
   ],
   "compilerOptions": {
     "jsx": "react-jsx",

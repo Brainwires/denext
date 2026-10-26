@@ -156,8 +156,8 @@ Deno.test({
   name:
     "denext create: the start task on denext's toolchain serves without the legacy-abort notice",
   // The pinned toolchain, already in the cache: started on it directly (a `toolchain link`ed
-  // `deno`), the least-privilege task cannot re-run itself with `--unstable-no-legacy-abort`, so
-  // the scaffolded deno.json's `"unstable": ["no-legacy-abort"]` is what turns it on.
+  // `deno`), the least-privilege task cannot re-run itself with a flag. Every runtime denext 5.0
+  // runs on has the no-legacy-abort behavior by default, so the scaffold writes no `unstable`.
   ignore: TOOLCHAIN === null,
   fn: async () => {
     const run: Runner = { deno: TOOLCHAIN!, env: linkedEnv(TOOLCHAIN!) };

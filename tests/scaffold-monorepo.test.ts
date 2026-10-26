@@ -61,7 +61,7 @@ Deno.test("monorepo root deno.json: explicit members, root-only fields, shared o
   const root = JSON.parse(content(monorepoFiles({ dir: ROOT }), "deno.json")) as Json;
   // Listed one by one (a glob member works too, but the root says exactly what it holds).
   assertEquals(root.workspace, ["./apps/web", "./packages/ui", "./packages/shared"]);
-  assertEquals(root.unstable, ["no-legacy-abort"]);
+  assertEquals(root.unstable, undefined);
   assertEquals(root.allowScripts, { deny: ["npm:@parcel/watcher"] });
   assertEquals((root.compilerOptions as Json).jsxImportSource, "denext");
   assertEquals((root.lint as Json).plugins, [`jsr:@denext/denext@^${VERSION}/lint-plugin`]);
@@ -129,7 +129,7 @@ Deno.test("monorepo app: a normal app that imports the shared packages by name",
   const files = scaffoldFiles(opts);
   const config = JSON.parse(content(files, "deno.json")) as Json;
   // Fields a member may not set (Deno warns), and the lint the root shares, stay at the root.
-  for (const key of ["allowScripts", "unstable", "lint"]) assertEquals(config[key], undefined, key);
+  for (const key of ["allowScripts", "lint"]) assertEquals(config[key], undefined, key);
   assertEquals((config.compilerOptions as Json).jsxImportSource, "denext");
   assertStringIncludes(content(files, "app/layout.tsx"), 'import "@my-shop/ui/styles.css";');
   const page = content(files, "app/page.tsx");
@@ -152,7 +152,7 @@ Deno.test("monorepo app: the minimal template renders the shared Card", () => {
 
 Deno.test("a standalone app keeps every root field (no monorepo scope)", () => {
   const config = JSON.parse(denoJson({ dir: "/x" })) as Json;
-  for (const key of ["allowScripts", "unstable", "lint"]) assert(config[key] !== undefined, key);
+  for (const key of ["allowScripts", "lint"]) assert(config[key] !== undefined, key);
   const page = content(scaffoldFiles({ dir: "/x" }), "app/page.tsx");
   assert(!page.includes("Card"), page);
 });

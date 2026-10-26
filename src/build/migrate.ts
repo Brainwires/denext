@@ -1019,10 +1019,10 @@ async function writeDenoJsonUnlessAuthored(
   if (!(await writable(denoJsonPath))) return true;
   // A re-run over its own earlier output keeps the unstable features added to it since.
   const before = await previousUnstable(denoJsonPath);
-  const merged = {
-    ...denoJson,
-    unstable: withDenextUnstable(before, denoJson.unstable as string[]),
-  };
+  const unstable = withDenextUnstable(before, denoJson.unstable as string[] | undefined);
+  // denext's retired entries (`no-legacy-abort`) leave with the re-run; an empty list, the key.
+  const merged: Record<string, unknown> = { ...denoJson, unstable };
+  if (!unstable.length) delete merged.unstable;
   await mfs.writeTextFile(denoJsonPath, denoJsonText(merged));
   written.unshift(denoJsonPath);
   return false;

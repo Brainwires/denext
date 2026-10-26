@@ -61,7 +61,6 @@ const DENO_JSON_WITHOUT_DEV = `{
     "denext/client": "jsr:@denext/denext@^2/client"
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },
-  "unstable": ["no-legacy-abort"],
   "tasks": {
     // no dev task yet — Setup adds it
     "build": "deno run -A jsr:@denext/denext/cli build .",
@@ -167,9 +166,12 @@ Deno.test("a missing dev task previews as a merge that adds only that key", asyn
   }
 });
 
-Deno.test("an unstable list without no-legacy-abort gains it, keeping the project's own", async () => {
+Deno.test("an unstable list is the project's own: Setup neither adds nor asks for an entry (5.0)", async () => {
   const source = DENO_JSON_WITHOUT_DEV
-    .replace('"unstable": ["no-legacy-abort"]', '"unstable": ["kv", "cron"]')
+    .replace(
+      '"compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },',
+      '"compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },\n  "unstable": ["kv", "cron"],',
+    )
     .replace(
       "    // no dev task yet — Setup adds it\n",
       '    "dev": "deno run -A jsr:@denext/denext/cli dev .",\n',
@@ -178,18 +180,9 @@ Deno.test("an unstable list without no-legacy-abort gains it, keeping the projec
   try {
     const res = await fetch(`${h.base}/api/setup`, { headers: h.headers });
     const denojson = (await res.json()).steps.find((s: { id: string }) => s.id === "denojson");
-    assertEquals(denojson.status, "todo");
-    assertStringIncludes(denojson.summary, "missing 1 key(s): unstable");
-    const applied = await post(h, { op: "denojson", confirm: "1" });
-    assertEquals(applied.status, 303);
-    await applied.body?.cancel();
-    const after = await Deno.readTextFile(join(h.dir, "deno.json"));
-    assertStringIncludes(after, "// the framework, pinned", "comments survive the splice");
+    assertEquals(denojson.status, "ok");
     const config = await readDenoConfig(h.dir);
-    assertEquals(config?.data?.unstable, ["kv", "cron", "no-legacy-abort"]);
-    const again = await fetch(`${h.base}/api/setup`, { headers: h.headers });
-    const step = (await again.json()).steps.find((s: { id: string }) => s.id === "denojson");
-    assertEquals(step.status, "ok");
+    assertEquals(config?.data?.unstable, ["kv", "cron"]);
   } finally {
     await stop(h);
   }

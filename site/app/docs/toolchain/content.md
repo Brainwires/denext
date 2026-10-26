@@ -121,8 +121,9 @@ timed out), and Deno prints no legacy-abort notice: that is the default of every
 runs on (`3.0.0-rc.5` and later). Code that relied on the old abort after every delivered response
 opts back in with `--unstable-legacy-abort`, `"unstable": ["legacy-abort"]` or
 `DENO_LEGACY_ABORT=1` (use the handler's `info.completed` to learn that a response was delivered).
-The `"unstable": ["no-legacy-abort"]` that `denext create` and `denext migrate` write into
-`deno.json` is a no-op there; it stays so older and newer projects agree.
+`denext create` and `denext migrate` no longer write `"unstable": ["no-legacy-abort"]` into
+`deno.json` (a no-op on these runtimes), and `denext upgrade` (or a `denext migrate` re-run) takes
+it out of a project that has it.
 
 The toolchain can also trim a server's memory once its event loop goes
 idle (a full GC, then `malloc_trim(0)`; glibc Linux only). `denext start` turns it on for the
@@ -214,8 +215,15 @@ denext 5.0 removed every stock-Deno path:
 - A compiled `denext` no longer looks for a `deno` of yours (`~/.deno/bin`, PATH) when the toolchain
   is missing; it refuses with `denext toolchain install`.
 - Bundling, `deno desktop` packaging and Vitest files in `denext test` need the runtime: a plain
-  `deno task desktop:package` or `deno test` on stock Deno refuses. Use `denext task …`,
-  `denext desktop package` and `denext test`, which run on it.
+  `deno test`, or a task that runs a `scripts/package-*.ts` straight on stock Deno, refuses. Use
+  `denext task …`, `denext desktop package` and `denext test`, which run on it. The
+  `desktop:package` tasks `denext create --desktop` writes run `denext desktop package` (extra
+  arguments after it reach the script: `deno task desktop:package --arch universal`), and
+  `denext upgrade` rewrites the `deno run -A scripts/package-*.ts` tasks an older `create` wrote
+  (one edited by hand is reported, not rewritten).
+- denext's library entry points — `build()`, `createTestApp()` and `probeApp()` — check the
+  runtime once per process before doing anything, and throw a `denext:` error naming
+  `denext toolchain install` on any other Deno.
 - esbuild comes from the toolchain (or `ESBUILD_BINARY_PATH`); the npm `@esbuild/<platform>`
   fallback and its `<DENO_DIR>/denext-esbuild/` cache are gone (delete that directory).
 - Platforms that run upstream Deno you don't control (Deno Deploy) still work; there,

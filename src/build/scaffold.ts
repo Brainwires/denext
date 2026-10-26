@@ -270,17 +270,12 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     // `denext desktop run` exports, then opens desktop.ts's Deno.serve() in a native `deno desktop`
     // window on denext's pinned Deno Desktop runtime (a bare `deno desktop` does not).
     tasks.desktop = `deno run -A ${cli} desktop run .`;
-    // The packaging script exports, then builds (embedding `out/`) + code-signs, with
-    // opt-in multi-arch (--arch universal|both) and notarization (env vars). See its
-    // header + the macOS distribution docs.
-    tasks["desktop:package"] = "deno run -A scripts/package-macos.ts";
-    // Linux bundle (exe + .so + .desktop) → tar.gz (+ AppImage when appimagetool is present).
-    // Cross-builds from any OS via `deno desktop --target`.
-    tasks["desktop:package:linux"] = "deno run -A scripts/package-linux.ts";
-    // Windows bundle (exe + dlls) → zip, Authenticode-signed when a cert is configured.
-    // The exe cross-builds from any OS; signing needs signtool (a configured cert without it
-    // fails the run; --no-sign builds unsigned).
-    tasks["desktop:package:windows"] = "deno run -A scripts/package-windows.ts";
+    // `denext desktop package` runs scripts/package-<os>.ts on denext's runtime (a plain
+    // `deno task` on another Deno re-runs the CLI on it, never the script itself). The script
+    // exports, then builds (embedding `out/`) + code-signs, with opt-in multi-arch
+    // (--arch universal|both) and notarization (env vars); the trailing `--` hands a task's
+    // extra arguments (`deno task desktop:package --arch universal`) to the script.
+    Object.assign(tasks, desktopPackageTasks(cli));
   }
   if (opts.capacitor) {
     // `mobile:sync` exports, then `cap sync` copies `out/` into the native projects. The
@@ -300,6 +295,34 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
   if (opts.mcp) tasks.mcp = mcpTaskCommand(cli);
   return tasks;
 }
+
+/**
+ * The scaffold's packaging tasks over a CLI specifier: `desktop:package` for the host OS (macOS:
+ * `.app` + `.dmg` / `.pkg`, signed and notarized), `desktop:package:linux` (tar.gz + .deb, …) and
+ * `desktop:package:windows` (.msi / .zip, Authenticode-signed when a cert is configured), the
+ * last two cross-building from any OS.
+ *
+ * @param cliSpec The `denext` CLI the project's tasks run (`jsr:@denext/denext@^5.0.0/cli`).
+ * @returns The three tasks.
+ */
+export function desktopPackageTasks(cliSpec: string): Record<string, string> {
+  const verb = `deno run -A ${cliSpec} desktop package .`;
+  return {
+    "desktop:package": `${verb} --`,
+    "desktop:package:linux": `${verb} --target-os linux --`,
+    "desktop:package:windows": `${verb} --target-os windows --`,
+  };
+}
+
+/**
+ * The packaging tasks `denext create --desktop` wrote before 5.0, which run a script straight on
+ * the `deno` that runs `deno task` (refused there unless it is denext's runtime), keyed by task.
+ */
+export const LEGACY_DESKTOP_PACKAGE_TASKS: Readonly<Record<string, string>> = {
+  "desktop:package": "deno run -A scripts/package-macos.ts",
+  "desktop:package:linux": "deno run -A scripts/package-linux.ts",
+  "desktop:package:windows": "deno run -A scripts/package-windows.ts",
+};
 
 /** The import map for a scaffolded project (denext entries + native / compat aliases). */
 function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
@@ -352,26 +375,21 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  * @returns The file's text.
  */
 /**
- * The unstable features a generated `deno.json` turns on. `no-legacy-abort`: Deno.serve's
- * `request.signal` aborts only when a response is NOT delivered, and Deno prints no legacy-abort
- * notice on the first request — what `denext start` / `dev` get from the toolchain's
- * `--unstable-no-legacy-abort`, here for every `deno` that reads the config (a least-privilege
- * `start` task included, which cannot re-run itself with the flag). denext's runtime from
- * 3.0.0-rc.5 — every one denext 5.0 runs on — has that behavior by default and accepts the key as
- * a no-op; it stays so the `deno.json` of a project created before 5.0 and a new one agree.
+ * The `unstable` entries denext once wrote and 5.0 drops: `no-legacy-abort` (Deno.serve's
+ * `request.signal` aborting only when a response is not delivered) is the default on every runtime
+ * denext 5.0 runs on (3.0.0-rc.5 and later), which accepts the key as a no-op. `create` no longer
+ * writes it, and `migrate` and `upgrade` take it out of an existing `deno.json`.
  */
-export const DENEXT_UNSTABLE: readonly string[] = ["no-legacy-abort"];
+export const RETIRED_UNSTABLE: readonly string[] = ["no-legacy-abort"];
 
 /**
  * The `deno.json` fields only a project's (or a workspace's) root config may set: the one npm
  * lifecycle script in the framework's dependency graph denied — `@parcel/watcher`'s (through
  * `sass`), which falls back to a native build its prebuilt optional dependency makes unneeded, so
- * Deno stops printing its "Ignored build scripts" box on every command and every Docker build —
- * and denext's unstable features.
+ * Deno stops printing its "Ignored build scripts" box on every command and every Docker build.
  */
 export const DENO_ROOT_FIELDS: Readonly<Record<string, unknown>> = {
   allowScripts: { deny: ["npm:@parcel/watcher"] },
-  unstable: [...DENEXT_UNSTABLE],
 };
 
 /**
@@ -400,18 +418,19 @@ export const SCAFFOLD_LINT: Readonly<Record<string, unknown>> = {
 
 /**
  * A `deno.json` `unstable` list: the entries already there (when `existing` is an array of
- * strings), then `extra`, then {@linkcode DENEXT_UNSTABLE}, each once, in that order — so a
- * regenerated config keeps the features its author added.
+ * strings), then `extra`, each once, in that order, without the {@linkcode RETIRED_UNSTABLE}
+ * ones — so a regenerated config keeps the features its author added and loses denext's
+ * retired ones.
  *
  * @param existing The config's current `unstable` value (anything; non-strings are dropped).
- * @param extra Features the writer needs besides denext's own (`sloppy-imports`).
- * @returns The merged list.
+ * @param extra Features the writer needs (`sloppy-imports`).
+ * @returns The merged list (possibly empty: leave the key out then).
  */
 export function withDenextUnstable(existing: unknown, extra: readonly string[] = []): string[] {
   const current = Array.isArray(existing)
     ? existing.filter((v): v is string => typeof v === "string")
     : [];
-  return [...new Set([...current, ...extra, ...DENEXT_UNSTABLE])];
+  return [...new Set([...current, ...extra])].filter((f) => !RETIRED_UNSTABLE.includes(f));
 }
 
 export function denoJson(opts: ScaffoldOptions): string {

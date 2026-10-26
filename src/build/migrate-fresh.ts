@@ -966,7 +966,7 @@ export function freshDenoJson(
       !DROPPED_TASKS.has(k)
     ),
   );
-  return {
+  const out: Record<string, unknown> = {
     "//": input.marker,
     ...rest,
     tasks: { ...tasks, ...input.tasks },
@@ -977,6 +977,9 @@ export function freshDenoJson(
     compilerOptions: compilerOptionsFor(rest.compilerOptions),
     imports: { ...imports, ...input.imports },
   };
+  // Without denext's retired entries (`no-legacy-abort`), an empty list leaves the key out.
+  if (input.unstable.length === 0) delete out.unstable;
+  return out;
 }
 
 // ── Orchestration ────────────────────────────────────────────────────────────

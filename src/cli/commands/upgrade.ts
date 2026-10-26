@@ -24,8 +24,13 @@ import {
   stripDenextExclude,
 } from "../../build/dep-age.ts";
 import { addTsgoLspSetting, tsgoLspByDefault } from "../../ts/lsp-settings.ts";
-import { SCAFFOLD_EXCLUDE } from "../../build/scaffold.ts";
-import { setJsonValue } from "../../build/json-edit.ts";
+import {
+  desktopPackageTasks,
+  LEGACY_DESKTOP_PACKAGE_TASKS,
+  RETIRED_UNSTABLE,
+  SCAFFOLD_EXCLUDE,
+} from "../../build/scaffold.ts";
+import { deleteJsonValue, setJsonValue } from "../../build/json-edit.ts";
 import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
 
 /** The project config `upgrade` edits: `deno.json`, else `deno.jsonc`. */
@@ -116,6 +121,149 @@ interface UpgradeOutcome {
   readonly denoExclude: { readonly written: boolean } | null;
   /** The lifecycle-script jail exceptions the dependencies need (`null`: none needed). */
   readonly jail: JailReport | null;
+  /** The 5.0 config clean-ups made (or that would be), per config that needed one. */
+  readonly retired: readonly RetiredConfigChange[];
+}
+
+/** What {@linkcode retiredConfigUpdate} changed in one config. */
+interface RetiredConfigChange {
+  /** The config's path. */
+  readonly path: string;
+  /** The retired `unstable` entries removed (`no-legacy-abort`). */
+  readonly unstable: readonly string[];
+  /** The scaffold's pre-5.0 packaging tasks rewritten to `denext desktop package`. */
+  readonly tasks: readonly string[];
+  /**
+   * Packaging tasks that run a `scripts/package-*.ts` straight on `deno` but could not be
+   * rewritten safely (edited by hand, or no `jsr:@denext/denext@…/cli` task to take the CLI
+   * from): each needs `denext desktop package` by hand.
+   */
+  readonly manual: readonly string[];
+  /** Whether the file was written. */
+  readonly written: boolean;
+}
+
+/** The CLI specifier a project's tasks run (`jsr:@denext/denext@^4.9.0/cli`). */
+const CLI_SPEC = /jsr:@denext\/denext@[~^]?\d[^\s/"']*\/cli(?=[\s"']|$)/;
+
+/** A task that runs a packaging script straight on `deno`, refused there off denext's runtime. */
+const RAW_PACKAGE_TASK = /\bdeno\s+run\b[^&|;]*\bscripts\/package-(?:macos|linux|windows)\.ts\b/;
+
+/**
+ * A config's text with denext 5.0's clean-ups applied, or `null` when it needs none (or isn't a
+ * JSON object): the retired `unstable` entries ({@linkcode RETIRED_UNSTABLE}) removed (the key
+ * too once empty), and the packaging tasks `denext create --desktop` wrote before 5.0 (exactly
+ * {@linkcode LEGACY_DESKTOP_PACKAGE_TASKS}) rewritten to `denext desktop package` over the CLI the
+ * project's other tasks run. A packaging task edited by hand is left for the user (`manual`).
+ * Comments and key order are kept.
+ *
+ * @param text The `deno.json` / `deno.jsonc` text.
+ * @returns The new text and what changed, or `null`.
+ */
+export async function retiredConfigUpdate(
+  text: string,
+): Promise<{ text: string; unstable: string[]; tasks: string[]; manual: string[] } | null> {
+  let doc: unknown;
+  try {
+    doc = parseJsonc(text);
+  } catch {
+    return null;
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) return null;
+  let source = text;
+  const config = doc as { unstable?: unknown; tasks?: unknown };
+  const unstable: string[] = [];
+  if (Array.isArray(config.unstable)) {
+    const kept = config.unstable.filter((f) => !RETIRED_UNSTABLE.includes(f as string));
+    unstable.push(...config.unstable.filter((f) => RETIRED_UNSTABLE.includes(f as string)));
+    if (unstable.length) {
+      const edit = kept.length
+        ? await setJsonValue(source, ["unstable"], kept)
+        : await deleteJsonValue(source, ["unstable"]);
+      if (edit.ok) source = edit.source;
+      else unstable.length = 0;
+    }
+  }
+  const { tasks, manual, source: next } = await rewritePackageTasks(source, config.tasks);
+  source = next;
+  if (!unstable.length && !tasks.length && !manual.length) return null;
+  return { text: source, unstable, tasks, manual };
+}
+
+/** A config's string tasks (`{ command }` objects included), as `[name, command]`. */
+function taskCommands(tasks: Record<string, unknown>): [string, string][] {
+  return Object.entries(tasks)
+    .map(([k, v]): [string, unknown] => [k, typeof v === "string" ? v : objectCommand(v)])
+    .filter((e): e is [string, string] => typeof e[1] === "string");
+}
+
+/** A `{ command }` task's command. */
+function objectCommand(v: unknown): unknown {
+  return v !== null && typeof v === "object" ? (v as { command?: unknown }).command : undefined;
+}
+
+/** Whether `tasks[name]` is exactly the string a pre-5.0 `create --desktop` wrote. */
+function isLegacyPackageTask(tasks: Record<string, unknown>, name: string): boolean {
+  return Object.hasOwn(LEGACY_DESKTOP_PACKAGE_TASKS, name) &&
+    tasks[name] === LEGACY_DESKTOP_PACKAGE_TASKS[name];
+}
+
+/** {@linkcode retiredConfigUpdate}'s task half. */
+async function rewritePackageTasks(
+  source: string,
+  value: unknown,
+): Promise<{ tasks: string[]; manual: string[]; source: string }> {
+  const tasks: string[] = [];
+  const manual: string[] = [];
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { tasks, manual, source };
+  }
+  const all = value as Record<string, unknown>;
+  const entries = taskCommands(all);
+  const spec = entries.map(([, v]) => CLI_SPEC.exec(v)?.[0]).find((s) => s !== undefined);
+  const wanted = spec === undefined ? {} : desktopPackageTasks(spec);
+  for (const [name] of entries.filter(([, c]) => RAW_PACKAGE_TASK.test(c))) {
+    const next = isLegacyPackageTask(all, name) ? await setTask(source, name, wanted[name]) : null;
+    if (next === null) manual.push(name);
+    else {
+      source = next;
+      tasks.push(name);
+    }
+  }
+  return { tasks, manual, source };
+}
+
+/** `source` with `tasks[name]` set to `command`, or `null` (no command, or the edit refused). */
+async function setTask(
+  source: string,
+  name: string,
+  command: string | undefined,
+): Promise<string | null> {
+  if (command === undefined) return null;
+  const edit = await setJsonValue(source, ["tasks", name], command);
+  return edit.ok ? edit.source : null;
+}
+
+/** {@linkcode retiredConfigUpdate} over every config (the root's and the members'), written when `write`. */
+async function applyRetiredConfig(
+  paths: readonly string[],
+  write: boolean,
+): Promise<RetiredConfigChange[]> {
+  const changes: RetiredConfigChange[] = [];
+  for (const path of paths) {
+    const update = await retiredConfigUpdate(await Deno.readTextFile(path));
+    if (update === null) continue;
+    const writes = write && (update.unstable.length > 0 || update.tasks.length > 0);
+    if (writes) await Deno.writeTextFile(path, update.text);
+    changes.push({
+      path,
+      unstable: update.unstable,
+      tasks: update.tasks,
+      manual: update.manual,
+      written: writes,
+    });
+  }
+  return changes;
 }
 
 /** Whether an `exclude` entry already keeps the runtime's `.deno/` directory out. */
@@ -218,6 +366,7 @@ function outcomeJson(
     ...(o.editor ? { editorSettings: o.editor } : {}),
     ...(o.denoExclude ? { denoExclude: o.denoExclude } : {}),
     ...(o.jail ? { jailExceptions: { action: o.jail.action, lines: o.jail.lines } } : {}),
+    ...(o.retired.length ? { retiredConfig: o.retired } : {}),
     ...(files.unresolved.length ? { unresolvedMembers: files.unresolved } : {}),
     ...(files.outside.length ? { outsideMembers: files.outside } : {}),
   };
@@ -318,7 +467,12 @@ export async function runUpgrade(
   const changed = plan.ok && (plan.changed || stripped.length > 0);
   const written = changed && !check && ctx.flags["dry-run"] !== true;
   const changedFiles = plan.ok ? await applyToFiles(read, files, plan.steps, written) : [];
-  const repairs = await projectRepairs(dir, path, plan.ok, !check && ctx.flags["dry-run"] !== true);
+  const repairs = await projectRepairs(
+    dir,
+    files.map((f) => f.path),
+    plan.ok,
+    !check && ctx.flags["dry-run"] !== true,
+  );
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
   const outcome = { dir, path, plan, check, written, lock, stripped, now, ...repairs };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
@@ -328,20 +482,22 @@ export async function runUpgrade(
 
 /**
  * What an upgrade sets right beside the pins (only once the plan is good): the `.deno/` exclude,
- * the jail exceptions and the editor's language server, written when `write` (not with
- * `--dry-run` / `--check`, which only report them).
+ * the jail exceptions, the editor's language server and denext 5.0's config clean-ups (every
+ * config: the root's, then the members'), written when `write` (not with `--dry-run` /
+ * `--check`, which only report them).
  */
 async function projectRepairs(
   dir: string,
-  path: string,
+  paths: readonly string[],
   ok: boolean,
   write: boolean,
-): Promise<Pick<UpgradeOutcome, "denoExclude" | "jail" | "editor">> {
-  if (!ok) return { denoExclude: null, jail: null, editor: null };
+): Promise<Pick<UpgradeOutcome, "denoExclude" | "jail" | "editor" | "retired">> {
+  if (!ok) return { denoExclude: null, jail: null, editor: null, retired: [] };
   return {
-    denoExclude: await applyDenoExclude(path, write),
+    denoExclude: await applyDenoExclude(paths[0], write),
     jail: await applyJail(dir, write),
     editor: await applyEditorSetting(dir, write),
+    retired: await applyRetiredConfig(paths, write),
   };
 }
 
@@ -423,6 +579,36 @@ function reportProjectRepairs(o: UpgradeOutcome): void {
     );
   }
   if (o.jail) console.log(`\n${o.jail.lines.join("\n")}`);
+  for (const r of o.retired) reportRetired(o.dir, r);
+}
+
+/** One config's 5.0 clean-ups: what was (or would be) changed, and what is left to the user. */
+function reportRetired(dir: string, r: RetiredConfigChange): void {
+  const where = relative(dir, r.path) || r.path;
+  const verb = r.written ? "Removed" : "Would remove";
+  if (r.unstable.length) {
+    console.log(
+      `\n${verb} ${r.unstable.map((f) => `"${f}"`).join(", ")} from ${where}'s "unstable": ` +
+        "denext 5.0's runtime has that behavior by default.",
+    );
+  }
+  if (r.tasks.length) {
+    console.log(
+      `\n${r.written ? "Rewrote" : "Would rewrite"} ${r.tasks.join(", ")} in ${where} to run ` +
+        "`denext desktop package`, which runs the packaging script on denext's runtime (a plain " +
+        "`deno task` on another Deno would be refused).",
+    );
+  }
+  if (r.manual.length) {
+    console.error(
+      `denext upgrade: ${r.manual.join(", ")} in ${where} run${
+        r.manual.length === 1 ? "s" : ""
+      } a scripts/package-*.ts straight on \`deno\`, ` +
+        "which denext 5.0 refuses off its runtime; not rewritten (edited by hand, or no denext " +
+        "CLI task to copy). Point it at `denext desktop package [--target-os linux|windows]`, " +
+        "or run it with `denext task`.",
+    );
+  }
 }
 
 /** Why the `jsr:@denext/*` exclude entry was removed (or would be). */
@@ -503,6 +689,9 @@ export const upgradeCommand: CommandSpec = {
     "exceptions the dependencies need (sharp, Prisma's engines, …) are written, as create does.\n" +
     'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +
     '"deno.unstable": ["tsgo-lsp"] (the TypeScript 7 language server; DENEXT_TSGO_LSP=0 skips it).\n' +
+    'denext 5.0 clean-ups: "no-legacy-abort" leaves "unstable" (the runtime\'s default now), and\n' +
+    "the desktop:package tasks create wrote before 5.0 (`deno run -A scripts/package-*.ts`) become\n" +
+    "`denext desktop package` (a hand-edited one is reported, not rewritten).\n" +
     "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [
