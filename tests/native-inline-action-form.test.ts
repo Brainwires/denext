@@ -14,6 +14,7 @@ import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { actionIdFor, forgetTaggedServers } from "../src/runtime/server-action.ts";
+import { setBuildActionIdSecret } from "../src/server/action-ids.ts";
 import { writeNativeActionFormFixture } from "./helpers/native-action-form-fixture.ts";
 import { serverModuleIdFor } from "../src/build/boundary-ids.ts";
 import { inlineActionModuleKey } from "../src/build/inline-server-action.ts";
@@ -183,8 +184,11 @@ Deno.test({
 }, async () => {
   const dir = await fixture({ static: true });
   // The export runs in its own process: the shared secret a deploy that builds more than once
-  // sets makes its ids the ones this process (a server of another build) mints.
+  // sets makes its ids the ones this process (a server of another build) mints — once this
+  // process forgets the build secret an earlier `denext start` in this file installed, which is
+  // authoritative over the variable while installed.
   Deno.env.set("DENEXT_ACTION_ID_SECRET", "export-and-server-share-this");
+  setBuildActionIdSecret(null);
   try {
     const { outDir } = await exportInChild(dir);
     const html = await Deno.readTextFile(join(outDir, "index.html"));
