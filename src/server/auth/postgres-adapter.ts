@@ -14,8 +14,8 @@
  * methods are single statements (`DELETE … RETURNING`, a conditional `UPDATE … RETURNING`), so
  * they hold across every replica, not just within one process.
  *
- * `url` opens a client on `Deno.SQL`, the Postgres client built into denext's Deno runtime; on
- * stock Deno pass `sql` instead — any {@link ../postgres.ts | SqlClient}, such as the npm
+ * `url` opens a client on `Deno.SQL`, the Postgres client built into denext's Deno runtime; where
+ * that is missing (Deno Deploy's upstream Deno) pass `sql` instead — any {@link ../postgres.ts | SqlClient}, such as the npm
  * `postgres` package through `fromPostgresJs`. A client you pass is never closed by the adapter.
  *
  * @module

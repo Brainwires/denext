@@ -4,9 +4,10 @@
  * anything with a tagged-template query, `unsafe(text, params)`, `begin(fn)` and `close()`.
  *
  * denext's Deno runtime has a built-in Postgres client, `Deno.SQL`, which already is one, so
- * {@linkcode postgresClient} hands it out with no dependency at all. Stock Deno has none:
- * there, bring a driver and adapt it — {@linkcode fromPostgresJs} wraps the npm `postgres`
- * package (denext does not depend on it; your app does):
+ * {@linkcode postgresClient} hands it out with no dependency at all. Where the app runs on
+ * another Deno — a platform that runs upstream Deno, such as Deno Deploy — or prefers postgres.js,
+ * bring a driver and adapt it: {@linkcode fromPostgresJs} wraps the npm `postgres` package (denext
+ * does not depend on it; your app does):
  *
  * ```ts
  * // deno.json imports: "postgres": "npm:postgres@^3"
@@ -33,7 +34,8 @@ export interface SqlQuery<T = SqlRow> extends PromiseLike<T[]> {
 
 /**
  * The minimal Postgres client denext needs. `Deno.SQL` (denext's runtime) satisfies it as is;
- * on stock Deno, {@linkcode fromPostgresJs} adapts the npm `postgres` package.
+ * elsewhere (Deno Deploy's upstream Deno), {@linkcode fromPostgresJs} adapts the npm `postgres`
+ * package.
  */
 export interface SqlClient {
   /** A parameterized query: every interpolated value is bound as a parameter. */
@@ -97,7 +99,8 @@ export class PostgresUnsupportedError extends Error {
   constructor(feature: string) {
     super(
       `${feature}: this Deno has no built-in Postgres client (Deno.SQL, part of denext's Deno ` +
-        "runtime). On stock Deno pass a client instead: `sql: fromPostgresJs(postgres(url))` " +
+        "runtime; Deno Deploy runs upstream Deno). Pass a client instead: " +
+        "`sql: fromPostgresJs(postgres(url))` " +
         "with the npm `postgres` package (see https://denext.dev/docs/database#postgres).",
     );
     this.name = "PostgresUnsupportedError";
@@ -162,8 +165,8 @@ export interface PostgresJsLike {
 }
 
 /**
- * Adapt an npm `postgres` (postgres.js) client to a {@linkcode SqlClient} — the stock-Deno path
- * for every denext Postgres feature. denext does not depend on the package: import it in your
+ * Adapt an npm `postgres` (postgres.js) client to a {@linkcode SqlClient} — the path for every
+ * denext Postgres feature where `Deno.SQL` is missing (Deno Deploy's upstream Deno). denext does not depend on the package: import it in your
  * app (`npm:postgres`) and pass the wrapped client as `sql`.
  *
  * @param pg The postgres.js client (`postgres(url)`).

@@ -36,8 +36,8 @@ export interface PostgresOptions {
    */
   url?: string;
   /**
-   * A client to use instead of `url`: any `SqlClient` (on stock Deno,
-   * `fromPostgresJs(postgres(url))` with the npm `postgres` package). It is never closed by the
+   * A client to use instead of `url`: any `SqlClient` (where `Deno.SQL` is missing, such as Deno
+   * Deploy's upstream Deno, `fromPostgresJs(postgres(url))` with the npm `postgres` package). It is never closed by the
    * plugin.
    */
   sql?: SqlClient;
@@ -74,8 +74,8 @@ export function installPostgres(slot: PostgresSlot | undefined): void {
 
 /**
  * Open the configured client. Never throws: on a Deno without `Deno.SQL` (and no `sql` given)
- * the slot carries the error, so `db()` explains it where it is used and a build on stock Deno
- * still succeeds.
+ * the slot carries the error, so `db()` explains it where it is used and a build that never
+ * queries still succeeds.
  *
  * @param options The `postgres` options.
  * @param env Reads an environment variable.

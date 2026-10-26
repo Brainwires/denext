@@ -3,7 +3,7 @@
 //
 // The client is the one the project itself would use: the `@denext/backend` plugin's (opened at
 // its setup from `backend({ postgres })` — its `url`, or a `sql` client the app passed, which is
-// how stock Deno gets one), else `DATABASE_URL` opened on `Deno.SQL`. The child reads the
+// how a Deno without `Deno.SQL` gets one), else `DATABASE_URL` opened on `Deno.SQL`. The child reads the
 // plugin's client from the process-global slot the plugin installs it in
 // (`Symbol.for("denext.backend.postgres")`), the same slot `db()` reads.
 //

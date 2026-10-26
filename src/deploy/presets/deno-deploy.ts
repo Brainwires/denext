@@ -146,7 +146,7 @@ function denoDeployWarnings(ctx: DeployContext): void {
   }
   if (manifest.env.some((v) => v.name === "DATABASE_URL")) {
     ctx.warn(
-      "deno-deploy: the platform runs stock Deno (no Deno.SQL) — give Postgres a postgres.js " +
+      "deno-deploy: the platform runs upstream Deno (no Deno.SQL) — give Postgres a postgres.js " +
         "client (https://denext.dev/docs/database#postgres)",
     );
   }
@@ -165,7 +165,7 @@ async function denoDeployPush(ctx: DeployContext, options: DenoDeployPresetOptio
         "organization token in the Deno Deploy dashboard and set it",
     );
   }
-  // denext's Deno toolchain (or the Deno the user chose with DENEXT_DENO / DENO_BIN): a compiled
+  // denext's Deno toolchain (or the build of it the user chose with DENEXT_DENO / DENO_BIN): a compiled
   // denext's own executable is not `deno`.
   const deno = denoExecutable();
   const args = [

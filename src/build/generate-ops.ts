@@ -174,8 +174,9 @@ const MIGRATE_JOB = `${sentinel("migration", "//")} — run it with \`denext job
 //
 // Postgres when DATABASE_URL is a postgres:// URL: migratePostgres takes an advisory lock, so two
 // instances deploying at once never apply a migration twice. postgresClient() uses Deno.SQL, the
-// Postgres client built into denext's Deno runtime; on stock Deno use the npm \`postgres\` package
-// instead: \`fromPostgresJs(postgres(url))\` (import postgres from "npm:postgres").
+// Postgres client built into denext's Deno runtime; where it is missing (Deno Deploy's upstream
+// Deno) use the npm \`postgres\` package instead: \`fromPostgresJs(postgres(url))\`
+// (import postgres from "npm:postgres").
 //
 // SQLite otherwise, on Deno's built-in node:sqlite (no npm). A file that manages its own
 // transaction (a \`BEGIN;\` / \`COMMIT;\` statement) runs as written: SQLite can't nest one inside

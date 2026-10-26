@@ -125,7 +125,7 @@ export class RealtimeUnsupportedError extends Error {
   constructor() {
     super(
       "backend({ realtime }): this Postgres client has no listen() — LISTEN/NOTIFY is needed. " +
-        "Deno.SQL (denext's Deno runtime) has it; on stock Deno pass " +
+        "Deno.SQL (denext's Deno runtime) has it; elsewhere (Deno Deploy) pass " +
         "`postgres: { sql: fromPostgresJs(postgres(url)) }` (the npm `postgres` package).",
     );
     this.name = "RealtimeUnsupportedError";
