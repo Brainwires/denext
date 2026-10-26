@@ -53,8 +53,8 @@ Low findings from the 4.8 supply-chain audit:
   `workspace` is.
 - **An unknown package's network failure** is pointed at `net: true`; on rc.6 suggest listing
   the hosts from the log instead.
-- **The runtime in use, not the pin.** The jail planning assumes the pinned runtime; under
-  `DENEXT_DENO=stock` or another binary it should read that runtime's version.
+- **The runtime in use, not the pin.** The jail planning assumes the pinned runtime; under a
+  `DENEXT_DENO=<path>` build of another version it should read that runtime's version.
 - **`.npmrc` next to a generated build config.** `module-config.json` / `css-config.json` now
   carry `supplyChain`; check whether a build child still finds the project's `.npmrc` (`paranoid`
   set there) from a config in `.denext/`, without copying a file that may hold credentials.
@@ -202,9 +202,8 @@ rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 tr
 (`?url` assets, CSS shims, MDX, `use cache`, Node-builtin stubs, `import.meta.env`, pnpm
 `catalog:`, Prisma externals, `jsr:` loading). The native App Router path already builds with
 `deno bundle`, and where `deno bundle --define` exists (denext's Deno toolchain from runtime
-`3.0.0-rc.1`; probed, so an upstream release with the flag is picked up too) it defines the
-class-component gate and the `features` map instead of seeding them; a stock Deno keeps the
-seeded fallback. No Deno has the hook below yet.
+`3.0.0-rc.1`, the only Deno denext 5.0 bundles on) it defines the class-component gate and the
+`features` map. No Deno has the hook below yet.
 
 - **When it gets a resolver / loader plugin API** (no committed issue yet): port
   `appResolverPlugin` / `denextRuntimePlugin` first, then the transforms one hook at a time;

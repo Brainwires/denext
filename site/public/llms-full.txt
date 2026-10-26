@@ -23,7 +23,7 @@ emit correct denext instead of Next.js.
    `denext task start` (the `denext` command brings its own Deno — no Deno install needed; with
    Deno installed, `deno task dev` runs the same task; the least-privilege `start` must be launched
    on denext's toolchain — `denext task start`, or the image / unit `denext deploy prepare` writes —
-   and stops with the fix on stock Deno). `denext create <dir>` scaffolds one (`--monorepo`: a Deno
+   and stops with the fix on any other Deno; denext 5.0 runs only on its own runtime). `denext create <dir>` scaffolds one (`--monorepo`: a Deno
    workspace, the app in `apps/web` importing shared `packages/ui` / `packages/shared` by name;
    `denext generate app <name>` adds another app; glob members such as `apps/*` work, and `denext ui`
    / `desktop` / `mobile` at the root run on its app). Migrating a Next app? `denext migrate` does it in one pass
@@ -709,13 +709,12 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-rc.5 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on, newer by semver; upstream Deno ships a 3.0.0 too, so from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
-`DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
-detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
+`denext desktop` and the package scripts download and SHA-256-verify (built by denext's Deno toolchain, made from Deno 2.9.8; denext pins runtime 3.0.0-rc.5 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on, newer by semver; upstream Deno ships a 3.0.0 too, so from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`DENEXT_DESKTOP_RUNTIME=stock` is refused since 5.0; an app built outside denext on an upstream
+runtime keeps the loopback origin); the gates detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
-`dev` build on denext's Deno toolchain, which always matches; only under an explicit
-`DENEXT_DENO=stock | <path>` or `DENO_BIN` of another version do they warn and use the stock runtime;
-`package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
+`dev` / `package` build on denext's Deno toolchain (`package` puts it first on the script's PATH),
+which always matches; another `deno` (a plain `deno task` on upstream Deno) is refused with the fix. A default installer that can't be built (missing tool, WiX other than 5,
 a version MSI/Debian can't express) is skipped with a warning; an asked-for one fails.
 `DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit, sidecar }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
 Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop({ sidecars })`,
@@ -897,8 +896,8 @@ PrismaDenoSql(Deno.env.get("DATABASE_URL")!) })` with `PrismaDenoSql` from `dene
 (Prisma's `prisma-client` generator, `runtime = "deno"`; needs runtime 3.0.0-rc.1+);
 `denext migrate` wires it (`--prisma-adapter deno-sql | npm | auto`).
 Postgres (every replica sharing one database): `postgresClient(url)` from `denext/server` is a
-tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
-`fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
+tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (where `Deno.SQL`
+is missing, e.g. Deno Deploy's upstream Deno: `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
 `postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
 tables by migration on first use (under the migration lock). The same cache / session / rate-limit
 stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, `{ client |
@@ -1128,7 +1127,7 @@ await screen.fireEvent.click(screen.getByRole("button"));
 
 A test that needs a fake clock or a module mock imports `vitest` (`vi.useFakeTimers()`,
 `vi.mock()`, `vi.stubEnv`) and runs under `denext test` — the toolchain's `deno test` has
-Vitest's API; stock Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
+Vitest's API; upstream Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
 `deno test` also runs. `denext test` runs the `*.vitest.ts` files as a second pass, and
 `denext test --coverage` reports both passes as one.
 
@@ -1190,10 +1189,13 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-rc.N` release built from Deno
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
-  and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
-  opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
-  first use, no build for the host, a failed download) the command stops with the fix
-  (`denext toolchain install`) — denext never runs another Deno on its own. Downloads of the
+  and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). From
+  denext 5.0 it is the only Deno denext runs on: `DENEXT_DENO=stock` is refused, and
+  `DENEXT_DENO=<path>` (or a `DENO_BIN` of yours) must be a build of denext's runtime, 3.0.0-rc.5 or
+  later, told by its `denext <version> (Brainwires)` `--version` line; when the toolchain can't be
+  had (offline on first use, no build for the host, a failed download) the command stops with the
+  fix (`denext toolchain install`) — denext never runs another Deno
+  (https://denext.dev/docs/toolchain#upgrading-to-50). Downloads of the
   toolchain and the Deno Desktop runtime give up after 30 s with no response
   (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`) or 60 s with no data (`DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`;
   `0` removes either), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` /
@@ -1201,12 +1203,12 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   starts `deno` (`fmt`, `lint`, `add`, `ui`, `mcp`, `create`, …) hands it the toolchain too.
   `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
-  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`;
+  plain `deno task` runs the `deno` on your PATH (a build it starts refuses unless that is denext's). `denext toolchain install|status|path|link|unlink`;
   `denext toolchain uninstall <version>|--all` and `prune` remove cached versions (the pinned one
   only with `--force`; `--dry-run`, `--json`).
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
-  runs it on the toolchain (with no toolchain it refuses, naming `denext toolchain install`;
-  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
+  runs it on the toolchain (with no toolchain it refuses, naming `denext toolchain install`; it
+  never looks for a `deno` of yours), and the installer runs `toolchain install` (+ `toolchain link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6) and its `deno lsp` runs
   TypeScript 7 too (the runtime's own default; `create` / `migrate` / `upgrade` also write
@@ -1216,7 +1218,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `tsconfig` `paths` imports, git / tarball dependencies, the project's own lifecycle scripts);
   everywhere it runs a CommonJS `.js` file as CommonJS and serves `better-sqlite3` over the built-in
   SQLite: https://denext.dev/docs/toolchain. A dependency's approved lifecycle script runs jailed
-  (no network, writes only under `node_modules`; on by default from runtime 3.0.0-rc.5):
+  (no network, writes only under `node_modules`; on by default):
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
   deno.json, the only one Deno reads; download hosts instead of `net: true` once denext pins
@@ -1236,9 +1238,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   keeps (`test`, `fmt`, `upgrade`, `desktop`, `deploy`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
-  esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else
-  (`DENEXT_DENO=stock`, stock Deno) the official `@esbuild/<platform>` binary, integrity-checked;
-  `ESBUILD_BINARY_PATH` overrides both. The build-time toolchain still uses a few opt-in npm tools —
+  esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256; no npm fallback since 5.0);
+  `ESBUILD_BINARY_PATH` overrides it. The build-time toolchain still uses a few opt-in npm tools —
   `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
   the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.

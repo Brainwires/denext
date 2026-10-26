@@ -197,9 +197,8 @@ bundler, not a different framework.
 ## The cost, honestly
 
 - **A build-time bundler.** The compat build runs esbuild — the binary
-  denext's Deno toolchain ships, or on stock Deno the official
-  `@esbuild/<platform>` binary fetched and integrity-checked on the first
-  compat build (see [esbuild](/docs/toolchain#esbuild)). It never ships; the
+  denext's Deno toolchain ships, hash-checked against its pin (see
+  [esbuild](/docs/toolchain#esbuild)). It never ships; the
   production image runs `deno` and the `.denext/` output only.
 - **Slower builds** than the native path — esbuild resolves through
   `node_modules` and prebuilds denext's runtime once per project. A large

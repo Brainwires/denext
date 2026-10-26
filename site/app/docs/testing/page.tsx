@@ -330,7 +330,7 @@ describe("scheduleReminder", () => {
 });`}
       </Code>
       <p>
-        Stock Deno cannot resolve <code>vitest</code>. If a plain <code>deno test</code>{" "}
+        Upstream Deno cannot resolve <code>vitest</code>. If a plain <code>deno test</code>{" "}
         also runs in your project, give these files a name its discovery skips, such as{" "}
         <code>*.vitest.ts</code>: <code>denext test</code>{" "}
         with no path named runs them as a second pass after the <code>Deno.test</code>{" "}
@@ -414,9 +414,9 @@ jobs:
         <a href="/docs/doctor-audit">Doctor &amp; audit</a>. Add <code>--coverage</code>{" "}
         to the test step and <code>deno coverage</code> after it for a report. A plain{" "}
         <code>deno task</code> runs the <code>deno test</code>{" "}
-        inside it on stock Deno; tests that use the toolchain&apos;s Vitest/Jest compatibility or
+        inside it on the Deno that started it; tests that use the toolchain&apos;s Vitest/Jest
+        compatibility or <code>Deno.SQL</code> run with <code>denext task check</code> instead (see
         {" "}
-        <code>Deno.SQL</code> run with <code>denext task check</code> instead (see{" "}
         <a href="/docs/toolchain">the toolchain</a>).
       </p>
 

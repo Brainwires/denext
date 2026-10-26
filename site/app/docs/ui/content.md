@@ -744,7 +744,7 @@ with no server running it is the last one. Read-only. The JSON twin answers
 **Where the work happens.** The UI process never opens the database: it would need the
 project's config, and the UI never runs project code. Each page writes one JSON request to a
 `denext db-admin` child (a hidden verb), which loads the project — its `.env`, its plugins, so
-`backend({ postgres })`'s client (including a `sql` client the app passes on stock Deno) and the
+`backend({ postgres })`'s client (including a `sql` client the app passes, as on Deno Deploy) and the
 storage driver are the app's own — answers, and exits. Without either a Postgres client or a
 configured database the page says why, rather than failing.
 

@@ -10,6 +10,40 @@ and this project adheres to
 
 ### Breaking
 
+- **denext 5.0 requires denext's own Deno runtime; stock Deno is no longer supported.** Every
+  command runs on the pinned toolchain (`3.0.0-rc.5` or later) and nothing else:
+  - `DENEXT_DENO=stock` and `DENEXT_DESKTOP_RUNTIME=stock` are refused with an error naming the
+    5.0 change and the fix (`denext toolchain install`). Unset them.
+  - `DENEXT_DENO=<path>`, and a `DENO_BIN` you set, must name a build of denext's runtime: it is
+    verified by the `denext <version> (Brainwires)` line of its `deno --version` (`3.0.0-rc.5` or
+    later), and any other binary is refused. The child marker is now that build's version.
+  - A compiled `denext` no longer looks for `~/.deno/bin/deno` or a `deno` on PATH when the
+    toolchain is missing; it refuses with the fix.
+  - Bundling refuses a `deno` that is not denext's runtime (a build started from a plain
+    `deno run` / `deno test` on upstream Deno): the `deno bundle --define` probe and the seeded
+    feature-flag fallback are gone. Run builds and tests through `denext` / `denext task`.
+  - esbuild comes from the toolchain or `ESBUILD_BINARY_PATH`; the npm `@esbuild/<platform>`
+    fallback and its `<DENO_DIR>/denext-esbuild/` cache are gone (delete the directory).
+  - `denext desktop run` / `dev` no longer fall back to the stock Deno Desktop runtime, and every
+    desktop build needs denext's Deno built from the runtime's release; `denext desktop package`
+    now puts the toolchain first on the packaging script's PATH. A plain `deno task
+    desktop:package` on upstream Deno is refused: use `denext task desktop:package`.
+    `desktopRuntimeDenoFlags` stays exported for older scripts and returns no flags.
+  - A least-privilege process that can't start the toolchain (`start` launched by a plain
+    `deno task` on another Deno) is always refused, never run on that Deno.
+  - Gates that assumed an older or stock runtime are gone: the idle trim, the lifecycle-script jail
+    default and the direction-split network grant (Docker, generic host, `build --compile`, desktop)
+    always apply; `denext test` always runs Vitest files; `--unstable-no-legacy-abort` is never
+    passed. `DENEXT_ALLOW_SKIP_VITEST` is gone from `scripts/test-run.ts`.
+  - Platforms that run upstream Deno you don't control (Deno Deploy) are unaffected; there
+    `Deno.SQL` is missing, so give Postgres `fromPostgresJs(postgres(url))`.
+
+  **Upgrading to 5.0:** unset `DENEXT_DENO=stock` / `DENEXT_DESKTOP_RUNTIME=stock`; run
+  `denext toolchain install` once; run tasks, builds and tests with `denext task …` /
+  `denext test` rather than a plain `deno task` / `deno test`; regenerate packaging scripts with
+  `denext desktop package --regenerate-scripts`; point any `DENEXT_DENO` / `DENO_BIN` at a build of
+  denext's runtime. See https://denext.dev/docs/toolchain#upgrading-to-50.
+
 - **Runtime `3.0.0-rc.5`: `request.signal` and the lifecycle-script jail** (see Changed).
   `Deno.serve`'s `request.signal` no longer aborts after a delivered response; code that relied on
   it opts back in with `--unstable-legacy-abort`, `"unstable": ["legacy-abort"]` or

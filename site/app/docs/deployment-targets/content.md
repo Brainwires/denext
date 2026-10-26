@@ -75,7 +75,7 @@ Point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with `start .` (or run
   ([Environment › Deno Deploy](/docs/environment#deno-deploy-and-other-platforms)).
 - TLS and autoscaling are the platform's; still set `maxConcurrency` per
   isolate.
-- The platform runs stock Deno, which has no `Deno.SQL`: give `@denext/backend`
+- The platform runs upstream Deno, which has no `Deno.SQL`: give `@denext/backend`
   and your own code a postgres.js client
   (`fromPostgresJs(postgres(url))`, [Databases › Postgres](/docs/database#postgres)).
 
@@ -252,7 +252,7 @@ it back: once the event loop has gone a second without work, it runs a full V8 G
 | `denext generate docker`, the `docker` / `fly` presets | `ENV DENO_UNSTABLE_IDLE_TRIM=1` in the image |
 | the `genericHost()` systemd unit                       | `Environment=DENO_UNSTABLE_IDLE_TRIM=1`      |
 
-`denext dev`, tests, `denext job`, the desktop runtime and stock Deno never get it, and it does
+`denext dev`, tests, `denext job`, the desktop runtime and a platform's upstream Deno never get it, and it does
 anything on glibc Linux only (macOS, Windows and musl ignore it). `denext start` can set it only on
 a process it starts itself (the switch onto the toolchain, a compiled `denext`'s run of the
 project's pinned denext). A `start` task run straight on the toolchain (`denext task start`)
@@ -382,9 +382,9 @@ export default {
 
 The binary takes its port from `--port` / `$PORT` at run time, so denext does not narrow listen
 unasked: list the port you deploy with, and a listener anywhere else (another port, a dependency's
-own server) is refused. The split needs the toolchain compiling onto its own `denort`; on stock Deno
-(`DENEXT_DENO=stock`), or for a target the toolchain has no `denort` for, the binary keeps
-`--allow-net` and the build warns.
+own server) is refused. The split needs the toolchain compiling onto its own `denort`; under a
+`DENEXT_DENO=<path>` build of another version, or for a target the toolchain has no `denort` for,
+the binary keeps `--allow-net` and the build warns.
 
 The generated deploy files scope listen for you, because they know the port: `denext generate
 docker` (and the `docker()` / `fly()` adapters) turn the `start` command's `--allow-net` into
@@ -466,9 +466,8 @@ target (`2.9.7-denext.20` and later; Windows on Arm `2.9.7-denext.21` and later)
 the same release as the CLI, pinned by SHA-256 in denext and downloaded into the
 toolchain cache on first use, so the binary carries the toolchain's patches.
 `Deno.SQL` is there (`postgresClient(url)` and `backend({ postgres: {} })` work
-as under `denext start`). With `DENEXT_DENO=stock` (or another `deno` through
-`DENEXT_DENO=<path>`), `deno compile` picks its own runtime, Deno's stock
-`denort`, which has no `Deno.SQL`.
+as under `denext start`). Under a `DENEXT_DENO=<path>` build of another version, `deno compile`
+picks its own runtime for that build.
 
 A compiled binary behaves as `denext start` does: its `request.signal` aborts
 only when a response is not delivered, and it prints no `request.signal` notice

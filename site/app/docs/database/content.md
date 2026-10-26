@@ -94,7 +94,8 @@ export const sql = postgresClient(Deno.env.get("DATABASE_URL"));
 export const getUsers = () => sql`SELECT id, email FROM users`; // values are bound, never spliced
 ```
 
-On stock Deno there is no `Deno.SQL`, and `postgresClient()` throws an error with
+On a Deno without `Deno.SQL` (a platform that runs upstream Deno, such as Deno Deploy),
+`postgresClient()` throws an error with
 `code: "unsupported"` that says so. Bring a driver instead and adapt it with `fromPostgresJs`
 (denext does not depend on the npm `postgres` package; your app does):
 
@@ -172,7 +173,7 @@ const sql = new Deno.SQL(Deno.env.get("DATABASE_URL"), {
   maxLifetime: 1800, // replace a connection this old (default 0: never)
   connectionTimeout: 10, // to connect, and to wait for a free connection (default 30)
 });
-// postgres.js on stock Deno: fromPostgresJs(postgres(url, { max, idle_timeout, max_lifetime, connect_timeout }))
+// postgres.js (Deno Deploy): fromPostgresJs(postgres(url, { max, idle_timeout, max_lifetime, connect_timeout }))
 ```
 
 **Sizing.** Each instance holds at most `max` pooled connections, plus one more for `LISTEN`
@@ -270,7 +271,8 @@ export const db = new Kysely<DB>({
 Deno may note that it ignored `better-sqlite3`'s build script; that is expected, since
 the addon it would build is never loaded. `DENO_NO_BETTER_SQLITE3_COMPAT=1` turns
 this off and loads the package's own code (which then needs its native addon). The
-shim recipes below are for stock Deno only.
+shim recipes below were for stock Deno, which denext 5.0 no longer runs on; keep them only for code
+that also runs on upstream Deno.
 
 ### Drizzle (verified — full app + e2e)
 
@@ -674,7 +676,8 @@ denext job migrate --payload '{"status":true}'  # applied / pending / changed / 
 The same calls work from your own code: `migratePostgres(sql, { dir, dryRun })` and
 `postgresMigrationStatus(sql, { dir })` from `denext/server` (`migrations: [{ name, sql }]`
 works instead of a directory). A file edited after it was applied is reported as `changed` by
-the status, never re-run. On stock Deno, swap `postgresClient(url)` in the generated job for
+the status, never re-run. On a platform without `Deno.SQL` (Deno Deploy), swap
+`postgresClient(url)` in the generated job for
 `fromPostgresJs(postgres(url))`. A Prisma or Drizzle project keeps its own tool.
 
 ### Drizzle: `drizzle-kit generate` + `migrate()` (verified)

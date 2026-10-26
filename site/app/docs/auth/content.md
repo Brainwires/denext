@@ -834,7 +834,7 @@ denextAuth({
 
 The same contract as the SQLite adapter, method for method (the shared contract suite runs against
 it on a real server), on a database every replica shares. `url` opens a client on `Deno.SQL`, the
-Postgres client built into [denext's Deno toolchain](/docs/toolchain); on stock Deno pass
+Postgres client built into [denext's Deno toolchain](/docs/toolchain); where it is missing (Deno Deploy) pass
 `sql: fromPostgresJs(postgres(url))` with the npm `postgres` package instead (see
 [Databases › Postgres](/docs/database#postgres)) — a `url` there throws an error with
 `code: "unsupported"`. A client you pass is never closed by the adapter; one it opened is closed on

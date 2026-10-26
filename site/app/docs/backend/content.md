@@ -506,7 +506,7 @@ transaction. Every query it runs is scoped by [row-level security](#row-level-se
 request's user; `db.service()` is the unscoped connection.
 
 The client is `Deno.SQL`, the Postgres client built into [denext's Deno toolchain](/docs/toolchain),
-opened at startup and closed when the server drains. On stock Deno there is none: the app still
+opened at startup and closed when the server drains. On a Deno without it (Deno Deploy) there is none: the app still
 builds and starts, and `db()` throws an error with `code: "unsupported"` that says so. Pass a client
 of your own as `postgres: { sql }` instead — the npm `postgres` package through `fromPostgresJs`
 from `denext/server` works on any Deno; a client you pass is never closed by the plugin.
@@ -1155,7 +1155,7 @@ logical when many connections write realtime tables at once.
 
 Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's
 [Deno toolchain](/docs/toolchain)), or the npm `postgres` package through
-`postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno. Without one, `onTableChange` and
+`postgres: { sql: fromPostgresJs(postgres(url)) }` where `Deno.SQL` is missing (Deno Deploy). Without one, `onTableChange` and
 `tableChanges` throw `RealtimeUnsupportedError` (`code: "unsupported"`), browser subscriptions are
 refused, and `denext dev` says so at startup. NOTIFY payloads are capped at 8000 bytes (why rows are
 re-read rather than carried, and why a full old row has a size limit under the notify source), and

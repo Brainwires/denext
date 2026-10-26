@@ -57,7 +57,7 @@ denext create my-app
 
 Everything else is pinned to your denext release and fetched the first time a command needs it:
 
-- **denext's Deno build**: stock Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`,
+- **denext's Deno build** (the only Deno denext runs on, from 5.0): upstream Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`,
   SHA-256-verified into `<DENO_DIR>/denext-deno/`, with **native TypeScript 7** type checking. A
   `deno` you already have is never replaced.
 - **esbuild 0.25.5**, shipped in the toolchain and hash-checked; its JS API is vendored, so there

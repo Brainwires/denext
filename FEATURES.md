@@ -309,7 +309,7 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
 - **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).
 - **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
   **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers, and Postgres
-  first-party — `postgresClient` on `Deno.SQL` (or `fromPostgresJs` on stock Deno), Postgres
+  first-party — `postgresClient` on `Deno.SQL` (or `fromPostgresJs` where it is missing, e.g. Deno Deploy), Postgres
   auth / session / rate-limit / cache / job-history stores and `migratePostgres` (see
   [Backend](#backend-opt-in-plugin-denextbackend)). See
   [the database guide](https://denext.dev/docs/database), [`examples/notes`](./examples/notes) (SQLite,
@@ -388,7 +388,7 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   could render as a page. — `packages/backend/src/storage.ts`, `s3-driver.ts`, `fs-driver.ts`,
   `sigv4.ts`.
 - **Postgres everywhere** — `postgresClient(url?)` (`denext/server`) is a tagged-template client
-  on **`Deno.SQL`**, built into denext's Deno runtime; on stock Deno,
+  on **`Deno.SQL`**, built into denext's Deno runtime; where it is missing (Deno Deploy),
   `fromPostgresJs(postgres(url))` adapts the npm `postgres` package to the same `SqlClient`
   shape. The Postgres stores take `{ sql | url, schema? }` and create their tables by migration
   on first use: `postgresAuthAdapter` (denext auth's users, accounts, credentials, tokens and
@@ -682,8 +682,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   pinned by URL, size and SHA-256, downloaded once, verified before extraction,
   extracted safely and cached for offline use, with optional `gh attestation`
   provenance pinned to the release workflow and tag; `deno task
-  desktop:pin-runtime <tag>` writes a new pin; `DENEXT_DESKTOP_RUNTIME=stock`
-  opts out. It carries a **stable app origin** (`desktop.app.origin`, so
+  desktop:pin-runtime <tag>` writes a new pin (denext 5.0 has no stock-runtime
+  opt-out). It carries a **stable app origin** (`desktop.app.origin`, so
   storage and server allow-lists survive relaunch) that the window **stays on** (a top-level
   navigation elsewhere opens in the user's browser unless
   `desktop.app.allowedNavigationOrigins` lists it), **deep links and opened
@@ -1027,14 +1027,15 @@ cache uses Deno's built-in `node:sqlite`.)
 ## Build, tooling & CLI
 
 - **denext's own Deno build (the toolchain)** — the verbs that run project code re-run
-  themselves on a pinned `2.9.7-denext.N` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
-  compatibility in `deno test`), downloaded on first need into `<DENO_DIR>/denext-deno/`,
+  themselves on a pinned `3.0.0-rc.N` Deno (upstream Deno plus `Deno.SQL` and Vitest/Jest
+  compatibility in `deno test`; from 5.0 the only Deno denext runs on), downloaded on first need into `<DENO_DIR>/denext-deno/`,
   SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
   The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and
   links it as `deno` only when none is on `PATH`), and every child the CLI starts finds it first
   on `PATH`. `denext toolchain install|status|path|link|unlink`, and `uninstall <version>|--all`
-  / `prune` to remove cached versions with the space freed; `DENEXT_DENO=stock` opts out,
-  and a toolchain that can't be had stops the command with the fix (never another Deno). See
+  / `prune` to remove cached versions with the space freed; `DENEXT_DENO=<path>` runs another
+  build of the runtime (verified by its identity line), and a toolchain that can't be had stops
+  the command with the fix (never another Deno; `DENEXT_DENO=stock` is refused). See
   [the toolchain](https://denext.dev/docs/toolchain). — `src/cli/self-exec.ts`,
   `src/build/deno-executable.ts`.
 - **Every Deno verb through `denext`** — a verb denext doesn't define (`compile`, `run`, `x`,

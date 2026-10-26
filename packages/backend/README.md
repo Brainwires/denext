@@ -91,7 +91,7 @@ import { db } from "@denext/backend/server";
 const posts = await db()`SELECT id, title FROM posts WHERE author = ${userId}`; // bound, not spliced
 ```
 
-The client is `Deno.SQL`, built into denext's Deno runtime. On stock Deno pass your own:
+The client is `Deno.SQL`, built into denext's Deno runtime. Where it is missing (Deno Deploy) pass your own:
 `backend({ postgres: { sql: fromPostgresJs(postgres(url)) } })` with the npm `postgres` package
 (`fromPostgresJs` is in `denext/server`). Behind a transaction-mode pooler, set
 `postgres.directUrl` (default `DATABASE_DIRECT_URL`): LISTEN, reserved connections and migrations

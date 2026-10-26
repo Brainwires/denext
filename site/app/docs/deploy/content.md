@@ -280,8 +280,8 @@ client that reaches the server directly could spoof the headers.
 
 **The runtime.** Every generated image runs on denext's Deno toolchain (the build already
 downloaded it; a layer puts it first on `PATH`), the runtime `dev` and `build` use:
-`@denext/backend`'s Postgres client and `postgresClient()` are `Deno.SQL`, which stock Deno does
-not have.
+`@denext/backend`'s Postgres client and `postgresClient()` are `Deno.SQL`, which upstream Deno
+does not have.
 
 **Object storage from the browser.** The app talks to the store at `S3_ENDPOINT` (default
 `http://minio:9000`, which only the containers can resolve), and signs every URL it hands a

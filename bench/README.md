@@ -79,8 +79,8 @@ only (sizes are deterministic).
   chunk, which a `Link` prefetch loads on every hello route, so it counts toward
   the shared runtime (1.4 KB gzip). Reports from before 4.3 count the same code
   inside the shared chunk. On a toolchain with `deno bundle --define` the
-  build-scan gates fold out code the app never names; a stock Deno keeps it
-  behind runtime checks, so compare reports made on the same Deno.
+  build-scan gates fold out code the app never names (reports made on a stock
+  Deno before 5.0 kept it behind runtime checks), so compare reports made on the same Deno.
 - **SSR: one harness, native runtimes.** The identical measurement loop runs on
   each framework in the runtime it actually deploys to. Ratios are the result;
   absolute ns/op are machine-specific.

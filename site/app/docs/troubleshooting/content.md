@@ -65,20 +65,20 @@ leftover backup automatically. On an older version, delete the injected
 
 See the [changelog](/docs/changelog) entry for 2.4.2.
 
-## "denext needs Deno 2.9+" / `deno bundle` not found
+## "bundling needs denext's Deno runtime" / `deno bundle` not found
 
-**Cause.** `build` and `dev` bundle client code with Deno's own `deno bundle` subcommand, which
-needs Deno ≥ 2.9. Normally they run on [denext's Deno toolchain](/docs/toolchain) and this never
-comes up; it does when the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a
-platform with no build) and the stock `deno` they fall back to is older or missing.
+**Cause.** `build` and `dev` bundle client code with `deno bundle` on [denext's Deno toolchain](/docs/toolchain) (its `--define`). From denext 5.0 nothing else bundles: a build started
+on another Deno (a script or test run with a plain `deno run` / `deno test`, a `DENO_BIN` or
+`DENEXT_DENO` that is not denext's runtime) stops with this error, and so does `DENEXT_DENO=stock`.
 
-**Fix.** Fetch the toolchain once you are online, or point denext at a Deno 2.9+ binary.
+**Fix.** Fetch the toolchain once you are online and run through denext, or point `DENEXT_DENO` at
+a build of denext's runtime.
 
 ```sh
 denext toolchain install
 denext toolchain status      # which Deno a command runs on, and why
-# or
-DENO_BIN=/path/to/deno denext task build
+# or a build of denext's runtime (3.0.0-rc.5 or later)
+DENEXT_DENO=/path/to/denext-runtime/deno denext task build
 ```
 
 ## "no dispatcher installed" / hooks throwing inside an npm React library

@@ -85,7 +85,7 @@ const ARRIVES: Card[] = [
   {
     title: "Deno, denext's build",
     body:
-      "Stock Deno plus Deno.SQL and Vitest/Jest compatibility in deno test, for macOS, Linux and Windows on x64 and arm64. A deno you already have is never replaced.",
+      "Upstream Deno plus Deno.SQL and Vitest/Jest compatibility in deno test, for macOS, Linux and Windows on x64 and arm64. A deno you already have is never replaced.",
   },
   {
     title: "TypeScript 7 type checking",

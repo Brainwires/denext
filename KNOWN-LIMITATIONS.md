@@ -49,8 +49,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
   arm64). Elsewhere, and offline on first use, a command that needs the toolchain stops with an
-  error naming `denext toolchain install`; `DENEXT_DENO=stock` runs stock Deno instead, without
-  `Deno.SQL` or Vitest/Jest compatibility in `deno test`.
+  error naming `denext toolchain install`. denext 5.0 runs on no other Deno (`DENEXT_DENO=stock` is
+  refused); on another host, `DENEXT_DENO=<path>` runs a build of denext's runtime you made for it.
 - **Windows on Arm has run on a VM, not yet on Arm64 hardware** (last verified on toolchain
   2.9.7-denext.21). On
   a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
@@ -116,12 +116,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   request.** On macOS, Windows and musl (Alpine) the runtime ignores the switch. The trim runs
   between event loop polls, so a request that arrives while one runs waits for it once (up to about
   240 ms on a large app after a load burst; 8-20 ms on a small handler). It needs denext's Deno
-  from runtime 3.0.0-rc.5, so stock Deno never gets it, and `denext task start` (straight on the
+  (every runtime denext 5.0 runs on), and `denext task start` (straight on the
   toolchain) gets it only with `DENO_UNSTABLE_IDLE_TRIM=1` in its environment.
   `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0` turns it off. See
   [Deployment targets › Idle memory trim](https://denext.dev/docs/deployment-targets#idle-memory-trim).
-- **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
-  `denext task` is what puts the toolchain inside a task.
+- **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (the `deno` on
+  your PATH); `denext task` is what puts the toolchain inside a task, and a build or packaging
+  script a plain `deno task` starts on another Deno refuses with the fix.
 
 ### Islands, resumability and Cache Components
 
@@ -273,7 +274,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   one shared password, not a multi-user console, and keeps no metrics.
   Moving from a Supabase project, TOTP secrets, WebAuthn credentials and OAuth-server client
   secrets don't carry over (users enroll again, clients are re-registered).
-- **The built-in Postgres client is `Deno.SQL`, part of denext's Deno runtime.** On stock Deno pass
+- **The built-in Postgres client is `Deno.SQL`, part of denext's Deno runtime.** Where it is missing
+  (Deno Deploy's upstream Deno) pass
   `postgres: { sql: fromPostgresJs(postgres(url)) }` (the npm `postgres` package); without a client
   `db()` and realtime throw `code: "unsupported"`.
 - **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
@@ -311,8 +313,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **The compiled `denext` binary re-execs the denext the project pins** for every module-loading
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
   need; no Deno install required). Offline on first use, with no toolchain cached, it stops with
-  the fix (`denext toolchain install` once online); `DENEXT_DENO=stock` runs a `deno` on PATH
-  instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
+  the fix (`denext toolchain install` once online); it never runs a `deno` of yours instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.
 - **A workspace glob member expands one level.** `"./apps/*"` names the folders directly under

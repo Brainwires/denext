@@ -78,12 +78,12 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   instances (`vi.resetModules()` + `await import()`, instead of a `reset…ForTesting` export) and
   `vi.stubGlobal` / `vi.stubEnv` with automatic restore. Write a NEW test that needs one of those
   as a Vitest file instead of adding a test-only seam to `src/` or sleeping; everything else stays
-  `Deno.test`. Stock Deno cannot resolve `vitest`, and its test discovery skips the `.vitest.ts`
+  `Deno.test`. Upstream Deno cannot resolve `vitest`, and its test discovery skips the `.vitest.ts`
   suffix, so plain `deno test` never sees these files: `scripts/test-run.ts` (`deno task test`,
   `test:unit`, `check`; CI's `check` job) finds them and runs them in a third pass on the
   toolchain — the running Deno when it already is one, else the pinned build it downloads and
-  verifies (`DENEXT_DENO=stock` skips the pass with a note; any other reason it can't is a
-  failure). Run one with `deno task test tests/jobs-timers.vitest.ts`. Outside CI that pass runs
+  verifies (every pass runs on it; when it can't be had, `DENEXT_DENO=stock` included, the run
+  fails). Run one with `deno task test tests/jobs-timers.vitest.ts`. Outside CI that pass runs
   with `--no-check` (CI, `CI=true`, type-checks them): Deno wipes a `DENO_DIR`'s type-check cache
   whenever another Deno version opens it, so a toolchain type-check would cost the next stock run
   its whole cache (~25 s for the suite) every time; add `--check` to type-check them locally. A Vitest file never goes
@@ -96,7 +96,7 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   `--parallel`, the serial ones included, then the Vitest files), and the report comes from the
   toolchain's `deno coverage <dir>` (`scripts/toolchain-deno.ts`). From `2.9.7-denext.17` it
   merges a module's plain-run and Vitest-run profiles per emitted form, so a line either pass ran
-  counts as covered; stock Deno's `deno coverage` would under-report such a module.
+  counts as covered; upstream Deno's `deno coverage` would under-report such a module.
   **`deno task test:stress`** finds these: it runs the timer-heavy unit tests (client runtime,
   mobile, desktop, React Native, Expo, VirtualList, navigation; serial and child-process files
   left out, see `scripts/test-stress.ts`; the `.vitest.ts` files in those areas too, their pass
