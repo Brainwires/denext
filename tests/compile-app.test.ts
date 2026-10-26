@@ -49,14 +49,12 @@ Deno.test("compileBuildFlags: --allow-all only when the app opts in", () => {
   assertEquals(compileBuildFlags({ permissions: "all" }), ["--allow-all"]);
 });
 
-Deno.test("toolchainCompileFlags: the toolchain's npm pruning and runtime flags, none off it", () => {
+Deno.test("toolchainCompileFlags: the toolchain's npm pruning, none for an explicit deno", () => {
   assertEquals(toolchainCompileFlags(undefined), []);
-  assertEquals(toolchainCompileFlags("2.9.7-denext.21"), [
-    "--exclude-unused-npm",
-    "--unstable-no-legacy-abort",
-  ]);
-  // From 3.0.0-rc.5 the new abort is the runtime's default: only the npm pruning.
-  assertEquals(toolchainCompileFlags("3.0.0-rc.5"), ["--exclude-unused-npm"]);
+  // Every runtime denext 5.0 runs on has the new request abort by default: no runtime flags.
+  for (const version of ["3.0.0-rc.5", "3.0.0-rc.6"]) {
+    assertEquals(toolchainCompileFlags(version), ["--exclude-unused-npm"]);
+  }
 });
 
 Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere", async () => {
