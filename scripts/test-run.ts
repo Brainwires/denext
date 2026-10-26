@@ -38,6 +38,14 @@
 // ones included (a coverage run stays deterministic). `DENEXT_DENO=stock` runs them on the
 // running Deno and skips the Vitest files, as without coverage.
 //
+// After the passes of a coverage run, every `src/` and `packages/` module the profiles name is
+// re-emitted under this checkout's `deno.json` (`deno cache` of one entry importing them all).
+// `deno coverage` reads a module's transpiled source from `DENO_DIR`'s emit cache, one entry per
+// module, which any process transpiling that module under another config overwrites — a test
+// app's build bundling denext's client modules with the app's own (or no) `deno.json`. A module
+// whose last emit was such a one is skipped by the report ("Missing transpiled source code"), and
+// the coverage ratchet then reads it as never loaded by a test.
+//
 // Every pass runs with `TMPDIR` / `TMP` / `TEMP` pointing at one temp root of this run's own, which
 // is removed when the run ends: the temp dirs tests (and the builds, CLIs and browsers they start)
 // make and never remove — scaffolds, build output, profiles — go with it instead of piling up
@@ -321,6 +329,122 @@ export async function removeTempRoot(root: string): Promise<void> {
   }
 }
 
+/**
+ * The profile directory `flags` collect into: `--coverage=<dir>`, or Deno's `coverage` for a bare
+ * `--coverage`; null without coverage.
+ *
+ * @param flags The `deno test` flags.
+ * @returns The directory, as given.
+ */
+export function coverageDir(flags: readonly string[]): string | null {
+  for (const f of flags) {
+    if (f === "--coverage") return "coverage";
+    if (f.startsWith("--coverage=")) return f.slice("--coverage=".length);
+  }
+  return null;
+}
+
+/** How much of a raw profile is read for its `url` (the second key of its pretty-printed JSON). */
+const PROFILE_HEAD_BYTES = 4096;
+
+/** A module that needs an emit (TypeScript or JSX; not a declaration file). */
+const EMITTED = /(?<!\.d)\.(?:[mc]?tsx?|jsx)$/;
+
+/** The `url` a raw profile's first bytes name, if any. */
+function profileUrl(head: string): string | null {
+  const m = /"url"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(head);
+  if (!m) return null;
+  try {
+    return JSON.parse(m[1]) as string;
+  } catch {
+    return null;
+  }
+}
+
+/** The first `n` bytes of `path`, decoded. */
+async function readHead(path: string, n: number): Promise<string> {
+  using file = await Deno.open(path);
+  const buf = new Uint8Array(n);
+  const read = await file.read(buf);
+  return new TextDecoder().decode(buf.subarray(0, read ?? 0));
+}
+
+/**
+ * The modules the raw profiles in `dir` name that lie under one of `roots` (directory file URLs
+ * ending in `/`), need an emit and still exist — sorted, each once.
+ *
+ * @param dir The profile directory.
+ * @param roots The directories whose modules count.
+ * @returns Their `file:` URLs.
+ */
+export async function profiledModules(dir: string, roots: readonly string[]): Promise<string[]> {
+  const found = new Set<string>();
+  for await (const entry of Deno.readDir(dir)) {
+    if (!entry.isFile || !entry.name.endsWith(".json")) continue;
+    const url = profileUrl(await readHead(join(dir, entry.name), PROFILE_HEAD_BYTES));
+    if (!url || found.has(url) || !EMITTED.test(url) || url.includes("/node_modules/")) continue;
+    if (!roots.some((r) => url.startsWith(r))) continue;
+    try {
+      if ((await Deno.stat(new URL(url))).isFile) found.add(url);
+    } catch {
+      // Gone since the run (a test's own scratch module): nothing to report on.
+    }
+  }
+  return [...found].sort();
+}
+
+/**
+ * The source of an entry module importing each of `urls`: `deno cache` of it emits every one under
+ * the config it runs with.
+ *
+ * @param urls The modules.
+ * @returns The module source.
+ */
+export function emitEntrySource(urls: readonly string[]): string {
+  return urls.map((u) => `import ${JSON.stringify(u)};\n`).join("");
+}
+
+/** The directories whose modules the coverage tasks report on (see deno.json's `coverage*`). */
+const COVERED_ROOTS: readonly string[] = ["src/", "packages/"].map((d) =>
+  new URL(`../${d}`, import.meta.url).href
+);
+
+/** Where {@linkcode reEmitCovered} looks and what it runs with. */
+export interface ReEmitOptions {
+  /** The Deno the passes ran on. */
+  bin: string;
+  /** The `deno.json` the passes ran under (default: this checkout's). */
+  config?: string;
+  /** The directories whose modules count (default: `src/` and `packages/`). */
+  roots?: readonly string[];
+  /** Where the entry module is written (default: the run's temp root, else a new temp dir). */
+  tempDir?: string;
+}
+
+/**
+ * Re-emit the covered modules the profiles in `dir` name under the passes' `deno.json` (see the
+ * module header). A failure is reported, never fatal: the report then skips what it can't read,
+ * and the ratchet names it.
+ *
+ * @param dir The profile directory.
+ * @param options The Deno, config, roots and temp dir.
+ * @returns How many modules were re-emitted (0 when none, or when `deno cache` failed).
+ */
+export async function reEmitCovered(dir: string, options: ReEmitOptions): Promise<number> {
+  const urls = await profiledModules(dir, options.roots ?? COVERED_ROOTS);
+  if (urls.length === 0) return 0;
+  const tempDir = options.tempDir ?? runTempRoot ?? await Deno.makeTempDir();
+  const entry = join(tempDir, "coverage-emit.ts");
+  await Deno.writeTextFile(entry, emitEntrySource(urls));
+  const config = options.config ?? join(ROOT, "deno.json");
+  if (await deno(["cache", "--config", config, entry], options.bin)) return urls.length;
+  console.error(
+    `test-run: re-emitting the ${urls.length} covered modules failed; \`deno coverage\` may ` +
+      "skip some (Missing transpiled source code).",
+  );
+  return 0;
+}
+
 /** The run's temp root, set once by the main block (unset when imported by a test). */
 let runTempRoot: string | undefined;
 
@@ -413,6 +537,8 @@ async function runPasses(): Promise<boolean> {
   const parallel = await runPass(withWatchdog(passes.parallel), stock);
   const serial = await runPass(withWatchdog(passes.serial), stock);
   const vitest = await vitestPass(passes.vitest, toolchain); // every pass runs, whatever failed
+  const dir = coverageDir(splitArgs(Deno.args).flags);
+  if (dir !== null) await reEmitCovered(dir, { bin: stock });
   return parallel && serial && vitest;
 }
 

@@ -525,6 +525,23 @@ Deno.test("adapter: money is read at lc_monetary's fractional digits, asked once
   assert(!plain.log.includes(`unsafe ${lookup}`));
 });
 
+Deno.test("adapter: a failed money scale lookup is asked again; a bad scale reads two digits", async () => {
+  const columns = [col({ name: "price", typeOid: 790 })];
+  const lookup = "select scale('1'::money::numeric)::int4";
+  const answers: Record<string, SqlRows<unknown> | Error> = {
+    "select x": rows([[i64(1500n)]], { columns }),
+    [lookup]: new Error("lookup down"),
+  };
+  const { client, log } = fakeClient(answers);
+  const db = new DenoSqlAdapter(client, postgresDriver(undefined), () => Promise.resolve());
+  await assertRejects(() => db.queryRaw(query("select x")));
+  // Not cached: the next result asks again, and an out-of-range answer falls back to 2 digits.
+  answers[lookup] = rows([[99]], { columns: [col({ name: "scale" })] });
+  const r = await db.queryRaw(query("select x"));
+  assertEquals(r.rows, [["15.00"]]);
+  assertEquals(log.filter((l) => l === `unsafe ${lookup}`).length, 2);
+});
+
 Deno.test("postgres: a money column without a scale lookup reads two digits", async () => {
   const codec = await pg.columnCodec(col({ typeOid: 790 }), noKinds);
   assertEquals(codec.decode(i64(-150n)), "-1.50");

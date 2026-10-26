@@ -23,9 +23,13 @@ import {
 } from "../scripts/lib/serial-scan.ts";
 import {
   ALLOW_SKIP_VITEST_ENV,
+  coverageDir,
+  emitEntrySource,
   findVitestFiles,
   heapEnv,
   isToolchainBuild,
+  profiledModules,
+  reEmitCovered,
   removeTempRoot,
   stockPassDeno,
   tempRootEnv,
@@ -35,7 +39,7 @@ import {
   WATCHDOG_PRELOAD,
   withWatchdog,
 } from "../scripts/test-run.ts";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 
 Deno.test("serial tests: each file that changes process-wide state is listed, and only those", async () => {
   // Stale? `deno task regen` rewrites the list (scripts/gen-serial-tests.ts); then commit it.
@@ -442,4 +446,86 @@ Deno.test("test-run: DENEXT_DENO=stock fails the Vitest pass unless the skip is 
   const body = src.slice(src.indexOf("async function runVitestPass("));
   const stockBranch = body.slice(0, body.indexOf("return await deno(args, bin);"));
   assert(stockBranch.includes("return false;"), stockBranch);
+});
+
+Deno.test("test-run: coverageDir names the profile directory the flags collect into", () => {
+  assertEquals(coverageDir(["--fail-fast", "--coverage=coverage/profile"]), "coverage/profile");
+  assertEquals(coverageDir(["--coverage"]), "coverage");
+  assertEquals(coverageDir(["--fail-fast"]), null);
+});
+
+Deno.test("test-run: profiledModules lists the existing emitted modules under the roots, once", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_profiles_" });
+  try {
+    const src = join(dir, "repo", "src");
+    await Deno.mkdir(join(src, "node_modules"), { recursive: true });
+    for (const f of ["a.ts", "b.tsx", "c.d.ts", "d.js", "node_modules/e.ts"]) {
+      await Deno.writeTextFile(join(src, f), "");
+    }
+    const root = `${toFileUrl(src).href}/`;
+    const profile = (name: string, url: string) =>
+      Deno.writeTextFile(
+        join(dir, `${name}.json`),
+        JSON.stringify({ scriptId: "1", url, functions: [] }, null, 2),
+      );
+    await profile("1", `${root}a.ts`);
+    await profile("2", `${root}a.ts`); // a second profile of the same module
+    await profile("3", `${root}b.tsx`);
+    await profile("4", `${root}c.d.ts`); // nothing to emit
+    await profile("5", `${root}d.js`); // nor here
+    await profile("6", `${root}node_modules/e.ts`);
+    await profile("7", `${root}gone.ts`); // removed since the run
+    await profile("8", toFileUrl(join(dir, "elsewhere.ts")).href); // outside the roots
+    await Deno.writeTextFile(join(dir, "9.json"), "{}"); // no url
+    await Deno.writeTextFile(join(dir, "notes.txt"), `"url": "${root}a.ts"`);
+    assertEquals(await profiledModules(dir, [root]), [`${root}a.ts`, `${root}b.tsx`]);
+    assertEquals(
+      emitEntrySource([`${root}a.ts`, `${root}b.tsx`]),
+      `import ${JSON.stringify(`${root}a.ts`)};\nimport ${JSON.stringify(`${root}b.tsx`)};\n`,
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test-run: a module another config re-emitted is reported again after reEmitCovered", async () => {
+  // `deno coverage` reads a module's emit from the shared emit cache; a process transpiling it under
+  // another config (a test app's build) overwrites that entry, and the report skips the module.
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_reemit_" }));
+  const deno = Deno.execPath();
+  const run = async (args: string[]) => {
+    const out = await new Deno.Command(deno, { args, cwd: dir, stdin: "null" }).output();
+    return new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+  };
+  try {
+    await Deno.mkdir(join(dir, "mod"));
+    await Deno.writeTextFile(
+      join(dir, "mod", "lib.ts"),
+      "export function f(x: number): number {\n  return x > 0 ? 1 : 2;\n}\n",
+    );
+    await Deno.writeTextFile(
+      join(dir, "lib_test.ts"),
+      'import { f } from "./mod/lib.ts";\nDeno.test("f", () => void f(1));\n',
+    );
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.writeTextFile(
+      join(dir, "other.json"),
+      '{ "compilerOptions": { "jsxFactory": "h" } }',
+    );
+    await run(["test", "--coverage=cov", "--coverage-raw-data-only", "lib_test.ts"]);
+    await run(["run", "--config", "other.json", "mod/lib.ts"]);
+    assert((await run(["coverage", "cov"])).includes("Missing transpiled source"), "clobbered");
+    const reEmitted = await reEmitCovered(join(dir, "cov"), {
+      bin: deno,
+      config: join(dir, "deno.json"),
+      roots: [`${toFileUrl(join(dir, "mod")).href}/`],
+      tempDir: dir,
+    });
+    assertEquals(reEmitted, 1);
+    const report = await run(["coverage", "cov"]);
+    assert(!report.includes("Missing transpiled source"), report);
+    assert(report.includes("lib.ts"), report);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
