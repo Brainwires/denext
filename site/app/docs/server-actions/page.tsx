@@ -120,13 +120,13 @@ export default async function Note({ params }: { params: Promise<{ id: string }>
         <code>openssl rand -base64 32</code>) to the same value for every build and every instance —
         where <code>denext build</code>{" "}
         runs, not only at runtime: the build's secret is the one the client bundle carries ids for,
-        so a server started with the variable set to another value ignores it with a warning (and
-        reports <code>action-ids: "down"</code> on{" "}
-        <code>/_denext/health</code>) when the build generated its own, and refuses to start when
-        the build used the variable and the server has another value or none. Inline actions are
-        keyed by their module's project-relative path, so builds of one source at different paths
-        agree. A page rendered by an older build posts ids the new one does not know: the request
-        answers <code>409</code> with{" "}
+        so a server started with the variable set to another value ignores it with one warning when
+        the build generated its own (actions keep working on the build's secret, and the instance
+        stays healthy), and refuses to start (with <code>action-ids: "down"</code> on{" "}
+        <code>/_denext/health</code>) when the build used the variable and the server has another
+        value or none. Inline actions are keyed by their module's project-relative path, so builds
+        of one source at different paths agree. A page rendered by an older build posts ids the new
+        one does not know: the request answers <code>409</code> with{" "}
         <code>x-denext-action: unknown</code>, and the page reloads itself once to pick the new ids
         up (never in a loop: a page whose actions stay unknown after the reload just fails the
         call), as an expired Next.js action makes the page reload.

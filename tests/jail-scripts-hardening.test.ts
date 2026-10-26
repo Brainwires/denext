@@ -292,3 +292,26 @@ Deno.test("generated configs carry the workspace root's supplyChain, write paths
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("jail: the deno.json edit never follows a symlink out of the project (F-L11)", async () => {
+  const outside = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_jail_out_" }));
+  const target = join(outside, "deno.json");
+  const original = `{ "imports": { "puppeteer": "npm:puppeteer@^24.1.0" } }\n`;
+  await Deno.writeTextFile(target, original);
+  const dir = await project({ "package.json": { dependencies: { sharp: "^0.34.0" } } });
+  try {
+    try {
+      await Deno.symlink(target, join(dir, "deno.json"));
+    } catch {
+      return; // no symlink privilege (Windows without Developer Mode): nothing to check
+    }
+    let refused: unknown = null;
+    await applyJailExceptions(dir, { version: RC5, env: NO_ENV }).catch((e) => refused = e);
+    assert(refused instanceof Error, "the write through the symlink is refused");
+    assertStringIncludes((refused as Error).message, "refusing to write");
+    assertEquals(await Deno.readTextFile(target), original, "the outside file is untouched");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});

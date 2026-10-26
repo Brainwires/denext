@@ -1022,7 +1022,7 @@ upstream version.
   ([`.github/workflows/denext_runtime.yml`](https://github.com/Brainwires/deno/blob/development-denext/.github/workflows/denext_runtime.yml)
   in the Deno fork) builds every target on its own runner, checks architectures and dynamic
   dependencies, and packages and launches a small app with the stock `deno desktop` on both
-  backends before anything is published. The fork's `DENEXT.md` describes how to reproduce a
+  backends before anything is published. The fork's repository describes how to reproduce a
   build locally.
 - **One laufey revision.** laufey's C API is version-exact, so the `laufey` crate `libdenort`
   links and the backend hosts are built from the same commit, and the workflow fails if their API

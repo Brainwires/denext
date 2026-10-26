@@ -858,3 +858,24 @@ Deno.test("s3: TUS uploads become multipart parts, with a tail between short PAT
     await app.close();
   }
 });
+
+Deno.test("TUS part upload: a presigned PUT that never answers is given up on (F-L7)", async () => {
+  const { putPart } = await import("../packages/backend/src/storage-tus.ts");
+  let sawSignal = false;
+  const hanging: typeof fetch = (_url, init) => {
+    sawSignal = init?.signal instanceof AbortSignal;
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    });
+  };
+  const err = await assertRejects(
+    () => putPart("https://store.example/part?x=1", new Uint8Array(8), 30, hanging),
+    StorageError,
+  );
+  assert(sawSignal, "the PUT carries an abort signal");
+  assertStringIncludes(err.message, "timed out");
+  // An answer in time: its ETag.
+  const ok: typeof fetch = () =>
+    Promise.resolve(new Response(null, { status: 200, headers: { etag: '"p1"' } }));
+  assertEquals(await putPart("https://store.example/part", new Uint8Array(8), 1_000, ok), '"p1"');
+});

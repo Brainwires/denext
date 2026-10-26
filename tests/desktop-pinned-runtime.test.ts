@@ -221,6 +221,46 @@ Deno.test("ensureDesktopRuntime refuses a checksum mismatch and extracts nothing
   }
 });
 
+Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or no data mid-body", async () => {
+  const good = await fixtureArchive();
+  const f = await fixture(good);
+  const vars = ["DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS"];
+  const prev = vars.map((v) => Deno.env.get(v));
+  Deno.env.set("DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", "200");
+  Deno.env.set("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", "200");
+  try {
+    // A server that accepts the request and never answers.
+    const silent: typeof fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+      });
+    const connect = await assertRejects(
+      () => ensure(f, { fetch: silent }),
+      DesktopRuntimeDownloadError,
+    );
+    assertStringIncludes(connect.message, "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS");
+    assertDownloadHint(connect.message);
+    // Headers and a first chunk, then nothing.
+    f.setBody(() =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(good.subarray(0, 20));
+          },
+        }),
+      )
+    );
+    const idle = await assertRejects(() => ensure(f), DesktopRuntimeDownloadError);
+    assertStringIncludes(idle.message, "interrupted");
+    assertStringIncludes(idle.message, "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS");
+    assertDownloadHint(idle.message);
+    assertEquals(await tree(join(f.cacheRoot, f.pin.version)), []);
+  } finally {
+    vars.forEach((v, i) => prev[i] === undefined ? Deno.env.delete(v) : Deno.env.set(v, prev[i]!));
+    await f.close();
+  }
+});
+
 /** Every download failure ends with the same way out: a local runtime dir, or the stock runtime. */
 function assertDownloadHint(message: string): void {
   assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime>");

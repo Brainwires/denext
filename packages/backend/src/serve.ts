@@ -172,14 +172,31 @@ async function multipartResponse(
   headers.set("content-length", String(length));
   if (!read) return new Response(null, { status: 206, headers });
   const first = await read(ranges[0]);
+  // Until its bytes are being copied, `first` is ours to close: a client that goes away before
+  // then (the generator not even started) would otherwise leave its file handle open.
+  let firstTaken = false;
   async function* parts(): AsyncGenerator<Uint8Array> {
     for (let i = 0; i < ranges.length; i++) {
       yield heads[i];
+      if (i === 0) firstTaken = true;
+      // Cancelling the answer mid-part returns this `yield*`, which cancels that part's stream.
       yield* i === 0 ? first : await read!(ranges[i]);
     }
     yield tail;
   }
-  return new Response(ReadableStream.from(parts()), { status: 206, headers });
+  const it = parts();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await it.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    async cancel(reason) {
+      await it.return(undefined);
+      if (!firstTaken) await first.cancel(reason).catch(() => {});
+    },
+  });
+  return new Response(body, { status: 206, headers });
 }
 
 /**

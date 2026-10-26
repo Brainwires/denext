@@ -560,7 +560,37 @@ async function uploadPart(
     900,
     bytes.byteLength,
   );
-  const res = await fetch(url, { method: "PUT", body: bytes as BodyInit });
+  return await putPart(url, bytes);
+}
+
+/** How long one part's PUT to its presigned URL may take before it is given up on. */
+const PART_UPLOAD_TIMEOUT_MS = 300_000;
+
+/**
+ * PUT one part to its presigned URL, given up on after `timeoutMs` (a store that stops answering
+ * must not hold the upload's request and its row lock forever).
+ *
+ * @param url The presigned part URL.
+ * @param bytes The part.
+ * @param timeoutMs The deadline.
+ * @param fetchImpl `fetch` (tests).
+ * @returns The part's ETag.
+ * @throws {StorageError} `driver_error` on an HTTP error or the deadline.
+ */
+export async function putPart(
+  url: string,
+  bytes: Uint8Array,
+  timeoutMs: number = PART_UPLOAD_TIMEOUT_MS,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let res: Response;
+  try {
+    res = await fetchImpl(url, { method: "PUT", body: bytes as BodyInit, signal });
+  } catch (err) {
+    if (!signal.aborted) throw err;
+    throw new StorageError("driver_error", `part upload timed out after ${timeoutMs / 1000} s`);
+  }
   await res.body?.cancel();
   if (!res.ok) throw new StorageError("driver_error", `part upload failed: HTTP ${res.status}`);
   return res.headers.get("etag") ?? "";

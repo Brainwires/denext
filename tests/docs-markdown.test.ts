@@ -305,3 +305,23 @@ Deno.test("renderMarkdown: heading ids drop emphasis markers and keep code-span 
   // Real inline HTML outside a code span still contributes no text.
   assertStringIncludes(renderMarkdown("## Hi <sup>beta</sup>"), `<h2 id="hi-beta">`);
 });
+
+Deno.test("docs pages: no raw `<a id=…>` anchor in any content.md (the renderer escapes raw HTML)", async () => {
+  // The Markdown renderer prints raw HTML as text, so an `<a id="x"></a>` anchor shows up on the
+  // page and the `#x` links to it go nowhere. Use a heading (it gets a slug id) instead.
+  const root = new URL("../site/app/docs/", import.meta.url);
+  const offenders: string[] = [];
+  for await (const dir of Deno.readDir(root)) {
+    if (!dir.isDirectory) continue;
+    const file = new URL(`${dir.name}/content.md`, root);
+    const text = await Deno.readTextFile(file).catch(() => null);
+    if (text === null) continue;
+    // Code (fenced blocks and inline spans) may show the markup on purpose.
+    const prose = text.replace(/^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, "")
+      .replace(/`[^`\n]*`/g, "");
+    prose.split("\n").forEach((line, i) => {
+      if (/<a\s[^>]*\bid\s*=/i.test(line)) offenders.push(`${dir.name}/content.md:${i + 1}`);
+    });
+  }
+  assertEquals(offenders, [], `raw <a id> anchors: ${offenders.join(", ")}`);
+});

@@ -656,3 +656,29 @@ Deno.test({
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("a failed graph crawl is not cached: the next request crawls again (F-L9)", async () => {
+  const { denoInfoGraph } = await import("../src/build/module-graph.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext_fl9_" });
+  const cwd = Deno.cwd();
+  try {
+    const entry = join(dir, "page.ts");
+    await Deno.writeTextFile(entry, "export const x = 1;\n");
+    // `deno info` runs in the working directory and reads its deno.json: a broken one fails it.
+    await Deno.writeTextFile(join(dir, "deno.json"), "{ broken");
+    Deno.chdir(dir);
+    let failed = false;
+    await denoInfoGraph([entry], { cache: "fl9-retry" }).catch(() => failed = true);
+    assert(failed, "the crawl fails on the broken config");
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    const graph = await denoInfoGraph([entry], { cache: "fl9-retry" });
+    assert(graph.info.modules.some((m) =>
+      m.specifier === toFileUrl(entry).href ||
+      m.specifier.endsWith("/page.ts")
+    ));
+  } finally {
+    Deno.chdir(cwd);
+    resetModuleGraphCache();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

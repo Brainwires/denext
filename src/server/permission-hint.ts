@@ -98,6 +98,13 @@ export function permissionHint(
 const reported = new Set<string>();
 
 /**
+ * At most this many distinct (permission, target) hints per process: an app that reaches
+ * user-supplied hosts or paths under a scoped grant must not grow the set, or the log, without
+ * bound. Past it a refusal is still recognised, but no longer printed.
+ */
+export const MAX_REPORTED_PERMISSION_HINTS = 256;
+
+/**
  * Print {@linkcode permissionHint} for the permission `error` was refused, once per permission
  * and target for the process. A no-op for any other error.
  *
@@ -112,7 +119,7 @@ export function reportPermissionRefusal(
   const refusal = permissionRefusal(error);
   if (!refusal) return false;
   const key = `${refusal.name}\0${refusal.target ?? ""}`;
-  if (!reported.has(key)) {
+  if (!reported.has(key) && reported.size < MAX_REPORTED_PERMISSION_HINTS) {
     reported.add(key);
     log(permissionHint(refusal));
   }

@@ -432,9 +432,12 @@ export function denoInfoGraph(
       if (!prev || [...prev.entries].every((e) => entries.has(e))) {
         graphCaches.set(name, { entries, info: graph.info, resolved: graph.resolvedEntries });
       }
-      graphInFlight.delete(key);
     }
     return { info: graph.info, roots: graph.roots };
+  }).finally(() => {
+    // Settled either way: a failed crawl (a stall, a bad config) must not answer every later
+    // request for the same graph until the cache is reset.
+    if (name) graphInFlight.delete(key);
   });
   if (name) graphInFlight.set(key, run);
   return run;

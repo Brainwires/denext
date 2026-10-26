@@ -164,6 +164,19 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     when: (o) => o.auth === true,
   },
   {
+    name: "DENEXT_ACTION_ID_SECRET",
+    about: "The secret Server Action ids are salted with (at least 16 characters; " +
+      "openssl rand -base64 32). Set it at build time and at runtime, the same value on every " +
+      "instance: the build's secret is the one the client bundle carries ids for, so a value " +
+      "present only at runtime is ignored. Needed only when the image is built more than once " +
+      "(one build per host or region); one image shared by every instance carries the secret " +
+      "its build generated, so leave it empty then.",
+    example: "",
+    required: false,
+    app: true,
+    when: () => true,
+  },
+  {
     name: "DENEXT_PUBLISHABLE_KEY",
     about: "@denext/backend supabase: the publishable (anon) API key, sb_publishable_….",
     generate: BACKEND_KEYS,

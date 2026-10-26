@@ -211,12 +211,14 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   protection** on the login endpoint (`rateLimit`: on by default, a generic
   `429` after 5 failures per client + identifier per 15 min — the client is the
   socket peer, or the proxy's `x-forwarded-for` when `trustForwardedHeaders` is
-  set; pluggable `RateLimitStore`, or `false`), and **opt-in revocable sessions**
-  (`sessionStore`: `inMemorySessionStore` / the durable `sqliteSessionStore`
-  on `node:sqlite`, or your own — the cookie then carries only an id, and
-  `revokeSession` / `revokeAllSessions` end sessions immediately). Without a
-  store, sessions stay stateless signed cookies (zero-config, multi-replica
-  safe). A weak session secret throws in production; `__Host-` cookies pin
+  set; pluggable `RateLimitStore`, or `false`), and **revocable sessions**:
+  with a `sessionStore` (`inMemorySessionStore` / the durable
+  `sqliteSessionStore` on `node:sqlite`, or your own) the cookie carries only
+  an id, and `revokeSession` / `revokeAllSessions` end sessions immediately.
+  Without a store, sessions stay stateless signed cookies (zero-config,
+  multi-replica safe), and `revokeSession(id)` still ends one (the id from
+  `currentSessionId()`) by putting it on the auth adapter's revocation list
+  until it would have expired. A weak session secret throws in production; `__Host-` cookies pin
   `Secure` regardless of proxy headers. **OIDC discovery**: a provider that names
   an `issuer` resolves its endpoints from `.well-known/openid-configuration`
   (issuer-host-pinned, issuer match required, cached per `Cache-Control`) and

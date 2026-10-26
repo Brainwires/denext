@@ -40,7 +40,7 @@ See [Migrating from Remix](/docs/migrating-remix) § 1.
 ## A freshly published `@denext/*` version is refused ("minimum dependency age")
 
 **Cause.** Deno's minimum-dependency-age hold refuses a JSR version until it is
-old enough (Deno 2.9.7 holds two days by default, although its error hint says 24
+old enough (Deno 2.9 holds two days by default, although its error hint says 24
 hours). A supply-chain delay, not an error: it is the window in which a
 compromised release would be caught.
 

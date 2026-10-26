@@ -87,7 +87,11 @@ function markActionIdSecretMismatch(): void {
 export function resetActionIdHealthForTesting(): void {
   actionIdsDown?.();
   actionIdsDown = null;
+  warnedIgnoredEnvSecret = false;
 }
+
+/** Whether the ignored-variable warning was printed (once per process). */
+let warnedIgnoredEnvSecret = false;
 
 /** What the build manifest says about the action-id secret. */
 interface ActionIdSecretRecord {
@@ -100,8 +104,8 @@ interface ActionIdSecretRecord {
  * Install the secret the build minted its Server Action ids under — the one the client bundle
  * carries ids for, so it is authoritative over the environment's:
  * - the recorded one (the build generated it): a `DENEXT_ACTION_ID_SECRET` set here that differs
- *   is ignored, with a warning and the instance marked unhealthy, since it was not there when the
- *   ids were minted;
+ *   is ignored, with one warning per process, since it was not there when the ids were minted.
+ *   The server answers every action correctly then, so the instance stays healthy;
  * - the environment's, when the build used it: it must be set here to the same value — unset, or
  *   another value (told apart by the recorded fingerprint), is an {@link ActionIdSecretError} and
  *   the start fails, never a server answering every action with "unknown";
@@ -121,14 +125,13 @@ function installActionIdSecret(bm: ActionIdSecretRecord): void {
 function installRecordedSecret(secret: string): void {
   setBuildActionIdSecret(secret);
   const env = actionIdSecretEnvValue();
-  if (!env || env === secret) return;
-  markActionIdSecretMismatch();
+  if (!env || env === secret || warnedIgnoredEnvSecret) return;
+  warnedIgnoredEnvSecret = true;
   console.warn(
     `denext: ${ACTION_ID_SECRET_ENV} is set, but this build generated its own Server Action ` +
       "id secret (the variable was not set when `denext build` ran), so the build's is used " +
-      "and the variable ignored. To share one secret across builds and instances, set it " +
-      'where `denext build` runs too. /_denext/health reports action-ids: "down" until the ' +
-      "server restarts with the variable unset or the app is rebuilt with it set.",
+      "and the variable ignored (Server Actions work). To share one secret across builds and " +
+      "instances, set it where `denext build` runs too.",
   );
 }
 

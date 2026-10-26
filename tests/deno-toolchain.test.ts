@@ -23,7 +23,6 @@ import {
   denoToolchainStatus,
   denoToolchainTarget,
   DenoToolchainUnavailableError,
-  downloadTimeoutMs,
   ensureDenort,
   ensureDenoToolchain,
   linkDenoToolchain,
@@ -35,6 +34,7 @@ import {
   unlinkDenoToolchain,
 } from "../src/build/deno-toolchain.ts";
 import { denoToolchainCheck } from "../src/cli/commands/doctor.ts";
+import { downloadTimeoutMs } from "../src/build/verified-download.ts";
 import { DESKTOP_RUNTIME_PIN, desktopRuntimeStatus } from "../src/build/desktop-runtime.ts";
 import { sha256Hex, zip } from "./_archive-fixtures.ts";
 

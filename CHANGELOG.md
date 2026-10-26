@@ -430,10 +430,10 @@ and this project adheres to
   in another lockfile version (an older lock under a newer Deno) or left it unreadable, the frozen
   check was skipped and the binary built anyway; it is now refused with the fix.
 
-- **Toolchain downloads time out.** A download that sends no response within 30 s, or no data
-  for 60 s mid-body, is given up on (the pin's fallback mirrors are then tried) instead of hanging
-  the build and holding the cache lock; `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` /
-  `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` change the deadlines.
+- **Toolchain and Deno Desktop runtime downloads time out.** A download that sends no response
+  within 30 s, or no data for 60 s mid-body, is given up on (the toolchain pin's fallback mirrors
+  are then tried) instead of hanging the build and holding the cache lock;
+  `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` / `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` change the deadlines.
 
 - **`DENEXT_CHILD_DEADLINE_MS` sets the build's `deno info` / `deno bundle` deadlines** (120 s and
   300 s; `0` removes them), for a first build with a cold cache on a slow link (a Docker
@@ -647,6 +647,15 @@ and this project adheres to
   read ten times too large. The adapter now asks the server's fractional digits once per client,
   when a result first carries a `money` column (or an array or domain of one).
 
+- **A failed `deno info` graph crawl is crawled again.** A crawl that failed (a stall, a broken
+  config) stayed in the in-flight table, so every later request for the same graph got the same
+  failure until the cache was reset.
+
+- **`denext generate docker --stack` lists `DENEXT_ACTION_ID_SECRET` in `.env.example`** and
+  hands it to the app's containers, with what it is for: the same value at build time and at
+  runtime on every instance, needed only when the image is built more than once. `denext stack
+  up` leaves it empty rather than inventing a value the image was not built with.
+
 ### Security
 
 - **A 4.9 stateless session cookie is read by a 4.8 instance, so a rolling 4.8 → 4.9 deploy and a
@@ -663,8 +672,8 @@ and this project adheres to
 - **A `DENEXT_ACTION_ID_SECRET` that disagrees with the build is refused or ignored at startup,
   never served as "unknown action" on every call.** The build's secret is the one the client
   bundle carries ids for, so it is authoritative: when `denext build` generated its own (the
-  variable was not set then) and the server has another value, the build's is used, the server
-  warns once and `/_denext/health` reports `action-ids: "down"` (503); when the build minted its
+  variable was not set then) and the server has another value, the build's is used and the server
+  warns once (every action works, so the instance stays healthy); when the build minted its
   ids under the variable, `manifest.json` records a fingerprint of it, and a server with the
   variable unset or set to another value fails to start with an error saying what to set and
   that it must be present where `denext build` runs. Before, the environment's value won at
@@ -913,6 +922,25 @@ and this project adheres to
   no scope to Deno, so `denext build --compile` baked that direction unscoped
   (`--allow-net-connect` with no hosts: every host), the opposite of what an empty list reads as.
   List the hosts, use `["*"]` for any, or leave the key out.
+
+- **A multi-range storage download no longer leaks a file handle when the client leaves early
+  (`@denext/backend`).** The first range's reader, opened before the answer starts, was never
+  closed when the answer was cancelled before its bytes were copied.
+
+- **A TUS part upload to a presigned URL is given up on after 5 minutes (`@denext/backend`).** A
+  store that stopped answering held the upload's request forever.
+
+- **The permission hints are bounded.** Under a scoped `--allow-net` / `--allow-read`, an app that
+  reaches user-supplied hosts or paths printed one hint per distinct target, with no bound, and
+  remembered each; past 256 a refusal is still recognised but no longer printed.
+
+- **`denext add`, `create` and `upgrade` never write the jail exceptions through a symlink out of
+  the project.** A committed `deno.json` symlinked elsewhere (or a granted directory behind one)
+  carried the edit out of it; the write is now refused, as `migrate`'s already was.
+
+- **The dev hydration check parses `dangerouslySetInnerHTML` into an inert `<template>`.** It
+  parsed the client's `__html` into a copy of the element in the live document, where an `<img>`
+  in it loaded and ran its `onerror` (development only).
 
 ### Docs
 

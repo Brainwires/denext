@@ -186,6 +186,29 @@ const DENO_FS: JailFs = {
   stat: (p) => Deno.stat(p),
 };
 
+/**
+ * The plain filesystem, with every write and directory creation confined to the project at
+ * `root` (`denext add` / `create` / `upgrade` run on projects they did not write: a committed
+ * symlink must not carry the deno.json edit, or a granted directory, out of it).
+ */
+function confinedFs(root: string): JailFs {
+  const inside = async (path: string) => {
+    const { assertInsideProject } = await import("./project-confine.ts");
+    await assertInsideProject(root, path);
+  };
+  return {
+    ...DENO_FS,
+    writeTextFile: async (p, t) => {
+      await inside(p);
+      await DENO_FS.writeTextFile(p, t);
+    },
+    mkdir: async (p, o) => {
+      await inside(p);
+      await DENO_FS.mkdir(p, o);
+    },
+  };
+}
+
 /** A file's text, or null. */
 async function readOr(fs: JailFs, path: string): Promise<string | null> {
   return await fs.readTextFile(path).catch(() => null);
@@ -734,6 +757,8 @@ export async function applyJailExceptions(
 ): Promise<JailReport> {
   const fs = options.fs ?? DENO_FS;
   const project = await readJailProject(dir, options);
+  // Writes stay inside the project (an injected fs, `migrate`'s, confines its own).
+  const out = options.fs ?? confinedFs(project.dir);
   const all = await requiredJailExceptions(project, fs, options.version);
   const refused = refusedLines(all);
   const required = all.filter(grantsSomething);
@@ -762,8 +787,8 @@ export async function applyJailExceptions(
       ],
     };
   }
-  await fs.writeTextFile(project.configPath!, written);
-  await ensureWriteDirs(fs, project.dir, missing);
+  await out.writeTextFile(project.configPath!, written);
+  await ensureWriteDirs(out, project.dir, missing);
   return {
     ...base,
     action: "written",

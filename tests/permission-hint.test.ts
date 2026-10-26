@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
+  MAX_REPORTED_PERMISSION_HINTS,
   permissionHint,
   permissionRefusal,
   reportPermissionRefusal,
@@ -120,4 +121,20 @@ Deno.test("the hint reads the refusal a least-privilege process really throws", 
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// Last in the file: it fills the process-wide set, so a later hint here would print nothing.
+Deno.test("reportPermissionRefusal stops printing past a bound of distinct targets (F-L4)", () => {
+  const lines: string[] = [];
+  const log = (m: string) => lines.push(m);
+  const extra = 20;
+  for (let i = 0; i < MAX_REPORTED_PERMISSION_HINTS + extra; i++) {
+    // Each a refusal, recognised as one, whatever the bound.
+    assert(reportPermissionRefusal(notCapable("net", `bound-${i}.example:443`), log));
+  }
+  // The process-wide set may already hold a few from other tests: at most the bound is printed,
+  // and the last targets (past it) print nothing.
+  assert(lines.length <= MAX_REPORTED_PERMISSION_HINTS, `${lines.length} lines`);
+  assert(lines.length >= MAX_REPORTED_PERMISSION_HINTS - 16, `${lines.length} lines`);
+  assert(!lines.some((l) => l.includes(`bound-${MAX_REPORTED_PERMISSION_HINTS + extra - 1}.`)));
 });

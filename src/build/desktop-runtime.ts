@@ -31,7 +31,11 @@ import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
 import {
   assertTrustedCacheDirs,
   cacheDirChain,
+  DownloadIdleError,
   downloadProgress,
+  downloadTimeoutMs,
+  fetchWithConnectDeadline,
+  IDLE_TIMEOUT_MS,
   readJsonFile,
   sha256File,
   streamHashed,
@@ -250,7 +254,8 @@ async function openDownload(
 ): Promise<ReadableStream<Uint8Array>> {
   let res: Response;
   try {
-    res = await fetchImpl(artifact.url, { redirect: "follow" });
+    // No response headers within the connect deadline: given up on, never a hung build.
+    res = await fetchWithConnectDeadline(fetchImpl, artifact.url);
   } catch (err) {
     throw new DesktopRuntimeDownloadError(
       `denext: could not download the Deno Desktop runtime (${artifact.file}) from ` +
@@ -277,18 +282,32 @@ function streamToFile(
 ): Promise<{ size: number; sha256: string }> {
   // A progress line on a terminal (bytes and percent); nothing in a log or CI.
   const progress = downloadProgress(`Deno Desktop runtime ${what}`, maxSize);
-  return streamHashed(body, dest, maxSize, {
-    tooLarge: () =>
-      new Error(
-        `denext: refusing the Deno Desktop runtime ${what}: the download is larger than its ` +
-          `pinned ${maxSize} bytes${DOWNLOAD_HINT}`,
-      ),
-    interrupted: (size, err) =>
-      new DesktopRuntimeDownloadError(
-        `denext: the Deno Desktop runtime download was interrupted (${what}, ${size} of ` +
-          `${maxSize} bytes): ${errText(err)}${DOWNLOAD_HINT}`,
-      ),
-  }, (bytes) => progress.update(bytes)).finally(() => progress.done());
+  return streamHashed(
+    body,
+    dest,
+    maxSize,
+    {
+      tooLarge: () =>
+        new Error(
+          `denext: refusing the Deno Desktop runtime ${what}: the download is larger than its ` +
+            `pinned ${maxSize} bytes${DOWNLOAD_HINT}`,
+        ),
+      interrupted: (size, err) =>
+        new DesktopRuntimeDownloadError(
+          `denext: the Deno Desktop runtime download was interrupted (${what}, ${size} of ` +
+            `${maxSize} bytes): ${errText(err)}${
+              err instanceof DownloadIdleError
+                ? " (DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS raises the deadline)"
+                : ""
+            }${DOWNLOAD_HINT}`,
+        ),
+    },
+    (bytes) => progress.update(bytes),
+    downloadTimeoutMs(
+      "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS",
+      IDLE_TIMEOUT_MS,
+    ),
+  ).finally(() => progress.done());
 }
 
 /** Download `artifact` to `dest`, refusing anything but exactly its pinned size and SHA-256. */

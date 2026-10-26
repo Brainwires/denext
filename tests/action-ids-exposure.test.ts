@@ -178,11 +178,12 @@ async function startWith(manifest: Record<string, unknown>, env: string | undefi
   }
 }
 
-Deno.test("denext start: a runtime-only DENEXT_ACTION_ID_SECRET is ignored for a build that generated its own, with a warning and health down", async () => {
+Deno.test("denext start: a runtime-only DENEXT_ACTION_ID_SECRET is ignored for a build that generated its own, with one warning and health up", async () => {
   const warnings: string[] = [];
   const warn = console.warn;
   console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
   try {
+    resetActionIdHealthForTesting();
     const expected = withEnvSecret(undefined, () => {
       setBuildActionIdSecret(SECRET_A);
       return actionIdFor("mod", "save");
@@ -197,9 +198,15 @@ Deno.test("denext start: a runtime-only DENEXT_ACTION_ID_SECRET is ignored for a
     assertEquals(warnings.length, 1, warnings.join("\n"));
     assertMatch(warnings[0], /DENEXT_ACTION_ID_SECRET is set, but this build generated its own/);
     assertMatch(warnings[0], /set it where `denext build` runs too/);
-    assertEquals((await runHealthChecks()).checks["action-ids"], "down");
+    // The build's secret serves every action, so the instance stays in rotation.
+    assertEquals((await runHealthChecks()).checks["action-ids"], undefined);
+    // A second start in the same process (a re-read) warns no more.
+    assertEquals(
+      await startWith({ actionIdSecret: SECRET_A }, "runtime-only-secret-xyz"),
+      expected,
+    );
+    assertEquals(warnings.length, 1, warnings.join("\n"));
     // The same value, or none: nothing to say.
-    resetActionIdHealthForTesting();
     assertEquals(await startWith({ actionIdSecret: SECRET_A }, SECRET_A), expected);
     assertEquals(await startWith({ actionIdSecret: SECRET_A }, undefined), expected);
     assertEquals(warnings.length, 1);

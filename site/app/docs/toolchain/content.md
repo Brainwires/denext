@@ -396,6 +396,13 @@ subpath), or remove it. `"node"` and `"deno"` are fine as they are. Earlier runt
 an entry silently, so a `"types": ["vite/client"]` carried over from a `tsconfig.json` can start
 failing there. The same release prints `Checked N files` after a clean `deno check`.
 
+From runtime `3.0.0-rc.5` the type check writes `.deno/npm-compat` into the project root, the
+`_test.ts` files of `@jsr/*` packages included, so a `deno test` with default discovery would run
+them. A project `denext create` scaffolds excludes it, and `denext upgrade` adds the entry to an
+existing one; otherwise add the same top-level entry to an older project's `deno.json` (a
+workspace's root and its members): `{ "exclude": [".deno/"] }`. See
+[known limitations](/docs/limitations).
+
 The dev type-check overlay checks only the files an edit changed (and what they import). From
 runtime `3.0.0-rc.2` the native check also:
 
@@ -526,7 +533,7 @@ Deno holds a package version published less than its _minimum dependency age_ ag
 resolution: a compromised release is refused while it is fresh. The window is the root
 `deno.json`'s `minimumDependencyAge` (minutes, an ISO-8601 duration such as `"P3D"`, a fixed date,
 or `{ "age": …, "exclude": [...] }`), else `.npmrc`'s `min-release-age`, else Deno's default
-(Deno 2.9.7 holds two days, although its error hint says 24 hours). denext's own packages wait
+(Deno 2.9 holds two days, although its error hint says 24 hours). denext's own packages wait
 like every other dependency: denext never switches the hold off on your behalf, and only forwards
 a `--min-dep-age` you set yourself (`DENEXT_MIN_DEP_AGE`) to the Deno processes it starts.
 
@@ -590,7 +597,7 @@ root `package.json`, workspace members) are your code and are not jailed.
   network). On Linux before 6.7 a host list from your deno.json keeps the network open at the OS
   level (with a warning) and still holds every `deno`; hosts a package declares for itself get no
   network there. On Windows the proxy holds only the clients that honour the proxy variables.
-  With a list, a script may not listen for connections either.
+  With a list (runtime `3.0.0-rc.6`), a script may not listen for connections either.
 - **Per-package writes (runtime `3.0.0-rc.6`).** A jailed script writes beneath its own package's
   folder, its `write` paths and the scratch `HOME` only, no longer anywhere in `node_modules`, so
   one package's script can't rewrite another's. A package that writes a sibling directory
@@ -601,6 +608,8 @@ root `package.json`, workspace members) are your code and are not jailed.
   deno.json alone, as it does `allowScripts`: one `node_modules` is installed for every member. A
   member's own `supplyChain` is ignored (with a warning), and relative `write` paths are resolved
   against the root's directory.
+
+From runtime `3.0.0-rc.6`, puppeteer's and msw's exceptions read:
 
 ```json
 {
@@ -624,7 +633,10 @@ root `package.json`, workspace members) are your code and are not jailed.
 or `executables`.)
 Up to `3.0.0-rc.5` an exceptions object counts as asking for the jail: on Windows an install then
 prints a one-line warning that the script's other programs are not confined. From `3.0.0-rc.6` an
-object that only lists `packages` configures the default jail and prints nothing.
+object that only lists `packages` configures the default jail and prints nothing. denext itself
+still reads such an object as turning the jail on (`readJailSetting`): it writes exceptions, and
+`denext doctor` flags missing ones, even next to `jail-scripts=false` in `.npmrc`, until that is
+fixed.
 
 **On Windows** the jail can't confine a script's other programs (`curl`, a compiler, a
 downloaded binary): the scrubbed environment, the scratch `HOME` and every `deno` the script
@@ -655,7 +667,8 @@ a dependency's failed script: which package, what the jail stopped (the network,
 add (never wider than a host list the project already grants). A package outside the list gets
 no exception to paste: an unreviewed install script that tries to reach the network is a common
 sign of malware, so doctor says so and points at reviewing the package, then granting only the
-hosts it needs (`"net": ["<host>"]`), never `"net": true`. The package name in that advice comes
+hosts it needs (`"net": ["<host>"]`, a host list from runtime `3.0.0-rc.6`), never
+`"net": true`. The package name in that advice comes
 from the install log, which the script itself can print to, so it is quoted as a JSON string.
 
 **Behind a proxy that takes only host names.** From runtime `3.0.0-rc.6` a package's `net` may be

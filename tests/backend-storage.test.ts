@@ -1080,3 +1080,39 @@ Deno.test("fs storage: the rebuilt sign request carries the client address and a
   assert(rebuilt.signal.aborted);
   await original.body?.cancel();
 });
+
+Deno.test("storage: a multi-range answer cancelled before it streams closes the first part's reader (F-L6)", async () => {
+  const { objectResponse } = await import("../packages/backend/src/serve.ts");
+  const cancelled: number[] = [];
+  const opened: number[] = [];
+  const read = (range?: { start: number; end: number }) => {
+    const start = range?.start ?? 0;
+    opened.push(start);
+    return Promise.resolve(
+      new ReadableStream<Uint8Array>({
+        pull(c) {
+          c.enqueue(new Uint8Array(4));
+          c.close();
+        },
+        cancel() {
+          cancelled.push(start);
+        },
+      }),
+    );
+  };
+  const info = { key: "k", size: 100, contentType: "text/plain" };
+  const ranges = [{ start: 0, end: 3 }, { start: 10, end: 13 }];
+  // The client goes away before a byte is read: the first part, already open, is closed.
+  const gone = await objectResponse(info, new Headers(), ranges, read);
+  await gone.body!.cancel();
+  assertEquals(opened, [0]);
+  assertEquals(cancelled, [0]);
+  // Read to the end: both parts streamed, nothing left to cancel.
+  opened.length = 0;
+  cancelled.length = 0;
+  const whole = await objectResponse(info, new Headers(), ranges, read);
+  const text = await whole.text();
+  assertEquals(opened, [0, 10]);
+  assertEquals(cancelled, []);
+  assertEquals((text.match(/content-range: bytes/g) ?? []).length, 2);
+});

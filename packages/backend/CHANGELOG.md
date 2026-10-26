@@ -48,6 +48,11 @@
   every flush, not only when their own table changes again.
 - **`rest.rateLimit`: an anonymous sign-in also counts against its address,** so minting
   anonymous users does not mint request budgets.
+- **A multi-range download no longer leaks a file handle when the client leaves early.** The
+  first range's reader, opened before the answer starts, was never closed when the answer was
+  cancelled before its bytes were copied.
+- **A TUS part upload to a presigned URL is given up on after 5 minutes,** so a store that stops
+  answering can no longer hold the upload's request forever.
 
 ## 0.7.1 - 2026-10-24
 

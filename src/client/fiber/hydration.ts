@@ -242,8 +242,8 @@ export function adoptServerHtml(
 let checkServerHtml: ((wip: Fiber, el: Element, html: unknown) => void) | null = null;
 
 /**
- * React 19's dev check (`diffHydratedProperties`): `__html` parsed into a copy of the element
- * (so mere re-serialization, `<br/>` vs `<br>`, is no difference) against the server's inner
+ * React 19's dev check (`diffHydratedProperties`): `__html` parsed (so mere re-serialization,
+ * `<br/>` vs `<br>`, is no difference) against the server's inner
  * HTML. A difference is a `console.error` that says it won't be patched up — not an
  * `onRecoverableError`, which React keeps for mismatches it recovers from by re-rendering —
  * and `suppressHydrationWarning` on the element silences it.
@@ -252,7 +252,9 @@ function warnServerHtml(wip: Fiber, el: Element, html: unknown): void {
   if (typeof html !== "string" || !devHydrationActive() || suppressed(wip)) return;
   const server = el.innerHTML;
   if (server === html) return;
-  const probe = el.cloneNode(false) as Element;
+  // Parsed into an inert <template>: markup parsed into an element of the live document loads
+  // its images and runs their `onerror` / `onload`, even while the element is detached.
+  const probe = (el.ownerDocument ?? doc).createElement("template");
   probe.innerHTML = html;
   if (probe.innerHTML === server) return;
   console.error(

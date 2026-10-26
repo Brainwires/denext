@@ -307,3 +307,71 @@ export async function streamHashed(
   }
   return { size, sha256: hash.digest("hex") };
 }
+
+/** The default deadline for a download's response headers (ms). */
+const CONNECT_TIMEOUT_MS = 30_000;
+/** The default longest gap between two chunks of a download's body (ms). */
+export const IDLE_TIMEOUT_MS = 60_000;
+
+/**
+ * A download deadline: `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` / `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`
+ * when set (milliseconds; `0` for none), else the default.
+ *
+ * @param name The variable.
+ * @param fallback The default.
+ * @param env Env reader.
+ * @returns The deadline (`Infinity`: none).
+ */
+export function downloadTimeoutMs(
+  name: "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS" | "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS",
+  fallback: number,
+  env: (k: string) => string | undefined = envGet,
+): number {
+  const raw = env(name)?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return fallback;
+  return Number(raw) === 0 ? Infinity : Number(raw);
+}
+
+/** One environment variable, or `undefined` (unset, or no env permission). */
+function envGet(k: string): string | undefined {
+  try {
+    return Deno.env.get(k);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * GET `url`, given up on when no response headers arrive within the connect deadline
+ * (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`, else 30 s): that rejection then says so.
+ *
+ * @param fetchImpl `fetch`.
+ * @param url The download.
+ * @param headers Request headers, if any.
+ * @returns The response (its body still to be read).
+ */
+export async function fetchWithConnectDeadline(
+  fetchImpl: typeof fetch,
+  url: string,
+  headers?: Readonly<Record<string, string>>,
+): Promise<Response> {
+  const connectMs = downloadTimeoutMs("DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", CONNECT_TIMEOUT_MS);
+  const connect = new AbortController();
+  const timer = Number.isFinite(connectMs)
+    ? setTimeout(() => connect.abort(), connectMs)
+    : undefined;
+  try {
+    return await fetchImpl(url, {
+      redirect: "follow",
+      signal: connect.signal,
+      ...(headers ? { headers: { ...headers } } : {}),
+    });
+  } catch (err) {
+    if (!connect.signal.aborted) throw err;
+    throw new Error(
+      `no response within ${connectMs / 1000} s (DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS raises it)`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
