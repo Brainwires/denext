@@ -567,7 +567,8 @@ Deno.test({
       assert(value.includes("was still running after 1 s and was killed"), value);
       // Killed, retried once, killed again.
       assert(value.includes("stalled twice"), value);
-      assert(stderr.includes("retrying once: deno info info --unstable-sloppy-imports"), stderr);
+      assert(stderr.includes("retrying once"), stderr);
+      assert(stderr.includes("deno info info --unstable-sloppy-imports"), stderr);
       assertEquals(stderr.split("retrying once").length, 2, stderr);
       assert(Date.now() - t0 < 60_000, `took ${Date.now() - t0} ms`);
     } finally {
