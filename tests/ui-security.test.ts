@@ -711,7 +711,8 @@ Deno.test("ui security: a write through a dangling symlink pointing outside the 
   const outside = await Deno.makeTempDir({ prefix: "denext_ui_dangling_out_" });
   try {
     const target = join(outside, "created.txt");
-    await Deno.symlink(target, join(dir, "link.txt"));
+    // Windows needs the link's type when the target does not exist.
+    await Deno.symlink(target, join(dir, "link.txt"), { type: "file" });
     await Deno.symlink(join(outside, "gone"), join(dir, "linkdir"), { type: "dir" });
 
     await assertRejects(() => writeFileAtomic(dir, "link.txt", "pwned"), Error, "dangling");

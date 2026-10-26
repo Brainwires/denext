@@ -530,7 +530,7 @@ public class DenextSettingsPlugin extends Plugin {
         switch (code) {
             case BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED:
             case BiometricPrompt.BIOMETRIC_ERROR_CANCELED:
-            case BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON:
+            case 13: // BIOMETRIC_ERROR_NEGATIVE_BUTTON (not public on the framework's BiometricPrompt)
                 return "cancelled";
             case BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT:
             case BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT_PERMANENT:
