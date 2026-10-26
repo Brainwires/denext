@@ -113,6 +113,7 @@ export const NAV: {
     items: [
       { slug: "config", label: "Configuration" },
       { slug: "cli", label: "CLI reference" },
+      { slug: "runtime-reference", label: "Runtime reference" },
       { slug: "examples", label: "Examples" },
       { slug: "plugins", label: "Writing a plugin" },
       { slug: "api", label: "API reference" },
