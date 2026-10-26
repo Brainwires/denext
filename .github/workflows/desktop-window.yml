@@ -45,6 +45,7 @@ on:
       # fails when a direct import of the window test, the desktop verbs or src/build is missing).
       - "src/cli/command.ts"
       - "src/cli/commands/start-options.ts"
+      - "src/cli/deno-path.ts"
       - "src/cli/dev-attach.ts"
       - "src/cli/explain-output.ts"
       - "src/cli/self-exec.ts"

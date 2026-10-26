@@ -114,6 +114,7 @@ on:
       - "src/cli/command.ts"
       - "src/cli/commands/mobile-build.ts"
       - "src/cli/commands/toolchain.ts"
+      - "src/cli/deno-path.ts"
       - "src/cli/dev-attach.ts"
       - "src/cli/register.ts"
       - "src/cli/shared.ts"
