@@ -371,11 +371,42 @@ and this project adheres to
 
 ### Fixed
 
+- **`build --compile` with a frozen lock fails closed.** When the compile rewrote the lock copy
+  in another lockfile version (an older lock under a newer Deno) or left it unreadable, the frozen
+  check was skipped and the binary built anyway; it is now refused with the fix.
+- **Toolchain downloads time out.** A download that sends no response within 30 s, or no data
+  for 60 s mid-body, is given up on (the pin's fallback mirrors are then tried) instead of hanging
+  the build and holding the cache lock; `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` /
+  `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` change the deadlines.
+- **`DENEXT_CHILD_DEADLINE_MS` sets the build's `deno info` / `deno bundle` deadlines** (120 s and
+  300 s; `0` removes them), for a first build with a cold cache on a slow link (a Docker
+  `RUN denext task build`), which could be killed twice and fail with `ChildStallError`.
+- **`denext upgrade` writes what an older project needs for runtime 3.0.0-rc.5:** the
+  lifecycle-script jail exceptions its dependencies need (sharp, Prisma's engines, puppeteer, …),
+  as `create` and `migrate` do, and the top-level `".deno/"` exclude; `--dry-run` and `--check`
+  report them.
+- **The idle trim's opt-out is read from the evaluated config.** `denext start` and `generate
+  docker` matched `idleTrim: false` in the config's text, so `idleTrim: isProd ? false : true`
+  was missed and a commented-out line counted. They now read what the last `denext build`
+  recorded in its deploy manifest (the text, comments ignored, only before a first build).
+- **`DENEXT_IDLE_TRIM=0` turns the idle trim off in a `build --compile` binary too.** The flag is
+  baked in and can't be removed once the binary runs, so the binary now keeps its event loop from
+  going idle long enough to trim when it sees the variable.
+- **The generated systemd unit's `TimeoutStopSec` and Fly's `kill_timeout` follow the drain.**
+  Both were a fixed 30 s, so a longer `DENEXT_SHUTDOWN_DRAIN_MS` was killed mid-drain. They are
+  now the drain plus 20 s (`TimeoutStopSec=infinity` for a drain of `0`; Fly's most is 300 s),
+  set with the presets' new `drainMs` option or `DENEXT_SHUTDOWN_DRAIN_MS` when `prepare` runs,
+  and the unit sets the drain itself.
+- **`denext migrate` says when a Remix `getLoadContext` reads `req.ip`, `req.secure`,
+  `req.protocol` or `req.hostname`:** their translations follow denext's proxy trust
+  (`trustForwardedHeaders`), not Express's `trust proxy`, so the report asks to check them behind
+  a proxy.
+
 - **A `denext create` project excludes `.deno/`.** Deno runtime 3.0.0-rc.5's type-check writes
   `.deno/npm-compat` into the project root, `@jsr/*` packages' `_test.ts` files included, and a
   later `deno test` with default discovery ran them. The scaffolded `deno.json` (a monorepo's root
-  and members too) now has a top-level `"exclude": [".deno/"]`; add it to an existing project's
-  `deno.json` by hand. The runtime will keep the copy out of the project in a later release
+  and members too) now has a top-level `"exclude": [".deno/"]`, and `denext upgrade` adds it to an
+  existing project's `deno.json`. The runtime will keep the copy out of the project in a later release
   (KNOWN-LIMITATIONS).
 
 - **`examples/hello` type-checks:** its `/blog/[slug]` page narrows its params with
@@ -701,6 +732,38 @@ and this project adheres to
   when a result first carries a `money` column (or an array or domain of one).
 
 ### Security
+
+- **Fresh `csp()` no longer grows the caller's directive array per request, and `reportOnly`
+  keeps denext's policy enforced.** With `reportTo`, every request pushed two entries into the
+  `csp` array the app passed, so the header grew without bound until proxies refused it. The
+  directives are now computed once, when `csp()` is called, from a copy. `reportOnly` used to drop
+  the enforced `Content-Security-Policy` from a page denext renders; it now keeps denext's own
+  policy enforced and sends the merged one as `Content-Security-Policy-Report-Only`.
+- **Fresh partials never fetch another origin.** An `f-partial` (or a partial form target) naming
+  another origin swapped that origin's answer into the page, and a POST form sent its fields
+  there; such an element now does what it would without `f-partial`.
+- **`denext doctor --install-log` gives paste-ready jail exceptions only for reviewed packages.**
+  An unknown package whose install script tried to reach the network was offered
+  `{"net": true}`. It now gets a warning that an unreviewed script phoning home is a common sign
+  of malware, and advice to review it and grant only the hosts it needs. Package names, which the
+  script itself can print into the log, are quoted with `JSON.stringify` (a name can no longer span
+  lines), and a suggested fix never widens a host list the project already grants.
+- **Jail write grants stay inside the project.** A Prisma generator `output` or msw
+  `workerDirectory` that resolves outside the project (`../…`, an absolute path, another drive,
+  or empty) is no longer granted by `create`, `migrate`, `add` or `upgrade`; only the
+  repository's `.git/hooks` may sit above it.
+- **The serial-child lock lives in a private directory.** The per-process lock that serializes
+  `deno info` / `deno bundle` children was `/tmp/denext-deno-child-<pid>.lock`, a predictable
+  name another local user could pre-create (blocking builds) and that was never removed. It is now
+  in `$XDG_RUNTIME_DIR/denext-locks`, else a `0700` `denext/locks` under the user's cache
+  directory (checked to be this user's), and removed when the process exits.
+- **A re-exec child keeps the parent's deny lists.** A permission held only in part (an allow with
+  a deny list, `--allow-net --deny-net=host` or `--allow-net-connect --deny-net-connect=host`) was
+  passed to the toolchain child as a bare allow, dropping the deny list. It is no longer passed on.
+- **A Deno Desktop download to a single picked file writes nothing beside it.** Its partial and
+  sidecar now live in the app's cache directory (`denext-downloads/`, named by a hash of the
+  destination); before, the runtime created `<file>.part`, `<file>.part.json` and a temp file
+  next to a file the user granted alone, and could delete an unrelated `<file>.part` there.
 
 - **Server Action ids are salted per build, and only the actions the app imports are callable.**
   As in Next.js 15, an action's id is now an HMAC of its module and export name under a secret

@@ -8,10 +8,16 @@
 // off glibc Linux, so it is passed whatever the host.
 //
 // Opt-outs: `start: { idleTrim: false }` in denext.config, or `DENEXT_IDLE_TRIM=0` in the
-// environment of the command that starts the server (or writes the file that does). A
+// environment of the command that starts the server (or writes the file that does) — for a
+// `build --compile` executable, which has the trim baked in, `DENEXT_IDLE_TRIM=0` when the binary
+// runs too (it then keeps its event loop from ever going idle long enough to trim). A
 // `DENO_UNSTABLE_IDLE_TRIM` the user set themselves is left alone.
+//
+// The config's opt-out is the evaluated value: what the last `denext build` recorded in its deploy
+// manifest; only before a first build, the file's text (comments ignored).
 
 import { join } from "@std/path";
+import { CONFIG_FILES } from "./config-files.ts";
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
 import { supportsIdleTrim } from "./deno-version.ts";
 
@@ -81,8 +87,8 @@ export function idleTrimEnv(inputs: IdleTrimInputs): Record<string, string> {
 
 /**
  * The flags a `build --compile` executable gets baked in: `--unstable-idle-trim` when
- * {@linkcode idleTrimOn}. A baked flag cannot be turned off when the binary runs, so the opt-outs
- * apply at build time.
+ * {@linkcode idleTrimOn}. A baked flag cannot be turned off when the binary runs; a
+ * `DENEXT_IDLE_TRIM=0` then holds the trim off instead ({@linkcode holdOffBakedIdleTrim}).
  *
  * @param inputs The toolchain compiling (`undefined` off it), the config's opt-out, the environment.
  * @returns The flags.
@@ -108,32 +114,81 @@ export function pinnedIdleTrim(
   return idleTrimOn({ runtime: pinned, configOff, env });
 }
 
+/** `text` with its line and block comments blanked (string contents are not parsed). */
+function withoutComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:\\])\/\/.*$/gm, "$1");
+}
+
 /**
- * Whether a config file's text opts out of the idle trim (`start: { idleTrim: false }`). Read as
- * text, as the Docker generator reads the config, so a process that has not loaded the config yet
- * (the parent of a toolchain re-exec) can decide without importing it.
+ * Whether a config file's text opts out of the idle trim (`start: { idleTrim: false }`), its
+ * comments ignored. What {@linkcode configDisablesIdleTrim} reads before a first build.
  *
  * @param text The config file's text (several files joined).
  * @returns Whether it opts out.
  */
 export function configTextDisablesIdleTrim(text: string): boolean {
-  return CONFIG_OFF.test(text);
+  return CONFIG_OFF.test(withoutComments(text));
+}
+
+/** The deploy manifest's `server.idleTrim` from the last `denext build` in `dir`, if any. */
+async function builtIdleTrim(dir: string): Promise<boolean | undefined> {
+  try {
+    const manifest = JSON.parse(
+      await Deno.readTextFile(join(dir, ".denext", "deploy-manifest.json")),
+    ) as { server?: { idleTrim?: unknown } };
+    const value = manifest.server?.idleTrim;
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined; // no build yet, or one from before the field
+  }
 }
 
 /**
- * {@linkcode configTextDisablesIdleTrim} for the project in `dir` (`denext.config.ts`, `.js`,
- * `.mjs` or `.mts`; none, or unreadable, opts out of nothing).
+ * Whether the project in `dir` opts out of the idle trim (`start: { idleTrim: false }`), read
+ * from the evaluated config: what the last `denext build` recorded in its deploy manifest (the
+ * loaded config's value, with a `DENEXT_IDLE_TRIM=0` at build time). Before any build, the config
+ * file's text, comments ignored: the config is never imported here (the Docker generator and
+ * `denext ui` run no project code, and `denext start`'s parent decides before it re-executes).
+ * No config opts out of nothing.
  *
  * @param dir The project directory.
  * @returns Whether its config opts out.
  */
 export async function configDisablesIdleTrim(dir: string): Promise<boolean> {
-  for (const ext of ["ts", "js", "mjs", "mts"]) {
+  const built = await builtIdleTrim(dir);
+  if (built !== undefined) return !built;
+  for (const name of CONFIG_FILES) {
     try {
-      if (configTextDisablesIdleTrim(await Deno.readTextFile(join(dir, `denext.config.${ext}`)))) {
-        return true;
-      }
+      if (configTextDisablesIdleTrim(await Deno.readTextFile(join(dir, name)))) return true;
     } catch { /* absent or unreadable */ }
   }
   return false;
+}
+
+/** The runtime's default idle delay before a trim (`DENO_IDLE_TRIM_DELAY_MS`), in ms. */
+const DEFAULT_TRIM_DELAY_MS = 1000;
+
+/**
+ * Keep a `build --compile` executable that has the idle trim baked in from ever trimming, when
+ * `DENEXT_IDLE_TRIM=0` is set as it runs. A baked flag can't be turned off once the binary has
+ * started, but the runtime trims only after its event loop has gone `DENO_IDLE_TRIM_DELAY_MS`
+ * (default 1 s) without a wake-up, so an unref'd timer firing at half that delay keeps it from
+ * ever being idle that long (and costs one empty callback per half-delay; it never keeps the
+ * process alive).
+ *
+ * @param baked Whether the binary was compiled with the trim baked in.
+ * @param env Reads an environment variable.
+ * @param every Starts the repeating timer (a seam for tests).
+ * @returns Whether the trim is held off.
+ */
+export function holdOffBakedIdleTrim(
+  baked: boolean,
+  env: (name: string) => string | undefined = readEnv,
+  every: (fn: () => void, ms: number) => void = (fn, ms) => Deno.unrefTimer(setInterval(fn, ms)),
+): boolean {
+  if (!baked || env(IDLE_TRIM_OPT_OUT_ENV) !== "0") return false;
+  const raw = Number(env("DENO_IDLE_TRIM_DELAY_MS")?.trim());
+  const delay = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TRIM_DELAY_MS;
+  every(() => {}, Math.max(1, Math.floor(delay / 2)));
+  return true;
 }

@@ -3,7 +3,9 @@
  * can continue where it stopped — after an app restart too. Beside the destination `<dest>` it
  * writes `<dest>.part` (the bytes so far) and `<dest>.part.json` (the sidecar: the URL, the
  * `If-Range` validator, the size if known, and the bytes written), the sidecar replaced atomically
- * (a temp file renamed over it).
+ * (a temp file renamed over it). A destination the user picked as a single file grants that file
+ * only, so its partial and sidecar live in the app's cache directory instead, named by a hash of
+ * the destination ({@linkcode partialAt}): nothing is created or removed beside the picked file.
  *
  * A partial is only ever continued for the SAME URL (the sidecar's `url` must equal the request's)
  * and into the destination the request itself resolved inside a granted directory, so a stale
@@ -14,6 +16,8 @@
  *
  * @module
  */
+
+import { dirname, join } from "@std/path";
 
 /** The sidecar's shape (version 1). */
 interface PartialSidecar {
@@ -37,9 +41,36 @@ export interface KeptPartial {
 /** The largest sidecar read back (bytes); a larger one is not ours. */
 const MAX_SIDECAR_BYTES = 64 * 1024;
 
-/** The partial file and its sidecar for destination `target`. */
-function partialPaths(target: string): { part: string; sidecar: string } {
-  return { part: `${target}.part`, sidecar: `${target}.part.json` };
+/** Where a download's partial lives: its destination, and the path its `.part` files extend. */
+export interface PartialAt {
+  /** The download's destination. */
+  readonly target: string;
+  /** The path `.part` / `.part.json` are appended to: the destination, or a cache-dir name. */
+  readonly base: string;
+}
+
+/** The cache-dir subdirectory holding single-file destinations' partials. */
+const CACHE_SUBDIR = "denext-downloads";
+
+/**
+ * Where `target`'s partial lives: beside it (`<target>.part`), or, given the app's cache
+ * directory (a destination picked as a single file), `<cache>/denext-downloads/<sha-256 of the
+ * destination>.part`.
+ *
+ * @param target The download's destination.
+ * @param cacheDir The app's cache directory, for a single-file destination.
+ * @returns The location.
+ */
+export async function partialAt(target: string, cacheDir?: string): Promise<PartialAt> {
+  if (cacheDir === undefined) return { target, base: target };
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(target));
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return { target, base: join(cacheDir, CACHE_SUBDIR, hex) };
+}
+
+/** The partial file and its sidecar for `at`. */
+function partialPaths(at: PartialAt): { part: string; sidecar: string } {
+  return { part: `${at.base}.part`, sidecar: `${at.base}.part.json` };
 }
 
 /**
@@ -71,12 +102,12 @@ async function removeQuietly(path: string): Promise<void> {
 }
 
 /**
- * Drop `target`'s partial file and sidecar.
+ * Drop a download's partial file and sidecar.
  *
- * @param target The download's destination.
+ * @param at Where the partial lives ({@linkcode partialAt}).
  */
-export async function discardPartial(target: string): Promise<void> {
-  const { part, sidecar } = partialPaths(target);
+export async function discardPartial(at: PartialAt): Promise<void> {
+  const { part, sidecar } = partialPaths(at);
   await removeQuietly(part);
   await removeQuietly(sidecar);
 }
@@ -112,15 +143,15 @@ function isSize(value: unknown): boolean {
 }
 
 /**
- * The partial `target` keeps for `url`, or `null` (after discarding anything there that cannot be
+ * The partial kept for `url`, or `null` (after discarding anything there that cannot be
  * continued: no sidecar, another URL, a symlink, a malformed or oversized sidecar).
  *
- * @param target The download's destination (already confined to a granted directory).
+ * @param at Where the partial lives (its destination already confined to a granted directory).
  * @param url The URL the request names (the sidecar's must equal it).
  * @returns The kept partial, or `null`.
  */
-export async function readPartial(target: string, url: string): Promise<KeptPartial | null> {
-  const { part, sidecar } = partialPaths(target);
+export async function readPartial(at: PartialAt, url: string): Promise<KeptPartial | null> {
+  const { part, sidecar } = partialPaths(at);
   const size = await regularSize(part);
   const sidecarSize = await regularSize(sidecar);
   let state: PartialSidecar | undefined;
@@ -128,23 +159,23 @@ export async function readPartial(target: string, url: string): Promise<KeptPart
     state = parseSidecar(await Deno.readTextFile(sidecar).catch(() => ""));
   }
   if (!state || state.url !== url || size === undefined) {
-    await discardPartial(target);
+    await discardPartial(at);
     return null;
   }
   return { bytes: size, validator: state.validator, total: state.total };
 }
 
 /**
- * Write `target`'s sidecar atomically (a temp file renamed over it).
+ * Write the sidecar atomically (a temp file renamed over it).
  *
- * @param target The download's destination.
+ * @param at Where the partial lives.
  * @param state The URL, validator, size and bytes written.
  */
 export async function writeSidecar(
-  target: string,
+  at: PartialAt,
   state: { url: string; validator: string | null; total: number | null; bytes: number },
 ): Promise<void> {
-  const { sidecar } = partialPaths(target);
+  const { sidecar } = partialPaths(at);
   const temp = `${sidecar}.${crypto.randomUUID()}.tmp`;
   const body: PartialSidecar = { v: 1, ...state };
   try {
@@ -157,37 +188,52 @@ export async function writeSidecar(
 }
 
 /**
- * Open `target`'s partial file for writing: appended to when `append` (it must be a regular file
- * of exactly `at` bytes, else this throws), else created anew (any old one removed first, never
- * followed).
+ * Open the partial file for writing: appended to when `append` (it must be a regular file of
+ * exactly `from` bytes, else this throws), else created anew (any old one removed first, never
+ * followed). A cache-dir partial's directory is made first, private to the user.
  *
- * @param target The download's destination.
+ * @param at Where the partial lives.
  * @param append Whether the kept bytes continue.
- * @param at The bytes kept (only checked when appending).
+ * @param from The bytes kept (only checked when appending).
  * @returns The open file.
  */
 export async function openPartial(
-  target: string,
+  at: PartialAt,
   append: boolean,
-  at: number,
+  from: number,
 ): Promise<Deno.FsFile> {
-  const { part } = partialPaths(target);
+  const { part } = partialPaths(at);
   if (append) {
     // The kept bytes changed under the request (or became a symlink): nothing to append to.
-    if ((await regularSize(part)) !== at) throw new Error("the partial file changed");
+    if ((await regularSize(part)) !== from) throw new Error("the partial file changed");
     return await Deno.open(part, { write: true, append: true });
   }
+  if (at.base !== at.target) await Deno.mkdir(dirname(at.base), { recursive: true, mode: 0o700 });
   await removeQuietly(part);
   return await Deno.open(part, { write: true, createNew: true });
 }
 
 /**
- * Move a finished partial into place and drop its sidecar.
+ * Move a finished partial into place and drop its sidecar. A cache-dir partial on another volume
+ * than its destination is copied over it, then removed.
  *
- * @param target The download's destination.
+ * @param at Where the partial lives.
  */
-export async function finalizePartial(target: string): Promise<void> {
-  const { part, sidecar } = partialPaths(target);
-  await Deno.rename(part, target);
+export async function finalizePartial(at: PartialAt): Promise<void> {
+  const { part, sidecar } = partialPaths(at);
+  try {
+    await Deno.rename(part, at.target);
+  } catch (err) {
+    if (at.base === at.target || !crossDevice(err)) throw err;
+    await Deno.copyFile(part, at.target);
+    await removeQuietly(part);
+  }
   await removeQuietly(sidecar);
+}
+
+/** Whether a rename failed because its two paths are on different volumes. */
+function crossDevice(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "EXDEV" || code === "ERROR_NOT_SAME_DEVICE" ||
+    /cross-device|EXDEV|not same device|different disk drive/i.test(String(err));
 }

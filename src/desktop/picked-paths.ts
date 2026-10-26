@@ -36,6 +36,8 @@ export interface PickedTarget {
   readonly target: string;
   /** The directory that must exist before a write (the folder, or the file's parent). */
   readonly root: string;
+  /** Set for a handle to a single file: the grant covers that file only, not its directory. */
+  readonly single?: boolean;
 }
 
 /** A `forbidden` (403) error. */
@@ -98,6 +100,6 @@ export class PickedPaths {
     }
     // A single-file handle: only the file itself (no relative sub-path).
     if (rel && rel !== "" && rel !== ".") throw forbidden("this handle refers to a single file");
-    return { target: entry.realPath, root: dirname(entry.realPath) };
+    return { target: entry.realPath, root: dirname(entry.realPath), single: true };
   }
 }

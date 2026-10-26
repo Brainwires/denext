@@ -200,6 +200,29 @@ Deno.test("relativeCssRedirects: stylesheet redirects name the embedded copies, 
   );
 });
 
+/** What the binary embeds: every included file (a directory's entries, one level) not excluded. */
+async function embeddedFiles(
+  dir: string,
+  included: string[],
+  excluded: Set<string>,
+): Promise<string[]> {
+  const embedded: string[] = [];
+  for (const path of included) {
+    const abs = join(dir, path);
+    const children = (await Deno.stat(abs)).isFile
+      ? [path]
+      : (await Array.fromAsync(Deno.readDir(abs))).map((e) => `${path}/${e.name}`);
+    embedded.push(...children.filter((p) => !excluded.has(p)));
+  }
+  return embedded;
+}
+
+/** Whether the file at `path` (a directory never) holds `text`. */
+async function holds(path: string, text: string): Promise<boolean> {
+  if (!(await Deno.stat(path)).isFile) return false;
+  return (await Deno.readTextFile(path)).includes(text);
+}
+
 /** A built project whose `.denext/` holds build outputs beside development state and secrets. */
 async function builtProjectWithState(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_compile_embed_" });
@@ -220,6 +243,8 @@ async function builtProjectWithState(): Promise<string> {
     ".denext/commands.json": "{}",
     ".denext/mobile-dev-backup.json": "{}",
     ".denext/mystery": "",
+    // A registry token: carried beside the compile config for Deno to read, never embedded.
+    ".npmrc": "//npm.example.com/:_authToken=npm_TOPSECRET\n",
   };
   for (const [path, text] of Object.entries(files)) {
     await Deno.mkdir(join(dir, path, ".."), { recursive: true });
@@ -248,30 +273,24 @@ Deno.test({
         argv.flatMap((a, i) => (a === name && argv[i + 1] !== undefined ? [argv[i + 1]] : []));
       const included = flag("--include");
       const excluded = new Set(flag("--exclude"));
-      // What the binary embeds: every included file not excluded.
-      const embedded: string[] = [];
-      for (const path of included) {
-        const abs = join(dir, path);
-        if ((await Deno.stat(abs)).isFile) {
-          if (!excluded.has(path)) embedded.push(path);
-          continue;
-        }
-        for await (const e of Deno.readDir(abs)) {
-          const child = `${path}/${e.name}`;
-          if (!excluded.has(child)) embedded.push(child);
-        }
-      }
+      const embedded = await embeddedFiles(dir, included, excluded);
       assertEquals(included.includes(".denext"), false, "the build dir is not embedded whole");
       for (const path of [".denext/manifest.json", ".denext/client", ".denext/server-copies"]) {
         assertEquals(included.includes(path), true, path);
       }
       for (const path of embedded) {
         assertEquals(
-          /backend-keys|\.dump$|stack-.*\.tar\.gz$|\/rag|dev\.json|commands\.json|mobile-dev-backup/
+          /backend-keys|\.dump$|stack-.*\.tar\.gz$|\/rag|dev\.json|commands\.json|mobile-dev-backup|\.npmrc$/
             .test(path),
           false,
           `${path} must not be embedded`,
         );
+      }
+      // The token's copy beside the compile config is excluded by name, and nothing embedded
+      // holds it.
+      assertEquals(excluded.has(".denext/compile/.npmrc"), true, [...excluded].join("\n"));
+      for (const path of embedded) {
+        assertEquals(await holds(join(dir, path), "npm_TOPSECRET"), false, path);
       }
       // `compile.include` named the backups directory: its dumps are still excluded.
       assertEquals(excluded.has(".denext/backups/stack-20261020.dump"), true);

@@ -12,6 +12,7 @@ import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { appName, header } from "./shared.ts";
 import { splitNetFlag, toolchainNetSplit } from "../../build/net-permissions.ts";
+import { drainMsOf, stopTimeoutSec } from "./shared.ts";
 
 /** Options for {@linkcode genericHost}. */
 export interface GenericHostPresetOptions {
@@ -37,6 +38,12 @@ export interface GenericHostPresetOptions {
   deno?: string;
   /** Concurrent connections per client address the proxy allows (default 100). */
   maxConnections?: number;
+  /**
+   * The shutdown drain (ms; `0` waits for every request). Default: `DENEXT_SHUTDOWN_DRAIN_MS` in
+   * the environment `prepare` runs in, else 10 s. The unit sets it and gives systemd's
+   * `TimeoutStopSec` the drain plus 20 s, so a stop never kills the server mid-drain.
+   */
+  drainMs?: number;
 }
 
 /** The options with every default filled in (`domain` stays `null` when nothing names one). */
@@ -66,6 +73,7 @@ const OPTION_RULES: ReadonlyArray<readonly [keyof Resolved, (v: unknown) => bool
     "a TCP port",
   ],
   ["maxConnections", (v) => Number.isInteger(v) && (v as number) >= 1, "a positive whole number"],
+  ["drainMs", (v) => Number.isInteger(v) && (v as number) >= 0, "a whole number of ms"],
 ];
 
 /**
@@ -106,6 +114,7 @@ function resolveOptions(options: GenericHostPresetOptions, ctx: DeployContext): 
     domain: options.domain ?? domainFromEnv(ctx.env),
     deno: options.deno ?? `${directory}/${TOOLCHAIN_LINK}`,
     maxConnections: options.maxConnections ?? 100,
+    drainMs: drainMsOf(ctx.manifest, ctx.env, options.drainMs),
   });
 }
 
@@ -217,8 +226,11 @@ ExecStart=${execStart(manifest, o)}
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM
-# Above the ${manifest.server.drain.ms / 1000} s drain (${manifest.server.drain.env}).
-TimeoutStopSec=30
+# The drain, and systemd's stop timeout above it (the drain plus 20 s for the services, the plugin
+# teardowns and onShutdown). Change both with the preset's drainMs (or ${manifest.server.drain.env}
+# when \`denext deploy prepare\` runs), not in the env file: systemd would still stop at the old time.
+Environment=${manifest.server.drain.env}=${o.drainMs}
+TimeoutStopSec=${stopTimeoutSec(o.drainMs) ?? "infinity"}
 # Sandboxing: the server writes only its build directory (the durable cache, job history).
 NoNewPrivileges=true
 PrivateTmp=true
@@ -350,8 +362,8 @@ function frameworkEnv(manifest: DeployManifest, o: Resolved): string {
       "# redirects are checked against it\nDENEXT_CANONICAL_ORIGIN=";
   return `# The server's own settings.
 ${origin}
-# optional — how long SIGTERM waits for in-flight requests (ms); keep it under TimeoutStopSec
-# ${manifest.server.drain.env}=${manifest.server.drain.ms}`;
+# The shutdown drain (${manifest.server.drain.env}) is set in the unit, with TimeoutStopSec above
+# it: change it with the preset's drainMs and re-run \`denext deploy prepare\`, not here.`;
 }
 
 /**

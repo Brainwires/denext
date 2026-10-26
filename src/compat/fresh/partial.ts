@@ -212,6 +212,15 @@ function landedUrl(url: URL, res: Response): URL {
   return shown;
 }
 
+/**
+ * Whether a partial URL is this page's origin. An `f-partial` naming another origin is never
+ * fetched: its answer would be swapped into the page, and a form's fields (a CSRF token among
+ * them) sent there. The element then does what it would with no `f-partial`.
+ */
+function sameOrigin(url: URL): boolean {
+  return url.origin === location.origin;
+}
+
 /** A navigation's history entry (a new URL only) and the location hooks' update. */
 function pushNavigation(req: PartialRequest, url: URL): void {
   if (!req.navigate) return;
@@ -243,7 +252,9 @@ function partialLinkBlocker(href: string): boolean {
   if (link === null || link.href !== href) return false;
   claimed = null;
   const url = new URL(href);
-  void fetchPartials({ url, partial: new URL(link.partial ?? href, location.href), navigate: true })
+  const partial = new URL(link.partial ?? href, location.href);
+  if (!sameOrigin(partial) || !sameOrigin(url)) return false;
+  void fetchPartials({ url, partial, navigate: true })
     .then(
       () => scrollTo({ left: 0, top: 0, behavior: "instant" }),
       () => (location.href = href), // the fetch failed: load the page in full
@@ -261,6 +272,7 @@ function onClick(e: MouseEvent): void {
   const partial = button.getAttribute(PARTIAL_ATTR);
   if (partial === null || !clientNavEnabled(button)) return;
   const url = new URL(partial, location.href);
+  if (!sameOrigin(url)) return;
   void fetchPartials({ url, partial: url, navigate: false });
 }
 
@@ -288,7 +300,9 @@ function formTarget(form: HTMLFormElement, submitter: HTMLElement | null): FormT
   ].find((v) => v !== null);
   if (!FORM_METHODS.has(method) || !raw) return null;
   const url = new URL(attr("formaction") ?? form.action, location.href);
-  return { method: method as FormTarget["method"], partial: new URL(raw, location.href), url };
+  const partial = new URL(raw, location.href);
+  if (!sameOrigin(partial) || !sameOrigin(url)) return null;
+  return { method: method as FormTarget["method"], partial, url };
 }
 
 /** The methods a partial form request takes (others submit as the browser does). */

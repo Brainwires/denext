@@ -1,7 +1,10 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
+import { join } from "@std/path";
 import {
   boundedOutput,
+  childDeadlineMs,
   ChildStallError,
+  lockDir,
   retryOnStall,
   serialChild,
   serialChildTurns,
@@ -166,4 +169,89 @@ Deno.test("boundedOutput: a child that exits in time returns its output", async 
   const out = await boundedOutput(child, { stdout: true, stderr: true }, 60_000, "deno eval");
   assertEquals(out.code, 0);
   assertEquals(new TextDecoder().decode(out.stdout).trim(), "ok");
+});
+
+Deno.test("lockDir: a directory only this user reaches, never a shared /tmp", () => {
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+  assertEquals(
+    lockDir(env({ XDG_RUNTIME_DIR: "/run/user/1000", HOME: "/home/u" }), "linux"),
+    join("/run/user/1000", "denext-locks"),
+  );
+  assertEquals(
+    lockDir(env({ HOME: "/home/u" }), "linux"),
+    join("/home/u", ".cache", "denext", "locks"),
+  );
+  assertEquals(
+    lockDir(env({ HOME: "/home/u", XDG_CACHE_HOME: "/c" }), "linux"),
+    join("/c", "denext", "locks"),
+  );
+  assertEquals(
+    lockDir(env({ HOME: "/Users/u", XDG_RUNTIME_DIR: "/x" }), "darwin"),
+    join("/x", "denext-locks"),
+  );
+  assertEquals(
+    lockDir(env({ HOME: "/Users/u" }), "darwin"),
+    join("/Users/u", "Library", "Caches", "denext", "locks"),
+  );
+  assertEquals(
+    lockDir(
+      env({ LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local", XDG_RUNTIME_DIR: "/x" }),
+      "windows",
+    ),
+    join("C:\\Users\\u\\AppData\\Local", "denext", "locks"),
+  );
+  assertEquals(lockDir(env({ TMPDIR: "/tmp" }), "linux"), undefined, "no home: no lock file");
+});
+
+Deno.test("childDeadlineMs: DENEXT_CHILD_DEADLINE_MS replaces a deadline; 0 turns it off", () => {
+  const env = (v?: string) => (k: string) => k === "DENEXT_CHILD_DEADLINE_MS" ? v : undefined;
+  assertEquals(childDeadlineMs(120_000, env()), 120_000);
+  assertEquals(childDeadlineMs(120_000, env("900000")), 900_000);
+  assertEquals(childDeadlineMs(120_000, env("0")), Infinity);
+  assertEquals(childDeadlineMs(120_000, env("ten minutes")), 120_000, "not a number: the default");
+  assertEquals(childDeadlineMs(120_000, env("-5")), 120_000);
+});
+
+Deno.test("boundedOutput: no deadline (Infinity) never kills the child", async () => {
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["eval", "await new Promise((r) => setTimeout(r, 50)); console.log('done')"],
+    stdout: "piped",
+    stderr: "null",
+    stdin: "null",
+  }).spawn();
+  const out = await boundedOutput(child, { stdout: true, stderr: false }, Infinity, "deno eval");
+  assertEquals(out.code, 0);
+  assertEquals(new TextDecoder().decode(out.stdout).trim(), "done");
+});
+
+Deno.test("serialChild: the process lock is in a private directory and is removed on exit", async () => {
+  const home = await Deno.makeTempDir({ prefix: "denext_lockhome_" });
+  try {
+    const mod = JSON.stringify(new URL("../src/build/serial-child.ts", import.meta.url).href);
+    const code = `import { lockDir, serialChild } from ${mod};
+const dir = lockDir();
+const seen = await serialChild(async () => [...Deno.readDirSync(dir)].map((e) => e.name));
+console.log(JSON.stringify({ dir, seen, pid: Deno.pid }));`;
+    const vars: Record<string, string> = Deno.build.os === "windows"
+      ? { LOCALAPPDATA: home, USERPROFILE: home }
+      : { HOME: home, XDG_CACHE_HOME: join(home, ".cache") };
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--no-check", code],
+      env: { ...vars, XDG_RUNTIME_DIR: "" },
+      stdout: "piped",
+      stderr: "piped",
+      stdin: "null",
+    }).output();
+    const text = new TextDecoder().decode(out.stdout);
+    assertEquals(out.code, 0, new TextDecoder().decode(out.stderr));
+    const { dir, seen, pid } = JSON.parse(text);
+    assert(dir.startsWith(home), dir);
+    assertEquals(seen, [`denext-deno-child-${pid}.lock`], "the lock was held there");
+    assertEquals([...Deno.readDirSync(dir)], [], "and removed when the process exited");
+    if (Deno.build.os !== "windows") {
+      assertEquals(Deno.statSync(dir).mode! & 0o777, 0o700, "the directory is this user's only");
+    }
+  } finally {
+    await Deno.remove(home, { recursive: true });
+  }
 });

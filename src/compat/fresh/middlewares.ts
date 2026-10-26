@@ -187,13 +187,23 @@ const FRESH_CSP_DEFAULTS = [
 /** A directive's name (its first token). */
 const directiveName = (d: string): string => d.trim().split(/\s+/)[0];
 
-/** The directives a {@link csp} middleware sends: the defaults, overridden by `options.csp`. */
-function freshDirectives(options: CSPOptions): { defaults: string[]; own: string[] } {
-  const own = options.csp ?? [];
+/** A {@link csp} middleware's directives, computed once: the defaults, overridden by `options.csp`. */
+interface FreshDirectives {
+  defaults: string[];
+  own: string[];
+  useNonce: boolean;
+}
+
+/**
+ * The directives a {@link csp} middleware sends: the defaults, overridden by `options.csp`. The
+ * caller's array is copied, never changed.
+ */
+function freshDirectives(options: CSPOptions): FreshDirectives {
+  const own = [...(options.csp ?? [])];
   const named = new Set(own.map(directiveName));
   const defaults = FRESH_CSP_DEFAULTS.filter((d) => !named.has(directiveName(d)));
   if (options.reportTo) own.push("report-to csp-endpoint", `report-uri ${options.reportTo}`);
-  return { defaults, own };
+  return { defaults, own, useNonce: options.useNonce === true };
 }
 
 /** A fetch directive (`*-src`), whose sources add to denext's own. */
@@ -224,8 +234,15 @@ function unionSources(base: string[], extra: string[]): string[] {
  * @returns The policy to send.
  */
 export function mergeCsp(policy: string | undefined, options: CSPOptions = {}): string {
-  const { defaults, own } = freshDirectives(options);
-  const inline = (d: string) => options.useNonce ? d.replaceAll(" 'unsafe-inline'", "") : d;
+  return mergeDirectives(policy, freshDirectives(options));
+}
+
+/** {@link mergeCsp} over directives already computed. */
+function mergeDirectives(
+  policy: string | undefined,
+  { defaults, own, useNonce }: FreshDirectives,
+): string {
+  const inline = (d: string) => useNonce ? d.replaceAll(" 'unsafe-inline'", "") : d;
   if (policy === undefined) return [...defaults, ...own].map(inline).join("; ");
   const merged = new Map<string, string[]>();
   for (const d of policy.split(";").map((p) => p.trim()).filter(Boolean)) {
@@ -255,31 +272,34 @@ function requestContext(): RequestContext | undefined {
  * Fresh's content-security-policy middleware. A page denext renders gets denext's own policy
  * (strict by default, the `csp` config key) with these directives merged in ({@link mergeCsp});
  * any other response gets Fresh's policy as Fresh sends it. `reportOnly` sends it as
- * `Content-Security-Policy-Report-Only` instead, and `reportTo` adds the reporting endpoint.
+ * `Content-Security-Policy-Report-Only` instead (a page keeps denext's own policy enforced), and
+ * `reportTo` adds the reporting endpoint. The directives are computed once, here: the options
+ * (and the `csp` array) are read at creation and never changed.
  *
  * @param options The policy.
  * @returns The middleware.
  */
 export function csp<State>(options: CSPOptions = {}): Mw<State> {
-  const header = options.reportOnly
-    ? "content-security-policy-report-only"
-    : "content-security-policy";
+  const reportOnly = options.reportOnly === true;
+  const reportTo = options.reportTo;
+  const header = reportOnly ? "content-security-policy-report-only" : "content-security-policy";
+  const directives = freshDirectives(options);
+  const standalone = mergeDirectives(undefined, directives);
   return async (ctx) => {
     const res = await ctx.next();
-    if (options.reportTo) {
-      res.headers.set("reporting-endpoints", `csp-endpoint="${options.reportTo}"`);
-    }
+    if (reportTo) res.headers.set("reporting-endpoints", `csp-endpoint="${reportTo}"`);
     const rc = requestContext();
     if (!res.headers.has(CONTINUE_HEADER) || !rc) {
-      res.headers.set(header, mergeCsp(undefined, options));
+      res.headers.set(header, standalone);
       return res;
     }
     // The page renders after this middleware: adjust the policy denext computes for it.
     rc.cspTransform = (policy) => {
-      const merged = mergeCsp(policy, options);
-      if (!options.reportOnly) return merged;
+      const merged = mergeDirectives(policy, directives);
+      if (!reportOnly) return merged;
+      // Report-only: denext's own policy stays enforced; the merged one is only reported.
       rc.outgoingHeaders.set(header, merged);
-      return undefined;
+      return policy;
     };
     return res;
   };

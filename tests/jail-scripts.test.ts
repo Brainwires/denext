@@ -20,6 +20,7 @@ import {
   jailEffective,
   jailFailures,
   jailOnByDefault,
+  narrowWriteTarget,
   npmPackageName,
   npmrcValue,
   readJailSetting,
@@ -325,6 +326,68 @@ generator js {
   }
 });
 
+Deno.test("jail: write targets outside the project are refused", async () => {
+  for (
+    const bad of [
+      "",
+      " ",
+      "/",
+      "/abs",
+      "C:/x",
+      "c:\\x",
+      "\\\\host\\share",
+      ".",
+      "./",
+      "..",
+      "../x",
+      "a/../../x",
+      "../../../home/u/.ssh",
+      "a\\..\\..\\x",
+    ]
+  ) {
+    assertFalse(narrowWriteTarget(bad), JSON.stringify(bad));
+    assertFalse(narrowWriteTarget(bad, "prisma-output"), JSON.stringify(bad));
+  }
+  for (const ok of ["generated/client", "public", "./static", "a/b/c"]) {
+    assert(narrowWriteTarget(ok, "msw-worker"), ok);
+  }
+  // only git-hooks may sit above the project, and only as the repository's .git/hooks
+  assert(narrowWriteTarget("../.git/hooks", "git-hooks"));
+  assert(narrowWriteTarget("../../.git/hooks", "git-hooks"));
+  assertFalse(narrowWriteTarget("../.git/hooks", "prisma-output"));
+  assertFalse(narrowWriteTarget("../other/.git/hooks", "git-hooks"));
+
+  const root = await project({
+    "app/deno.json": "{}",
+    "app/package.json": {
+      dependencies: { prisma: "6", "@prisma/client": "6", msw: "2" },
+      msw: { workerDirectory: ["../../outside", "/abs/worker"] },
+    },
+    "app/prisma/schema.prisma": `generator a {
+  provider = "prisma-client"
+  output   = "/"
+}
+generator b {
+  provider = "prisma-client"
+  output   = "../../../home/u/.ssh"
+}
+`,
+  });
+  const dir = join(root, "app");
+  try {
+    const r = await applyJailExceptions(dir, { version: RC5, env: NO_ENV });
+    const jail = await jailConfig(dir) as { packages?: Record<string, JailPackageException> };
+    assertEquals(jail?.packages?.["@prisma/client"]?.write, undefined, "no Prisma grant");
+    assertEquals(jail?.packages?.msw?.write, undefined, "no msw grant");
+    const lines = r.lines.join("\n");
+    assertStringIncludes(lines, '"../../home/u/.ssh"', "the Prisma output above the project");
+    assertStringIncludes(lines, '"../../outside"', "the msw directory above the project");
+    assertStringIncludes(lines, "abs/worker");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("jail: a write-only package with nothing to write needs no exception", async () => {
   const dir = await project({
     "deno.json": "{}",
@@ -381,22 +444,60 @@ Deno.test("jail: an install log's jail failures are recognised and explained", (
     explainJailFailures(failures, "3.0.0-rc.6").join("\n"),
     '"net":["storage.googleapis.com"]',
   );
-  assertStringIncludes(text, "packages.@acme/native.write");
+  assertStringIncludes(text, '"supplyChain.jailScripts.packages" → "@acme/native" → "write"');
   assertStringIncludes(text, "never allowed in the jail");
   assertFalse(text.includes("plain@"), "a failure without a sign of the jail is not blamed on it");
   assertEquals(jailFailures("no failures here"), []);
-  // an unknown package that hit the network is pointed at `net`
+  // an unknown package that hit the network gets a warning and review advice, never a grant
   const net = jailFailures(
     "error: script 'install' in 'x@1.0.0' failed with exit code 1\nNotCapable: Requires net access",
     "linux",
   );
-  assertStringIncludes(explainJailFailures(net).join("\n"), '{"net":true}');
+  const netText = explainJailFailures(net).join("\n");
+  assertFalse(netText.includes('"net":true'), "no paste-ready whole-network grant");
+  assertFalse(netText.includes("fix:"), "no paste-ready fix for an unreviewed package");
+  assertStringIncludes(netText, "common sign of malware");
+  assertStringIncludes(netText, '"net": ["<host>"]');
   const deno = jailFailures(
     "error: script 'install' in 'y@1.0.0' failed with exit code 1\n" +
       "error: This deno subcommand is not allowed in a jailed npm lifecycle script (jail-scripts).",
     "linux",
   );
   assertEquals(deno[0].signs, ["deno"]);
+});
+
+Deno.test("jail: a forged failure line can't shape the advice; a host list is never widened", () => {
+  // the script prints a line naming a package of its own making
+  const forged = 'evil"}}},"x":{"net":true';
+  const failures = jailFailures(
+    `error: script 'postinstall' in '${forged}@1.0.0' failed with exit code 1\n` +
+      "NotCapable: Requires net access",
+    "linux",
+  );
+  assertEquals(failures.map((f) => f.name), [forged]);
+  const text = explainJailFailures(failures, RC5).join("\n");
+  assertStringIncludes(text, JSON.stringify(forged), "the name is quoted");
+  assertFalse(text.includes("fix:"));
+  assertFalse(text.includes('{"net":true}'));
+  // a name spanning lines is not a match at all
+  assertEquals(
+    jailFailures("error: script 'install' in 'a\nb@1.0.0' failed with exit code 1", "linux"),
+    [],
+  );
+
+  // a built-in entry on a runtime without host lists: the project's host list is kept
+  const puppeteer = jailFailures(
+    "error: script 'postinstall' in 'puppeteer@24.1.0' failed with exit code 1\n" +
+      "Error: getaddrinfo ENOTFOUND storage.googleapis.com",
+    "linux",
+  );
+  const kept = explainJailFailures(puppeteer, RC5, {
+    puppeteer: { net: ["storage.googleapis.com"] },
+  }).join("\n");
+  assertFalse(kept.includes('"net":true'), "an existing host list is not widened");
+  assertStringIncludes(kept, '"net":["storage.googleapis.com"]');
+  // with no list of the project's own, the reviewed entry's grant is pasted as before
+  assertStringIncludes(explainJailFailures(puppeteer, RC5).join("\n"), '"net":true');
 });
 
 /** A host-listed package's script failing through a proxy that refused the checked address. */

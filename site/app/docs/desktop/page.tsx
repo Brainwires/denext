@@ -2020,10 +2020,14 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         in <code>&lt;file&gt;.part</code>{" "}
         beside the file, with a sidecar naming the URL; it is continued only for that URL and that
         file, with an <code>If-Range</code>{" "}
-        request, else started over. It sends the page&apos;s request headers except those a
-        browser&apos;s <code>fetch</code> refuses (<code>Cookie</code>, <code>Host</code>,{" "}
-        <code>Origin</code>, the hop-by-hop and <code>Sec-</code> / <code>Proxy-</code>{" "}
-        ones), and drops <code>Authorization</code>{" "}
+        request, else started over. A file the user picked on its own (a single-file{" "}
+        <code>picked</code>{" "}
+        handle) grants that file only, so its partial and sidecar go in the app&apos;s cache
+        directory instead (<code>denext-downloads/</code>, named by a hash of the destination):
+        nothing is created or removed beside the picked file. It sends the page&apos;s request
+        headers except those a browser&apos;s <code>fetch</code> refuses (<code>Cookie</code>,{" "}
+        <code>Host</code>, <code>Origin</code>, the hop-by-hop and <code>Sec-</code> /{" "}
+        <code>Proxy-</code> ones), and drops <code>Authorization</code>{" "}
         on a redirect to another origin. LAN addresses (<code>
           192.168.x.x
         </code>, <code>10.x.x.x</code>, …) stay allowed, so a download from a NAS works.{" "}

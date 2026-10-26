@@ -1266,7 +1266,11 @@ export class RealtimeEngine {
       const scope = await resolveScope();
       const owner = scope.role === "anon" ? `anon:${peer}` : identityOf(scope);
       const existing = this.#audiences.get(key);
-      if (existing) return this.#rebind(existing, scope, owner);
+      if (existing) {
+        if (!this.#rebind(existing, scope, owner)) return false;
+        if (existing.regranted) await this.#reseed(existing, scope);
+        return true;
+      }
       const sink = { channel: key };
       return await this.#admit({ key, table, filter: parts.filter, scope, sink }, owner);
     } catch (error) {
@@ -1287,12 +1291,30 @@ export class RealtimeEngine {
     }
     // A reconnect under other claims (a role, a tenant, a group changed): what was read and kept
     // for it was read under the old ones, so it is dropped and the return is a resync.
+    // The keys it tracked were seen under the old grant too: none of them may yield a delete
+    // (with an `old: "full"` row image) to the new one, so they go now and are re-seeded under it.
     if (audience.everActive && !audience.active && grantOf(scope) !== grantOf(audience.scope)) {
       audience.queue.length = 0;
+      audience.tracked = new Set();
       audience.regranted = true;
     }
     audience.scope = scope;
     return true;
+  }
+
+  /**
+   * Re-seed a regranted audience's tracked keys under its new scope (what it can see now). A
+   * failed read leaves the set empty: no delete is then sent for a row seen before.
+   */
+  async #reseed(audience: Audience, scope: RlsScope): Promise<void> {
+    try {
+      const tracked = await this.#seedSlot(() =>
+        this.#seed(audience.table, audience.filter, scope)
+      );
+      if (audience.scope === scope) audience.tracked = tracked;
+    } catch (error) {
+      this.#warnOnce(error);
+    }
   }
 
   /**

@@ -8,6 +8,7 @@ import { FIRST_IDLE_TRIM_RUNTIME, supportsIdleTrim } from "../src/build/deno-ver
 import {
   configDisablesIdleTrim,
   configTextDisablesIdleTrim,
+  holdOffBakedIdleTrim,
   IDLE_TRIM_ENV,
   IDLE_TRIM_FLAG,
   idleTrimCompileFlags,
@@ -16,6 +17,7 @@ import {
   idleTrimOn,
   pinnedIdleTrim,
 } from "../src/build/idle-trim.ts";
+import { entrySource } from "../src/build/compile-app.ts";
 import { renderDockerfile } from "../src/build/docker-template.ts";
 import { resolveDocker } from "../src/build/docker-detect.ts";
 import { startIdleTrimEnv } from "../src/cli/run-verb.ts";
@@ -88,11 +90,14 @@ Deno.test("idle trim: generated files follow the pinned toolchain", () => {
   assert(!pinnedIdleTrim(false, (n) => n === "DENEXT_IDLE_TRIM" ? "0" : undefined, "3.0.0-rc.5"));
 });
 
-Deno.test("idle trim: the config's opt-out is read from its text", async () => {
+Deno.test("idle trim: the config's opt-out is read from its text before a build, comments ignored", async () => {
   assert(configTextDisablesIdleTrim("export default { start: { idleTrim: false } };"));
   assert(configTextDisablesIdleTrim("start: {\n  idleTrim:false,\n}"));
   assert(!configTextDisablesIdleTrim("export default { start: { idleTrim: true } };"));
   assert(!configTextDisablesIdleTrim("export default {};"));
+  // A commented-out opt-out opts out of nothing.
+  assert(!configTextDisablesIdleTrim("export default { start: {\n  // idleTrim: false,\n} };"));
+  assert(!configTextDisablesIdleTrim("export default { /* idleTrim: false */ };"));
   const dir = await Deno.makeTempDir();
   try {
     assert(!(await configDisablesIdleTrim(dir)), "no config: nothing opts out");
@@ -106,6 +111,59 @@ Deno.test("idle trim: the config's opt-out is read from its text", async () => {
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("idle trim: after a build, the evaluated config (the deploy manifest) decides, not the text", async () => {
+  const dir = await Deno.makeTempDir();
+  const manifest = (idleTrim: boolean) =>
+    Deno.writeTextFile(
+      join(dir, ".denext", "deploy-manifest.json"),
+      JSON.stringify({ server: { idleTrim } }),
+    );
+  try {
+    await Deno.mkdir(join(dir, ".denext"));
+    // `start: { idleTrim: isProd ? false : true }`: no literal `idleTrim: false` in the text.
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      "const isProd = true;\nexport default { start: { idleTrim: isProd ? false : true } };\n",
+    );
+    assert(!(await configDisablesIdleTrim(dir)), "the text alone can't tell");
+    await manifest(false);
+    assert(await configDisablesIdleTrim(dir), "the build recorded the evaluated opt-out");
+    // A commented-out opt-out in the text, the build says on: on.
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      "// idleTrim: false\nexport default {};\n",
+    );
+    await manifest(true);
+    assert(!(await configDisablesIdleTrim(dir)));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("idle trim: DENEXT_IDLE_TRIM=0 when a compiled binary runs holds a baked trim off", () => {
+  const timers: number[] = [];
+  const every = (_fn: () => void, ms: number) => void timers.push(ms);
+  const env = (vars: Record<string, string>) => (n: string) => vars[n];
+  assertEquals(holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0" }), every), true);
+  assertEquals(timers, [500], "woken twice per default 1 s idle delay");
+  assertEquals(
+    holdOffBakedIdleTrim(
+      true,
+      env({ DENEXT_IDLE_TRIM: "0", DENO_IDLE_TRIM_DELAY_MS: "300" }),
+      every,
+    ),
+    true,
+  );
+  assertEquals(timers.at(-1), 150, "half the delay the runtime was given");
+  assertEquals(holdOffBakedIdleTrim(true, env({}), every), false, "no opt-out: the trim runs");
+  assertEquals(holdOffBakedIdleTrim(false, env({ DENEXT_IDLE_TRIM: "0" }), every), false);
+  assertEquals(timers.length, 2);
+  // The compiled entry tells the binary whether the trim was baked in.
+  const baked = entrySource("file:///p/.denext/compile/main.ts", "file:///p/", true);
+  assertStringIncludes(baked, "Deno.args, { idleTrimBaked: true });");
+  assert(!entrySource("file:///p/.denext/compile/main.ts", "file:///p/").includes("idleTrimBaked"));
 });
 
 Deno.test("idle trim: only the `start` verb's child gets it", async () => {

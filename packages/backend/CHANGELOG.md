@@ -26,6 +26,18 @@
 
 ### Security
 
+- **A reconnect under a reduced grant forgets the keys it tracked.** A subscriber re-authorized
+  with other claims (a role, tenant or group removed) kept the old set of tracked keys, so a later
+  delete or move-out of a row it could only see before was still sent, with its old image under
+  `old: "full"`. The set is now dropped at the re-authorization and re-seeded under the new claims.
+- **Multi-range object downloads are capped at 8 ranges.** Each range was a separate driver read
+  (a billed S3 GET), so one request with 64 ranges fanned out 64 reads. More than 8 ranges (after
+  coalescing) now get the whole object, a `200`, as nginx's `max_ranges` does.
+- **`rest.rateLimit` counts in its own store.** By default the auto-REST limiter adopted the store
+  `denextAuth({ rateLimit: { store } })` configures, writing to it on every request and, with an
+  in-memory store, taking the sign-in limiters' lockout rule (keys over 5 requests unevictable,
+  new clients refused once 10 000 filled it). It now uses its own bounded in-memory store per
+  process unless `rest.rateLimit.store` names a shared one.
 - **A reconnect is replayed only under the claims it was read under.** A subscriber re-authorized
   with other claims than it left with (a refresh's `exp` / `iat` / `nbf` / `jti` aside) gets a
   `resync`: the frames kept for it are dropped and nothing is replayed. A token without `sub` binds

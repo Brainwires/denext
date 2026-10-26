@@ -23,7 +23,7 @@ import { desktopNetSplit, desktopNetSplitFor } from "../src/build/desktop-runtim
 import type { DenoIdentity } from "../src/build/deno-version.ts";
 import { withNetHosts } from "../src/build/desktop-launch.ts";
 import { renderDockerfile } from "../src/build/docker-template.ts";
-import { directionalNetFlags } from "../src/cli/run-verb.ts";
+import { childPermissionFlags, directionalNetFlags } from "../src/cli/run-verb.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { sidecarListError } from "../src/desktop/sidecar.ts";
@@ -284,8 +284,12 @@ Deno.test("renderDockerfile: the server listens only on its port; the static ser
 });
 
 Deno.test("directionalNetFlags: a re-exec child keeps the parent's split grants", async () => {
-  const states = (s: Record<string, Deno.PermissionState>) => (name: string) =>
-    Promise.resolve(s[name] ?? "prompt");
+  const states = (s: Record<string, Deno.PermissionState | "partial">) => (name: string) =>
+    Promise.resolve(
+      s[name] === "partial"
+        ? { state: "granted" as const, partial: true }
+        : { state: s[name] ?? "prompt", partial: false },
+    );
   // Directional model: `net` reads prompt; each unscoped direction passes on.
   assertEquals(
     await directionalNetFlags(false, states({ "net-connect": "granted", "net-listen": "granted" })),
@@ -294,6 +298,16 @@ Deno.test("directionalNetFlags: a re-exec child keeps the parent's split grants"
   assertEquals(
     await directionalNetFlags(false, states({ "net-connect": "denied" })),
     ["--deny-net-connect"],
+  );
+  // A direction granted only in part (a deny list beside the allow) is not widened to a bare
+  // allow: the child is refused instead.
+  assertEquals(
+    await directionalNetFlags(false, states({ "net-connect": "partial", "net-listen": "granted" })),
+    ["--allow-net-listen"],
+  );
+  assertEquals(
+    await directionalNetFlags(false, states({ "net-connect": "partial", "net-listen": "denied" })),
+    ["--deny-net-listen"],
   );
   // The legacy model (granted, or denied) or a Deno without the names: nothing to add.
   assertEquals(await directionalNetFlags(true, states({ "net-connect": "granted" })), []);
@@ -304,6 +318,27 @@ Deno.test("directionalNetFlags: a re-exec child keeps the parent's split grants"
   assertEquals(await directionalNetFlags(false, () => Promise.reject(new TypeError("name"))), []);
   // This process (stock or the toolchain, run with -A): the legacy model, so none.
   assertEquals(await directionalNetFlags(true), []);
+});
+
+Deno.test("childPermissionFlags: a grant held only in part is not widened for the re-exec child", async () => {
+  const query = (s: Record<string, "granted" | "partial">) => (name: string) =>
+    Promise.resolve(
+      s[name] === "partial"
+        ? { state: "granted" as const, partial: true }
+        : { state: s[name] ?? ("prompt" as const), partial: false },
+    );
+  // `--allow-net --deny-net=host --allow-read --deny-read=/etc --allow-env`
+  assertEquals(
+    await childPermissionFlags(query({ net: "partial", read: "partial", env: "granted" })),
+    ["--allow-env"],
+  );
+  assertEquals(
+    await childPermissionFlags(query({ net: "granted", read: "granted" })),
+    ["--allow-read", "--allow-net"],
+  );
+  // The real query on this process: a deny list here would have to show up as `partial`.
+  const live = await Deno.permissions.query({ name: "net" });
+  if (live.partial) assertFalse((await childPermissionFlags()).includes("--allow-net"));
 });
 
 Deno.test("config: the network directions are validated, and plain `net` keeps working", () => {

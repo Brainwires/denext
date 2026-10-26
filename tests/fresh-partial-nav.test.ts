@@ -7,7 +7,7 @@
 // (`f-client-nav="false"`, no `f-partial`, a cancelled click, a fragment link, a form naming no
 // target, a `dialog` form) is left alone.
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { inChild } from "./helpers/isolated.ts";
 import type { PartialNavReport } from "./helpers/fresh-partial-dom.ts";
 
@@ -36,4 +36,6 @@ Deno.test("partial navigation: buttons, links and forms fetch and swap their reg
   assertEquals(r.assigned, ["http://app.test/landed"], "the redirect is followed in full");
   assertEquals(r.title, "Answered");
   assertEquals(r.ignored, 0, "nothing else was fetched");
+  assertEquals(r.foreign, [], "a cross-origin f-partial is never fetched");
+  assert(r.declined.every((u) => u.startsWith("/?page=3")), r.declined.join());
 });

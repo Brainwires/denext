@@ -26,6 +26,7 @@ import { startAppProdServer } from "../build/prod-server/start.ts";
 import { loadEnv } from "../server/env.ts";
 import { abortJobRuns } from "../server/jobs.ts";
 import { setStandaloneState } from "../server/standalone.ts";
+import { holdOffBakedIdleTrim } from "../build/idle-trim.ts";
 
 /** The verbs a compiled app runs (the first is the default). */
 const VERBS = ["start", "job", "db"] as const;
@@ -111,13 +112,17 @@ async function prepareStandalone(projectDir: string): Promise<void> {
  *
  * @param projectUrl The embedded project's root, as a `file:` URL.
  * @param args The command line (default `Deno.args`).
+ * @param options `idleTrimBaked`: the binary was compiled with the idle trim baked in (a
+ *   `DENEXT_IDLE_TRIM=0` when it runs then holds the trim off).
  */
 export async function runStandalone(
   projectUrl: string | URL,
   args: readonly string[] = Deno.args,
+  options: { idleTrimBaked?: boolean } = {},
 ): Promise<void> {
   const projectDir = fromFileUrl(projectUrl).replace(/[\\/]$/, "");
   await prepareStandalone(projectDir);
+  holdOffBakedIdleTrim(options.idleTrimBaked === true);
   const registry = new CommandRegistry();
   for (const spec of [startSpec(projectDir), jobCommand, dbCommand]) registry.register(spec);
   const outcome = registry.parse(standaloneArgv(args));
