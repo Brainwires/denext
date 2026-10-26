@@ -385,6 +385,8 @@ class Translator {
     carried: new Set(),
     session: false,
   };
+  /** The Express fields read whose trust of a proxy's headers changes (`ip`, `secure`, …). */
+  readonly proxyTrust = new Set<string>();
 
   constructor(private readonly server: ServerModule) {}
 
@@ -558,10 +560,13 @@ class Translator {
       case "path":
         return url("requestUrl.pathname");
       case "hostname":
+        this.proxyTrust.add("hostname");
         return url("requestUrl.hostname");
       case "protocol":
+        this.proxyTrust.add("protocol");
         return url("requestUrl.protocol.slice(0, -1)");
       case "secure":
+        this.proxyTrust.add("secure");
         return url('(requestUrl.protocol === "https:")');
       case "query":
         return url("Object.fromEntries(requestUrl.searchParams)");
@@ -569,6 +574,7 @@ class Translator {
         this.needs.params = true;
         return { text: "params" };
       case "ip":
+        this.proxyTrust.add("ip");
         return server("clientIp", "clientIp()");
       case "cookies":
         return server(
@@ -855,7 +861,7 @@ ${providerSource(props, needs, isAsync)}`;
       .join(", ")
     : "TODO";
   const todos = rendered?.flatMap((r) => (r.todo ? [r.todo] : [])) ?? [rel];
-  const warnings = reportWarnings(rel, summary, todos);
+  const warnings = reportWarnings(rel, summary, todos, translator.proxyTrust);
   return { module: { dest, code, srcDir: join(dir, dirname(rel)) }, warnings };
 }
 
@@ -868,12 +874,28 @@ function moduleIntro(rel: string): string {
 }
 
 /** The migrate report lines for a generated `load-context.ts`. */
-function reportWarnings(rel: string, summary: string, todos: string[]): string[] {
+function reportWarnings(
+  rel: string,
+  summary: string,
+  todos: string[],
+  proxyTrust: ReadonlySet<string> = new Set(),
+): string[] {
   const warnings = [`${rel}: getLoadContext → load-context.ts (${summary})`];
   if (todos.length > 0) {
     warnings.push(
       `load-context.ts: ${todos.length} value(s) need porting by hand — see its ` +
         `TODO(denext migrate) notes (from ${todos.join(", ")})`,
+    );
+  }
+  if (proxyTrust.size > 0) {
+    const fields = [...proxyTrust].sort().map((f) => `req.${f}`).join(", ");
+    warnings.push(
+      `load-context.ts: ${fields} no longer follow Express's \`trust proxy\` setting. ` +
+        "`clientIp()` (req.ip) reads a proxy's X-Forwarded-For hop only with denext's " +
+        "`trustForwardedHeaders` (or DENEXT_TRUST_PROXY=1), else the socket peer; req.secure, " +
+        "req.protocol and req.hostname read the request's own URL, which behind a " +
+        "TLS-terminating proxy is the proxy's hop (http, an internal host) — check these values " +
+        "behind your proxy",
     );
   }
   return warnings;
@@ -904,7 +926,7 @@ export default defineLoadContext(${head} {\n${url}${body.code}});\n`;
   const summary = ["RouterContextProvider", ...body.summary].join(", ");
   return {
     module: { dest, code, srcDir: join(dir, dirname(rel)) },
-    warnings: reportWarnings(rel, summary, body.todos),
+    warnings: reportWarnings(rel, summary, body.todos, translator.proxyTrust),
   };
 }
 

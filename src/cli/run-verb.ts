@@ -72,19 +72,29 @@ function entryUrl(): string {
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
  * permission grants (a parent run with `-A` grants all → all pass through; a scoped
  * parent passes through only what it holds). Path-scoped grants can't be enumerated
- * by the Deno API, so they aren't reconstructed.
+ * by the Deno API, so they aren't reconstructed, and a grant the parent holds only in part
+ * (`--allow-net --deny-net=host`: `partial`) is not passed on either: a bare allow would drop
+ * the parent's deny list.
+ *
+ * @param query The permission query (a test seam).
+ * @returns The flags.
  */
-async function childPermissionFlags(): Promise<string[]> {
+export async function childPermissionFlags(
+  query: (name: string) => Promise<Pick<Deno.PermissionStatus, "state" | "partial">> = (name) =>
+    Deno.permissions.query({ name } as unknown as Deno.PermissionDescriptor),
+): Promise<string[]> {
   const names: Deno.PermissionName[] = ["read", "write", "net", "env", "run", "sys", "ffi"];
   const flags: string[] = [];
   for (const name of names) {
     try {
-      if ((await Deno.permissions.query({ name })).state === "granted") {
-        flags.push(`--allow-${name}`);
-      }
+      const status = await query(name);
+      if (status.state === "granted" && !status.partial) flags.push(`--allow-${name}`);
     } catch { /* permission name unknown to this Deno version */ }
   }
-  return [...flags, ...await directionalNetFlags(flags.includes("--allow-net"))];
+  // A partly granted legacy `net` still rules out the directional names (one model per line).
+  let legacyNet = flags.includes("--allow-net");
+  if (!legacyNet) legacyNet = await query("net").then((s) => s.state === "granted", () => false);
+  return [...flags, ...await directionalNetFlags(legacyNet, query)];
 }
 
 /**
@@ -92,7 +102,9 @@ async function childPermissionFlags(): Promise<string[]> {
  * / `--allow-net-listen`, `--deny-net-connect` / `--deny-net-listen`), each one held unscoped, for
  * a re-exec child. Only when the parent runs in that model: there `net` reads `prompt`, and the two
  * models may not be mixed on one command line. Elsewhere (`--allow-net`, `--deny-net`, a Deno
- * without the split) none.
+ * without the split) none. A direction granted only in part (`--allow-net-connect
+ * --deny-net-connect=host`) is not passed on: its deny list can't be read back, and a bare allow
+ * would drop it, so the child is left to be refused (or asked) instead.
  *
  * @param legacyGranted Whether the parent holds the legacy `net` grant.
  * @param query The permission query (a test seam).
@@ -100,16 +112,16 @@ async function childPermissionFlags(): Promise<string[]> {
  */
 export async function directionalNetFlags(
   legacyGranted: boolean,
-  query: (name: string) => Promise<Deno.PermissionState> = (name) =>
-    Deno.permissions.query({ name } as unknown as Deno.PermissionDescriptor).then((s) => s.state),
+  query: (name: string) => Promise<Pick<Deno.PermissionStatus, "state" | "partial">> = (name) =>
+    Deno.permissions.query({ name } as unknown as Deno.PermissionDescriptor),
 ): Promise<string[]> {
   if (legacyGranted) return [];
   try {
-    if (await query("net") !== "prompt") return [];
+    if ((await query("net")).state !== "prompt") return [];
     const flags: string[] = [];
     for (const direction of ["connect", "listen"]) {
-      const state = await query(`net-${direction}`);
-      if (state === "granted") flags.push(`--allow-net-${direction}`);
+      const { state, partial } = await query(`net-${direction}`);
+      if (state === "granted" && !partial) flags.push(`--allow-net-${direction}`);
       else if (state === "denied") flags.push(`--deny-net-${direction}`);
     }
     return flags;

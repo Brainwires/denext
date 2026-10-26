@@ -125,6 +125,10 @@ server-rendered children, and in the browser, inside an element with `f-client-n
 - a **`<form>`** with an explicit `f-partial`, `action` or submitter `formaction` submits there
   (GET or POST) and swaps the regions of the answer.
 
+An `f-partial` (or form target) on another origin is never fetched: its answer would be swapped
+into the page and a form's fields sent there. The element then does what it would with no
+`f-partial` (a link navigates, a form submits as the browser does, a button does nothing).
+
 The request carries `?fresh-partial=true`, so the handler sees `ctx.isPartial` (a route that
 answers only partial requests redirects a full one, as Fresh's own website does), and a partial
 request's `ctx.redirect()` keeps the parameter. Each region of the answer applies its `mode`:
@@ -161,9 +165,11 @@ directives merge into denext's own (strict, hash-based) policy: a `*-src` direct
 sources to denext's, so the page's own scripts and styles keep working (`'unsafe-inline'` from
 Fresh's defaults is left out, as is every `'unsafe-inline'` with `useNonce`); any other directive
 replaces denext's or is added (`frame-ancestors 'none'`, `upgrade-insecure-requests`, …).
-`reportOnly` sends the merged policy as `Content-Security-Policy-Report-Only` instead, and
+`reportOnly` sends the merged policy as `Content-Security-Policy-Report-Only` as well, while the
+page keeps denext's own policy enforced (Fresh's directives are only reported), and
 `reportTo` adds the `report-to` / `report-uri` directives and the `Reporting-Endpoints` header. A
-Response a handler makes itself gets Fresh's policy as Fresh sends it.
+Response a handler makes itself gets Fresh's policy as Fresh sends it. The directives are worked
+out once, when `csp()` is called: the `csp` array you pass is copied, never changed.
 
 ---
 

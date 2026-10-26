@@ -23,6 +23,7 @@ import {
   denoToolchainStatus,
   denoToolchainTarget,
   DenoToolchainUnavailableError,
+  downloadTimeoutMs,
   ensureDenort,
   ensureDenoToolchain,
   linkDenoToolchain,
@@ -360,6 +361,14 @@ Deno.test("ensureDenoToolchain refuses an oversized or truncated download, and o
   } finally {
     await f.close();
   }
+});
+
+Deno.test("downloadTimeoutMs: the variable's milliseconds, 0 for none, else the default", () => {
+  const env = (v?: string) => () => v;
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env()), 60_000);
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env("5000")), 5_000);
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env("0")), Infinity);
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env("1m")), 60_000);
 });
 
 Deno.test("ensureDenoToolchain refuses a verified zip without a top-level deno", async () => {

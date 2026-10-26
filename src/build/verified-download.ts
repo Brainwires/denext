@@ -218,15 +218,65 @@ export function downloadProgress(
   };
 }
 
+/** A download that sent no bytes for its idle deadline (the connection is half-open, say). */
+export class DownloadIdleError extends Error {
+  /**
+   * @param idleMs How long it went without a byte.
+   */
+  constructor(idleMs: number) {
+    super(`no data for ${idleMs / 1000} s; the connection looks stalled`);
+    this.name = "DownloadIdleError";
+  }
+}
+
+/**
+ * `body`'s chunks, cancelling it and throwing {@linkcode DownloadIdleError} when no chunk arrives
+ * for `idleMs` (`Infinity`: no deadline).
+ *
+ * @param body The download.
+ * @param idleMs The most time between two chunks.
+ * @returns The chunks.
+ */
+async function* idleBounded(
+  body: ReadableStream<Uint8Array>,
+  idleMs: number,
+): AsyncGenerator<Uint8Array> {
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<never>((_, reject) => {
+        if (Number.isFinite(idleMs)) {
+          timer = setTimeout(() => reject(new DownloadIdleError(idleMs)), idleMs);
+        }
+      });
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try {
+        next = await Promise.race([reader.read(), idle]);
+      } catch (err) {
+        reader.cancel(err).catch(() => {});
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (next.done) return;
+      yield next.value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /**
  * Stream `body` into the NEW file `dest` (it must not exist), hashing it as it goes and refusing it
- * as soon as it holds more than `maxSize` bytes.
+ * as soon as it holds more than `maxSize` bytes, or once it sends nothing for `idleMs`.
  *
  * @param body The download.
  * @param dest The file to create.
  * @param maxSize The most bytes accepted.
  * @param errors The refusals' wording.
  * @param progress Told the running byte count after each chunk (a {@linkcode downloadProgress}).
+ * @param idleMs The most time between two chunks (default: no deadline).
  * @returns The byte count and SHA-256.
  */
 export async function streamHashed(
@@ -235,13 +285,14 @@ export async function streamHashed(
   maxSize: number,
   errors: StreamHashedErrors,
   progress?: (bytes: number) => void,
+  idleMs = Infinity,
 ): Promise<{ size: number; sha256: string }> {
   const hash = createHash("sha256");
   let size = 0;
   let refused: Error | null = null;
   const file = await Deno.open(dest, { write: true, createNew: true });
   try {
-    for await (const chunk of body) {
+    for await (const chunk of idleBounded(body, idleMs)) {
       size += chunk.byteLength;
       if (size > maxSize) throw (refused = errors.tooLarge());
       hash.update(chunk);

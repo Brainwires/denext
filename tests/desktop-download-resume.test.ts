@@ -7,7 +7,9 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import { fsCapability, type FsCapabilityConfig } from "../src/desktop/caps/fs.ts";
+import { openPartial, partialAt, writeSidecar } from "../src/desktop/caps/download-partial.ts";
 import { type DesktopCapCtx, DesktopCapError } from "../src/desktop/extension.ts";
+import { PickedPaths } from "../src/desktop/picked-paths.ts";
 
 const OS = Deno.build.os as "darwin" | "windows" | "linux";
 const TEST = { sanitizeOps: false, sanitizeResources: false } as const;
@@ -517,4 +519,84 @@ Deno.test({
     assertEquals(await dataFiles(t.root), []);
     assertEquals(await call(cap, "cancelDownload", { id: "p2" }), { cancelled: false });
   });
+});
+
+/** The names in `dir` (sorted; none when it doesn't exist). */
+async function namesIn(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  try {
+    for await (const e of Deno.readDir(dir)) out.push(e.name);
+  } catch { /* missing */ }
+  return out.sort();
+}
+
+Deno.test({
+  ...TEST,
+  name: "resume: a picked single file keeps its partial in the cache dir, never beside the file",
+}, async () => {
+  await withServer({ body: BODY, etag: '"v1"', honorRange: true, cutOnce: 400 }, async (t) => {
+    const outside = join(t.root, "picked");
+    await Deno.mkdir(outside);
+    const file = join(await Deno.realPath(outside), "pick.bin");
+    await Deno.writeTextFile(file, "old");
+    // Another program's in-progress download beside the picked file: not ours to touch.
+    await Deno.writeTextFile(`${file}.part`, "someone else's bytes");
+    const picked = new PickedPaths();
+    const handle = picked.add(file, "readwrite");
+    const cap = t.cap({ picked });
+    const cut = await assertRejects(
+      () => call(cap, "download", { url: URL_A, directory: { picked: handle } }),
+      DesktopCapError,
+    );
+    assertEquals(cut.code, "network");
+    const kept = (cut.data as { bytes: number }).bytes;
+    assert(kept > 0 && kept < 1000, `kept ${kept}`);
+    assertEquals(await namesIn(outside), ["pick.bin", "pick.bin.part"], "nothing new beside it");
+    assertEquals(await Deno.readTextFile(`${file}.part`), "someone else's bytes");
+    const cacheParts = await namesIn(join(t.root, "cache", "denext-downloads"));
+    assertEquals(cacheParts.length, 2, JSON.stringify(cacheParts));
+    assert(cacheParts.every((n) => /^[0-9a-f]{64}\.part(\.json)?$/.test(n)), cacheParts.join());
+
+    // The resume continues from the cache-dir partial and moves it into place.
+    const done = await call(cap, "resumeDownload", { url: URL_A, directory: { picked: handle } });
+    assertEquals((done as { bytes: number }).bytes, 1000);
+    assertEquals(t.seen.at(-1), [`bytes=${kept}-`, '"v1"']);
+    assertEquals(await Deno.readFile(file), BODY);
+    assertEquals(await namesIn(outside), ["pick.bin", "pick.bin.part"]);
+    assertEquals(await Deno.readTextFile(`${file}.part`), "someone else's bytes");
+    assertEquals(await namesIn(join(t.root, "cache", "denext-downloads")), []);
+  });
+});
+
+Deno.test({
+  ...TEST,
+  name: "resume SECURITY: appending refuses a partial that was truncated or swapped for a link",
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-dl-guard-" });
+  try {
+    const at = await partialAt(join(dir, "g.bin"));
+    const first = await openPartial(at, false, 0);
+    await first.write(new Uint8Array(7));
+    first.close();
+    await writeSidecar(at, { url: URL_A, validator: '"v1"', total: 1000, bytes: 7 });
+    // Truncated under the request: nothing to append to.
+    await Deno.truncate(`${at.base}.part`, 3);
+    await assertRejects(() => openPartial(at, true, 7), Error, "the partial file changed");
+    if (OS !== "windows") {
+      // Swapped for a symlink of the same size: refused, and the link's target untouched.
+      const victim = join(dir, "victim.txt");
+      await Deno.writeTextFile(victim, "seven!!");
+      await Deno.remove(`${at.base}.part`);
+      await Deno.symlink(victim, `${at.base}.part`);
+      await assertRejects(() => openPartial(at, true, 7), Error, "the partial file changed");
+      assertEquals(await Deno.readTextFile(victim), "seven!!");
+    }
+    // The cache-dir location is named by the destination, inside the given directory.
+    const cached = await partialAt(join(dir, "g.bin"), join(dir, "cache"));
+    assert(cached.base.startsWith(join(dir, "cache", "denext-downloads")), cached.base);
+    assertEquals((await partialAt(join(dir, "g.bin"), join(dir, "cache"))).base, cached.base);
+    assert((await partialAt(join(dir, "h.bin"), join(dir, "cache"))).base !== cached.base);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

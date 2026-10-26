@@ -2154,6 +2154,7 @@ Deno.test("realtime replay: a reconnect under other claims drops what was kept a
     // flush (a few ms): let that window pass, as any real reconnect does.
     await settle(100);
     env.sql.insert("notes", { id: 900, email: "one@x.test", body: "while away" });
+    env.sql.insert("notes", { id: 950, email: "two@x.test", body: "theirs under the new claims" });
     await engine.flush();
 
     // The same user (same subject) is back, but with other claims: nothing read under the old
@@ -2164,6 +2165,16 @@ Deno.test("realtime replay: a reconnect under other claims drops what was kept a
     await settle(150);
     assertEquals(unnumbered(back.frames), [{ resync: true }]);
     assertEquals(changesOf(back), [], "no row read under the old claims");
+
+    // The keys tracked under the old claims are gone: deleting a row only they could see sends
+    // nothing (no `delete` with its old image), while a row the new claims see is tracked anew.
+    env.sql.remove("notes", "1");
+    env.sql.remove("notes", "900");
+    env.sql.remove("notes", "950");
+    await engine.flush();
+    await until(() => changesOf(back).length >= 1, 3_000, "the delete the new grant may see");
+    await settle(150);
+    assertEquals(changesOf(back).map((c) => [c.op, c.key]), [["delete", "950"]]);
   } finally {
     await env.done();
   }

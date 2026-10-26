@@ -157,6 +157,16 @@ Deno.test("fs storage: several ranges, and If-Range, as the static handler reads
       multi.headers.get("content-length"),
       "",
     ]);
+    // Eight separate ranges are served in parts; a ninth asks for the whole object (a 200), so
+    // one request can't fan out into many driver reads.
+    const spaced = (n: number) =>
+      `bytes=${Array.from({ length: n }, (_, i) => `${i * 3}-${i * 3}`).join(", ")}`;
+    const eight = await app.call(url, { headers: { range: spaced(8) } });
+    assertEquals(eight.status, 206);
+    assertEquals((await eight.text()).match(/content-range: /g)?.length, 8);
+    const nine = await app.call(url, { headers: { range: spaced(9) } });
+    assertEquals([nine.status, await nine.text()], [200, "abcdefghijklmnopqrstuvwxyz"]);
+
     // A suffix range, and one unsatisfiable spec among satisfiable ones is dropped.
     const tail = await app.call(url, { headers: { range: "bytes=-3, 900-" } });
     assertEquals([tail.status, tail.headers.get("content-range"), await tail.text()], [

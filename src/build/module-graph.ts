@@ -32,7 +32,7 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
-import { boundedOutput, retryOnStall } from "./serial-child.ts";
+import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
 import { quietThenExplain, type StderrMode } from "./exited-output.ts";
 
 // The boundary ids and the manifest's shape live in leaf modules the server runtime imports
@@ -468,7 +468,7 @@ const DENO_INFO_DEADLINE_MS = 120_000;
 
 async function spawnDenoInfo(
   entryFiles: string[],
-  deadlineMs: number = DENO_INFO_DEADLINE_MS,
+  deadlineMs: number = childDeadlineMs(DENO_INFO_DEADLINE_MS),
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
   graphSpawns++;
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });

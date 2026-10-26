@@ -33,6 +33,8 @@ import {
   finalizePartial,
   type KeptPartial,
   openPartial,
+  type PartialAt,
+  partialAt,
   readPartial,
   strongValidator,
   writeSidecar,
@@ -539,6 +541,8 @@ async function answerStep(
 interface DownloadJob {
   readonly url: string;
   readonly target: string;
+  /** Where its partial lives (beside the target, or in the cache dir for a picked file). */
+  readonly at: PartialAt;
   readonly headers: Headers;
   readonly privateTarget: boolean;
   readonly signal: AbortSignal;
@@ -558,6 +562,7 @@ function downloadJob(
     id: string | undefined;
     headers: Headers;
     target: string;
+    at: PartialAt;
     privateTarget: boolean;
     signal: AbortSignal;
   },
@@ -565,6 +570,7 @@ function downloadJob(
   return {
     url: req.url,
     target: req.target,
+    at: req.at,
     headers: req.headers,
     privateTarget: req.privateTarget,
     signal: req.signal,
@@ -581,7 +587,7 @@ function tooLarge(job: DownloadJob): DesktopCapError {
 }
 
 /**
- * Stream `res`'s body into `job.target`'s partial file (appended to the kept bytes, or from zero),
+ * Stream `res`'s body into `job`'s partial file (appended to the kept bytes, or from zero),
  * the sidecar written first, enforcing `maxBytes` over the WHOLE file (the kept bytes included);
  * then move it into place. Resolves the file's size.
  */
@@ -595,10 +601,10 @@ async function writePartial(
     await res.body?.cancel();
     throw tooLarge(job);
   }
-  const file = await onDisk(() => openPartial(job.target, step.append, from));
+  const file = await onDisk(() => openPartial(job.at, step.append, from));
   let bytes = from;
   try {
-    await onDisk(() => writeSidecar(job.target, { url: job.url, validator, total, bytes }));
+    await onDisk(() => writeSidecar(job.at, { url: job.url, validator, total, bytes }));
     job.progress(bytes, total, true);
     for await (const chunk of res.body ?? new ReadableStream<Uint8Array>()) {
       bytes += chunk.byteLength;
@@ -609,7 +615,7 @@ async function writePartial(
   } finally {
     file.close();
   }
-  await onDisk(() => finalizePartial(job.target));
+  await onDisk(() => finalizePartial(job.at));
   return bytes;
 }
 
@@ -620,7 +626,7 @@ async function writePartial(
  * asks once more from zero. Resolves the file's size.
  */
 async function runDownload(job: DownloadJob): Promise<number> {
-  let plan = planFor(await readPartial(job.target, job.url));
+  let plan = planFor(await readPartial(job.at, job.url));
   for (;;) {
     const res = await fetchChecked(
       job.url,
@@ -633,11 +639,11 @@ async function runDownload(job: DownloadJob): Promise<number> {
     const step = await answerStep(res, plan, job.withBody);
     if (step.kind === "write") return await writePartial(res, job, step);
     if (step.kind === "finish") {
-      await onDisk(() => finalizePartial(job.target));
+      await onDisk(() => finalizePartial(job.at));
       job.progress(step.bytes, step.bytes, true);
       return step.bytes;
     }
-    await discardPartial(job.target);
+    await discardPartial(job.at);
     plan = FRESH;
   }
 }
@@ -654,12 +660,12 @@ async function settlePartial(
   drop: boolean,
 ): Promise<KeptPartial | null> {
   if (drop) {
-    await discardPartial(job.target);
+    await discardPartial(job.at);
     return null;
   }
-  const kept = await readPartial(job.target, job.url);
+  const kept = await readPartial(job.at, job.url);
   if (kept) {
-    await writeSidecar(job.target, { url: job.url, ...kept }).catch(() => {});
+    await writeSidecar(job.at, { url: job.url, ...kept }).catch(() => {});
   }
   return kept;
 }
@@ -757,7 +763,7 @@ async function resolveTarget(
   path: unknown,
   write: boolean,
   allowRoot = false,
-): Promise<{ target: string; root: string }> {
+): Promise<{ target: string; root: string; single?: boolean }> {
   const handle = pickedHandle(directory);
   if (handle !== undefined) {
     if (!cfg.picked) throw badInput("picked directories are not available");
@@ -830,13 +836,13 @@ type DownloadMethods = Record<
  */
 function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
   const running = new Map<string, RunningDownload>();
-  const kept = new Map<string, string>();
+  const kept = new Map<string, PartialAt>();
   const busy = new Set<string>();
 
-  /** Note whether download `id` (if it has one) left a partial `target` behind. */
-  const remember = (id: string | undefined, target: string, keeps: boolean) => {
+  /** Note whether download `id` (if it has one) left a partial (at `at`) behind. */
+  const remember = (id: string | undefined, at: PartialAt, keeps: boolean) => {
     if (id === undefined) return;
-    if (keeps) kept.set(id, target);
+    if (keeps) kept.set(id, at);
     else kept.delete(id);
   };
 
@@ -849,12 +855,15 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
   ): Promise<{ path: string; bytes: number }> => {
     const timeout = AbortSignal.timeout(cfg.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS);
     const privateTarget = await checkDownloadUrl(req.url, cfg.resolveHost);
-    const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
+    const { target, root, single } = await resolveTarget(cfg, a.directory, a.path, true);
     if (busy.has(target)) throw inUse("that file");
     busy.add(target);
+    // A file picked on its own grants that file only: its partial goes in the app's cache dir.
+    const at = await partialAt(target, single ? cfg.dirs.cache : undefined);
     const job = downloadJob(cfg, a, ctx, {
       ...req,
       target,
+      at,
       privateTarget,
       signal: AbortSignal.any([ctx.signal, timeout, entry.stop.signal]),
     });
@@ -862,13 +871,13 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
       await mkdirp(root);
       await onDisk(() => mkdirp(dirname(target)));
       const bytes = await runDownload(job);
-      remember(req.id, target, false);
+      remember(req.id, at, false);
       return { path: target, bytes };
     } catch (err) {
       const failure = await downloadFailure(err, job, entry.stop.signal, ctx.signal, timeout);
       entry.paused = failure.code === "paused";
       const keeps = (failure.data as { bytes?: unknown } | undefined)?.bytes;
-      remember(req.id, target, typeof keeps === "number" && keeps > 0);
+      remember(req.id, at, typeof keeps === "number" && keeps > 0);
       throw failure;
     } finally {
       busy.delete(target);
@@ -930,10 +939,10 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
       handler: async (args) => {
         const { id, entry } = await stopRunning(args, "cancel");
         if (entry) return { cancelled: true };
-        const target = id === undefined ? undefined : kept.get(id);
-        if (target === undefined || busy.has(target)) return { cancelled: false };
+        const at = id === undefined ? undefined : kept.get(id);
+        if (at === undefined || busy.has(at.target)) return { cancelled: false };
         kept.delete(id!);
-        await discardPartial(target);
+        await discardPartial(at);
         return { cancelled: true };
       },
     },

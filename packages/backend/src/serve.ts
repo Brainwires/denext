@@ -68,7 +68,9 @@ export function objectHeaders(
  * `If-None-Match`, `416` when none of the requested ranges can be satisfied — else the ranges to
  * read (none for the whole object). `Range` is read as the static file handler reads it (several
  * ranges, sorted and coalesced; {@linkcode parseRanges}), and an `If-Range` that no longer names
- * the object asks for all of it.
+ * the object asks for all of it. More than {@linkcode MAX_STORAGE_RANGES} ranges after coalescing
+ * are answered with the whole object (a `200`, as nginx's `max_ranges` does): each part is a
+ * separate driver read (an S3 GET), so a long `Range` list would fan one request out.
  *
  * @param info The object.
  * @param headers Its headers (a 416 adds `Content-Range`).
@@ -91,8 +93,12 @@ export function preflight(
     headers.set("content-range", `bytes */${info.size}`);
     return new Response(null, { status: 416, headers });
   }
+  if (ranges && ranges.length > MAX_STORAGE_RANGES) return {};
   return { ranges };
 }
+
+/** The most ranges one storage request is served in parts; more get the whole object. */
+const MAX_STORAGE_RANGES = 8;
 
 /**
  * `If-Range` (RFC 9110 §13.1.5): absent, or a validator that still names this object, lets the

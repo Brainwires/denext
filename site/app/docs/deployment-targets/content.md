@@ -273,9 +273,15 @@ Measured on an 8-vCPU Linux host (Brainwires/deno DENEXT.md item 104):
 
 Throughput and p99 latency were unchanged within run-to-run noise. Turn it off with
 `start: { idleTrim: false }` in `denext.config.ts`, or `DENEXT_IDLE_TRIM=0` in the environment of
-`denext start` (or of the `build --compile` / `generate` run, since a baked flag and a generated
-file keep what they were written with); an image or unit already written takes
-`DENO_UNSTABLE_IDLE_TRIM=0`. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
+`denext start` (or of the `build --compile` / `generate` run, since a generated file keeps what it
+was written with); an image or unit already written takes `DENO_UNSTABLE_IDLE_TRIM=0`. The config's
+value is read as evaluated: `denext start` and `generate docker` take what the last `denext build`
+recorded in `.denext/deploy-manifest.json` (so `idleTrim: isProd ? false : true` works), and only
+before a first build read the file's text, comments ignored. A `build --compile` binary has the
+trim baked in, and a flag baked into a binary can't be removed when it runs, so
+`DENEXT_IDLE_TRIM=0` in the binary's environment holds the trim off instead: the binary wakes its
+event loop at half the idle delay (`DENO_IDLE_TRIM_DELAY_MS`, 1 s by default), so it is never idle
+long enough to trim. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
 
 ## A single binary with `denext build --compile`
 

@@ -24,6 +24,9 @@ import {
   stripDenextExclude,
 } from "../../build/dep-age.ts";
 import { addTsgoLspSetting, tsgoLspByDefault } from "../../ts/lsp-settings.ts";
+import { SCAFFOLD_EXCLUDE } from "../../build/scaffold.ts";
+import { setJsonValue } from "../../build/json-edit.ts";
+import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
 
 /** The project config `upgrade` edits: `deno.json`, else `deno.jsonc`. */
 async function configPath(dir: string): Promise<string | null> {
@@ -109,6 +112,64 @@ interface UpgradeOutcome {
   readonly now: Date;
   /** The editor settings that get (or would get) the TypeScript 7 language server, if any. */
   readonly editor: { readonly path: string; readonly written: boolean } | null;
+  /** Whether the `.deno/` exclude was (or would be) added to the root config, if it was missing. */
+  readonly denoExclude: { readonly written: boolean } | null;
+  /** The lifecycle-script jail exceptions the dependencies need (`null`: none needed). */
+  readonly jail: JailReport | null;
+}
+
+/** Whether an `exclude` entry already keeps the runtime's `.deno/` directory out. */
+const DENO_DIR_ENTRY = /^(?:\.\/)?\.deno(?:\/(?:\*\*)?)?$/;
+
+/**
+ * The root config's text with the scaffold's `.deno/` entry added to its top-level `exclude`
+ * (runtime 3.0.0-rc.5's type-check writes `.deno/npm-compat` there, whose `_test.ts` files
+ * `deno test` would otherwise walk), or `null`: already there, or a config whose `exclude` isn't
+ * a list (left for the user). Comments and key order are kept.
+ *
+ * @param text The `deno.json` / `deno.jsonc` text.
+ * @returns The new text, or `null`.
+ */
+export async function denoDirExcludeUpdate(text: string): Promise<string | null> {
+  let doc: unknown;
+  try {
+    doc = parseJsonc(text);
+  } catch {
+    return null;
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) return null;
+  const exclude = (doc as { exclude?: unknown }).exclude;
+  if (exclude !== undefined && !Array.isArray(exclude)) return null;
+  const list = (exclude ?? []) as unknown[];
+  if (list.some((e) => typeof e === "string" && DENO_DIR_ENTRY.test(e.trim()))) return null;
+  const edit = await setJsonValue(text, ["exclude"], [...list, ...SCAFFOLD_EXCLUDE]);
+  return edit.ok ? edit.source : null;
+}
+
+/** Add the `.deno/` exclude to the root config when it is missing (written when `write`). */
+async function applyDenoExclude(
+  path: string,
+  write: boolean,
+): Promise<UpgradeOutcome["denoExclude"]> {
+  const next = await denoDirExcludeUpdate(await Deno.readTextFile(path));
+  if (next === null) return null;
+  if (write) await Deno.writeTextFile(path, next);
+  return { written: write };
+}
+
+/**
+ * The jail exceptions the project's dependencies need (sharp, Prisma's engines, puppeteer, …):
+ * the runtime jails dependencies' lifecycle scripts by default from 3.0.0-rc.5, so a project
+ * upgraded from a denext that pinned an earlier runtime gets them written now, as `create`,
+ * `migrate` and `add` write them (only when `write`; else reported).
+ */
+async function applyJail(dir: string, write: boolean): Promise<JailReport | null> {
+  try {
+    const report = await applyJailExceptions(dir, { edit: write });
+    return report.action === "none" ? null : report;
+  } catch {
+    return null; // an unreadable project: the doctor check reports it
+  }
 }
 
 /**
@@ -155,6 +216,8 @@ function outcomeJson(
     ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
     ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
     ...(o.editor ? { editorSettings: o.editor } : {}),
+    ...(o.denoExclude ? { denoExclude: o.denoExclude } : {}),
+    ...(o.jail ? { jailExceptions: { action: o.jail.action, lines: o.jail.lines } } : {}),
     ...(files.unresolved.length ? { unresolvedMembers: files.unresolved } : {}),
     ...(files.outside.length ? { outsideMembers: files.outside } : {}),
   };
@@ -172,6 +235,7 @@ function printOutcome(
   reportExclude(o.dir, o.stripped, o.written);
   reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
+  reportProjectRepairs(o);
   if (o.lock === true) console.log("deno.lock refreshed.");
   if (o.lock === false) {
     console.error(
@@ -254,14 +318,31 @@ export async function runUpgrade(
   const changed = plan.ok && (plan.changed || stripped.length > 0);
   const written = changed && !check && ctx.flags["dry-run"] !== true;
   const changedFiles = plan.ok ? await applyToFiles(read, files, plan.steps, written) : [];
+  const repairs = await projectRepairs(dir, path, plan.ok, !check && ctx.flags["dry-run"] !== true);
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
-  const editor = plan.ok
-    ? await applyEditorSetting(dir, !check && ctx.flags["dry-run"] !== true)
-    : null;
-  const outcome = { dir, path, plan, check, written, lock, stripped, now, editor };
+  const outcome = { dir, path, plan, check, written, lock, stripped, now, ...repairs };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;
   return check && changed ? 1 : 0;
+}
+
+/**
+ * What an upgrade sets right beside the pins (only once the plan is good): the `.deno/` exclude,
+ * the jail exceptions and the editor's language server, written when `write` (not with
+ * `--dry-run` / `--check`, which only report them).
+ */
+async function projectRepairs(
+  dir: string,
+  path: string,
+  ok: boolean,
+  write: boolean,
+): Promise<Pick<UpgradeOutcome, "denoExclude" | "jail" | "editor">> {
+  if (!ok) return { denoExclude: null, jail: null, editor: null };
+  return {
+    denoExclude: await applyDenoExclude(path, write),
+    jail: await applyJail(dir, write),
+    editor: await applyEditorSetting(dir, write),
+  };
 }
 
 /**
@@ -329,6 +410,19 @@ function reportEditor(dir: string, editor: UpgradeOutcome["editor"]): void {
       `${relative(dir, editor.path)}: the editor's Deno language server runs TypeScript 7 ` +
       `(DENEXT_TSGO_LSP=0 leaves it out; "deno.unstable": [] keeps TypeScript 6).`,
   );
+}
+
+/** The `.deno/` exclude and the jail exceptions added (or that would be). */
+function reportProjectRepairs(o: UpgradeOutcome): void {
+  if (o.denoExclude) {
+    console.log(
+      `\n${o.denoExclude.written ? "Added" : "Would add"} ".deno/" to ${
+        relative(o.dir, o.path) || o.path
+      }'s "exclude": the runtime's type-check writes .deno/npm-compat, which test, lint and ` +
+        "fmt must not walk.",
+    );
+  }
+  if (o.jail) console.log(`\n${o.jail.lines.join("\n")}`);
 }
 
 /** Why the `jsr:@denext/*` exclude entry was removed (or would be). */
@@ -405,6 +499,8 @@ export const upgradeCommand: CommandSpec = {
     "Only versions Deno's minimum dependency age already lets in are pinned (a newer one is\n" +
     "named, with when it becomes eligible; a pin still held moves down to one that resolves),\n" +
     'and the "jsr:@denext/*" entry older projects carry in minimumDependencyAge.exclude is removed.\n' +
+    'A missing ".deno/" entry is added to the top-level "exclude", and the lifecycle-script jail\n' +
+    "exceptions the dependencies need (sharp, Prisma's engines, …) are written, as create does.\n" +
     'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +
     '"deno.unstable": ["tsgo-lsp"] (the TypeScript 7 language server; DENEXT_TSGO_LSP=0 skips it).\n' +
     "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",

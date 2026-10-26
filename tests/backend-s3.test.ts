@@ -848,8 +848,11 @@ Deno.test("s3: TUS uploads become multipart parts, with a tail between short PAT
       },
       body: "more than four",
     });
-    assert(lie.status >= 400, `a PATCH past the length is refused (${lie.status})`);
-    await lie.body?.cancel();
+    // Refused as too large (413, `too_large`) before a byte is stored — not any error (a 500
+    // would have passed the old `>= 400`).
+    const lieBody = await lie.text();
+    assertEquals(lie.status, 413, lieBody);
+    assertStringIncludes(lieBody, "too_large");
     assertEquals(await storage.bucket("docs", { service: true }).exists("lie.txt"), false);
   } finally {
     await app.close();

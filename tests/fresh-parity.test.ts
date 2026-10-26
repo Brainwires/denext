@@ -10,7 +10,7 @@ import { join } from "@std/path";
 import { createTestApp, createTestClient, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { applyPartialTree, Partial } from "../src/compat/fresh/partial.ts";
-import { mergeCsp } from "../src/compat/fresh/middlewares.ts";
+import { csp, mergeCsp } from "../src/compat/fresh/middlewares.ts";
 import { underPattern } from "../src/compat/fresh/app.ts";
 import { createFreshRequest } from "../src/compat/fresh/context.ts";
 import { env } from "../src/compat/fresh/env.ts";
@@ -317,6 +317,23 @@ Deno.test("mergeCsp: Fresh's directives join denext's policy; its own scripts ke
   );
 });
 
+Deno.test("csp(): the caller's directive array is never changed; the header stays one size", async () => {
+  const own = ["img-src 'self' https://img.example"];
+  const mw = csp({ csp: own, reportTo: "/csp" });
+  const headers: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const res = await mw({ next: () => Promise.resolve(new Response("x")) } as never);
+    headers.push(res.headers.get("content-security-policy") ?? "");
+  }
+  assertEquals(own, ["img-src 'self' https://img.example"], "the caller's array is untouched");
+  assertEquals(new Set(headers).size, 1, "every response gets the same policy");
+  assertEquals(headers[0].split("report-uri").length, 2, "one report-uri");
+  // mergeCsp on its own doesn't grow the array either.
+  mergeCsp(undefined, { csp: own, reportTo: "/csp" });
+  mergeCsp(DENEXT_POLICY, { csp: own, reportTo: "/csp" });
+  assertEquals(own.length, 1);
+});
+
 const CSP_APP: Record<string, string> = {
   "main.ts": `import { App, csp } from "${FRESH}";
 export const app = new App()
@@ -368,7 +385,13 @@ Deno.test("csp(): a page's denext policy carries the directives; a handler's res
     );
 
     const ro = await client.get("/ro/page");
-    assertEquals(ro.headers.get("content-security-policy"), null, "report-only enforces nothing");
+    const enforced = directives(ro.headers.get("content-security-policy") ?? "");
+    assertEquals(enforced["script-src"], "script-src 'self'", "denext's own policy stays enforced");
+    assertEquals(
+      enforced["frame-ancestors"],
+      "frame-ancestors 'self'",
+      "denext's own, not Fresh's 'none': Fresh's directives are only reported",
+    );
     assertStringIncludes(
       ro.headers.get("content-security-policy-report-only") ?? "",
       "frame-ancestors 'none'",

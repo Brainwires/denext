@@ -393,7 +393,7 @@ export async function jailScriptsCheck(
   const log = options.installLog ?? "";
   const project = await readJailProject(dir, options.env ? { env: options.env } : {});
   const explained = [
-    ...explainJailFailures(jailFailures(log, os), options.version),
+    ...explainJailFailures(jailFailures(log, os), options.version, project.setting.packages),
     ...upstreamByNameAdvice({
       output: log,
       denoJson: project.denoJson,

@@ -32,7 +32,10 @@ ExecStart=/srv/shop/.deno/bin/deno run --allow-net-connect --allow-net-listen=12
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM
-# Above the 10 s drain (DENEXT_SHUTDOWN_DRAIN_MS).
+# The drain, and systemd's stop timeout above it (the drain plus 20 s for the services, the plugin
+# teardowns and onShutdown). Change both with the preset's drainMs (or DENEXT_SHUTDOWN_DRAIN_MS
+# when `denext deploy prepare` runs), not in the env file: systemd would still stop at the old time.
+Environment=DENEXT_SHUTDOWN_DRAIN_MS=10000
 TimeoutStopSec=30
 # Sandboxing: the server writes only its build directory (the durable cache, job history).
 NoNewPrivileges=true

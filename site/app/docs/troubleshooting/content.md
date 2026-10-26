@@ -671,6 +671,18 @@ branch.
 shell's `ios` / `android` key when the spec has no `web` key. See
 [Platform.OS in the shell](/docs/react-native#platformos-in-the-shell).
 
+## `deno info (pid …) was still running after 120 s and was killed` during a build
+
+**Cause.** `denext build` runs its module-graph crawl (`deno info`, 120 s) and its client bundle
+(`deno bundle`, 300 s) one at a time, each with a deadline after which it is killed and started
+once more; a second overrun fails the build with `ChildStallError`. A first build with a cold
+cache on a slow link (a Docker `RUN denext task build` that downloads every npm package) can
+take longer than that without being stuck.
+
+**Fix.** Set `DENEXT_CHILD_DEADLINE_MS` for that build: a number of milliseconds replaces both
+deadlines (`DENEXT_CHILD_DEADLINE_MS=900000` for 15 minutes), and `0` removes them. Warm the
+cache in an earlier layer (`RUN denext install`) so later builds don't pay for it.
+
 ## Docker: `required variable … is missing a value: set it in .env`
 
 **Cause.** The self-hosted compose file from `denext generate docker` reads every secret as

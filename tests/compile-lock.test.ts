@@ -171,11 +171,23 @@ Deno.test("settleCompileLock: records additions, refuses them under a frozen loc
     const merged = await readJson(app);
     assertEquals(merged.specifiers, after.specifiers);
     assertEquals(merged.workspace, appLock.workspace);
-    // Nothing to do: no lock, no copy left, another lockfile version, nothing new.
+    // Nothing to do: no lock, nothing new; unfrozen, no copy left or another lockfile version.
     await settleCompileLock({ frozen: false });
-    await settleCompileLock({ path: join(dir, "gone"), appLock: app, frozen: true, seed });
+    await settleCompileLock({ path: join(dir, "gone"), appLock: app, frozen: false, seed });
     await Deno.writeTextFile(copy, JSON.stringify({ ...after, version: "4" }));
-    await settleCompileLock({ path: copy, appLock: app, frozen: true, seed });
+    await settleCompileLock({ path: copy, appLock: app, frozen: false, seed });
+    // A frozen lock fails closed when the result can't be checked against it.
+    await assertRejects(
+      () => settleCompileLock({ path: copy, appLock: app, frozen: true, seed }),
+      Error,
+      'rewrote it as lockfile version "4"',
+    );
+    await assertRejects(
+      () => settleCompileLock({ path: join(dir, "gone"), appLock: app, frozen: true, seed }),
+      Error,
+      "can't be checked against it",
+    );
+    assertEquals(await readJson(app), merged, "and is never written");
     await Deno.writeTextFile(copy, JSON.stringify(seed));
     await settleCompileLock({ path: copy, appLock: app, frozen: true, seed });
   });

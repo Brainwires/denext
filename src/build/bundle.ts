@@ -6,7 +6,7 @@
 // intact, which separate dynamic imports would break.
 
 import { quietThenExplain, runToExit } from "./exited-output.ts";
-import { boundedOutput, retryOnStall } from "./serial-child.ts";
+import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
@@ -1816,7 +1816,7 @@ async function runDenoBundle(
         deadline,
         "deno bundle",
       );
-    }, DENO_BUNDLE_DEADLINE_MS)
+    }, childDeadlineMs(DENO_BUNDLE_DEADLINE_MS))
   );
   if (output.code !== 0) {
     throw new Error(bundleFailureMessage(output.code, new TextDecoder().decode(output.stderr)));

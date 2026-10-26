@@ -41,6 +41,7 @@ import { extractArchive } from "./safe-extract.ts";
 import {
   assertTrustedCacheDirs,
   cacheDirChain,
+  DownloadIdleError,
   type DownloadProgress,
   downloadProgress,
   readJsonFile,
@@ -431,7 +432,73 @@ async function netDenied(url: string): Promise<boolean> {
   return state === "denied";
 }
 
-/** GET `artifact`, mapping a network failure / HTTP error to a download error. */
+/** The default deadline for a download's response headers (ms). */
+const CONNECT_TIMEOUT_MS = 30_000;
+/** The default longest gap between two chunks of a download's body (ms). */
+const IDLE_TIMEOUT_MS = 60_000;
+
+/**
+ * A download deadline: `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` / `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`
+ * when set (milliseconds; `0` for none), else the default.
+ *
+ * @param name The variable.
+ * @param fallback The default.
+ * @param env Env reader.
+ * @returns The deadline (`Infinity`: none).
+ */
+export function downloadTimeoutMs(
+  name: "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS" | "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS",
+  fallback: number,
+  env: (k: string) => string | undefined = envGet,
+): number {
+  const raw = env(name)?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return fallback;
+  return Number(raw) === 0 ? Infinity : Number(raw);
+}
+
+/** One environment variable, or `undefined` (unset, or no env permission). */
+function envGet(k: string): string | undefined {
+  try {
+    return Deno.env.get(k);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * GET `artifact`, given up on when no response headers arrive within the connect deadline
+ * (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`): that rejection then says so.
+ */
+async function fetchWithConnectDeadline(
+  fetchImpl: typeof fetch,
+  artifact: DenoToolchainSource,
+): Promise<Response> {
+  const connectMs = downloadTimeoutMs("DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", CONNECT_TIMEOUT_MS);
+  const connect = new AbortController();
+  const timer = Number.isFinite(connectMs)
+    ? setTimeout(() => connect.abort(), connectMs)
+    : undefined;
+  try {
+    return await fetchImpl(artifact.url, {
+      redirect: "follow",
+      signal: connect.signal,
+      ...(artifact.headers ? { headers: { ...artifact.headers } } : {}),
+    });
+  } catch (err) {
+    if (!connect.signal.aborted) throw err;
+    throw new Error(
+      `no response within ${connectMs / 1000} s (DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS raises it)`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * GET `artifact`, mapping a network failure / HTTP error to a download error. A server that
+ * sends no response headers within the connect deadline is given up on (the next source, if any,
+ * is tried).
+ */
 async function openDownload(
   slot: DownloadNames,
   fetchImpl: typeof fetch,
@@ -446,10 +513,7 @@ async function openDownload(
   }
   let res: Response;
   try {
-    res = await fetchImpl(artifact.url, {
-      redirect: "follow",
-      ...(artifact.headers ? { headers: { ...artifact.headers } } : {}),
-    });
+    res = await fetchWithConnectDeadline(fetchImpl, artifact);
   } catch (err) {
     throw new DenoToolchainDownloadError(
       `denext: could not download denext's ${what} (${artifact.file}) from ` +
@@ -499,18 +563,29 @@ function streamHashedTo(
   { artifact, what }: DownloadNames,
   progress: DownloadProgress,
 ): Promise<{ size: number; sha256: string }> {
-  return streamHashed(body, dest, cap, {
-    tooLarge: () =>
-      new DenoToolchainDownloadError(
-        `denext: refusing denext's ${what} ${artifact.file}: larger than its pinned ` +
-          `${cap} bytes`,
-      ),
-    interrupted: (size, err) =>
-      new DenoToolchainDownloadError(
-        `denext: the ${what} download was interrupted (${artifact.file}, ${size} bytes): ` +
-          `${err instanceof Error ? err.message : err}`,
-      ),
-  }, (bytes) => progress.update(bytes));
+  return streamHashed(
+    body,
+    dest,
+    cap,
+    {
+      tooLarge: () =>
+        new DenoToolchainDownloadError(
+          `denext: refusing denext's ${what} ${artifact.file}: larger than its pinned ` +
+            `${cap} bytes`,
+        ),
+      interrupted: (size, err) =>
+        new DenoToolchainDownloadError(
+          `denext: the ${what} download was interrupted (${artifact.file}, ${size} bytes): ` +
+            `${err instanceof Error ? err.message : err}${
+              err instanceof DownloadIdleError
+                ? " (DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS raises the deadline)"
+                : ""
+            }`,
+        ),
+    },
+    (bytes) => progress.update(bytes),
+    downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", IDLE_TIMEOUT_MS),
+  );
 }
 
 /** Check a finished download against the pin; throws (the caller deletes the file). */

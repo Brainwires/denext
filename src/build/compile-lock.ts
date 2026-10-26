@@ -168,20 +168,35 @@ export function mergeLockAdditions(target: Lockfile, source: Lockfile): Lockfile
 
 /**
  * After the compile: what it resolved that the app's lock did not lock is recorded in the app's
- * lockfile, or, when that lock is frozen, refused (the binary is then not to be shipped).
+ * lockfile, or, when that lock is frozen, refused (the binary is then not to be shipped). A frozen
+ * lock fails closed: a copy the compile left unreadable, or rewrote in another lockfile version
+ * (an older lock compiled by a newer Deno), can't be checked, so it is refused too.
  *
  * @param lock What {@linkcode seedCompileLock} wrote.
- * @throws When the app's lock is frozen and the compile resolved something it does not lock.
+ * @throws When the app's lock is frozen and the compile resolved something it does not lock, or
+ *   its result can't be compared with the lock.
  */
 export async function settleCompileLock(lock: CompileLock): Promise<void> {
   if (!lock.path || !lock.seed || !lock.appLock) return;
   let after: unknown;
   try {
     after = JSON.parse(await Deno.readTextFile(lock.path));
-  } catch {
+  } catch (err) {
+    if (lock.frozen) throw uncheckable(lock.appLock, `its compile copy is unreadable (${err})`);
     return; // Deno wrote nothing new
   }
-  if (!isRecord(after) || after.version !== lock.seed.version) return;
+  if (!isRecord(after) || after.version !== lock.seed.version) {
+    if (lock.frozen) {
+      const version = isRecord(after) ? JSON.stringify(after.version) : "none";
+      throw uncheckable(
+        lock.appLock,
+        `the compile rewrote it as lockfile version ${version} (it is version ` +
+          `${JSON.stringify(lock.seed.version)}); run \`deno install\` with this Deno to upgrade ` +
+          "it, review the change and freeze it again",
+      );
+    }
+    return;
+  }
   const added = lockAdditions(lock.seed, after);
   if (added.length === 0) return;
   if (lock.frozen) {
@@ -196,6 +211,14 @@ export async function settleCompileLock(lock: CompileLock): Promise<void> {
   await Deno.writeTextFile(
     lock.appLock,
     `${JSON.stringify(mergeLockAdditions(current, after), null, 2)}\n`,
+  );
+}
+
+/** The refusal for a frozen lock the compile's result can't be checked against. */
+function uncheckable(appLock: string, why: string): Error {
+  return new Error(
+    `denext build --compile: ${appLock} is frozen, but what the compiled server resolves can't ` +
+      `be checked against it: ${why}.`,
   );
 }
 

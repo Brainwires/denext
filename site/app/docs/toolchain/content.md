@@ -104,7 +104,10 @@ the same arguments, working directory, standard streams and exit code, with Ctrl
 forwarded. A `--config` the first process was started with is passed on (read from its command line on
 Linux and macOS). Denied permissions stay denied (`--deny-net`), and
 grants carry over whole: `-A` stays `-A`, and a path-scoped grant such as
-`--allow-write=.denext` can't be read back, so only the whole-permission grants pass. Everything that command spawns (`deno test`, `deno bundle`,
+`--allow-write=.denext` can't be read back, so only the whole-permission grants pass. A grant held
+only in part — an allow with a deny list beside it (`--allow-net --deny-net=host`,
+`--allow-net-connect --deny-net-connect=host`) — is not passed on either, since a bare allow would
+drop the deny list: the child is refused (or asked) instead. Everything that command spawns (`deno test`, `deno bundle`,
 `deno desktop`) runs on the toolchain too. The child carries `DENEXT_TOOLCHAIN_ACTIVE=<version>`,
 so it never switches twice. Only the running version decides: a process whose `Deno.version.deno`
 is not the pinned build (stock Deno that inherited the marker inside `denext task`, or an older
@@ -170,6 +173,10 @@ The binary is cached beside Deno's own cache:
   percent; in a log or CI it prints nothing.
 - Two commands starting at once download it once: the second prints
   `Blocking waiting for file lock on Deno toolchain cache` and adopts the first one's binary.
+- A download that gets no response within 30 s, or no data for 60 s mid-body (a half-open
+  connection, a stuck proxy), is given up on with an error that says which; the pin's fallback
+  mirrors are then tried. `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` and
+  `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` change the two deadlines (`0` turns one off).
 
 ## Opting out, and when it falls back
 
@@ -608,15 +615,22 @@ and, when the jail is on for the project, add the narrowest exception each needs
 download hosts instead of `net: true`, and the browser packages' cache under `~`. In a workspace
 they read every member's dependencies and write the root deno.json. A project directory a
 package would write (msw's `workerDirectory`, a Prisma generator's `output`) is never granted
-when it is the whole project or lies above it, or on another drive: denext says so and leaves
-that one for you to narrow. On a runtime that jails only on request they say which
+when it is empty, the whole project, outside it (a `..` path, an absolute one) or on another
+drive: denext says so and leaves that one for you to narrow. On a runtime that jails only on request they say which
 dependencies will need one and write nothing, since an exceptions object would itself turn the
 jail on. `migrate` lists each exception in its review notes (`--check` too); when it keeps a
-hand-authored deno.json it prints the JSON to add instead. `denext doctor` flags a listed
-dependency whose exception is missing while the jail is on, and
+hand-authored deno.json it prints the JSON to add instead. `denext upgrade` writes them too, for a
+project upgraded from a denext that pinned a runtime without the jail on by default (4.6 and
+earlier), and adds the `.deno/` entry to the top-level `exclude` that `create` writes. `denext
+doctor` flags a listed dependency whose exception is missing while the jail is on, and
 `denext doctor --install-log install.log` (from `denext install 2>&1 | tee install.log`) explains
 a dependency's failed script: which package, what the jail stopped (the network, a write outside
-`node_modules`, a real `npm` / `npx`) and the exception to add.
+`node_modules`, a real `npm` / `npx`) and, for a package in the built-in list, the exception to
+add (never wider than a host list the project already grants). A package outside the list gets
+no exception to paste: an unreviewed install script that tries to reach the network is a common
+sign of malware, so doctor says so and points at reviewing the package, then granting only the
+hosts it needs (`"net": ["<host>"]`), never `"net": true`. The package name in that advice comes
+from the install log, which the script itself can print to, so it is quoted as a JSON string.
 
 **Behind a proxy that takes only host names.** From runtime `3.0.0-rc.6` a package's `net` may be
 a host list, and the jail's proxy chains through an `http://` proxy in `HTTPS_PROXY` /

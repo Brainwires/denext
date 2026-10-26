@@ -66,6 +66,10 @@ export interface PartialNavReport {
   title: string;
   assigned: string[];
   ignored: number;
+  /** Every request made to another origin (an `f-partial` naming one must never be fetched). */
+  foreign: string[];
+  /** What denext's own navigation fetched for a link whose foreign `f-partial` was declined. */
+  declined: string[];
 }
 
 /** Run every scenario and report what happened. */
@@ -80,6 +84,8 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
     title: "",
     assigned: [],
     ignored: 0,
+    foreign: [],
+    declined: [],
   };
   const loc = { href: ORIGIN + "/", origin: ORIGIN, pathname: "/", search: "", hash: "" };
   const g = globalThis as Record<string, unknown>;
@@ -126,6 +132,7 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
   setFlightParser((flight) => trees[flight as string]);
   g.fetch = (input: URL, init: RequestInit = {}) => {
     const url = new URL(input);
+    if (url.origin !== ORIGIN) report.foreign.push(url.href);
     const headers = new Headers(init.headers);
     const body = init.body instanceof RealFormData ? [...init.body].join("&") : null;
     report.fetched.push({
@@ -204,7 +211,28 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
     submitter: null,
   });
   await fire("click", { target: new El("a", { href: "#top" }, nav) }, true);
+  // An `f-partial` naming another origin: never fetched (its answer would be swapped into the
+  // page, and a form's fields sent there), so the browser does what it would without one.
+  const evil = "https://evil.example/steal";
+  await fire("click", { target: new El("button", { type: "button", "f-partial": evil }, nav) });
+  await fire("submit", {
+    target: new FormEl({ action: "/search", "f-partial": evil }, [["q", "x"]], nav),
+    submitter: null,
+  });
+  const postForm = new FormEl({ method: "post", action: "/save" }, [["token", "t"]], nav);
+  await fire("submit", {
+    target: postForm,
+    submitter: new El("button", { "f-partial": `${evil}?post` }, postForm),
+  });
   report.ignored = report.fetched.length - before;
+  // A link whose f-partial is foreign: the blocker declines it; denext's own navigation goes on.
+  const mark = report.fetched.length;
+  const foreignLink = new El("a", { href: "/?page=3", "f-partial": evil }, nav);
+  const claim = { target: foreignLink, defaultPrevented: false, preventDefault() {} };
+  for (const l of listeners) if (l.type === "click" && l.capture) l.fn(claim);
+  await navigate(foreignLink.href).catch(() => {});
+  await settle();
+  report.declined = report.fetched.splice(mark).map((f) => f.url);
   report.title = fakeDocument.title;
   return report;
 }

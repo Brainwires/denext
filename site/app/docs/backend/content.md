@@ -122,7 +122,9 @@ multipart upload reads it).
 
 **`fs({ dir })`** stores objects as files under `dir` (relative to the project root), for
 development and single-server self-hosting. Uploads and downloads go through the plugin's own
-endpoint with signed, expiring URLs; downloads answer `Range` requests. Writes land in a temporary
+endpoint with signed, expiring URLs; downloads answer `Range` requests (up to 8 ranges in one
+request as `multipart/byteranges`; more get the whole object, a `200`, as nginx's `max_ranges` does,
+since each part is a separate driver read). Writes land in a temporary
 file and are renamed into place, so a refused upload leaves nothing behind.
 
 ### From the command line
@@ -1311,11 +1313,13 @@ can't get round it. Past the budget a request is answered `429` before any state
 As with every per-address limit in denext, a request from a loopback or private peer with no
 trusted proxy hop has no address of its own (it is most likely the proxy every visitor shares)
 and is not counted by address: set `trustForwardedHeaders` (or `rateLimitHeader`) behind a proxy,
-or `rateLimitLocalAddresses: true` where such peers are real clients. The counts go to the shared
-store the app's `denextAuth({ rateLimit: { store } })` configures (`redisRateLimitStore()`,
-`postgresRateLimitStore()` or `denoKvRateLimitStore()` from `denext/server`), so every replica
-counts against one budget; with no such store they live in memory, per process. `store` picks one
-for the routes alone:
+or `rateLimitLocalAddresses: true` where such peers are real clients. By default the counts live in
+the routes' own bounded in-memory store, per process (10 000 clients; one over its budget is kept
+until its window ends). They never go to the store `denextAuth({ rateLimit: { store } })`
+configures: every REST request would write to it, and its lockout rules are the sign-in limiters'.
+For one budget across replicas, give the routes a shared store of their own
+(`redisRateLimitStore()`, `postgresRateLimitStore()` or `denoKvRateLimitStore()` from
+`denext/server`):
 
 ```ts
 import { postgresRateLimitStore } from "denext/server";

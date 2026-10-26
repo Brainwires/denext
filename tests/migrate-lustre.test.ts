@@ -255,6 +255,29 @@ Deno.test("migrate: a hand-written page and config are kept and reported", async
   });
 });
 
+Deno.test("migrate: a public/ file already there is never overwritten by priv/static", async () => {
+  const mine = new Uint8Array([0, 1, 2, 3]);
+  await withTree({ ...LUSTRE, "priv/static/favicon.ico": "lustre's icon\n" }, async (dir) => {
+    await Deno.mkdir(join(dir, "public"), { recursive: true });
+    await Deno.writeFile(join(dir, "public", "favicon.ico"), mine);
+    const r = await migrateProject(dir, { denextLocalPath: REPO });
+    assertEquals(
+      await Deno.readFile(join(dir, "public", "favicon.ico")),
+      mine,
+      "kept byte for byte",
+    );
+    assertEquals(await read(dir, "priv/static/favicon.ico"), "lustre's icon\n", "left in place");
+    assert(
+      r.lustre!.wontMigrate.some((f) =>
+        f.item === "priv/static/favicon.ico" && /already exists; merge by hand/.test(f.reason)
+      ),
+      JSON.stringify(r.lustre!.wontMigrate),
+    );
+    // The rest still moved.
+    assert(await exists(dir, "public/logo.svg"));
+  });
+});
+
 Deno.test("migrate: a main mounting on another kind of selector, or none found, is reported", async () => {
   const other = COUNTER_GLEAM.replace(`"#app"`, `"body > main"`);
   await withTree({ ...LUSTRE, "src/counter_app.gleam": other }, async (dir) => {
