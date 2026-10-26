@@ -417,7 +417,15 @@ async function tryLink(target: string, path: string, type: "file" | "dir"): Prom
     await Deno.symlink(target, path, { type });
     return true;
   } catch (err) {
-    if (Deno.build.os === "windows" && err instanceof Deno.errors.PermissionDenied) return false;
+    // Windows without Developer Mode or the privilege: "A required privilege is not held by
+    // the client. (os error 1314)".
+    if (
+      Deno.build.os === "windows" &&
+      (err instanceof Deno.errors.PermissionDenied || /os error 1314/.test(String(err)))
+    ) {
+      console.warn("skipped: this Windows account may not create symlinks");
+      return false;
+    }
     throw err;
   }
 }
