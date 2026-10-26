@@ -1,49 +1,31 @@
 // The server loop and Deno's legacy request abort: denext reads `request.signal` on every request
 // (to cancel work when a client goes away), and under Deno.serve's legacy behavior that makes the
-// runtime warn on the first delivered response. The toolchain child runs with
-// `--unstable-no-legacy-abort` (`toolchainRuntimeFlags`), so the warning is gone, a disconnect
-// still aborts `requestSignal()` mid-request, and a delivered response still aborts it afterwards
-// (from `info.completed`), as the legacy signal did.
+// runtime warn on the first delivered response. Every runtime denext 5.0 runs on (3.0.0-rc.5 and
+// later) has the new abort by default, with no flag: the warning is gone, a disconnect still
+// aborts `requestSignal()` mid-request, and a delivered response still aborts it afterwards (from
+// `info.completed`), as the legacy signal did.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import {
-  childToolchainMarker,
-  legacyAbortActive,
-  toolchainRuntimeFlags,
-} from "../src/cli/self-exec.ts";
-import { needsNoLegacyAbortFlag } from "../src/build/deno-version.ts";
+import { childToolchainMarker } from "../src/cli/self-exec.ts";
 
 const src = (path: string) => toFileUrl(join(Deno.cwd(), path)).href;
 
-Deno.test("toolchainRuntimeFlags: the toolchain child opts in to Deno.serve's new request abort", () => {
-  assertEquals(toolchainRuntimeFlags("2.9.7-denext.16"), ["--unstable-no-legacy-abort"]);
-  assertEquals(toolchainRuntimeFlags("3.0.0-rc.4"), ["--unstable-no-legacy-abort"]);
-  // From 3.0.0-rc.5 the new abort is the runtime's default (the flag is a no-op): none.
-  assertEquals(toolchainRuntimeFlags("3.0.0-rc.5"), []);
-  assertEquals(toolchainRuntimeFlags("3.0.0-rc.10"), []);
-  assertEquals(toolchainRuntimeFlags("3.0.0"), []);
-  // A DENEXT_DENO=<path> binary may predate the flag; no toolchain, no flag.
-  assertEquals(toolchainRuntimeFlags("path"), []);
-  assertEquals(toolchainRuntimeFlags(undefined), []);
-  // Which toolchain a CLI child runs: the marker, else this process's own toolchain build.
+Deno.test("childToolchainMarker: the marker, else this process's own toolchain build", () => {
   const env = (vars: Record<string, string>) => (name: string) => vars[name];
-  const marker = "DENEXT_TOOLCHAIN_ACTIVE";
-  assertEquals(childToolchainMarker(env({ [marker]: "path" }), { deno: "2.9.6" }), "path");
-  assertEquals(childToolchainMarker(env({}), { deno: "2.9.7-denext.17" }), "2.9.7-denext.17");
   assertEquals(
-    childToolchainMarker(env({ DENO_BIN: "/x/deno" }), { deno: "2.9.7-denext.17" }),
-    undefined,
+    childToolchainMarker(env({ DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-rc.6" }), { deno: "x" }),
+    "3.0.0-rc.6",
   );
-  assertEquals(childToolchainMarker(env({}), { deno: "2.9.6" }), undefined);
-  // From 3.0.0-rc.3 the identity marker says it; upstream Deno of the same version is not it.
-  const rc3 = { deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" };
-  assertEquals(childToolchainMarker(env({}), rc3), "3.0.0-rc.3");
-  assertEquals(childToolchainMarker(env({}), { deno: "3.0.0-rc.3" }), undefined);
+  const rc5 = { deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" };
+  assertEquals(childToolchainMarker(env({}), rc5), "3.0.0-rc.5");
+  // A user DENO_BIN no longer hides this process's own build (it is verified as denext's).
+  assertEquals(childToolchainMarker(env({ DENO_BIN: "/my/deno" }), rc5), "3.0.0-rc.5");
+  assertEquals(childToolchainMarker(env({}), { deno: "3.0.0-rc.5" }), undefined, "upstream");
 });
 
 Deno.test({
-  name: "the server loop under the toolchain's flags: no legacy-abort warning, same request signal",
+  name: "the server loop on denext's runtime: no legacy-abort warning, same request signal",
   sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "dnx-legacy-abort-" });
@@ -96,7 +78,6 @@ await server.finished;
         "-A",
         "--config",
         join(Deno.cwd(), "deno.json"),
-        ...toolchainRuntimeFlags("2.9.7-denext.16"),
         script,
       ],
       cwd: Deno.cwd(),
@@ -118,39 +99,4 @@ await server.finished;
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
-});
-
-Deno.test("legacyAbortActive: tells the legacy abort from the flag, and prints no notice itself", async () => {
-  const script = join(await Deno.makeTempDir({ prefix: "dnx-legacy-probe-" }), "probe.ts");
-  try {
-    await Deno.writeTextFile(
-      script,
-      `import { legacyAbortActive } from ${JSON.stringify(src("src/cli/self-exec.ts"))};
-console.log(JSON.stringify(await legacyAbortActive()));
-`,
-    );
-    const run = async (flags: string[]) => {
-      const out = await new Deno.Command(Deno.execPath(), {
-        args: ["run", "-A", "--config", join(Deno.cwd(), "deno.json"), ...flags, script],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      const stderr = new TextDecoder().decode(out.stderr);
-      assert(out.success, stderr);
-      assert(!/legacy behavior/.test(stderr), stderr);
-      return new TextDecoder().decode(out.stdout).trim();
-    };
-    if (needsNoLegacyAbortFlag(Deno.version.deno)) {
-      assertEquals(await run([]), "true");
-      assertEquals(await run(["--unstable-no-legacy-abort"]), "false");
-    } else {
-      // From runtime 3.0.0-rc.5 the legacy abort is off by default; the flag opts back in.
-      assertEquals(await run([]), "false");
-      assertEquals(await run(["--unstable-legacy-abort"]), "true");
-    }
-  } finally {
-    await Deno.remove(join(script, ".."), { recursive: true });
-  }
-  // In this process (the suite may run with or without the flag) it answers a boolean.
-  assertEquals(typeof await legacyAbortActive(), "boolean");
 });

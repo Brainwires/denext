@@ -22,7 +22,8 @@
  *   `Origin` is accepted, and no per-launch token is ever injected. Its scheme bridge also marks a
  *   request from another origin's document ({@linkcode isCrossOriginMarked}), which no
  *   `/_denext/desktop/*` endpoint accepts.
- * - **`loopback`** — the stock Deno Desktop runtime (no memory transport, no published origin). The
+ * - **`loopback`** — a Deno Desktop runtime other than denext's (an app built outside denext: no
+ *   memory transport, no published origin). The
  *   page runs at `http://127.0.0.1:<port>` and the gates keep their loopback rules: a loopback
  *   `Host` (the DNS-rebinding defence) and an `Origin` equal to `http://<Host>`.
  *
@@ -157,7 +158,7 @@ export function resolveDesktopTrust(
         reason: `this Deno Desktop runtime is older than ${DESKTOP_RELAY_MARKING_RUNTIME} (it ` +
           "does not mark requests from its WebSocket relay, so they can't be told from the " +
           "page's). Rebuild with the runtime denext pins (unset DENORT_DESKTOP_BIN, " +
-          "LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR), or set DENEXT_DESKTOP_RUNTIME=stock",
+          "LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR)",
       },
     };
   }

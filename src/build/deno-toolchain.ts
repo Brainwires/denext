@@ -1,9 +1,10 @@
 // denext's managed Deno toolchain: the Deno CLI built from the Brainwires/deno fork
-// (`2.9.7-denext.N` — stock Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`),
-// downloaded on first need and pinned by version + SHA-256 in `deno-toolchain-pin.json`, the same
-// way `desktop-runtime.ts` pins the Deno Desktop runtime. Users keep installing stock Deno; the
-// CLI re-runs the commands that execute project code under this binary (see
-// `maybeReexecToolchain` in src/cli/self-exec.ts), and the `deno` on PATH is never replaced.
+// (`3.0.0-rc.N` — upstream Deno plus `Deno.SQL`, Vitest/Jest compatibility in `deno test` and the
+// rest of DENEXT.md), downloaded on first need and pinned by version + SHA-256 in
+// `deno-toolchain-pin.json`, the same way `desktop-runtime.ts` pins the Deno Desktop runtime. It is
+// the only Deno denext runs on: the CLI re-runs the commands that execute project code under this
+// binary and hands it to every other command's children (see `maybeReexecToolchain` in
+// src/cli/self-exec.ts), and the `deno` on PATH is never replaced.
 //
 // {@linkcode ensureDenoToolchain}:
 //
@@ -30,7 +31,10 @@
 // `denext build --compile` hands it to `deno compile` as `DENORT_BIN`, so a compiled app carries
 // the fork's patches (`Deno.SQL`) like the toolchain itself.
 //
-// `DENEXT_DENO=stock` opts out; `DENEXT_DENO=<path>` uses that binary unverified (a warning).
+// denext 5.0 runs only on denext's own Deno: `DENEXT_DENO=stock` is refused, and
+// `DENEXT_DENO=<path>` (or a `DENO_BIN` of the user's own) must name a build of denext's runtime,
+// {@linkcode MIN_DENEXT_RUNTIME} or later, told by its `--version` identity line (a warning: it is
+// not pinned or hash-checked).
 // `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
 
 import { encodeHex } from "@std/encoding/hex";
@@ -53,7 +57,17 @@ import {
   sweepLeftovers,
 } from "./verified-download.ts";
 import { ESBUILD_VERSION } from "./esbuild/version.ts";
-import { currentDenoIdentity, type DenoIdentity, isPinnedDenextDeno } from "./deno-version.ts";
+import {
+  currentDenoIdentity,
+  denoBinaryIdentity,
+  type DenoIdentity,
+  describeDeno,
+  isDenextDenoVersion,
+  isPinnedDenextDeno,
+  isSupportedDenextRuntime,
+  MIN_DENEXT_RUNTIME,
+  RUNTIME_REQUIRED_FIX,
+} from "./deno-version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
 
 /** The esbuild a toolchain archive carries beside `deno` (2.9.7-denext.17 on). */
@@ -131,7 +145,7 @@ export interface DenoToolchainPin {
   readonly schema: 1;
   /**
    * The toolchain version (`2.9.7-denext.15`), or `null` while no CLI archives are pinned for
-   * this denext version — the toolchain then reports itself not available and stock Deno runs.
+   * this denext version — every command that needs the toolchain then refuses.
    */
   readonly version: string | null;
   /** The release tag the pin came from (`denext-runtime-v<version>`). */
@@ -151,8 +165,8 @@ export interface DenoToolchainPin {
 /** The toolchain denext pins (see the module header). */
 export const DENO_TOOLCHAIN: DenoToolchainPin = pinJson as DenoToolchainPin;
 
-/** `stock` → stock Deno; a path → that binary (unverified); unset / `pinned` → denext's. */
-export const TOOLCHAIN_ENV = "DENEXT_DENO";
+/** A path → that build of denext's runtime (verified by its identity line); unset / `pinned` → the pin; `stock` → refused. */
+const TOOLCHAIN_ENV = "DENEXT_DENO";
 /** Set on a re-exec'd child (to the toolchain version): never re-exec again. */
 export const TOOLCHAIN_ACTIVE_ENV = "DENEXT_TOOLCHAIN_ACTIVE";
 /** A pin file that replaces the built-in one (tests, fork development). */
@@ -167,11 +181,10 @@ const CACHE_NAME = "denext-deno";
 const CACHE_DESCR = "Deno toolchain cache";
 /** The size cap for a download whose pin records no size. */
 const MAX_DOWNLOAD = 1024 ** 3;
-/** The way out of every toolchain failure. */
-/** What every refusal to run without the toolchain names: the fix, and the explicit opt-outs. */
+/** What every refusal to run without the toolchain names: the fix (denext 5.0 has no opt-out). */
 const TOOLCHAIN_FIX = "  Fix: run `denext toolchain install` (online), then retry.\n" +
-  `  Or opt out explicitly: ${TOOLCHAIN_ENV}=stock runs the deno that started denext (or the ` +
-  `\`deno\` on PATH), ${TOOLCHAIN_ENV}=<path> runs that deno binary.`;
+  "  denext 5.0 runs only on denext's own Deno runtime; stock Deno is no longer supported " +
+  `(${TOOLCHAIN_ENV}=<path> runs another build of denext's runtime).`;
 /** The one line {@linkcode linkDenoToolchain}'s Windows shim carries (what unlink checks). */
 const SHIM_MARK = "REM denext toolchain shim";
 
@@ -202,8 +215,9 @@ export class DenoToolchainHashError extends Error {
 
 /**
  * Raised when a command needs denext's Deno toolchain and it can't be had (offline on first use,
- * no build for this host, a failed or tampered download, a bad `DENEXT_DENO`): denext no longer
- * falls back to another Deno on its own. The message names the fix and the explicit opt-outs.
+ * no build for this host, a failed or tampered download, `DENEXT_DENO=stock`, a `DENEXT_DENO` /
+ * `DENO_BIN` that is not denext's runtime): denext 5.0 never runs another Deno. The message names
+ * the fix.
  */
 export class DenoToolchainRequiredError extends Error {
   override name = "DenoToolchainRequiredError";
@@ -1034,30 +1048,15 @@ export async function ensureDenort(
 // ---------------------------------------------------------------------------------------------
 // Choosing the Deno a command runs on.
 
-/** What {@linkcode resolveDenoToolchain} chose. */
-export type DenoToolchainChoice =
-  | {
-    readonly kind: "toolchain";
-    /** The binary to run. */
-    readonly deno: string;
-    /** The marker value (`DENEXT_TOOLCHAIN_ACTIVE`): the version, or `path` for an override. */
-    readonly version: string;
-    /** Say this once before running (the unverified `DENEXT_DENO=<path>` override). */
-    readonly warning?: string;
-  }
-  | {
-    readonly kind: "stock";
-    /** Why stock Deno runs. */
-    readonly reason: string;
-    /** Say this once (a failure or a missing grant), or nothing (an opt-out, no pin yet). */
-    readonly warning?: string;
-    /**
-     * Set when the toolchain is pinned but this process lacks the grants to start it: the
-     * `denext:` message a verb that runs project code ends with instead of running on this Deno
-     * (a verb that only hands the toolchain to its children keeps its Deno, silently).
-     */
-    readonly refusal?: string;
-  };
+/** What {@linkcode resolveDenoToolchain} chose: the build of denext's Deno runtime to run. */
+export interface DenoToolchainChoice {
+  /** The binary to run. */
+  readonly deno: string;
+  /** The marker value (`DENEXT_TOOLCHAIN_ACTIVE`): the runtime's version. */
+  readonly version: string;
+  /** Say this once before running (a `DENEXT_DENO=<path>` / `DENO_BIN` override). */
+  readonly warning?: string;
+}
 
 /** Options for {@linkcode resolveDenoToolchain}. */
 export interface ResolveDenoToolchainOptions extends EnsureDenoToolchainOptions {
@@ -1068,6 +1067,8 @@ export interface ResolveDenoToolchainOptions extends EnsureDenoToolchainOptions 
    * `run`, and `read` + `write` on the cache root; never prompts).
    */
   readonly missingGrants?: (cacheRoot: string) => Promise<string[]>;
+  /** What a `DENEXT_DENO=<path>` / `DENO_BIN` binary says about itself (default: its `--version`). */
+  readonly identify?: (deno: string) => Promise<DenoIdentity | null>;
 }
 
 /** The `--allow-*` grants this process lacks for `cacheRoot` (queried, never prompted). */
@@ -1138,59 +1139,99 @@ export function toolchainEnvValue(env: EnvGet = processEnv, name = TOOLCHAIN_ENV
   return raw;
 }
 
-/** The `DENEXT_DENO` mode: `pinned`, `stock`, or a path. */
-function toolchainMode(env: EnvGet): { mode: "pinned" | "stock" } | { mode: "path"; path: string } {
+/** The variable a compiled `denext` (and a user) points at the Deno a child spawns. */
+const DENO_BIN_ENV = "DENO_BIN";
+
+/** The Deno the environment asks for: the pinned toolchain, a path to another build, or a refusal. */
+type ToolchainMode =
+  | { readonly mode: "pinned" }
+  | { readonly mode: "path"; readonly path: string; readonly name: string }
+  | { readonly mode: "refused"; readonly message: string };
+
+/** The refusal of `DENEXT_DENO=stock` (denext 5.0 dropped stock Deno). */
+const STOCK_REFUSAL = `denext: ${TOOLCHAIN_ENV}=stock is no longer supported.\n` +
+  RUNTIME_REQUIRED_FIX +
+  ` (Unset ${TOOLCHAIN_ENV}; ${TOOLCHAIN_ENV}=<path> still runs another build of denext's ` +
+  "runtime.)";
+
+/**
+ * The Deno the environment asks for: `DENEXT_DENO` (`pinned` / unset, `stock` — refused — or a
+ * path), else a `DENO_BIN` the user set (one denext set itself for its children carries the
+ * toolchain marker beside it and is the toolchain), else the pinned toolchain.
+ */
+function toolchainMode(env: EnvGet): ToolchainMode {
   const raw = toolchainEnvValue(env);
-  if (raw === "" || raw.toLowerCase() === "pinned") return { mode: "pinned" };
-  if (raw.toLowerCase() === "stock") return { mode: "stock" };
-  return { mode: "path", path: raw };
+  if (raw.toLowerCase() === "stock") return { mode: "refused", message: STOCK_REFUSAL };
+  if (raw !== "" && raw.toLowerCase() !== "pinned") {
+    return { mode: "path", path: raw, name: TOOLCHAIN_ENV };
+  }
+  const bin = toolchainEnvValue(env, DENO_BIN_ENV);
+  if (raw === "" && bin !== "" && !env(TOOLCHAIN_ACTIVE_ENV)) {
+    return { mode: "path", path: bin, name: DENO_BIN_ENV };
+  }
+  return { mode: "pinned" };
 }
 
 /**
- * `DENEXT_DENO=<path>`: that binary, unverified, when it exists. A relative path is resolved
- * against the directory denext started in, so a child run in another directory (`--cwd`, a
- * forwarded verb) still finds it.
+ * A `DENEXT_DENO=<path>` / `DENO_BIN` binary, verified as a build of denext's Deno runtime
+ * ({@linkcode isSupportedDenextRuntime}: its `--version` carries the `denext <version>
+ * (Brainwires)` line, {@linkcode MIN_DENEXT_RUNTIME} or later). A relative path is resolved against
+ * the directory denext started in, so a child run in another directory (`--cwd`, a forwarded verb)
+ * still finds it. It is not downloaded, pinned or hash-checked: the escape hatch for a local build
+ * of the runtime.
  */
-async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
+async function pathChoice(
+  raw: string,
+  name: string,
+  identify: (deno: string) => Promise<DenoIdentity | null>,
+): Promise<DenoToolchainChoice> {
   const path = resolve(raw);
+  const unset =
+    `  Point it at a build of denext's Deno runtime (${MIN_DENEXT_RUNTIME} or later), or unset ` +
+    "it to run the pinned toolchain.\n";
   if (!(await Deno.stat(path).catch(() => null))?.isFile) {
     throw new DenoToolchainRequiredError(
-      `denext: ${TOOLCHAIN_ENV}=${path} is not a file.\n  Point it at a deno binary, set ` +
-        `${TOOLCHAIN_ENV}=stock to run the deno that started denext, or unset it to run ` +
-        "denext's own Deno toolchain.",
+      `denext: ${name}=${path} is not a file.\n${unset}${RUNTIME_REQUIRED_FIX}`,
+    );
+  }
+  const identity = await identify(path);
+  if (identity === null || !isSupportedDenextRuntime(identity)) {
+    throw new DenoToolchainRequiredError(
+      `denext: ${name}=${path} is ${describeDeno(identity)}, not denext's Deno runtime.\n` +
+        `${unset}${RUNTIME_REQUIRED_FIX}`,
     );
   }
   return {
-    kind: "toolchain",
     deno: path,
-    version: "path",
-    warning: `denext: using the Deno at ${path} (${TOOLCHAIN_ENV}); it is not downloaded, ` +
-      "pinned or verified.",
+    version: identity.denext!,
+    warning: `denext: using denext's Deno ${identity.denext} at ${path} (${name}); it is not ` +
+      "downloaded, pinned or hash-checked.",
   };
 }
 
 /**
  * Pick the Deno the current command should run on — denext's toolchain (downloaded and verified
- * on first use), or what the user chose explicitly: `DENEXT_DENO=<path>` (that binary) or
- * `DENEXT_DENO=stock` (the Deno that started the CLI). Stock Deno is also chosen, silently, when
- * this denext version pins no toolchain, and for a process run without the grants to install and
- * start it (a least-privilege `start`: it runs on the Deno that launched it and spawns none).
- * Anything else that keeps the toolchain from running — offline on first use, no build for this
- * host, a failed or mismatching download, an unreadable pin file, a `DENEXT_DENO=<path>` that is
- * not a file — throws {@linkcode DenoToolchainRequiredError} naming the fix: denext never falls
- * back to another Deno on its own.
+ * on first use), or another build of denext's runtime the user named (`DENEXT_DENO=<path>`, or a
+ * `DENO_BIN` of their own), verified by its identity line. From denext 5.0 nothing else runs:
+ * `DENEXT_DENO=stock`, a binary that is not denext's runtime, no pin for this denext version, no
+ * build for this host, a process without the grants to install and start the toolchain (a
+ * least-privilege `start` launched on another Deno), offline on first use, a failed or mismatching
+ * download or an unreadable pin file all throw {@linkcode DenoToolchainRequiredError} naming the
+ * fix.
  *
  * @param options Seams; all default to the process.
  * @returns The choice.
- * @throws {DenoToolchainRequiredError} When the toolchain can't be had.
+ * @throws {DenoToolchainRequiredError} When denext's runtime can't be had.
  */
 export async function resolveDenoToolchain(
   options: ResolveDenoToolchainOptions = {},
 ): Promise<DenoToolchainChoice> {
   const env = options.env ?? processEnv;
   const mode = toolchainMode(env);
-  if (mode.mode === "stock") return { kind: "stock", reason: `${TOOLCHAIN_ENV}=stock` };
-  if (mode.mode === "path") return await pathChoice(mode.path);
+  if (mode.mode === "refused") throw new DenoToolchainRequiredError(mode.message);
+  if (mode.mode === "path") {
+    return await pathChoice(mode.path, mode.name, options.identify ?? denoBinaryIdentity);
+  }
   let pin: DenoToolchainPin;
   try {
     pin = options.pin ?? loadDenoToolchainPin(env);
@@ -1202,41 +1243,35 @@ export async function resolveDenoToolchain(
 
 const errText = (err: unknown) => err instanceof Error ? err.message : String(err);
 
-/** A `stock` choice, with its warning when there is one. */
-function stockChoice(reason: string, warning?: string): DenoToolchainChoice {
-  return { kind: "stock", reason, ...(warning ? { warning } : {}) };
-}
-
-/** Why stock Deno must run for `pin` on `target`, before any download; `null` when nothing. */
-async function pinnedObstacle(
+/** Refuse, before any download, a `pin` that can't run on `target` from this process. */
+async function assertPinnedRunnable(
   pin: DenoToolchainPin,
   target: string,
   cacheRoot: string,
   missingGrants: (cacheRoot: string) => Promise<string[]>,
-): Promise<DenoToolchainChoice | null> {
-  if (pin.version === null) return stockChoice("not available for this denext version");
+): Promise<void> {
+  if (pin.version === null) {
+    throw new DenoToolchainRequiredError(
+      "denext: this denext version pins no Deno toolchain, and denext runs only on its own " +
+        `runtime.\n${TOOLCHAIN_FIX}`,
+    );
+  }
   if (!pin.targets[target]) {
     throw new DenoToolchainRequiredError(
       `denext: denext's Deno toolchain ${pin.version} has no build for ${target} (it has: ` +
-        `${Object.keys(pin.targets).join(", ") || "none"}).\n  Opt out explicitly: ` +
-        `${TOOLCHAIN_ENV}=stock runs the deno that started denext (or the \`deno\` on PATH), ` +
-        `${TOOLCHAIN_ENV}=<path> runs that deno binary.`,
+        `${Object.keys(pin.targets).join(", ") || "none"}), and denext runs only on its own ` +
+        `runtime.\n  ${TOOLCHAIN_ENV}=<path> runs a build of it you made for this host.`,
     );
   }
   const missing = await missingGrants(cacheRoot);
-  if (missing.length === 0) return null;
   // A process scoped down on purpose (the least-privilege `start` task `denext create` scaffolds)
-  // can't start the toolchain. A verb that runs project code refuses with the ways out rather than
-  // run on this Deno: there `Deno.SQL` (`postgresClient()`, the Prisma adapter) and the toolchain's
-  // other changes would be missing in production while `dev` had them.
-  return {
-    kind: "stock",
-    reason: `this process lacks ${missing.join(" ")} (for ${cacheRoot})`,
-    refusal: grantsRefusal(pin.version, missing, cacheRoot),
-  };
+  // can't start the toolchain, and project code runs on the toolchain only.
+  if (missing.length > 0) {
+    throw new DenoToolchainRequiredError(grantsRefusal(pin.version, missing, cacheRoot));
+  }
 }
 
-/** The refusal of {@linkcode pinnedObstacle}: what a project-code verb ends with, and the fixes. */
+/** The refusal of a process without the grants to start the toolchain, and the fixes. */
 function grantsRefusal(version: string, missing: readonly string[], cacheRoot: string): string {
   return `denext: this process can't start denext's Deno toolchain ${version} (it lacks ` +
     `${missing.join(" ")} for ${cacheRoot}), and project code runs on the toolchain, not on ` +
@@ -1244,11 +1279,10 @@ function grantsRefusal(version: string, missing: readonly string[], cacheRoot: s
     "  Run the command on the toolchain itself: `denext task start` (a task's `deno` is the " +
     "toolchain), the binary `denext toolchain path` prints, or the image / unit " +
     "`denext deploy prepare` writes.\n" +
-    `  Or grant ${missing.join(" ")} so it re-runs itself on the toolchain.\n` +
-    `  ${TOOLCHAIN_ENV}=stock runs it on this Deno instead (no Deno.SQL / postgresClient()).`;
+    `  Or grant ${missing.join(" ")} so it re-runs itself on the toolchain.`;
 }
 
-/** The pinned toolchain (installed and verified), or the silent stock choice of {@linkcode pinnedObstacle}. */
+/** The pinned toolchain, installed and verified. */
 async function pinnedChoice(
   pin: DenoToolchainPin,
   env: EnvGet,
@@ -1256,16 +1290,10 @@ async function pinnedChoice(
 ): Promise<DenoToolchainChoice> {
   const target = options.target ?? denoToolchainTarget();
   const cacheRoot = options.cacheRoot ?? denoToolchainCacheRoot(env);
-  const obstacle = await pinnedObstacle(
-    pin,
-    target,
-    cacheRoot,
-    options.missingGrants ?? queryMissingGrants,
-  );
-  if (obstacle) return obstacle;
+  await assertPinnedRunnable(pin, target, cacheRoot, options.missingGrants ?? queryMissingGrants);
   try {
     const rt = await ensureDenoToolchain({ ...options, pin, target, cacheRoot });
-    return { kind: "toolchain", deno: rt.deno, version: rt.version };
+    return { deno: rt.deno, version: rt.version };
   } catch (err) {
     throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
   }
@@ -1276,13 +1304,18 @@ async function pinnedChoice(
 
 /** The toolchain's state on this machine. */
 export interface DenoToolchainStatus {
-  readonly mode: "pinned" | "stock" | "path";
+  /**
+   * `pinned` = the pinned toolchain; `path` = a `DENEXT_DENO=<path>` / `DENO_BIN` build of denext's
+   * runtime; `refused` = the environment asks for a Deno denext refuses (`DENEXT_DENO=stock`).
+   */
+  readonly mode: "pinned" | "path" | "refused";
   /** The pinned version (`null` when none is pinned for this denext version). */
   readonly version: string | null;
   readonly target: string;
   /**
    * `cached` = present + verified; `missing` = downloads on first use; `invalid` = re-downloads;
-   * `unpinned` = no toolchain for this denext version; `unsupported` = none for this host.
+   * `unpinned` = no toolchain for this denext version; `unsupported` = none for this host (both:
+   * commands refuse).
    */
   readonly state: "cached" | "missing" | "invalid" | "unpinned" | "unsupported" | "n/a";
   /** The binary (`null` when there is none to run). */
@@ -1322,14 +1355,16 @@ export interface DenoToolchainStatusOptions {
    * Its own embedded Deno never runs a command: every child it starts runs on the toolchain.
    */
   readonly standalone?: boolean;
+  /** What a `DENEXT_DENO=<path>` / `DENO_BIN` binary says about itself (default: its `--version`). */
+  readonly identify?: (deno: string) => Promise<DenoIdentity | null>;
 }
 
 const STATE_TEXT: Record<DenoToolchainStatus["state"], string> = {
   cached: "cached + verified",
   missing: "not cached yet (downloaded on the first command that runs project code)",
   invalid: "cache FAILED verification (re-downloaded on next use)",
-  unpinned: "not available for this denext version (stock Deno runs)",
-  unsupported: "no build for this host (commands refuse; DENEXT_DENO=stock opts out)",
+  unpinned: "not available for this denext version (commands refuse)",
+  unsupported: "no build for this host (commands refuse; DENEXT_DENO=<path> runs your own build)",
   "n/a": "",
 };
 
@@ -1364,29 +1399,61 @@ const MISSING_STANDALONE_TEXT = "not cached yet (downloaded on the first denext 
 
 /**
  * What a compiled `denext` executable says about the Deno that runs: never its own embedded one
- * (which runs only the CLI itself) but the one it hands every child — the toolchain, a
- * `DENEXT_DENO=<path>` binary, or with `DENEXT_DENO=stock` the `deno` on PATH.
+ * (which runs only the CLI itself) but the one it hands every child — the toolchain, or a
+ * `DENEXT_DENO=<path>` build of denext's runtime.
  */
-function executableText(mode: "pinned" | "stock" | "path", embedded: string): string {
-  const own = `this executable embeds deno ${embedded} for itself only`;
-  if (mode === "stock") return `commands run on the \`deno\` on PATH (${own})`;
-  return `denext runs every command on it (${own})`;
+function executableText(embedded: string): string {
+  return `denext runs every command on it (this executable embeds deno ${embedded} for itself only)`;
 }
 
 /** What status says about the Deno running: this process's, or a compiled executable's children's. */
-function runningLine(
-  standalone: boolean,
-  mode: "pinned" | "stock" | "path",
-  active: boolean,
-  running: string,
-): string {
-  if (standalone) return executableText(mode, running);
+function runningLine(standalone: boolean, active: boolean, running: string): string {
+  if (standalone) return executableText(running);
   return active ? `running on it (deno ${running})` : `running on deno ${running}`;
 }
 
 /** The cache state's text; a compiled executable downloads a missing toolchain sooner. */
 function stateLine(state: DenoToolchainStatus["state"], standalone: boolean): string {
   return standalone && state === "missing" ? MISSING_STANDALONE_TEXT : STATE_TEXT[state];
+}
+
+/** Whether this process is a compiled executable. */
+function isStandaloneProcess(): boolean {
+  return (Deno.build as { standalone?: boolean }).standalone === true;
+}
+
+/**
+ * Whether this process runs on the toolchain, from the running Deno alone: denext's Deno (its
+ * `Deno.build.denext` marker, or a pre-marker build's version) of the pin's version. An inherited
+ * marker, an older build (a stale `toolchain link`) or upstream Deno of the pinned number is not
+ * the pinned toolchain. Under a `DENEXT_DENO=<path>` build the marker its launch set (that build's
+ * version) counts.
+ */
+function runsOnIt(
+  mode: ToolchainMode,
+  identity: DenoIdentity,
+  pin: DenoToolchainPin,
+  env: EnvGet,
+): boolean {
+  if (mode.mode !== "path") return isPinnedDenextDeno(identity, pin.version);
+  return isDenextDenoVersion(identity) && env(TOOLCHAIN_ACTIVE_ENV) === identity.deno;
+}
+
+/** A `DENEXT_DENO=<path>` / `DENO_BIN` build's status: the path, whether it verifies, a line. */
+async function pathStatus(
+  mode: { readonly path: string; readonly name: string },
+  identify: (deno: string) => Promise<DenoIdentity | null>,
+): Promise<{ path: string; ok: boolean; detail: string }> {
+  const path = resolve(mode.path);
+  if ((await Deno.stat(path).catch(() => null))?.isFile !== true) {
+    return { path, ok: false, detail: `${mode.name}=${path} (NOT FOUND)` };
+  }
+  const found = await identify(path);
+  const ok = found !== null && isSupportedDenextRuntime(found);
+  const what = ok
+    ? `denext's Deno ${found!.denext}, not pinned or hash-checked`
+    : `REFUSED: ${describeDeno(found)}`;
+  return { path, ok, detail: `${mode.name}=${path} (${what})` };
 }
 
 /**
@@ -1405,17 +1472,9 @@ export async function denoToolchainStatus(
   const target = options.target ?? denoToolchainTarget();
   const mode = toolchainMode(env);
   const pin = options.pin ?? loadDenoToolchainPin(env);
-  // From the running Deno alone: denext's Deno (its `Deno.build.denext` marker, or a pre-marker
-  // build's version) of the pin's version. An inherited marker, an older `-denext.N` build (a stale
-  // `toolchain link`) or upstream Deno of the pinned number is not the pinned toolchain; a
-  // `DENEXT_DENO=<path>` binary has no version to check, so there the marker its own launch set
-  // ("path") counts.
-  const active = mode.mode === "path"
-    ? env(TOOLCHAIN_ACTIVE_ENV) === "path"
-    : isPinnedDenextDeno(identity, pin.version);
-  const standalone = options.standalone ??
-    (Deno.build as { standalone?: boolean }).standalone === true;
-  const runningText = runningLine(standalone, mode.mode, active, running);
+  const active = runsOnIt(mode, identity, pin, env);
+  const standalone = options.standalone ?? isStandaloneProcess();
+  const runningText = runningLine(standalone, active, running);
   const esbuild = await toolchainEsbuild({ ...options, env, pin, target });
   const tsgo = await toolchainTsgo({ ...options, env, pin, target });
   const tsgoLsp = await toolchainTsgoLsp({ ...options, env, pin, target });
@@ -1429,25 +1488,12 @@ export async function denoToolchainStatus(
     tsgo,
     tsgoLsp,
   };
-  if (mode.mode === "stock") {
-    return {
-      ...base,
-      mode: "stock",
-      path: null,
-      ok: true,
-      detail: `${TOOLCHAIN_ENV}=stock — stock Deno runs everything; ${runningText}`,
-    };
+  if (mode.mode === "refused") {
+    return { ...base, mode: "refused", path: null, ok: false, detail: mode.message.split("\n")[0] };
   }
   if (mode.mode === "path") {
-    const exists = (await Deno.stat(mode.path).catch(() => null))?.isFile === true;
-    return {
-      ...base,
-      mode: "path",
-      path: mode.path,
-      ok: exists,
-      detail: `${TOOLCHAIN_ENV}=${mode.path} (unverified)${exists ? "" : " — NOT FOUND"}; ` +
-        runningText,
-    };
+    const p = await pathStatus(mode, options.identify ?? denoBinaryIdentity);
+    return { ...base, mode: "path", path: p.path, ok: p.ok, detail: `${p.detail}; ${runningText}` };
   }
   const root = options.cacheRoot ?? denoToolchainCacheRoot(env);
   const { state, path } = await cacheState(
@@ -1462,24 +1508,24 @@ export async function denoToolchainStatus(
     mode: "pinned",
     state,
     path,
-    ok: state !== "invalid",
+    ok: state === "cached" || state === "missing",
     detail: `${pin.version ? `toolchain ${pin.version} for ${target}` : "toolchain"}; ` +
       `${stateLine(state, standalone)}; ${runningText}`,
   };
 }
 
 // ---------------------------------------------------------------------------------------------
-// The toolchain's esbuild (what src/build/esbuild/binary.ts spawns before the npm fallback).
+// The toolchain's esbuild (what src/build/esbuild/binary.ts spawns unless ESBUILD_BINARY_PATH is set).
 
 /** The toolchain's esbuild on this machine. */
 export interface ToolchainEsbuildStatus {
   /**
    * `ok` = installed and verified (denext's esbuild API runs it); `missing` = the toolchain is not
-   * cached; `refused` = it failed verification (the npm esbuild runs, with a warning); `none` =
-   * this pin's toolchain ships no esbuild (before 2.9.7-denext.17: the npm esbuild runs); `n/a` =
-   * `DENEXT_DENO=stock` or a path (the npm esbuild runs).
+   * cached; `refused` = it failed verification; `none` = this pin's toolchain ships no esbuild.
+   * Anything but `ok` makes a build refuse unless `ESBUILD_BINARY_PATH` names one. Under a
+   * `DENEXT_DENO=<path>` build this is still the pinned toolchain's esbuild.
    */
-  readonly state: "ok" | "missing" | "refused" | "none" | "n/a";
+  readonly state: "ok" | "missing" | "refused" | "none";
   /** The binary (`ok` only). */
   readonly path: string | null;
   /** The esbuild version the pin names (`null`: none). */
@@ -1500,14 +1546,8 @@ export interface ToolchainEsbuildStatus {
 export async function toolchainEsbuild(
   options: DenoToolchainStatusOptions = {},
 ): Promise<ToolchainEsbuildStatus> {
-  const q = await stepQuery(options);
-  if ("mode" in q) {
-    return esbuildState("n/a", null, `${TOOLCHAIN_ENV}=${q.mode}: the npm esbuild runs`);
-  }
-  const { pin, target, artifact, dir, stamp } = q;
-  if (!artifact?.esbuild) {
-    return esbuildState("none", null, "this toolchain ships no esbuild: the npm esbuild runs");
-  }
+  const { pin, target, artifact, dir, stamp } = await pinnedStep(options);
+  if (!artifact?.esbuild) return esbuildState("none", null, "this toolchain ships no esbuild");
   const pinned = artifact.esbuild;
   if (!stampMatches(stamp, pin.version!, target, artifact)) {
     return esbuildState("missing", pinned, `esbuild ${pinned.version} arrives with the toolchain`);
@@ -1525,24 +1565,21 @@ export async function toolchainEsbuild(
     );
 }
 
-/** {@linkcode stepQuery}'s result. */
-type StepQuery = { mode: "stock" | "<path>" } | {
-  pin: DenoToolchainPin;
-  target: string;
-  artifact: DenoToolchainArtifact | undefined;
-  dir: string;
-  stamp: ToolchainStamp | null;
-};
+/** {@linkcode pinnedStep}'s result. */
+interface PinnedStep {
+  readonly pin: DenoToolchainPin;
+  readonly target: string;
+  readonly artifact: DenoToolchainArtifact | undefined;
+  readonly dir: string;
+  readonly stamp: ToolchainStamp | null;
+}
 
 /**
- * What a status query of one of the archive's install steps (esbuild, tsgo) starts from: the
- * toolchain mode when it is not the pinned one (`stock` / `<path>`), else the pin, the host
- * target, its artifact, the cached binary's directory and its stamp.
+ * What a status query of one of the pinned archive's install steps (esbuild, tsgo) starts from:
+ * the pin, the host target, its artifact, the cached binary's directory and its stamp.
  */
-async function stepQuery(options: DenoToolchainStatusOptions): Promise<StepQuery> {
+async function pinnedStep(options: DenoToolchainStatusOptions): Promise<PinnedStep> {
   const env = options.env ?? processEnv;
-  const mode = toolchainMode(env).mode;
-  if (mode !== "pinned") return { mode: mode === "stock" ? "stock" : "<path>" };
   const pin = options.pin ?? loadDenoToolchainPin(env);
   const target = options.target ?? denoToolchainTarget();
   const artifact = pinnedTargetArtifact(pin, target);
@@ -1595,7 +1632,7 @@ export interface ToolchainTsgoStatus {
    * `ok` = installed and verified (the toolchain type-checks with it); `missing` = the toolchain
    * is not cached; `refused` = it failed verification (type checking falls back to the in-process
    * TypeScript, see src/ts/engine.ts); `none` = this pin's toolchain ships none (it
-   * type-checks in-process); `n/a` = `DENEXT_DENO=stock` or a path.
+   * type-checks in-process); `n/a` = a `DENEXT_DENO=<path>` / `DENO_BIN` build (its own checker).
    */
   readonly state: "ok" | "missing" | "refused" | "none" | "n/a";
   /** The compiler (`ok` only). */
@@ -1649,9 +1686,9 @@ async function toolchainTsRole(
   role: TsRole,
   text: { na: string; none: string; ok: (version: string) => string },
 ): Promise<ToolchainTsgoStatus> {
-  const q = await stepQuery(options);
-  if ("mode" in q) return tsgoState("n/a", null, `${TOOLCHAIN_ENV}=${q.mode}: ${text.na}`);
-  const { pin, target, artifact, dir, stamp } = q;
+  const mode = toolchainMode(options.env ?? processEnv);
+  if (mode.mode === "path") return tsgoState("n/a", null, `${mode.name}=<path>: ${text.na}`);
+  const { pin, target, artifact, dir, stamp } = await pinnedStep(options);
   const pinned = artifact?.[role.key];
   if (!pinned) return tsgoState("none", null, text.none);
   if (!stampMatches(stamp, pin.version!, target, artifact!)) {

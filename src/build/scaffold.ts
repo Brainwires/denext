@@ -259,7 +259,7 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     build: `deno run -A ${cli} build .`,
     start: `deno run --allow-net --allow-read --allow-env --allow-write=.denext ${cli} start .`,
     // Through the CLI rather than a bare `deno test`: `deno task` runs a task's `deno` on the
-    // Deno that started it (stock), while `denext test` runs on denext's Deno toolchain.
+    // Deno that started it, while `denext test` runs on denext's Deno toolchain.
     test: `deno run -A ${cli} test`,
   };
   // Both native targets ship the static export (SSG) from `out/`.
@@ -268,7 +268,7 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
   }
   if (opts.desktop) {
     // `denext desktop run` exports, then opens desktop.ts's Deno.serve() in a native `deno desktop`
-    // window on denext's pinned Deno Desktop runtime (a bare `deno desktop` uses the stock one).
+    // window on denext's pinned Deno Desktop runtime (a bare `deno desktop` does not).
     tasks.desktop = `deno run -A ${cli} desktop run .`;
     // The packaging script exports, then builds (embedding `out/`) + code-signs, with
     // opt-in multi-arch (--arch universal|both) and notarization (env vars). See its
@@ -356,9 +356,9 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  * `request.signal` aborts only when a response is NOT delivered, and Deno prints no legacy-abort
  * notice on the first request — what `denext start` / `dev` get from the toolchain's
  * `--unstable-no-legacy-abort`, here for every `deno` that reads the config (a least-privilege
- * `start` task included, which cannot re-run itself with the flag). Stock Deno 2.9 accepts the key
- * without a warning. denext's runtime from 3.0.0-rc.5 has that behavior by default and accepts
- * the key as a no-op; it stays for a project run on stock Deno 2.9.x or an older toolchain.
+ * `start` task included, which cannot re-run itself with the flag). denext's runtime from
+ * 3.0.0-rc.5 — every one denext 5.0 runs on — has that behavior by default and accepts the key as
+ * a no-op; it stays so the `deno.json` of a project created before 5.0 and a new one agree.
  */
 export const DENEXT_UNSTABLE: readonly string[] = ["no-legacy-abort"];
 
@@ -1150,9 +1150,9 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * against the app (App ID, team, expiry, the entitlements it grants) before anything is built.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
- * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
- * Deno version it was built for (\`deno upgrade --version 2.9.8\`).
- *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it builds with
+ * denext's Deno toolchain: run it with \`denext desktop package\` or \`denext task <this task>\`
+ * (a plain \`deno task\` runs the \`deno\` on PATH, which is refused unless it is denext's).
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
@@ -1197,7 +1197,6 @@ const {
   desktopNpmArgs,
   desktopPackageFlags,
   desktopRun: run,
-  desktopRuntimeDenoFlags,
   desktopRuntimeEnv,
   desktopWithAppVersion,
   macosCodesignArgs,
@@ -1222,8 +1221,6 @@ async function buildApp(out: string, target?: string): Promise<void> {
   await Deno.remove(out, { recursive: true }).catch(() => {});
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   const env = await desktopRuntimeEnv(import.meta.url, target);
-  // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
-  const denoFlags = await desktopDenoFlagArgs(import.meta.url);
   const cmd = [
     "deno",
     "desktop",
@@ -1231,9 +1228,8 @@ async function buildApp(out: string, target?: string): Promise<void> {
     // prompt the packaged GUI has no TTY to answer.
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
-    ...denoFlags,
-    // The pinned runtime's own flags (--unstable-no-legacy-abort before 3.0.0-rc.5; none after).
-    ...desktopRuntimeDenoFlags(env, denoFlags),
+    // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
+    ...await desktopDenoFlagArgs(import.meta.url),
     "--include",
     "out",
     ...await desktopIncludeArgs(import.meta.url),
@@ -1717,9 +1713,9 @@ const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   \`publisher\` / \`description\` fill the package metadata.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
- * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
- * Deno version it was built for (\`deno upgrade --version 2.9.8\`).
- *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it builds with
+ * denext's Deno toolchain: run it with \`denext desktop package\` or \`denext task <this task>\`
+ * (a plain \`deno task\` runs the \`deno\` on PATH, which is refused unless it is denext's).
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
@@ -1932,9 +1928,9 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   \`desktop.installers.publisher\` its Manufacturer.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
- * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
- * Deno version it was built for (\`deno upgrade --version 2.9.8\`).
- *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it builds with
+ * denext's Deno toolchain: run it with \`denext desktop package\` or \`denext task <this task>\`
+ * (a plain \`deno task\` runs the \`deno\` on PATH, which is refused unless it is denext's).
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)

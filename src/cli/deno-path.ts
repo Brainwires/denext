@@ -10,13 +10,12 @@
 //   - the chosen binary is already what PATH resolves `deno` to → no PATH change at all;
 //   - it is denext's toolchain binary (alone in its cache directory with its stamp) → that
 //     directory goes first, since it holds nothing but `deno`;
-//   - anything else (stock Deno in `/usr/bin` or `~/.deno/bin`, a `DENEXT_DENO=<path>` override)
+//   - anything else (a `DENEXT_DENO=<path>` build of denext's runtime)
 //     → a dedicated directory holding only a `deno` link to it goes first: a symlink on Unix, a
 //     hard link on Windows (no privilege needed; a copy across volumes). Prepending the binary's
 //     own directory would put every other program in it ahead of the user's PATH.
 
 import { basename, dirname, isAbsolute, join, relative } from "@std/path";
-import { denoExecutable } from "../build/bundle.ts";
 import {
   denoToolchainCacheRoot,
   resolveDenoToolchain,
@@ -148,7 +147,8 @@ export interface ForwardedDeno {
 
 /**
  * The Deno a forwarded Deno verb or `deno task` runs on — the automatic switch's choice (denext's
- * toolchain, or what `DENEXT_DENO=stock` / `<path>` asks for) — with the child environment that
+ * toolchain, or the `DENEXT_DENO=<path>` / `DENO_BIN` build of denext's runtime the user named)
+ * — with the child environment that
  * makes every nested `deno` that same binary. Shared by the CLI (`denext task`, `denext compile`,
  * …) and `denext ui`'s Tasks page.
  *
@@ -157,13 +157,9 @@ export interface ForwardedDeno {
  */
 export async function forwardedDeno(): Promise<ForwardedDeno> {
   const choice = await resolveDenoToolchain();
-  const deno = choice.kind === "toolchain" ? choice.deno : denoExecutable();
-  const marker: Record<string, string> = choice.kind === "toolchain"
-    ? { [TOOLCHAIN_ACTIVE_ENV]: choice.version }
-    : {};
   return {
-    deno,
-    env: { ...await denoPathEnv(deno), ...marker },
+    deno: choice.deno,
+    env: { ...await denoPathEnv(choice.deno), [TOOLCHAIN_ACTIVE_ENV]: choice.version },
     ...(choice.warning ? { warning: choice.warning } : {}),
   };
 }

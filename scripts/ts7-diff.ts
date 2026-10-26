@@ -313,12 +313,6 @@ function parseArgs(args: string[]) {
 if (import.meta.main) {
   const opts = parseArgs(Deno.args);
   const deno = opts.deno || await toolchainDeno();
-  if (!deno) {
-    console.error(
-      "ts7-diff: DENEXT_DENO=stock has no native checker; run it on denext's toolchain.",
-    );
-    Deno.exit(2);
-  }
   const targets = opts.targets.length ? opts.targets : await defaultTargets();
   const diffs: TargetDiff[] = [];
   for (const target of targets) {

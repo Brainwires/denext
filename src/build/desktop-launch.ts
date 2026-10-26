@@ -31,7 +31,6 @@ import {
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
-import { desktopNetSplit, desktopRuntimeDenoFlags } from "./desktop-runtime.ts";
 
 /** The file name of the generated `desktop dev` entry (written into the project's `.denext/`). */
 export const DESKTOP_DEV_ENTRY_FILE = "desktop-dev-entry.ts";
@@ -42,8 +41,6 @@ export interface DesktopLaunchBuildInput {
   readonly permissionFlags: readonly string[];
   /** `desktop.denoFlags`. */
   readonly denoFlags: readonly string[];
-  /** The pinned runtime's flags (`desktopRuntimeDenoFlags`; none from runtime 3.0.0-rc.5). */
-  readonly runtimeFlags?: readonly string[];
   /** The extension `--include`s and the npm args (`desktopIncludeArgs` + `desktopNpmArgs`). */
   readonly extraArgs: readonly string[];
   /** `["--icon", path]` or `[]`. */
@@ -96,7 +93,6 @@ export function desktopLaunchBuildArgs(input: DesktopLaunchBuildInput): string[]
     "--no-prompt",
     ...withNetHosts(input.permissionFlags, input.netHosts ?? []),
     ...input.denoFlags,
-    ...input.runtimeFlags ?? [],
     ...(input.includeOut ? ["--include", "out"] : []),
     ...input.extraArgs,
     ...input.iconArgs,
@@ -249,18 +245,13 @@ export interface DesktopLaunchPlanInput {
   readonly os: DesktopOs;
   /** `desktop.denoFlags`. */
   readonly denoFlags: readonly string[];
-  /**
-   * The build's runtime env (`resolveDesktopRuntimeEnv`): on the pinned runtime the build gets its
-   * flags (`desktopRuntimeDenoFlags`), as the packaging scripts do; none when empty (stock).
-   */
-  readonly runtimeEnv?: Readonly<Record<string, string>>;
   /** The entry to build, relative to the project. */
   readonly entry: string;
   /** `desktop dev` (no export embedded) vs `desktop run`. */
   readonly dev: boolean;
   /** Hosts to add to `--allow-net` (`dev --lan`). */
   readonly netHosts?: readonly string[];
-  /** Whether this build may bake the split network grant (default {@linkcode desktopNetSplit}). */
+  /** Whether this build bakes the split network grant (default: yes; every runtime has it). */
   readonly netSplit?: () => boolean;
   /** The scratch directory ({@linkcode desktopLaunchScratchDir}). */
   readonly scratch: string;
@@ -293,12 +284,9 @@ export async function desktopLaunchBuildPlan(
   );
   const args = desktopLaunchBuildArgs({
     permissionFlags: desktopBuildFlags(input.config, input.os, {
-      // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
-      netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
-        (input.netSplit ?? desktopNetSplit)(),
+      netSplit: input.netSplit?.() ?? true,
     }),
     denoFlags: input.denoFlags,
-    runtimeFlags: desktopRuntimeDenoFlags(input.runtimeEnv ?? {}, input.denoFlags),
     extraArgs: [
       ...await desktopIncludeArgs(scriptUrl, input.os),
       ...await desktopNpmArgs(scriptUrl),

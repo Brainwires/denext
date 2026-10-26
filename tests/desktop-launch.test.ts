@@ -112,7 +112,10 @@ Deno.test("desktop run: the build has the packaging scripts' flags, output outsi
     });
     assertEquals(darwin.bundle, `${join(scratch, "My-App")}.app`);
     assert(darwin.args.includes("--no-prompt"));
-    assert(darwin.args.includes("--allow-net=127.0.0.1,api.example.com,localhost"));
+    // Split by direction: every runtime denext 5.0 builds on has the split.
+    assert(darwin.args.includes("--allow-net-connect=127.0.0.1,api.example.com,localhost"));
+    assert(darwin.args.some((a) => a.startsWith("--allow-net-listen=127.0.0.1")));
+    assert(!darwin.args.some((a) => a.startsWith("--allow-net=")));
     assert(darwin.args.includes("--allow-write"));
     assert(!darwin.args.includes("-A") && !darwin.args.includes("--allow-all"));
     assertStringIncludes(darwin.args.join(" "), "--include out --include ./desktop/ext.ts");
@@ -122,7 +125,7 @@ Deno.test("desktop run: the build has the packaging scripts' flags, output outsi
   }
 });
 
-Deno.test("desktop dev: no export embedded, the generated entry, a LAN host added to --allow-net", async () => {
+Deno.test("desktop dev: no export embedded, the generated entry, a LAN host added to --allow-net-connect", async () => {
   const { dir, config } = await project();
   const scratch = await desktopLaunchScratchDir(dir);
   try {
@@ -142,7 +145,10 @@ Deno.test("desktop dev: no export embedded, the generated entry, a LAN host adde
       scratch,
     });
     assert(!plan.args.includes("out"), "dev proxies to the dev server: no export embedded");
-    assert(plan.args.includes("--allow-net=127.0.0.1,192.168.1.5,api.example.com,localhost"));
+    // The LAN host joins the outbound grant.
+    assert(
+      plan.args.includes("--allow-net-connect=127.0.0.1,192.168.1.5,api.example.com,localhost"),
+    );
     assertEquals(plan.args.at(-1), entry);
   } finally {
     await Deno.remove(scratch, { recursive: true });

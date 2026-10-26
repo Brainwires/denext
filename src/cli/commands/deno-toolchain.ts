@@ -6,7 +6,6 @@
 import { cacheCliModules, isRemoteCli } from "../cli-cache.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, spawnDenoAndExit } from "../shared.ts";
-import { denoExecutable } from "../../build/bundle.ts";
 import { forwardedDeno } from "../deno-path.ts";
 import {
   denoToolchainStatus,
@@ -14,7 +13,6 @@ import {
   linkDenoToolchain,
   resolveDenoToolchain,
   staleToolchainLink,
-  TOOLCHAIN_ENV,
   toolchainEnvValue,
   unlinkDenoToolchain,
 } from "../../build/deno-toolchain.ts";
@@ -42,44 +40,38 @@ async function requireToolchain(): Promise<{ deno: string; version: string; cach
   }
 }
 
-/** The binary `toolchain path` / `link` name: the pinned one (installed), or a refusal. */
+/**
+ * The binary `toolchain path` / `link` name: the pinned one (installed), the verified
+ * `DENEXT_DENO=<path>` build, or a refusal (`DENEXT_DENO=stock`, a binary that is not denext's
+ * runtime, a toolchain that can't be had) on stderr with exit code 1.
+ */
 async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
-  const raw = toolchainEnvValue();
-  if (raw.toLowerCase() === "stock") {
-    console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
-    return { deno: denoExecutable(), marker: "" };
+  const raw = toolchainEnvValue().toLowerCase();
+  if (raw === "" || raw === "pinned") {
+    const rt = await requireToolchain();
+    return { deno: rt.deno, marker: rt.version };
   }
-  if (raw !== "" && raw.toLowerCase() !== "pinned") {
+  try {
     const choice = await resolveDenoToolchain();
     if (choice.warning) console.error(choice.warning);
-    if (choice.kind === "stock") Deno.exit(1); // a process without the grants to run it
     return { deno: choice.deno, marker: choice.version };
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
   }
-  const rt = await requireToolchain();
-  return { deno: rt.deno, marker: rt.version };
 }
 
 /**
  * Run the toolchain's `deno` with `args` verbatim in `cwd` and exit with its code — `denext deno
- * …`, and (with `forwarded`) every Deno verb denext forwards (`denext compile …`, `denext
- * main.ts`) and `denext task`. Both take {@linkcode forwardedDeno}'s choice (its PATH rule and the
- * toolchain marker included); when the toolchain can't be had that throws a `denext:` error naming
- * the fix and the explicit opt-outs, never running another Deno on its own. `denext deno` also
- * says `DENEXT_DENO=stock` once. Never returns.
+ * …`, every Deno verb denext forwards (`denext compile …`, `denext main.ts`) and `denext task`.
+ * Each takes {@linkcode forwardedDeno}'s choice (its PATH rule and the
+ * toolchain marker included); when denext's runtime can't be had that throws a `denext:` error
+ * naming the fix, never running another Deno. Never returns.
  *
  * @param args The arguments for `deno`.
  * @param cwd The directory to run in.
- * @param forwarded Whether a Deno verb is being forwarded rather than `denext deno`.
  */
-export async function runDenoPassthrough(
-  args: string[],
-  cwd = Deno.cwd(),
-  forwarded = false,
-): Promise<never> {
-  const raw = toolchainEnvValue().toLowerCase();
-  if (!forwarded && raw === "stock") {
-    console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
-  }
+export async function runDenoPassthrough(args: string[], cwd = Deno.cwd()): Promise<never> {
   const chosen = await forwardedDeno();
   if (chosen.warning) console.error(chosen.warning);
   return await spawnDenoAndExit(args, cwd, chosen.env, chosen.deno);
@@ -209,8 +201,9 @@ export const toolchainCommand: CommandSpec = {
   summary:
     "Manage denext's Deno toolchain (install | status | path | link | unlink | uninstall | prune)",
   usage: "denext runs the commands that execute project code on its own pinned Deno build\n" +
-    "(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\n" +
-    "verified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n" +
+    "(upstream Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\n" +
+    "verified on first use. It is the only Deno denext runs on (DENEXT_DENO=<path> runs another\n" +
+    "build of it); your own `deno` is never replaced.\n" +
     "  denext toolchain install      Download + verify it now (fails when it can't)\n" +
     "  denext toolchain install --with gleam   …and the pinned Gleam compiler\n" +
     "  denext toolchain install --with fastlane   …and the managed fastlane (Ruby + gems)\n" +

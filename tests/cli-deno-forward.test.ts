@@ -287,7 +287,8 @@ async function runCli(
   const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
     cwd,
-    env: { DENEXT_DENO: "stock", NO_COLOR: "1", ...env },
+    // The running Deno (denext's runtime: the suite runs on it) stands in for the toolchain.
+    env: { DENEXT_DENO: Deno.execPath(), NO_COLOR: "1", ...env },
   });
   const decoder = new TextDecoder();
   return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };
@@ -511,8 +512,8 @@ Deno.test("a relative DENEXT_DENO resolves against the starting directory", asyn
     const rel = relative(Deno.cwd(), bin);
     const choice = await resolveDenoToolchain({
       env: (name) => (name === "DENEXT_DENO" ? rel : undefined),
+      identify: () => Promise.resolve({ deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" }),
     });
-    assert(choice.kind === "toolchain", JSON.stringify(choice));
     assertEquals(choice.deno, bin, "an absolute path, so a child in another cwd still finds it");
   } finally {
     await Deno.remove(dir, { recursive: true });

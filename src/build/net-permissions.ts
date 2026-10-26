@@ -4,62 +4,11 @@
 // Deno.serve, node:net servers), with `--allow-net`'s host syntax (`host`, `host:port`, a bare
 // `:port` for 0.0.0.0, 127.0.0.1 and localhost on that port). `--allow-net` keeps meaning both
 // directions, and the two models are exclusive per invocation: `--allow-net` (or `--allow-all`)
-// next to a directional flag is an error. Stock Deno and older builds know only `--allow-net`.
+// next to a directional flag is an error. Upstream Deno knows only `--allow-net`.
 //
-// Where denext bakes or derives least-privilege flags for a runtime that has the split, it bakes
-// the split instead, so a server may listen only on its own port while connecting where it needs:
-// a compromised dependency can no longer open a listener of its own.
-
-import {
-  compareDenoVersions,
-  type DenoIdentity,
-  isDenextDenoVersion,
-  isDenextReleaseVersion,
-} from "./deno-version.ts";
-import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
-
-/** The first release of denext's Deno with `--allow-net-connect` / `--allow-net-listen`. */
-export const NET_SPLIT_RELEASE = "3.0.0-rc.2";
-
-/**
- * Whether a release of denext's own Deno (a toolchain or a Deno Desktop runtime) named by a pin, a
- * release manifest or denext's own toolchain marker (`DENEXT_TOOLCHAIN_ACTIVE`) has the
- * direction-split network flags ({@linkcode NET_SPLIT_RELEASE} or later). An older release or an
- * unknown version (`undefined`) has not. A running Deno's own version goes through
- * {@linkcode denoSupportsNetSplit}, which tells upstream Deno of the same number apart.
- *
- * @param version A runtime or toolchain pin's version, or the toolchain marker.
- * @returns Whether the split flags may be passed.
- */
-export function supportsNetSplit(version: string | undefined): boolean {
-  return version !== undefined && isDenextReleaseVersion(version) &&
-    compareDenoVersions(version, NET_SPLIT_RELEASE) >= 0;
-}
-
-/**
- * Whether a running Deno parses the direction-split network flags: denext's own Deno (by its
- * identity marker, or a pre-marker build's version; src/build/deno-version.ts) of
- * {@linkcode NET_SPLIT_RELEASE} or later. Stock Deno — upstream's `3.0.0-rc.N` included — has not.
- *
- * @param identity What the Deno says about itself (`currentDenoIdentity()`, or a child's parsed
- *   `deno --version`).
- * @returns Whether the split flags may be passed to it.
- */
-export function denoSupportsNetSplit(identity: DenoIdentity): boolean {
-  return isDenextDenoVersion(identity) &&
-    compareDenoVersions(identity.deno, NET_SPLIT_RELEASE) >= 0;
-}
-
-/**
- * Whether denext's pinned Deno toolchain has the split: what a generated file that runs its
- * server on the toolchain (the Docker image, a generic host's systemd unit) may bake.
- *
- * @param version The pinned toolchain version (default: the checked-in pin's).
- * @returns Whether the pinned toolchain supports the split flags.
- */
-export function toolchainNetSplit(version: string = toolchainPin.version): boolean {
-  return supportsNetSplit(version);
-}
+// Every runtime denext 5.0 runs on has the split, so where denext bakes or derives least-privilege
+// flags it bakes the split, so a server may listen only on its own port while connecting where it
+// needs: a compromised dependency can no longer open a listener of its own.
 
 /** One permission flag from its values: `"*"` (or none given) is the unscoped flag. */
 function scoped(flag: string, values: readonly string[] | undefined): string {

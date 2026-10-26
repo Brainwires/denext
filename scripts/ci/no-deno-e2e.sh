@@ -45,14 +45,12 @@ denext create my-app --yes
 cd my-app
 mkdir -p tests
 cat > tests/smoke.test.ts <<'TS'
-// denext's Deno (src/build/deno-version.ts isDenextDenoVersion): its identity marker,
-// Deno.build.denext (3.0.0-rc.3 on); before it, only the version says so (`2.9.7-denext.N`, the
-// pinned pre-marker `3.0.0-rc.1` / `3.0.0-rc.2`). Upstream Deno's 3.0.0-rc.N has no marker.
-const PRE_MARKER = /^(\d+\.\d+\.\d+-denext\.\d+|3\.0\.0-rc\.[12])$/;
+// denext's Deno (src/build/deno-version.ts isSupportedDenextRuntime): its identity marker,
+// Deno.build.denext. Upstream Deno has none.
 Deno.test("the app's tests run on denext's toolchain", () => {
   const v = Deno.version.deno;
   const marker = (Deno.build as { denext?: unknown }).denext;
-  if (typeof marker !== "string" && !PRE_MARKER.test(v)) throw new Error(`stock deno ${v}`);
+  if (typeof marker !== "string") throw new Error(`not denext's runtime: deno ${v}`);
   // Only the toolchain has the built-in Postgres client.
   if (typeof (Deno as unknown as { SQL?: unknown }).SQL !== "function") throw new Error(`no Deno.SQL on ${v}`);
 });
@@ -89,9 +87,9 @@ denext fmt --check
 denext lint
 denext task build
 
-echo "--- no toolchain and no deno: one error naming the fix"
+echo "--- DENEXT_DENO=stock (refused since 5.0): one error naming the fix"
 if DENEXT_DENO=stock denext fmt --check > /tmp/no-deno-refusal.log 2>&1; then
-  fail "denext fmt ran with no Deno at all"
+  fail "denext fmt ran with DENEXT_DENO=stock"
 fi
 grep -q "denext toolchain install" /tmp/no-deno-refusal.log ||
   { cat /tmp/no-deno-refusal.log; fail "the refusal does not name the fix"; }

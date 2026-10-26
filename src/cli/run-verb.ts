@@ -7,20 +7,16 @@
 
 import { join } from "@std/path";
 import {
-  childToolchainMarker,
   entrypointArg,
   handsToolchainToChildren,
   isStandaloneBinary,
-  legacyAbortActive,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
   mergeRunFlags,
   pinnedConfigArgs,
   pinnedDenextCli,
-  servesInProcess,
   toolchainApplies,
   toolchainConfigArgs,
-  toolchainRuntimeFlags,
 } from "./self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "../build/deno-toolchain.ts";
 import { currentDenoIdentity } from "../build/deno-version.ts";
@@ -322,9 +318,6 @@ function maybeReexecPinned(
         denoExecutable(),
         [
           "-A",
-          ...toolchainRuntimeFlags(
-            childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
-          ),
           ...pinnedConfigArgs(dir),
           ...cliNpmModeArgs(dir),
           ...minDepAgeArgs(),
@@ -358,19 +351,6 @@ async function toolchainPermissionFlags(): Promise<string[]> {
   return flags;
 }
 
-/**
- * Whether this process may start its own Deno binary again without asking: a least-privilege
- * `start` (no `--allow-run`) keeps serving in-process rather than prompt or fail.
- */
-function mayRespawnSelf(): boolean {
-  try {
-    return Deno.permissions.querySync({ name: "run", command: Deno.execPath() }).state ===
-      "granted";
-  } catch {
-    return false;
-  }
-}
-
 /** The pinned toolchain version, or `null` (none pinned, or an unreadable pin file override). */
 function pinnedToolchainVersion(): string | null {
   try {
@@ -387,27 +367,21 @@ function gateDir(command: CommandSpec, ctx: CommandContext): string {
 
 /**
  * The environment a child that will serve `denext start` gets: the idle trim
- * (`DENO_UNSTABLE_IDLE_TRIM=1`, src/build/idle-trim.ts) when the child runs denext's Deno from
- * 3.0.0-rc.5 (`marker`) and neither the project's config nor `DENEXT_IDLE_TRIM=0` opts out. The
- * runtime reads it when the process starts, so only a process denext starts itself can get it;
- * every other verb (`dev`, `test`, `job`, …) gets nothing.
+ * (`DENO_UNSTABLE_IDLE_TRIM=1`, src/build/idle-trim.ts) unless the project's config or
+ * `DENEXT_IDLE_TRIM=0` opts out. The runtime reads it when the process starts, so only a process
+ * denext starts itself can get it; every other verb (`dev`, `test`, `job`, a project's own `start`
+ * verb, …) gets nothing.
  *
  * @param command The verb.
  * @param dir The project directory (its config's opt-out is read as text, before any import).
- * @param marker The toolchain the child runs (`undefined`: stock Deno).
  * @returns The variables to add.
  */
 export async function startIdleTrimEnv(
   command: CommandSpec,
   dir: string,
-  marker: string | undefined,
 ): Promise<Record<string, string>> {
-  if (!servesInProcess(command) || command.name !== "start") return {};
-  return idleTrimEnv({
-    runtime: marker,
-    configOff: await configDisablesIdleTrim(dir),
-    env: readEnv,
-  });
+  if ((command.source ?? "core") !== "core" || command.name !== "start") return {};
+  return idleTrimEnv({ configOff: await configDisablesIdleTrim(dir), env: readEnv });
 }
 
 /**
@@ -428,7 +402,7 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
     pinnedVersion: pinnedToolchainVersion(),
     standalone: () => standalone,
     resolve: () => resolveDenoToolchain(),
-    spawn: async (deno, marker, env = {}) =>
+    spawn: async (deno, marker) =>
       spawnCliChild(
         deno,
         [
@@ -437,31 +411,19 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
           // `deno task`), it found the project's deno.json from the working directory, but the
           // child runs the https URL that resolved to, which discovers no config at all.
           ...mergeRunFlags(
-            [
-              ...toolchainRuntimeFlags(marker),
-              ...cliNpmModeArgs(gateDir(command, ctx)),
-              ...minDepAgeArgs(),
-            ],
+            [...cliNpmModeArgs(gateDir(command, ctx)), ...minDepAgeArgs()],
             await toolchainConfigArgs(entrypointArg(entryUrl())),
           ),
         ],
         entrypointArg(entryUrl()),
         {
-          ...env,
-          ...await startIdleTrimEnv(command, gateDir(command, ctx), marker),
+          ...await startIdleTrimEnv(command, gateDir(command, ctx)),
           DENEXT_TOOLCHAIN_ACTIVE: marker,
         },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
     pathEnv: (deno) => denoPathEnv(deno),
-    // Already on the toolchain but started without its runtime flags (`toolchain link`'s `deno`,
-    // a `deno task` step): a serving verb re-runs once with them.
-    legacyAbort: !standalone && servesInProcess(command) && mayRespawnSelf()
-      ? legacyAbortActive
-      : undefined,
-    execPath: Deno.execPath(),
-    pids: { pid: Deno.pid, ppid: Deno.ppid },
     // A verb that runs no project code still hands the toolchain to the `deno` it spawns.
     handOff: handsToolchainToChildren(command, ctx.positionals[0], standalone),
   });
@@ -488,7 +450,6 @@ async function reexecWithConfig(
       // sloppy-imports so the re-exec'd process can load Next.js app route modules
       // that use extensionless imports at runtime (permissive fallback).
       "--unstable-sloppy-imports",
-      ...toolchainRuntimeFlags(childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity())),
       ...await childPermissionFlags(),
       // Deno's minimum-dependency-age policy applies to the child too and the parent can't
       // read the value it was started with: forward `DENEXT_MIN_DEP_AGE` (see minDepAgeArgs),
@@ -594,11 +555,7 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   // so config helpers don't refuse a runtime secret the build environment doesn't have.
   if (command.name === "build" || command.name === "export") markBuildPhase();
   const dir = gateDir(command, ctx);
-  const pinnedEnv = await startIdleTrimEnv(
-    command,
-    dir,
-    childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
-  );
+  const pinnedEnv = await startIdleTrimEnv(command, dir);
   if (await maybeReexecPinned(dir, pinnedEnv)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).

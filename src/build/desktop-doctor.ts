@@ -34,11 +34,12 @@
 
 import {
   DESKTOP_RUNTIME_PIN,
+  desktopBuildDeno,
   type DesktopRuntimePin,
   type DesktopRuntimeStatus,
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
-import { compareDenoVersions, denoReleaseVersion } from "./deno-version.ts";
+import { compareDenoVersions, isSupportedDenextRuntime } from "./deno-version.ts";
 import {
   CEF_SIGNING_FIX,
   cefCertificateProblem,
@@ -912,38 +913,43 @@ export async function probeLinuxSession(
   };
 }
 
+/**
+ * The finding about the `deno` that runs `deno desktop`, or `null` when it is denext's Deno
+ * runtime built from the runtime's Deno release ({@linkcode desktopBuildDeno}).
+ */
+function denoFinding(s: DesktopRuntimeStatus): DesktopDoctorFinding | null {
+  const found = s.deno.found === null
+    ? null
+    : { deno: s.deno.found, ...(s.deno.denext ? { denext: s.deno.denext } : {}) };
+  if (found !== null && desktopBuildDeno(found, { deno: s.deno.required })) return null;
+  const whose = found && !isSupportedDenextRuntime(found) ? " (not denext's)" : "";
+  return {
+    check: "runtime",
+    level: "error",
+    message: `the runtime ${s.version} builds only with denext's Deno built from Deno ` +
+      `${s.deno.required}; \`deno\` is ${s.deno.found ?? "not found"}${whose}`,
+    fix: "run it through denext (`denext desktop …`, `denext task …`), whose `deno` is the " +
+      "toolchain; `denext toolchain install` if it is missing",
+  };
+}
+
 /** The findings about the pinned runtime. */
 function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopDoctorFinding[] {
   const s = runtime.status;
   const out: DesktopDoctorFinding[] = [];
   const add = (level: DesktopDoctorFinding["level"], message: string, fix: string) =>
     out.push({ check: "runtime", level, message, fix });
-  if (s.mode === "stock") {
-    add(
-      "warning",
-      "DENEXT_DESKTOP_RUNTIME=stock: the stock runtime has no session probe, so tray and " +
-        "keyring problems show only as failures",
-      "unset DENEXT_DESKTOP_RUNTIME to use denext's pinned runtime",
-    );
+  if (s.mode === "refused") {
+    add("error", s.detail, "unset DENEXT_DESKTOP_RUNTIME to use denext's pinned runtime");
   }
   if (s.mode !== "pinned") return out;
-  const found = s.deno.found === null
-    ? null
-    : { deno: s.deno.found, ...(s.deno.denext ? { denext: s.deno.denext } : {}) };
-  if (found === null || denoReleaseVersion(found) !== s.deno.required) {
-    add(
-      "error",
-      `the runtime ${s.version} needs Deno ${s.deno.required} exactly (stock, or denext's ` +
-        `Deno toolchain built from it); \`deno\` is ${s.deno.found ?? "not found"}`,
-      `deno upgrade --version ${s.deno.required} (or point DENO_BIN at a Deno ` +
-        `${s.deno.required} binary, or at denext's Deno toolchain: \`denext toolchain path\`)`,
-    );
-  }
+  const deno = denoFinding(s);
+  if (deno) out.push(deno);
   if (s.cache === "unpinned") {
     add(
       "error",
       `no pinned runtime build for ${s.target}`,
-      "set DENEXT_DESKTOP_RUNTIME=stock to use the stock runtime",
+      "set DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime build> for this target",
     );
   } else if (s.cache === "invalid") {
     add(

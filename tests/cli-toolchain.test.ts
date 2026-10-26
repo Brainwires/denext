@@ -11,7 +11,6 @@ import {
   maybeReexecToolchain,
   type ReexecToolchainDeps,
   runsProjectCode,
-  servesInProcess,
   toolchainApplies,
 } from "../src/cli/self-exec.ts";
 import { buildRegistry } from "../src/cli/register.ts";
@@ -94,10 +93,7 @@ function deps(
     pinnedVersion: "2.9.7-denext.15",
     standalone: () => false,
     resolve: () => (seen.resolved++, Promise.resolve(choice)),
-    spawn: (deno, marker, env) => (
-      seen.spawned.push(env === undefined ? [deno, marker] : [deno, marker, JSON.stringify(env)]),
-        Promise.resolve(42)
-    ),
+    spawn: (deno, marker) => (seen.spawned.push([deno, marker]), Promise.resolve(42)),
     exit: (code) => void seen.exits.push(code),
     warn: (m) => void seen.warned.push(m),
     ...over,
@@ -105,11 +101,13 @@ function deps(
   return { d, seen, vars };
 }
 
-const TOOLCHAIN: DenoToolchainChoice = {
-  kind: "toolchain",
-  deno: "/cache/deno",
-  version: "2.9.7-denext.15",
-};
+const TOOLCHAIN: DenoToolchainChoice = { deno: "/cache/deno", version: "2.9.7-denext.15" };
+
+/** A resolver that refuses as the real one does for `DENEXT_DENO=stock` (denext 5.0). */
+const refuseStock = () =>
+  Promise.reject(
+    new DenoToolchainRequiredError("denext: DENEXT_DENO=stock is no longer supported"),
+  );
 
 Deno.test("maybeReexecToolchain: re-runs the invocation under the toolchain and exits with its code", async () => {
   const { d, seen } = deps(TOOLCHAIN);
@@ -123,7 +121,12 @@ Deno.test("maybeReexecToolchain never loops: the marker on its own version, or t
   for (
     const over of [
       { vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }, denoVersion: "2.9.7-denext.15" },
-      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } },
+      // A DENEXT_DENO=<path> build's child: the marker is that build's own version.
+      {
+        vars: { DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-rc.6" },
+        denoVersion: "3.0.0-rc.6",
+        denext: "3.0.0-rc.6",
+      },
       { denoVersion: "2.9.7-denext.15" },
     ]
   ) {
@@ -139,10 +142,12 @@ Deno.test("maybeReexecToolchain never loops: the marker on its own version, or t
 Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-execs onto the pin", async () => {
   for (
     const over of [
-      // an absolute-path stock deno inside `denext task` inherits the marker
+      // an absolute-path upstream deno inside `denext task` inherits the marker
       { vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }, denoVersion: "2.9.6" },
       // a `toolchain link` left on an older toolchain
       { denoVersion: "2.9.7-denext.14" },
+      // the retired "path" marker names no version: not the toolchain
+      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } },
     ]
   ) {
     const { d, seen } = deps(TOOLCHAIN, over);
@@ -154,11 +159,7 @@ Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-e
 Deno.test("maybeReexecToolchain: upstream Deno of the pinned version is not the toolchain", async () => {
   // Upstream Deno releases a 3.0.0-rc.N / 3.0.0 too: from 3.0.0-rc.3 the toolchain says it is
   // denext's with Deno.build.denext, and a Deno without it re-execs onto the pin.
-  const pinned: DenoToolchainChoice = {
-    kind: "toolchain",
-    deno: "/cache/deno",
-    version: "3.0.0-rc.3",
-  };
+  const pinned: DenoToolchainChoice = { deno: "/cache/deno", version: "3.0.0-rc.3" };
   for (
     const over of [
       { denoVersion: "3.0.0-rc.3" },
@@ -184,18 +185,26 @@ Deno.test("maybeReexecToolchain: upstream Deno of the pinned version is not the 
     assertEquals(await maybeReexecToolchain(true, d), false);
     assertEquals([seen.resolved, seen.spawned.length], [0, 0]);
   }
-  // The pinned pre-marker 3.0.0-rc.2 is recognised by its version (the fallback).
-  const { d, seen } = deps(TOOLCHAIN, { pinnedVersion: "3.0.0-rc.2", denoVersion: "3.0.0-rc.2" });
-  assertEquals(await maybeReexecToolchain(true, d), false);
-  assertEquals(seen.resolved, 0);
 });
 
-Deno.test("maybeReexecToolchain: an opt-out continues in-process; a toolchain that can't be had refuses", async () => {
-  const silent = deps({ kind: "stock", reason: "DENEXT_DENO=stock" });
-  assertEquals(await maybeReexecToolchain(true, silent.d), false);
-  assertEquals(silent.seen.warned, []);
-  // Offline on first use (or no build for this host, a tampered download): the resolver's error
-  // ends the command — no other Deno runs on its own.
+Deno.test("maybeReexecToolchain: DENEXT_DENO=stock and a toolchain that can't be had refuse; nothing runs", async () => {
+  // denext 5.0 has no opt-out: the resolver refuses DENEXT_DENO=stock, and the command ends.
+  const stock = deps(TOOLCHAIN, { vars: { DENEXT_DENO: "stock" }, resolve: refuseStock });
+  await assertRejects(
+    () => maybeReexecToolchain(true, stock.d),
+    DenoToolchainRequiredError,
+    "no longer supported",
+  );
+  assertEquals(stock.seen.spawned, []);
+  // Already on the toolchain, DENEXT_DENO=stock is still refused rather than ignored.
+  const onIt = deps(TOOLCHAIN, {
+    denoVersion: "2.9.7-denext.15",
+    vars: { DENEXT_DENO: "stock" },
+    resolve: refuseStock,
+  });
+  await assertRejects(() => maybeReexecToolchain(true, onIt.d), DenoToolchainRequiredError);
+  // Offline on first use (or no build for this host, a tampered download, a process without the
+  // grants to start it): the resolver's error ends the command — no other Deno runs.
   const offline = deps(TOOLCHAIN, {
     resolve: () => Promise.reject(new DenoToolchainRequiredError("denext: offline. Fix: …")),
   });
@@ -215,25 +224,29 @@ Deno.test("maybeReexecToolchain: an opt-out continues in-process; a toolchain th
   }
 });
 
-Deno.test("maybeReexecToolchain: a project-code verb that can't start the toolchain refuses, never serves on stock", async () => {
-  // The least-privilege `start` (no --allow-run) on stock Deno: it used to serve in-process, so
-  // Deno.SQL / postgresClient() worked in `dev` and were missing in production.
-  const lacking: DenoToolchainChoice = {
-    kind: "stock",
-    reason: "this process lacks --allow-run (for /cache)",
-    refusal: "denext: this process can't start denext's Deno toolchain. Fix: …",
-  };
-  const refused = deps(lacking);
-  await assertRejects(
-    () => maybeReexecToolchain(true, refused.d),
-    Error,
-    "can't start denext's Deno toolchain",
-  );
-  assertEquals(refused.seen.spawned, []);
-  // A verb that runs no project code only hands the toolchain on: it keeps its Deno, silently.
-  const handing = deps(lacking, { handOff: true });
-  assertEquals(await maybeReexecToolchain(false, handing.d), false);
-  assertEquals(handing.vars.DENO_BIN, undefined);
+Deno.test("maybeReexecToolchain: a DENO_BIN of the user's own is resolved (verified), never trusted", async () => {
+  // On the toolchain already: the user's DENO_BIN goes through the resolver, which verifies it is
+  // denext's runtime (and refuses it otherwise).
+  const refused = deps(TOOLCHAIN, {
+    denoVersion: "2.9.7-denext.15",
+    vars: { DENO_BIN: "/usr/bin/deno" },
+    resolve: () =>
+      Promise.reject(new DenoToolchainRequiredError("denext: DENO_BIN=/usr/bin/deno is upstream")),
+  });
+  await assertRejects(() => maybeReexecToolchain(true, refused.d), DenoToolchainRequiredError);
+  const verified = deps({ deno: "/my/deno", version: "3.0.0-rc.6", warning: "using it" }, {
+    denoVersion: "2.9.7-denext.15",
+    vars: { DENO_BIN: "/my/deno" },
+  });
+  assertEquals(await maybeReexecToolchain(true, verified.d), false);
+  assertEquals([verified.seen.resolved, verified.seen.warned], [1, ["using it"]]);
+  // One denext handed down itself (the marker beside it) is the toolchain: not resolved again.
+  const handed = deps(TOOLCHAIN, {
+    denoVersion: "2.9.7-denext.15",
+    vars: { DENO_BIN: "/cache/deno", DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" },
+  });
+  assertEquals(await maybeReexecToolchain(true, handed.d), false);
+  assertEquals(handed.seen.resolved, 0);
 });
 
 Deno.test("maybeReexecToolchain: under deno run, a verb that runs no project code hands the toolchain to its children", async () => {
@@ -247,16 +260,20 @@ Deno.test("maybeReexecToolchain: under deno run, a verb that runs no project cod
     [vars.DENO_BIN, vars.DENEXT_TOOLCHAIN_ACTIVE, vars.PATH],
     ["/cache/deno", "2.9.7-denext.15", "/cache:/usr/bin"],
   );
-  // Already on the toolchain (its own Deno is the pinned build), or a DENO_BIN of the user's own:
-  // nothing to resolve.
-  for (const over of [{ denoVersion: "2.9.7-denext.15" }, { vars: { DENO_BIN: "/my/deno" } }]) {
-    const on = deps(TOOLCHAIN, { handOff: true, ...over });
-    assertEquals(await maybeReexecToolchain(false, on.d), false);
-    assertEquals(on.seen.resolved, 0);
-  }
-  // DENEXT_DENO=stock: the children keep the Deno that started the CLI.
-  const stock = deps({ kind: "stock", reason: "DENEXT_DENO=stock" }, { handOff: true });
-  assertEquals(await maybeReexecToolchain(false, stock.d), false);
+  // Already on the toolchain (its own Deno is the pinned build): nothing to resolve.
+  const on = deps(TOOLCHAIN, { handOff: true, denoVersion: "2.9.7-denext.15" });
+  assertEquals(await maybeReexecToolchain(false, on.d), false);
+  assertEquals(on.seen.resolved, 0);
+  // A DENO_BIN of the user's own is resolved (verified) and handed down.
+  const own = deps({ deno: "/my/deno", version: "3.0.0-rc.6" }, {
+    handOff: true,
+    vars: { DENO_BIN: "/my/deno" },
+  });
+  assertEquals(await maybeReexecToolchain(false, own.d), false);
+  assertEquals([own.seen.resolved, own.vars.DENEXT_TOOLCHAIN_ACTIVE], [1, "3.0.0-rc.6"]);
+  // DENEXT_DENO=stock: refused, the children get nothing.
+  const stock = deps(TOOLCHAIN, { handOff: true, resolve: refuseStock });
+  await assertRejects(() => maybeReexecToolchain(false, stock.d), DenoToolchainRequiredError);
   assertEquals(stock.vars.DENO_BIN, undefined);
 });
 
@@ -275,104 +292,7 @@ Deno.test("handsToolchainToChildren: every non-project verb that may spawn deno,
   assert(hands("desktop", "add"), "desktop add runs no project code but may spawn deno");
 });
 
-Deno.test("servesInProcess: dev, start and profile; never export, a build or a project verb", () => {
-  for (const name of ["dev", "start", "profile"]) assert(servesInProcess({ name }), name);
-  for (const name of ["export", "build", "test", "job", "desktop", "mobile"]) {
-    assert(!servesInProcess({ name }), name);
-  }
-  assert(!servesInProcess({ name: "start", source: "project" }));
-  assert(!servesInProcess({ name: "dev", source: "plugin" }));
-});
-
-/** Seams of a serving verb already on the pinned toolchain (`toolchain link`'s `deno`). */
-function onToolchain(
-  legacy: boolean | undefined,
-  over: Partial<ReexecToolchainDeps> & { vars?: Record<string, string> } = {},
-) {
-  let probes = 0;
-  const r = deps(TOOLCHAIN, {
-    denoVersion: "2.9.7-denext.15",
-    execPath: "/linked/deno",
-    pids: { pid: 200, ppid: 100 },
-    legacyAbort: () => (probes++, Promise.resolve(legacy)),
-    ...over,
-  });
-  return { ...r, probes: () => probes };
-}
-
-Deno.test("maybeReexecToolchain on the toolchain without its runtime flags: one re-run on the same binary", async () => {
-  const markers: Record<string, string>[] = [{}, { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }];
-  for (const vars of markers) {
-    const { d, seen, probes } = onToolchain(true, { vars });
-    assert(await maybeReexecToolchain(true, d));
-    assertEquals(probes(), 1);
-    assertEquals(seen.resolved, 0, "no toolchain lookup: it is this binary");
-    // The marker is this version, so the spawn adds --unstable-no-legacy-abort, and the child
-    // is told it has it (this pid).
-    assertEquals(seen.spawned, [[
-      "/linked/deno",
-      "2.9.7-denext.15",
-      JSON.stringify({ DENEXT_RUNTIME_FLAGS_FOR: "200" }),
-    ]]);
-    assertEquals(seen.exits, [42]);
-  }
-});
-
-Deno.test("maybeReexecToolchain on the toolchain: no re-run when the flag is on, unknown, or already given", async () => {
-  for (const legacy of [false, undefined]) {
-    const { d, seen, probes } = onToolchain(legacy);
-    assertEquals(await maybeReexecToolchain(true, d), false);
-    assertEquals([probes(), seen.spawned.length], [1, 0]);
-  }
-  // The child of that re-run: its parent told it, so it never probes or re-runs again.
-  const child = onToolchain(true, { vars: { DENEXT_RUNTIME_FLAGS_FOR: "100" } });
-  assertEquals(await maybeReexecToolchain(true, child.d), false);
-  assertEquals([child.probes(), child.seen.spawned.length], [0, 0]);
-  // A value leaked from further up names another process: this one still checks.
-  const leaked = onToolchain(true, { vars: { DENEXT_RUNTIME_FLAGS_FOR: "7" } });
-  assert(await maybeReexecToolchain(true, leaked.d));
-  assertEquals(leaked.probes(), 1);
-});
-
-Deno.test("maybeReexecToolchain on a 3.0.0-rc.5+ toolchain: no probe, no re-run (the new abort is its default)", async () => {
-  for (const version of ["3.0.0-rc.5", "3.0.0"]) {
-    const { d, seen, probes } = onToolchain(true, {
-      denoVersion: version,
-      denext: version,
-      vars: { DENEXT_TOOLCHAIN_ACTIVE: version },
-    });
-    assertEquals(await maybeReexecToolchain(true, d), false);
-    assertEquals([probes(), seen.spawned.length], [0, 0], version);
-  }
-});
-
-Deno.test("maybeReexecToolchain on the toolchain: nothing to check off a serving verb, a DENEXT_DENO path or stock", async () => {
-  // No probe given: the verb serves nothing, or this process may not spawn its own Deno.
-  const quiet = onToolchain(true, { legacyAbort: undefined });
-  assertEquals(await maybeReexecToolchain(true, quiet.d), false);
-  assertEquals(quiet.seen.spawned, []);
-  // A DENEXT_DENO=<path> binary may predate the flag.
-  const path = onToolchain(true, { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } });
-  assertEquals(await maybeReexecToolchain(true, path.d), false);
-  assertEquals([path.probes(), path.seen.spawned.length], [0, 0]);
-  // A verb that runs no project code.
-  const none = onToolchain(true);
-  assertEquals(await maybeReexecToolchain(false, none.d), false);
-  assertEquals(none.probes(), 0);
-});
-
-Deno.test("maybeReexecToolchain from stock Deno: the toolchain child is told it has the runtime flags", async () => {
-  const { d, seen, probes } = onToolchain(true, { denoVersion: "2.9.6" });
-  assert(await maybeReexecToolchain(true, d));
-  assertEquals(probes(), 0, "stock Deno is never probed: it re-execs onto the toolchain anyway");
-  assertEquals(seen.spawned, [[
-    "/cache/deno",
-    "2.9.7-denext.15",
-    JSON.stringify({ DENEXT_RUNTIME_FLAGS_FOR: "200" }),
-  ]]);
-});
-
-Deno.test("maybeReexecToolchain in a compiled binary: children get the toolchain, the user's DENO_BIN wins", async () => {
+Deno.test("maybeReexecToolchain in a compiled binary: children get the toolchain; a user DENO_BIN is verified", async () => {
   const { d, seen, vars } = deps({ ...TOOLCHAIN, warning: "unverified" }, {
     standalone: () => true,
     pathEnv: (deno) => Promise.resolve({ PATH: `/shim-for${deno}:/usr/bin` }),
@@ -383,11 +303,21 @@ Deno.test("maybeReexecToolchain in a compiled binary: children get the toolchain
   assertEquals(vars.PATH, "/shim-for/cache/deno:/usr/bin", "every `deno` a child looks up");
   assertEquals(seen.spawned, [], "a binary cannot swap its own runtime");
   assertEquals(seen.warned, ["unverified"]);
-  const own = deps(TOOLCHAIN, { standalone: () => true, vars: { DENO_BIN: "/my/deno" } });
+  // The user's DENO_BIN goes through the resolver (which verifies it) and is handed down as is.
+  const own = deps({ deno: "/my/deno", version: "3.0.0-rc.6" }, {
+    standalone: () => true,
+    vars: { DENO_BIN: "/my/deno" },
+  });
   assertEquals(await maybeReexecToolchain(true, own.d), false);
-  assertEquals(own.vars.DENO_BIN, "/my/deno");
-  assertEquals(own.seen.resolved, 0, "nothing downloaded when the user named a deno");
-  assertEquals(own.vars.PATH, undefined);
+  assertEquals([own.vars.DENO_BIN, own.vars.DENEXT_TOOLCHAIN_ACTIVE], ["/my/deno", "3.0.0-rc.6"]);
+  assertEquals(own.seen.resolved, 1);
+  // What a parent binary already handed down (DENO_BIN + the marker) stands.
+  const handed = deps(TOOLCHAIN, {
+    standalone: () => true,
+    vars: { DENO_BIN: "/cache/deno", DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" },
+  });
+  assertEquals(await maybeReexecToolchain(true, handed.d), false);
+  assertEquals(handed.seen.resolved, 0);
 });
 
 Deno.test("maybeReexecToolchain in a compiled binary: the marker or the pinned version never skip the hand-off", async () => {
@@ -404,17 +334,14 @@ Deno.test("maybeReexecToolchain in a compiled binary: the marker or the pinned v
   }
 });
 
-Deno.test("maybeReexecToolchain in a compiled binary: an opt-out leaves the environment alone", async () => {
-  const { d, seen, vars } = deps({ kind: "stock", reason: "DENEXT_DENO=stock", warning: "stock" }, {
-    standalone: () => true,
-  });
-  assertEquals(await maybeReexecToolchain(true, d), false);
+Deno.test("maybeReexecToolchain in a compiled binary: DENEXT_DENO=stock refuses and leaves the environment alone", async () => {
+  const { d, vars } = deps(TOOLCHAIN, { standalone: () => true, resolve: refuseStock });
+  await assertRejects(() => maybeReexecToolchain(true, d), DenoToolchainRequiredError);
   assertEquals([vars.DENO_BIN, vars.PATH, vars.DENEXT_TOOLCHAIN_ACTIVE], [
     undefined,
     undefined,
     undefined,
   ]);
-  assertEquals(seen.warned, ["stock"]);
 });
 
 Deno.test("toolchainApplies: a compiled binary hands the toolchain to every verb that may spawn deno", () => {
@@ -440,13 +367,22 @@ Deno.test("toolchainApplies: a compiled binary hands the toolchain to every verb
 
 const posix = Deno.build.os !== "windows";
 
-/** A `deno` stand-in: records argv (one per line) + the marker into `log`, exits with `code`. */
+/** The version a {@linkcode wrapper} says it is (denext 5.0 runs only on its runtime). */
+const WRAPPER_VERSION = "3.0.0-rc.99";
+
+/**
+ * A `deno` stand-in: answers `--version` as denext's runtime of {@linkcode WRAPPER_VERSION} (the
+ * identity line a `DENEXT_DENO=<path>` is verified by); otherwise records argv (one per line) +
+ * the marker into `log` and exits with `code`.
+ */
 async function wrapper(dir: string, code: number): Promise<{ path: string; log: string }> {
   const path = join(dir, "deno");
   const log = join(dir, "argv.log");
   await Deno.writeTextFile(
     path,
-    `#!/bin/sh\nprintf '%s\\n' "$@" > '${log}'\n` +
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then\n` +
+      `  printf 'deno ${WRAPPER_VERSION} (stable)\\ndenext ${WRAPPER_VERSION} (Brainwires)\\n'\n` +
+      `  exit 0\nfi\nprintf '%s\\n' "$@" > '${log}'\n` +
       `printf 'marker=%s\\n' "$DENEXT_TOOLCHAIN_ACTIVE" >> '${log}'\nexit ${code}\n`,
   );
   await Deno.chmod(path, 0o755);
@@ -494,13 +430,19 @@ Deno.test({
         DENEXT_TOOLCHAIN_PIN_FILE: pinFile,
       });
       assertEquals(run.code, 7, run.stderr);
-      assertStringIncludes(run.stderr, "not downloaded, pinned or verified");
+      assertStringIncludes(run.stderr, "not downloaded, pinned or hash-checked");
       const argv = (await Deno.readTextFile(w.log)).trimEnd().split("\n");
       assertEquals(argv[0], "run");
       assert(argv.includes("-A"), "a -A parent gives the child -A");
       const at = argv.indexOf(CLI);
       assert(at > 0, `the CLI entrypoint: ${argv.join(" ")}`);
-      assertEquals(argv.slice(at + 1), ["test", "--filter", "x y", "a.test.ts", "marker=path"]);
+      assertEquals(argv.slice(at + 1), [
+        "test",
+        "--filter",
+        "x y",
+        "a.test.ts",
+        `marker=${WRAPPER_VERSION}`,
+      ]);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -516,11 +458,12 @@ Deno.test({
       const w = await wrapper(dir, 7);
       const marked = await cli(["toolchain", "status", "--json"], dir, {
         DENEXT_DENO: w.path,
-        DENEXT_TOOLCHAIN_ACTIVE: "path",
+        DENEXT_TOOLCHAIN_ACTIVE: WRAPPER_VERSION,
       });
       assertEquals(marked.code, 0, marked.stderr);
       const status = JSON.parse(marked.stdout);
-      assertEquals([status.mode, status.active], ["path", true]);
+      assertEquals([status.mode, status.ok], ["path", true]);
+      assertStringIncludes(status.detail, `denext's Deno ${WRAPPER_VERSION}`);
       const help = await cli(["generate", "--help"], dir, { DENEXT_DENO: w.path });
       assertEquals(help.code, 0, help.stderr);
       assertEquals(await Deno.stat(w.log).catch(() => null), null, "the wrapper never ran");
@@ -547,7 +490,7 @@ Deno.test({
         "x.json",
         "--json",
         "-A",
-        "marker=path",
+        `marker=${WRAPPER_VERSION}`,
       ]);
     } finally {
       await Deno.remove(dir, { recursive: true });
@@ -626,7 +569,7 @@ Deno.test({
 
 Deno.test({
   name:
-    "with no toolchain pinned: toolchain install fails clearly, denext deno runs stock; DENEXT_DENO=stock / a missing path",
+    "denext 5.0: no toolchain pinned, DENEXT_DENO=stock, upstream Deno or a missing path all refuse",
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext-tc-" });
     try {
@@ -636,40 +579,35 @@ Deno.test({
       const install = await cli(["toolchain", "install"], dir, env);
       assertEquals(install.code, 1);
       assertStringIncludes(install.stderr, "not available for this denext version");
-      // No toolchain pinned for this denext version: `denext deno` runs the Deno that started it.
+      // No toolchain pinned for this denext version: `denext deno` refuses (it used to run the
+      // Deno that started it).
       const deno = await cli(["deno", "--version"], dir, env);
-      assertEquals(deno.code, 0, deno.stderr);
-      assertStringIncludes(deno.stdout, `deno ${Deno.version.deno}`);
-      // A DENEXT_DENO=<path> that isn't a file is still an error for `denext deno`.
+      assertEquals(deno.code, 1, deno.stdout);
+      assertStringIncludes(deno.stderr, "pins no Deno toolchain");
+      assertStringIncludes(deno.stderr, "denext toolchain install");
+      // A DENEXT_DENO=<path> that isn't a file is an error for `denext deno`.
       const missing = await cli(["deno", "--version"], dir, {
         ...env,
         DENEXT_DENO: join(dir, "no-such-deno"),
       });
       assertEquals(missing.code, 1);
       assertStringIncludes(missing.stderr, "is not a file");
+      // DENEXT_DENO=stock: the 5.0 refusal, with the fix.
       const stock = await cli(["deno", "--version"], dir, { ...env, DENEXT_DENO: "stock" });
-      assertEquals(stock.code, 0, stock.stderr);
-      assertStringIncludes(stock.stdout, `deno ${Deno.version.deno}`);
-      assertStringIncludes(stock.stderr, "DENEXT_DENO=stock");
+      assertEquals(stock.code, 1, stock.stdout);
+      assertStringIncludes(stock.stderr, "DENEXT_DENO=stock is no longer supported");
+      assertStringIncludes(stock.stderr, "denext toolchain install");
+      // A path to upstream Deno (no identity line): refused by its `--version`.
+      if (posix) {
+        const upstream = join(dir, "upstream-deno");
+        await Deno.writeTextFile(upstream, "#!/bin/sh\necho 'deno 2.9.8 (stable)'\n");
+        await Deno.chmod(upstream, 0o755);
+        const refused = await cli(["deno", "--version"], dir, { ...env, DENEXT_DENO: upstream });
+        assertEquals(refused.code, 1, refused.stdout);
+        assertStringIncludes(refused.stderr, "is upstream Deno 2.9.8");
+      }
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
   },
-});
-
-Deno.test("desktop run / dev: only an explicitly chosen Deno may fall back to the stock runtime", async () => {
-  const { denoChosenExplicitly } = await import("../src/cli/commands/desktop.ts");
-  const env = (vars: Record<string, string>) => (k: string) => vars[k];
-  assertEquals(denoChosenExplicitly(env({})), false);
-  assertEquals(denoChosenExplicitly(env({ DENEXT_DENO: "pinned" })), false);
-  assertEquals(denoChosenExplicitly(env({ DENEXT_DENO: "stock" })), true);
-  assertEquals(denoChosenExplicitly(env({ DENEXT_DENO: "/opt/deno" })), true);
-  assertEquals(denoChosenExplicitly(env({ DENO_BIN: "/opt/deno" })), true);
-  // A compiled denext sets DENO_BIN to the toolchain itself, with the marker beside it.
-  assertEquals(
-    denoChosenExplicitly(
-      env({ DENO_BIN: "/cache/deno", DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }),
-    ),
-    false,
-  );
 });

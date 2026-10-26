@@ -32,48 +32,33 @@ Deno.test("under `deno test`, resolves the real deno binary", () => {
 // ---------------------------------------------------------------------------------------------
 // resolveDenoExecutable: a compiled binary never assumes a `deno` it does not have.
 
-/** Seams over a fake filesystem holding `files`. */
+/** Seams of a compiled binary (override any). */
 function seams(
-  over: Partial<DenoExecutableSeams> & { vars?: Record<string, string>; files?: string[] } = {},
+  over: Partial<DenoExecutableSeams> & { vars?: Record<string, string> } = {},
 ): DenoExecutableSeams {
-  const files = new Set(over.files ?? []);
   return {
     env: (name) => over.vars?.[name],
     execPath: () => "/opt/denext/bin/denext",
-    os: "linux",
     standalone: true,
-    isFile: (path) => files.has(path),
     ...over,
   };
 }
 
-Deno.test("resolveDenoExecutable: DENO_BIN, then a deno execPath, then ~/.deno/bin, then PATH", () => {
+Deno.test("resolveDenoExecutable: DENO_BIN, else this process's own Deno under deno run", () => {
   assertEquals(resolveDenoExecutable(seams({ vars: { DENO_BIN: "/tc/deno" } })), "/tc/deno");
-  assertEquals(
-    resolveDenoExecutable(seams({ execPath: () => "/usr/local/bin/deno", standalone: false })),
-    "/usr/local/bin/deno",
-  );
-  assertEquals(
-    resolveDenoExecutable(seams({ vars: { HOME: "/home/u" }, files: ["/home/u/.deno/bin/deno"] })),
-    "/home/u/.deno/bin/deno",
-  );
-  assertEquals(
-    resolveDenoExecutable(seams({ vars: { PATH: "/a::/b" }, files: ["/b/deno"] })),
-    "/b/deno",
-  );
-  assertEquals(
-    resolveDenoExecutable(
-      seams({ os: "windows", vars: { Path: "C:\\x;C:\\y" }, files: ["C:\\y\\deno.exe"] }),
-    ),
-    "C:\\y\\deno.exe",
-  );
+  for (const exec of ["/usr/local/bin/deno", "/cache/denext-deno/3.0.0-rc.5/x/deno-renamed"]) {
+    assertEquals(resolveDenoExecutable(seams({ execPath: () => exec, standalone: false })), exec);
+  }
 });
 
-Deno.test("resolveDenoExecutable: a compiled binary with no Deno anywhere refuses with the fix", () => {
-  const err = assertThrows(() => resolveDenoExecutable(seams({ vars: { PATH: "/usr/bin" } })));
+Deno.test("resolveDenoExecutable: a compiled binary never looks for another Deno (5.0)", () => {
+  // A `~/.deno/bin/deno` or a `deno` on PATH is not looked at: the binary always hands the
+  // toolchain over in DENO_BIN, and without it refuses with the fix.
+  const err = assertThrows(() =>
+    resolveDenoExecutable(seams({ vars: { HOME: "/home/u", PATH: "/usr/bin" } }))
+  );
   assertEquals((err as Error).message, NO_DENO_MESSAGE);
   assertStringIncludes(NO_DENO_MESSAGE, "denext toolchain install");
+  assertStringIncludes(NO_DENO_MESSAGE, "stock Deno is no longer supported");
   assert(NO_DENO_MESSAGE.startsWith("denext:"), "printed by the CLI without a stack");
-  // Outside a binary the bare name is still a PATH lookup, as before.
-  assertEquals(resolveDenoExecutable(seams({ standalone: false })), "deno");
 });

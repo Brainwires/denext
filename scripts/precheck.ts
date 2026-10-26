@@ -11,7 +11,7 @@
 //   2. fmt + lint      the changed files (the whole repo when deno.json's fmt or lint changed)
 //   3. type-check      cli.ts + mod.ts (CI's step) and every changed TypeScript file, on denext's
 //                      Deno toolchain (native TypeScript 7) as CI checks them — never the `deno`
-//                      that happens to be on PATH (a stock 2.9 checks with TypeScript 6)
+//                      that happens to be on PATH (an upstream 2.9 checks with TypeScript 6)
 //   4. drift tests     the consistency tests that turned CI red most often (DRIFT_TESTS)
 //   5. test badge      `deno task badge:tests --check` (CI checks it on the dispatched run a
 //                      release counts, on `main` and on pull requests)

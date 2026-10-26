@@ -104,18 +104,13 @@ export interface TestPlan {
  * one `deno test -A` exactly as typed. Otherwise the `Deno.test` files run, then the Vitest
  * files; with coverage both add `--coverage-raw-data-only`, and the combined report (summary,
  * `<dir>/lcov.info`, `<dir>/html/`) is made afterwards, as `deno test --coverage` makes it for
- * one pass. Off the toolchain the Vitest files are skipped (stock Deno cannot run them).
+ * one pass. The verb runs on denext's Deno toolchain, whose `deno test` has Vitest's API.
  *
  * @param args The arguments after `denext test`.
  * @param vitestFiles The project's Vitest files (see {@link findVitestFiles}).
- * @param onToolchain Whether this Deno is denext's toolchain build (Vitest's API).
  * @returns The plan.
  */
-export function planTestRun(
-  args: readonly string[],
-  vitestFiles: readonly string[],
-  onToolchain: boolean,
-): TestPlan {
+export function planTestRun(args: readonly string[], vitestFiles: readonly string[]): TestPlan {
   const { flags, paths, tail } = splitTestArgs(args);
   const single: TestPlan = { passes: [["test", "-A", ...args]], report: [] };
   const help = flags.includes("--help") || flags.includes("-h");
@@ -124,7 +119,6 @@ export function planTestRun(
     ...single,
     note: `${vitestFiles.length} Vitest file(s) not run: ${why}`,
   });
-  if (!onToolchain) return skipped("they need denext's Deno toolchain (DENEXT_DENO=stock)");
   // A watched pass never ends, so a second could never start: name the Vitest files to watch them.
   if (flags.includes("--watch") || flags.some((f) => f.startsWith("--watch="))) {
     return skipped("--watch runs one pass (name the Vitest files to watch them)");

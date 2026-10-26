@@ -11,7 +11,7 @@ import { basename } from "@std/path";
 import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { appName, header } from "./shared.ts";
-import { splitNetFlag, toolchainNetSplit } from "../../build/net-permissions.ts";
+import { splitNetFlag } from "../../build/net-permissions.ts";
 import { drainMsOf, stopTimeoutSec } from "./shared.ts";
 
 /** Options for {@linkcode genericHost}. */
@@ -162,7 +162,7 @@ function toolchainNet(
   port: number | null,
 ): readonly string[] {
   const net = manifest.permissions.net;
-  if (!net || !toolchainNetSplit()) return words;
+  if (!net) return words;
   const scoped = (values: readonly string[]) => values.includes("*") ? undefined : values;
   const listen = scoped(net.listen) ?? (port === null ? undefined : [`127.0.0.1:${port}`]);
   return splitNetFlag(words, listen, scoped(net.connect));

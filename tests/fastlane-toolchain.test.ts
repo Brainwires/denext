@@ -598,7 +598,7 @@ Deno.test({
       const cli = new URL("../cli.ts", import.meta.url).pathname;
       const out = await new Deno.Command(Deno.execPath(), {
         args: ["run", "-A", cli, "--cwd", dir, "fastlane", "--version", "--verbose", "env"],
-        env: { DENEXT_FASTLANE: exe, DENEXT_DENO: "stock", NO_COLOR: "1" },
+        env: { DENEXT_FASTLANE: exe, DENEXT_DENO: Deno.execPath(), NO_COLOR: "1" },
         stdout: "piped",
         stderr: "piped",
       }).output();

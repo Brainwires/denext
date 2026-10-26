@@ -28,9 +28,6 @@ import {
   type JailWriteTarget,
 } from "./jail-exceptions.ts";
 
-/** The first release of denext's Deno that jails dependencies' lifecycle scripts by default. */
-export const JAIL_DEFAULT_RELEASE = "3.0.0-rc.5";
-
 /**
  * The first release of denext's Deno that takes a per-package host list (`"net": ["host"]`) and
  * `~`-relative `write` paths in `jailScripts.packages` (DENEXT.md item 108). On older runtimes a
@@ -53,19 +50,6 @@ export function jailHostListsSupported(
 
 /** The docs section on the jail. */
 export const JAIL_DOCS_URL = "https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail";
-
-/**
- * Whether a release of denext's own Deno (a pin, a release manifest, the toolchain marker) jails
- * dependencies' lifecycle scripts by default: {@linkcode JAIL_DEFAULT_RELEASE} or later. Stock
- * Deno and an unknown version have no jail at all.
- *
- * @param version The runtime version (default: the checked-in toolchain pin's).
- * @returns Whether the jail is on unless the project opts out.
- */
-export function jailOnByDefault(version: string | undefined = toolchainPin.version): boolean {
-  return version !== undefined && isDenextReleaseVersion(version) &&
-    compareDenoVersions(version, JAIL_DEFAULT_RELEASE) >= 0;
-}
 
 /** What the project's settings say: on, off, or nothing (the runtime's default). */
 export type JailState = "on" | "off" | "default";
@@ -160,14 +144,14 @@ export function readJailSetting(inputs: JailInputs): JailSetting {
 }
 
 /**
- * Whether dependencies' lifecycle scripts run jailed for the project.
+ * Whether dependencies' lifecycle scripts run jailed for the project: unless it turns the jail off
+ * (every runtime denext 5.0 runs on jails them by default, from 3.0.0-rc.5).
  *
  * @param setting The project's settings.
- * @param version The runtime version (default: the toolchain pin's).
  * @returns Whether the jail is on.
  */
-export function jailEffective(setting: JailSetting, version?: string): boolean {
-  return setting.state === "on" || (setting.state === "default" && jailOnByDefault(version));
+export function jailEffective(setting: JailSetting): boolean {
+  return setting.state !== "off";
 }
 
 /** The file operations the jail planning uses (`mfs` in `denext migrate`, so `--check` writes nothing). */
@@ -593,8 +577,6 @@ export type JailAction =
   | "none"
   /** The project turned the jail off; nothing written. */
   | "off"
-  /** The jail is not on for this runtime yet; nothing written. */
-  | "pending"
   /** Every needed exception is already configured. */
   | "configured"
   /** The exceptions were written into deno.json. */
@@ -718,17 +700,6 @@ function unwrittenReport(
       ],
     };
   }
-  if (!effective) {
-    return {
-      ...base,
-      action: "pending",
-      lines: [
-        `${names(required)} will need a lifecycle-script jail exception once dependencies' ` +
-        `install scripts run jailed (on by default from denext's runtime ${JAIL_DEFAULT_RELEASE}, ` +
-        "or with jail-scripts=true); `denext doctor` flags it then",
-      ],
-    };
-  }
   if (missing.length > 0) return null;
   return {
     ...base,
@@ -762,7 +733,7 @@ export async function applyJailExceptions(
   const all = await requiredJailExceptions(project, fs, options.version);
   const refused = refusedLines(all);
   const required = all.filter(grantsSomething);
-  const effective = jailEffective(project.setting, options.version);
+  const effective = jailEffective(project.setting);
   const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
   const base = { effective, required, missing };
   const early = unwrittenReport(base, project.setting, refused);

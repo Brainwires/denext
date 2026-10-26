@@ -37,6 +37,7 @@ import {
 import {
   compareDenoVersions,
   denextVersionLine,
+  denoReleaseVersion,
   isDenextReleaseVersion,
   pinnedDenoReleaseVersion,
 } from "../src/build/deno-version.ts";
@@ -54,6 +55,11 @@ const pinRuntimeMain = (args: string[], out: string, toolchainOut = `${out}.tool
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
+
+/** What denext's toolchain says about itself: the only Deno that builds on the runtime (5.0). */
+const TOOLCHAIN_DENO = { deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" };
+/** The Deno release the toolchain is built from (`deno-toolchain-pin.json`'s `deno`). */
+const RUNTIME_DENO_RELEASE = denoReleaseVersion(TOOLCHAIN_DENO);
 
 const TARGET = "x86_64-unknown-linux-gnu";
 const LIB = "libdenort.so";
@@ -90,7 +96,7 @@ async function fixture(archive: Uint8Array): Promise<Fixture> {
     version: "9.9.9-denext.1",
     tag: "denext-runtime-v9.9.9-denext.1",
     repository: "https://github.com/Brainwires/deno",
-    deno: "9.9.9",
+    deno: RUNTIME_DENO_RELEASE,
     denoSha: "",
     laufeySha: "",
     laufeyApiVersion: null,
@@ -261,10 +267,10 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
   }
 });
 
-/** Every download failure ends with the same way out: a local runtime dir, or the stock runtime. */
+/** Every download failure ends with the same way out: a local runtime dir (no stock runtime). */
 function assertDownloadHint(message: string): void {
-  assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime>");
-  assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME=stock to use the stock runtime (");
+  assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime build>");
+  assert(!message.includes("DENEXT_DESKTOP_RUNTIME=stock"), message);
 }
 
 Deno.test("ensureDesktopRuntime refuses an oversized and a truncated download", async () => {
@@ -634,7 +640,7 @@ Deno.test("resolveDesktopRuntimeEnv: the pinned runtime's env for a matching den
       pin: f.pin,
       cacheRoot: f.cacheRoot,
       env: envOf({}),
-      denoVersion: () => Promise.resolve("9.9.9"),
+      denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
       log: quiet,
     });
     assertEquals(r.mode, "pinned");
@@ -649,7 +655,7 @@ Deno.test("resolveDesktopRuntimeEnv: the pinned runtime's env for a matching den
   }
 });
 
-Deno.test("resolveDesktopRuntimeEnv: a deno version mismatch fails with the install command", async () => {
+Deno.test("resolveDesktopRuntimeEnv: upstream Deno, or denext's Deno of another release, is refused", async () => {
   const f = await fixture(await fixtureArchive());
   try {
     const err = await assertRejects(
@@ -666,27 +672,64 @@ Deno.test("resolveDesktopRuntimeEnv: a deno version mismatch fails with the inst
         }),
       Error,
     );
-    assertEquals(err.message, denoVersionMismatchMessage("2.9.6", f.pin));
-    assertStringIncludes(err.message, "deno upgrade --version 9.9.9");
-    assertStringIncludes(err.message, "DENO_BIN");
-    assertStringIncludes(err.message, "DENEXT_DESKTOP_RUNTIME=stock");
+    assertEquals(err.message, denoVersionMismatchMessage({ deno: "2.9.6" }, f.pin));
+    assertStringIncludes(err.message, "is upstream Deno 2.9.6");
+    assertStringIncludes(err.message, "denext desktop run | dev | package");
+    assertStringIncludes(err.message, "denext toolchain install");
+    assert(!err.message.includes("DENEXT_DESKTOP_RUNTIME=stock"), err.message);
+    // Upstream Deno of exactly the runtime's release: still not denext's runtime.
+    const upstream = await assertRejects(
+      () =>
+        resolveDesktopRuntimeEnv({
+          projectDir: ".",
+          target: TARGET,
+          hostOs: "linux",
+          pin: f.pin,
+          cacheRoot: f.cacheRoot,
+          env: envOf({}),
+          denoVersion: () => Promise.resolve(RUNTIME_DENO_RELEASE),
+          log: quiet,
+        }),
+      Error,
+    );
+    assertStringIncludes(upstream.message, `is upstream Deno ${RUNTIME_DENO_RELEASE}`);
+    // denext's own Deno from before 5.0's minimum.
+    const old = await assertRejects(
+      () =>
+        resolveDesktopRuntimeEnv({
+          projectDir: ".",
+          target: TARGET,
+          hostOs: "linux",
+          pin: f.pin,
+          cacheRoot: f.cacheRoot,
+          env: envOf({}),
+          denoVersion: () => Promise.resolve({ deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" }),
+          log: quiet,
+        }),
+      Error,
+    );
+    assertStringIncludes(old.message, "older than 3.0.0-rc.5");
     assertEquals(f.hits(), 0);
   } finally {
     await f.close();
   }
 });
 
-Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock → no env, a warning, no checks", async () => {
-  const logs: string[] = [];
-  const r = await resolveDesktopRuntimeEnv({
-    projectDir: ".",
-    target: TARGET,
-    env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock" }),
-    denoVersion: () => Promise.reject(new Error("must not be called")),
-    log: (l) => logs.push(l),
-  });
-  assertEquals(r, { mode: "stock", env: {} });
-  assertStringIncludes(logs.join("\n"), "deep links");
+Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock is refused before any check (5.0)", async () => {
+  const stock = await assertRejects(
+    () =>
+      resolveDesktopRuntimeEnv({
+        projectDir: ".",
+        target: TARGET,
+        env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock" }),
+        denoVersion: () => Promise.reject(new Error("must not be called")),
+        log: quiet,
+      }),
+    Error,
+  );
+  assertStringIncludes(stock.message, "DENEXT_DESKTOP_RUNTIME=stock is no longer supported");
+  assertStringIncludes(stock.message, "denext 5.0");
+  assertStringIncludes(stock.message, "DENEXT_DESKTOP_RUNTIME_DIR");
   await assertRejects(
     () =>
       resolveDesktopRuntimeEnv({
@@ -790,7 +833,7 @@ Deno.test({
         pin,
         cacheRoot: f.cacheRoot,
         env: envOf({}),
-        denoVersion: () => Promise.resolve("9.9.9"),
+        denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
         log: (l) => logs.push(l),
       });
     const r = await resolve();
@@ -859,7 +902,7 @@ Deno.test({
         pin,
         cacheRoot: f.cacheRoot,
         env: envOf(vars),
-        denoVersion: () => Promise.resolve("9.9.9"),
+        denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
         log: (l) => logs.push(l),
       });
     const shim = (await resolve()).env.LAUFEY_DEV_DIR;
@@ -902,7 +945,7 @@ Deno.test({
       pin,
       cacheRoot: f.cacheRoot,
       env: envOf({}),
-      denoVersion: () => Promise.resolve("9.9.9"),
+      denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
       log: quiet,
     };
     // Install the runtime first (its own extraction needs real symlinks), then refuse them.
@@ -934,7 +977,7 @@ Deno.test("resolveDesktopRuntimeEnv: a Linux target from Windows offers the back
       pin: f.pin,
       cacheRoot: f.cacheRoot,
       env: envOf({}),
-      denoVersion: () => Promise.resolve("9.9.9"),
+      denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
       log: quiet,
     });
     const shim = `${desktopRuntimeDir(f.cacheRoot, f.pin, TARGET, "webview")}.cross-host`;
@@ -964,39 +1007,12 @@ Deno.test("resolveDesktopRuntimeEnv: a cross-host runtime without its backend bi
           pin,
           cacheRoot: f.cacheRoot,
           env: envOf({}),
-          denoVersion: () => Promise.resolve("9.9.9"),
+          denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
           log: quiet,
         }),
       Error,
       "has no laufey_webview.exe",
     );
-  } finally {
-    await f.close();
-  }
-});
-
-Deno.test("resolveDesktopRuntimeEnv: onDenoMismatch stock warns (naming DENO_BIN) and builds stock", async () => {
-  const f = await fixture(await fixtureArchive());
-  try {
-    const logs: string[] = [];
-    const r = await resolveDesktopRuntimeEnv({
-      projectDir: ".",
-      target: TARGET,
-      hostOs: "linux",
-      pin: f.pin,
-      cacheRoot: f.cacheRoot,
-      env: envOf({}),
-      denoVersion: () => Promise.resolve("2.9.6"),
-      onDenoMismatch: "stock",
-      log: (l) => logs.push(l),
-    });
-    assertEquals(r, { mode: "stock", env: {} });
-    const text = logs.join("\n");
-    assertStringIncludes(text, "is Deno 2.9.6");
-    assertStringIncludes(text, "DENO_BIN");
-    assertStringIncludes(text, "STOCK runtime");
-    assertStringIncludes(text, "packaging still requires Deno 9.9.9");
-    assertEquals(f.hits(), 0);
   } finally {
     await f.close();
   }
@@ -1057,7 +1073,7 @@ Deno.test("renameRetrying: retries a Windows PermissionDenied with backoff, noth
   }
 });
 
-Deno.test("resolveDesktopRuntimeEnv: an unpinned target names the stock opt-out", async () => {
+Deno.test("resolveDesktopRuntimeEnv: an unpinned target names a local runtime build, not stock", async () => {
   const f = await fixture(await fixtureArchive());
   try {
     const err = await assertRejects(
@@ -1069,12 +1085,14 @@ Deno.test("resolveDesktopRuntimeEnv: an unpinned target names the stock opt-out"
           pin: f.pin,
           cacheRoot: f.cacheRoot,
           env: envOf({}),
-          denoVersion: () => Promise.resolve("9.9.9"),
+          denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
           log: quiet,
         }),
       Error,
     );
     assertStringIncludes(err.message, "has no webview build for aarch64-unknown-linux-gnu");
+    assertStringIncludes(err.message, "DENEXT_DESKTOP_RUNTIME_DIR");
+    assert(!err.message.includes("stock"), err.message);
   } finally {
     await f.close();
   }
@@ -1087,7 +1105,7 @@ Deno.test("projectDesktopBackend reads deno.json desktop.backend", async () => {
     await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "cef" } }');
     assertEquals(await projectDesktopBackend(dir), "cef");
     await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "raw" } }');
-    await assertRejects(() => projectDesktopBackend(dir), Error, "stock");
+    await assertRejects(() => projectDesktopBackend(dir), Error, 'ships "webview" and "cef"');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -1122,7 +1140,7 @@ Deno.test("doctor desktopRuntimeCheck: version, cache state and the deno match",
       pin: f.pin,
       cacheRoot: f.cacheRoot,
       env: envOf({}),
-      denoVersion: () => Promise.resolve("9.9.9"),
+      denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
     };
     // Not a desktop project: no check.
     assertEquals(await desktopRuntimeCheck(project, opts), null);
@@ -1136,7 +1154,7 @@ Deno.test("doctor desktopRuntimeCheck: version, cache state and the deno match",
     const rt = await ensure(f);
     c = (await desktopRuntimeCheck(project, opts))!;
     assertStringIncludes(c.detail, "cached + verified");
-    assertStringIncludes(c.detail, "deno 9.9.9 ✓");
+    assertStringIncludes(c.detail, "deno 3.0.0-rc.5 (denext's Deno) ✓");
     await Deno.writeTextFile(rt.runtimeLib, "r");
     c = (await desktopRuntimeCheck(project, opts))!;
     assertEquals(c.ok, false);
@@ -1146,13 +1164,13 @@ Deno.test("doctor desktopRuntimeCheck: version, cache state and the deno match",
       denoVersion: () => Promise.resolve("2.9.6"),
     }))!;
     assertEquals(c.ok, false);
-    assertStringIncludes(c.detail, "deno upgrade --version 9.9.9");
+    assertStringIncludes(c.detail, "deno 2.9.6 ✗ — needs denext's Deno built from");
     c = (await desktopRuntimeCheck(project, {
       ...opts,
       env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock" }),
     }))!;
-    assertEquals(c.ok, true);
-    assertStringIncludes(c.detail, "stock");
+    assertEquals(c.ok, false, "DENEXT_DESKTOP_RUNTIME=stock is refused since 5.0");
+    assertStringIncludes(c.detail, "DENEXT_DESKTOP_RUNTIME=stock is no longer supported");
   } finally {
     await f.close();
     await Deno.remove(project, { recursive: true });

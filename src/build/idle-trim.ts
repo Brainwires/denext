@@ -1,5 +1,5 @@
-// The production server's idle trim: denext's Deno from runtime 3.0.0-rc.5 (Brainwires/deno
-// DENEXT.md item 104) can hand the memory a load burst left behind back to the OS once the event
+// The production server's idle trim: denext's Deno (from runtime 3.0.0-rc.5, Brainwires/deno
+// DENEXT.md item 104; every runtime denext 5.0 runs on) can hand the memory a load burst left behind back to the OS once the event
 // loop goes idle — a full V8 GC, then glibc's `malloc_trim(0)`. It is opt-in on the runtime
 // (`--unstable-idle-trim`, or `DENO_UNSTABLE_IDLE_TRIM=1` read when the process starts); denext
 // turns it on for the production server only — `denext start` when it starts the server process
@@ -18,8 +18,6 @@
 
 import { join } from "@std/path";
 import { CONFIG_FILES } from "./config-files.ts";
-import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
-import { supportsIdleTrim } from "./deno-version.ts";
 
 /** The environment variable denext's Deno reads at start to turn the idle trim on (`1`). */
 export const IDLE_TRIM_ENV = "DENO_UNSTABLE_IDLE_TRIM";
@@ -48,11 +46,6 @@ export function readEnv(name: string): string | undefined {
 
 /** What decides whether the server runs with the idle trim. */
 export interface IdleTrimInputs {
-  /**
-   * The version of denext's Deno that runs the server (a toolchain marker or the pinned
-   * version), or `undefined` / `"path"` when it is stock Deno or of unknown version.
-   */
-  readonly runtime: string | undefined;
   /** Whether the project's config opts out (`start.idleTrim === false`). */
   readonly configOff: boolean;
   /** Reads an environment variable. */
@@ -60,16 +53,14 @@ export interface IdleTrimInputs {
 }
 
 /**
- * Whether the production server gets the idle trim: its runtime is denext's Deno from 3.0.0-rc.5
- * and neither the config nor `DENEXT_IDLE_TRIM=0` opts out.
+ * Whether the production server gets the idle trim: unless the config or `DENEXT_IDLE_TRIM=0`
+ * opts out (every runtime denext runs on has it).
  *
- * @param inputs The runtime, the config's opt-out and the environment.
+ * @param inputs The config's opt-out and the environment.
  * @returns Whether to turn it on.
  */
 export function idleTrimOn(inputs: IdleTrimInputs): boolean {
-  const { runtime } = inputs;
-  return runtime !== undefined && runtime !== "path" && supportsIdleTrim(runtime) &&
-    !inputs.configOff && inputs.env(IDLE_TRIM_OPT_OUT_ENV) !== "0";
+  return !inputs.configOff && inputs.env(IDLE_TRIM_OPT_OUT_ENV) !== "0";
 }
 
 /**
@@ -77,7 +68,7 @@ export function idleTrimOn(inputs: IdleTrimInputs): boolean {
  * {@linkcode idleTrimOn}, unless the variable is already set (the user's own value stands, `0`
  * included: the runtime turns the trim on for `1` only).
  *
- * @param inputs The runtime, the config's opt-out and the environment.
+ * @param inputs The config's opt-out and the environment.
  * @returns The variables to add (none, or the one).
  */
 export function idleTrimEnv(inputs: IdleTrimInputs): Record<string, string> {
@@ -90,7 +81,7 @@ export function idleTrimEnv(inputs: IdleTrimInputs): Record<string, string> {
  * {@linkcode idleTrimOn}. A baked flag cannot be turned off when the binary runs; a
  * `DENEXT_IDLE_TRIM=0` then holds the trim off instead ({@linkcode holdOffBakedIdleTrim}).
  *
- * @param inputs The toolchain compiling (`undefined` off it), the config's opt-out, the environment.
+ * @param inputs The config's opt-out and the environment.
  * @returns The flags.
  */
 export function idleTrimCompileFlags(inputs: IdleTrimInputs): string[] {
@@ -103,15 +94,13 @@ export function idleTrimCompileFlags(inputs: IdleTrimInputs): string[] {
  *
  * @param configOff Whether the project's config opts out.
  * @param env Reads an environment variable (the generator's).
- * @param pinned The pinned toolchain version (default: the checked-in pin's).
  * @returns Whether to write `DENO_UNSTABLE_IDLE_TRIM=1` into it.
  */
 export function pinnedIdleTrim(
   configOff: boolean,
   env: (name: string) => string | undefined,
-  pinned: string = toolchainPin.version,
 ): boolean {
-  return idleTrimOn({ runtime: pinned, configOff, env });
+  return idleTrimOn({ configOff, env });
 }
 
 /** `text` with its line and block comments blanked (string contents are not parsed). */

@@ -28,6 +28,5 @@ export const taskCommand: CommandSpec = {
     { name: "name", help: "The task (default: list them)" },
     { name: "args", help: "Arguments for the task", variadic: true },
   ],
-  run: (ctx) =>
-    runDenoPassthrough(["task", ...denoGlobalArgs(ctx), ...ctx.rest], commandCwd(ctx), true),
+  run: (ctx) => runDenoPassthrough(["task", ...denoGlobalArgs(ctx), ...ctx.rest], commandCwd(ctx)),
 };

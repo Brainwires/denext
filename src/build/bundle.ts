@@ -5,9 +5,14 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
-import { quietThenExplain, runToExit } from "./exited-output.ts";
+import { quietThenExplain } from "./exited-output.ts";
 import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
-import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
+import {
+  denoBinaryIdentity,
+  describeDeno,
+  isSupportedDenextRuntime,
+  RUNTIME_REQUIRED_FIX,
+} from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
 import { frameworkFileUrl, frameworkRootUrl } from "./framework-root.ts";
@@ -160,16 +165,16 @@ export function frameworkRoot(): string {
 let bundleSupport: Promise<void> | undefined;
 
 /**
- * Verify the resolved `deno` exists and is new enough for the (experimental)
- * `deno bundle` subcommand, with a clear, actionable error otherwise. Runs the
- * check once per process (memoized). `deno bundle` is an evolving subcommand;
- * this fails fast on a missing/old binary instead of a cryptic bundle error, and
- * the build-smoke test guards against output-shape drift.
+ * Verify the resolved `deno` is denext's Deno runtime ({@linkcode isSupportedDenextRuntime}: the
+ * `denext <version> (Brainwires)` line of `deno --version`, 3.0.0-rc.5 or later) before it bundles: the native path relies on what only that runtime has (`deno bundle
+ * --define`), so another Deno — a stock `deno test` running a build, a `DENO_BIN` of another
+ * Deno — is refused with the fix rather than producing a broken bundle. Runs the check once per
+ * process (memoized).
  */
 export function ensureBundleSupport(): Promise<void> {
   // Memoize only a SUCCESSFUL probe. Caching a rejection would permanently brick
   // a long-lived dev server after one transient spawn failure (or after the user
-  // fixes their Deno install / sets DENO_BIN) — reset so the next call re-probes.
+  // installs the toolchain) — reset so the next call re-probes.
   if (!bundleSupport) {
     bundleSupport = probeBundleSupport().catch((err) => {
       bundleSupport = undefined;
@@ -181,74 +186,16 @@ export function ensureBundleSupport(): Promise<void> {
 
 async function probeBundleSupport(): Promise<void> {
   const deno = denoExecutable();
-  let versionText: string;
-  try {
-    const out = await runToExit(deno, {
-      args: ["--version"],
-      stdout: "piped",
-      stderr: "null",
-    });
-    versionText = new TextDecoder().decode(out.stdout);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `denext: could not run \`${deno} --version\` to bundle client code (${msg}). ` +
-        `Install Deno ${MIN_DENO_VERSION}+, or set DENO_BIN to a compatible deno binary.`,
-    );
-  }
-  const match = versionText.match(/deno\s+(\d+)\.(\d+)\.(\d+)/i);
-  if (!match) {
-    throw new Error(
-      `denext: unexpected \`deno --version\` output while checking bundle support:\n${versionText}\n` +
-        `denext needs Deno ${MIN_DENO_VERSION}+ (the \`deno bundle\` subcommand). Set DENO_BIN if needed.`,
-    );
-  }
-  if (!denoVersionOk(`${match[1]}.${match[2]}.${match[3]}`)) {
-    throw new Error(
-      `denext: bundling requires Deno ${MIN_DENO_VERSION}+ (the \`deno bundle\` subcommand); ` +
-        `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a newer deno binary.`,
-    );
-  }
-}
-
-let defineSupport: Promise<boolean> | undefined;
-
-/**
- * Whether the resolved `deno`'s `deno bundle` takes `--define` (esbuild's `define`: replace a
- * global identifier with a constant expression). denext's Deno toolchain has it; a stock Deno 2.x
- * does not, and an upstream release that adds the same flag is picked up for free. A feature
- * probe, not a version match: it runs `deno bundle --help` once per process (memoized) and looks
- * for the flag. Never throws: any failure reads `false`, which keeps the seeded fallback
- * (`DENEXT_DENO=stock`, `DENO_BIN` pointing at an older deno).
- *
- * @returns `true` when `deno bundle --define KEY=VALUE` is available.
- */
-export function bundleSupportsDefine(): Promise<boolean> {
-  return defineSupport ??= probeBundleDefine();
-}
-
-/** {@linkcode bundleSupportsDefine}'s probe: `deno bundle --help` lists `--define`. */
-async function probeBundleDefine(): Promise<boolean> {
-  try {
-    const out = await runToExit(denoExecutable(), {
-      args: ["bundle", "--help"],
-      stdout: "piped",
-      stderr: "null",
-    });
-    return out.success && /--define\b/.test(new TextDecoder().decode(out.stdout));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Test seam: force {@linkcode bundleSupportsDefine}'s answer (`undefined` re-probes), so one
- * process can exercise both the `--define` path and the seeded fallback.
- *
- * @param supported The answer to return, or `undefined` to clear the override and re-probe.
- */
-export function __setBundleDefineForTests(supported: boolean | undefined): void {
-  defineSupport = supported === undefined ? undefined : Promise.resolve(supported);
+  const identity = await denoBinaryIdentity(deno);
+  if (identity !== null && isSupportedDenextRuntime(identity)) return;
+  throw new Error(
+    `denext: bundling needs denext's Deno runtime, but \`${deno}\` is ${
+      describeDeno(identity)
+    }.\n` +
+      RUNTIME_REQUIRED_FIX +
+      " Run builds through the `denext` CLI (or `denext task`), which runs " +
+      "them on it.",
+  );
 }
 
 /**
@@ -268,8 +215,7 @@ export function classDefine(classComponents?: boolean): Record<string, string> {
  * The `--define`s of a native client bundle: the class-component gate (on unless
  * `classRuntime` is `"off"`) and, when `features` is given, the `denext/feature` flag map
  * (the value the esbuild paths define, so an un-folded `feature()` call reads the configured
- * flag). Used only when {@linkcode bundleSupportsDefine}; otherwise the Flight entry seeds the
- * flags ({@linkcode featureSeedBlock}) and the class gate reads its runtime default (on).
+ * flag).
  *
  * @param opts The bundle's class-runtime mode and feature flags.
  * @returns The define map, `name → constant source text`.
@@ -1040,35 +986,18 @@ function viewTransitionSupportBlock(
 }
 
 /**
- * Seed the `denext/feature` flag map on the CLIENT for the native App Router path when the
- * running `deno bundle` has no `--define` (stock Deno; see {@linkcode bundleSupportsDefine}).
- * With `--define`, the bundler inlines `__DENEXT_FEATURES__` as the esbuild paths do and this
- * seed is not emitted. A `feature()` call the fold leaves (a non-literal argument, a namespace
- * import) would otherwise read the empty `globalThis` default and disagree with the (seeded)
- * server render. Seeding here makes the fold a pure DCE optimization: any un-folded call still
- * returns the configured value. Emitted at the top of the entry, before any island module
- * executes. Empty map → nothing emitted (the runtime default `{}` already reads every flag as
- * `false`).
+ * Seed the `denext/feature` flag map on the CLIENT for a Flight entry built without
+ * `deno bundle --define` (the unbundled dev entries, the compat esbuild path). The native
+ * `deno bundle` path defines `__DENEXT_FEATURES__` instead and passes no flags here. A
+ * `feature()` call the fold leaves (a non-literal argument, a namespace import) would otherwise
+ * read the empty `globalThis` default and disagree with the (seeded) server render. Seeding here
+ * makes the fold a pure DCE optimization: any un-folded call still returns the configured value.
+ * Emitted at the top of the entry, before any island module executes. Empty map → nothing emitted
+ * (the runtime default `{}` already reads every flag as `false`).
  */
 function featureSeedBlock(features: Record<string, boolean>): string {
   if (Object.keys(features).length === 0) return "";
   return `globalThis.__DENEXT_FEATURES__ = ${JSON.stringify(features)};\n`;
-}
-
-/**
- * {@linkcode featureSeedBlock} for a route (or global-error) entry: the same seed, needed only
- * when the running `deno bundle` has no `--define`, but as a side-effect `import` of a `data:`
- * module. A route entry imports the page statically, and ES imports are evaluated before the
- * entry's own statements, so a page's module-level `feature()` call would otherwise read the
- * empty default; an import prepended FIRST runs first (see {@linkcode momentumScrollSeedImport}).
- *
- * @param features The configured flags (`undefined`: none passed).
- * @returns The import to prepend, or `""`.
- */
-async function featureSeedImport(features: Record<string, boolean> | undefined): Promise<string> {
-  if (!features || Object.keys(features).length === 0 || await bundleSupportsDefine()) return "";
-  const code = `globalThis.__DENEXT_FEATURES__=${JSON.stringify(features)};`;
-  return `import ${JSON.stringify(`data:text/javascript,${encodeURIComponent(code)}`)};\n`;
 }
 
 /**
@@ -1323,9 +1252,7 @@ export interface BundleOptions {
   /**
    * Compile-time feature flags (`features`) for the CLIENT on the native `deno bundle` path,
    * so an un-folded `feature()` call reads the configured value instead of the empty default.
-   * Passed to `deno bundle --define __DENEXT_FEATURES__=…` when the running Deno supports it
-   * ({@linkcode bundleSupportsDefine}); otherwise the Flight, route and global-error entries seed
-   * them. Only the native App Router bundlers pass this (the dev server's too); compat and SPA
+   * Passed to `deno bundle --define __DENEXT_FEATURES__=…`. Only the native App Router bundlers pass this (the dev server's too); compat and SPA
    * builds handle the flags themselves. Unset: none.
    */
   features?: Record<string, boolean>;
@@ -1375,9 +1302,7 @@ export async function bundleFlightEntry(
   boundary: BoundaryManifest,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  // With `deno bundle --define` the flags are defined (bundleSourceFiles); seed them only without.
-  const seeded = await bundleSupportsDefine() ? {} : opts.features ?? {};
-  return bundleSourceFiles(
+  return await bundleSourceFiles(
     generateFlightEntry(
       boundary,
       opts.dev,
@@ -1387,7 +1312,8 @@ export async function bundleFlightEntry(
       opts.classRuntime ?? "lazy",
       opts.usesActivity ?? false,
       opts.usesViewTransition ?? false,
-      seeded,
+      // The flags are defined (`deno bundle --define`, bundleSourceFiles), never seeded here.
+      {},
       opts.usesSingletons ?? true,
       opts.usesLiveView ?? true,
     ),
@@ -1738,7 +1664,7 @@ export function bundleFailureMessage(code: number, stderr: string): string {
     : "";
   return `deno bundle failed (${code}):\n${stderr}${hint}\n` +
     `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +
-    `error rather than a code error, check your Deno version or set DENO_BIN.)`;
+    `error rather than a code error, check \`denext toolchain status\`.)`;
 }
 
 /** What one `deno bundle` run emitted. */
@@ -2151,11 +2077,6 @@ async function bundleResolution(tmpDir: string, opts: BundleOptions): Promise<Bu
   return { client, configPath };
 }
 
-/** The `--define`s for a native bundle: {@linkcode nativeBundleDefines}, when Deno takes them. */
-async function bundleDefines(opts: BundleOptions): Promise<Record<string, string>> {
-  return await bundleSupportsDefine() ? nativeBundleDefines(opts) : {};
-}
-
 /**
  * A fresh `deno bundle` workspace (after checking the toolchain supports it): a temp dir with
  * an empty `src/` for the entry sources and the `out/` path the bundle writes to. The caller
@@ -2178,24 +2099,17 @@ export function bundleSourceFiles(
   entrySource: string,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  return bundleEntry(entrySource, opts, "");
+  return bundleEntry(entrySource, opts);
 }
 
-/**
- * {@linkcode bundleSourceFiles} with `prelude` (a seed import) written ahead of the entry. The
- * leak check still reads `entrySource` itself, which names the generated entry it labels.
- */
-async function bundleEntry(
-  entrySource: string,
-  opts: BundleOptions,
-  prelude: string,
-): Promise<BundleOutput> {
+/** {@linkcode bundleSourceFiles}'s work; the leak check reads `entrySource`, which names the generated entry it labels. */
+async function bundleEntry(entrySource: string, opts: BundleOptions): Promise<BundleOutput> {
   const { tmpDir, srcDir, outDir } = await bundleWorkspace();
   const entryPath = join(srcDir, "entry.tsx");
   try {
     await Deno.writeTextFile(
       entryPath,
-      prelude + momentumScrollSeed(opts.momentumSafeScroll) + entrySource,
+      momentumScrollSeed(opts.momentumSafeScroll) + entrySource,
     );
     const resolution = await bundleResolution(tmpDir, opts);
     const run = await runDenoBundle(
@@ -2204,7 +2118,7 @@ async function bundleEntry(
       outDir,
       opts.minify,
       opts.dev,
-      await bundleDefines(opts),
+      nativeBundleDefines(opts),
     );
     const { files } = run;
     const entry = "entry.js";
@@ -2268,8 +2182,7 @@ async function bundleRoutesNow(
     // Distinct per-entry basenames so esbuild's outputs map back unambiguously.
     const bases = routeEntries.map((_, i) => `entry_${i}`);
     const entryPaths = bases.map((b) => join(srcDir, `${b}.tsx`));
-    const prelude = await featureSeedImport(opts.features) +
-      momentumScrollSeed(opts.momentumSafeScroll);
+    const prelude = momentumScrollSeed(opts.momentumSafeScroll);
     await Promise.all(
       routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], prelude + re.source)),
     );
@@ -2280,7 +2193,7 @@ async function bundleRoutesNow(
       outDir,
       opts.minify,
       opts.dev,
-      await bundleDefines(opts),
+      nativeBundleDefines(opts),
     );
     const { files } = run;
 
@@ -2323,7 +2236,7 @@ export async function bundleRoute(
   route: PageRoute,
   opts: BundleOptions & { devMetaFooter?: string },
 ): Promise<BundleOutput> {
-  return bundleEntry(
+  return await bundleEntry(
     generateRouteEntry(route, {
       dev: opts.dev,
       instrumentationClient: opts.instrumentationClient,
@@ -2335,7 +2248,6 @@ export async function bundleRoute(
       devMetaFooter: opts.devMetaFooter,
     }),
     opts,
-    await featureSeedImport(opts.features),
   );
 }
 
@@ -2344,10 +2256,9 @@ export async function bundleGlobalError(
   globalErrorFile: string,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  return bundleEntry(
+  return await bundleEntry(
     generateGlobalErrorEntry(globalErrorFile, opts.instrumentationClient ?? null),
     opts,
-    await featureSeedImport(opts.features),
   );
 }
 

@@ -10,7 +10,7 @@
 //     (refused at install, or changed since): one warning, and the in-process checker runs.
 //
 // A `DENO_CHECK_ENGINE` the user set always wins, and a runtime without native checking (every
-// pin before it, stock Deno, a `DENEXT_DENO=<path>` binary) is left alone.
+// pin before it, a `DENEXT_DENO=<path>` binary) is left alone.
 
 import {
   type DenoToolchainPin,

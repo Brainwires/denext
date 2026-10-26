@@ -385,7 +385,7 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
           "--cwd",
           root,
         ],
-        env: { NO_COLOR: "1", DENEXT_DENO: "stock" },
+        env: { NO_COLOR: "1", DENEXT_DENO: Deno.execPath() },
       });
       const text = (b: Uint8Array) => new TextDecoder().decode(b);
       return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };

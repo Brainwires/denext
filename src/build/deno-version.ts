@@ -16,9 +16,27 @@
 // manifests is denext's by where it came from ({@linkcode isDenextReleaseVersion}).
 
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
+import { runToExit } from "./exited-output.ts";
 
 /** The minimum supported Deno version. */
 export const MIN_DENO_VERSION = "2.9.0";
+
+/**
+ * The oldest release of denext's Deno that denext 5.0 runs on: the toolchain a `DENEXT_DENO=<path>`
+ * or `DENO_BIN` names, and the Deno that bundles or runs `deno desktop`, must carry the identity
+ * marker of this release or a later one ({@linkcode isSupportedDenextRuntime}). Every runtime
+ * feature denext used to gate on a version at or below it — the identity marker (3.0.0-rc.3), the
+ * direction-split network flags (3.0.0-rc.2), `Deno.serve`'s no-legacy-abort default, the idle
+ * trim and the lifecycle-script jail (3.0.0-rc.5) — is therefore always there.
+ */
+export const MIN_DENEXT_RUNTIME = "3.0.0-rc.5";
+
+/**
+ * What every refusal of another Deno ends with: the 5.0 change and the fix.
+ */
+export const RUNTIME_REQUIRED_FIX =
+  "  denext 5.0 runs only on denext's own Deno runtime (stock Deno is no longer supported).\n" +
+  "  Fix: run `denext toolchain install`, then retry.";
 
 /** The first release of denext's Deno under its own version (see {@linkcode isDenextDenoVersion}). */
 export const FIRST_OWN_VERSION_RUNTIME = "3.0.0-rc.1";
@@ -90,44 +108,6 @@ export function compareDenoVersions(a: string, b: string): number {
     return Math.sign(y.pre.length - x.pre.length);
   }
   return comparePrerelease(x.pre, y.pre);
-}
-
-/**
- * The first release of denext's Deno whose `Deno.serve` aborts `request.signal` only when a
- * response is not delivered by default (Brainwires/deno DENEXT.md item 102): there
- * `--unstable-no-legacy-abort` is accepted and does nothing, and the old behavior is an opt-out
- * (`--unstable-legacy-abort`, `DENO_LEGACY_ABORT=1`).
- */
-const FIRST_NO_LEGACY_ABORT_RUNTIME = "3.0.0-rc.5";
-
-/**
- * Whether denext's Deno of `version` still runs `Deno.serve`'s legacy `request.signal` abort
- * unless `--unstable-no-legacy-abort` turns it off: every release before
- * {@linkcode FIRST_NO_LEGACY_ABORT_RUNTIME}, and a version that does not parse.
- *
- * @param version A version of denext's Deno (`2.9.7-denext.N`, `3.0.0-rc.N`).
- * @returns Whether it needs the flag.
- */
-export function needsNoLegacyAbortFlag(version: string): boolean {
-  return compareDenoVersions(version, FIRST_NO_LEGACY_ABORT_RUNTIME) < 0;
-}
-
-/**
- * The first release of denext's Deno with the idle trim (Brainwires/deno DENEXT.md item 104:
- * `--unstable-idle-trim` / `DENO_UNSTABLE_IDLE_TRIM=1`, a full GC and `malloc_trim(0)` once the
- * event loop has gone idle; glibc Linux only, a no-op elsewhere).
- */
-export const FIRST_IDLE_TRIM_RUNTIME = "3.0.0-rc.5";
-
-/**
- * Whether denext's Deno of `version` has the idle trim (from {@linkcode FIRST_IDLE_TRIM_RUNTIME}).
- * A version that does not parse has not.
- *
- * @param version A version of denext's Deno (`3.0.0-rc.N`, `2.9.7-denext.N`).
- * @returns Whether it accepts `--unstable-idle-trim`.
- */
-export function supportsIdleTrim(version: string): boolean {
-  return compareDenoVersions(version, FIRST_IDLE_TRIM_RUNTIME) >= 0;
 }
 
 /** `2.9.7-denext.N`: a release of denext's Deno before it took its own version. */
@@ -244,6 +224,51 @@ export function isDenextDenoVersion(
  */
 export function isPinnedDenextDeno(identity: DenoIdentity, pinned: string | null): boolean {
   return pinned !== null && identity.deno === pinned && isDenextDenoVersion(identity, pinned);
+}
+
+/**
+ * Whether a Deno is a runtime denext 5.0 runs on: denext's Deno carrying its identity marker
+ * (`Deno.build.denext`, or the `denext <version> (Brainwires)` line of `deno --version`) of
+ * {@linkcode MIN_DENEXT_RUNTIME} or later. Upstream Deno, whatever its number, is not; nor is a
+ * build of denext's Deno from before the marker.
+ *
+ * @param identity What the Deno says about itself.
+ * @returns Whether denext runs on it.
+ */
+export function isSupportedDenextRuntime(identity: DenoIdentity): boolean {
+  return identity.denext !== undefined && identity.denext !== "" &&
+    compareDenoVersions(identity.denext, MIN_DENEXT_RUNTIME) >= 0;
+}
+
+/**
+ * What a `deno` binary says about itself: its `deno --version` output, parsed
+ * ({@linkcode parseDenoVersionOutput}).
+ *
+ * @param deno The binary.
+ * @returns The identity, or `null` when it can't be run or prints no `deno <version>` line.
+ */
+export async function denoBinaryIdentity(deno: string): Promise<DenoIdentity | null> {
+  try {
+    const out = await runToExit(deno, { args: ["--version"], stdout: "piped", stderr: "null" });
+    return out.success ? parseDenoVersionOutput(new TextDecoder().decode(out.stdout)) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How a refusal names a Deno that is not a supported runtime: `upstream Deno 2.9.8`, `denext's
+ * Deno 3.0.0-rc.3 (older than 3.0.0-rc.5)`, or `not a deno binary`.
+ *
+ * @param identity What it says about itself (`null`: nothing readable).
+ * @returns The phrase.
+ */
+export function describeDeno(identity: DenoIdentity | null): string {
+  if (identity === null) return "not a deno binary (no `deno <version>` line from `--version`)";
+  if (identity.denext === undefined || identity.denext === "") {
+    return `upstream Deno ${identity.deno} (no \`denext <version> (Brainwires)\` line)`;
+  }
+  return `denext's Deno ${identity.denext} (older than ${MIN_DENEXT_RUNTIME})`;
 }
 
 /**

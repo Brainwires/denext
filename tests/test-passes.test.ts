@@ -32,13 +32,13 @@ Deno.test("splitTestArgs: flags with their values, paths, and the -- tail", () =
 
 Deno.test("planTestRun: one pass when a path is named, nothing is Vitest, or --help", () => {
   const one = (args: string[]) => ({ passes: [["test", "-A", ...args]], report: [] });
-  assertEquals(planTestRun(["a.test.ts"], ["v.vitest.ts"], true), one(["a.test.ts"]));
-  assertEquals(planTestRun(["--coverage"], [], true), one(["--coverage"]));
-  assertEquals(planTestRun(["--help"], ["v.vitest.ts"], true), one(["--help"]));
+  assertEquals(planTestRun(["a.test.ts"], ["v.vitest.ts"]), one(["a.test.ts"]));
+  assertEquals(planTestRun(["--coverage"], []), one(["--coverage"]));
+  assertEquals(planTestRun(["--help"], ["v.vitest.ts"]), one(["--help"]));
 });
 
 Deno.test("planTestRun: the Vitest pass after the Deno.test pass", () => {
-  assertEquals(planTestRun(["--filter", "x", "--", "arg"], ["t/v.vitest.ts"], true), {
+  assertEquals(planTestRun(["--filter", "x", "--", "arg"], ["t/v.vitest.ts"]), {
     passes: [
       ["test", "-A", "--filter", "x", "--", "arg"],
       ["test", "-A", "--filter", "x", "t/v.vitest.ts", "--", "arg"],
@@ -48,7 +48,7 @@ Deno.test("planTestRun: the Vitest pass after the Deno.test pass", () => {
 });
 
 Deno.test("planTestRun: --coverage accumulates both passes, then one report", () => {
-  assertEquals(planTestRun(["--coverage=cov"], ["v.vitest.ts"], true), {
+  assertEquals(planTestRun(["--coverage=cov"], ["v.vitest.ts"]), {
     passes: [
       ["test", "-A", "--coverage=cov", "--coverage-raw-data-only"],
       ["test", "-A", "--coverage=cov", "--coverage-raw-data-only", "v.vitest.ts"],
@@ -61,7 +61,7 @@ Deno.test("planTestRun: --coverage accumulates both passes, then one report", ()
     ],
   });
   // Raw data asked for: the passes accumulate, and the caller reports.
-  const raw = planTestRun(["--coverage", "--coverage-raw-data-only"], ["v.vitest.ts"], true);
+  const raw = planTestRun(["--coverage", "--coverage-raw-data-only"], ["v.vitest.ts"]);
   assertEquals(raw.report, []);
   assertEquals(raw.clean, undefined);
   assertEquals(raw.passes.length, 2);
@@ -76,7 +76,7 @@ Deno.test("clearCoverageProfiles: only the raw profiles go, never the directory 
     await Deno.mkdir(join(root, "src"));
     await Deno.writeTextFile(join(root, "src", "app.ts"), "");
     // `denext test --coverage=.` plans `clean: "."`: the project directory itself.
-    assertEquals(planTestRun(["--coverage=."], ["v.vitest.ts"], true).clean, ".");
+    assertEquals(planTestRun(["--coverage=."], ["v.vitest.ts"]).clean, ".");
     assertEquals(await clearCoverageProfiles(join(root, ".")), 1);
     assertEquals(
       (await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(),
@@ -88,11 +88,8 @@ Deno.test("clearCoverageProfiles: only the raw profiles go, never the directory 
   }
 });
 
-Deno.test("planTestRun: off the toolchain, or watching, the Vitest files are named, not run", () => {
-  const stock = planTestRun(["--coverage"], ["v.vitest.ts"], false);
-  assertEquals(stock.passes, [["test", "-A", "--coverage"]]);
-  assertMatch(stock.note ?? "", /1 Vitest file\(s\) not run: .*toolchain/);
-  const watch = planTestRun(["--watch"], ["v.vitest.ts"], true);
+Deno.test("planTestRun: watching, the Vitest files are named, not run", () => {
+  const watch = planTestRun(["--watch"], ["v.vitest.ts"]);
   assertEquals(watch.passes, [["test", "-A", "--watch"]]);
   assertMatch(watch.note ?? "", /--watch/);
 });
@@ -124,7 +121,7 @@ Deno.test("findVitestFiles: project Vitest files, not dependencies, dot dirs or 
 async function toolchain(): Promise<string | null> {
   if (isDenextDenoVersion(currentDenoIdentity())) return Deno.execPath();
   const choice = await resolveDenoToolchain().catch(() => null);
-  return choice?.kind === "toolchain" ? choice.deno : null;
+  return choice?.deno ?? null;
 }
 
 Deno.test({

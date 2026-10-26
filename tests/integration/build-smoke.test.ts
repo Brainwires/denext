@@ -8,7 +8,7 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { copy } from "@std/fs";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { build } from "../../src/build/build.ts";
-import { bundleSupportsDefine, frameworkRoot } from "../../src/build/bundle.ts";
+import { frameworkRoot } from "../../src/build/bundle.ts";
 import { nativeAnalyzeMeta } from "../../src/build/sourcemap-attribution.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
 import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "../helpers/symlink.ts";
@@ -361,9 +361,8 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     // The feature runtimes below ship only when the app uses the feature; each one's positive
     // half is FEATURE_MARKERS, asserted against the bundle-features fixture.
     ...FEATURE_MARKERS.map(({ marker, what }): [string, string] => [marker, what]),
-    // The build-scan defines fold their runtime out only where `deno bundle` takes `--define`
-    // (denext's Deno toolchain); a stock Deno keeps it on.
-    ...(await bundleSupportsDefine() ? SCAN_GATE_MARKERS : []).map((
+    // The build-scan defines fold their runtime out (`deno bundle --define`).
+    ...SCAN_GATE_MARKERS.map((
       { marker, what },
     ): [string, string] => [marker, what]),
   ];
@@ -731,7 +730,7 @@ async function assertFlightStartupLean(clientDir: string): Promise<void> {
       { marker, what },
     ): [string, string] => [marker, what]),
     // examples/islands renders no blur placeholder and no form action (build-scan defines).
-    ...(await bundleSupportsDefine() ? SCAN_GATE_MARKERS : []).map((
+    ...SCAN_GATE_MARKERS.map((
       { marker, what },
     ): [string, string] => [marker, what]),
   ];

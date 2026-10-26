@@ -1,5 +1,5 @@
 /**
- * Where a page's WebSocket to its own server goes. On the web (and under the stock Deno Desktop
+ * Where a page's WebSocket to its own server goes. On the web (and under an upstream Deno Desktop
  * runtime) that is `ws(s)://<location.host>`. Under denext's pinned Deno Desktop runtime the page
  * runs at a custom origin (`desktop.app.origin`, e.g. `myapp://app`) served over an in-process
  * transport that carries no WebSockets: they go through the runtime's loopback relay instead. The

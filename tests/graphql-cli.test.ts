@@ -18,7 +18,7 @@ Deno.test({
     const out = await boundedOutput(Deno.execPath(), {
       args: ["run", "-A", abs("cli.ts"), "graphql", "sdl"],
       cwd: abs("examples/graphql"),
-      env: { NO_COLOR: "1", DENEXT_DENO: "stock" },
+      env: { NO_COLOR: "1", DENEXT_DENO: Deno.execPath() },
     });
     const stdout = new TextDecoder().decode(out.stdout);
     const log = stdout + new TextDecoder().decode(out.stderr);

@@ -160,7 +160,7 @@ Deno.test("windows targets: x86_64 and aarch64 names; the checked-in pin's Windo
       DenoToolchainRequiredError,
     );
     assertStringIncludes(refused.message, "has no build for windows-aarch64");
-    assertStringIncludes(refused.message, "DENEXT_DENO=stock");
+    assertStringIncludes(refused.message, "DENEXT_DENO=<path>");
     assertEquals(s.requests(), 0);
   } finally {
     await s.dispose();
@@ -350,7 +350,6 @@ Deno.test("windows resolve: the pinned deno.exe under DENO_DIR's denext-deno", a
       missingGrants: granted,
     });
     assertEquals(choice, {
-      kind: "toolchain",
       deno: join(s.cache, "denext-deno", PINNED, WIN, "deno.exe"),
       version: PINNED,
     });
@@ -359,18 +358,19 @@ Deno.test("windows resolve: the pinned deno.exe under DENO_DIR's denext-deno", a
   }
 });
 
-Deno.test("windows DENEXT_DENO=<path>: a drive-letter path (as cmd.exe sets it) runs unverified", async () => {
+Deno.test("windows DENEXT_DENO=<path>: a drive-letter path (as cmd.exe sets it) runs once verified", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-wintc-path-" });
   try {
     const exe = join(dir, "deno.exe");
     await Deno.writeTextFile(exe, DENO_EXE);
     const forms = [exe, `${exe} `]; // `set DENEXT_DENO=… && …` keeps the trailing space
     if (onWindows) forms.push(exe.replaceAll("\\", "/"));
+    const identify = () => Promise.resolve({ deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" });
     for (const raw of forms) {
-      const choice = await resolveDenoToolchain({ env: envFrom({ DENEXT_DENO: raw }) });
-      assert(choice.kind === "toolchain" && choice.warning, JSON.stringify(raw));
-      assertEquals([choice.deno, choice.version], [resolve(exe), "path"]);
-      assertStringIncludes(choice.warning, "not downloaded, pinned or verified");
+      const choice = await resolveDenoToolchain({ env: envFrom({ DENEXT_DENO: raw }), identify });
+      assert(choice.warning, JSON.stringify(raw));
+      assertEquals([choice.deno, choice.version], [resolve(exe), "3.0.0-rc.5"]);
+      assertStringIncludes(choice.warning, "not downloaded, pinned or hash-checked");
     }
     if (onWindows) assert(/^[A-Za-z]:\\/.test(resolve(exe)), resolve(exe));
     const missing = "C:\\Program Files\\denext-missing\\deno.exe";
@@ -385,24 +385,29 @@ Deno.test("windows DENEXT_DENO=<path>: a drive-letter path (as cmd.exe sets it) 
       pin: DENO_TOOLCHAIN,
       target: WIN,
       os: "windows",
+      identify,
     });
-    assertEquals([status.mode, status.path, status.ok], ["path", exe, true]);
+    assertEquals([status.mode, status.path, status.ok], ["path", resolve(exe), true]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("windows DENEXT_DENO=stock: any case, cmd's trailing space, never touches the cache", async () => {
+Deno.test("windows DENEXT_DENO=stock: any case, cmd's trailing space, refused before the cache", async () => {
   for (const raw of ["stock", "STOCK", "stock "]) {
-    const choice = await resolveDenoToolchain({
-      env: envFrom({ DENEXT_DENO: raw }),
-      pin: { schema: 1, version: PINNED, targets: {} },
-      target: WIN,
-      os: "windows",
-      cacheRoot: "Z:\\nonexistent\\denext-deno",
-      fetch: noNetwork,
-    });
-    assertEquals(choice, { kind: "stock", reason: "DENEXT_DENO=stock" }, JSON.stringify(raw));
+    const refused = await assertRejects(
+      () =>
+        resolveDenoToolchain({
+          env: envFrom({ DENEXT_DENO: raw }),
+          pin: { schema: 1, version: PINNED, targets: {} },
+          target: WIN,
+          os: "windows",
+          cacheRoot: "Z:\\nonexistent\\denext-deno",
+          fetch: noNetwork,
+        }),
+      DenoToolchainRequiredError,
+    );
+    assertStringIncludes(refused.message, "DENEXT_DENO=stock is no longer supported");
   }
   const status = await denoToolchainStatus({
     env: envFrom({ DENEXT_DENO: "stock " }),
@@ -410,6 +415,5 @@ Deno.test("windows DENEXT_DENO=stock: any case, cmd's trailing space, never touc
     target: WIN,
     os: "windows",
   });
-  assertEquals([status.mode, status.ok, status.path], ["stock", true, null]);
-  assertEquals(status.esbuild.state, "n/a");
+  assertEquals([status.mode, status.ok, status.path], ["refused", false, null]);
 });

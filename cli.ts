@@ -45,11 +45,11 @@ function lazy<T>(path: string): Promise<T> {
 // (tests/cli-startup-graph.test.ts holds the line).
 
 /** Run `deno <args>` on denext's Deno (a Deno verb, a script, `denext deno …`); never returns. */
-async function runDenoPassthrough(args: string[], cwd: string, forwarded: boolean): Promise<never> {
+async function runDenoPassthrough(args: string[], cwd: string): Promise<never> {
   const { runDenoPassthrough: run } = await lazy<
     typeof import("./src/cli/commands/deno-toolchain.ts")
   >("./commands/deno-toolchain.ts");
-  return await run(args, cwd, forwarded);
+  return await run(args, cwd);
 }
 
 /**
@@ -207,14 +207,11 @@ const DENO_VERB_NAMES: readonly string[] = DENO_VERBS.map((verb) => verb.name);
  * flag before the verb is denext's: `denext --help task` describes the verb and `denext --version
  * task` prints denext's version. Null for everything else.
  */
-function denoBeforeParse(
-  argv: string[],
-): { args: string[]; cwd: string; forwarded: boolean } | null {
+function denoBeforeParse(argv: string[]): { args: string[]; cwd: string } | null {
   const at = verbIndex(argv);
   if (at < 0 || (argv[at] !== "deno" && argv[at] !== "task")) return null;
   if (argv.slice(0, at).some((tok) => isHelpToken(tok) || isVersionToken(tok))) return null;
-  if (argv[at] === "deno") return { ...denoVerbArgs(argv, at), forwarded: false };
-  return { ...verbatimFrom(argv, at), forwarded: true };
+  return argv[at] === "deno" ? denoVerbArgs(argv, at) : verbatimFrom(argv, at);
 }
 
 /**
@@ -262,7 +259,7 @@ async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> 
   outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
   if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
   const forward = denoForwardFor(Deno.args, outcome.unknownVerb);
-  if (forward) return await runDenoPassthrough(forward.args, forward.cwd, true);
+  if (forward) return await runDenoPassthrough(forward.args, forward.cwd);
   const shortfall = discoveryShortfall(loaded, COMMAND_DISPATCH_BUDGET_MS);
   return shortfall === null
     ? outcome
@@ -278,7 +275,7 @@ async function runRouted(route: Extract<VerbRoute, { kind: "deno" }>): Promise<n
   if (route.unlisted && await firstNotice(forward.cwd, `unlisted:${forward.args[0]}`)) {
     console.error(unlistedVerbHint(forward.args[0]));
   }
-  return await runDenoPassthrough(forward.args, forward.cwd, true);
+  return await runDenoPassthrough(forward.args, forward.cwd);
 }
 
 /**
@@ -301,7 +298,7 @@ async function warmRemoteCli(): Promise<void> {
 async function main(): Promise<void> {
   await warmRemoteCli();
   const early = denoBeforeParse(Deno.args);
-  if (early) return await runDenoPassthrough(early.args, early.cwd, early.forwarded);
+  if (early) return await runDenoPassthrough(early.args, early.cwd);
   const fastlane = fastlaneBeforeParse(Deno.args);
   if (fastlane) {
     const { runFastlane } = await lazy<typeof import("./src/cli/commands/fastlane.ts")>(

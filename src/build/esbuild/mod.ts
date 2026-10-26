@@ -84,7 +84,6 @@ interface Service {
 let longLivedService: Promise<Service> | undefined;
 let stopService: (() => void) | undefined;
 let initializeWasCalled = false;
-let warned = false;
 
 /** Start (once) the long-lived `esbuild --service` child and the channel over its pipes. */
 function ensureServiceIsRunning(): Promise<Service> {
@@ -121,11 +120,7 @@ async function checkOverrideVersion(path: string): Promise<void> {
 
 async function startService(): Promise<Service> {
   const binary = await resolveEsbuildBinary();
-  if (binary.warning && !warned) {
-    warned = true;
-    console.warn(binary.warning);
-  }
-  // The toolchain and npm binaries are hash-pinned to ESBUILD_VERSION; an override is only as
+  // The toolchain's binary is hash-pinned to ESBUILD_VERSION; an override is only as
   // good as its word, so ask it first and refuse with a message that names the variable.
   if (binary.source === "env") await checkOverrideVersion(binary.path);
   const defaultWD = Deno.cwd();

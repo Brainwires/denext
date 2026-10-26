@@ -47,7 +47,6 @@ import { workspaceRootHint } from "../../build/workspace-imports.ts";
 import {
   explainJailFailures,
   grantsSomething,
-  JAIL_DEFAULT_RELEASE,
   JAIL_DOCS_URL,
   jailEffective,
   jailFailures,
@@ -97,7 +96,6 @@ export const infoCommand: CommandSpec = {
       return await runDenoPassthrough(
         ["info", ...denoGlobalArgs(ctx, { json: true }), ...ctx.rest],
         commandCwd(ctx),
-        true,
       );
     }
     const paths = await resolveProject(dir);
@@ -406,7 +404,7 @@ export async function jailScriptsCheck(
   const blocked = jailBlockers(project, os);
   if (required.length === 0 && explained.length === 0 && blocked.length === 0) return null;
   const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
-  const on = jailEffective(project.setting, options.version);
+  const on = jailEffective(project.setting);
   const windows = on && os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
   const failures = explained.length
     ? `the install log shows: ${explained.map((l) => l.trim()).join(" · ")}; `
@@ -427,7 +425,7 @@ export async function jailScriptsCheck(
   return {
     name,
     ok: true,
-    detail: passingJailDetail(required, project.setting, on) + windows,
+    detail: passingJailDetail(required, project.setting) + windows,
     critical: false,
   };
 }
@@ -464,9 +462,7 @@ function missingJailDetail(
   setting: JailSetting,
   version?: string,
 ): string {
-  const why = setting.state === "on"
-    ? `${setting.source} turns it on`
-    : `on by default from runtime ${JAIL_DEFAULT_RELEASE}`;
+  const why = setting.state === "on" ? `${setting.source} turns it on` : "on by default";
   const verb = missing.length === 1 ? "needs" : "need";
   return `${missing.map((r) => r.entry.name).join(", ")} ${verb} an exception: dependencies' ` +
     `install scripts run jailed (${why}) and theirs download or write outside node_modules; ` +
@@ -485,20 +481,13 @@ function cacheNote(missing: readonly JailRequirement[], version?: string): strin
     : "";
 }
 
-/** The jail check's detail when nothing is missing: off, configured, or needed once it is on. */
-function passingJailDetail(
-  required: readonly JailRequirement[],
-  setting: JailSetting,
-  on: boolean,
-): string {
+/** The jail check's detail when nothing is missing: off, or configured. */
+function passingJailDetail(required: readonly JailRequirement[], setting: JailSetting): string {
   const list = required.map((r) => r.entry.name).join(", ");
   if (setting.state === "off") {
     return `off (${setting.source}); ${list} run${required.length === 1 ? "s" : ""} unconfined`;
   }
-  return on
-    ? `exceptions configured for ${list}`
-    : `${list} will need an exception once dependencies' install scripts run jailed (on by ` +
-      `default from runtime ${JAIL_DEFAULT_RELEASE}): ${JAIL_DOCS_URL}`;
+  return `exceptions configured for ${list}`;
 }
 
 /** The project's parsed `deno.json` (else `deno.jsonc`), or `null`. */
@@ -624,26 +613,26 @@ export async function compileSigningCheck(
   };
 }
 
-/** A task command that runs `deno test` itself (stock Deno under `deno task`). */
-const STOCK_DENO_TEST = /(?:^|[;&|(]\s*)deno\s+test\b/;
+/** A task command that runs `deno test` itself (the `deno` on PATH under a plain `deno task`). */
+const PLAIN_DENO_TEST = /(?:^|[;&|(]\s*)deno\s+test\b/;
 
 /** The deno.json tasks that call `deno test` directly. */
-async function stockDenoTestTasks(dir: string): Promise<string[]> {
+async function plainDenoTestTasks(dir: string): Promise<string[]> {
   const tasks = (await readDenoJson(dir))?.tasks;
   if (typeof tasks !== "object" || tasks === null) return [];
   return Object.entries(tasks as Record<string, unknown>)
     .filter(([, v]) => {
       const command = typeof v === "string" ? v : (v as { command?: unknown })?.command;
-      return typeof command === "string" && STOCK_DENO_TEST.test(command);
+      return typeof command === "string" && PLAIN_DENO_TEST.test(command);
     })
     .map(([name]) => name);
 }
 
 /**
  * denext's Deno toolchain: the pinned version, whether it is cached and verified, and whether
- * this run is on it (or stock Deno, and why). When the toolchain is in use, it also names the
- * deno.json tasks that call `deno test` themselves — `deno task` runs those on the Deno that
- * started it, stock Deno, so they miss the toolchain's Vitest/Jest compat and `Deno.SQL`.
+ * this run is on it. It also names the deno.json tasks that call `deno test` themselves — a plain
+ * `deno task` runs those on the Deno that started it, which need not be denext's runtime, so they
+ * miss the toolchain's Vitest/Jest compat and `Deno.SQL` (and a build they start refuses).
  * Advisory; never downloads.
  *
  * @param dir The project directory.
@@ -661,13 +650,13 @@ export async function denoToolchainCheck(
     const detail = err instanceof Error ? err.message : String(err);
     return { name: "deno toolchain", ok: false, detail, critical: false };
   }
-  const tasks = status.mode === "stock" || status.state === "unpinned" ||
+  const tasks = status.mode === "refused" || status.state === "unpinned" ||
       status.state === "unsupported"
     ? []
-    : await stockDenoTestTasks(dir);
+    : await plainDenoTestTasks(dir);
   const note = tasks.length === 0 ? "" : `; deno.json task${tasks.length > 1 ? "s" : ""} ` +
     `${tasks.map((t) => `"${t}"`).join(", ")} run${tasks.length > 1 ? "" : "s"} \`deno test\` ` +
-    "on stock Deno under a plain `deno task` — run it with `denext task`, " +
+    "on whatever `deno` started a plain `deno task` — run it with `denext task`, " +
     "or use `denext test` there";
   return {
     name: "deno toolchain",

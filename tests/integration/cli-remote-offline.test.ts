@@ -67,7 +67,12 @@ Deno.test({
         const out = await boundedOutput(Deno.execPath(), {
           args,
           cwd: tmp,
-          env: { DENO_DIR: join(tmp, "deno-dir"), DENEXT_DENO: "stock", NO_COLOR: "1", ...env },
+          env: {
+            DENO_DIR: join(tmp, "deno-dir"),
+            DENEXT_DENO: Deno.execPath(),
+            NO_COLOR: "1",
+            ...env,
+          },
         });
         const decoder = new TextDecoder();
         return { code: out.code, out: decoder.decode(out.stdout), err: decoder.decode(out.stderr) };

@@ -48,14 +48,12 @@ import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-p
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
 import {
   DESKTOP_RUNTIME_ATTEST_ENV,
-  DESKTOP_RUNTIME_PIN,
   DESKTOP_RUNTIME_VERIFY_ENV,
-  type DesktopRuntimePin,
   projectDesktopBackend,
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
-import { needsNoLegacyAbortFlag } from "../../build/deno-version.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { denoPathEnv } from "../deno-path.ts";
 import { desktopWindowExitHint } from "../../build/desktop-vc-runtime.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
 import {
@@ -287,8 +285,7 @@ interface DesktopWindowLaunch {
 /**
  * Prepare an UNPACKAGED window (`desktop run` / `dev`): sync `.deno-desktop/app.json` (the
  * configured origin + identifier, embedded through deno.json `compile.include`), resolve denext's
- * pinned Deno Desktop runtime for the build (downloaded and verified on first use; nothing under
- * `DENEXT_DESKTOP_RUNTIME=stock`), and the webview backend's launch settings as `LAUFEY_*` env for
+ * pinned Deno Desktop runtime for the build (downloaded and verified on first use), and the webview backend's launch settings as `LAUFEY_*` env for
  * the launched executable (the scratch bundle has no `laufey-launch.json`; DevTools on in `dev`,
  * and in `run` unless `desktop.inspectable: false`). Single instance is left out on purpose: a dev
  * window must never hand itself to an installed copy of the same app and exit.
@@ -299,32 +296,13 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
   const denoFlags = desktopDenoFlags(config);
   await syncDesktopAppConfigAt(dir, config);
   // The window builds on denext's Deno toolchain (this verb re-ran on it), which always matches the
-  // runtime. Only a Deno the user chose explicitly (DENEXT_DENO=stock / <path>, DENO_BIN) may be
-  // another version: then an unpackaged window falls back to the stock runtime with a warning.
-  // Packaging stays strict.
-  const runtime = await resolveDesktopRuntimeEnv({
-    projectDir: dir,
-    deno: denoExecutable(),
-    onDenoMismatch: denoChosenExplicitly() ? "stock" : "fail",
-  });
+  // runtime; a `DENEXT_DENO=<path>` build of another Deno release is refused with the fix.
+  const runtime = await resolveDesktopRuntimeEnv({ projectDir: dir, deno: denoExecutable() });
   const env = {
     ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
     ...(dev ? await devPreloadEnv(paths) : {}),
   };
   return { config, env, buildEnv: runtime.env, denoFlags, buildDir: paths.outDir };
-}
-
-/**
- * Whether the user picked the Deno to run explicitly: `DENEXT_DENO=stock | <path>`, or a `DENO_BIN`
- * of their own (a compiled denext sets `DENO_BIN` to the toolchain itself, with the toolchain
- * marker beside it).
- */
-export function denoChosenExplicitly(
-  env: (name: string) => string | undefined = (k) => Deno.env.get(k),
-): boolean {
-  const deno = (env("DENEXT_DENO") ?? "").trim().toLowerCase();
-  if (deno !== "" && deno !== "pinned") return true;
-  return Boolean(env("DENO_BIN")) && !env("DENEXT_TOOLCHAIN_ACTIVE");
 }
 
 /**
@@ -385,7 +363,6 @@ async function buildDesktopWindow(
       config: launch.config,
       os,
       denoFlags: launch.denoFlags,
-      runtimeEnv: launch.buildEnv,
       entry,
       dev: opts.dev,
       netHosts: opts.netHosts,
@@ -654,10 +631,19 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   // workspace's root package.json from pnpm-workspace.yaml.
   const npmMode = (await desktopNpmArgsFor(dir)).filter((a) => a.startsWith("--node-modules-dir"));
   // A script already under --node-modules-dir=none need not re-run itself to get it (its guard).
-  const env = npmMode.includes("--node-modules-dir=none")
+  const npmEnv: Record<string, string> = npmMode.includes("--node-modules-dir=none")
     ? { DENEXT_DESKTOP_NPM: "none" }
-    : undefined;
-  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir, env);
+    : {};
+  // The script's own `deno desktop` (and `deno task export`) look `deno` up on PATH: make that
+  // this verb's Deno, denext's runtime, which the pinned Deno Desktop runtime requires.
+  const deno = denoExecutable();
+  const env = { ...await denoPathEnv(deno), ...npmEnv };
+  await spawnDenoAndExit(
+    ["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest],
+    dir,
+    env,
+    deno,
+  );
 }
 
 /** What a packaging script predating denext 3.1 lacks. */
@@ -666,11 +652,6 @@ export interface PackageScriptAge {
   readonly runtime: boolean;
   /** It takes `--format` (parses its arguments with `parseDesktopPackageArgs`). */
   readonly formats: boolean;
-  /**
-   * It passes the pinned runtime's flags (`--unstable-no-legacy-abort`): it calls
-   * `desktopRuntimeDenoFlags` itself, or builds through `buildDesktopBundle`, which does.
-   */
-  readonly runtimeFlags: boolean;
   /**
    * It leaves the app-local VC++ runtime to `bundleDesktopVcRuntime` (only the DLLs the target
    * arch imports, machine-checked). A Windows script that copies System32's `vcruntime140_1.dll`
@@ -689,44 +670,31 @@ export function packageScriptAge(text: string): PackageScriptAge {
   return {
     runtime: /\b(desktopRuntimeEnv|buildDesktopBundle)\b/.test(text),
     formats: /\bparseDesktopPackageArgs\b/.test(text),
-    runtimeFlags: /\b(desktopRuntimeDenoFlags|buildDesktopBundle)\b/.test(text),
     vcRuntime: !text.includes('"vcruntime140_1.dll"'),
   };
 }
 
 /**
- * The warnings for a stale packaging script: one predating denext 3.1 builds on the stock runtime,
- * one predating the 2.9.7-denext.21 pin (a macOS script calling `deno desktop` itself) builds without the pinned
- * runtime's `--unstable-no-legacy-abort` (only while the pinned runtime predates 3.0.0-rc.5, where
- * that is the default), one copying the VC++ runtime itself (a Windows script
- * predating `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, and a `--format` is
- * not passed to a script that cannot read it.
+ * The warnings for a stale packaging script: one predating denext 3.1 builds without denext's
+ * pinned Deno Desktop runtime, one copying the VC++ runtime itself (a Windows script predating
+ * `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, and a `--format` is not passed
+ * to a script that cannot read it.
  *
  * @param name The script's file name (`package-linux.ts`).
  * @param age What it supports.
  * @param format The `--format` value, when given.
- * @param pin The runtime pin (its `version` decides whether the runtime flags still matter).
  * @returns The lines to print (none for a current script).
  */
 export function packageScriptWarnings(
   name: string,
   age: PackageScriptAge,
   format: string | undefined,
-  pin: Pick<DesktopRuntimePin, "version"> = DESKTOP_RUNTIME_PIN,
 ): string[] {
   const out: string[] = [];
   if (!age.runtime) {
     out.push(
-      `  ⚠ scripts/${name} predates denext 3.1: it builds with the stock Deno Desktop runtime ` +
-        "and none of the default installers.\n" +
-        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
-        "(the old file is kept as a .bak).",
-    );
-  } else if (!age.runtimeFlags && needsNoLegacyAbortFlag(pin.version)) {
-    out.push(
-      `  ⚠ scripts/${name} does not pass the pinned runtime's flags (desktopRuntimeDenoFlags): ` +
-        "the app is built without --unstable-no-legacy-abort, so it aborts request.signal after " +
-        "each response and prints Deno.serve's legacy-abort notice.\n" +
+      `  ⚠ scripts/${name} predates denext 3.1: it builds without denext's pinned Deno Desktop ` +
+        "runtime and none of the default installers.\n" +
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );

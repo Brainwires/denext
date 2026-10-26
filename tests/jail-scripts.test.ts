@@ -16,10 +16,8 @@ import {
   applyJailExceptions,
   entryException,
   explainJailFailures,
-  JAIL_DEFAULT_RELEASE,
   jailEffective,
   jailFailures,
-  jailOnByDefault,
   narrowWriteTarget,
   npmPackageName,
   npmrcValue,
@@ -27,12 +25,10 @@ import {
   UPSTREAM_BY_NAME_RELEASE,
   upstreamByNameAdvice,
 } from "../src/build/jail-scripts.ts";
-import { compareDenoVersions } from "../src/build/deno-version.ts";
-import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
-/** A runtime that jails by default, and one that jails only on request. */
+/** denext 5.0's minimum runtime, and an older one (both before the rc.6 host lists). */
 const RC5 = "3.0.0-rc.5";
 const RC3 = "3.0.0-rc.3";
 /** No environment: a test never inherits the runner's `npm_config_*`. */
@@ -99,22 +95,6 @@ Deno.test("jail exceptions: the built-in list is sorted, unique and in deno.json
   }
 });
 
-Deno.test("jail: on by default from runtime 3.0.0-rc.5, never on stock or older builds", () => {
-  assertEquals(JAIL_DEFAULT_RELEASE, RC5);
-  for (const v of [RC5, "3.0.0-rc.6", "3.0.0-rc.10", "3.0.0", "3.1.0"]) {
-    assert(jailOnByDefault(v), v);
-  }
-  for (const v of [RC3, "3.0.0-rc.4", "2.9.7-denext.22", "2.9.7", ""]) {
-    assertFalse(jailOnByDefault(v), String(v));
-  }
-  // no version: the checked-in pin decides the default (3.0.0-rc.5 or later: on)
-  assertEquals(
-    jailOnByDefault(),
-    compareDenoVersions(toolchainPin.version, RC5) >= 0,
-  );
-  assertEquals(jailOnByDefault(undefined), jailOnByDefault(toolchainPin.version));
-});
-
 Deno.test("jail: settings merge as the runtime merges them, the stricter one winning", () => {
   assertEquals(readJailSetting({}).state, "default");
   const off = readJailSetting({ denoJson: { supplyChain: { jailScripts: false } } });
@@ -143,11 +123,10 @@ Deno.test("jail: settings merge as the runtime merges them, the stricter one win
   );
   assertEquals(npmrcValue("a=1\na=2", "a"), "2", "the last value wins");
   assertEquals(npmrcValue("b=1", "a"), undefined);
-  // what the state means per runtime
-  assert(jailEffective({ state: "on", packages: {} }, RC3));
-  assertFalse(jailEffective({ state: "off", packages: {} }, RC5));
-  assert(jailEffective({ state: "default", packages: {} }, RC5));
-  assertFalse(jailEffective({ state: "default", packages: {} }, RC3));
+  // what the state means: every runtime denext 5.0 runs on jails by default (from 3.0.0-rc.5)
+  assert(jailEffective({ state: "on", packages: {} }));
+  assertFalse(jailEffective({ state: "off", packages: {} }));
+  assert(jailEffective({ state: "default", packages: {} }));
 });
 
 Deno.test("jail: npm package names from specifiers", () => {
@@ -190,18 +169,6 @@ Deno.test("jail: with the jail on by default, the needed exceptions are written 
   }
 });
 
-Deno.test("jail: on a runtime that jails only on request nothing is written", async () => {
-  const dir = await project({ "deno.json": DENO_JSON });
-  try {
-    const r = await applyJailExceptions(dir, { version: RC3, env: NO_ENV });
-    assertEquals([r.action, r.effective], ["pending", false]);
-    assertStringIncludes(r.lines[0], `runtime ${RC5}`);
-    assertEquals(await Deno.readTextFile(join(dir, "deno.json")), DENO_JSON);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
 Deno.test("jail: an opted-out project is left alone; the jail is never turned off", async () => {
   const deno = JSON.stringify({ supplyChain: { jailScripts: false }, imports: {} });
   const dir = await project({
@@ -218,7 +185,7 @@ Deno.test("jail: an opted-out project is left alone; the jail is never turned of
   }
 });
 
-Deno.test("jail: `jail-scripts=true` in .npmrc turns it on before rc.5, so exceptions are written", async () => {
+Deno.test("jail: `jail-scripts=true` in .npmrc keeps it on, so exceptions are written", async () => {
   const dir = await project({
     "deno.json": "{}\n",
     ".npmrc": "jail-scripts=true\n",
@@ -619,11 +586,7 @@ Deno.test("doctor: the jail check flags a missing exception, then passes once it
     assertEquals([missing?.ok, missing?.critical], [false, false]);
     assertStringIncludes(missing!.detail, "re2 needs an exception");
     assertStringIncludes(missing!.detail, '{"supplyChain":{"jailScripts":{"packages":{"re2"');
-    assertStringIncludes(missing!.detail, `on by default from runtime ${RC5}`);
-    // before rc.5 it is a heads-up, not a failure
-    const pending = await jailScriptsCheck(dir, { version: RC3, env: NO_ENV, os: "linux" });
-    assertEquals(pending?.ok, true);
-    assertStringIncludes(pending!.detail, "will need an exception");
+    assertStringIncludes(missing!.detail, "(on by default)");
     await applyJailExceptions(dir, opts);
     const configured = await jailScriptsCheck(dir, opts);
     assertEquals([configured?.ok, configured?.detail], [true, "exceptions configured for re2"]);

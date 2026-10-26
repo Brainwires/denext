@@ -12,11 +12,7 @@ import {
 } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
-import {
-  desktopNetSplitFor,
-  desktopRuntimeDenoFlags,
-  desktopRuntimeEnv,
-} from "./desktop-runtime.ts";
+import { desktopRuntimeEnv } from "./desktop-runtime.ts";
 import {
   type DesktopInstallerPlan,
   desktopInstallerPlan,
@@ -532,31 +528,20 @@ export interface DesktopBundleOptions {
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
  * @param o The target, output and icon candidates.
- * @param runtimeEnv The `deno desktop` child's runtime env ({@linkcode desktopRuntimeEnv}): on the
- *   pinned runtime the build gets its flags ({@linkcode desktopRuntimeDenoFlags}); none when empty.
  * @returns The command line.
  */
 export async function desktopBundleCommand(
   entryUrl: string,
   os: "linux" | "windows",
   o: DesktopBundleOptions,
-  runtimeEnv: Readonly<Record<string, string>> = {},
 ): Promise<string[]> {
-  // `desktop.denoFlags`: the project's own allow-listed flags (`--node-modules-dir=none`, …).
-  const denoFlags = await desktopDenoFlagArgs(entryUrl);
   const cmd = [
     "deno",
     "desktop",
     "--no-prompt",
-    // The split network grant only on the pinned runtime (a non-empty runtime env), 3.0.0-rc.2+.
-    ...await desktopPackageFlags(
-      entryUrl,
-      os,
-      Boolean(runtimeEnv.DENORT_DESKTOP_BIN) && await desktopNetSplitFor(),
-    ),
-    ...denoFlags,
-    // The pinned runtime's own flags (`--unstable-no-legacy-abort` before 3.0.0-rc.5; none after).
-    ...desktopRuntimeDenoFlags(runtimeEnv, denoFlags),
+    ...await desktopPackageFlags(entryUrl, os),
+    // `desktop.denoFlags`: the project's own allow-listed flags (`--node-modules-dir=none`, …).
+    ...await desktopDenoFlagArgs(entryUrl),
     "--include",
     "out",
     ...await desktopIncludeArgs(entryUrl, os),
@@ -612,7 +597,7 @@ export async function buildDesktopBundle(
   await Deno.remove(o.out, { recursive: true }).catch(() => {});
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   const env = await desktopRuntimeEnv(entryUrl, o.target);
-  const cmd = await desktopBundleCommand(entryUrl, os, o, env);
+  const cmd = await desktopBundleCommand(entryUrl, os, o);
   await desktopWithAppVersion(entryUrl, () => desktopRun(cmd, env));
   if (os === "windows") {
     await desktopWindowsCefLayout(

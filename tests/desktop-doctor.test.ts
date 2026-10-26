@@ -15,7 +15,7 @@ import type { DesktopRuntimePin, DesktopRuntimeStatus } from "../src/build/deskt
 import { desktopDoctor } from "../src/cli/commands/desktop-doctor.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 import { join } from "@std/path";
-import { denoReleaseVersion } from "../src/build/deno-version.ts";
+import { denoReleaseVersion, isSupportedDenextRuntime } from "../src/build/deno-version.ts";
 import { capture, stubExit } from "./_cli-coverage-helpers.ts";
 
 /** A full answer: an exit code with its stdout / stderr. */
@@ -93,7 +93,8 @@ const status = (over: Partial<DesktopRuntimeStatus> = {}): DesktopRuntimeStatus 
   target: "x86_64-unknown-linux-gnu",
   backend: "webview",
   cache: "cached",
-  deno: { found: "2.9.7", required: "2.9.7" },
+  // denext's toolchain (its identity line), built from the runtime's Deno release.
+  deno: { found: "3.0.0-rc.5", required: "2.9.8", denext: "3.0.0-rc.5" },
   ok: true,
   detail: "runtime 2.9.7-denext.10 for x86_64-unknown-linux-gnu/webview; cached + verified",
   ...over,
@@ -306,47 +307,52 @@ Deno.test("desktop doctor: no session bus is an error; no bus tools and a tty ar
   assertEquals(noTools.findings.map((f) => f.check), ["session", "session-bus"]);
 });
 
-Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock, unpinned, invalid cache", async () => {
+Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, refused stock, unpinned, invalid cache", async () => {
   const run = fakeRun(FULL);
   const linux = { os: "linux", env: env({ XDG_SESSION_TYPE: "x11" }), run };
   const checksOf = (r: DesktopDoctorReport) => r.findings.map((f) => `${f.level}:${f.check}`);
   const old = await runDesktopDoctor({
     ...linux,
-    runtimeStatus: () => Promise.resolve(status({ deno: { found: "2.9.6", required: "2.9.7" } })),
+    runtimeStatus: () => Promise.resolve(status({ deno: { found: "2.9.6", required: "2.9.8" } })),
     pin: pin(44),
   });
   assertEquals(old.runtime.platformFeatures, false);
   assertEquals(checksOf(old), ["error:runtime", "warning:runtime"]);
-  assertStringIncludes(old.findings[0].message, "needs Deno 2.9.7 exactly");
+  assertStringIncludes(
+    old.findings[0].message,
+    "builds only with denext's Deno built from Deno 2.9.8",
+  );
+  assertStringIncludes(old.findings[0].message, "(not denext's)");
   assertStringIncludes(old.findings[1].message, "predates Deno.desktop.platformFeatures()");
-  assertStringIncludes(old.findings[0].fix, "deno upgrade --version 2.9.7");
-  // denext's Deno toolchain (`2.9.7-denext.N`) is Deno 2.9.7: no mismatch.
-  const toolchain = await runDesktopDoctor({
+  assertStringIncludes(old.findings[0].fix, "denext toolchain install");
+  // A pre-marker toolchain build (`2.9.8-denext.N`) is older than 5.0's minimum: a mismatch.
+  const preMarker = await runDesktopDoctor({
     ...linux,
     runtimeStatus: () =>
-      Promise.resolve(status({ deno: { found: "2.9.7-denext.15", required: "2.9.7" } })),
+      Promise.resolve(status({ deno: { found: "2.9.8-denext.15", required: "2.9.8" } })),
     pin: pin(45),
   });
-  assertEquals(checksOf(toolchain).filter((c) => c === "error:runtime"), []);
-  // ...and so is the toolchain under its own version (3.0.0-rc.N), built from the pin's Deno (2.9.8
-  // from 3.0.0-rc.4): by its identity marker (3.0.0-rc.3 on) ...
+  assertEquals(checksOf(preMarker).filter((c) => c === "error:runtime"), ["error:runtime"]);
+  // The toolchain under its own version (3.0.0-rc.N), built from the pin's Deno, by its identity
+  // marker: no mismatch ...
   const own = await runDesktopDoctor({
     ...linux,
     runtimeStatus: () =>
       Promise.resolve(
-        status({ deno: { found: "3.0.0-rc.4", required: "2.9.8", denext: "3.0.0-rc.4" } }),
+        status({ deno: { found: "3.0.0-rc.6", required: "2.9.8", denext: "3.0.0-rc.6" } }),
       ),
     pin: pin(45),
   });
   assertEquals(checksOf(own).filter((c) => c === "error:runtime"), []);
-  // ... but upstream Deno's 3.0.0-rc.4 (no marker) is a mismatch.
-  const upstream = await runDesktopDoctor({
-    ...linux,
-    runtimeStatus: () =>
-      Promise.resolve(status({ deno: { found: "3.0.0-rc.4", required: "2.9.8" } })),
-    pin: pin(45),
-  });
-  assertEquals(checksOf(upstream).filter((c) => c === "error:runtime"), ["error:runtime"]);
+  // ... but upstream Deno's 3.0.0-rc.5 (no marker) is a mismatch, and so is denext's rc.4.
+  for (const deno of [{ found: "3.0.0-rc.5" }, { found: "3.0.0-rc.4", denext: "3.0.0-rc.4" }]) {
+    const refused = await runDesktopDoctor({
+      ...linux,
+      runtimeStatus: () => Promise.resolve(status({ deno: { ...deno, required: "2.9.8" } })),
+      pin: pin(45),
+    });
+    assertEquals(checksOf(refused).filter((c) => c === "error:runtime"), ["error:runtime"]);
+  }
   // Off Linux the pre-probe pin is not a finding (the facts only matter there).
   const mac = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status()),
@@ -356,12 +362,22 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
   assertEquals([mac.linux, mac.findings, mac.checks], [null, [], ["runtime"]]);
   assertStringIncludes(formatDesktopDoctor(mac), "not in this runtime");
   const stock = await runDesktopDoctor({
-    runtimeStatus: () => Promise.resolve(status({ mode: "stock", backend: null, cache: "n/a" })),
+    runtimeStatus: () =>
+      Promise.resolve(
+        status({
+          mode: "refused",
+          backend: null,
+          cache: "n/a",
+          ok: false,
+          detail: "denext: DENEXT_DESKTOP_RUNTIME=stock is no longer supported: denext 5.0 …",
+        }),
+      ),
     os: "darwin",
     pin: pin(45),
   });
-  assertEquals(checksOf(stock), ["warning:runtime"]);
+  assertEquals(checksOf(stock), ["error:runtime"]);
   assertStringIncludes(stock.findings[0].message, "DENEXT_DESKTOP_RUNTIME=stock");
+  assertStringIncludes(stock.findings[0].fix, "unset DENEXT_DESKTOP_RUNTIME");
   const unpinned = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status({ cache: "unpinned" })),
     os: "darwin",
@@ -663,21 +679,23 @@ Deno.test("desktop doctor CLI: without a seam the runtime status is read from th
     // runs a newer one) adds its own runtime error, so this test reads the deno it ran under —
     // denext's Deno toolchain (`2.9.7-denext.N`) is that release.
     const { found, denext } = report.runtime.status.deno;
-    const denoMatches = found !== null &&
-      denoReleaseVersion({ deno: found, ...(denext ? { denext } : {}) }) ===
-        report.runtime.status.deno.required;
+    // denext 5.0 builds only on denext's runtime: its identity line, and the runtime's release.
+    const denoMatches = found !== null && denext !== undefined &&
+      isSupportedDenextRuntime({ deno: found, denext }) &&
+      denoReleaseVersion({ deno: found, denext }) === report.runtime.status.deno.required;
     assertEquals(
       report.findings.map((f) => `${f.level}:${f.check}`),
       denoMatches ? ["error:runtime"] : ["error:runtime", "error:runtime"],
     );
     assert(report.findings.some((f) => f.message.includes("no pinned runtime build")));
-    // DENEXT_DESKTOP_RUNTIME=stock (read from this process's env): a warning, exit 0.
+    // DENEXT_DESKTOP_RUNTIME=stock (read from this process's env): refused since 5.0, an error.
     Deno.env.set("DENEXT_DESKTOP_RUNTIME", "stock");
-    const stock = await runCli({}, false, dir, { os: "darwin" });
-    assertEquals(stock.code, 0, stock.err);
-    assertEquals(stock.report?.runtime.status.mode, "stock");
-    assertStringIncludes(stock.out, "WARNING [runtime]");
-    assertStringIncludes(stock.out, "DENEXT_DESKTOP_RUNTIME=stock");
+    const stock = await runCli({}, true, dir, { os: "darwin" });
+    assertEquals(stock.code, 1, "an error finding exits 1");
+    const refused = JSON.parse(stock.out) as DesktopDoctorReport;
+    assertEquals(refused.runtime.status.mode, "refused");
+    assertEquals(refused.findings.map((f) => `${f.level}:${f.check}`)[0], "error:runtime");
+    assertStringIncludes(stock.out, "DENEXT_DESKTOP_RUNTIME=stock is no longer supported");
   } finally {
     keys.forEach((k, i) => prev[i] === undefined ? Deno.env.delete(k) : Deno.env.set(k, prev[i]!));
     await Deno.remove(dir, { recursive: true });

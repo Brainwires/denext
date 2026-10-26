@@ -16,7 +16,7 @@
 
 import { isAbsolute, join, relative } from "@std/path";
 import { currentDenoIdentity, denoReleaseVersion } from "./deno-version.ts";
-import { splitNetFlag, toolchainNetSplit } from "./net-permissions.ts";
+import { splitNetFlag } from "./net-permissions.ts";
 import {
   DOCKER_SENTINEL,
   isStack,
@@ -47,15 +47,14 @@ export interface DockerOptions extends StackOptions {
   readonly denoTag?: string;
   /**
    * Bake the network grant split by direction into the server's command (listen only on the
-   * served port, connect anywhere). Default: when denext's pinned Deno toolchain, which the image
-   * runs its server on, has the split (3.0.0-rc.2 or later).
+   * served port, connect anywhere). Default: on (denext's Deno toolchain, which the image runs its
+   * server on, has the split).
    */
   readonly netSplit?: boolean;
   /**
    * Run the server with denext's Deno's idle trim (`ENV DENO_UNSTABLE_IDLE_TRIM=1`): a full GC and
-   * `malloc_trim(0)` once the event loop goes idle. `resolveDocker()` sets it when the pinned
-   * toolchain has it (3.0.0-rc.5 or later) and the project does not opt out
-   * (`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0`). Default: off.
+   * `malloc_trim(0)` once the event loop goes idle. `resolveDocker()` sets it unless the project opts
+   * out (`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0`). Default: off.
    */
   readonly idleTrim?: boolean;
 }
@@ -145,7 +144,7 @@ function execForm(words: readonly string[]): string {
  */
 function imageStartCommand(port: number, options: DockerOptions): readonly string[] | undefined {
   const task = options.startCommand;
-  if (!task || !(options.netSplit ?? toolchainNetSplit())) return task;
+  if (!task || !(options.netSplit ?? true)) return task;
   // `:<port>` is 0.0.0.0, 127.0.0.1 and localhost; `[::]` is the server bound to IPv6's any.
   return splitNetFlag(task, [`:${port}`, `[::]:${port}`]);
 }
@@ -317,7 +316,7 @@ ${staticCmd(port, options)}
  * access at all; elsewhere `--allow-net`.
  */
 function staticCmd(port: number, options: DockerOptions): string {
-  const split = options.netSplit ?? toolchainNetSplit();
+  const split = options.netSplit ?? true;
   const net = split ? [`--allow-net-listen=0.0.0.0:${port}`] : ["--allow-net"];
   const cmd = [
     "deno",

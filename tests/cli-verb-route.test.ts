@@ -237,7 +237,7 @@ async function runCli(
   const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
     cwd,
-    env: { DENEXT_DENO: "stock", NO_COLOR: "1" },
+    env: { DENEXT_DENO: Deno.execPath(), NO_COLOR: "1" },
   });
   const decoder = new TextDecoder();
   return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };

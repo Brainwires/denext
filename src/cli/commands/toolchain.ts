@@ -15,7 +15,6 @@ import {
 import { RAW_FLAG } from "../explain-output.ts";
 import { join } from "@std/path";
 import { denoExecutable } from "../../build/deno-executable.ts";
-import { currentDenoIdentity, isDenextDenoVersion } from "../../build/deno-version.ts";
 import { clearCoverageProfiles, coverageDir, findVitestFiles, planTestRun } from "./test-passes.ts";
 import { rawDiagnostics } from "../../build/explain/mod.ts";
 
@@ -52,14 +51,6 @@ function runDenoExplained(sub: string, ctx: CommandContext, json = false): Promi
 
 export { coverageDir };
 
-/**
- * Whether this Deno is denext's toolchain build (its `Deno.build.denext` marker, or a pre-marker
- * `3.0.0-rc.N` / `2.9.7-denext.N` build: Vitest's API in `deno test`).
- */
-function onToolchain(): boolean {
-  return isDenextDenoVersion(currentDenoIdentity());
-}
-
 /** Run one `deno` argument list in `cwd`, inheriting the terminal; its exit code. */
 async function runDenoStep(args: string[], cwd: string): Promise<number> {
   const child = new Deno.Command(denoExecutable(), {
@@ -80,7 +71,7 @@ async function runDenoStep(args: string[], cwd: string): Promise<number> {
 async function runTests(ctx: CommandContext): Promise<never> {
   const cwd = commandCwd(ctx);
   const args = [...denoGlobalArgs(ctx), ...ctx.rest];
-  const plan = planTestRun(args, await findVitestFiles(cwd), onToolchain());
+  const plan = planTestRun(args, await findVitestFiles(cwd));
   if (plan.note) console.error(`denext test: ${plan.note}`);
   if (plan.passes.length === 1 && plan.report.length === 0) {
     return spawnDenoAndExit(plan.passes[0], cwd);

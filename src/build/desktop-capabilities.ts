@@ -17,7 +17,6 @@ import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
-import { desktopNetSplitFor } from "./desktop-runtime.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
@@ -418,9 +417,9 @@ const DESKTOP_LISTEN_BASELINE = ["127.0.0.1", "localhost"] as const;
 /** Options for {@linkcode desktopBuildFlags}. */
 export interface DesktopBuildFlagOptions {
   /**
-   * The runtime has the direction-split network flags (denext's pinned Deno Desktop runtime and
-   * toolchain, 3.0.0-rc.2 or later; see `desktopNetSplit`): bake `--allow-net-connect` +
-   * `--allow-net-listen` instead of `--allow-net`. Default `false` (the stock runtime's flags).
+   * Bake the direction-split network flags (`--allow-net-connect` + `--allow-net-listen`) instead
+   * of `--allow-net`. The packaging scripts and `desktop run` / `dev` always do (every runtime
+   * denext builds on has them); default `false` (one `--allow-net`).
    */
   readonly netSplit?: boolean;
 }
@@ -711,8 +710,8 @@ export function desktopBuildFlags(
       : [];
 
   return [
-    // `"*"` (a sidecar or `extraPermissions` that talks to any host) is the unscoped flag. The
-    // stock runtime knows only `--allow-net`, both directions in ONE flag (Deno keeps the last).
+    // `"*"` (a sidecar or `extraPermissions` that talks to any host) is the unscoped flag. Without
+    // the split, `--allow-net` carries both directions in ONE flag (Deno keeps the last).
     ...(options.netSplit
       ? netSplitFlags([...connect], [...listen])
       : listFlag("net", new Set([...connect, ...listen]))),
@@ -732,13 +731,11 @@ export function desktopBuildFlags(
  * desktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The
  * config is imported dynamically at run time from a caller-supplied URL, so it is never part of
  * this module's own dependency graph (nor a build-time import of user code). The network grant is
- * split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or
- * later, read from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});
- * `DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a stock `deno` keep `--allow-net`.
+ * split by direction: every runtime denext builds on has the split.
  *
  * @param entryUrl The packaging script's `import.meta.url`.
  * @param os The target OS.
- * @param netSplit Override the detection (default {@linkcode desktopNetSplitFor}).
+ * @param netSplit Bake the split network grant (default `true`).
  * @returns The `--allow-*` flags, ready to splice into the `deno desktop` argv.
  */
 export async function desktopPackageFlags(
@@ -748,7 +745,7 @@ export async function desktopPackageFlags(
 ): Promise<string[]> {
   // No config (or one that exports none) → the baseline; a config that fails to load fails.
   const config = await loadConfigBeside(entryUrl);
-  return desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
+  return desktopBuildFlags(config, os, { netSplit: netSplit ?? true });
 }
 
 /** The `desktop.capabilities.extensions` module paths from a config object (each a project-relative

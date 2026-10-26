@@ -1,39 +1,25 @@
-// A `deno desktop` build on denext's pinned runtime before 3.0.0-rc.5 passes
-// `--unstable-no-legacy-abort`, which the runtime keeps from the app's metadata (2.9.7-denext.21):
-// the app's server prints no Deno.serve legacy-abort notice on its first request, as
-// `build --compile` binaries. From 3.0.0-rc.5 that is the runtime's default (the flag is a no-op),
-// so `desktop run` / `dev`, the Linux / Windows bundle command and the scaffolded macOS script pass
-// nothing; a stock-runtime build (an empty runtime env) never does.
+// `--unstable-no-legacy-abort` for a `deno desktop` build: runtimes before 3.0.0-rc.5 needed it
+// (so the app's server printed no Deno.serve legacy-abort notice), and from 3.0.0-rc.5 it is the
+// runtime's default. denext 5.0 builds only on 3.0.0-rc.5 or later, so `desktop run` / `dev`, the
+// Linux / Windows bundle command and the scaffolded macOS script pass no runtime flags at all;
+// `desktopRuntimeDenoFlags` stays exported (always `[]`) for packaging scripts written before 5.0.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { DESKTOP_RUNTIME_PIN, desktopRuntimeDenoFlags } from "../src/build/desktop-runtime.ts";
+import { desktopRuntimeDenoFlags } from "../src/build/desktop-runtime.ts";
 import { desktopRuntimeDenoFlags as reexported } from "../src/build/desktop.ts";
 import { desktopBundleCommand } from "../src/build/desktop-package-script.ts";
 import { desktopLaunchBuildPlan, desktopLaunchScratchDir } from "../src/build/desktop-launch.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
-import { compareDenoVersions } from "../src/build/deno-version.ts";
 
 const FLAG = "--unstable-no-legacy-abort";
 const PINNED = { DENORT_DESKTOP_BIN: "/cache/libdenort.so", LAUFEY_DEV_DIR: "/cache/laufey" };
-const RC4 = { version: "3.0.0-rc.4" };
 
-Deno.test("desktopRuntimeDenoFlags: a pinned runtime before 3.0.0-rc.5 gets --unstable-no-legacy-abort, stock none", () => {
-  assertEquals(desktopRuntimeDenoFlags(PINNED, [], RC4), [FLAG]);
-  assertEquals(desktopRuntimeDenoFlags(PINNED, [], { version: "2.9.7-denext.21" }), [FLAG]);
-  assertEquals(desktopRuntimeDenoFlags({}, [], RC4), []);
-  // Already in desktop.denoFlags: not repeated.
-  assertEquals(desktopRuntimeDenoFlags(PINNED, ["--no-check", FLAG], RC4), []);
-  // From 3.0.0-rc.5 it is the runtime's default: no flag.
-  assertEquals(desktopRuntimeDenoFlags(PINNED, [], { version: "3.0.0-rc.5" }), []);
-  assertEquals(desktopRuntimeDenoFlags(PINNED, [], { version: "3.0.0" }), []);
-  assertEquals(reexported, desktopRuntimeDenoFlags, "denext/desktop exports it for the scripts");
-});
-
-Deno.test("desktopRuntimeDenoFlags: the current pin (3.0.0-rc.5 or newer) gets none", () => {
-  assert(compareDenoVersions(DESKTOP_RUNTIME_PIN.version, "3.0.0-rc.5") >= 0);
-  assertEquals(desktopRuntimeDenoFlags(PINNED), []);
+Deno.test("desktopRuntimeDenoFlags: kept for pre-5.0 packaging scripts, and always empty", () => {
+  assertEquals(desktopRuntimeDenoFlags(PINNED, []), []);
   assertEquals(desktopRuntimeDenoFlags({}), []);
+  assertEquals(desktopRuntimeDenoFlags(), []);
+  assertEquals(reexported, desktopRuntimeDenoFlags, "denext/desktop exports it for the scripts");
 });
 
 /** A temp project with a desktop entry and `scripts/`. */
@@ -46,23 +32,23 @@ async function project(config = "export default {};\n"): Promise<string> {
   return dir;
 }
 
-Deno.test("package scripts: the Linux / Windows bundle command passes no flag on the current pin", async () => {
+Deno.test("package scripts: the Linux / Windows bundle command passes no runtime flag", async () => {
   const dir = await project();
   try {
     for (const os of ["linux", "windows"] as const) {
       const entry = toFileUrl(join(dir, "scripts", `package-${os}.ts`)).href;
       const o = { target: "x86_64-unknown-linux-gnu", out: "dist/a-x64", icons: [] };
-      const pinned = await desktopBundleCommand(entry, os, o, PINNED);
-      assert(pinned.includes("desktop.ts") && !pinned.includes(FLAG), pinned.join(" "));
-      assert(!(await desktopBundleCommand(entry, os, o, {})).includes(FLAG), `${os}: stock`);
-      assert(!(await desktopBundleCommand(entry, os, o)).includes(FLAG), `${os}: no env`);
+      const cmd = await desktopBundleCommand(entry, os, o);
+      assert(cmd.includes("desktop.ts") && !cmd.includes(FLAG), cmd.join(" "));
+      // The split network grant: every runtime denext builds on has it.
+      assert(cmd.some((a) => a.startsWith("--allow-net-listen")), cmd.join(" "));
     }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("package scripts: a flag already in desktop.denoFlags is passed once", async () => {
+Deno.test("package scripts: a flag in desktop.denoFlags is passed once, as the project wrote it", async () => {
   const dir = await project(
     `export default { desktop: { denoFlags: [${JSON.stringify(FLAG)}] } };\n`,
   );
@@ -72,33 +58,29 @@ Deno.test("package scripts: a flag already in desktop.denoFlags is passed once",
       target: "x86_64-unknown-linux-gnu",
       out: "dist/a-x64",
       icons: [],
-    }, PINNED);
+    });
     assertEquals(cmd.filter((a) => a === FLAG).length, 1, cmd.join(" "));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("desktop run / dev: the build passes no flag on the current pin, as the scripts do", async () => {
+Deno.test("desktop run / dev: the build passes no runtime flag, as the scripts do", async () => {
   const dir = await project();
   const scratch = await desktopLaunchScratchDir(dir);
   try {
-    const plan = (runtimeEnv?: Record<string, string>, dev = false) =>
-      desktopLaunchBuildPlan({
+    for (const dev of [false, true]) {
+      const { args } = await desktopLaunchBuildPlan({
         projectDir: dir,
         config: {},
         os: "linux",
         denoFlags: [],
-        runtimeEnv,
         entry: "desktop.ts",
         dev,
         scratch,
       });
-    for (const dev of [false, true]) {
-      const { args } = await plan(PINNED, dev);
       assert(args.includes("--output") && !args.includes(FLAG), args.join(" "));
-      assert(!(await plan({}, dev)).args.includes(FLAG), "stock runtime: none");
-      assert(!(await plan(undefined, dev)).args.includes(FLAG), "no runtime env: none");
+      assert(args.some((a) => a.startsWith("--allow-net-listen")), args.join(" "));
     }
   } finally {
     await Deno.remove(scratch, { recursive: true });
@@ -106,14 +88,12 @@ Deno.test("desktop run / dev: the build passes no flag on the current pin, as th
   }
 });
 
-Deno.test("scaffold: the macOS script passes the pinned runtime's flags (regenerate-scripts picks it up)", () => {
+Deno.test("scaffold: the macOS script no longer asks for runtime flags", () => {
   const mac =
     scaffoldFiles({ dir: ".", desktop: true }).find((f) => f.path === "scripts/package-macos.ts")!
       .content;
-  assertStringIncludes(mac, "  desktopRuntimeDenoFlags,\n");
-  assertStringIncludes(mac, "...desktopRuntimeDenoFlags(env, denoFlags),");
-  // The env is resolved before the command is assembled, and once.
-  const env = mac.indexOf("const env = await desktopRuntimeEnv(import.meta.url, target);");
-  assert(env > 0 && env < mac.indexOf("...desktopRuntimeDenoFlags(env, denoFlags),"));
+  assert(!mac.includes("desktopRuntimeDenoFlags"), "a 5.0 script needs no runtime flags");
+  assert(!mac.includes("DENEXT_DESKTOP_RUNTIME=stock"), "no stock-runtime opt-out documented");
+  // The env is resolved once, before the command is assembled.
   assertEquals(mac.split("await desktopRuntimeEnv(").length, 2);
 });

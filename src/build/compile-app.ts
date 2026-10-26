@@ -44,14 +44,14 @@ import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { supplyChainConfig } from "./workspace-imports.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
-import { NET_SPLIT_RELEASE, netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
+import { netSplitFlags } from "./net-permissions.ts";
 import { currentDenoIdentity } from "./deno-version.ts";
 import {
   type CompileSignDeps,
   type CompileSignResult,
   signCompiledBinary,
 } from "./compile-sign.ts";
-import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
+import { childToolchainMarker } from "../cli/self-exec.ts";
 import { idleTrimCompileFlags, readEnv } from "./idle-trim.ts";
 import {
   carryNpmrc,
@@ -311,30 +311,28 @@ export function wantsNetSplit(compile: CompileConfig | undefined): boolean {
 
 /**
  * {@linkcode compileBuildFlags} for a compile onto `ownDenort` (the toolchain's own `denort`, or
- * `deno compile`'s choice): the split network flags need both the compiling CLI and the binary's
- * runtime to know them, so only the toolchain compiling onto its own denort, 3.0.0-rc.2 or later,
- * bakes them. A `netConnect` / `netListen` it cannot bake warns.
+ * `deno compile`'s choice): the split network flags need the binary's runtime to know them, so
+ * only a compile onto the toolchain's own denort bakes them (a `DENEXT_DENO=<path>` build of
+ * another version, or an explicit `deno`, leaves the runtime to `deno compile`). A `netConnect` /
+ * `netListen` it cannot bake warns.
  *
  * @param compile The project's `compile` config.
  * @param ownDenort Whether the binary runs on the toolchain's own `denort`.
  * @param warn Where the warning goes (default: stderr).
- * @param version The toolchain version this process runs on (default: detected).
  * @returns The flags.
  */
 export function compilePermissionFlags(
   compile: CompileConfig | undefined,
   ownDenort: boolean,
   warn: (message: string) => void = (m) => console.error(m),
-  version: string | undefined = toolchainVersion(),
 ): string[] {
-  const netSplit = ownDenort && supportsNetSplit(version);
-  if (!netSplit && wantsNetSplit(compile)) {
+  if (!ownDenort && wantsNetSplit(compile)) {
     warn(
-      `  ⚠ compile.permissions.netConnect / netListen need denext's Deno ${NET_SPLIT_RELEASE} or ` +
-        "later (its own denort for this target); baking the unscoped --allow-net instead.",
+      "  ⚠ compile.permissions.netConnect / netListen need the pinned toolchain's own denort for " +
+        "this target; baking the unscoped --allow-net instead.",
     );
   }
-  return compileBuildFlags(compile, { netSplit });
+  return compileBuildFlags(compile, { netSplit: ownDenort });
 }
 
 /** The executable's default name: deno.json's `name` (without its scope), else the dir's. */
@@ -353,24 +351,19 @@ function toolchainVersion(): string | undefined {
       return undefined;
     }
   };
-  const marker = childToolchainMarker(env, currentDenoIdentity());
-  return marker !== undefined && marker !== "path" ? marker : undefined;
+  return childToolchainMarker(env, currentDenoIdentity());
 }
 
 /**
- * The flags only a toolchain compile gets (`version`: the toolchain's, `undefined` off it):
- * `--exclude-unused-npm` embeds only the npm packages the server's graph reaches, not the whole
- * lockfile snapshot (the framework's build tools are no part of the server), and the toolchain's
- * runtime flags are baked into the binary's metadata (`--unstable-no-legacy-abort` before runtime
- * 3.0.0-rc.5, where it became the default: the server runs as under `denext start`; the
- * toolchain's denort keeps it from 2.9.7-denext.21, so the first request prints no legacy-abort
- * notice).
+ * The flags only a toolchain compile gets (`version`: the toolchain's, `undefined` for an explicit
+ * `deno`): `--exclude-unused-npm` embeds only the npm packages the server's graph reaches, not the
+ * whole lockfile snapshot (the framework's build tools are no part of the server).
  *
  * @param version The toolchain version this process runs on, or `undefined`.
- * @returns The flags (none off the toolchain).
+ * @returns The flags.
  */
 export function toolchainCompileFlags(version: string | undefined): string[] {
-  return version === undefined ? [] : ["--exclude-unused-npm", ...toolchainRuntimeFlags(version)];
+  return version === undefined ? [] : ["--exclude-unused-npm"];
 }
 
 /** How {@linkcode denortBinary} reaches the toolchain (tests pass fakes). */
@@ -391,8 +384,8 @@ export interface DenortBinaryDeps {
  * from the toolchain pin (2.9.7-denext.20 on), downloaded into the toolchain cache and
  * SHA-256-verified like the toolchain itself ({@linkcode ensureDenort}), so a compiled app has
  * `Deno.SQL` and the toolchain's patches. `undefined` — `deno compile` then picks its own — when the
- * compile runs on another Deno (`DENEXT_DENO=stock` / `=<path>`, or a `deno` given explicitly),
- * when that Deno is not the pinned version, or when the pin names no denort for the target. A
+ * compile runs on another build of denext's runtime (`DENEXT_DENO=<path>`, or a `deno` given
+ * explicitly) than the pinned version, or when the pin names no denort for the target. A
  * failed download or a hash mismatch throws: nothing is compiled onto an unverified runtime.
  *
  * @param target The `deno compile --target` triple, or undefined for this machine.
@@ -717,7 +710,6 @@ export async function compileApp(
   const entryUrl = toFileUrl(entry).href;
   // The production server's idle trim, baked in (src/build/idle-trim.ts).
   const trimFlags = options.deno ? [] : idleTrimCompileFlags({
-    runtime: toolchainVersion(),
     configOff: paths.config?.start?.idleTrim === false,
     env: readEnv,
   });

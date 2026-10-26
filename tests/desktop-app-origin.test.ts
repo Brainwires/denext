@@ -295,7 +295,7 @@ Deno.test("trust: a runtime older than denext.7 (no relay marking) is refused", 
   assertEquals(old.trust.kind, "refuse");
   const reason = (old.trust as { reason: string }).reason;
   assertStringIncludes(reason, DESKTOP_RELAY_MARKING_RUNTIME);
-  assertStringIncludes(reason, "DENEXT_DESKTOP_RUNTIME=stock");
+  assert(!reason.includes("DENEXT_DESKTOP_RUNTIME=stock"), "no stock opt-out since 5.0");
   assertStringIncludes(reason, "DENORT_DESKTOP_BIN");
   // The stock runtime (no published origin, no relay) is unaffected.
   assertEquals(resolveDesktopTrust(undefined, undefined, false), { trust: LOOPBACK_TRUST });

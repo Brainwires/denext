@@ -1,6 +1,6 @@
 // denext's pinned Deno Desktop runtime: the prebuilt `libdenort` + laufey backend hosts from the
 // Brainwires/deno fork's releases (custom app origin, per-app storage, deep links, single
-// instance), handed to the user's STOCK `deno desktop` CLI through two env vars it already reads:
+// instance), handed to the `deno desktop` of denext's Deno toolchain through two env vars it reads:
 //
 //   DENORT_DESKTOP_BIN=<cache>/<runtime lib>   (libdenort.dylib | libdenort.so | denort.dll)
 //   LAUFEY_DEV_DIR=<cache>/laufey
@@ -19,10 +19,11 @@
 //      atomically. Two packagers racing each extract privately; the loser of the rename adopts
 //      the winner's verified tree. A crashed run leaves only a temp dir, cleaned up a day later.
 //
-// The `deno` that runs `deno desktop` must be the runtime's exact Deno version (the CLI embeds a
-// matching libdenort ABI). `DENEXT_DESKTOP_RUNTIME=stock` opts out (the stock runtime: no custom
-// origin, deep links or single instance); `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` uses a local runtime
-// build unverified (runtime development).
+// The `deno` that runs `deno desktop` must be denext's Deno runtime (its identity line) built from
+// the runtime's exact Deno release (the CLI embeds a matching libdenort ABI): the toolchain, which
+// `denext desktop run | dev | package` and `denext task` put first on PATH. denext 5.0 has no
+// stock runtime: `DENEXT_DESKTOP_RUNTIME=stock` is refused. `DENEXT_DESKTOP_RUNTIME_DIR=<dir>`
+// uses a local runtime build unverified (runtime development).
 
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { acquireCacheLock } from "./project-locks.ts";
@@ -44,13 +45,13 @@ import {
 import { readJson } from "./json-edit.ts";
 import { runToExit } from "./exited-output.ts";
 import {
-  currentDenoIdentity,
   type DenoIdentity,
   denoReleaseVersion,
-  needsNoLegacyAbortFlag,
+  describeDeno,
+  isSupportedDenextRuntime,
   parseDenoVersionOutput,
+  RUNTIME_REQUIRED_FIX,
 } from "./deno-version.ts";
-import { denoSupportsNetSplit, NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 
 /** A runtime backend (`deno desktop --backend`). */
@@ -89,7 +90,7 @@ export interface DesktopRuntimePin {
 /** The runtime denext pins (generated; see the header). */
 export const DESKTOP_RUNTIME_PIN: DesktopRuntimePin = pinJson as DesktopRuntimePin;
 
-/** `stock` → the stock runtime; unset / `pinned` → denext's. */
+/** Unset / `pinned` → denext's runtime; anything else (`stock` included) is refused. */
 const RUNTIME_ENV = "DENEXT_DESKTOP_RUNTIME";
 /** A local runtime build directory (runtime development), used unverified. */
 const RUNTIME_DIR_ENV = "DENEXT_DESKTOP_RUNTIME_DIR";
@@ -101,15 +102,16 @@ export const DESKTOP_RUNTIME_ATTEST_ENV = "DENEXT_DESKTOP_RUNTIME_ATTEST";
 /** The marker a verified cache entry carries (at its root, beside the runtime lib). */
 export const RUNTIME_MARKER = ".denext-runtime.json";
 
-/** What the stock runtime lacks (named in every opt-out message). */
-const STOCK_LACKS = "no stable app origin or persistent browser storage, deep links, " +
-  "single instance, preload, full-app updates, native clipboard / notifications / context " +
-  "menu, or window controls beyond size, position and title";
+/** The refusal of `DENEXT_DESKTOP_RUNTIME=stock` (denext 5.0 dropped the stock runtime). */
+const STOCK_RUNTIME_REFUSAL = `denext: ${RUNTIME_ENV}=stock is no longer supported: denext 5.0 ` +
+  "builds every desktop window on its pinned Deno Desktop runtime.\n" +
+  `  Fix: unset ${RUNTIME_ENV} (the pinned runtime downloads and verifies on first use), or set ` +
+  `${RUNTIME_DIR_ENV}=<an unpacked runtime build>.`;
 
 /** The way out of a runtime download that failed (every download error ends with it). */
 const DOWNLOAD_HINT =
   `\n  Once it is cached, packaging needs no network. Or set ${RUNTIME_DIR_ENV}=<an unpacked ` +
-  `runtime>, or ${RUNTIME_ENV}=stock to use the stock runtime (${STOCK_LACKS}).`;
+  "runtime build>.";
 
 /** The marker's contents. */
 interface RuntimeMarker {
@@ -183,8 +185,8 @@ function pinnedArtifact(
   if (a) return a;
   throw new Error(
     `denext: the pinned Deno Desktop runtime ${pin.version} has no ${backend} build for ` +
-      `${target} (it has: ${Object.keys(pin.targets).join(", ")}).\n  Set ${RUNTIME_ENV}=stock ` +
-      `to use the stock runtime (${STOCK_LACKS}).`,
+      `${target} (it has: ${Object.keys(pin.targets).join(", ")}).\n  Set ${RUNTIME_DIR_ENV}=` +
+      "<an unpacked runtime build> to use one you built for it.",
   );
 }
 
@@ -517,7 +519,7 @@ async function harmonizeApp(app: string, run: CaptureRunner): Promise<boolean> {
 }
 
 /**
- * Do, once at install time, the ad-hoc re-sign the stock `deno desktop` applies to a
+ * Do, once at install time, the ad-hoc re-sign `deno desktop` applies to a
  * `LAUFEY_DEV_DIR` laufey `.app` on EVERY build (`harmonize_laufey_app_identifiers`: each Mach-O
  * in `Contents/MacOS` gets the bundle's `CFBundleIdentifier` as its signing identifier). The CLI
  * skips binaries that already match, so after this it never rewrites the verified cache, and two
@@ -809,18 +811,44 @@ function asIdentity(found: string | DenoIdentity): DenoIdentity {
   return typeof found === "string" ? { deno: found } : found;
 }
 
-/** The message for a `deno` that doesn't match the runtime's Deno version. */
+/**
+ * Whether `found` may run `deno desktop` on the runtime `pin`: denext's Deno runtime
+ * ({@linkcode isSupportedDenextRuntime}) built from the runtime's exact Deno release.
+ *
+ * @param found What the `deno` says about itself.
+ * @param pin The runtime pin.
+ * @returns Whether it builds on the runtime.
+ */
+export function desktopBuildDeno(
+  found: DenoIdentity,
+  pin: Pick<DesktopRuntimePin, "deno">,
+): boolean {
+  return isSupportedDenextRuntime(found) && denoReleaseVersion(found) === pin.deno;
+}
+
+/**
+ * The message for a `deno` that can't run `deno desktop` on the runtime: not denext's Deno, or
+ * one built from another Deno release.
+ *
+ * @param found What the `deno` says about itself.
+ * @param pin The runtime pin.
+ * @param deno The binary, as the message names it.
+ * @returns The refusal.
+ */
 export function denoVersionMismatchMessage(
-  found: string,
+  found: DenoIdentity,
   pin: DesktopRuntimePin,
   deno = "deno",
 ): string {
-  return `denext: the Deno Desktop runtime ${pin.version} is built for Deno ${pin.deno} exactly ` +
-    `(stock, or denext's Deno toolchain built from it), but \`${deno}\` is Deno ${found}.\n` +
-    `  Install it with:  deno upgrade --version ${pin.deno}\n` +
-    `  Or point DENO_BIN at a Deno ${pin.deno} binary, or at denext's Deno toolchain ` +
-    `(\`denext toolchain path\`; desktop run / dev build with it).\n` +
-    `  Or set ${RUNTIME_ENV}=stock to use the stock runtime (${STOCK_LACKS}).`;
+  const what = isSupportedDenextRuntime(found)
+    ? `denext's Deno ${found.denext}, built from Deno ${denoReleaseVersion(found)}`
+    : describeDeno(found);
+  return `denext: the Deno Desktop runtime ${pin.version} builds only with denext's Deno runtime ` +
+    `built from Deno ${pin.deno}, but \`${deno}\` is ${what}.\n` +
+    "  Run it through denext, which builds on its toolchain: `denext desktop run | dev | " +
+    "package`, or `denext task <task>` for a packaging task (a plain `deno task` runs the " +
+    "`deno` on PATH).\n" +
+    RUNTIME_REQUIRED_FIX;
 }
 
 /** Options for {@linkcode resolveDesktopRuntimeEnv}. */
@@ -844,18 +872,12 @@ export interface DesktopRuntimeEnvOptions {
   readonly denoVersion?: (deno: string) => Promise<string | DenoIdentity>;
   readonly log?: (line: string) => void;
   readonly hostOs?: string;
-  /**
-   * What a `deno` that is not the runtime's exact Deno version does: `fail` (the default, for
-   * packaging) or `stock` — build with the stock runtime and warn (`desktop run` / `dev`, where an
-   * unpackaged window beats a refusal).
-   */
-  readonly onDenoMismatch?: "fail" | "stock";
 }
 
 /** The env for `deno desktop`, plus which runtime it selects. */
 export interface DesktopRuntimeEnv {
-  readonly mode: "pinned" | "stock" | "local";
-  /** `DENORT_DESKTOP_BIN` + `LAUFEY_DEV_DIR` (empty for `stock`). */
+  readonly mode: "pinned" | "local";
+  /** `DENORT_DESKTOP_BIN` + `LAUFEY_DEV_DIR`. */
   readonly env: Record<string, string>;
 }
 
@@ -879,7 +901,7 @@ export async function projectDesktopBackend(projectDir: string): Promise<Desktop
   if (backend === "webview" || backend === "cef") return backend;
   throw new Error(
     `denext: deno.json desktop.backend is ${JSON.stringify(backend)}; the denext Deno Desktop ` +
-      `runtime ships "webview" and "cef". Set ${RUNTIME_ENV}=stock for another backend.`,
+      `runtime ships "webview" and "cef".`,
   );
 }
 
@@ -893,12 +915,12 @@ function runtimeLibFor(pin: DesktopRuntimePin, target: string): string {
   return isWindowsTarget(target) ? "denort.dll" : "libdenort.so";
 }
 
-/** The `DENEXT_DESKTOP_RUNTIME` mode (throws on an unknown value). */
-function runtimeMode(env: EnvGet): "stock" | "pinned" {
+/** The `DENEXT_DESKTOP_RUNTIME` refusal, or `null` when it is unset / `pinned`. */
+function runtimeModeRefusal(env: EnvGet): string | null {
   const mode = (env(RUNTIME_ENV) ?? "").trim().toLowerCase();
-  if (mode === "stock") return "stock";
-  if (mode === "" || mode === "pinned") return "pinned";
-  throw new Error(`denext: ${RUNTIME_ENV} must be "stock" or "pinned" (got "${mode}")`);
+  if (mode === "" || mode === "pinned") return null;
+  if (mode === "stock") return STOCK_RUNTIME_REFUSAL;
+  return `denext: ${RUNTIME_ENV} must be "pinned" or unset (got "${mode}")`;
 }
 
 /** `DENEXT_DESKTOP_RUNTIME_DIR`: a local runtime build, checked for its layout only. */
@@ -1117,28 +1139,12 @@ async function crossHostLaufeyDir(
   return join(shim, "laufey");
 }
 
-/** The stock fallback of `desktop run` / `dev` for a `deno` of another version (a warning). */
-function stockForMismatch(
-  found: string,
-  pin: DesktopRuntimePin,
-  deno: string,
-  log: (l: string) => void,
-) {
-  log(
-    `  ⚠ ${denoVersionMismatchMessage(found, pin, deno).replace(/^denext: /, "")}\n` +
-      "  Building this window with the STOCK runtime instead (packaging still requires " +
-      `Deno ${pin.deno}).`,
-  );
-  return { mode: "stock" as const, env: {} };
-}
-
 /**
  * Resolve the env one `deno desktop` invocation needs to run on denext's pinned runtime (and
- * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME=stock` (no env, a warning),
- * `DENEXT_DESKTOP_RUNTIME_DIR` (a local build, unverified, a warning),
- * `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`. Fails when `deno` is
- * not the runtime's exact Deno version (or, with `onDenoMismatch: "stock"`, warns and selects the
- * stock runtime). A target whose backend binary the host's `deno desktop` would look up under
+ * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME_DIR` (a local build,
+ * unverified, a warning), `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`;
+ * refuses `DENEXT_DESKTOP_RUNTIME=stock`. Fails when `deno` is not denext's Deno runtime built
+ * from the runtime's exact Deno release. A target whose backend binary the host's `deno desktop` would look up under
  * another executable suffix (Windows from macOS / Linux, Linux from Windows) gets a cross-host
  * `LAUFEY_DEV_DIR` (see {@linkcode crossHostBackendRename}).
  *
@@ -1152,12 +1158,8 @@ export async function resolveDesktopRuntimeEnv(
   const log = options.log ?? ((l: string) => console.error(l));
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const target = options.target ?? desktopRuntimeTarget();
-  if (runtimeMode(env) === "stock") {
-    log(
-      `  denext: ${RUNTIME_ENV}=stock — building with the STOCK Deno Desktop runtime (${STOCK_LACKS}).`,
-    );
-    return { mode: "stock", env: {} };
-  }
+  const refusal = runtimeModeRefusal(env);
+  if (refusal) throw new Error(refusal);
   const localDir = env(RUNTIME_DIR_ENV);
   if (localDir) {
     const local = await localRuntimeEnv(localDir, runtimeLibFor(pin, target), target);
@@ -1169,10 +1171,7 @@ export async function resolveDesktopRuntimeEnv(
   }
   const deno = options.deno ?? "deno";
   const found = asIdentity(await (options.denoVersion ?? denoCliVersion)(deno));
-  if (denoReleaseVersion(found) !== pin.deno) {
-    if (options.onDenoMismatch === "stock") return stockForMismatch(found.deno, pin, deno, log);
-    throw new Error(denoVersionMismatchMessage(found.deno, pin, deno));
-  }
+  if (!desktopBuildDeno(found, pin)) throw new Error(denoVersionMismatchMessage(found, pin, deno));
   const backend = options.backend ?? await projectDesktopBackend(options.projectDir);
   const rt = await ensureDesktopRuntime({
     target,
@@ -1192,81 +1191,28 @@ export async function resolveDesktopRuntimeEnv(
 }
 
 /**
- * The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime
- * build) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it. A runtime before
- * `3.0.0-rc.5` gets `--unstable-no-legacy-abort`, which it keeps from the compiled app's metadata
- * (from 2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not
- * delivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under
- * `denext start` and a `build --compile` binary. From `3.0.0-rc.5` that is the runtime's default,
- * so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A
- * flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.
+ * The `deno desktop` flags the pinned runtime used to need from the build
+ * (`--unstable-no-legacy-abort`, before runtime 3.0.0-rc.5). Every runtime denext 5.0 builds on has
+ * that behavior by default, so there are none.
  *
- * @param runtimeEnv The `deno desktop` child's runtime env (`DENORT_DESKTOP_BIN` set: not stock).
- * @param denoFlags The flags the command already passes (`desktop.denoFlags`).
- * @param pin The runtime pin (its `version` decides whether the flag is still needed).
- * @returns The flags, to splice in before the entry.
+ * @deprecated Kept for packaging scripts generated before denext 5.0, which spread it into their
+ *   `deno desktop` command; `denext desktop package --regenerate-scripts` drops the call.
+ * @param _runtimeEnv The `deno desktop` child's runtime env (unused).
+ * @param _denoFlags The flags the command already passes (unused).
+ * @returns No flags.
  */
 export function desktopRuntimeDenoFlags(
-  runtimeEnv: Readonly<Record<string, string>>,
-  denoFlags: readonly string[] = [],
-  pin: { readonly version: string } = DESKTOP_RUNTIME_PIN,
+  _runtimeEnv?: Readonly<Record<string, string>>,
+  _denoFlags?: readonly string[],
 ): string[] {
-  if (!runtimeEnv.DENORT_DESKTOP_BIN || !needsNoLegacyAbortFlag(pin.version)) return [];
-  return ["--unstable-no-legacy-abort"].filter((flag) => !denoFlags.includes(flag));
-}
-
-/**
- * Whether a `deno desktop` build from this process bakes the network grant split by direction
- * (`--allow-net-connect` + `--allow-net-listen`, see `src/build/net-permissions.ts`): it builds on
- * denext's pinned Deno Desktop runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local
- * `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) whose version has the split, and the Deno
- * running the build (`denoVersion`) parses the flags. `desktop run` / `dev` re-ran on the Deno they
- * build with, so theirs is this process's own; a packaging script spawns the `deno` on `PATH`,
- * which may be another one ({@linkcode desktopNetSplitFor}).
- *
- * @param env Reads an environment variable.
- * @param deno The building Deno (default: this process's; denext's Deno by its identity marker,
- *   so upstream Deno of the same version never gets the flags).
- * @param pin The runtime pin.
- * @returns Whether to bake the split flags.
- */
-export function desktopNetSplit(
-  env: EnvGet = processEnv,
-  deno: DenoIdentity = currentDenoIdentity(),
-  pin: Pick<DesktopRuntimePin, "version"> = DESKTOP_RUNTIME_PIN,
-): boolean {
-  const mode = (env(RUNTIME_ENV) ?? "").trim().toLowerCase();
-  if (mode === "stock" || env(RUNTIME_DIR_ENV)) return false;
-  return supportsNetSplit(pin.version) && denoSupportsNetSplit(deno);
-}
-
-/**
- * {@linkcode desktopNetSplit} for the `deno` a packaging script spawns (`deno` on `PATH`, which
- * under a plain `deno task` or a CI's own Deno need not be the Deno running the script): its
- * version is read from `deno --version`. Not run under `DENEXT_DESKTOP_RUNTIME=stock` or a local
- * runtime build; a `deno` that can't be run reads as no split.
- *
- * @param deno The `deno` the build runs.
- * @param env Reads an environment variable.
- * @param version Reads a Deno's version (a test seam).
- * @returns Whether to bake the split flags.
- */
-export async function desktopNetSplitFor(
-  deno: string = "deno",
-  env: EnvGet = processEnv,
-  version: (deno: string) => Promise<string | DenoIdentity> = denoCliVersion,
-): Promise<boolean> {
-  // The env and the pin first (with a Deno that has the split), so a stock runtime spawns nothing.
-  const split = { deno: NET_SPLIT_RELEASE, denext: NET_SPLIT_RELEASE };
-  if (!desktopNetSplit(env, split)) return false;
-  return desktopNetSplit(env, asIdentity(await version(deno).catch(() => "")));
+  return [];
 }
 
 /**
  * The env a scaffolded `scripts/package-*.ts` adds to its `deno desktop` command so it builds on
  * denext's pinned Deno Desktop runtime: `DENORT_DESKTOP_BIN` + `LAUFEY_DEV_DIR` for `target`
- * (default: the host), downloaded and verified on first use. Empty under
- * `DENEXT_DESKTOP_RUNTIME=stock`. The project is the script's parent directory.
+ * (default: the host), downloaded and verified on first use. The project is the script's parent
+ * directory.
  *
  * @param entryUrl The packaging script's `import.meta.url`.
  * @param target The Rust target triple passed to `deno desktop --target` (default: the host's).
@@ -1285,7 +1231,11 @@ export async function desktopRuntimeEnv(
 
 /** The pinned runtime's state on this machine (for `denext doctor`). */
 export interface DesktopRuntimeStatus {
-  readonly mode: "pinned" | "stock" | "local";
+  /**
+   * `pinned` = the pinned runtime; `local` = a `DENEXT_DESKTOP_RUNTIME_DIR` build; `refused` =
+   * `DENEXT_DESKTOP_RUNTIME` asks for one denext refuses (`stock`).
+   */
+  readonly mode: "pinned" | "local" | "refused";
   readonly version: string;
   readonly target: string;
   readonly backend: DesktopRuntimeBackend | null;
@@ -1312,30 +1262,28 @@ const CACHE_TEXT: Record<CacheState, string> = {
   cached: "cached + verified",
   missing: "not cached yet (downloaded on the first desktop run/package)",
   invalid: "cache FAILED verification (re-downloaded on next use)",
-  unpinned: `no pinned build for this host (set ${RUNTIME_ENV}=stock)`,
+  unpinned: `no pinned build for this host (set ${RUNTIME_DIR_ENV}=<your build>)`,
   "n/a": "",
 };
 
 /**
  * The `deno` half of {@linkcode desktopRuntimeStatus}: whether the `deno` found (`null`: none) is
- * the runtime's Deno release — stock, or denext's toolchain told by its identity marker — and its
- * report text.
+ * denext's Deno runtime built from the runtime's Deno release ({@linkcode desktopBuildDeno}), and
+ * its report text.
  */
 function denoStatus(
   identity: DenoIdentity | null,
   pin: DesktopRuntimePin,
 ): { ok: boolean; text: string; status: DesktopRuntimeStatus["deno"] } {
   const wrong = (found: string) =>
-    `deno ${found} ✗ — needs ${pin.deno}: deno upgrade --version ${pin.deno}`;
+    `deno ${found} ✗ — needs denext's Deno built from ${pin.deno}: run it through denext ` +
+    "(`denext desktop …`, `denext task …`)";
   if (identity === null) {
     return { ok: false, text: wrong("not found"), status: { found: null, required: pin.deno } };
   }
   const status = { found: identity.deno, required: pin.deno, ...markerOf(identity) };
-  if (denoReleaseVersion(identity) !== pin.deno) {
-    return { ok: false, text: wrong(identity.deno), status };
-  }
-  const whose = identity.denext === undefined ? "" : " (denext's Deno)";
-  return { ok: true, text: `deno ${identity.deno}${whose} ✓`, status };
+  if (!desktopBuildDeno(identity, pin)) return { ok: false, text: wrong(identity.deno), status };
+  return { ok: true, text: `deno ${identity.deno} (denext's Deno) ✓`, status };
 }
 
 /** An identity's marker as a status field (`{}` when it has none). */
@@ -1343,18 +1291,15 @@ function markerOf(identity: DenoIdentity): { denext?: string } {
   return identity.denext === undefined ? {} : { denext: identity.denext };
 }
 
-/** The status under an override (`stock` / a local dir), or `null` for the pinned runtime. */
+/** The status under an override (a refused mode / a local dir), or `null` for the pinned runtime. */
 function overrideStatus(
   env: EnvGet,
   base: Pick<DesktopRuntimeStatus, "version" | "target" | "deno">,
 ): DesktopRuntimeStatus | null {
   const common = { ...base, backend: null, cache: "n/a" as const, ok: true };
-  if ((env(RUNTIME_ENV) ?? "").trim().toLowerCase() === "stock") {
-    return {
-      ...common,
-      mode: "stock",
-      detail: `${RUNTIME_ENV}=stock — the stock runtime (${STOCK_LACKS})`,
-    };
+  const refusal = runtimeModeRefusal(env);
+  if (refusal) {
+    return { ...common, mode: "refused", ok: false, detail: refusal.split("\n")[0] };
   }
   const local = env(RUNTIME_DIR_ENV);
   if (!local) return null;

@@ -3,12 +3,12 @@
 
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
 import {
-  type DenoIdentity,
-  isDenextDenoVersion,
-  needsNoLegacyAbortFlag,
-} from "../build/deno-version.ts";
+  type DenoToolchainChoice,
+  TOOLCHAIN_ACTIVE_ENV,
+  toolchainEnvValue,
+} from "../build/deno-toolchain.ts";
+import { type DenoIdentity, isDenextDenoVersion } from "../build/deno-version.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
 
@@ -635,38 +635,13 @@ export async function toolchainConfigArgs(
 }
 
 /**
- * The runtime flags a denext CLI child on the pinned toolchain gets (the toolchain re-exec, and a
- * compiled binary's pinned-denext child once it handed the toolchain down).
- *
- * `--unstable-no-legacy-abort`: Deno.serve's `request.signal` aborts only when a response is NOT
- * delivered (the client went away), not after every delivered one. The server loop reads it on
- * each request to cancel work when the client disconnects, and under the legacy behavior Deno
- * prints a warning on the first such request. The request context's own signal
- * (`requestSignal()`) still aborts once a response is delivered, from `info.completed`.
- *
- * From runtime `3.0.0-rc.5` that is Deno's default (the flag is accepted and does nothing), so a
- * toolchain of that version or newer gets no flags.
- *
- * @param marker The toolchain the child runs (`DENEXT_TOOLCHAIN_ACTIVE`): a version, or `path`
- *   for a `DENEXT_DENO=<path>` binary of unknown version (which gets none: it may predate them).
- * @returns The flags.
- */
-export function toolchainRuntimeFlags(marker: string | undefined): string[] {
-  return marker && marker !== "path" && needsNoLegacyAbortFlag(marker)
-    ? ["--unstable-no-legacy-abort"]
-    : [];
-}
-
-/**
- * The toolchain a CLI child spawned with `denoExecutable()` runs, for
- * {@linkcode toolchainRuntimeFlags}: the `DENEXT_TOOLCHAIN_ACTIVE` marker, else this process's own
- * Deno's version when it is a toolchain build (its `Deno.build.denext` marker, or a pre-marker
- * `3.0.0-rc.N` / `2.9.7-denext.N` build; src/build/deno-version.ts) and no `DENO_BIN` points
- * elsewhere.
+ * The toolchain a CLI child spawned with `denoExecutable()` runs: the `DENEXT_TOOLCHAIN_ACTIVE`
+ * marker, else this process's own Deno's version when it is denext's Deno (its `Deno.build.denext`
+ * marker, or a pre-marker `2.9.7-denext.N` build; src/build/deno-version.ts).
  *
  * @param env Reads an environment variable.
  * @param identity This process's Deno (`currentDenoIdentity()`).
- * @returns The marker, or `undefined` (not the toolchain, or not known to be).
+ * @returns The marker, or `undefined` (not denext's Deno).
  */
 export function childToolchainMarker(
   env: (name: string) => string | undefined,
@@ -674,7 +649,7 @@ export function childToolchainMarker(
 ): string | undefined {
   const marker = env(TOOLCHAIN_ACTIVE_ENV);
   if (marker) return marker;
-  return !env("DENO_BIN") && isDenextDenoVersion(identity) ? identity.deno : undefined;
+  return isDenextDenoVersion(identity) ? identity.deno : undefined;
 }
 
 /**
@@ -691,82 +666,6 @@ export function mergeRunFlags(base: readonly string[], inherited: readonly strin
   return [...base.filter((t) => !set.has(flagName(t))), ...inherited];
 }
 
-/**
- * The core verbs that serve HTTP from their own process (`Deno.serve`), and so are the ones
- * Deno's legacy `request.signal` abort reaches: `dev`, `start` and `profile` (which serves the
- * build it profiles). `export` renders without a server; `mobile dev` / `desktop dev` start a
- * `denext dev` child, which passes through this gate itself.
- */
-const SERVING_VERBS: ReadonlySet<string> = new Set(["dev", "start", "profile"]);
-
-/**
- * Whether a verb serves HTTP in its own process ({@linkcode SERVING_VERBS}; a project's or a
- * plugin's verb never counts).
- *
- * @param command The verb's name and where it came from.
- * @returns Whether its process runs `Deno.serve`.
- */
-export function servesInProcess(
-  command: { readonly name: string; readonly source?: "core" | "plugin" | "project" },
-): boolean {
-  return (command.source ?? "core") === "core" && SERVING_VERBS.has(command.name);
-}
-
-/**
- * The environment variable a runtime-flags re-exec ({@linkcode maybeReexecToolchain}) gives its
- * child: the parent's pid. The child skips the check only when it names ITS parent, so a value
- * that leaks into a grandchild (a `deno task` the server starts) never suppresses that one's.
- */
-const RUNTIME_FLAGS_ENV = "DENEXT_RUNTIME_FLAGS_FOR";
-
-/**
- * Whether `Deno.serve` in this process still runs Deno's legacy abort — `request.signal`
- * aborting after every delivered response, and the "(legacy behavior)" notice on the first
- * request that read it — or runs `--unstable-no-legacy-abort`. Deno exposes the flag to no
- * runtime API (it also comes from a config's `"unstable"` list), so this asks the server itself:
- * one request to a throwaway loopback `Deno.serve`, its response delivered, then whether the
- * request's signal aborted. The handler never reads the signal before the response is done, so
- * the probe prints no notice of its own.
- *
- * @returns `true` (legacy), `false` (the flag is on), or `undefined` when it cannot tell (no net
- *   permission, a socket error).
- */
-export async function legacyAbortActive(): Promise<boolean | undefined> {
-  const stop = new AbortController();
-  let server: Deno.HttpServer<Deno.NetAddr> | undefined;
-  try {
-    let seen: Request | undefined;
-    let completed: Promise<void> | undefined;
-    server = Deno.serve(
-      { hostname: "127.0.0.1", port: 0, signal: stop.signal, onListen: () => {} },
-      (request, info) => {
-        seen = request;
-        completed = info.completed;
-        return new Response("ok", { headers: { connection: "close" } });
-      },
-    );
-    const conn = await Deno.connect({ hostname: "127.0.0.1", port: server.addr.port });
-    try {
-      await conn.write(
-        new TextEncoder().encode("GET / HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n"),
-      );
-      const buf = new Uint8Array(1024);
-      while (await conn.read(buf) !== null) { /* drain the response until the server closes */ }
-    } finally {
-      try {
-        conn.close();
-      } catch { /* already closed */ }
-    }
-    await completed;
-    return seen === undefined ? undefined : seen.signal.aborted;
-  } catch {
-    return undefined;
-  } finally {
-    stop.abort();
-    await server?.finished.catch(() => {});
-  }
-}
-
 /** What {@linkcode maybeReexecToolchain} touches in the process (injectable for tests). */
 export interface ReexecToolchainDeps {
   /** An environment variable (production: `Deno.env.get`). */
@@ -776,22 +675,21 @@ export interface ReexecToolchainDeps {
   /** This process's `Deno.version.deno`. */
   readonly denoVersion: string;
   /**
-   * This process's `Deno.build.denext`, the identity marker of denext's Deno (absent on stock Deno
-   * and on the toolchain builds from before it).
+   * This process's `Deno.build.denext`, the identity marker of denext's Deno (absent on upstream
+   * Deno and on the toolchain builds from before it).
    */
   readonly denext?: string;
   /** The pinned toolchain version (`null` when this denext version pins none). */
   readonly pinnedVersion: string | null;
   /** Whether this process is a compiled binary. */
   readonly standalone: () => boolean;
-  /** Pick the Deno to run on (production: `resolveDenoToolchain`). */
+  /** Pick the Deno to run on (production: `resolveDenoToolchain`; throws when it can't be had). */
   readonly resolve: () => Promise<DenoToolchainChoice>;
   /**
-   * Re-run this exact invocation under `deno` with `DENEXT_TOOLCHAIN_ACTIVE=<marker>` (and `env`)
-   * and the toolchain's runtime flags for `marker` ({@linkcode toolchainRuntimeFlags}), and
-   * resolve its exit code (production: a `deno run` child, stdio + shutdown signals forwarded).
+   * Re-run this exact invocation under `deno` with `DENEXT_TOOLCHAIN_ACTIVE=<marker>` and resolve
+   * its exit code (production: a `deno run` child, stdio + shutdown signals forwarded).
    */
-  readonly spawn: (deno: string, marker: string, env?: Record<string, string>) => Promise<number>;
+  readonly spawn: (deno: string, marker: string) => Promise<number>;
   /** End the process (production: `Deno.exit`). */
   readonly exit: (code: number) => void;
   /** Say something on stderr. */
@@ -803,16 +701,6 @@ export interface ReexecToolchainDeps {
    */
   readonly pathEnv?: (deno: string) => Promise<Record<string, string>>;
   /**
-   * For a verb that serves in this process ({@linkcode servesInProcess}) and may spawn this
-   * process's own Deno: whether `Deno.serve` here runs the legacy abort
-   * ({@linkcode legacyAbortActive}). Absent: the runtime-flags re-exec never happens.
-   */
-  readonly legacyAbort?: () => Promise<boolean | undefined>;
-  /** This process's own Deno binary (production: `Deno.execPath()`). */
-  readonly execPath?: string;
-  /** This process's pid and its parent's (production: `Deno.pid` / `Deno.ppid`). */
-  readonly pids?: { readonly pid: number; readonly ppid: number };
-  /**
    * For a verb that runs no project code under `deno run`: hand the toolchain to its children
    * instead ({@linkcode handsToolchainToChildren}).
    */
@@ -820,20 +708,36 @@ export interface ReexecToolchainDeps {
 }
 
 /**
+ * Whether `DENO_BIN` was set by the user rather than handed down by denext (which sets the
+ * toolchain marker beside it): such a binary must be denext's runtime too, so the resolver checks
+ * it.
+ */
+function userDenoBin(deps: ReexecToolchainDeps): boolean {
+  return Boolean(deps.env("DENO_BIN")) && !deps.env(TOOLCHAIN_ACTIVE_ENV);
+}
+
+/**
+ * Whether the children already get denext's runtime with nothing to resolve: a `DENO_BIN` denext
+ * handed down (the marker beside it), or — under `deno run` on the toolchain already, with no
+ * `DENO_BIN` of the user's to verify — this very binary, which `denoExecutable()` returns.
+ */
+function alreadyHanded(deps: ReexecToolchainDeps): boolean {
+  if (deps.env("DENO_BIN") && deps.env(TOOLCHAIN_ACTIVE_ENV)) return true;
+  return !deps.standalone() && onToolchainNow(deps) && !userDenoBin(deps);
+}
+
+/**
  * A compiled binary's half of {@linkcode maybeReexecToolchain}: it cannot swap its own runtime, so
  * it resolves the toolchain (downloading it on first need) and hands it to every child through its
  * own environment — `DENO_BIN` (what `denoExecutable()` spawns), the toolchain marker, and a PATH
- * whose `deno` is the toolchain (only `deno` lookups change). A `DENO_BIN` the user set wins and
- * nothing is resolved. A stock choice changes nothing: `denoExecutable()` then finds a stock
- * `deno`, or refuses with the fix when the machine has none.
+ * whose `deno` is the toolchain (only `deno` lookups change). A `DENO_BIN` denext already handed
+ * down (the marker beside it) stands; one the user set is resolved like `DENEXT_DENO=<path>`
+ * (verified as denext's runtime, else refused).
  */
 async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false> {
-  if (deps.env("DENO_BIN")) return false;
-  // Under `deno run` on the toolchain already, `denoExecutable()` is this very binary.
-  if (!deps.standalone() && onToolchainNow(deps)) return false;
+  if (alreadyHanded(deps)) return false;
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
-  if (choice.kind === "stock") return false;
   deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
   deps.setEnv("DENO_BIN", choice.deno);
   const path = (await deps.pathEnv?.(choice.deno))?.PATH;
@@ -842,36 +746,14 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
 }
 
 /**
- * The half of {@linkcode maybeReexecToolchain} for a process ALREADY on the toolchain — started on
- * it directly (`toolchain link`'s `deno`, a `deno task` step, any `deno run` of the CLI on a
- * `2.9.7-denext.N` build) rather than re-exec'd onto it, so without the toolchain's runtime flags
- * ({@linkcode toolchainRuntimeFlags}). A serving verb whose `Deno.serve` still runs the legacy abort
- * re-runs once on this same binary with them; the child is told so ({@linkcode RUNTIME_FLAGS_ENV})
- * and never re-runs again, whatever its probe says. Everything else continues in-process: a verb
- * that serves nothing, no permission to spawn (`legacyAbort` absent), the flag already on (the
- * command line or a config's `"unstable"`), or a probe that cannot tell.
- */
-async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean> {
-  const { legacyAbort, execPath, pids } = deps;
-  if (!legacyAbort || execPath === undefined || pids === undefined) return false;
-  if (toolchainRuntimeFlags(deps.denoVersion).length === 0) return false;
-  if (deps.env(RUNTIME_FLAGS_ENV) === String(pids.ppid)) return false;
-  if (await legacyAbort() !== true) return false;
-  deps.exit(
-    await deps.spawn(execPath, deps.denoVersion, { [RUNTIME_FLAGS_ENV]: String(pids.pid) }),
-  );
-  return true;
-}
-
-/**
- * Whether this `deno run` process already runs on the toolchain: it is denext's Deno (its
+ * Whether this `deno run` process already runs on denext's runtime: it is denext's Deno (its
  * `Deno.build.denext` marker, or a pre-marker build's version; src/build/deno-version.ts) and the
- * toolchain marker names its own version, or its version is the pinned build's. A
- * `DENEXT_DENO=<path>` child (marker `path`) counts. Upstream Deno of the pinned number does not.
+ * toolchain marker names its own version (a re-exec'd child, a `DENEXT_DENO=<path>` build's
+ * included), or its version is the pinned build's. Upstream Deno of the pinned number does not
+ * count.
  */
 function onToolchainNow(deps: ReexecToolchainDeps): boolean {
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
-  if (marker === "path") return true;
   const identity = deps.denext
     ? { deno: deps.denoVersion, denext: deps.denext }
     : { deno: deps.denoVersion };
@@ -880,21 +762,21 @@ function onToolchainNow(deps: ReexecToolchainDeps): boolean {
 }
 
 /**
- * Run a project-code verb on denext's Deno toolchain: under stock Deno, re-exec the same
- * invocation (argv, cwd, stdio, exit code, shutdown signals) under the pinned toolchain binary.
- * A compiled binary cannot swap its own runtime, so it hands the toolchain to its children
- * instead ({@linkcode handToolchainToChildren}) — and its pinned-denext re-exec runs on it.
+ * Run a verb on denext's Deno runtime — the only Deno denext 5.0 runs on. A project-code verb
+ * under any other Deno re-execs the same invocation (argv, cwd, stdio, exit code, shutdown signals)
+ * under the pinned toolchain binary (or the `DENEXT_DENO=<path>` / `DENO_BIN` build the user
+ * named). A compiled binary cannot swap its own runtime, so it hands the toolchain to its children
+ * instead ({@linkcode handToolchainToChildren}) — and its pinned-denext re-exec runs on it; so does
+ * a verb that only starts `deno` children (`deps.handOff`).
  *
  * Loops are impossible: the child carries `DENEXT_TOOLCHAIN_ACTIVE=<version>` and runs that
- * version, and a process whose Deno is that marker's version (or the pinned version, or a
- * `DENEXT_DENO=<path>` child: marker `path`) never re-execs. Neither a leaked marker (an
- * absolute-path stock `deno` inside `denext task`) nor an older `-denext.N` build (a stale
- * `toolchain link`) counts as the toolchain: they re-exec onto the pinned one. An explicit opt-out
- * (`DENEXT_DENO=stock`) or no pin continues the command in-process; a process without the grants
- * to start the toolchain refuses with the resolver's `refusal` (its ways out); a toolchain that can't be had (offline, no build for this host, a failed download)
- * throws the resolver's `denext:` error with the fix — never another Deno. A serving verb already
- * on the toolchain without its runtime flags re-runs once on the same binary
- * ({@linkcode reexecForRuntimeFlags}).
+ * version, and a process whose Deno is that marker's version (or the pinned version) never
+ * re-execs. Neither a leaked marker (an absolute-path upstream `deno` inside `denext task`) nor an
+ * older build (a stale `toolchain link`) counts as the toolchain: they re-exec onto the pinned one.
+ * Anything that keeps denext's runtime from running — `DENEXT_DENO=stock`, a `DENEXT_DENO` /
+ * `DENO_BIN` that is not denext's runtime, a process without the grants to start the toolchain,
+ * offline on first use, no build for this host, a failed download — throws the resolver's
+ * `denext:` error with the fix; nothing runs on another Deno.
  *
  * @param applies Whether the verb runs project code ({@linkcode runsProjectCode}).
  * @param deps The process seams.
@@ -904,17 +786,24 @@ export async function maybeReexecToolchain(
   applies: boolean,
   deps: ReexecToolchainDeps,
 ): Promise<boolean> {
-  if (!applies) return deps.handOff ? await handToolchainToChildren(deps) : false;
-  if (deps.standalone()) return await handToolchainToChildren(deps);
-  const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
-  if (marker === "path") return false;
-  if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
+  if (!applies && !deps.handOff) return false;
+  if (!applies || deps.standalone()) return await handToolchainToChildren(deps);
+  if (onToolchainNow(deps)) {
+    // Already on the runtime: still refuse what the environment asks for that denext won't run
+    // (`DENEXT_DENO=stock`, a `DENO_BIN` of the user's that is not denext's runtime).
+    if (stockRequested(deps.env) || userDenoBin(deps)) {
+      const choice = await deps.resolve();
+      if (choice.warning) deps.warn(choice.warning);
+    }
+    return false;
+  }
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
-  if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
-  if (choice.kind === "stock") return false;
-  // The child gets the runtime flags with the spawn; told so, it skips their check.
-  const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;
-  deps.exit(await deps.spawn(choice.deno, choice.version, told));
+  deps.exit(await deps.spawn(choice.deno, choice.version));
   return true;
+}
+
+/** Whether the environment asks for `DENEXT_DENO=stock` (which the resolver refuses). */
+function stockRequested(env: (name: string) => string | undefined): boolean {
+  return toolchainEnvValue(env).toLowerCase() === "stock";
 }

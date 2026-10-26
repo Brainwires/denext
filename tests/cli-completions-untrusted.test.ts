@@ -36,7 +36,7 @@ async function completions(dir: string, shell: string): Promise<string> {
   const out = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", CLI, "completions", shell],
     cwd: dir,
-    env: { DENEXT_DENO: "stock", NO_COLOR: "1" },
+    env: { DENEXT_DENO: Deno.execPath(), NO_COLOR: "1" },
   });
   const stdout = new TextDecoder().decode(out.stdout);
   assertEquals(out.code, 0, new TextDecoder().decode(out.stderr));

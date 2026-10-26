@@ -1,6 +1,6 @@
 // Run `deno <args>` on denext's Deno toolchain — the running Deno when it already is one, else
-// the pinned build `resolveDenoToolchain` downloads and verifies — and exit with its code.
-// `DENEXT_DENO=stock` runs the running Deno instead.
+// the pinned build `resolveDenoToolchain` downloads and verifies — and exit with its code. When it
+// can't be had (`DENEXT_DENO=stock` included) the resolver's `denext:` error says the fix.
 //
 //   deno run -A scripts/toolchain-deno.ts coverage coverage/profile --include=/src/ ...
 //
@@ -11,7 +11,7 @@
 import { toolchainDeno } from "./test-run.ts";
 
 if (import.meta.main) {
-  const bin = (await toolchainDeno()) ?? Deno.execPath();
+  const bin = await toolchainDeno();
   const { code } = await new Deno.Command(bin, {
     args: Deno.args,
     stdin: "inherit",

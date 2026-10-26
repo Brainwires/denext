@@ -1,10 +1,10 @@
-// The production server's idle trim (src/build/idle-trim.ts): which runtimes get it, the opt-outs,
-// and where it is turned on — the `denext start` child's environment, the `build --compile` flags,
-// the Docker image — and where it is not (`dev`, stock Deno, an older pin, a SPA image).
+// The production server's idle trim (src/build/idle-trim.ts): the opt-outs, and where it is turned
+// on — the `denext start` child's environment, the `build --compile` flags, the Docker image — and
+// where it is not (`dev`, a SPA image). Every runtime denext 5.0 runs on (3.0.0-rc.5 or later)
+// has it, so no runtime gate remains.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { FIRST_IDLE_TRIM_RUNTIME, supportsIdleTrim } from "../src/build/deno-version.ts";
 import {
   configDisablesIdleTrim,
   configTextDisablesIdleTrim,
@@ -23,32 +23,16 @@ import { resolveDocker } from "../src/build/docker-detect.ts";
 import { startIdleTrimEnv } from "../src/cli/run-verb.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
 
 const noEnv = (_: string) => undefined;
 const inputs = (over: Partial<IdleTrimInputs> = {}): IdleTrimInputs => ({
-  runtime: "3.0.0-rc.5",
   configOff: false,
   env: noEnv,
   ...over,
 });
 
-Deno.test("idle trim: denext's Deno from 3.0.0-rc.5 has it", () => {
-  assertEquals(FIRST_IDLE_TRIM_RUNTIME, "3.0.0-rc.5");
-  for (const v of ["3.0.0-rc.5", "3.0.0-rc.6", "3.0.0-rc.10", "3.0.0", "3.1.0"]) {
-    assert(supportsIdleTrim(v), v);
-  }
-  for (const v of ["3.0.0-rc.4", "3.0.0-rc.1", "2.9.7-denext.22", "2.9.7", "garbage", ""]) {
-    assert(!supportsIdleTrim(v), v);
-  }
-});
-
-Deno.test("idle trim: on for a new enough toolchain unless an opt-out says otherwise", () => {
+Deno.test("idle trim: on unless an opt-out says otherwise", () => {
   assert(idleTrimOn(inputs()));
-  // Stock Deno, a DENEXT_DENO=<path> binary of unknown version, an older runtime: off.
-  assert(!idleTrimOn(inputs({ runtime: undefined })));
-  assert(!idleTrimOn(inputs({ runtime: "path" })));
-  assert(!idleTrimOn(inputs({ runtime: "3.0.0-rc.4" })));
   // `start: { idleTrim: false }`, DENEXT_IDLE_TRIM=0: off. Any other value leaves it on.
   assert(!idleTrimOn(inputs({ configOff: true })));
   assert(!idleTrimOn(inputs({ env: (n) => n === "DENEXT_IDLE_TRIM" ? "0" : undefined })));
@@ -57,8 +41,6 @@ Deno.test("idle trim: on for a new enough toolchain unless an opt-out says other
 
 Deno.test("idle trim: the start child's environment, the user's own value standing", () => {
   assertEquals(idleTrimEnv(inputs()), { [IDLE_TRIM_ENV]: "1" });
-  assertEquals(idleTrimEnv(inputs({ runtime: undefined })), {});
-  assertEquals(idleTrimEnv(inputs({ runtime: "3.0.0-rc.4" })), {});
   assertEquals(idleTrimEnv(inputs({ configOff: true })), {});
   // DENO_UNSTABLE_IDLE_TRIM already set (to anything, `0` included): nothing is added.
   for (const value of ["0", "1", ""]) {
@@ -70,11 +52,9 @@ Deno.test("idle trim: the start child's environment, the user's own value standi
   }
 });
 
-Deno.test("idle trim: a compiled executable gets the flag baked in, off the toolchain nothing", () => {
+Deno.test("idle trim: a compiled executable gets the flag baked in unless opted out", () => {
   assertEquals(idleTrimCompileFlags(inputs()), [IDLE_TRIM_FLAG]);
   assertEquals(IDLE_TRIM_FLAG, "--unstable-idle-trim");
-  assertEquals(idleTrimCompileFlags(inputs({ runtime: undefined })), []);
-  assertEquals(idleTrimCompileFlags(inputs({ runtime: "3.0.0-rc.3" })), []);
   assertEquals(idleTrimCompileFlags(inputs({ configOff: true })), []);
   assertEquals(
     idleTrimCompileFlags(inputs({ env: (n) => n === "DENEXT_IDLE_TRIM" ? "0" : undefined })),
@@ -82,12 +62,10 @@ Deno.test("idle trim: a compiled executable gets the flag baked in, off the tool
   );
 });
 
-Deno.test("idle trim: generated files follow the pinned toolchain", () => {
-  assertEquals(pinnedIdleTrim(false, noEnv), supportsIdleTrim(toolchainPin.version));
-  assert(pinnedIdleTrim(false, noEnv, "3.0.0-rc.5"));
-  assert(!pinnedIdleTrim(false, noEnv, "3.0.0-rc.4"));
-  assert(!pinnedIdleTrim(true, noEnv, "3.0.0-rc.5"));
-  assert(!pinnedIdleTrim(false, (n) => n === "DENEXT_IDLE_TRIM" ? "0" : undefined, "3.0.0-rc.5"));
+Deno.test("idle trim: generated files turn it on unless opted out", () => {
+  assert(pinnedIdleTrim(false, noEnv));
+  assert(!pinnedIdleTrim(true, noEnv));
+  assert(!pinnedIdleTrim(false, (n) => n === "DENEXT_IDLE_TRIM" ? "0" : undefined));
 });
 
 Deno.test("idle trim: the config's opt-out is read from its text before a build, comments ignored", async () => {
@@ -179,21 +157,18 @@ Deno.test("idle trim: only the `start` verb's child gets it", async () => {
         Deno.env.get("DENEXT_IDLE_TRIM") === "0"
       ? {}
       : { [IDLE_TRIM_ENV]: "1" };
-    assertEquals(await startIdleTrimEnv(verb("start"), dir, "3.0.0-rc.5"), expected);
+    assertEquals(await startIdleTrimEnv(verb("start"), dir), expected);
     // Not for dev, profile, test or jobs; not for a project's own `start` verb.
     for (const name of ["dev", "profile", "test", "job", "build"]) {
-      assertEquals(await startIdleTrimEnv(verb(name), dir, "3.0.0-rc.5"), {}, name);
+      assertEquals(await startIdleTrimEnv(verb(name), dir), {}, name);
     }
-    assertEquals(await startIdleTrimEnv(verb("start", "project"), dir, "3.0.0-rc.5"), {});
-    // Stock Deno and older runtimes: nothing.
-    assertEquals(await startIdleTrimEnv(verb("start"), dir, undefined), {});
-    assertEquals(await startIdleTrimEnv(verb("start"), dir, "3.0.0-rc.4"), {});
+    assertEquals(await startIdleTrimEnv(verb("start", "project"), dir), {});
     // The project's opt-out.
     await Deno.writeTextFile(
       join(dir, "denext.config.ts"),
       "export default { start: { idleTrim: false } };\n",
     );
-    assertEquals(await startIdleTrimEnv(verb("start"), dir, "3.0.0-rc.5"), {});
+    assertEquals(await startIdleTrimEnv(verb("start"), dir), {});
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

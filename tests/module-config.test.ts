@@ -225,7 +225,7 @@ Deno.test("a re-exec the CLI may not spawn fails with the way out, not NotCapabl
       cwd: dir,
       // stdin is null (no terminal): Deno cannot ask for --allow-run, so the CLI refuses up front
       // On stock Deno: the module gate's refusal, past the toolchain gate's (scaffold-start.test.ts).
-      env: { NO_COLOR: "1", DENEXT_DENO: "stock" },
+      env: { NO_COLOR: "1", DENEXT_DENO: Deno.execPath() },
     });
     const stderr = new TextDecoder().decode(out.stderr);
     assert(out.code !== 0, stderr);
