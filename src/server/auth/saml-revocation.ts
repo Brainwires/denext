@@ -22,6 +22,12 @@
 import { currentContext } from "../request-context.ts";
 import type { AuthAdapter, SsoSessionIndexRecord } from "./adapter.ts";
 import { randomToken } from "./oauth.ts";
+import type { ResolvedAuthLogger } from "./options.ts";
+import {
+  REVOCATION_FLOOR_SECONDS,
+  type SidRevocationAdapter,
+  sidRevoked,
+} from "./sid-revocation.ts";
 import type { AuthSessionSaml } from "./types.ts";
 
 /** The adapter methods Single Logout of cookie sessions needs. */
@@ -107,12 +113,15 @@ async function namedSessions(
 
 /**
  * Put the cookie sessions a LogoutRequest names on the revocation list: those its SessionIndexes
- * started, or with none given, every session its NameID started (SAML 2.0 §3.7.3.2).
+ * started, or with none given, every session its NameID started (SAML 2.0 §3.7.3.2). The rows
+ * live until the latest ceiling the index recorded, and at least `REVOCATION_FLOOR_SECONDS` from
+ * now (a later, longer `session.maxLifetime` can't outlive them; `sid-revocation.ts`).
  *
  * @param adapter The adapter.
  * @param providerId The `saml()` provider id.
  * @param nameId The LogoutRequest's NameID.
  * @param sessionIndexes Its SessionIndexes (may be empty).
+ * @param nowSeconds The clock, epoch seconds.
  * @returns The revoked `sid`s — or `null` when a target can't be resolved (the caller then ends
  *   every session of the user instead).
  */
@@ -121,11 +130,16 @@ export async function revokeCookieSessions(
   providerId: string,
   nameId: string,
   sessionIndexes: readonly string[],
+  nowSeconds: number = Math.floor(Date.now() / 1000),
 ): Promise<string[] | null> {
   const targets = await namedSessions(adapter, providerId, nameId, sessionIndexes);
   if (!targets) return null;
   const sids = [...new Set(targets.map((t) => t.sid))];
-  await adapter.revokeSids(sids, Math.max(...targets.map((t) => t.expiresAt)));
+  const expiresAt = Math.max(
+    nowSeconds + REVOCATION_FLOOR_SECONDS,
+    ...targets.map((t) => t.expiresAt),
+  );
+  await adapter.revokeSids(sids, expiresAt);
   return sids;
 }
 
@@ -134,22 +148,25 @@ const REVOKED_READS = Symbol("denext.auth.revokedReads");
 
 /**
  * Whether the cookie session `sid` is on the revocation list — one query, at most once per
- * request.
+ * request, through `sid-revocation.ts`'s `sidRevoked` (a failed lookup is stood in for by a
+ * recent answer, else it throws and the caller fails closed).
  *
  * @param adapter The adapter.
  * @param sid The session's id.
+ * @param logger Hears a (rate-limited) warning when the adapter fails.
  * @returns `true` when it was revoked.
  */
 export function cookieSessionRevoked(
-  adapter: Pick<CookieRevocationAdapter, "isSidRevoked">,
+  adapter: SidRevocationAdapter,
   sid: string,
+  logger?: ResolvedAuthLogger,
 ): Promise<boolean> {
   const memo = currentContext()?.memo;
   let reads = memo?.get(REVOKED_READS) as Map<string, Promise<boolean>> | undefined;
   if (memo && !reads) memo.set(REVOKED_READS, reads = new Map());
   const hit = reads?.get(sid);
   if (hit) return hit;
-  const read = Promise.resolve().then(() => adapter.isSidRevoked(sid)).then((v) => v === true);
+  const read = Promise.resolve().then(() => sidRevoked(adapter, sid, logger));
   reads?.set(sid, read);
   return read;
 }

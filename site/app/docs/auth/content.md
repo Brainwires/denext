@@ -469,9 +469,11 @@ non-SAML session, make none unless the app revokes sessions by id ([`revokeSessi
 can't be named: a LogoutRequest that names a session the index doesn't know ends every session of
 that user signed in before it (`sessionsValidAfter`) instead, so it fails closed.
 
-The index and the revocation list live in the auth adapter, as durable rows kept until the session
-would have expired, so every instance on the same database sees a revocation and nothing evicts
-it early. `sqliteAuthAdapter`, `postgresAuthAdapter` and `backendAuthAdapter` keep them
+The index and the revocation list live in the auth adapter, as durable rows: the index until the
+session would have expired, a revocation for at least 400 days (see [Revocation](#revocation)), so
+every instance on the same database sees a revocation and nothing evicts it early. With a
+`sessionStore`, a LogoutRequest naming a SessionIndex no recorded session carries fails closed the
+same way: every session of the user ends. `sqliteAuthAdapter`, `postgresAuthAdapter` and `backendAuthAdapter` keep them
 (`recordSsoSessionIndex`, `listSsoSessionIndexBySessionIndex`, `listSsoSessionIndexByNameId`,
 `revokeSids`, `isSidRevoked`); `inMemoryAuthAdapter` keeps them for this process only. An
 adapter without those methods (an Auth.js adapter) leaves the exact logout off: a LogoutRequest
@@ -632,15 +634,31 @@ a session signed in during the very second of the stamp survives it. It needs an
 
 `revokeSession(id)` ends one session. Store-backed, `id` is the session's `sessionId` and its
 record is deleted. Stateless (no `sessionStore`), `id` is the session's own `sid` and goes on the
-auth adapter's revocation list, the one [SAML Single Logout](#saml-providers) writes, until the
-session would have ended anyway (`session.maxLifetime`); every instance on the same database then
-reads that session as signed out and clears its cookie. That needs an adapter with the list
-(`sqliteAuthAdapter`, `postgresAuthAdapter`, `backendAuthAdapter`; `inMemoryAuthAdapter` for one
-process), and `revokeSession` throws with an adapter that lacks it (an Auth.js adapter) or with
-none. `currentSessionId()` returns the current request's id (`sessionId`, else `sid`; `null`
-when signed out, for a bearer session, or for a cookie from before denext minted ids). It is
-server-only: `/auth/session` and the client hooks never carry it, so don't pass it to the
-browser yourself.
+auth adapter's revocation list, the one [SAML Single Logout](#saml-providers) writes, for the
+larger of `session.maxLifetime` and 400 days (the longest a browser keeps a cookie, so a lifetime
+raised later can't outlive the revocation; raising it past 400 days after a revocation doesn't
+extend that revocation); every instance on the same database then reads that session as signed
+out and clears its cookie. That needs an adapter with the list (`sqliteAuthAdapter`,
+`postgresAuthAdapter`, `backendAuthAdapter`; `inMemoryAuthAdapter` for one process), and
+`revokeSession` throws with an adapter that lacks it (an Auth.js adapter) or with none.
+`currentSessionId()` returns the current request's id (`sessionId`, else `sid`; `null` when
+signed out, for a bearer session, or for a cookie from before denext minted ids). It is
+server-only: `/auth/session` and the client hooks never carry it, and on the session `auth()`
+returns `sid` is non-enumerable — a session passed to a client component, spread or
+`JSON.stringify`'d doesn't carry it (`session.sid` still reads it on the server). In the sealed
+cookie the id rides as `rsid`, a key denext 4.8 ignores, so a rolling 4.8 → 4.9 deploy and a
+rollback keep every session.
+
+**When the list can't be read.** A lookup that throws (a database blip or failover) is answered
+with that session's last answer when it is at most 60 seconds old — a revoked session stays
+revoked, a live one stays live — and only with no answer that recent does the session read as
+signed out for that request; its cookie is kept, so it comes back once the adapter answers (each
+process remembers up to 10,000 answers per adapter). The failure is logged at `warn`, once a
+minute, and `/_denext/health` reports `auth-revocation: "down"` (503) until a probe reaches the
+list again. With `DENEXT_BOOT_DDL=off`, the server checks at startup that the list can be read
+and refuses to start with a `BootSchemaError` when its table is missing (Postgres: apply
+`0009_auth_sso_cookie_sessions` with `denext db push`), so a missing migration never shows up as
+every stateless user signed out.
 
 **What the check costs.** A stateless read looks its `sid` up (one indexed query, at most once per
 request) only once the app has revoked a session this way: the first `revokeSession(id)` also

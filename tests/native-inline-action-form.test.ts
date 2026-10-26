@@ -221,7 +221,7 @@ Deno.test({
       const [base, token] = closure.split(".");
       const edited = token.slice(0, -2) + (token.endsWith("A") ? "BB" : "AA");
       const tampered = await postForm(server.origin, `${base}.${edited}`, "evil");
-      assertEquals(tampered.status, 404);
+      assertEquals(tampered.status, 409);
       await tampered.body?.cancel();
       assert(!(await (await fetch(server.origin + "/")).text()).includes("evil"));
       // An export no module imports is refused like an unknown id, under its real id.
@@ -231,7 +231,7 @@ Deno.test({
         "addUnreferenced",
       );
       const refused = await postForm(server.origin, `/_denext/action/${unreferenced}`, "sneak");
-      assertEquals(refused.status, 404);
+      assertEquals(refused.status, 409);
       await refused.body?.cancel();
       assert(!(await (await fetch(server.origin + "/")).text()).includes("unreferenced:"));
     } finally {

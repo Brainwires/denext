@@ -2659,8 +2659,12 @@ function frameworkUrlExternalPlugin(): esbuild.Plugin {
  * intact. Modules with neither directive fall through to the normal loader. Exported for testing.
  *
  * @param options.useCache Compile `"use cache"` (default true).
+ * @param options.projectDir The project root: inline action ids are keyed by the module's
+ *   project-relative path, as the runtime loader keys them.
  */
-export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbuild.Plugin {
+export function cacheDirectivePlugin(
+  options: { useCache?: boolean; projectDir?: string } = {},
+): esbuild.Plugin {
   const useCache = options.useCache ?? true;
   return {
     name: "denext-server-directives",
@@ -2674,7 +2678,9 @@ export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbu
         const cached = cache
           ? await transformUseCache(source, url)
           : { code: source, changed: false };
-        const inline = await transformInlineServerActions(cached.code, url);
+        const inline = await transformInlineServerActions(cached.code, url, {
+          projectDir: options.projectDir,
+        });
         if (!cached.changed && !inline.changed) return undefined;
         const ext = extname(args.path).slice(1);
         return {
@@ -2830,17 +2836,18 @@ async function sourcePlugins(
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
+  const projectDir = options.absWorkingDir ?? dirname(
+    options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
+  );
   const fumadocs = await detectFumadocsMdx(
-    options.absWorkingDir ?? dirname(
-      options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
-    ),
+    projectDir,
     (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
   );
   return [
     ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild, options.configPath)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
-    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true })] : []),
+    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true, projectDir })] : []),
     mdxPlugin(options.mdxOptions),
     ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
   ];

@@ -117,9 +117,19 @@ export default async function Note({ params }: { params: Promise<{ id: string }>
         than once (an image per replica, a build per region, a <code>denext export</code>{" "}
         served next to a separate <code>denext build</code>), set{" "}
         <code>DENEXT_ACTION_ID_SECRET</code> (at least 16 characters;{" "}
-        <code>openssl rand -base64 32</code>) to the same value for every build and every instance.
-        A page rendered by an older build posts ids the new one does not know: the request is an
-        unknown action (404), as an expired Next.js action is.
+        <code>openssl rand -base64 32</code>) to the same value for every build and every instance —
+        where <code>denext build</code>{" "}
+        runs, not only at runtime: the build's secret is the one the client bundle carries ids for,
+        so a server started with the variable set to another value ignores it with a warning (and
+        reports <code>action-ids: "down"</code> on{" "}
+        <code>/_denext/health</code>) when the build generated its own, and refuses to start when
+        the build used the variable and the server has another value or none. Inline actions are
+        keyed by their module's project-relative path, so builds of one source at different paths
+        agree. A page rendered by an older build posts ids the new one does not know: the request
+        answers <code>409</code> with{" "}
+        <code>x-denext-action: unknown</code>, and the page reloads itself once to pick the new ids
+        up (never in a loop: a page whose actions stay unknown after the reload just fails the
+        call), as an expired Next.js action makes the page reload.
       </p>
       <p>
         Only the exports your app's modules import are callable: imported into a client component,

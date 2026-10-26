@@ -1128,6 +1128,19 @@ Deno.test("next-auth adapter bridge: MFA is refused over its database sessions (
   ) {
     assertThrows(() => configureAuth(config), Error, "Auth.js adapter");
   }
+  // `mfa.required: "always"` over the bridge's sessions with NO factor store is refused too —
+  // by the factor-store check (nobody could ever finish signing in), before the store check.
+  assertThrows(
+    () =>
+      configureAuth({
+        ...base,
+        adapter: bridged,
+        session: { strategy: "database" as const },
+        mfa: { required: "always" as const },
+      }),
+    Error,
+    "MFA factor store",
+  );
 });
 
 Deno.test("next-auth: database sessions slide by updateAge, as Auth.js's do, up to an opt-in session.maxLifetime", async () => {

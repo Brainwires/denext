@@ -192,7 +192,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `sessionsValidAfter` (set by `revokeAllSessions`, a password reset or change, a ban, a deletion
   and the pre-account-hijacking eviction) lives on the stored user, so with no adapter there is
   nothing to read. It is compared to the second: a session signed in during the very second it
-  is set survives it. `revokeSession(id)` (one device) needs a `sessionStore`.
+  is set survives it. `revokeSession(id)` (one device) needs a `sessionStore` or an adapter with
+  the revocation list (`sqliteAuthAdapter`, `postgresAuthAdapter`, `backendAuthAdapter`;
+  `inMemoryAuthAdapter` for one process). Once an app has revoked a stateless session by id, every
+  stateless read makes one indexed lookup on that list; while the adapter can't answer, a session
+  reads as it last did within 60 seconds, else as signed out, and `/_denext/health` reports
+  `auth-revocation: "down"`. A revocation lives the larger of `session.maxLifetime` and 400 days:
+  raising the lifetime past 400 days after a revocation doesn't extend it.
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.

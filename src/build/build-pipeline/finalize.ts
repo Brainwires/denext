@@ -9,6 +9,7 @@ import { resetFonts } from "../../compat/next/font/registry.ts";
 import { extractPublicEnvRefs } from "../../runtime/public-env.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import { generateServerActionsKey } from "../../server/action-bound.ts";
+import { actionIdSecretDigest, actionIdSecretEnvValue } from "../../server/action-ids.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import { type BundleChunk, bundleSummaryLines } from "../bundle-report.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
@@ -94,6 +95,12 @@ function envBuildId(): string | undefined {
 }
 
 /** The boundary `manifest.json` records: the Flight one, else the crawl's (null: no page). */
+/** The fingerprint of the `DENEXT_ACTION_ID_SECRET` this build minted its ids under. */
+function recordedEnvSecretDigest(): { actionIdSecretDigest: string } | Record<never, never> {
+  const env = actionIdSecretEnvValue();
+  return env ? { actionIdSecretDigest: actionIdSecretDigest(env) } : {};
+}
+
 function recordedBoundary(ctx: BuildContext) {
   const boundary = ctx.boundary ?? ctx.crawledBoundary;
   return boundary ? serializeBoundary(boundary, ctx.projectDir) : null;
@@ -117,8 +124,12 @@ function buildManifestFor(
     // separately).
     serverActionsKey: generateServerActionsKey(),
     // Mints the Server Action ids (src/server/action-ids.ts): new per build, read only by the
-    // server. Absent when `DENEXT_ACTION_ID_SECRET` set it, which the server then needs too.
-    ...(ctx.actionIdSecret ? { actionIdSecret: ctx.actionIdSecret } : { actionIdSecretEnv: true }),
+    // server. Absent when `DENEXT_ACTION_ID_SECRET` set it, which the server then needs too — its
+    // fingerprint is recorded, so a server given another value refuses to start instead of
+    // answering every action with "unknown".
+    ...(ctx.actionIdSecret
+      ? { actionIdSecret: ctx.actionIdSecret }
+      : { actionIdSecretEnv: true, ...recordedEnvSecretDigest() }),
     ...(pinnedId ? { buildIdPinned: true } : {}),
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,

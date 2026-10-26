@@ -13,12 +13,20 @@ import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
 import {
   MARKER_RECHECK_MS,
+  MAX_REMEMBERED_ANSWERS,
+  resetSidRevocationForTesting,
+  REVOCATION_FLOOR_SECONDS,
+  REVOCATION_HEALTH_CHECK,
   REVOCATIONS_MARKER,
   revocationsInUse,
   revokeStatelessSid,
   sidRevocationOf,
+  sidRevoked,
+  STALE_ANSWER_MS,
+  WARN_INTERVAL_MS,
 } from "../src/server/auth/sid-revocation.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
+import { runHealthChecks } from "../src/server/health.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
@@ -176,21 +184,165 @@ Deno.test("another instance turns the check on within the recheck interval", asy
   assertEquals(sidRevocationOf(undefined), null);
 });
 
-Deno.test("a revocation list that can't be read fails closed", async () => {
+/** An adapter whose `isSidRevoked` throws while `fail` is set, counting the lookups it makes. */
+function flaky(): { adapter: AuthAdapter; fail: (on: boolean) => void; lookups: () => number } {
+  const base = inMemoryAuthAdapter();
+  let failing = false;
+  let lookups = 0;
+  const adapter: AuthAdapter = Object.assign(Object.create(base), {
+    isSidRevoked: (sid: string) => {
+      lookups++;
+      if (failing) throw new Error("db down");
+      return base.isSidRevoked!(sid);
+    },
+  });
+  return { adapter, fail: (on) => void (failing = on), lookups: () => lookups };
+}
+
+/** Run `fn` with `Date.now` moved `ms` forward. */
+async function later<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+  const real = Date.now;
+  Date.now = () => real() + ms;
+  try {
+    return await fn();
+  } finally {
+    Date.now = real;
+  }
+}
+
+/** A logger collecting its warnings. */
+function warnings(): { logger: AuthConfig["logger"]; warned: string[] } {
+  const warned: string[] = [];
+  return { warned, logger: { error() {}, warn: (m) => void warned.push(m), debug() {} } };
+}
+
+Deno.test("a revocation list that can't be read: a recent answer stands in, else signed out", async () => {
+  const { adapter, fail } = flaky();
+  const { logger, warned } = warnings();
+  const { config } = app(adapter, { logger });
+  const live = await signIn(config, "alice@x.test");
+  const revokedCookie = await signIn(config, "alice@x.test");
+  const unseen = await signIn(config, "alice@x.test");
+  const revokedSid = (await inRequest(revokedCookie, () => currentSessionId()))!;
+  await revokeSession(revokedSid);
+  assert(await sessionUser(config, live), "read once while the list answers (remembered: live)");
+  assertEquals(await sessionUser(config, revokedCookie), null, "remembered: revoked");
+  try {
+    fail(true);
+    // Within STALE_ANSWER_MS: each session answers as it last did.
+    await later(STALE_ANSWER_MS - 1000, async () => {
+      assert(await sessionUser(config, live), "a live session stays live through the outage");
+      assertEquals(await sessionUser(config, revokedCookie), null, "a revoked one stays revoked");
+      assertEquals(await sessionUser(config, unseen), null, "no answer yet: signed out");
+    });
+    assertEquals(warned.length, 1, "one warning for the outage, not one per request");
+    assert(warned[0].includes("revocation list could not be read"), warned[0]);
+    assertEquals((await runHealthChecks()).checks[REVOCATION_HEALTH_CHECK], "down");
+    // Past it, a stale answer is no better than none.
+    await later(STALE_ANSWER_MS + 1000, async () => {
+      assertEquals(await sessionUser(config, live), null, "a stale answer reads as signed out");
+      assertEquals(await sessionUser(config, revokedCookie), null);
+    });
+    assertEquals(warned.length, 1, "still rate-limited within the interval");
+    await later(STALE_ANSWER_MS + WARN_INTERVAL_MS + 1000, () => sessionUser(config, live));
+    assertEquals(warned.length, 2, "and one more once the interval has passed");
+    // The cookie was kept: once the list answers again, every session is back as it should be.
+    fail(false);
+    assert(await sessionUser(config, live), "the live session comes back");
+    assertEquals(await sessionUser(config, revokedCookie), null, "the revoked one stays revoked");
+    assert(await sessionUser(config, unseen), "and the one never answered for is signed in");
+    assertEquals((await runHealthChecks()).checks[REVOCATION_HEALTH_CHECK], "ok");
+  } finally {
+    resetSidRevocationForTesting(sidRevocationOf(adapter)!);
+  }
+});
+
+Deno.test("the health probe itself finds the list back before any request does", async () => {
+  const { adapter, fail } = flaky();
+  const { config } = app(adapter, { logger: { error() {}, warn() {}, debug() {} } });
+  const cookie = await signIn(config, "alice@x.test");
+  await revokeSession((await inRequest(cookie, () => currentSessionId()))!);
+  try {
+    fail(true);
+    assertEquals(await sessionUser(config, cookie), null);
+    assertEquals((await runHealthChecks()).checks[REVOCATION_HEALTH_CHECK], "down");
+    fail(false);
+    assertEquals((await runHealthChecks()).checks[REVOCATION_HEALTH_CHECK], "ok", "probed");
+  } finally {
+    resetSidRevocationForTesting(sidRevocationOf(adapter)!);
+  }
+});
+
+Deno.test("a failed marker lookup keeps a recent 'no revocation yet'; without one it fails closed", async () => {
+  const { adapter, fail, lookups } = flaky();
+  const { config } = app(adapter, { logger: { error() {}, warn() {}, debug() {} } });
+  const cookie = await signIn(config, "alice@x.test");
+  try {
+    assert(await sessionUser(config, cookie));
+    assertEquals(lookups(), 1, "the marker, once");
+    fail(true);
+    // The recheck interval has passed, the lookup throws: the answer of a minute ago stands.
+    await later(MARKER_RECHECK_MS + 1000, async () => {
+      assert(await sessionUser(config, cookie), "the app has not revoked anything: still live");
+    });
+    assertEquals(lookups(), 2);
+    // Past STALE_ANSWER_MS nothing recent is known: signed out until the adapter answers.
+    await later(STALE_ANSWER_MS + 1000, async () => {
+      assertEquals(await sessionUser(config, cookie), null);
+    });
+    fail(false);
+    assert(await sessionUser(config, cookie), "back once the adapter answers");
+  } finally {
+    resetSidRevocationForTesting(sidRevocationOf(adapter)!);
+  }
+});
+
+Deno.test("sidRevoked: remembered answers are bounded, oldest first", async () => {
   const base = inMemoryAuthAdapter();
   let fail = false;
-  const adapter: AuthAdapter = Object.assign(Object.create(base), {
+  const adapter = sidRevocationOf(Object.assign(Object.create(base), {
     isSidRevoked: (sid: string) => {
       if (fail) throw new Error("db down");
       return base.isSidRevoked!(sid);
     },
+  }) as AuthAdapter)!;
+  try {
+    const t0 = Date.now();
+    for (let i = 0; i <= MAX_REMEMBERED_ANSWERS; i++) {
+      assertFalse(await sidRevoked(adapter, `s${i}`, undefined, t0));
+    }
+    fail = true;
+    await assertRejects(() => sidRevoked(adapter, "s0", undefined, t0), Error, "db down");
+    assertFalse(await sidRevoked(adapter, "s1", undefined, t0), "the 10,000 newest are kept");
+    await assertRejects(() => sidRevoked(adapter, "s1", undefined, t0 + STALE_ANSWER_MS + 1));
+  } finally {
+    resetSidRevocationForTesting(adapter);
+  }
+});
+
+Deno.test("a revocation lives the larger of session.maxLifetime and 400 days", async () => {
+  const expiries: number[] = [];
+  const base = inMemoryAuthAdapter();
+  const adapter: AuthAdapter = Object.assign(Object.create(base), {
+    revokeSids: (sids: readonly string[], expiresAt: number) => {
+      if (!sids.includes(REVOCATIONS_MARKER)) expiries.push(expiresAt);
+      return base.revokeSids!(sids, expiresAt);
+    },
   });
-  const { config } = app(adapter, { logger: { error() {}, warn() {}, debug() {} } });
-  const cookie = await signIn(config, "alice@x.test");
-  const other = await signIn(config, "alice@x.test");
-  await revokeSession((await inRequest(other, () => currentSessionId()))!);
-  fail = true;
-  assertEquals(await sessionUser(config, cookie), null, "an unreadable list reads as signed out");
-  fail = false;
-  assert(await sessionUser(config, cookie), "and the session comes back once it can be read");
+  const day = 86_400;
+  // The default lifetime (30 days): the row outlives it, so a lifetime raised later (while the
+  // cookie keeps sliding) can't bring the session back once the row would have been pruned.
+  const { config } = app(adapter);
+  const sid = (await inRequest(await signIn(config, "a@x.test"), () => currentSessionId()))!;
+  const before = Math.floor(Date.now() / 1000);
+  await revokeSession(sid);
+  assert(expiries[0] >= before + REVOCATION_FLOOR_SECONDS, `floor: ${expiries[0]}`);
+  assert(expiries[0] <= before + REVOCATION_FLOOR_SECONDS + 5);
+  assertEquals(REVOCATION_FLOOR_SECONDS, 400 * day);
+  // A lifetime past the floor: the row lives the lifetime.
+  const long = app(adapter, { session: { maxAge: 30 * day, maxLifetime: 500 * day } });
+  const sid2 = (await inRequest(await signIn(long.config, "b@x.test"), () => currentSessionId()))!;
+  const at = Math.floor(Date.now() / 1000);
+  await revokeSession(sid2);
+  assert(expiries[1] >= at + 500 * day && expiries[1] <= at + 500 * day + 5, `${expiries[1]}`);
 });
