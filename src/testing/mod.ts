@@ -70,6 +70,7 @@ export type {
 
 import { defaultLoader } from "../server/mod.ts";
 import { buildTestHandler } from "./conformance.ts";
+import { requireDenextRuntime } from "../build/deno-version.ts";
 
 /**
  * The handler {@linkcode createTestApp} returns: still a plain `(Request) => Response` function
@@ -143,6 +144,8 @@ export async function createTestApp(
   projectDir: string,
   options: TestAppOptions = {},
 ): Promise<TestApp> {
+  // denext 5.0 runs only on its own runtime: a clear error before the app is loaded.
+  requireDenextRuntime("createTestApp()");
   // The production server's boundary discovery, with no build and no client bundle — the
   // JavaScript-disabled surface this handler exercises (`buildTestHandler`).
   const { handler, close } = await buildTestHandler(projectDir, defaultLoader, undefined, {

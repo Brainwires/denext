@@ -36,6 +36,7 @@ import { fillPattern, type RouteParams } from "../router/segments.ts";
 import { enumerateStaticParams } from "../server/static-params.ts";
 import { type ProjectPaths, resolveProject } from "../build/paths.ts";
 import { withBuildDirLock } from "../build/project-locks.ts";
+import { requireDenextRuntime } from "../build/deno-version.ts";
 import { type AppPlugins, EMITTED_DIR, setupAppPlugins } from "../plugin/mod.ts";
 import { discoverJobs } from "../server/job-loader.ts";
 import { abortJobRuns, getJob, jobNames, registerJob, unregisterJob } from "../server/jobs.ts";
@@ -422,6 +423,8 @@ export async function probeApp(
   projectDir: string,
   options: ProbeOptions = {},
 ): Promise<ConformanceReport> {
+  // denext 5.0 runs only on its own runtime: a clear error before any route renders.
+  requireDenextRuntime("probeApp()");
   const load = options.load ?? defaultLoader;
   const renderErrors: RenderErrors = new Map();
   const { handler, manifest, close } = await buildTestHandler(

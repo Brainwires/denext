@@ -240,6 +240,33 @@ export function isSupportedDenextRuntime(identity: DenoIdentity): boolean {
     compareDenoVersions(identity.denext, MIN_DENEXT_RUNTIME) >= 0;
 }
 
+/** Set once this process has passed {@linkcode requireDenextRuntime}: the check runs once. */
+let runtimeChecked = false;
+
+/**
+ * Refuse, up front, a library entry point (`build()`, `createTestApp`, `probeApp`) running on a
+ * Deno that is not denext's runtime ({@linkcode isSupportedDenextRuntime}): a clear `denext:` error
+ * naming the 5.0 change and `denext toolchain install`, rather than a failure deep inside a build.
+ * The process's own identity is checked once and remembered.
+ *
+ * @param entry What is starting, for the message (`build()`, `createTestApp()`).
+ * @param identity The Deno to check (default: this process's, {@linkcode currentDenoIdentity}).
+ * @throws {Error} When the Deno is not a supported runtime.
+ */
+export function requireDenextRuntime(entry: string, identity?: DenoIdentity): void {
+  if (identity === undefined && runtimeChecked) return;
+  const found = identity ?? currentDenoIdentity();
+  if (!isSupportedDenextRuntime(found)) {
+    throw new Error(
+      `denext: ${entry} needs denext's Deno runtime, but this process runs ${
+        describeDeno(found)
+      }.\n` + RUNTIME_REQUIRED_FIX +
+        "\n  Then run it through the `denext` CLI (`denext test`, `denext task …`), which runs on it.",
+    );
+  }
+  if (identity === undefined) runtimeChecked = true;
+}
+
 /**
  * What a `deno` binary says about itself: its `deno --version` output, parsed
  * ({@linkcode parseDenoVersionOutput}).

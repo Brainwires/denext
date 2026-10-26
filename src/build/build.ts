@@ -22,11 +22,14 @@ import {
 import { buildCss, clientTransforms } from "./build-pipeline/transforms.ts";
 import { resolveProject } from "./paths.ts";
 import { canonicalPath } from "./canonical-path.ts";
+import { requireDenextRuntime } from "./deno-version.ts";
 
 export type { BuildResult } from "./build-pipeline/context.ts";
 
 /** Build the project at `projectDir` into its `.denext/` output dir. */
 export async function build(dir: string): Promise<BuildResult> {
+  // denext 5.0 runs only on its own runtime: say so before any build work starts.
+  requireDenextRuntime("build()");
   // The project's real path: Deno resolves the app's imports from the real location of its
   // `deno.json`, so a project named through a symlink would otherwise reach some modules under
   // two spellings, bundled twice and misread by every path-prefix test (see canonical-path.ts).
