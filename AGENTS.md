@@ -45,7 +45,15 @@ emit correct denext instead of Next.js.
    A **Lustre** app (Gleam, `target = "javascript"` or lustre_dev_tools) keeps its Gleam source as
    it is: migrate writes `plugins: [gleam()]` and the `@gleam/` import map, an `app/` page whose
    island calls the entry's own `main`, and moves `priv/static/` to `public/`; Erlang-target code
-   is reported, and `lustreElement` / `defineLustreView` are opt-in. Guides: https://denext.dev/docs/migrating-fresh,
+   is reported, and `lustreElement` / `defineLustreView` are opt-in.
+   A **React Router** app (`@denext/react-router`) keeps its route modules: `createContext` /
+   `RouterContextProvider` / `MiddlewareFunction` come from `denext/remix` (what `react-router`
+   maps to), every loader's and action's `context` is a `RouterContextProvider` (`context.get(key)`
+   / `context.set(key, value)`), a route's `middleware` export runs outermost first before its
+   loader or action, and migrate carries a custom server's `getLoadContext` into
+   `load-context.ts` (`defineLoadContext` from `denext/remix/server`):
+   https://denext.dev/docs/react-router#load-context-and-middleware.
+   Guides: https://denext.dev/docs/migrating-fresh,
    https://denext.dev/docs/migrating-preact, https://denext.dev/docs/migrating-lustre, https://denext.dev/docs/tanstack-start;
    `denext/signals` (Preact Signals' API, usable in any app, not the resumability `useSignal`
    from `denext`): https://denext.dev/docs/signals.
@@ -318,6 +326,12 @@ export function NewPost() {
   );
 }
 ```
+
+Server Action ids are an HMAC under a secret `denext build` generates, so every build gets new ids;
+a deploy that builds more than once (one image per region, say) sets `DENEXT_ACTION_ID_SECRET` (16+
+characters) to one value for every build and instance. Only the `"use server"` exports some module
+imports are callable: an export nothing imports answers 404 (`denext build` lists them; `denext dev`
+keeps them callable with a warning).
 
 **Errors as values (opt-in):** `denext/result` has `Result` / `ok` / `err` / `tryAsync` and an
 exhaustive `match(x).with(pattern, fn)….exhaustive()` (a missing case is a compile error;
@@ -1167,8 +1181,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
   `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
   `mobile dev|build`,
-  project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
-  Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
+  project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-rc.N` release built from Deno
+  2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
   opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
   first use, no build for the host, a failed download) the command stops with the fix
@@ -1194,8 +1208,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   (no network, writes only under `node_modules`; on by default from runtime 3.0.0-rc.5):
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
-  deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6) and `denext doctor` flags a missing one; never turn the jail off for them:
+  deno.json, the only one Deno reads; download hosts instead of `net: true` once denext pins
+  runtime 3.0.0-rc.6, not yet released) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext

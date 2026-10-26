@@ -44,8 +44,8 @@ Low findings from the 4.8 supply-chain audit:
   `@denext` entries too (denext never writes them).
 - **The user-level `~/.npmrc`.** The runtime reads `jail-scripts` / `paranoid` from it too;
   `readJailSetting` reads only the project's `.npmrc` and the environment.
-- **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail**
-  (DENEXT.md item 108). `readJailSetting` still counts it as on, so next to `jail-scripts=false`
+- **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail.**
+  `readJailSetting` still counts it as on, so next to `jail-scripts=false`
   denext writes exceptions and `doctor` flags missing ones for a jail that is off.
 - **Narrow existing exceptions on the move to rc.6.** A built-in entry already configured as
   `net: true` stays so; `doctor` (or `upgrade`) could offer the host list and the `~` cache.

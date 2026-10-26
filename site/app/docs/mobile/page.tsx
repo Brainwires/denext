@@ -1425,6 +1425,20 @@ export default {
         <code>get_login_creds</code>, so saved passwords and passkeys are shared with the app
         (<code>webcredentials: false</code> / <code>loginCredentials: false</code> turn that off).
       </p>
+      <p>
+        <code>android</code> also takes a list, one <code>assetlinks.json</code>{" "}
+        statement per app (a debug and a release build, say). The same objects go in{" "}
+        <code>denextAuth({"{ passkeys: { androidApps } }"})</code>{" "}
+        for the app's passkeys (<a href="/docs/auth#passkeys-in-a-native-app">
+          Auth › Passkeys in a native app
+        </a>).
+      </p>
+      <Code lang="ts">
+        {`android: [
+  { packageName: "com.example.app", sha256CertFingerprints: ["14:6D:E9:…:44:E5"] },
+  { packageName: "com.example.app.debug", sha256CertFingerprints: ["FA:C6:17:…:0B:2A"] },
+],`}
+      </Code>
 
       <h2 id="auth-sessions">Auth sessions</h2>
       <p>
@@ -2830,6 +2844,15 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         split arrived in calendar template generation 2 (denext 4.4.0): a project that added{" "}
         <code>calendar</code> earlier re-runs <code>denext mobile add calendar</code>{" "}
         and ships a new binary, or that call still rejects on Android.
+      </p>
+      <p>
+        Printing cannot reach the app&apos;s private files: on iOS{" "}
+        <code>printAsync({"{ printerUrl, uri }"})</code>{" "}
+        (no dialog) prints only a file in the app&apos;s Documents, Caches or temporary folder, and
+        Android&apos;s <code>printToFile</code> WebView doesn&apos;t read <code>file:</code> /{" "}
+        <code>content:</code>{" "}
+        URLs (remote images still load). An app installed with an older template (before print
+        generation 2) re-runs <code>denext mobile add print</code> and ships a new binary.
       </p>
       <p>
         <code>app-config</code>{" "}

@@ -1766,7 +1766,13 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>netListen</code> grant one. <code>DENEXT_DESKTOP_RUNTIME=stock</code>, a local{" "}
         <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build or a stock <code>deno</code> keep the single
         {" "}
-        <code>--allow-net</code>, with the directional hosts folded into it.
+        <code>--allow-net</code>, with the directional hosts folded into it. A hand-written
+        packaging script derives the same flags with{" "}
+        <code>desktopBuildFlags(config, os, {"{ netSplit: true }"})</code> from{" "}
+        <code>denext/desktop</code>: with <code>netSplit</code>{" "}
+        (the pinned runtime, 3.0.0-rc.2 or later) it bakes <code>--allow-net-connect</code> /{" "}
+        <code>--allow-net-listen</code>; without it (the default) it bakes the stock runtime&apos;s
+        single <code>--allow-net</code>.
       </Callout>
       <Callout kind="note">
         <strong>What is verified.</strong>{" "}

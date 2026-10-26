@@ -455,6 +455,12 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 - **Crypto/auth** — `jose`, `bcryptjs`, WebAuthn load cleanly.
 - **Env/secrets** — use `Deno.env`; environment variables and CLI flags are
   trusted inputs.
+- **Files beside a module** — in a drop-in, each of the app's own server modules
+  keeps its source file's `import.meta.url` (`.filename`, `.dirname`,
+  `.resolve` too), as in Next.js, so a route that reads a file beside itself
+  (`fs.readFile(new URL("./Inter-SemiBold.ttf", import.meta.url))` for an OG
+  image) works under `denext start`, in a container image and in a
+  `build --compile` binary.
 
 ---
 

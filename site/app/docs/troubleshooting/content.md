@@ -110,6 +110,18 @@ on for a compat app.
 
 See [Migrating from Next.js](/docs/migrating) § 8.
 
+## `deno test` runs `_test.ts` files from `.deno/npm-compat`
+
+**Cause.** From runtime 3.0.0-rc.5 the type check writes `.deno/npm-compat` into
+the project root: an npm-shaped copy of the `@jsr/*` packages, their `_test.ts`
+files included, which a `deno test` with default discovery then finds.
+
+**Fix.** Add a top-level `exclude` to the project's `deno.json` (a workspace's
+root and its members): `{ "exclude": [".deno/"] }`. A project `denext create`
+scaffolds already has it. See
+[Known limitations](/docs/limitations) (the runtime is to keep the copy out of
+the project in a later release).
+
 ## `WorkspaceDiscoverError(ConfigNotWorkspaceMember)` when building
 
 **Cause.** The app's directory sits inside another Deno workspace without being
