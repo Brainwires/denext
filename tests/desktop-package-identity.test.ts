@@ -12,6 +12,7 @@ import {
 } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import { inChild } from "./helpers/isolated.ts";
+import { cachedToolchain, linkedEnv } from "./helpers/toolchain.ts";
 import { desktopIconArgs } from "../src/build/desktop-package-script.ts";
 import { syncDesktopAppConfigAt } from "../src/build/desktop-app-config.ts";
 import { injectAppConfigRedirects } from "../src/build/css.ts";
@@ -121,7 +122,12 @@ Deno.test({
       imports: `import { prepareDesktopPackage } from "@repo/src/build/desktop-package-script.ts";`,
       body: `return (await prepareDesktopPackage(${JSON.stringify(entry)}, "linux", ` +
         `{ formats: [], add: [], export: true })).meta;`,
-      env: { DENEXT_APP_NAME: undefined },
+      // The export's `deno task` and its `deno run` resolve `deno` on PATH: the toolchain's,
+      // never a PATH `deno` that may be another version or not run at all.
+      env: {
+        DENEXT_APP_NAME: undefined,
+        PATH: linkedEnv(cachedToolchain() ?? Deno.execPath()).PATH,
+      },
       cwd: dir,
     });
     const app = JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).desktop.app;

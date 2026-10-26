@@ -16,6 +16,7 @@ import {
   hiddenKey,
   hostFreeBytes,
   parseDfAvailable,
+  parseWindowsFree,
   type PipeOptions,
   type PsRow,
   type StackIo,
@@ -801,6 +802,16 @@ Deno.test("hostFreeBytes: the host's free space where a path lives; undefined wh
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("parseWindowsFree: a whole number of bytes; blank output (no rights to the volume) is no answer", () => {
+  assertEquals(parseWindowsFree("11925422080\r\n"), 11925422080);
+  assertEquals(parseWindowsFree("0"), 0);
+  // Get-PSDrive's Free is blank for a non-administrator: that is not "0 bytes free".
+  assertEquals(parseWindowsFree(""), undefined);
+  assertEquals(parseWindowsFree("\r\n"), undefined);
+  assertEquals(parseWindowsFree("-5"), undefined);
+  assertEquals(parseWindowsFree("Get-PSDrive : Cannot find drive"), undefined);
 });
 
 Deno.test("storageSource: MinIO's bucket, the fs driver's dir (literal or --storage-dir), or none", async () => {

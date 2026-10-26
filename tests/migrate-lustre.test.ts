@@ -11,6 +11,7 @@ import { checkMigration } from "../src/build/migrate-check.ts";
 import { detectLustre, parseGleamToml, startSelector } from "../src/build/migrate-lustre.ts";
 import { gleamToolchainStatus } from "../src/build/gleam-toolchain.ts";
 import { runBounded } from "./helpers/bounded-command.ts";
+import { SYMLINK_GATE } from "./helpers/symlink.ts";
 
 type Tree = Record<string, string>;
 
@@ -346,8 +347,12 @@ const GLEAM = await realGleam();
 if (!GLEAM.bin) console.warn(`migrate-lustre build test skipped: ${GLEAM.why}`);
 
 Deno.test({
-  name: "migrate --from lustre: the migrated app compiles with gleam() and exports its page",
-  ignore: GLEAM.bin === null,
+  // Gleam links each dependency's build into the project: a symlink, which a Windows account
+  // without the privilege can't create ("enable developer mode").
+  name: SYMLINK_GATE.name(
+    "migrate --from lustre: the migrated app compiles with gleam() and exports its page",
+  ),
+  ignore: GLEAM.bin === null || SYMLINK_GATE.ignore,
   sanitizeResources: false,
 }, async () => {
   await withTree(LUSTRE, async (dir) => {

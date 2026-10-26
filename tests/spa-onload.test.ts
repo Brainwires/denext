@@ -7,6 +7,7 @@ import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { firstPartyTsxPlugin } from "../src/build/spa-onload.ts";
+import { SYMLINK_GATE } from "./helpers/symlink.ts";
 
 async function bundleWith(projectDir: string, entry: string): Promise<string> {
   const plugin = firstPartyTsxPlugin(
@@ -30,7 +31,12 @@ async function bundleWith(projectDir: string, entry: string): Promise<string> {
   }
 }
 
-Deno.test("firstPartyTsxPlugin: a project reached through a symlink is still first-party", async () => {
+Deno.test({
+  name: SYMLINK_GATE.name(
+    "firstPartyTsxPlugin: a project reached through a symlink is still first-party",
+  ),
+  ignore: SYMLINK_GATE.ignore,
+}, async () => {
   const base = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_onload_" }));
   try {
     const real = join(base, "real");
