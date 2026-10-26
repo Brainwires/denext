@@ -8,6 +8,7 @@ import {
   permissionHint,
   permissionRefusal,
   reportPermissionRefusal,
+  resetPermissionHintsForTesting,
 } from "../src/server/permission-hint.ts";
 import { reportRequestError } from "../src/server/app-config.ts";
 import type { AppConfig } from "../src/server/app.ts";
@@ -123,8 +124,8 @@ Deno.test("the hint reads the refusal a least-privilege process really throws", 
   }
 });
 
-// Last in the file: it fills the process-wide set, so a later hint here would print nothing.
 Deno.test("reportPermissionRefusal stops printing past a bound of distinct targets (F-L4)", () => {
+  resetPermissionHintsForTesting();
   const lines: string[] = [];
   const log = (m: string) => lines.push(m);
   const extra = 20;
@@ -132,9 +133,9 @@ Deno.test("reportPermissionRefusal stops printing past a bound of distinct targe
     // Each a refusal, recognised as one, whatever the bound.
     assert(reportPermissionRefusal(notCapable("net", `bound-${i}.example:443`), log));
   }
-  // The process-wide set may already hold a few from other tests: at most the bound is printed,
-  // and the last targets (past it) print nothing.
-  assert(lines.length <= MAX_REPORTED_PERMISSION_HINTS, `${lines.length} lines`);
-  assert(lines.length >= MAX_REPORTED_PERMISSION_HINTS - 16, `${lines.length} lines`);
+  // Exactly the bound is printed; the targets past it print nothing.
+  assertEquals(lines.length, MAX_REPORTED_PERMISSION_HINTS);
   assert(!lines.some((l) => l.includes(`bound-${MAX_REPORTED_PERMISSION_HINTS + extra - 1}.`)));
+  // Leave the set empty for the other tests in this process (any order).
+  resetPermissionHintsForTesting();
 });

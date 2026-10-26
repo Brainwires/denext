@@ -104,6 +104,11 @@ const reported = new Set<string>();
  */
 export const MAX_REPORTED_PERMISSION_HINTS = 256;
 
+/** Forget the hints printed so far (tests). */
+export function resetPermissionHintsForTesting(): void {
+  reported.clear();
+}
+
 /**
  * Print {@linkcode permissionHint} for the permission `error` was refused, once per permission
  * and target for the process. A no-op for any other error.
