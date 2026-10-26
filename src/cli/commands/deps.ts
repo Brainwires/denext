@@ -6,7 +6,12 @@
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, relayingSignals, spawnDenoAndExit } from "../shared.ts";
 import { denoExecutable } from "../../build/bundle.ts";
-import { applyJailExceptions, npmPackageName } from "../../build/jail-scripts.ts";
+import {
+  applyJailExceptions,
+  jailRuntime,
+  type JailRuntimeSeams,
+  npmPackageName,
+} from "../../build/jail-scripts.ts";
 
 function runDeno(
   sub: string,
@@ -80,16 +85,25 @@ const runDenoAdd: DenoAddRunner = async (args, cwd) => {
  *
  * @param ctx The invocation.
  * @param run Runs `deno add` (test seam).
+ * @param runtimeSeams How the Deno `deno add` runs on is found (test seam).
  * @returns `deno add`'s exit code.
  */
 export async function addWithJail(
   ctx: CommandContext,
   run: DenoAddRunner = runDenoAdd,
+  runtimeSeams: JailRuntimeSeams = {},
 ): Promise<number> {
   const cwd = commandCwd(ctx);
-  const jail = await applyJailExceptions(cwd, { deps: addedNpmPackages(ctx.rest) })
-    .catch(() => null);
-  const [first, ...more] = jail?.lines ?? [];
+  // Planned for the Deno `deno add` runs on (DENEXT_DENO, DENO_BIN), not the pin.
+  const runtime = await jailRuntime(runtimeSeams).catch(() => null);
+  const jail = await applyJailExceptions(cwd, {
+    deps: addedNpmPackages(ctx.rest),
+    ...(runtime ? { version: runtime.version } : {}),
+  }).catch(() => null);
+  const lines = jail?.lines ?? [];
+  const [first, ...more] = runtime?.overridden && lines.length
+    ? [...lines, `(planned for ${runtime.label})`]
+    : lines;
   if (first) console.error(`denext add: ${[first, ...more.map((l) => `  ${l}`)].join("\n")}`);
   const path = jail?.action === "written" ? jail.configPath : undefined;
   const after = path === undefined ? null : await Deno.readTextFile(path).catch(() => null);

@@ -43,17 +43,6 @@ Low findings from the 4.8 supply-chain audit:
 - **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail.**
   `readJailSetting` still counts it as on, so next to `jail-scripts=false`
   denext writes exceptions and `doctor` flags missing ones for a jail that is off.
-- **Narrow existing exceptions on the move to rc.6.** A built-in entry already configured as
-  `net: true` stays so; `doctor` (or `upgrade`) could offer the host list and the `~` cache.
-- **npm (`package.json` `workspaces`) members** are not read for dependencies; only a deno.json
-  `workspace` is.
-- **An unknown package's network failure** is pointed at `net: true`; on rc.6 suggest listing
-  the hosts from the log instead.
-- **The runtime in use, not the pin.** The jail planning assumes the pinned runtime; under
-  `DENEXT_DENO=stock` or another binary it should read that runtime's version.
-- **`.npmrc` next to a generated build config.** `module-config.json` / `css-config.json` now
-  carry `supplyChain`; check whether a build child still finds the project's `.npmrc` (`paranoid`
-  set there) from a config in `.denext/`, without copying a file that may hold credentials.
 
 ## Deno Desktop
 

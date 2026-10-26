@@ -618,7 +618,14 @@ root `package.json`, workspace members) are your code and are not jailed.
 - **Workspaces: the root deno.json only.** Deno reads `supplyChain` from the workspace root's
   deno.json alone, as it does `allowScripts`: one `node_modules` is installed for every member. A
   member's own `supplyChain` is ignored (with a warning), and relative `write` paths are resolved
-  against the root's directory.
+  against the root's directory. An npm workspace (package.json `workspaces`, an array or Yarn's
+  `{ "packages": [...] }`) counts as one too: denext reads every member's dependencies.
+- **Builds see the project's `.npmrc` gates.** A build child runs with a config denext writes in
+  `.denext/`, where Deno looks for no project `.npmrc`. So that config's `supplyChain` carries the
+  supply-chain keys the root's `.npmrc` sets (`paranoid`, `jail-scripts`, `advisory-check`,
+  `low-download-check`, `low-download-threshold`, `allowed-unpopular-packages`), merged with
+  deno.json's with the stricter value winning. Nothing else from the file is copied: it may hold
+  registry credentials.
 
 From runtime `3.0.0-rc.6`, puppeteer's and msw's exceptions read:
 
@@ -679,9 +686,21 @@ a dependency's failed script: which package, what the jail stopped (the network,
 add (never wider than a host list the project already grants). A package outside the list gets
 no exception to paste: an unreviewed install script that tries to reach the network is a common
 sign of malware, so doctor says so and points at reviewing the package, then granting only the
-hosts it needs (`"net": ["<host>"]`, a host list from runtime `3.0.0-rc.6`), never
-`"net": true`. The package name in that advice comes
-from the install log, which the script itself can print to, so it is quoted as a JSON string.
+hosts it needs, never `"net": true`. It names the hosts the log shows the script failing to
+reach (`"net": ["cdn.example.com"]`, a host list from runtime `3.0.0-rc.6`; on an older runtime it
+says to install on one that takes host lists rather than grant the whole network). The package
+name in that advice comes from the install log, which the script itself can print to, so it is
+quoted as a JSON string, and only a plain DNS name is ever quoted back as a host.
+On a runtime that takes host lists, doctor also flags a built-in package whose exception still
+grants `"net": true` (all a runtime before `3.0.0-rc.6` could take) and prints the narrower one:
+its download hosts and cache, with your own `env` and `write` kept.
+
+**The runtime in use, not the pin.** `denext add` and `denext doctor` plan the jail for the Deno
+the install runs on: the pinned toolchain, or what `DENEXT_DENO=stock` / `DENEXT_DENO=<path>` or a
+`DENO_BIN` chose (its `deno --version`). Stock Deno has no jail, so nothing is written for it and
+doctor says which Deno it planned for; another release of denext's Deno gets its own defaults
+(on by default, host lists). `migrate`, `create` and `upgrade` configure the project for the
+pinned toolchain.
 
 **Behind a proxy that takes only host names.** From runtime `3.0.0-rc.6` a package's `net` may be
 a host list, and the jail's proxy chains through an `http://` proxy in `HTTPS_PROXY` /

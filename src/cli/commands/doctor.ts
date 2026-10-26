@@ -61,6 +61,8 @@ import {
   jailHostListsSupported,
   type JailProject,
   type JailRequirement,
+  jailRuntime,
+  type JailRuntimeSeams,
   type JailSetting,
   jailSnippet,
   readJailProject,
@@ -355,13 +357,15 @@ function safeEnv(name: string): string | undefined {
 /** Options for {@linkcode jailScriptsCheck}. */
 export interface JailScriptsCheckOptions {
   /** The runtime version the project installs with (default: the toolchain pin's). */
-  readonly version?: string;
+  readonly version?: string | null;
   /** The environment (default: the process's). */
   readonly env?: (name: string) => string | undefined;
   /** A captured install log (`denext doctor --install-log <file>`) to explain. */
   readonly installLog?: string;
   /** The OS the project installs on (default: this one). */
   readonly os?: typeof Deno.build.os;
+  /** How the runtime in use is found when no `version` is given (tests). */
+  readonly runtime?: JailRuntimeSeams;
 }
 
 /** What the jail can't do on Windows, said with every Windows jail detail. */
@@ -395,48 +399,110 @@ export async function jailScriptsCheck(
   dir: string,
   options: JailScriptsCheckOptions = {},
 ): Promise<Check | null> {
-  const name = "lifecycle-script jail";
   const os = options.os ?? Deno.build.os;
-  const log = options.installLog ?? "";
+  // The runtime the installs run on, not the pin, unless the caller names one.
+  const runtime = options.version !== undefined ? null : await jailRuntime(options.runtime);
+  const version = runtime ? runtime.version : options.version;
   const project = await readJailProject(dir, options.env ? { env: options.env } : {});
-  const explained = [
-    ...explainJailFailures(jailFailures(log, os), options.version, project.setting.packages),
+  const explained = installLogAdvice(project, options, version, os);
+  const required = (await requiredJailExceptions(project, undefined, version))
+    .filter(grantsSomething);
+  const blocked = jailBlockers(project, os);
+  if (required.length === 0 && explained.length === 0 && blocked.length === 0) return null;
+  const notes = [...runtime?.overridden ? [`installs run on ${runtime.label}`] : [], ...blocked];
+  return jailCheckResult({ project, version, os, required, explained, blocked, notes });
+}
+
+/** The install log's jail failures explained, and the `upstreamByName` advice when it applies. */
+function installLogAdvice(
+  project: JailProject,
+  options: JailScriptsCheckOptions,
+  version: string | null | undefined,
+  os: typeof Deno.build.os,
+): string[] {
+  const log = options.installLog ?? "";
+  return [
+    ...explainJailFailures(jailFailures(log, os), version, project.setting.packages),
     ...upstreamByNameAdvice({
       output: log,
       denoJson: project.denoJson,
       env: options.env ?? safeEnv,
-      ...(options.version ? { version: options.version } : {}),
+      version,
     }),
   ];
-  const required = (await requiredJailExceptions(project, undefined, options.version))
-    .filter(grantsSomething);
-  const blocked = jailBlockers(project, os);
-  if (required.length === 0 && explained.length === 0 && blocked.length === 0) return null;
+}
+
+/** What {@linkcode jailCheckResult} decides from. */
+interface JailCheckFacts {
+  readonly project: JailProject;
+  readonly version: string | null | undefined;
+  readonly os: typeof Deno.build.os;
+  /** The built-in exceptions the dependencies need. */
+  readonly required: readonly JailRequirement[];
+  /** The install log's advice. */
+  readonly explained: readonly string[];
+  /** What stops the settings from doing what they look like they do. */
+  readonly blocked: readonly string[];
+  /** Said first: the runtime when it is not the pin, then the blockers. */
+  readonly notes: readonly string[];
+}
+
+/** The text a jail check's detail opens with: its notes, then the install log's advice. */
+function jailDetailLead(f: JailCheckFacts): string {
+  const notes = f.notes.map((b) => `${b}; `).join("");
+  return f.explained.length
+    ? `${notes}the install log shows: ${f.explained.map((l) => l.trim()).join(" · ")}; `
+    : notes;
+}
+
+/** The jail check from its facts: missing exceptions, then advice to act on, else passing. */
+function jailCheckResult(f: JailCheckFacts): Check {
+  const { project, version, required } = f;
   const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
-  const on = jailEffective(project.setting, options.version);
-  const windows = on && os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
-  const failures = explained.length
-    ? `the install log shows: ${explained.map((l) => l.trim()).join(" · ")}; `
-    : "";
-  const blockers = blocked.map((b) => `${b}; `).join("");
-  if (on && missing.length) {
-    return {
-      name,
-      ok: false,
-      detail: blockers + failures +
-        missingJailDetail(missing, project.setting, options.version) + windows,
-      critical: false,
+  const on = jailEffective(project.setting, version);
+  const windows = on && f.os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
+  const lead = jailDetailLead(f);
+  const narrow = on ? narrowableJailExceptions(required, project.setting) : [];
+  const [ok, body] = on && missing.length
+    ? [false, missingJailDetail(missing, project.setting, version) + windows]
+    : f.explained.length || f.blocked.length || narrow.length
+    ? [false, narrow.map((n) => `${n}; `).join("") + JAIL_DOCS_URL]
+    : [true, passingJailDetail(required, project.setting, on) + windows];
+  return { name: "lifecycle-script jail", ok, detail: lead + body, critical: false };
+}
+
+/**
+ * The configured exceptions that grant a built-in entry's package the whole network (`"net":
+ * true`, all a runtime before host lists could take) where this runtime takes its host list:
+ * each with the narrower exception to put in its place, the project's own `env` / `write` kept.
+ */
+function narrowableJailExceptions(
+  required: readonly JailRequirement[],
+  setting: JailSetting,
+): string[] {
+  return required.flatMap((r) => {
+    const own = Object.hasOwn(setting.packages, r.entry.name)
+      ? setting.packages[r.entry.name]
+      : undefined;
+    if (own?.net !== true || !Array.isArray(r.exception.net)) return [];
+    const union = (a?: readonly string[], b?: readonly string[]) => [
+      ...new Set([...a ?? [], ...b ?? []]),
+    ];
+    const env = union(own.env, r.exception.env);
+    const write = union(own.write, r.exception.write);
+    const narrower = {
+      ...own,
+      ...(env.length ? { env } : {}),
+      ...(write.length ? { write } : {}),
+      net: r.exception.net,
     };
-  }
-  if (explained.length || blocked.length) {
-    return { name, ok: false, detail: `${blockers}${failures}${JAIL_DOCS_URL}`, critical: false };
-  }
-  return {
-    name,
-    ok: true,
-    detail: passingJailDetail(required, project.setting, on) + windows,
-    critical: false,
-  };
+    return [
+      `${r.entry.name}'s exception grants the whole network ("net": true); this runtime takes ` +
+      `the hosts its install script needs: narrow it to ${
+        JSON.stringify({ [r.entry.name]: narrower })
+      } under "supplyChain.jailScripts.packages"`,
+    ];
+  });
 }
 
 /**
@@ -469,7 +535,7 @@ function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] 
 function missingJailDetail(
   missing: readonly JailRequirement[],
   setting: JailSetting,
-  version?: string,
+  version?: string | null,
 ): string {
   const why = setting.state === "on"
     ? `${setting.source} turns it on`
@@ -482,7 +548,7 @@ function missingJailDetail(
 }
 
 /** How to keep a browser download that the exception's `~` cache directory grants. */
-function cacheNote(missing: readonly JailRequirement[], version?: string): string {
+function cacheNote(missing: readonly JailRequirement[], version?: string | null): string {
   if (!jailHostListsSupported(version)) return "";
   const caches = missing.flatMap((r) => r.entry.cache ? [r.entry.cache] : []);
   return caches.length

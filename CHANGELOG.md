@@ -446,6 +446,24 @@ and this project adheres to
 - **`denext add` takes its jail exceptions out when the add fails.** They go into deno.json before
   `deno add` runs the install scripts; a failed add left them behind. The file is now put back
   (unless `deno add` changed it too, which is said).
+- **Builds keep the project's `.npmrc` supply-chain gates.** A build child runs with a config in
+  `.denext/` (`module-config.json`, `css-config.json`, the compile config), where Deno finds no
+  project `.npmrc`, so `paranoid=true` or `advisory-check=required` set there did not hold for it.
+  Its `supplyChain` now carries the six supply-chain keys of the root's `.npmrc`, merged with
+  deno.json's (the stricter wins); nothing else of the file, which may hold credentials, is copied.
+- **An npm workspace's members are read for jail exceptions.** Only a deno.json `workspace` was;
+  a package.json `workspaces` (array, or Yarn's `{ packages }`) now brings in each member's
+  dependencies too.
+- **The jail is planned for the runtime installs run on.** `denext add` and `denext doctor`
+  assumed the pinned toolchain; under `DENEXT_DENO=stock`, `DENEXT_DENO=<path>` or a `DENO_BIN`
+  they now read that Deno's version (stock Deno has no jail, another release of denext's Deno has
+  its own defaults) and say which one they planned for.
+- **An unreviewed package's network failure names the hosts.** `denext doctor --install-log`
+  advice for a package outside the reviewed list showed `"net": ["<host>"]`; it now lists the
+  hosts the log shows the script failing to reach (plain DNS names only, since the script prints
+  that log), and on a runtime without host lists says to install on one rather than grant
+  `"net": true`. On a runtime with host lists, a built-in package still configured with
+  `"net": true` is flagged with its narrower exception.
 - **The user-level `~/.npmrc` counts for the lifecycle-script jail.** The runtime reads
   `jail-scripts` / `paranoid` from it, but denext's exception planning and `denext doctor` read
   only the project's `.npmrc` and the environment, so a jail turned off (or `paranoid` turned on)
