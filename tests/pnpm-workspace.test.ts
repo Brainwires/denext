@@ -9,7 +9,7 @@ import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { cliInvocation } from "../src/ui/proc.ts";
 import { cliNpmModeArgs, inPnpmWorkspace } from "../src/build/pnpm-workspace.ts";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
 
 const REPO = fromFileUrl(new URL("../", import.meta.url));

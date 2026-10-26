@@ -7,9 +7,8 @@
 // import or a top-level declaration); every other option is reported with the reason.
 
 import { join } from "@std/path";
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
+import { mfs, PLUGIN_CATALOG as CATALOG } from "@denext/denext/internal/migrate-host";
 import { anyExists } from "./migrate-fs.ts";
-import { mfs } from "./migrate-io.ts";
 import {
   balancedCall,
   readViteConfig,

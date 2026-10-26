@@ -6,14 +6,14 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
 import { quietDeno } from "./helpers/quiet-deno.ts";
 import {
   appIdFromPackageName,
   type CapacitorStep,
   runCapacitorSteps,
-} from "../src/build/migrate-capacitor.ts";
+} from "../packages/migrate/src/migrate-capacitor.ts";
 import {
   createMigrateCommand,
   terminalRunner as terminalRunnerForTest,

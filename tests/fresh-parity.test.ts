@@ -14,7 +14,7 @@ import { csp, mergeCsp } from "../src/compat/fresh/middlewares.ts";
 import { underPattern } from "../src/compat/fresh/app.ts";
 import { createFreshRequest } from "../src/compat/fresh/context.ts";
 import { env } from "../src/compat/fresh/env.ts";
-import { rewriteEnvReads } from "../src/build/migrate-fresh.ts";
+import { rewriteEnvReads } from "../packages/migrate/src/migrate-fresh.ts";
 
 const u = (rel: string) => new URL(rel, import.meta.url).href;
 const JSX = u("../src/jsx/jsx-runtime.ts");

@@ -5,9 +5,9 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
-import { nextAuthMajor, nextAuthMigrateInfo } from "../src/build/next-auth-migrate.ts";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
+import { nextAuthMajor, nextAuthMigrateInfo } from "../packages/migrate/src/next-auth-migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
 

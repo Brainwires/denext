@@ -1,4 +1,4 @@
-// `denext migrate` (Vite SPA) carrying build plugins over (src/build/migrate-vite-plugins.ts):
+// `denext migrate` (Vite SPA) carrying build plugins over (packages/migrate/src/migrate-vite-plugins.ts):
 // TanStack Router's `autoCodeSplitting` → `spa.tanstackRouter`, and a Vite plugin that emits
 // files from `generateBundle` → `viteEmitterPlugin(<the same call>)` in `denext.config.ts` —
 // proven end to end (the migrated app exports the emitted file). Emitters migrate cannot carry
@@ -7,13 +7,13 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
 import {
   balancedCall,
   tanstackRouterFacts,
   viteAssetsDir,
-} from "../src/build/migrate-vite-plugins.ts";
+} from "../packages/migrate/src/migrate-vite-plugins.ts";
 import { resetPlugins } from "../src/plugin/mod.ts";
 import { exportInChild } from "./helpers/bounded-build.ts";
 

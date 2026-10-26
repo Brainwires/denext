@@ -6,7 +6,7 @@
 // report says what was recognised and what to check.
 
 import { join } from "@std/path";
-import { projectSourceFiles } from "./platform-extensions.ts";
+import { projectSourceFiles } from "@denext/denext/internal/migrate-host";
 
 /** The `next-auth` report of a migration. */
 export interface NextAuthMigrateInfo {

@@ -335,6 +335,7 @@ exactly that package.
 | `@denext/swc`                 | `swc-v*`                 | `packages/swc/deno.json`                 |
 | `@denext/docs-corpus`         | `docs-corpus-v*`         | `packages/docs-corpus/deno.json`         |
 | `@denext/ui`                  | `ui-v*`                  | `packages/ui/deno.json`                  |
+| `@denext/migrate`             | `migrate-v*`             | `packages/migrate/deno.json`             |
 
 A release is: **`deno task release <version>`** on `development`, then the
 `development → main` merge. The script does the bump, the changelog roll, the
@@ -343,7 +344,7 @@ docs deploy.
 
 **Release order: what denext pins publishes first.** `deno publish` rewrites each bare
 `@denext/<member>` import the framework makes at run time (`@denext/docs-corpus`, `@denext/ui`,
-`@denext/og`, `@denext/avif`, `@denext/photon`: `RUNTIME_MEMBERS` in `scripts/lib/jsr-pins.ts`) to a `jsr:`
+`@denext/migrate`, `@denext/og`, `@denext/avif`, `@denext/photon`: `RUNTIME_MEMBERS` in `scripts/lib/jsr-pins.ts`) to a `jsr:`
 specifier, so each of those versions must be on JSR before the `v*` tag. `@denext/og`,
 `@denext/avif` and `@denext/photon` keep their own semver and are pinned as
 `jsr:@denext/<member>@^<that member's version>`: the release script refuses to start while one of
@@ -374,6 +375,15 @@ dependency age never holds it back from a denext the hold already let in. `@dene
 publish names `@denext/denext` X.Y.Z before that version exists: JSR does not check a dependency
 at upload (4.1.0 shipped pinning an unpublished `@denext/og`), and the pair resolves once
 `v<version>` is published.
+
+`@denext/migrate` (`packages/migrate`: the `denext migrate` migrators) is the same again: denext
+X.Y.Z loads exactly `@denext/migrate` X.Y.Z (`jsr:@denext/migrate@<denext's version>`, a literal
+dynamic import in `src/cli/migrate-package.ts`), and `@denext/migrate` X.Y.Z imports exactly
+`jsr:@denext/denext@X.Y.Z`'s `internal/migrate-host` export (not a public API). `deno task bump`
+moves its three spots, and step 6 tags and pushes `migrate-v<version>` with the other two and waits
+for JSR to list it. A migrator that needs another framework module re-exports it from
+`src/build/migrate-host.ts`; the migrators' tests stay in `tests/` and import
+`packages/migrate/src/*` directly.
 
 **Prerequisites (one-time, per package).** The JSR package exists and is
 **linked to this GitHub repo** in its JSR settings — that link is what lets

@@ -5,9 +5,9 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
-import { preactTooling } from "../src/build/migrate-preact.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
+import { preactTooling } from "../packages/migrate/src/migrate-preact.ts";
 
 type Tree = Record<string, string | Record<string, unknown>>;
 

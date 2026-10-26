@@ -1,23 +1,22 @@
 // `migrate` (generate compat config for a Next.js or Vite-SPA app) and `codemod`
-// (the standalone source-import rewrite half). Extracted verbatim from the 1.x
-// `cli.ts` switch arms, now reading parsed flags instead of scanning `Deno.args`.
+// (the standalone source-import rewrite half). The migrators themselves are the `@denext/migrate`
+// package, loaded on the first `denext migrate` run (src/cli/migrate-package.ts); `codemod` stays here.
 
 import { basename, dirname, resolve } from "@std/path";
 import { pinEligibleFile } from "../../build/eligible-pins.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { type AppIconReport, type MigrateOptions, migrateProject } from "../../build/migrate.ts";
-import {
-  checkMigration,
-  type MigrateCheckReport,
-  type MigrateFinding,
-} from "../../build/migrate-check.ts";
 import { runCodemod } from "../../build/codemod.ts";
-import {
-  type CapacitorMigrateInfo,
-  type CapacitorStepsOutcome,
-  runCapacitorSteps,
-} from "../../build/migrate-capacitor.ts";
 import type { CommandRunner } from "../../build/mobile-capabilities.ts";
+import { loadMigratePackage, type MigratePackage } from "../migrate-package.ts";
+import type {
+  AppIconReport,
+  CapacitorMigrateInfo,
+  CapacitorStepsOutcome,
+  MigrateCheckReport,
+  MigrateFinding,
+  MigrateOptions,
+  MigrateResult,
+} from "@denext/migrate";
 
 /**
  * Print the codemod's planned source-import rewrites, then apply them — either
@@ -80,8 +79,6 @@ function confirmCodemod(rewrites: number): boolean | null {
   );
   return null;
 }
-
-type MigrateResult = Awaited<ReturnType<typeof migrateProject>>;
 
 /** The dependency summary every migration prints. */
 function reportDeps(r: MigrateResult): void {
@@ -660,6 +657,7 @@ function reportCapacitorSteps(outcome: CapacitorStepsOutcome): void {
 
 /** Run the Capacitor steps (human mode prints as it goes; JSON mode returns the outcome). */
 async function capacitorSteps(
+  migrate: MigratePackage,
   r: MigrateResult,
   run: CommandRunner,
   json: boolean,
@@ -671,7 +669,7 @@ async function capacitorSteps(
     return undefined;
   }
   if (!json) reportCapacitor(r.capacitor);
-  const outcome = await runCapacitorSteps(r.capacitor.steps, run);
+  const outcome = await migrate.runCapacitorSteps(r.capacitor.steps, run);
   if (!json) reportCapacitorSteps(outcome);
   return outcome;
 }
@@ -730,12 +728,13 @@ const REMIX_CODEMOD_NOTE = "the codemod plan lists files at their current paths;
  * would fail. With `--codemod`, the source-import rewrite plan is reported too (dry run).
  */
 async function runCheck(
+  migrate: MigratePackage,
   target: string,
   options: MigrateOptions,
   json: boolean,
   codemod: boolean,
 ): Promise<void> {
-  const report = await checkMigration(target, options);
+  const report = await migrate.checkMigration(target, options);
   const plan = codemod && report.verdict !== "blocked" ? await runCodemod(target) : undefined;
   // The codemod plan reads the tree as it is now; a Remix migration first moves and rewrites
   // the route modules, so its paths are the pre-migration ones (the real run rewrites the moved
@@ -881,19 +880,21 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
       const json = ctx.global.json;
       const options = migrateOptions(ctx);
+      // The migrators are `@denext/migrate`, loaded on the first run (src/cli/migrate-package.ts).
+      const migrate = await loadMigratePackage("denext migrate");
       if (ctx.flags.check === true) {
-        await runCheck(target, options, json === true, ctx.flags.codemod === true);
+        await runCheck(migrate, target, options, json === true, ctx.flags.codemod === true);
         return;
       }
       if (!json) console.log(`\n  denext migrate  ▸  ${target}\n`);
       const desktop = options.desktop === true;
-      const r = await migrateProject(target, options);
+      const r = await migrate.migrateProject(target, options);
       await pinMigratedEligible(target, r, json === true);
       if (json) {
         // Machine-readable: the result object only (no banner, no prompts). `--codemod`
         // applies with `--yes`, else reports its plan as a dry run. The Capacitor steps'
         // output goes to the terminal; their outcome is in the JSON.
-        const capacitorRun = await capacitorSteps(r, run ?? terminalRunner(true), true);
+        const capacitorRun = await capacitorSteps(migrate, r, run ?? terminalRunner(true), true);
         const codemod = ctx.flags.codemod === true
           ? await runCodemod(target, { write: ctx.flags.yes === true })
           : undefined;
@@ -907,7 +908,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       if (r.prisma) reportPrisma(r.prisma);
       if (r.nextAuth) reportNextAuth(r.nextAuth);
       if (r.jailScripts) reportJailScripts(r.jailScripts);
-      await capacitorSteps(r, run ?? terminalRunner(false), false);
+      await capacitorSteps(migrate, r, run ?? terminalRunner(false), false);
 
       if (r.denoJsonExists) {
         console.log(

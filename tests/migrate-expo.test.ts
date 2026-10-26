@@ -5,8 +5,12 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { expoApiUsage, expoDependencyReport, expoMobilePlan } from "../src/build/expo-migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import {
+  expoApiUsage,
+  expoDependencyReport,
+  expoMobilePlan,
+} from "../packages/migrate/src/expo-migrate.ts";
 import { readExpoAppConfig, readStaticAppConfig } from "../src/build/expo-app-config.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import {

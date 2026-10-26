@@ -4,15 +4,15 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
 import {
   detectFresh,
   freshDenoJson,
   freshHandlerMethods,
   freshMatchOrder,
-} from "../src/build/migrate-fresh.ts";
-import { appFolder, freshPattern, internalFolder } from "../src/build/fresh-codegen.ts";
+} from "../packages/migrate/src/migrate-fresh.ts";
+import { appFolder, freshPattern, internalFolder } from "../packages/migrate/src/fresh-codegen.ts";
 
 type Tree = Record<string, string | Record<string, unknown>>;
 

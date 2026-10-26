@@ -17,7 +17,7 @@
 
 import { join } from "@std/path";
 import { exists } from "./migrate-fs.ts";
-import { mfs } from "./migrate-io.ts";
+import { mfs } from "@denext/denext/internal/migrate-host";
 import { type FreshFinding, removeEmptyDirs, walk } from "./migrate-fresh.ts";
 
 /** What the Lustre migration did and left to the user (`MigrateResult.lustre`). */

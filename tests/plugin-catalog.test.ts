@@ -14,7 +14,7 @@ import {
   workspaceDirs,
 } from "../scripts/gen-plugin-catalog.ts";
 import { resolvePluginNames } from "../src/build/plugin-install.ts";
-import { PAGES_ROUTER_SPEC } from "../src/build/migrate.ts";
+import { PAGES_ROUTER_SPEC } from "../packages/migrate/src/migrate.ts";
 
 const catalog = JSON.parse(Deno.readTextFileSync(CATALOG_OUT)) as PluginCatalog;
 const entries: CatalogEntry[] = catalog.plugins;
@@ -94,7 +94,7 @@ Deno.test("plugin catalog: kinds, verbs and libraries have the expected shape", 
     }
   }
   assertEquals(plugins.map((e) => e.verb).filter(Boolean).sort(), VERBS, "plugin CLI verbs");
-  assertEquals(entries.length - plugins.length, 7, "seven packages are plain libraries");
+  assertEquals(entries.length - plugins.length, 8, "eight packages are plain libraries");
 });
 
 Deno.test("plugin catalog: every row carries a plain-text title and blurb", () => {
@@ -120,8 +120,10 @@ Deno.test("plugin catalog: every package's @denext/denext range is the framework
   const ranged = entries.filter((e) => e.denext !== undefined);
   assert(ranged.length >= 8, "the plugins carry their denext range");
   for (const e of ranged) {
-    // @denext/ui is built on denext's internals, so it pins exactly the denext it ships with.
-    const want = e.name === "@denext/ui" ? version : `^${version}`;
+    // @denext/ui and @denext/migrate are built on denext's internals, so each pins exactly the
+    // denext it ships with.
+    const exact = e.name === "@denext/ui" || e.name === "@denext/migrate";
+    const want = exact ? version : `^${version}`;
     assertEquals(e.denext, want, `${e.name}'s @denext/denext range`);
   }
 });

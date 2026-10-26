@@ -26,9 +26,10 @@ name: Publish to JSR
 #   git tag swc-v76.0.0      && git push origin swc-v76.0.0          # @denext/swc
 #   git tag docs-corpus-v4.3.0 && git push origin docs-corpus-v4.3.0  # @denext/docs-corpus
 #   git tag ui-v4.9.0         && git push origin ui-v4.9.0           # @denext/ui
-#   (their versions ARE denext's: the release script tags docs-corpus-v<version> and
-#   ui-v<version> itself for every denext release and waits for JSR to list them before it tags
-#   v<version>: see scripts/release.ts)
+#   git tag migrate-v4.9.0    && git push origin migrate-v4.9.0      # @denext/migrate
+#   (their versions ARE denext's: the release script tags docs-corpus-v<version>,
+#   ui-v<version> and migrate-v<version> itself for every denext release and waits for JSR to list
+#   them before it tags v<version>: see scripts/release.ts)
 #   (likewise avif-v* / og-v* / sqlite-v*)
 #
 # Bump the version in that package's deno.json before tagging — JSR rejects
@@ -56,6 +57,7 @@ on:
       - "swc-v*" # @denext/swc
       - "docs-corpus-v*" # @denext/docs-corpus
       - "ui-v*" # @denext/ui
+      - "migrate-v*" # @denext/migrate
 
 permissions:
   contents: read
@@ -119,6 +121,7 @@ jobs:
             swc-v*)          cfg=packages/swc/deno.json ;;
             docs-corpus-v*)  cfg=packages/docs-corpus/deno.json ;;
             ui-v*)           cfg=packages/ui/deno.json ;;
+            migrate-v*)      cfg=packages/migrate/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
           esac

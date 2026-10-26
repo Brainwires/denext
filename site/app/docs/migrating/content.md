@@ -66,6 +66,12 @@ evaluator is also killed when the `migrate` that started it dies:
 deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
 ```
 
+The migrators themselves are the `@denext/migrate` package, pinned to exactly the CLI's version
+and loaded the first time `denext migrate` (or `migrate --check`) runs: the `denext` binary
+carries it, and a CLI run from JSR fetches it once from jsr.io (`deno cache
+jsr:@denext/migrate@<version>` fetches it ahead), after which it works offline. Without a network
+on that first run the verb stops and says so.
+
 [Fixed in denext](/docs/fixed) lists problems on Next.js, React, Vite and React Native stacks
 that denext handles, each with the test that proves it.
 

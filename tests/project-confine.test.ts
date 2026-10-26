@@ -8,7 +8,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import { assertInsideProject, OutsideProjectError } from "../src/build/project-confine.ts";
 import { confineWrites, mfs } from "../src/build/migrate-io.ts";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 import { scaffoldProject } from "../src/build/scaffold.ts";
 import { runUpgrade } from "../src/cli/commands/upgrade.ts";
 import type { CommandContext } from "../src/cli/command.ts";

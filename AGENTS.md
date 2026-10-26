@@ -59,6 +59,8 @@ emit correct denext instead of Next.js.
    from `denext`): https://denext.dev/docs/signals.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
+   The migrators are the `@denext/migrate` package, pinned to the CLI's own version and loaded on
+   the first `denext migrate` (the binary embeds it; a CLI run from JSR fetches it once).
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
    ios,android]` adds an iOS / Android one (a SPA, App Router or Expo app): `capacitor.config.ts`,
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the

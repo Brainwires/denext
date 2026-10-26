@@ -12,7 +12,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 
 const FIXTURE = fromFileUrl(new URL("../examples/effect", import.meta.url));
 

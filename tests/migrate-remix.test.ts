@@ -9,13 +9,13 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 import {
   analyzeModule,
   parseRemixStem,
   rewriteRemixImports,
   selectHelpers,
-} from "../src/build/remix-migrate.ts";
+} from "../packages/migrate/src/remix-migrate.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 
 const FIXTURE = fromFileUrl(new URL("./fixtures/remix-app", import.meta.url));

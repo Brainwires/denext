@@ -22,7 +22,7 @@ The example covers **both** DI paths:
 - the **typed** `createEffectRuntime` path (the page `/`), and
 - the **`effect()` plugin** path — the ambient runtime, wired in
   `denext.config.ts`, that a route handler runs on (`/api/user`). This is the
-  shape [`denext migrate`](../../src/build/migrate.ts) generates for an app that
+  shape [`denext migrate`](../../packages/migrate/src/migrate.ts) generates for an app that
   depends on `effect` (there with an empty `effect()`; here with the real
   `AppLayer`).
 

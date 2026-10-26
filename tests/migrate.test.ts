@@ -4,7 +4,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 
 Deno.test("migrate writes a compat deno.json (skipLibCheck + react→denext aliases)", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_migrate_" });

@@ -1,4 +1,4 @@
-// Coverage sweep of the Remix migration transform (`src/build/remix-migrate.ts`): the
+// Coverage sweep of the Remix migration transform (`packages/migrate/src/remix-migrate.ts`): the
 // exported detection/parse/analyze/select helpers over their branch variety, plus a
 // `transformRemixApp` run over a crafted temp app that exercises the wrapper generators
 // (resource routes, folder-form routes, the many `export default` shapes, a client-needing
@@ -14,8 +14,8 @@ import {
   rewriteRemixImports,
   selectHelpers,
   transformRemixApp,
-} from "../src/build/remix-migrate.ts";
-import { migrateProject } from "../src/build/migrate.ts";
+} from "../packages/migrate/src/remix-migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("../", import.meta.url));
 const REMIX_FIXTURE = fromFileUrl(new URL("./fixtures/remix-app", import.meta.url));
@@ -831,6 +831,8 @@ Deno.test("transformRemixApp: head-only routes get a passthrough component; nest
 });
 
 Deno.test("remix-migrate.ts carries no raw NUL bytes (git would treat it as binary)", async () => {
-  const src = await Deno.readTextFile(new URL("../src/build/remix-migrate.ts", import.meta.url));
+  const src = await Deno.readTextFile(
+    new URL("../packages/migrate/src/remix-migrate.ts", import.meta.url),
+  );
   assert(!src.includes(String.fromCharCode(0)));
 });

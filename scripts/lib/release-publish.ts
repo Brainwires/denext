@@ -1,5 +1,6 @@
 // The release's publish half (step 6 of scripts/release.ts), resumable: publish the members whose
-// version is denext's (`@denext/docs-corpus` and `@denext/ui` <version>, SAME_VERSION_MEMBERS) and
+// version is denext's (`@denext/docs-corpus`, `@denext/ui` and `@denext/migrate` <version>,
+// SAME_VERSION_MEMBERS) and
 // wait for JSR to list them, then tag `v<version>`, push, and hand over the `development → main`
 // PR. A release that stopped part-way — JSR slow to list them, a network error, a closed
 // terminal — is picked up where it stopped: run
@@ -11,14 +12,27 @@ import {
   corpusConflictMessage,
   corpusReleaseState,
 } from "./docs-corpus-package.ts";
-import { type Fetch, jsrHasVersion, type MemberPin, memberPin, missingPins } from "./jsr-pins.ts";
+import {
+  type Fetch,
+  jsrHasVersion,
+  type MemberPin,
+  memberPin,
+  missingPins,
+  SAME_VERSION_MEMBERS,
+} from "./jsr-pins.ts";
 
-/** The `@denext/ui` member (packages/ui): the `denext ui` / `denext dashboard` web UI. */
-export const UI_MEMBER = "ui";
+/**
+ * The same-version members a release publishes once JSR does not list their version: all but
+ * the docs corpus, which is also checked for content (`@denext/ui`, `@denext/migrate`).
+ */
+export const LISTED_MEMBERS: readonly string[] = SAME_VERSION_MEMBERS.filter((dir) =>
+  dir !== "docs-corpus"
+);
 
 /**
  * The publish steps, in order. `commit` is the release commit the earlier steps prepared;
- * `corpus` publishes every same-version member (`@denext/docs-corpus` and `@denext/ui`).
+ * `corpus` publishes every same-version member (`@denext/docs-corpus`, `@denext/ui`,
+ * `@denext/migrate`).
  */
 export const PUBLISH_STEPS = ["commit", "corpus", "tag", "push", "pr"] as const;
 
@@ -185,9 +199,13 @@ async function listed(pin: MemberPin, deps: PublishDeps): Promise<boolean> {
   });
 }
 
-/** `@denext/ui`'s pin, which must be at the release's version (the bump moves both). */
-async function uiPin(target: ReleaseTarget, deps: PublishDeps): Promise<MemberPin> {
-  const pin = await memberPin(UI_MEMBER, deps.root);
+/** A listed member's pin, which must be at the release's version (the bump moves both). */
+async function listedPin(
+  dir: string,
+  target: ReleaseTarget,
+  deps: PublishDeps,
+): Promise<MemberPin> {
+  const pin = await memberPin(dir, deps.root);
   if (pin.version !== target.version) {
     throw new ReleaseAbort(
       `${pin.name} is at ${pin.version}, not ${target.version} — the bump moves both ` +
@@ -199,22 +217,25 @@ async function uiPin(target: ReleaseTarget, deps: PublishDeps): Promise<MemberPi
 
 /**
  * The same-version members this release must still publish: `@denext/docs-corpus` unless JSR has
- * <version> with this corpus (another corpus aborts), `@denext/ui` unless JSR lists <version>.
+ * <version> with this corpus (another corpus aborts), each of {@linkcode LISTED_MEMBERS} unless
+ * JSR lists <version>.
  */
 async function pendingMembers(target: ReleaseTarget, deps: PublishDeps): Promise<MemberPin[]> {
   const pending: MemberPin[] = [];
   if (await corpusState(target.version, deps) === "published") {
     deps.log(`   ${CORPUS_PACKAGE}@${target.version} is on JSR with this corpus`);
   } else pending.push(await memberPin("docs-corpus", deps.root));
-  const ui = await uiPin(target, deps);
-  if (await listed(ui, deps)) deps.log(`   ${ui.name}@${ui.version} is on JSR`);
-  else pending.push(ui);
+  for (const dir of LISTED_MEMBERS) {
+    const pin = await listedPin(dir, target, deps);
+    if (await listed(pin, deps)) deps.log(`   ${pin.name}@${pin.version} is on JSR`);
+    else pending.push(pin);
+  }
   return pending;
 }
 
 /**
  * The corpus step: tag each same-version member JSR does not have yet (`docs-corpus-v<version>`,
- * `ui-v<version>`, unless the tag exists), push the branch and those tags, and wait for JSR to
+ * `ui-v<version>`, `migrate-v<version>`, unless the tag exists), push the branch and those tags, and wait for JSR to
  * list every one — then check that the corpus JSR serves is this tree's. The tags are pushed
  * together, so their publish runs overlap instead of queueing one wait behind the other.
  */

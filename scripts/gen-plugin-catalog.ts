@@ -7,7 +7,7 @@
 //   deno task docs:build           # regenerate + export the site
 //
 // The catalog is the single source of truth for "which first-party plugins exist, what
-// they are called, and which range pins them": `src/build/migrate.ts` reads its `spec`
+// they are called, and which range pins them": `packages/migrate/src/migrate.ts` reads its `spec`
 // values instead of hard-coding pins, and the `denext ui` plugin panel lists it.
 // Everything a file can't state about itself (is this a plugin or a plain library? what is
 // its factory export called? does it add a CLI verb?) is declared in the package's own

@@ -8,11 +8,14 @@
 // (`deno run --allow-read --allow-env --allow-run …/cli migrate --check`). Without
 // `--allow-run` the config is reported as not evaluated, not as unportable.
 
-import { VERSION } from "../../mod.ts";
+import {
+  COMPUTED_ICON_FIX,
+  dryRunMigration,
+  NEXT_CONFIG_NEEDS_RUN,
+  type PlannedChange,
+  VERSION,
+} from "@denext/denext/internal/migrate-host";
 import { type MigrateOptions, migrateProject, type MigrateResult } from "./migrate.ts";
-import { dryRunMigration, type PlannedChange } from "./migrate-io.ts";
-import { NEXT_CONFIG_NEEDS_RUN } from "./next-config-eval.ts";
-import { COMPUTED_ICON_FIX } from "./mobile-icon-source.ts";
 
 /** The source framework a check detected. */
 export type MigrateSource =

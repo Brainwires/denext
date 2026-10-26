@@ -17,8 +17,8 @@ import {
   resolveIconSource,
 } from "../src/build/mobile-icon-source.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
 
 /** A PNG's width, height and colour type from its IHDR. */
 function ihdr(bytes: Uint8Array): { width: number; height: number; colorType: number } {

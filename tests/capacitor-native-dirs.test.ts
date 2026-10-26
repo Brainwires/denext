@@ -13,7 +13,7 @@ import {
   nativeText,
 } from "../src/build/capacitor-native-dirs.ts";
 import { CAPACITOR_BUILD_IGNORES } from "../src/build/capacitor-pins.ts";
-import { capacitorIgnoresFor } from "../src/build/migrate-capacitor.ts";
+import { capacitorIgnoresFor } from "../packages/migrate/src/migrate-capacitor.ts";
 import {
   addMobileCapabilities,
   type CommandRunner,

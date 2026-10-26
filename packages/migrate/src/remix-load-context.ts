@@ -11,15 +11,20 @@
 
 import { dirname, join, relative } from "@std/path";
 import { exists, firstExisting } from "./migrate-fs.ts";
-import { mfs } from "./migrate-io.ts";
 import {
+  applyEdits,
+  type Ctx,
   declaredNames,
+  type Edit,
+  forEachChild,
   freeIdentifiers,
   GEN_HEADER,
+  mfs,
+  type Node,
   parseRouteModule,
   rewriteSpecifiers,
-} from "./remix-codegen.ts";
-import { applyEdits, type Ctx, type Edit, forEachChild, type Node, walkAst } from "./swc-ast.ts";
+  walkAst,
+} from "@denext/denext/internal/migrate-host";
 
 /** Where a Remix app's custom server (Express/Hono) lives, most common first. */
 const SERVER_ENTRIES = [

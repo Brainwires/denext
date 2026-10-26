@@ -30,7 +30,7 @@ import {
   WEBKIT_DEPENDENCY,
   withWebkitDependency,
 } from "../src/build/mobile-native-install.ts";
-import { needsFrameGuardOptOut, planCapacitor } from "../src/build/migrate-capacitor.ts";
+import { needsFrameGuardOptOut, planCapacitor } from "../packages/migrate/src/migrate-capacitor.ts";
 
 const PBXPROJ_FIXTURE = await Deno.readTextFile(
   new URL("./fixtures/capacitor8/project.pbxproj", import.meta.url),

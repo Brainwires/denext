@@ -23,7 +23,6 @@
 
 import { isAbsolute, join, relative } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
-import { mfs } from "./migrate-io.ts";
 import {
   analyzeModule,
   clientModuleSource,
@@ -35,6 +34,7 @@ import {
   type HelperDecl,
   isTypeDecl,
   layoutWrapperSource,
+  mfs,
   type ModuleParts,
   pageActionRouteSource,
   pageWrapperSource,
@@ -48,11 +48,15 @@ import {
   SERVER_EXPORTS,
   serverRootLayoutSource,
   stripRootDoc,
+  txt,
   usedImports,
-} from "./remix-codegen.ts";
-export { analyzeModule, rewriteRemixImports, selectHelpers } from "./remix-codegen.ts";
+} from "@denext/denext/internal/migrate-host";
+export {
+  analyzeModule,
+  rewriteRemixImports,
+  selectHelpers,
+} from "@denext/denext/internal/migrate-host";
 import { loadContextModule } from "./remix-load-context.ts";
-import { txt } from "./swc-ast.ts";
 
 /** What {@link transformRemixApp} did, for the CLI to print (assisted-migration report). */
 export interface RemixMigrateInfo {

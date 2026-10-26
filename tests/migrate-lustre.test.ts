@@ -6,9 +6,13 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
-import { detectLustre, parseGleamToml, startSelector } from "../src/build/migrate-lustre.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
+import {
+  detectLustre,
+  parseGleamToml,
+  startSelector,
+} from "../packages/migrate/src/migrate-lustre.ts";
 import { gleamToolchainStatus } from "../src/build/gleam-toolchain.ts";
 import { runBounded } from "./helpers/bounded-command.ts";
 

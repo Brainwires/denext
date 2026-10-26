@@ -14,7 +14,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { copy } from "@std/fs/copy";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
-import { migrateProject } from "../../src/build/migrate.ts";
+import { migrateProject } from "../../packages/migrate/src/migrate.ts";
 import { runDeno } from "./harness.ts";
 
 const REPO = fromFileUrl(new URL("../../", import.meta.url));

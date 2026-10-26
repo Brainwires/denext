@@ -361,6 +361,19 @@ and this project adheres to
   publishes `@denext/ui` (`ui-v<version>`) with `@denext/docs-corpus`, before the `v<version>`
   tag.
 
+- **The `denext migrate` migrators are their own package, `@denext/migrate`.** The Next.js,
+  Remix, React Router, TanStack Start, Vite, CRA, Expo, Fresh, Preact and Lustre migrations and
+  the `--enable-capacitor` target leave `@denext/denext` (18.46 MiB → 18.01 MiB) for a package the
+  CLI loads on the first `denext migrate` (or `migrate --check`) run, pinned to exactly its own
+  version (`jsr:@denext/migrate@<version>`, moved by `deno task bump`): the `denext` binary embeds
+  it, `deno cache` of the CLI caches it, and a CLI run from JSR fetches it once, then works
+  offline. Without a network on that first fetch the verb says what to do
+  (`deno cache jsr:@denext/migrate@<version>`). Nothing changes in what a migration writes;
+  `denext codemod` (and `migrate --codemod`'s source rewrite), the MCP `denext_codemod` tool and
+  the runtime layers a migrated app imports (`denext/remix`, `denext/fresh`, `denext/preact`, …)
+  stay in `@denext/denext`. The release publishes `@denext/migrate` (`migrate-v<version>`) with
+  `@denext/ui` and `@denext/docs-corpus`, before the `v<version>` tag.
+
 - **The MCP `denext://guide` resource works offline from a JSR install.** It reads the authoring
   guide from `@denext/docs-corpus`, which now carries the guide verbatim (AGENTS.md minus its
   repo-process sections, as served before), so the resource works offline from a JSR install instead

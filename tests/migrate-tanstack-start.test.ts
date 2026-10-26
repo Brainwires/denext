@@ -6,12 +6,12 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { checkMigration } from "../src/build/migrate-check.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { checkMigration } from "../packages/migrate/src/migrate-check.ts";
 import {
   isTanstackStartApp,
   readTanstackStartOptions,
-} from "../src/build/migrate-tanstack-start.ts";
+} from "../packages/migrate/src/migrate-tanstack-start.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
 

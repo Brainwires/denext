@@ -17,9 +17,11 @@
 // vite.config is read as text, never executed.
 
 import { dirname, join, relative, resolve } from "@std/path";
-import type { SpaTanstackRouterConfig } from "../server/config.ts";
-import { normalizeSpaAssetsDir } from "../server/config-validate.ts";
-import { mfs } from "./migrate-io.ts";
+import {
+  mfs,
+  normalizeSpaAssetsDir,
+  type SpaTanstackRouterConfig,
+} from "@denext/denext/internal/migrate-host";
 
 /** The vite.config file names migrate reads, in precedence order. */
 const VITE_CONFIGS = ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"];

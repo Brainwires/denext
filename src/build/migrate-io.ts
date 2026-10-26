@@ -71,7 +71,7 @@ async function confined(path: string, entry = false): Promise<void> {
 type Kind = "file" | "dir" | "none";
 
 /** The minimal stat shape the migrate code reads. */
-interface MigrateStat {
+export interface MigrateStat {
   isFile: boolean;
   isDirectory: boolean;
 }
@@ -198,11 +198,29 @@ async function overlayRename(o: Overlay, from: string, to: string): Promise<void
   o.files.set(from, { kind: "deleted", movedTo: to });
 }
 
+/** The file operations the migrate planners use (see {@linkcode mfs}). */
+export interface MigrateFs {
+  /** `Deno.readTextFile`, through the dry run's overlay. */
+  readTextFile(path: string): Promise<string>;
+  /** `Deno.writeTextFile`, confined to the project; into the overlay in a dry run. */
+  writeTextFile(path: string, text: string): Promise<void>;
+  /** `Deno.mkdir`, confined to the project; into the overlay in a dry run. */
+  mkdir(path: string, options?: Deno.MkdirOptions): Promise<void>;
+  /** `Deno.remove`, confined to the project; into the overlay in a dry run. */
+  remove(path: string): Promise<void>;
+  /** `Deno.rename`, confined to the project; into the overlay in a dry run. */
+  rename(from: string, to: string): Promise<void>;
+  /** `Deno.stat` (whether it is a file or a directory), through the overlay. */
+  stat(path: string): Promise<MigrateStat>;
+  /** `Deno.readDir`, through the overlay. */
+  readDir(path: string): AsyncGenerator<Deno.DirEntry>;
+}
+
 /**
  * The file operations the migrate planners use. Each is the `Deno.*` call of the same name,
  * except inside {@link dryRunMigration}, where it reads through and writes to the overlay.
  */
-export const mfs = {
+export const mfs: MigrateFs = {
   async readTextFile(path: string): Promise<string> {
     const o = active;
     return o ? await overlayRead(o, resolve(path)) : await Deno.readTextFile(path);

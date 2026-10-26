@@ -15,10 +15,40 @@
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
-import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
-import { confineWrites, mfs } from "./migrate-io.ts";
-import { withCapacitorConfigValue } from "./capacitor-config.ts";
-import { applyJailExceptions, type JailReport } from "./jail-scripts.ts";
+import {
+  appendGitignore,
+  applyJailExceptions,
+  capacitorAppearanceConfig,
+  confineWrites,
+  denoSqlHasColumns,
+  DESKTOP_ICON_FILE,
+  detectIconSource,
+  ensureVscodeDeno,
+  evalNextConfigProgram,
+  type ExpoAppConfig,
+  findReactNativeWeb,
+  findSqliteWasm,
+  formatIconSearch,
+  type IconSearch,
+  type JailReport,
+  LOAD_NEXT_CONFIG,
+  mfs,
+  mobileIconConfig,
+  pageBackgroundStyle,
+  PLUGIN_CATALOG as CATALOG,
+  REACT_FAMILY_CLIENT,
+  REACT_FAMILY_CORE,
+  readExpoAppConfig,
+  readFrameworkJson,
+  resolveAppearance,
+  resolveIconSource,
+  resolveTsPaths,
+  type SpaTanstackRouterConfig,
+  tsPathAliases,
+  VERSION,
+  withCapacitorConfigValue,
+  withDenextUnstable,
+} from "@denext/denext/internal/migrate-host";
 import {
   type MappedViteEmitter,
   readViteConfig,
@@ -28,22 +58,7 @@ import {
   viteEmitterFacts,
   type ViteEmitterFinding,
 } from "./migrate-vite-plugins.ts";
-import type { SpaTanstackRouterConfig } from "../server/config.ts";
-import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
-import { readFrameworkJson } from "./bundle.ts";
-import { VERSION } from "../version.ts";
-import { appendGitignore } from "./gitignore.ts";
-import { ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
-import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
-import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
-import {
-  formatIconSearch,
-  type IconSearch,
-  mobileIconConfig,
-  resolveIconSource,
-} from "./mobile-icon-source.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import { type CarriedLoadContext, carryLoadContext } from "./remix-load-context.ts";
 import {
@@ -90,13 +105,6 @@ import {
   prebuildFolders,
   readMetroResolution,
 } from "./expo-migrate.ts";
-import { type ExpoAppConfig, readExpoAppConfig } from "./expo-app-config.ts";
-import {
-  capacitorAppearanceConfig,
-  pageBackgroundStyle,
-  resolveAppearance,
-} from "./expo-appearance.ts";
-import { findReactNativeWeb } from "./react-native.ts";
 import {
   appRouterServerFiles,
   capacitorIgnoresFor,
@@ -107,14 +115,12 @@ import {
   planCapacitor,
   validateCapacitorOptions,
 } from "./migrate-capacitor.ts";
-import { findSqliteWasm } from "./sqlite-wasm.ts";
 import {
   detectPrismaWiring,
   isPrismaDep,
   type PrismaMigrateInfo,
   type PrismaWiring,
 } from "./prisma-migrate.ts";
-import { denoSqlHasColumns } from "../server/prisma-adapter/client.ts";
 import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's

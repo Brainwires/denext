@@ -1,6 +1,7 @@
 // The installed `denext` binary, verb by verb, with nothing but the binary: `--version`,
-// `migrate --check` and `migrate` on a small Next.js app, `create`, `generate`, `routes`,
-// `patch … denext`, `build`, the MCP server and `denext ui` (its embedded `@denext/ui`). A `deno compile`d CLI carries only the files scripts/compile-cli.ts embeds;
+// `migrate --check` and `migrate` on a small Next.js app (its embedded `@denext/migrate`), `create`,
+// `generate`, `routes`, `patch … denext`, `build`, the MCP server and `denext ui` (its embedded
+// `@denext/ui`). A `deno compile`d CLI carries only the files scripts/compile-cli.ts embeds;
 // the 4.5.1 binary embedded no `deno.json`, so `migrate` stopped at "could not read the framework
 // version" and the MCP server answered version 0.0.0 with no `denext://guide`, while every test
 // that ran the CLI from source passed.

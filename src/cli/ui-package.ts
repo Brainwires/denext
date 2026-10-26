@@ -9,13 +9,16 @@
 // package in the `denext` binary, and `deno cache` of the CLI (src/cli/cli-cache.ts) caches it —
 // yet no other verb loads it. A CLI run from JSR whose cache lacks it fetches it on the first
 // `denext ui`; after that it works offline. When that first fetch cannot happen (offline, JSR
-// unreachable), the verb stops with what to do instead of Deno's loader error.
+// unreachable), the verb stops with what to do instead of Deno's loader error
+// (src/cli/member-package.ts).
 //
 // The release publishes `@denext/ui` <version> before it tags `v<version>` (scripts/release.ts),
 // so the version denext pins is always older than denext itself: Deno's minimum dependency age
 // never holds it back from a denext the age hold already let in.
 
-import { VERSION } from "../version.ts";
+import { memberLoader, memberUnavailableMessage } from "./member-package.ts";
+
+export { isModuleLoadFailure } from "./member-package.ts";
 
 /** The `@denext/ui` module: the servers and the defaults the verbs start them with. */
 export type UiPackage = typeof import("@denext/ui");
@@ -26,21 +29,6 @@ export type UiImporter = () => Promise<UiPackage>;
 /** The package's JSR name. */
 export const UI_PACKAGE = "@denext/ui";
 
-/** The real import: literal, so publish, compile and cache all see it. */
-const importUi: UiImporter = () => import("@denext/ui");
-
-let loaded: Promise<UiPackage> | null = null;
-
-/**
- * Whether `error` is Deno failing to load a module (a fetch that could not happen, a specifier
- * missing from the cache under `--cached-only`), not the UI's own code throwing as it loads.
- */
-export function isModuleLoadFailure(error: unknown): boolean {
-  if (!(error instanceof TypeError)) return false;
-  return /\b(import|module|fetch|cached?|jsr|network|sending request|dns|connect|resolve)/i
-    .test(error.message);
-}
-
 /**
  * What a verb prints when `@denext/ui` could not be loaded.
  *
@@ -49,13 +37,7 @@ export function isModuleLoadFailure(error: unknown): boolean {
  * @returns The message, prefixed `denext:` (the CLI prints it without a stack trace).
  */
 export function uiUnavailableMessage(verb: string, error: unknown): string {
-  // Deno's loader error spans lines (the request, then each cause): one line, bounded.
-  const text = (error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, " ");
-  const reason = text.length > 300 ? `${text.slice(0, 299)}…` : text;
-  return `denext: ${verb} needs ${UI_PACKAGE}@${VERSION}, which is not in Deno's cache and ` +
-    `could not be fetched from jsr.io (${reason}).\n` +
-    "  Connect to the network and run it again: it is fetched once, then works offline.\n" +
-    `  To fetch it ahead of time: deno cache jsr:${UI_PACKAGE}@${VERSION}`;
+  return memberUnavailableMessage(UI_PACKAGE, verb, error);
 }
 
 /**
@@ -67,19 +49,5 @@ export function uiUnavailableMessage(verb: string, error: unknown): string {
  * @param importer The import (tests pass a stand-in; the default is the literal import).
  * @returns The package.
  */
-export function loadUiPackage(
-  verb: string,
-  importer: UiImporter = importUi,
-): Promise<UiPackage> {
-  const attempt = () =>
-    importer().catch((error: unknown) => {
-      if (!isModuleLoadFailure(error)) throw error;
-      throw new Error(uiUnavailableMessage(verb, error), { cause: error });
-    });
-  if (importer !== importUi) return attempt();
-  loaded ??= attempt().catch((error: unknown) => {
-    loaded = null;
-    throw error;
-  });
-  return loaded;
-}
+export const loadUiPackage: (verb: string, importer?: UiImporter) => Promise<UiPackage> =
+  memberLoader(UI_PACKAGE, () => import("@denext/ui"));

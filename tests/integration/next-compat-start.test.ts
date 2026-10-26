@@ -12,7 +12,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../../src/build/migrate.ts";
+import { migrateProject } from "../../packages/migrate/src/migrate.ts";
 import { removeTempDir } from "../helpers/temp.ts";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 import {

@@ -4,7 +4,7 @@
 // not migrate (with the reason for each).
 
 import { join } from "@std/path";
-import { mfs } from "./migrate-io.ts";
+import { mfs } from "@denext/denext/internal/migrate-host";
 
 /** Something the migration leaves to the user. */
 export interface PreactFinding {

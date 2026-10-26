@@ -15,13 +15,19 @@
 //     TurboModule / Fabric codegen, Expo native modules) that have no web build.
 
 import { dirname, join } from "@std/path";
-import { EXPO_SHIMS } from "../expo/manifest.ts";
-import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
-import { unwrap } from "./config-edit.ts";
-import { type ExpoAppConfig, PLUGIN_USAGE_STRINGS, readJsonFile } from "./expo-app-config.ts";
-import { hasAppearance, resolveAppearance } from "./expo-appearance.ts";
-import { MOBILE_CAPABILITIES } from "./mobile-capabilities.ts";
-import { type Node, swcParse } from "./swc-ast.ts";
+import {
+  COMMUNITY_ALIASES,
+  EXPO_SHIMS,
+  type ExpoAppConfig,
+  hasAppearance,
+  MOBILE_CAPABILITIES,
+  type Node,
+  PLUGIN_USAGE_STRINGS,
+  readJsonFile,
+  resolveAppearance,
+  swcParse,
+  unwrap,
+} from "@denext/denext/internal/migrate-host";
 
 // --- the entry ----------------------------------------------------------------------------
 

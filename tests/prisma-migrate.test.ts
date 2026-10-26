@@ -10,8 +10,8 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
-import { readDatasource, wiredProvider } from "../src/build/prisma-migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
+import { readDatasource, wiredProvider } from "../packages/migrate/src/prisma-migrate.ts";
 import { denoSqlHasColumns } from "../src/server/prisma-adapter/client.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));

@@ -13,12 +13,12 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { dirname, fromFileUrl, join, relative } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 import {
   checkMigration,
   type MigrateCheckReport,
   shellPathArg,
-} from "../src/build/migrate-check.ts";
+} from "../packages/migrate/src/migrate-check.ts";
 import { dryRunMigration, mfs, type PlannedChange } from "../src/build/migrate-io.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";

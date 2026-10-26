@@ -7,8 +7,8 @@
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { carryLoadContext, loadContextModule } from "../src/build/remix-load-context.ts";
-import { transformRemixApp } from "../src/build/remix-migrate.ts";
+import { carryLoadContext, loadContextModule } from "../packages/migrate/src/remix-load-context.ts";
+import { transformRemixApp } from "../packages/migrate/src/remix-migrate.ts";
 import { clearLoadContext, loadContext } from "../src/compat/remix/load-context.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { getSession } from "../src/server/session.ts";

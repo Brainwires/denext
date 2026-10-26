@@ -52,8 +52,12 @@ Deno.test("bumpVersion (dry) finds the current version in the target files and r
     "@denext/ui's version and its jsr:@denext/denext@<version> import move with denext's",
   );
   assert(
-    result.changed.find((c) => c.file === "deno.json")!.hits >= 3,
-    "root deno.json: the version and the docs-corpus and ui <version> imports",
+    result.changed.find((c) => c.file === "packages/migrate/deno.json")!.hits >= 2,
+    "@denext/migrate's version and its jsr:@denext/denext@<version> import move with denext's",
+  );
+  assert(
+    result.changed.find((c) => c.file === "deno.json")!.hits >= 4,
+    "root deno.json: the version and the docs-corpus, ui and migrate <version> imports",
   );
   assert(result.total >= result.changed.length);
   const out = await captured(() => printBumpResult(result, true));
@@ -308,23 +312,39 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   assert(mib < 19, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
 });
 
-Deno.test("the @denext/ui package stays small, and ships what it imports", async () => {
-  // The UI left @denext/denext to keep it under JSR's cap; it must not become the next package to
-  // reach it (it is under 1 MiB). And every module the package reaches is in its publish set.
-  const files = await publishedMemberFiles("ui");
-  if (!files) return;
-  const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
-  assert(mib < 4, `@denext/ui is ${mib.toFixed(2)} MiB; keep it well under JSR's 20 MiB cap`);
-  assert(files.has("mod.ts") && files.has("deno.json") && files.has("src/server.ts"));
-  for (const [file] of files) {
-    if (!file.endsWith(".ts")) continue;
-    const text = await Deno.readTextFile(new URL(`../packages/ui/${file}`, import.meta.url));
-    for (const m of text.matchAll(/(?:from|import\()\s*"(\.[^"]+)"/g)) {
-      const target = new URL(m[1], new URL(`https://ui.invalid/${file}`)).pathname.slice(1);
-      assert(files.has(target), `${file} imports ${m[1]}, which @denext/ui does not publish`);
+for (const [dir, entry] of [["ui", "src/server.ts"], ["migrate", "src/migrate.ts"]]) {
+  Deno.test(`the @denext/${dir} package stays small, and ships what it imports`, async () => {
+    // These left @denext/denext to keep it under JSR's cap; neither may become the next package
+    // to reach it (each is under 1 MiB). And every module the package reaches is in its publish
+    // set.
+    const files = await publishedMemberFiles(dir);
+    if (!files) return;
+    const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
+    assert(mib < 4, `@denext/${dir} is ${mib.toFixed(2)} MiB; keep it well under JSR's 20 MiB cap`);
+    assert(files.has("mod.ts") && files.has("deno.json") && files.has(entry));
+    // The module graph from its entry (Deno's own resolution, so generated-code templates that
+    // look like imports do not count): every file of the package it reaches is published.
+    const pkg = new URL(`../packages/${dir}/`, import.meta.url);
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["info", "--json", "mod.ts"],
+      cwd: pkg,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    assert(out.success, `deno info packages/${dir}/mod.ts failed`);
+    const graph = JSON.parse(new TextDecoder().decode(out.stdout)) as {
+      modules: Array<{ specifier: string }>;
+    };
+    const base = (await Deno.realPath(pkg)).replaceAll("\\", "/").replace(/\/?$/, "/");
+    for (const { specifier } of graph.modules) {
+      if (!specifier.startsWith("file:")) continue;
+      const path = (await Deno.realPath(new URL(specifier))).replaceAll("\\", "/");
+      if (!path.startsWith(base)) continue; // @denext/denext's own modules
+      const file = path.slice(base.length);
+      assert(files.has(file), `@denext/${dir} reaches ${file}, which it does not publish`);
     }
-  }
-});
+  });
+}
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */
 const UNCOMPRESSED_GENERATED_OK: Readonly<Record<string, string>> = {

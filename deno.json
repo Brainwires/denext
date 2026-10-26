@@ -18,7 +18,8 @@
     "./packages/lightningcss",
     "./packages/swc",
     "./packages/docs-corpus",
-    "./packages/ui"
+    "./packages/ui",
+    "./packages/migrate"
   ],
   "exports": {
     ".": "./mod.ts",
@@ -28,6 +29,7 @@
     "./plugin-kit/vite-emitter": "./src/plugin/vite-emitter.ts",
     "./ui-kit": "./src/ui/kit.ts",
     "./internal/ui-host": "./src/ui/host.ts",
+    "./internal/migrate-host": "./src/build/migrate-host.ts",
     "./jsx-runtime": "./src/jsx/jsx-runtime.ts",
     "./jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
     "./server": "./src/server/mod.ts",
@@ -436,6 +438,7 @@
     "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
     "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.8.0",
     "@denext/ui": "jsr:@denext/ui@4.8.0",
+    "@denext/migrate": "jsr:@denext/migrate@4.8.0",
     "sass": "npm:sass@^1.80.0",
     "@mdx-js/mdx": "npm:@mdx-js/mdx@^3",
     "@tanstack/router-plugin": "npm:@tanstack/router-plugin@1.168.42",

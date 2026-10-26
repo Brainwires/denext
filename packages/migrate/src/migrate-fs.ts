@@ -1,7 +1,7 @@
 // Small filesystem probes shared by the migration paths (Next / SPA / Remix).
 
 import { join } from "@std/path";
-import { mfs } from "./migrate-io.ts";
+import { mfs } from "@denext/denext/internal/migrate-host";
 
 /** Whether `p` exists (file or directory). */
 export async function exists(p: string): Promise<boolean> {

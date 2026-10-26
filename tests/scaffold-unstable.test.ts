@@ -12,7 +12,7 @@ import {
   scaffoldFiles,
   withDenextUnstable,
 } from "../src/build/scaffold.ts";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 import { FEATURES } from "../src/cli/commands/create.ts";
 
 Deno.test("withDenextUnstable: the existing entries, then the writer's, then denext's, each once", () => {

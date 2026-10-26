@@ -665,8 +665,8 @@ Deno.test("doctor: no listed dependency and no log, no jail check; a missing log
 });
 
 Deno.test("migrate: detects the dependencies and writes the exceptions, listed for review", async () => {
-  const { checkMigration } = await import("../src/build/migrate-check.ts");
-  const { migrateProject } = await import("../src/build/migrate.ts");
+  const { checkMigration } = await import("../packages/migrate/src/migrate-check.ts");
+  const { migrateProject } = await import("../packages/migrate/src/migrate.ts");
   const files: Tree = {
     "package.json": {
       name: "jail-app",

@@ -15,12 +15,13 @@
 //   - mod.ts                 export const VERSION
 //   - src/version.ts         the CLI's dependency-free copy of VERSION
 //   - packages/*/deno.json   the @denext/denext peer-dependency pins (all subpaths), and the
-//                            versions of packages/docs-corpus and packages/ui, which ARE denext's
-//                            version (and @denext/ui's exact `jsr:@denext/denext@<version>`)
-//   - deno.json              the exact `jsr:@denext/docs-corpus@<version>` and
-//                            `jsr:@denext/ui@<version>` imports (denext X.Y.Z ships with both at
-//                            X.Y.Z, rc versions included); all are set outright even when they
-//                            had drifted from the old version
+//                            versions of packages/docs-corpus, packages/ui and packages/migrate,
+//                            which ARE denext's version (and @denext/ui's and @denext/migrate's
+//                            exact `jsr:@denext/denext@<version>`)
+//   - deno.json              the exact `jsr:@denext/docs-corpus@<version>`,
+//                            `jsr:@denext/ui@<version>` and `jsr:@denext/migrate@<version>` imports
+//                            (denext X.Y.Z ships with all three at X.Y.Z, rc versions included);
+//                            all are set outright even when they had drifted from the old version
 //   - ROADMAP.md             the "development is <version>" status line
 //
 // And at a STABLE release only: the prerelease specifiers the docs teach with — README.md,
@@ -198,7 +199,8 @@ export async function bumpVersion(
 /**
  * The same-version members' versions and the exact pins between them and denext
  * (scripts/lib/jsr-pins.ts `SAME_VERSION_MEMBERS`): the docs corpus and denext's import of it,
- * and `@denext/ui` with denext's import of it and its own import of denext.
+ * and `@denext/ui` and `@denext/migrate`, each with denext's import of it and its own import of
+ * denext.
  */
 const CORPUS_SPOTS: Array<[file: string, re: RegExp]> = [
   ["packages/docs-corpus/deno.json", /(?<="version":\s*")[^"]*(?=")/],
@@ -206,6 +208,9 @@ const CORPUS_SPOTS: Array<[file: string, re: RegExp]> = [
   ["packages/ui/deno.json", /(?<="version":\s*")[^"]*(?=")/],
   ["packages/ui/deno.json", /(?<="jsr:@denext\/denext@)[^"]*(?=")/],
   ["deno.json", /(?<="jsr:@denext\/ui@)[^"]*(?=")/],
+  ["packages/migrate/deno.json", /(?<="version":\s*")[^"]*(?=")/],
+  ["packages/migrate/deno.json", /(?<="jsr:@denext\/denext@)[^"]*(?=")/],
+  ["deno.json", /(?<="jsr:@denext\/migrate@)[^"]*(?=")/],
 ];
 
 /**

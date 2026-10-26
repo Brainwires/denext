@@ -15,6 +15,7 @@ import "../action-stub.ts";
 import "../build/desktop-sidecar-bundle.ts";
 import "../build/desktop.ts";
 import "../build/fumadocs-mdx-worker.ts";
+import "../build/migrate-host.ts";
 import "../build/next-compat-public.ts";
 import "../build/next-mdx-recover.ts";
 import "../build/plugin-bundle.ts";

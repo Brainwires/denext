@@ -7,7 +7,7 @@
 
 import { join } from "@std/path";
 import { anyExists, exists } from "./migrate-fs.ts";
-import { mfs } from "./migrate-io.ts";
+import { mfs } from "@denext/denext/internal/migrate-host";
 import { readViteConfig, withoutComments } from "./migrate-vite-plugins.ts";
 import {
   PREACT_ALIASES,

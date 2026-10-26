@@ -150,6 +150,21 @@ Deno.test("ui version: denext's version, pinned exactly both ways", async () => 
   assert(SAME_VERSION_MEMBERS.includes("ui") && RUNTIME_MEMBERS.includes("ui"));
 });
 
+Deno.test("migrate version: denext's version, pinned exactly both ways", async () => {
+  const root = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
+  const migrate = JSON.parse(
+    await Deno.readTextFile(new URL("../packages/migrate/deno.json", import.meta.url)),
+  );
+  assertEquals(migrate.name, "@denext/migrate");
+  assertEquals(migrate.version, root.version, "deno task bump moves @denext/migrate with denext");
+  // denext X.Y.Z loads exactly @denext/migrate X.Y.Z, which imports exactly @denext/denext X.Y.Z
+  // (its `internal/migrate-host` export), so the pair never mixes versions.
+  assertEquals(root.imports["@denext/migrate"], `jsr:@denext/migrate@${root.version}`);
+  assertEquals(migrate.imports["@denext/denext"], `jsr:@denext/denext@${root.version}`);
+  assertEquals(root.exports["./internal/migrate-host"], "./src/build/migrate-host.ts");
+  assert(SAME_VERSION_MEMBERS.includes("migrate") && RUNTIME_MEMBERS.includes("migrate"));
+});
+
 Deno.test("docs-corpus version: the module's source hash, and the manifest's version", async () => {
   const text = await Deno.readTextFile(CORPUS_MODULE);
   assertEquals(moduleSourceHash(text)?.length, 64);

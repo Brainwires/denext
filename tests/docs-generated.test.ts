@@ -6,7 +6,7 @@ import { assertEquals } from "@std/assert";
 import { CLI_OUT, generateCliReference } from "../scripts/gen-cli-reference.ts";
 import { generateMcpReference, MCP_OUT } from "../scripts/gen-mcp-reference.ts";
 import { LLMS_FULL_OUT, LLMS_OUT, llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
-import type { MigrateResult } from "../src/build/migrate.ts";
+import type { MigrateResult } from "../packages/migrate/src/migrate.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
 // llms-full.txt is re-derived from the API reference (`deno doc` over the published entrypoints)

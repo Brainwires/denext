@@ -14,7 +14,7 @@ import {
   stripDenextExclude,
 } from "../src/build/dep-age.ts";
 import { offlineNote, pinEligible } from "../src/build/eligible-pins.ts";
-import { freshDenoJson } from "../src/build/migrate-fresh.ts";
+import { freshDenoJson } from "../packages/migrate/src/migrate-fresh.ts";
 import { denoJson } from "../src/build/scaffold.ts";
 import { planUpgrade, type UpgradeLookups } from "../src/build/upgrade.ts";
 import { runUpgrade } from "../src/cli/commands/upgrade.ts";

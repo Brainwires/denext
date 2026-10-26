@@ -392,7 +392,7 @@ export function desktopPermissionFlags(names: readonly string[], os: DesktopOs):
  *   caps confine what the page can actually reach.
  * - `--allow-env` (broad): `PORT` plus the app's own environment.
  *
- * This mirrors the flags a migrated SPA's `deno task desktop` already bakes (see `src/build/migrate.ts`).
+ * This mirrors the flags a migrated SPA's `deno task desktop` already bakes (see `packages/migrate/src/migrate.ts`).
  */
 export const DESKTOP_BASELINE_FLAGS: readonly string[] = [
   "--allow-net=127.0.0.1,localhost",

@@ -7,7 +7,7 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import { join } from "@std/path";
 import { entrypointArg, isStandaloneBinary } from "../src/cli/self-exec.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
-import { PAGES_ROUTER_SPEC } from "../src/build/migrate.ts";
+import { PAGES_ROUTER_SPEC } from "../packages/migrate/src/migrate.ts";
 import { bundleFailureMessage, minDepAgeArgs } from "../src/build/bundle.ts";
 import { fsPathAllowed, handle as handleUnbundled } from "../src/build/dev-unbundled/handler.ts";
 import {

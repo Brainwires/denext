@@ -6,7 +6,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 
 async function write(dir: string, path: string, content: string): Promise<void> {
   const full = join(dir, path);

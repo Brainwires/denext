@@ -22,10 +22,9 @@
 
 import { basename, dirname, extname, join } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import { DENEXT_EXCLUDE } from "./dep-age.ts";
+import { DENEXT_EXCLUDE, mfs } from "@denext/denext/internal/migrate-host";
 import { exists } from "./migrate-fs.ts";
 import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
-import { mfs } from "./migrate-io.ts";
 import {
   APP_ROUTE_FOLDER,
   appFolder,

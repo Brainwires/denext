@@ -8,12 +8,18 @@
 // `denext migrate --check` list them without running anything.
 
 import { join } from "@std/path";
-import { mfs } from "./migrate-io.ts";
+import {
+  CAPACITOR_CONFIGS,
+  CAPACITOR_VERSION,
+  capacitorBuildIgnores,
+  type CommandRunner,
+  mfs,
+  nativeDirsOf,
+  type PlannedCommand,
+  readCapacitorConfig,
+  YARN_NO_SCRIPTS_ENV,
+} from "@denext/denext/internal/migrate-host";
 import { exists, firstExisting } from "./migrate-fs.ts";
-import { CAPACITOR_CONFIGS, readCapacitorConfig } from "./capacitor-config.ts";
-import { nativeDirsOf } from "./capacitor-native-dirs.ts";
-import { CAPACITOR_VERSION, capacitorBuildIgnores, YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
-import type { CommandRunner, PlannedCommand } from "./mobile-capabilities.ts";
 
 /** A native platform Capacitor adds. */
 export type CapacitorPlatform = "ios" | "android";

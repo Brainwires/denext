@@ -6,7 +6,7 @@
 // driven in a browser by tests/e2e/fresh-partials.e2e.test.ts.
 
 import { dirname, fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../../src/build/migrate.ts";
+import { migrateProject } from "../../packages/migrate/src/migrate.ts";
 
 /** The secret the app's `.env` holds: it must never reach the browser. */
 export const SECRET_VALUE = "s3cr3t-fresh-parity-value";

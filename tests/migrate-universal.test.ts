@@ -7,7 +7,7 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { migrateProject } from "../packages/migrate/src/migrate.ts";
 
 /** Read a generated deno.json (has a leading `"//"` marker key, but is valid JSON). */
 async function readDenoJson(dir: string): Promise<Record<string, unknown>> {
@@ -616,7 +616,7 @@ Deno.test("migrate --denext-local-path points the config at a local checkout (fi
 // A Next app keeps its Tailwind entry in `app/globals.css` (shadcn/ui, create-next-app), not the
 // Vite-style `src/index.css` migrate used to require — so the site built but shipped unstyled.
 Deno.test("App Router: the Tailwind block points at the stylesheet that imports tailwindcss", async () => {
-  const { findTailwindInput } = await import("../src/build/migrate.ts");
+  const { findTailwindInput } = await import("../packages/migrate/src/migrate.ts");
   const dir = await tmp("mig_next_tailwind");
   try {
     await Deno.writeTextFile(

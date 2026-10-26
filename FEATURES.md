@@ -868,8 +868,8 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
   `denext/preact`, `denext/preact-iso`, `denext/signals`) and a **TanStack
   Start** app (wired to `@denext/tanstack-start`, its options carried over);
   `--from fresh|preact|tanstack-start` forces each. —
-  `src/build/migrate-fresh.ts`, `src/build/migrate-preact.ts`,
-  `src/build/migrate-tanstack-start.ts`.
+  `packages/migrate/src/migrate-fresh.ts`, `packages/migrate/src/migrate-preact.ts`,
+  `packages/migrate/src/migrate-tanstack-start.ts`.
 - **`denext/signals`** — Preact Signals' API (`signal`, `computed`, `effect`,
   `useSignal`, `Show`, `For`, …) on denext's renderer, in any app; a signal a
   Server Component passes to a client component arrives live. —

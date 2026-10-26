@@ -30,8 +30,7 @@
 // runs on real Prisma with zero hand edits — no stub.
 
 import { dirname, join, relative } from "@std/path";
-import { appendGitignore } from "./gitignore.ts";
-import { mfs } from "./migrate-io.ts";
+import { appendGitignore, mfs } from "@denext/denext/internal/migrate-host";
 
 /** Prisma 6 line: the first release with the ESM/Deno `prisma-client` generator + GA driver adapters. */
 const PRISMA_VERSION = "6.19.3";

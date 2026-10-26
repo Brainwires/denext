@@ -34,7 +34,8 @@
 //      fmt, lint and RELEASE_DELTA_TESTS. publish.yml runs the same delta gate on the tagged
 //      release commit (scripts/publish-verify.ts). `--full-gate` runs `deno task check` instead.
 //   6. confirm  → git add -A, commit; for each same-version member not on JSR yet
-//      (@denext/docs-corpus, @denext/ui: scripts/lib/jsr-pins.ts SAME_VERSION_MEMBERS), tag
+//      (@denext/docs-corpus, @denext/ui, @denext/migrate: scripts/lib/jsr-pins.ts
+//      SAME_VERSION_MEMBERS), tag
 //      <member>-v<version>, push branch + those tags and wait for JSR to list them; REFUSE to tag
 //      while any workspace member denext imports at run time (scripts/lib/jsr-pins.ts) pins a
 //      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
@@ -44,7 +45,7 @@
 // version with backoff for up to 3 hours —, a failed push, a closed terminal) resumes where it
 // stopped: run the same command again. It sees the release commit on HEAD and the tags already
 // made, and runs only the remaining steps (scripts/lib/release-publish.ts): `corpus` (publish and
-// wait for @denext/docs-corpus and @denext/ui), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
+// wait for @denext/docs-corpus, @denext/ui and @denext/migrate), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
 // Every resume requires the gate-pass marker step 5 records (in the git directory: the release,
 // the CI-green base commit and the gated tree's hash), matching the tree it would publish; without
 // one it refuses, and `--regate` re-runs step 0 and step 5 on the tree first.
@@ -84,6 +85,7 @@ import {
   gateMarkerName,
   type GatePass,
   gateRefusal,
+  LISTED_MEMBERS,
   pinRefusal,
   publishFrom,
   type PublishStep,
@@ -482,17 +484,7 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
           : `not on JSR — a real run publishes docs-corpus-v${version} first`
       }`,
     );
-    const ui = await memberPin("ui");
-    const uiOnJsr = await jsrHasVersion(ui.name, version).catch(() => null);
-    console.log(
-      `6. ${ui.name}@${version}: ${
-        uiOnJsr === null
-          ? "could not ask JSR"
-          : uiOnJsr
-          ? "already on JSR"
-          : `not on JSR — a real run publishes ui-v${version} first`
-      }`,
-    );
+    for (const dir of LISTED_MEMBERS) console.log(await listedMemberLine(dir, version));
   }
   console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
 }
@@ -822,10 +814,34 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
     die("publish dry-run failed — release aborted BEFORE tagging.");
   }
-  // @denext/ui publishes from its own config (step 6 tags ui-v<version> before v<version>).
-  const uiDry = ["publish", "--dry-run", "--allow-dirty", "--config", "packages/ui/deno.json"];
-  if (await run("deno", ...uiDry) !== 0) {
-    die("@denext/ui publish dry-run failed — release aborted BEFORE tagging.");
+  await memberPublishDryRuns();
+}
+
+/**
+ * The dry run's line for a listed same-version member (`@denext/ui`, `@denext/migrate`): whether
+ * JSR has `version` of it, or the real run publishes it first.
+ */
+async function listedMemberLine(dir: string, version: string): Promise<string> {
+  const pin = await memberPin(dir);
+  const onJsr = await jsrHasVersion(pin.name, version).catch(() => null);
+  const state = onJsr === null
+    ? "could not ask JSR"
+    : onJsr
+    ? "already on JSR"
+    : `not on JSR — a real run publishes ${dir}-v${version} first`;
+  return `6. ${pin.name}@${version}: ${state}`;
+}
+
+/**
+ * `deno publish --dry-run` of each listed same-version member (`@denext/ui`, `@denext/migrate`),
+ * which publish from their own configs (step 6 tags `<dir>-v<version>` before `v<version>`).
+ */
+async function memberPublishDryRuns(): Promise<void> {
+  for (const dir of LISTED_MEMBERS) {
+    const dry = ["publish", "--dry-run", "--allow-dirty", "--config", `packages/${dir}/deno.json`];
+    if (await run("deno", ...dry) !== 0) {
+      die(`packages/${dir} publish dry-run failed — release aborted BEFORE tagging.`);
+    }
   }
 }
 
@@ -898,7 +914,8 @@ async function runSteps(steps: Array<[string[], string]>): Promise<void> {
 
 /**
  * Step 3a's check of the members whose version is denext's: the corpus (its JSR state, see
- * {@linkcode checkCorpus}) and `@denext/ui`, which must be at `version` (the bump moves both).
+ * {@linkcode checkCorpus}) and `@denext/ui` / `@denext/migrate`, which must be at `version` (the
+ * bump moves them).
  */
 async function checkSameVersionMembers(version: string): Promise<void> {
   const corpus = await checkCorpus(version);
@@ -909,9 +926,13 @@ async function checkSameVersionMembers(version: string): Promise<void> {
         : "already on JSR with this corpus"
     }`,
   );
-  const ui = await memberPin("ui");
-  if (ui.version !== version) {
-    die(`${ui.name} is at ${ui.version}, not ${version} — the bump moves both. Release aborted.`);
+  for (const dir of LISTED_MEMBERS) {
+    const pin = await memberPin(dir);
+    if (pin.version !== version) {
+      die(
+        `${pin.name} is at ${pin.version}, not ${version} — the bump moves both. Release aborted.`,
+      );
+    }
   }
 }
 
@@ -931,8 +952,8 @@ async function checkCorpus(
 
 /**
  * Step 6: the release commit, then the resumable publish steps (scripts/lib/release-publish.ts):
- * publish `@denext/docs-corpus` <version> unless JSR has it with this corpus and `@denext/ui`
- * <version> unless JSR lists it, refuse the tag
+ * publish `@denext/docs-corpus` <version> unless JSR has it with this corpus and `@denext/ui` /
+ * `@denext/migrate` <version> unless JSR lists them, refuse the tag
  * while any pinned member is not on JSR, then tag, push, and hand over the PR. A stop names the
  * command that resumes it.
  */

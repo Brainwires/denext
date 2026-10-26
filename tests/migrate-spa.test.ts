@@ -5,7 +5,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { findSpaTailwindInput, migrateProject } from "../src/build/migrate.ts";
+import { findSpaTailwindInput, migrateProject } from "../packages/migrate/src/migrate.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 
 async function writeViteApp(dir: string, opts: { pnpm?: boolean } = {}): Promise<void> {
@@ -132,7 +132,7 @@ async function assertDesktopDenoFlags(dir: string): Promise<void> {
 }
 
 Deno.test("desktopAppName: the SPA title minus parentheticals/odd characters, else 'app'", async () => {
-  const { desktopAppName } = await import("../src/build/migrate.ts");
+  const { desktopAppName } = await import("../packages/migrate/src/migrate.ts");
   assertEquals(desktopAppName("T3 Code (Alpha)"), "T3 Code");
   assertEquals(desktopAppName("My App!"), "My App");
   assertEquals(desktopAppName("(wip)"), "app");
