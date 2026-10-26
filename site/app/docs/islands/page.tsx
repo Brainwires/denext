@@ -239,8 +239,10 @@ export default function Chart() { /* … */ }
         waits for its chunk before the page (or its Suspense boundary, which then renders it on the
         client) hydrates; its <code>useId</code>{" "}
         values match the server's either way. A component that is also used without a directive, or
-        a module that a Flight route also reaches, keeps the island's code in the page bundle;{" "}
-        <code>denext dev</code> always does.
+        a module that a Flight route, <code>global-error</code> or{" "}
+        <code>instrumentation-client</code>{" "}
+        also reaches, keeps the island's code in the page bundle; <code>denext dev</code>{" "}
+        always does.
       </p>
 
       <h2>In SPA mode: deferred mounts</h2>

@@ -255,7 +255,7 @@ never twice within 10 s, and after the first only when the resident memory has g
 last one left it, so a server woken by its own timers is not collected over and over. A request
 that arrives during a trim waits for it once: on `examples/hello` after a load burst the GC took
 112-217 ms and `malloc_trim` 9-26 ms (up to about 240 ms); a small handler's trim takes 8-20 ms.
-Measured on an 8-vCPU Linux host (Brainwires/deno DENEXT.md item 104):
+Measured on an 8-vCPU Linux host:
 
 | Server           | Resident after a burst, off | After 3 s idle, on | After 30 s idle, off |
 | ---------------- | --------------------------- | ------------------ | -------------------- |

@@ -808,7 +808,7 @@ between — re-read as that viewer, under their policies, with deletes only for 
 and `stale` stays `false`. Each server instance journals the changes it receives (keys only) and
 each subscription the last change it was delivered, so nothing runs while the viewer is away: the
 missed changes are coalesced and re-read once, when they return. When the gap can't be replayed —
-older than the retention, more than `replay.maxChangesPerTable` changes of the table, the
+older than the retention, more than `replay.maxChangesPerTable` (10 000 by default) changes of the table, the
 database listener was lost meanwhile, the reconnect reached another instance (no sticky
 sessions), or the viewer came back with other claims than they left with (a changed role, team or
 tenant; a refreshed token is the same claims) — `stale` turns true and `onResync` runs, as before.

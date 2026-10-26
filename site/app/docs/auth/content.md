@@ -242,6 +242,13 @@ didn't ask for takes `checks: ["state"]` (`{ ...github({ clientId, clientSecret 
 ["state"] }`); `state` runs whatever the list says, `"none"` included, and an unknown value is a
 config error.
 
+The callback's `iss` parameter (RFC 9207) is checked too, as Auth.js does: an authorization
+response naming another issuer fails with `oauth_failed`, so a response minted by one authorization
+server can't be replayed at another provider's callback. When the provider's discovery document
+advertises `authorization_response_iss_parameter_supported: true`, a response without `iss` fails
+as well. A plain OAuth 2 provider (no issuer) and Microsoft Entra ID's multi-tenant issuer (checked
+per token) ignore the parameter.
+
 ### Native `OAuthProvider` fields
 
 A provider the presets don't cover is an `OAuthProvider` object literal (or `oidc({ … })` for an

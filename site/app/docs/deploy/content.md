@@ -29,7 +29,10 @@ what it built (the `DeployManifest` type from `denext/deploy` and `denext/plugin
   `sitemap.ts` are marked) and `middleware` (with a literal `matcher`);
 - the files served as they are, by directory, with the `Cache-Control` the server sends
   (content-hashed `/_denext/client/` files are immutable; `public/` revalidates);
-- the server: its start command, port (`PORT`), health path and drain;
+- the server: its start command, port (`PORT`), health path, drain, and `idleTrim` (whether the
+  production server's [idle memory trim](/docs/deployment-targets#idle-memory-trim) is on, so a
+  third-party adapter sets `DENO_UNSTABLE_IDLE_TRIM=1` / `--unstable-idle-trim` as the built-in ones
+  do);
 - the jobs under `jobs/` and every schedule (`scheduledJobs` and each job's own), the services
   under `services/`;
 - the environment variables the app reads (the detected stack's secrets and every literal

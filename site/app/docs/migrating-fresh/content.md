@@ -133,6 +133,10 @@ region's content; a region the page lacks is skipped with a warning. Islands ins
 region hydrate. An answer with no partials navigates the whole page instead (a link or a GET
 form), and a full-page navigation renders each region with the new page's children.
 
+The mode is Fresh's `mode` prop (`<Partial name="cart" mode="append">`; the type is `PartialMode`
+from `denext/fresh/partial`). `applyPartialTree(tree)` from the same module applies the regions of
+an already-parsed answer by hand and returns how many partials the answer held.
+
 ---
 
 ## 5. `main.ts`: the app builder

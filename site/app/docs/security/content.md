@@ -245,6 +245,16 @@ Every write is a `.tmp` file plus one rename, and a config form carries a
 SHA-256 of the source it was rendered from, so a file that changed on disk
 underneath you is a `409` rather than a lost edit.
 
+The UI refuses a dangling symlink anywhere on a path too, and so do the CLI
+commands that write into a project they did not create (`denext migrate`,
+`init`, `upgrade`, `mobile add`, `desktop add`), since a cloned repository's
+committed symlinks are its author's choice: they never write through a symlink,
+to a folder or a file, that leads out of the project, nor through a dangling
+one, and stop with an error naming it (`migrate` and `init` leave a `.vscode`
+linked elsewhere alone). A link that stays inside the project is followed.
+`denext upgrade` leaves a workspace member outside the project unpinned and
+names it, and `denext patch` refuses a package name that is not an npm name.
+
 **Project code never runs in the UI's privileged process.** Doctor, tasks,
 `next.config` evaluation, `deno add`, **and discovering the project's own CLI
 verbs** (`denext commands --json`) all run as `deno` subprocesses with array

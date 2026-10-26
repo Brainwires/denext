@@ -112,6 +112,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
   the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
   Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
+- **The production server's idle memory trim is glibc Linux only, and a trim can delay one
+  request.** On macOS, Windows and musl (Alpine) the runtime ignores the switch. The trim runs
+  between event loop polls, so a request that arrives while one runs waits for it once (up to about
+  240 ms on a large app after a load burst; 8-20 ms on a small handler). It needs denext's Deno
+  from runtime 3.0.0-rc.5, so stock Deno never gets it, and `denext task start` (straight on the
+  toolchain) gets it only with `DENO_UNSTABLE_IDLE_TRIM=1` in its environment.
+  `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0` turns it off. See
+  [Deployment targets › Idle memory trim](https://denext.dev/docs/deployment-targets#idle-memory-trim).
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 

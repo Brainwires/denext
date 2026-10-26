@@ -171,6 +171,12 @@ internal design choice with no observable difference lives in
   so the form posts to `/_denext/action/<id>.<token>`. Large bound values make a long URL: keep
   them small (an id, not a record). `action.bind` values are encrypted too, and a value must be
   one the wire codec carries (no functions, class instances or other actions).
+- **Server Action ids change with every build** unless `DENEXT_ACTION_ID_SECRET` is set (16+
+  characters, one value for every build and instance). An open page from the previous build gets
+  the unknown-action answer (404), as an expired Next.js action does, and a `"use server"` export
+  that no module imports is not callable in `denext build` / `start` (`denext build` lists them;
+  `denext dev` keeps them callable with a warning). See
+  [Server Actions › Action ids](https://denext.dev/docs/server-actions#action-ids-and-which-actions-are-exposed).
 - **Config `rewrites` have one phase.** Next distinguishes `beforeFiles` /
   `afterFiles` / `fallback` rewrites; denext runs its single `rewrites` list after
   middleware and before the filesystem (Next's `beforeFiles` position). Middleware
