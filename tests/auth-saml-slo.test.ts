@@ -27,7 +27,7 @@ import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import { cookieSessionOptions, resolveAuthOptions } from "../src/server/auth/options.ts";
 import { getSession } from "../src/server/session.ts";
 import { readAuthSession } from "../src/server/auth/session.ts";
-import { REVOCATIONS_MARKER } from "../src/server/auth/sid-revocation.ts";
+import { REVOCATION_FLOOR_SECONDS, REVOCATIONS_MARKER } from "../src/server/auth/sid-revocation.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";
@@ -382,6 +382,44 @@ Deno.test("with a session store, a LogoutRequest ends exactly the session its Se
   assert(await sessionUser(a, second), "the other session of the same NameID lives");
 });
 
+Deno.test("with a session store, a LogoutRequest naming a SessionIndex no record knows fails closed", async () => {
+  // Recording a session is best effort: a LogoutRequest for a session that was never recorded
+  // (or whose record was pruned) must not answer Success while ending nothing.
+  const a = await app({ store: true });
+  const first = await signIn(a, "ada@acme.test", "_s1");
+  const second = await signIn(a, "ada@acme.test", "_s2");
+  const bob = await signIn(a, "bob@acme.test", "_s3");
+  const realNow = Date.now;
+  Date.now = () => realNow() + 1500;
+  try {
+    const unknown = await idpLogoutQuery(a, { nameId: "ada@acme.test", sessionIndexes: ["_s9"] });
+    assertEquals((await call(a.config, new Request(`${SLO}${unknown}`))).res!.status, 303);
+    assertEquals(await sessionUser(a, first), null, "every session of the user ended");
+    assertEquals(await sessionUser(a, second), null);
+    assert(await sessionUser(a, bob), "another user's session lives");
+    const user = await a.adapter.getUser(await ssoUserId(a, "ada@acme.test"));
+    assert(typeof user?.sessionsValidAfter === "number", "through the user-wide stamp");
+  } finally {
+    Date.now = realNow;
+  }
+  // One named index known, one not: the known one is deleted, and the user-wide logout follows.
+  const b = await app({ store: true });
+  const known = await signIn(b, "ada@acme.test", "_s1");
+  const other = await signIn(b, "ada@acme.test", "_s2");
+  Date.now = () => realNow() + 1500;
+  try {
+    const mixed = await idpLogoutQuery(b, {
+      nameId: "ada@acme.test",
+      sessionIndexes: ["_s1", "_s9"],
+    });
+    assertEquals((await call(b.config, new Request(`${SLO}${mixed}`))).res!.status, 303);
+    assertEquals(await sessionUser(b, known), null);
+    assertEquals(await sessionUser(b, other), null, "the unresolved index ends every session");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 Deno.test("an IdP LogoutRequest over HTTP-POST (an enveloped signature) is answered too", async () => {
   const a = await app({ store: true });
   const session = await signIn(a);
@@ -728,6 +766,90 @@ function adapterWithoutIndex(): AuthAdapter {
   } = inMemoryAuthAdapter();
   return rest;
 }
+
+Deno.test("a revocation list that can't be written ends every session of the user instead", async () => {
+  const inner = inMemoryAuthAdapter();
+  const adapter: AuthAdapter = {
+    ...inner,
+    revokeSids: () => {
+      throw new Error("db down");
+    },
+  };
+  const a = await app({ adapter });
+  const errors: string[] = [];
+  a.config.logger = { warn: () => {}, debug: () => {}, error: (m) => void errors.push(m) };
+  const first = await signIn(a, "ada@acme.test", "_s1");
+  const second = await signIn(a, "ada@acme.test", "_s2");
+  const bob = await signIn(a, "bob@acme.test", "_s3");
+  const realNow = Date.now;
+  Date.now = () => realNow() + 1500;
+  try {
+    const query = await idpLogoutQuery(a, { nameId: "ada@acme.test", sessionIndexes: ["_s1"] });
+    const { res } = await call(a.config, new Request(`${SLO}${query}`));
+    assertEquals(res!.status, 303, "the IdP still gets its LogoutResponse");
+    assertEquals((await readSession(a.config, first)).session, null, "the named session ended");
+    assertEquals((await readSession(a.config, second)).session, null, "and every other one");
+    assert((await readSession(a.config, bob)).session, "another user's lives");
+    const user = await a.adapter.getUser(await ssoUserId(a, "ada@acme.test"));
+    assert(typeof user?.sessionsValidAfter === "number", "through the user-wide stamp");
+    assertEquals(errors.length, 1);
+    assert(errors[0].includes("revocation list could not be written"), errors[0]);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+Deno.test("a stateless revocation row lives at least 400 days, past the session's recorded ceiling", async () => {
+  const inner = inMemoryAuthAdapter();
+  const expiries: number[] = [];
+  const adapter: AuthAdapter = {
+    ...inner,
+    revokeSids: (sids, expiresAt) => {
+      expiries.push(expiresAt);
+      return inner.revokeSids!(sids, expiresAt);
+    },
+  };
+  const a = await app({ adapter });
+  await signIn(a, "ada@acme.test", "_s1");
+  const query = await idpLogoutQuery(a, { nameId: "ada@acme.test", sessionIndexes: ["_s1"] });
+  const before = Math.floor(Date.now() / 1000);
+  assertEquals((await call(a.config, new Request(`${SLO}${query}`))).res!.status, 303);
+  assertEquals(expiries.length, 1);
+  // The index row expires at the session's 30-day ceiling; a `session.maxLifetime` raised later
+  // would let the cookie outlive a revocation written for that ceiling, so the row lives longer.
+  assert(expiries[0] >= before + REVOCATION_FLOOR_SECONDS, `${expiries[0]}`);
+  assert(expiries[0] <= before + REVOCATION_FLOOR_SECONDS + 5, `${expiries[0]}`);
+});
+
+Deno.test("the SLO endpoint answers 400 (no-store) to a misconfigured provider, a non-form POST and an unparsable message", async () => {
+  const a = await app();
+  const session = await signIn(a, "ada@acme.test", "_s1");
+  const noStore = (res: Response) => {
+    assertEquals(res.status, 400);
+    assertEquals(res.headers.get("cache-control"), "no-store");
+  };
+  // A POST that isn't a form.
+  const text = await call(
+    a.config,
+    new Request(SLO, { method: "POST", headers: { "content-type": "text/plain" }, body: "x" }),
+  );
+  noStore(text.res!);
+  // A message that doesn't parse (neither a LogoutRequest nor a LogoutResponse).
+  const garbage = await call(a.config, new Request(`${SLO}?SAMLRequest=not-a-message`));
+  noStore(garbage.res!);
+  assert((await readSession(a.config, session)).session, "nothing ended");
+  // A provider whose Single Logout is misconfigured (a signing key with no certificate).
+  const broken = await app();
+  const provider = broken.config.providers[0] as { sp?: Record<string, unknown> };
+  delete provider.sp!.signingCertificate;
+  const errors: string[] = [];
+  broken.config.logger = { warn: () => {}, debug: () => {}, error: (m) => void errors.push(m) };
+  const query = await idpLogoutQuery(broken, { nameId: "ada@acme.test" });
+  const misconfigured = await call(broken.config, new Request(`${SLO}${query}`));
+  noStore(misconfigured.res!);
+  assertEquals(errors.length, 1);
+  assert(errors[0].includes("misconfigured"), errors[0]);
+});
 
 Deno.test("an adapter without the session index keeps the user-wide logout", async () => {
   const a = await app({ adapter: adapterWithoutIndex() });

@@ -9,6 +9,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
+  cappedBytes,
   CrlCache,
   crlUrlsOf,
   FAILURE_BACKOFF_MS,
@@ -193,6 +194,108 @@ Deno.test("crl: an over-size CRL is refused, not read whole", async () => {
   const s = await setup();
   const big = new Uint8Array(65 * 1024);
   await assertRejects(() => chain(s, "require", { [CRL_URL]: big }).run(), RevocationError);
+});
+
+Deno.test("crl: a declared content-length over the cap is refused before the body is read", async () => {
+  // The body is a valid CRL that lists nothing: read, it would say "good". Its declared length
+  // says it is over the cap, so it is cancelled unread and the check has no usable CRL.
+  const s = await setup();
+  const crl = await makeCrl({ issuer: s.issuer, revoked: [] });
+  let pulled = 0;
+  // No eager pull (`highWaterMark: 0`): the stream is pulled only when something reads it.
+  const bodyOf = () =>
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(crl);
+        controller.close();
+      },
+    }, { highWaterMark: 0 });
+  assertEquals(
+    await cappedBytes(
+      new Response(bodyOf(), { headers: { "content-length": String(64 * 1024 + 1) } }),
+      64 * 1024,
+    ),
+    null,
+  );
+  assertEquals(pulled, 0, "never read");
+  const fetch = (() =>
+    Promise.resolve(
+      new Response(bodyOf(), { headers: { "content-length": String(64 * 1024 + 1) } }),
+    )) as typeof globalThis.fetch;
+  const check = cache("require", fetch);
+  await assertRejects(
+    () =>
+      verifyCertificateChain(
+        [s.leaf, s.pki.intermediate],
+        [s.pki.root],
+        NOW,
+        (cert, issuer, at) =>
+          check.check(
+            { serial: cert.serial, issuer: cert.issuer, crlUrls: crlUrlsOfCert(cert) },
+            issuer.spki,
+            at,
+          ),
+      ),
+    RevocationError,
+    "no usable",
+  );
+  assertEquals(pulled, 0);
+  // Under the cap, the same body reads and judges the certificate.
+  const small = cache(
+    "require",
+    (() =>
+      Promise.resolve(
+        new Response(bodyOf(), { headers: { "content-length": String(crl.byteLength) } }),
+      )) as typeof globalThis.fetch,
+  );
+  await verifyCertificateChain(
+    [s.leaf, s.pki.intermediate],
+    [s.pki.root],
+    NOW,
+    (cert, issuer, at) =>
+      small.check(
+        { serial: cert.serial, issuer: cert.issuer, crlUrls: crlUrlsOfCert(cert) },
+        issuer.spki,
+        at,
+      ),
+  );
+  assertEquals(pulled, 1);
+});
+
+Deno.test("crl: a partitioned or indirect CRL is unusable, even when it lists the certificate", async () => {
+  // A CRL scoped to some revocation reasons, or an indirect one, doesn't carry every revocation
+  // this reader would need: it must not count as a complete answer — neither "revoked" (it may
+  // list the certificate under a reason the reader can't interpret) nor "good".
+  const s = await setup();
+  for (const kind of ["onlySomeReasons", "indirect"] as const) {
+    const listing = await makeCrl({
+      issuer: s.issuer,
+      revoked: [s.serial],
+      issuingDistributionPoint: kind,
+    });
+    assertEquals(parseCrl(listing).unusable, true, kind);
+    await assertRejects(
+      () => chain(s, "require", { [CRL_URL]: listing }).run(),
+      RevocationError,
+      "no usable",
+      kind,
+    );
+    await chain(s, "best-effort", { [CRL_URL]: listing }).run();
+  }
+  // The positive control: an issuingDistributionPoint that only says "end-entity certificates"
+  // keeps the CRL usable, and the listed certificate is refused.
+  const complete = await makeCrl({
+    issuer: s.issuer,
+    revoked: [s.serial],
+    issuingDistributionPoint: "userCertsOnly",
+  });
+  assertEquals(parseCrl(complete).unusable, false);
+  await assertRejects(
+    () => chain(s, "require", { [CRL_URL]: complete }).run(),
+    RevocationError,
+    "revoked",
+  );
 });
 
 Deno.test("crl: a usable CRL is cached until its nextUpdate; a failure is not retried for five minutes", async () => {

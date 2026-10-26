@@ -2,15 +2,30 @@
 // model): an id is an HMAC of `module#export` under the build's secret
 // (src/server/action-ids.ts), and the server registers only the exports of a `"use server"`
 // module that the app's modules import (src/build/action-references.ts). An export nothing
-// imports answers like a random id (404) in production; `denext dev` keeps it callable and warns.
+// imports answers like a random id (409, unknown action) in production; `denext dev` keeps it callable and warns.
 
-import { assert, assertEquals, assertMatch, assertNotEquals, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   ACTION_ID_SECRET_ENV,
+  actionIdSecretDigest,
   setBuildActionIdSecret,
   setLegacyActionIds,
 } from "../src/server/action-ids.ts";
+import {
+  ActionIdSecretError,
+  readBuildInfo,
+  resetActionIdHealthForTesting,
+} from "../src/build/prod-server/manifest.ts";
+import type { ProjectPaths } from "../src/build/paths.ts";
+import { runHealthChecks } from "../src/server/health.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { bindInlineAction, inlineServerReference } from "../src/server/action-bound.ts";
 import {
@@ -93,14 +108,14 @@ Deno.test("action ids: a build's secret salts them; the same secret mints the sa
   });
 });
 
-Deno.test("action ids: DENEXT_ACTION_ID_SECRET wins, so separate builds agree", () => {
+Deno.test("action ids: DENEXT_ACTION_ID_SECRET mints them when the build recorded none, so separate builds agree", () => {
   try {
     const one = withEnvSecret("shared-deploy-secret-123", () => {
-      setBuildActionIdSecret(SECRET_A);
+      setBuildActionIdSecret(null);
       return actionIdFor("mod", "save");
     });
     const two = withEnvSecret("shared-deploy-secret-123", () => {
-      setBuildActionIdSecret(SECRET_B);
+      setBuildActionIdSecret(null);
       return actionIdFor("mod", "save");
     });
     assertEquals(one, two, "two builds under one env secret");
@@ -109,8 +124,109 @@ Deno.test("action ids: DENEXT_ACTION_ID_SECRET wins, so separate builds agree", 
     withEnvSecret("short", () => {
       assertThrows(() => actionIdFor("mod", "save"), Error, ACTION_ID_SECRET_ENV);
     });
+    // The build's recorded secret is the one the client bundle carries ids for: authoritative.
+    const recorded = withEnvSecret("shared-deploy-secret-123", () => {
+      setBuildActionIdSecret(SECRET_A);
+      return actionIdFor("mod", "save");
+    });
+    assertEquals(recorded, withEnvSecret(undefined, () => actionIdFor("mod", "save")));
+    assertNotEquals(recorded, one);
   } finally {
     setBuildActionIdSecret(null);
+  }
+});
+
+/** `readBuildInfo` over a `manifest.json` holding `manifest`, with `DENEXT_ACTION_ID_SECRET` as `env`. */
+async function startWith(manifest: Record<string, unknown>, env: string | undefined) {
+  const outDir = await Deno.makeTempDir({ prefix: "denext_action_secret_" });
+  try {
+    await Deno.writeTextFile(join(outDir, "manifest.json"), JSON.stringify(manifest));
+    const paths = { outDir, projectDir: outDir } as unknown as ProjectPaths;
+    const prev = Deno.env.get(ACTION_ID_SECRET_ENV);
+    if (env === undefined) Deno.env.delete(ACTION_ID_SECRET_ENV);
+    else Deno.env.set(ACTION_ID_SECRET_ENV, env);
+    try {
+      await readBuildInfo(paths);
+      return actionIdFor("mod", "save");
+    } finally {
+      if (prev === undefined) Deno.env.delete(ACTION_ID_SECRET_ENV);
+      else Deno.env.set(ACTION_ID_SECRET_ENV, prev);
+    }
+  } finally {
+    await Deno.remove(outDir, { recursive: true });
+  }
+}
+
+Deno.test("denext start: a runtime-only DENEXT_ACTION_ID_SECRET is ignored for a build that generated its own, with a warning and health down", async () => {
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const expected = withEnvSecret(undefined, () => {
+      setBuildActionIdSecret(SECRET_A);
+      return actionIdFor("mod", "save");
+    });
+    setBuildActionIdSecret(null);
+    assertEquals((await runHealthChecks()).checks["action-ids"], undefined, "healthy before");
+    // The build generated SECRET_A (the variable was not set then); ops sets another value now.
+    assertEquals(
+      await startWith({ actionIdSecret: SECRET_A }, "runtime-only-secret-xyz"),
+      expected,
+    );
+    assertEquals(warnings.length, 1, warnings.join("\n"));
+    assertMatch(warnings[0], /DENEXT_ACTION_ID_SECRET is set, but this build generated its own/);
+    assertMatch(warnings[0], /set it where `denext build` runs too/);
+    assertEquals((await runHealthChecks()).checks["action-ids"], "down");
+    // The same value, or none: nothing to say.
+    resetActionIdHealthForTesting();
+    assertEquals(await startWith({ actionIdSecret: SECRET_A }, SECRET_A), expected);
+    assertEquals(await startWith({ actionIdSecret: SECRET_A }, undefined), expected);
+    assertEquals(warnings.length, 1);
+    assertEquals((await runHealthChecks()).checks["action-ids"], undefined);
+  } finally {
+    console.warn = warn;
+    setBuildActionIdSecret(null);
+    resetActionIdHealthForTesting();
+  }
+});
+
+Deno.test("denext start: a build minted under DENEXT_ACTION_ID_SECRET refuses to start without the same value", async () => {
+  try {
+    const built = {
+      actionIdSecretEnv: true,
+      actionIdSecretDigest: actionIdSecretDigest("shared-deploy-secret-123"),
+    };
+    const expected = withEnvSecret("shared-deploy-secret-123", () => {
+      setBuildActionIdSecret(null);
+      return actionIdFor("mod", "save");
+    });
+    // The same value: the ids the client bundle carries.
+    assertEquals(await startWith(built, "shared-deploy-secret-123"), expected);
+    // Unset: every action would be unknown, so the start fails and says what to set.
+    const unset = await assertRejects(() => startWith(built, undefined), ActionIdSecretError);
+    assertMatch(unset.message, /DENEXT_ACTION_ID_SECRET, which is not set here/);
+    assertMatch(unset.message, /value `denext build` ran with/);
+    assertEquals((await runHealthChecks()).checks["action-ids"], "down");
+    resetActionIdHealthForTesting();
+    // Another value: told apart by the recorded fingerprint.
+    const other = await assertRejects(
+      () => startWith(built, "another-deploy-secret-4"),
+      ActionIdSecretError,
+    );
+    assertMatch(other.message, /set to another value here/);
+    resetActionIdHealthForTesting();
+    // A manifest from before the fingerprint was recorded can't tell: a set value is trusted.
+    assertEquals(
+      await startWith({ actionIdSecretEnv: true }, "shared-deploy-secret-123"),
+      expected,
+    );
+    await assertRejects(
+      () => startWith({ actionIdSecretEnv: true }, undefined),
+      ActionIdSecretError,
+    );
+  } finally {
+    setBuildActionIdSecret(null);
+    resetActionIdHealthForTesting();
   }
 });
 
@@ -126,7 +242,7 @@ Deno.test("an export no module references is refused like a random id; a referen
   assertEquals(await call(saveId, [1]), { status: 200, body: { result: "saved:1" } });
   const refused = await call(wipeId);
   assertEquals(refused, await call("a-random-id-nobody-minted"), "indistinguishable from random");
-  assertEquals(refused.status, 404);
+  assertEquals(refused.status, 409);
   assertEquals(getServerAction(wipeId), undefined);
   // Still a server reference on the server (it can be called directly there).
   assertEquals((mod.internalWipe as unknown as ServerActionRef<[], string>).denextActionId, wipeId);
@@ -152,7 +268,7 @@ Deno.test("dev keeps an unreferenced export callable and warns once that product
     // Once production tags it, it is gone.
     setUnreferencedActionsPermissive(false);
     tagServerExports(mod, "exposure-dev-module", "", []);
-    assertEquals((await call(id)).status, 404);
+    assertEquals((await call(id)).status, 409);
   } finally {
     setUnreferencedActionsPermissive(false);
     console.warn = warn;

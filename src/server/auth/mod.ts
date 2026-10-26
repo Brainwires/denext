@@ -25,7 +25,11 @@
  * @module
  */
 
-import { registerFrameworkMigrations } from "../postgres-boot.ts";
+import {
+  BootSchemaError,
+  registerBootCheck,
+  registerFrameworkMigrations,
+} from "../postgres-boot.ts";
 import { authMigrationSet } from "./postgres-schema.ts";
 import { OAUTH_CHECKS } from "./oauth.ts";
 import { backendPostgresClient } from "./backend-postgres.ts";
@@ -53,7 +57,13 @@ import { currentContext, headers } from "../request-context.ts";
 import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
 import { keepsAuthLevel } from "./session-store.ts";
 import { endUserSessions, readAuthSession, refreshLiveSession } from "./session.ts";
-import { revokeStatelessSid, sidRevocationOf } from "./sid-revocation.ts";
+import {
+  revocationExpiry,
+  REVOCATIONS_MARKER,
+  revokeStatelessSid,
+  type SidRevocationAdapter,
+  sidRevocationOf,
+} from "./sid-revocation.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 
@@ -179,13 +189,13 @@ function validateConfig(config: AuthConfig): void {
 /**
  * MFA needs a session store that keeps a session's `authTime`, `amr` and `mfaPending`: over one
  * that drops them (the Auth.js adapter bridge's session rows) a session still owing its second
- * factor would read back as complete. Refuse the pairing — whenever MFA can run (the adapter
- * has the factor store, or `mfa.required: "always"`) — instead of signing anyone in past it.
+ * factor would read back as complete. Refuse the pairing whenever MFA can run (the adapter has
+ * the factor store) instead of signing anyone in past it. `mfa.required: "always"` without the
+ * factor store was refused just before this check, so it needs no arm of its own here.
  */
 function assertMfaStoreKeepsAuthLevel(options: ResolvedAuthOptions): void {
   const store = options.sessionStore;
-  if (!store || keepsAuthLevel(store)) return;
-  if (!hasMfaAdapter(options) && options.mfa.required !== "always") return;
+  if (!store || keepsAuthLevel(store) || !hasMfaAdapter(options)) return;
   throw new Error(
     "denextAuth: MFA can't run over the Auth.js adapter's database sessions — its session rows " +
       "keep no sign-in time, methods or pending second factor, so a half-signed-in session would " +
@@ -378,6 +388,10 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
       if (store?.close) ctx.addTeardown(() => store.close!());
       const adapter = config.adapter;
       if (adapter?.close) ctx.addTeardown(() => adapter.close!());
+      // DENEXT_BOOT_DDL=off: a revocation list that can't be read (its 0009 migration not
+      // applied) refuses to start, instead of signing every stateless user out on the first read.
+      const revocations = sidRevocationOf(adapter);
+      if (revocations) registerBootCheck(() => checkRevocationListAtBoot(revocations));
       // With `@denext/backend`'s Postgres the rate limits and the SAML replay cache default onto
       // it (backend-postgres.ts), built on first use: declare their tables for `denext db push`.
       registerFrameworkMigrations(
@@ -399,18 +413,38 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
 const AUTH_PLUGIN_CONFIG = Symbol.for("denext.auth.pluginConfig");
 
 /**
+ * The boot check for the revocation list (`DENEXT_BOOT_DDL=off` only): one marker lookup, so a
+ * list whose table is missing fails the start as a {@link BootSchemaError} naming the migration
+ * to apply, not as every stateless read answering "signed out" once the server serves.
+ */
+async function checkRevocationListAtBoot(adapter: SidRevocationAdapter): Promise<void> {
+  try {
+    await adapter.isSidRevoked(REVOCATIONS_MARKER);
+  } catch (error) {
+    if (error instanceof BootSchemaError) throw error;
+    throw new BootSchemaError(
+      "denextAuth: the session revocation list can't be read with DENEXT_BOOT_DDL=off — every " +
+        "stateless cookie session would read as signed out. Apply the auth migrations out of band " +
+        "(`denext db push`; Postgres: 0009_auth_sso_cookie_sessions) before starting: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+}
+
+/**
  * Revoke one session by id, so its cookie stops authenticating from the next read — "sign out
  * this device". Fires the `sessionRevoked` event.
  *
  * - **Store-backed** (`denextAuth({ sessionStore })`): `sessionId` is the session's
  *   {@link AuthSession.sessionId}; its record is deleted from the store.
  * - **Stateless** (no `sessionStore`): `sessionId` is the session's own
- *   {@link AuthSession.sid}; it goes on the auth adapter's revocation list (`revokeSids`) until
- *   the session would have ended anyway (`session.maxLifetime`), and every read of a stateless
- *   session checks that list from then on (`isSidRevoked`, at most once per request). Until an
- *   app first revokes a session this way its reads make no such query. Needs an adapter with the
- *   list: `sqliteAuthAdapter`, `postgresAuthAdapter`, `inMemoryAuthAdapter` (one process) or
- *   `backendAuthAdapter()`; throws with one that lacks it (an Auth.js adapter) or with none.
+ *   {@link AuthSession.sid}; it goes on the auth adapter's revocation list (`revokeSids`) for the
+ *   larger of `session.maxLifetime` and 400 days (so a lifetime raised later can't outlive it),
+ *   and every read of a stateless session checks that list from then on (`isSidRevoked`, at most
+ *   once per request). Until an app first revokes a session this way its reads make no such
+ *   query. Needs an adapter with the list: `sqliteAuthAdapter`, `postgresAuthAdapter`,
+ *   `inMemoryAuthAdapter` (one process) or `backendAuthAdapter()`; throws with one that lacks it
+ *   (an Auth.js adapter) or with none.
  *
  * {@link currentSessionId} gives the current request's id; never send it to the browser.
  *
@@ -437,7 +471,11 @@ export async function revokeSession(sessionId: string): Promise<void> {
         "`revokeAllSessions(userId)` ends every session of a user through any adapter.",
     );
   }
-  await revokeStatelessSid(adapter, sessionId, Math.floor(Date.now() / 1000) + options.maxLifetime);
+  await revokeStatelessSid(
+    adapter,
+    sessionId,
+    revocationExpiry(Math.floor(Date.now() / 1000), options.maxLifetime),
+  );
   await emitAuthEvent(options, "sessionRevoked", { sessionId });
 }
 

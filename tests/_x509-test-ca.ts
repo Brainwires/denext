@@ -265,6 +265,27 @@ export interface CrlOptions {
   nextUpdate?: number | null;
   /** A critical CRL extension OID this reader doesn't know (a delta CRL indicator, say). */
   unknownCritical?: string;
+  /**
+   * A critical issuingDistributionPoint (RFC 5280 §5.2.5): one scoping the CRL to some reasons
+   * (`onlySomeReasons`), an indirect CRL, or one that only says it covers end-entity
+   * certificates (`userCertsOnly`, which doesn't partition the revocations a reader needs).
+   */
+  issuingDistributionPoint?: "onlySomeReasons" | "indirect" | "userCertsOnly";
+}
+
+/** The DER of an issuingDistributionPoint extension value of `kind`. */
+function issuingDistributionPointOf(kind: NonNullable<CrlOptions["issuingDistributionPoint"]>) {
+  switch (kind) {
+    case "onlySomeReasons":
+      // [3] IMPLICIT ReasonFlags BIT STRING: keyCompromise only.
+      return der(0x30, der(0x83, [0x06, 0x40]));
+    case "indirect":
+      // [4] IMPLICIT BOOLEAN TRUE.
+      return der(0x30, der(0x84, [0xff]));
+    case "userCertsOnly":
+      // [1] IMPLICIT BOOLEAN TRUE (onlyContainsUserCerts).
+      return der(0x30, der(0x81, [0xff]));
+  }
 }
 
 /**
@@ -285,8 +306,17 @@ export async function makeCrl(o: CrlOptions): Promise<Uint8Array> {
     utcTime(o.thisUpdate ?? TEST_NOW - 86_400_000),
     ...(o.nextUpdate === null ? [] : [utcTime(o.nextUpdate ?? TEST_NOW + 7 * 86_400_000)]),
     ...(entries.length ? [der(0x30, ...entries)] : []),
-    ...(o.unknownCritical
-      ? [der(0xa0, der(0x30, extension(o.unknownCritical, true, der(0x02, [1]))))]
+    ...(o.unknownCritical || o.issuingDistributionPoint
+      ? [der(
+        0xa0,
+        der(
+          0x30,
+          ...(o.unknownCritical ? [extension(o.unknownCritical, true, der(0x02, [1]))] : []),
+          ...(o.issuingDistributionPoint
+            ? [extension("2.5.29.28", true, issuingDistributionPointOf(o.issuingDistributionPoint))]
+            : []),
+        ),
+      )]
       : []),
   );
   const signature = await signDer(o.issuer.key.privateKey, tbs);

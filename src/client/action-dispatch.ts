@@ -20,6 +20,37 @@ const WIRE_ENC = 1;
 /** Reserved FormData field carrying non-FormData args (server-action.ts's decoder reads it). */
 const META_FIELD = "__denext_meta";
 
+/**
+ * The sessionStorage flag set before the page reloads itself on an unknown action id (a page from
+ * an older build posting to a newer one) — the guard against reloading again when the reloaded
+ * page's actions are unknown too. Cleared by the next action call that succeeds.
+ */
+const RELOAD_FLAG = "denext:action-reload";
+
+/** `sessionStorage` access that never throws (a sandboxed frame, a private window). */
+function storage(): Storage | undefined {
+  try {
+    return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The server doesn't know the action's id, so this page was rendered by an older build: reload
+ * it once (the fresh page carries the new ids), and never again until an action succeeds.
+ *
+ * @returns Whether a reload was started.
+ */
+function reloadOnceForStaleBuild(): boolean {
+  const store = storage();
+  if (store?.getItem(RELOAD_FLAG)) return false;
+  store?.setItem(RELOAD_FLAG, "1");
+  if (typeof location === "undefined") return false;
+  location.reload();
+  return true;
+}
+
 /** The JSON an action endpoint replies with. */
 interface ActionReply {
   result?: unknown;
@@ -60,17 +91,11 @@ export async function dispatchAction(
   });
   const data = (await res.json().catch(() => ({}))) as ActionReply;
   if (data.redirect) {
-    // A `replace`-type redirect swaps the current history entry (no back-stack entry);
-    // otherwise push a new one. Both are full navigations from a Server Action.
-    if (typeof location !== "undefined") {
-      if (data.replace) location.replace(data.redirect);
-      else location.href = data.redirect;
-    }
+    navigate(data.redirect, data.replace);
     return undefined;
   }
-  if (!res.ok || data.error) {
-    throw new Error(data.error ?? `server action failed (${res.status})`);
-  }
+  failIfRefused(res, data);
+  storage()?.removeItem(RELOAD_FLAG);
   // Read-your-writes: if the action revalidated tags or asked for a refresh,
   // re-render the current route so the client reflects the new server state.
   if ((data.refresh || (data.updatedTags && data.updatedTags.length > 0)) && refresh) {
@@ -78,6 +103,31 @@ export async function dispatchAction(
   }
   // A result the server flagged `enc` carries wire-codec tags (Date/Map/Set/BigInt/…).
   return data.enc === WIRE_ENC ? decode(data.result) : data.result;
+}
+
+/**
+ * A `replace`-type redirect swaps the current history entry (no back-stack entry); otherwise push
+ * a new one. Both are full navigations from a Server Action (none outside a browser).
+ */
+function navigate(url: string, replace: boolean | undefined): void {
+  if (typeof location === "undefined") return;
+  if (replace) location.replace(url);
+  else location.href = url;
+}
+
+/**
+ * Throw for an answer that refused the call: an unknown action id (a deploy re-minted the ids
+ * this page carries: reload once, and still fail this call, since the reloaded page has nothing
+ * to resume it with), or any other error status / `error` field.
+ */
+function failIfRefused(res: Response, data: ActionReply): void {
+  if (res.status === 409 && res.headers.get("x-denext-action") === "unknown") {
+    reloadOnceForStaleBuild();
+    throw new Error("unknown action (the page is from an older build)");
+  }
+  if (!res.ok || data.error) {
+    throw new Error(data.error ?? `server action failed (${res.status})`);
+  }
 }
 
 /**

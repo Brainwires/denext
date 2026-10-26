@@ -226,8 +226,17 @@ Live WebSockets are closed the moment shutdown begins (they would otherwise
 never drain); the client reconnects to whichever instance is now routed, without
 replay — pass a cold-start `initial` for anything that must not flicker. During
 the overlap window two builds serve at once; each page links the content-hashed
-chunks of the build that rendered it, so the mix is safe as long as the old
-image keeps serving until it has drained.
+chunks of the build that rendered it, so the pages themselves mix safely as long
+as the old image keeps serving until it has drained. Server Action ids are the
+exception: they are salted per build, so a form rendered by one build posts ids
+the other does not know. The overlap is safe for them too when every build is
+made with the same `DENEXT_ACTION_ID_SECRET` (set where `denext build` runs, not
+only at runtime: a build made without it generates its own secret, and a
+runtime-only value is ignored with a warning). Without a shared secret, a tab
+rendered by the old build that posts to the new one gets `409` with
+`x-denext-action: unknown` and reloads itself once to pick the new ids up — the
+submission it was making is lost. See
+[Server Actions › Action ids](/docs/server-actions#action-ids-and-which-actions-are-exposed).
 
 ## Idle memory trim
 

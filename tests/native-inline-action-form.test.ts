@@ -14,8 +14,10 @@ import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { actionIdFor, forgetTaggedServers } from "../src/runtime/server-action.ts";
+import { setBuildActionIdSecret } from "../src/server/action-ids.ts";
 import { writeNativeActionFormFixture } from "./helpers/native-action-form-fixture.ts";
 import { serverModuleIdFor } from "../src/build/boundary-ids.ts";
+import { inlineActionModuleKey } from "../src/build/inline-server-action.ts";
 import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
@@ -60,9 +62,13 @@ async function assertInlinePost(origin: string, title: string): Promise<void> {
   assertStringIncludes(await (await fetch(origin + "/")).text(), `<li>inline:${title}</li>`);
 }
 
-/** The id next-compat's server bundle gives the page's first inline action (`addInline`). */
+/**
+ * The id next-compat's server bundle gives the page's first inline action (`addInline`): keyed by
+ * the module's project-relative path, so a build of the same source elsewhere mints the same.
+ */
 function compatId(dir: string): string {
-  return actionIdFor(toFileUrl(join(dir, "app", "page.tsx")).href, "inline:0:addInline");
+  const url = toFileUrl(join(dir, "app", "page.tsx")).href;
+  return actionIdFor(inlineActionModuleKey(url, dir), "inline:0:addInline");
 }
 
 Deno.test({
@@ -178,8 +184,11 @@ Deno.test({
 }, async () => {
   const dir = await fixture({ static: true });
   // The export runs in its own process: the shared secret a deploy that builds more than once
-  // sets makes its ids the ones this process (a server of another build) mints.
+  // sets makes its ids the ones this process (a server of another build) mints — once this
+  // process forgets the build secret an earlier `denext start` in this file installed, which is
+  // authoritative over the variable while installed.
   Deno.env.set("DENEXT_ACTION_ID_SECRET", "export-and-server-share-this");
+  setBuildActionIdSecret(null);
   try {
     const { outDir } = await exportInChild(dir);
     const html = await Deno.readTextFile(join(outDir, "index.html"));
@@ -221,7 +230,7 @@ Deno.test({
       const [base, token] = closure.split(".");
       const edited = token.slice(0, -2) + (token.endsWith("A") ? "BB" : "AA");
       const tampered = await postForm(server.origin, `${base}.${edited}`, "evil");
-      assertEquals(tampered.status, 404);
+      assertEquals(tampered.status, 409);
       await tampered.body?.cancel();
       assert(!(await (await fetch(server.origin + "/")).text()).includes("evil"));
       // An export no module imports is refused like an unknown id, under its real id.
@@ -231,7 +240,7 @@ Deno.test({
         "addUnreferenced",
       );
       const refused = await postForm(server.origin, `/_denext/action/${unreferenced}`, "sneak");
-      assertEquals(refused.status, 404);
+      assertEquals(refused.status, 409);
       await refused.body?.cancel();
       assert(!(await (await fetch(server.origin + "/")).text()).includes("unreferenced:"));
     } finally {

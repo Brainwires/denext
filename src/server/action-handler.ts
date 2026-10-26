@@ -125,9 +125,11 @@ export async function handleAction(
     return jsonResponse({ error: "payload too large" }, 413);
   }
 
-  // 3. Resolve the action; unknown ids are indistinguishable from missing ones.
+  // 3. Resolve the action; unknown ids are indistinguishable from missing ones. The answer is
+  // distinct from a plain 404 (`409` + `x-denext-action: unknown`): a page rendered by an older
+  // build posts ids a new build doesn't know, and the client reloads once on this answer.
   const handler = resolveAction(request, await options.scope?.(request));
-  if (!handler) return jsonResponse({ error: "unknown action" }, 404);
+  if (!handler) return unknownActionResponse();
   const isXhr = request.headers.get("x-denext-action") === "1";
 
   // 4. Buffer the body under the cap (covers chunked requests with no
@@ -261,6 +263,17 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+/**
+ * The answer to an action id the server doesn't know: `409` with `x-denext-action: unknown`, no
+ * detail. Distinct from a plain 404 so the client (src/client/action-dispatch.ts) can tell a page
+ * from an older build (its ids were re-minted by a new one) and reload once.
+ */
+function unknownActionResponse(): Response {
+  const res = jsonResponse({ error: "unknown action" }, 409);
+  res.headers.set("x-denext-action", "unknown");
+  return res;
 }
 
 function redirectResponse(location: string, status: number): Response {

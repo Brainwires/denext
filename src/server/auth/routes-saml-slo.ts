@@ -209,7 +209,10 @@ async function endSamlSessions(
 
 /**
  * Delete the store-backed sessions of `userId` that a NameID's recorded SAML sign-ins started and
- * the SessionIndexes name (all of them with none): `false` when there is no store or no record.
+ * the SessionIndexes name (all of them with none). `true` only when every named SessionIndex
+ * matched a record (or none were named and there was a record): a session the records don't know
+ * (never recorded — recording is best effort — or pruned) fails closed, the caller ending every
+ * session of the user instead. `false` too when there is no store or no record.
  */
 async function endStoredSessions(
   ctx: AuthRouteContext,
@@ -224,12 +227,17 @@ async function endStoredSessions(
   const mine = (await records.listSsoSessions(providerId, nameId)).filter((r) =>
     r.sessionId.startsWith(COOKIE_SESSION_PREFIX) && r.userId === userId
   );
+  const matched = new Set<string>();
   for (const record of mine) {
     const named = !sessionIndexes.length ||
       (record.sessionIndex !== undefined && sessionIndexes.includes(record.sessionIndex));
-    if (named) await sessions.delete(record.sessionId.slice(COOKIE_SESSION_PREFIX.length));
+    if (!named) continue;
+    await sessions.delete(record.sessionId.slice(COOKIE_SESSION_PREFIX.length));
+    if (record.sessionIndex !== undefined) matched.add(record.sessionIndex);
   }
-  return mine.length > 0;
+  return sessionIndexes.length
+    ? sessionIndexes.every((index) => matched.has(index))
+    : mine.length > 0;
 }
 
 /** {@linkcode revokeCookieSessions}, with an adapter failure logged and read as unresolved. */

@@ -702,6 +702,61 @@ and this project adheres to
 
 ### Security
 
+- **A 4.9 stateless session cookie is read by a 4.8 instance, so a rolling 4.8 → 4.9 deploy and a
+  rollback keep every session.** The sealed stateless payload carries the session's own id as
+  `rsid`, never `sid`: 4.8 reads any cookie with a `sid` key as a store id and signs a stateless
+  user out, so with the id under `sid` a user who signed in on a 4.9 instance was signed out on
+  every request a 4.8 instance answered, and a rollback signed out everyone who had signed in
+  while 4.9 was live. 4.9 reads both spellings (a cookie from an early 4.9 build still works), so
+  a mixed fleet is safe in both directions. On the session object the id stays `sid`, now defined
+  non-enumerable: a session passed to a client component, spread or `JSON.stringify`'d doesn't
+  carry it, while `session.sid` and `currentSessionId()` read it as before (a slide and an
+  in-place rewrite take the id from the cookie, so a spread copy never loses it).
+
+- **A `DENEXT_ACTION_ID_SECRET` that disagrees with the build is refused or ignored at startup,
+  never served as "unknown action" on every call.** The build's secret is the one the client
+  bundle carries ids for, so it is authoritative: when `denext build` generated its own (the
+  variable was not set then) and the server has another value, the build's is used, the server
+  warns once and `/_denext/health` reports `action-ids: "down"` (503); when the build minted its
+  ids under the variable, `manifest.json` records a fingerprint of it, and a server with the
+  variable unset or set to another value fails to start with an error saying what to set and
+  that it must be present where `denext build` runs. Before, the environment's value won at
+  runtime: an image built without the secret and started with one (the usual "secrets are
+  runtime-only" setup) answered every Server Action with a 404 and stayed healthy.
+
+- **An open tab survives a deploy that re-minted the Server Action ids.** An unknown action id
+  now answers `409` with `x-denext-action: unknown` instead of a plain 404, and the browser
+  dispatch reloads the page once on it (a sessionStorage flag, cleared by the next call that
+  succeeds, keeps a page whose actions stay unknown from reloading in a loop) and fails the call.
+  Inline actions are keyed by the module's project-relative path instead of its absolute URL, so
+  separate builds of one source at different paths (an image per replica, a build per host) mint
+  the same ids under a shared `DENEXT_ACTION_ID_SECRET`. The deployment docs no longer call the
+  overlap of two builds safe without that shared secret.
+
+- **A revocation-list outage no longer signs every stateless user out.** A read of a stateless
+  session whose `isSidRevoked` lookup throws (a database blip or failover) answers with that
+  session's last answer when it is at most 60 seconds old — a revoked session stays revoked, a
+  live one stays live — and only with no answer that recent reads as signed out (the cookie is
+  kept). Each process remembers up to 10,000 answers per adapter. A failing adapter is logged at
+  `warn` (once a minute) and `/_denext/health` reports `auth-revocation: "down"` (503) until a
+  probe reaches the list again. With `DENEXT_BOOT_DDL=off`, a list whose table is missing
+  (migration `0009_auth_sso_cookie_sessions` not applied) fails the start as a `BootSchemaError`
+  naming it, instead of every stateless read answering "signed out". Before, every lookup failure
+  read as signed out, with one error line per request and the probe answering `200`.
+
+- **Store-backed SAML Single Logout fails closed when a LogoutRequest names a session the records
+  don't know.** With a `sessionStore`, a LogoutRequest whose SessionIndex matched no recorded
+  session (recording is best effort; a record may have been pruned) answered Success while ending
+  nothing. Now it ends every session of the user instead, as the stateless path already did, and
+  only when every named SessionIndex matched a record are just those sessions deleted.
+
+- **A revocation outlives a `session.maxLifetime` raised after it.** A revoked stateless
+  session's row (`revokeSession(id)`, a SAML LogoutRequest) now lives the larger of
+  `session.maxLifetime` and 400 days — the longest a browser keeps a cookie — so raising the
+  lifetime later, while the revoked cookie keeps sliding, can't bring the session back once its
+  row would have been pruned. Raising it past 400 days after a revocation doesn't extend that
+  revocation.
+
 - **Server Action ids are salted per build, and only the actions the app imports are callable.**
   As in Next.js 15, an action's id is now an HMAC of its module and export name under a secret
   `denext build` generates (kept in the server-only `manifest.json`), so a new build gets new ids

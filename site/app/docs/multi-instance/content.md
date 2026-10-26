@@ -433,8 +433,9 @@ ceiling at the edge (see
   to the same base64 key (`openssl rand -base64 32`), or a form rendered by one fails on another.
   Action ids are salted the same way, with a secret new per build: replicas built separately (or
   a `denext export` served beside a separate build) need `DENEXT_ACTION_ID_SECRET` set to one
-  value (at least 16 characters), or every action posted from one is an unknown action on the
-  other ([Server Actions › Action ids](/docs/server-actions#action-ids-and-which-actions-are-exposed)).
+  value (at least 16 characters) where each `denext build` runs — a runtime-only value is
+  ignored — or every action posted from one is an unknown action on the other, which reloads the
+  page once ([Server Actions › Action ids](/docs/server-actions#action-ids-and-which-actions-are-exposed)).
 - `.env` files — each node reads its own; use the platform's secret store so
   they agree.
 - The client bundle — its chunks are content-hashed and served immutable, so a
