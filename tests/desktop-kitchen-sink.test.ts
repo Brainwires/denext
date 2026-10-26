@@ -93,7 +93,6 @@ Deno.test("kitchen sink window test: flags for the backend, the runtime and the 
     noSigning: false,
     backend: null,
     runtimeDir: null,
-    stockRuntime: false,
     results: null,
     json: false,
   });
@@ -112,7 +111,6 @@ Deno.test("kitchen sink window test: flags for the backend, the runtime and the 
     [true, "cef", "/opt/runtime", true, "out.json"],
   );
   assertEquals(runtimeOf(all), { mode: "local", version: null, dir: "/opt/runtime" });
-  assertEquals(runtimeOf(parseWindowTestArgs(["--stock-runtime"])).mode, "stock");
   // A boolean flag never swallows the next argument.
   assertEquals(parseWindowTestArgs(["--json", "--backend", "webview"]).backend, "webview");
   const refused = (args: string[]) => {
@@ -126,7 +124,8 @@ Deno.test("kitchen sink window test: flags for the backend, the runtime and the 
   assertStringIncludes(refused(["--backend", "gtk"]), "webview or cef");
   assertStringIncludes(refused(["--nope"]), "unknown flag --nope");
   assertStringIncludes(refused(["--results"]), "--results needs a value");
-  assertStringIncludes(refused(["--runtime-dir", "/x", "--stock-runtime"]), "choose one");
+  // denext 5.0 has no stock runtime: the old flag is an unknown flag now.
+  assertStringIncludes(refused(["--stock-runtime"]), "unknown flag --stock-runtime");
   assertStringIncludes(refused(["stray"]), "unexpected argument stray");
 });
 

@@ -72,14 +72,15 @@ const TOOLCHAIN = cachedToolchain();
 
 /**
  * Where `start` runs: on denext's toolchain when it is cached (what `denext task start`, the
- * image and the unit run), else this suite's Deno with the `DENEXT_DENO=stock` opt-out. Either
+ * image and the unit run), else this suite's own Deno (denext's runtime: denext 5.0 runs on no
+ * other, so the task takes it for the toolchain and needs no re-exec). Either
  * way `DENEXT_MODULE_ACTIVE` stands in for the published CLI: a `jsr:` CLI never takes the
  * module re-exec, while this checkout's `cli.ts` (a `file:` URL) would for the migrated config's
  * `npm:` entries, which is a source-checkout concern, not the app's.
  */
 const SERVE: Runner = TOOLCHAIN
   ? { deno: TOOLCHAIN, env: { ...linkedEnv(TOOLCHAIN), DENEXT_MODULE_ACTIVE: "1" } }
-  : { deno: STOCK.deno, env: { ...STOCK.env, DENEXT_DENO: "stock", DENEXT_MODULE_ACTIVE: "1" } };
+  : { deno: STOCK.deno, env: { ...STOCK.env, DENEXT_MODULE_ACTIVE: "1" } };
 
 Deno.test("denext migrate: a Next.js App Router app serves pages with CSS under its least-privilege start", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compat_start_" }));

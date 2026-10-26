@@ -61,7 +61,7 @@ async function pointAtThisCheckout(root: string): Promise<void> {
 const TOOLCHAIN = cachedToolchain();
 const RUN = TOOLCHAIN
   ? { deno: TOOLCHAIN, env: linkedEnv(TOOLCHAIN) }
-  : { deno: Deno.execPath(), env: { NO_COLOR: "1", DENEXT_DENO: "stock" } };
+  : { deno: Deno.execPath(), env: { NO_COLOR: "1" } };
 
 /** Run `deno <args>` in `cwd` to completion; fail with its output. */
 async function deno(args: string[], cwd: string): Promise<string> {

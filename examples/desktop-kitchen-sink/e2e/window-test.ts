@@ -39,14 +39,13 @@
 //                                               # deno.json's desktop.backend (restored afterwards)
 //   deno task test:window --runtime-dir <dir>   # package with a local runtime build
 //                                               # (DENEXT_DESKTOP_RUNTIME_DIR; unverified)
-//   deno task test:window --stock-runtime       # package with the stock runtime (DENEXT_DESKTOP_RUNTIME=stock)
 //   deno task test:window --results <file>      # also write the results document to <file>
 //   deno task test:window --json                # print only the results document on stdout (the
 //                                               # progress goes to stderr)
 //
 // The runtime is denext's pinned one (src/build/desktop-runtime-pin.json: its version is in the
-// output and the results) unless --runtime-dir or --stock-runtime says otherwise; an unknown flag
-// is an error.
+// output and the results) unless --runtime-dir says otherwise (denext 5.0 has no stock runtime);
+// an unknown flag is an error.
 //
 // macOS: run it in a logged-in session (the window needs a screen). Linux: under a display, e.g.
 // `xvfb-run -a deno task test:window`. Windows: in the interactive desktop session (over SSH, start
@@ -152,7 +151,6 @@ const FLAGS = {
   "no-package": "boolean",
   "no-update": "boolean",
   "no-signing": "boolean",
-  "stock-runtime": "boolean",
   json: "boolean",
   backend: "value",
   "runtime-dir": "value",
@@ -168,7 +166,6 @@ export interface WindowTestOptions {
   readonly backend: "webview" | "cef" | null;
   /** DENEXT_DESKTOP_RUNTIME_DIR for packaging. */
   readonly runtimeDir: string | null;
-  readonly stockRuntime: boolean;
   /** Also write the results document here. */
   readonly results: string | null;
   /** The results document is stdout's only output. */
@@ -196,16 +193,12 @@ export function parseWindowTestArgs(args: readonly string[]): WindowTestOptions 
   if (backend !== null && backend !== "webview" && backend !== "cef") {
     throw new Error(`--backend must be webview or cef (got ${backend})`);
   }
-  if (flags["runtime-dir"] !== undefined && flags["stock-runtime"] !== undefined) {
-    throw new Error("--runtime-dir and --stock-runtime pick different runtimes: choose one");
-  }
   return {
     noPackage: "no-package" in flags,
     noUpdate: "no-update" in flags,
     noSigning: "no-signing" in flags,
     backend,
     runtimeDir: flags["runtime-dir"] ?? null,
-    stockRuntime: "stock-runtime" in flags,
     results: flags.results ?? null,
     json: "json" in flags,
   };
@@ -213,11 +206,10 @@ export function parseWindowTestArgs(args: readonly string[]): WindowTestOptions 
 
 /** The runtime packaging uses, as the results document names it. */
 export function runtimeOf(options: WindowTestOptions): {
-  mode: "pinned" | "local" | "stock";
+  mode: "pinned" | "local";
   version: string | null;
   dir: string | null;
 } {
-  if (options.stockRuntime) return { mode: "stock", version: null, dir: null };
   if (options.runtimeDir) return { mode: "local", version: null, dir: options.runtimeDir };
   return { mode: "pinned", version: (pin as { version: string }).version, dir: null };
 }
@@ -1714,7 +1706,6 @@ async function main(): Promise<void> {
   const runtime = runtimeOf(options);
   // The package scripts (and `denext desktop package`) read the runtime from the environment.
   if (options.runtimeDir) Deno.env.set("DENEXT_DESKTOP_RUNTIME_DIR", resolve(options.runtimeDir));
-  if (options.stockRuntime) Deno.env.set("DENEXT_DESKTOP_RUNTIME", "stock");
   await Deno.remove(SCRATCH, { recursive: true }).catch(() => {});
   await Deno.mkdir(SCRATCH, { recursive: true });
   log(`${OS} ${Deno.build.arch}, deno ${Deno.version.deno}`);

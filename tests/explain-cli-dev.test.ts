@@ -58,7 +58,7 @@ async function cli(args: string[], cwd: string, env: Record<string, string>) {
       ...args,
     ],
     cwd,
-    env: { DENEXT_TOOLCHAIN_ACTIVE: "1", DENEXT_DENO: "stock", NO_COLOR: "1", ...env },
+    env: { DENEXT_TOOLCHAIN_ACTIVE: "1", NO_COLOR: "1", ...env },
   });
   const d = new TextDecoder();
   return { code: out.code, stderr: d.decode(out.stderr) };

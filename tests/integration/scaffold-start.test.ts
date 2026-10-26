@@ -71,12 +71,12 @@ const TOOLCHAIN = cachedToolchain();
 
 /**
  * Where the least-privilege `start` runs: on denext's toolchain (a `denext task start`, the
- * generated image and unit), else — no toolchain cached — this suite's Deno with the explicit
- * `DENEXT_DENO=stock` opt-out (without it, the task refuses: see the test below).
+ * generated image and unit), else — no toolchain cached — this suite's own Deno, which denext 5.0
+ * requires to be its runtime (any other Deno, the task refuses: see the test below).
  */
 const SERVE: Runner = TOOLCHAIN
   ? { deno: TOOLCHAIN, env: linkedEnv(TOOLCHAIN) }
-  : { deno: STOCK.deno, env: { ...STOCK.env, DENEXT_DENO: "stock" } };
+  : { deno: STOCK.deno, env: STOCK.env };
 
 for (const { name, opts, expect } of CASES) {
   Deno.test(`denext create: ${name}'s least-privilege start task serves the built app`, async () => {
@@ -110,7 +110,7 @@ async function addRuntimeRoute(dir: string): Promise<void> {
 }
 
 Deno.test({
-  name: "denext create: the start task never serves on stock Deno without the opt-out",
+  name: "denext create: the start task never serves on another Deno than denext's runtime",
   // Up to 4.5.0 the least-privilege task (no --allow-run) served in-process on whatever Deno ran
   // it, so `Deno.SQL` (postgresClient(), the Prisma adapter) worked in `dev` and was missing in
   // production. Now it refuses with the ways out — unless this suite already runs on the toolchain.
@@ -121,7 +121,7 @@ Deno.test({
       await scaffoldProject({ dir, vscode: false, template: "minimal" });
       const cfg = await pointAtThisCheckout(dir);
       await build(dir, cfg);
-      const env = { ...STOCK.env, DENEXT_DENO: "", DENEXT_TOOLCHAIN_ACTIVE: "" };
+      const env = { ...STOCK.env, DENEXT_TOOLCHAIN_ACTIVE: "" };
       const { html, output } = await start(dir, cfg, { deno: STOCK.deno, env });
       assertEquals(html, "", `served on stock Deno:\n${output}`);
       assertStringIncludes(output, "can't start denext's Deno toolchain");

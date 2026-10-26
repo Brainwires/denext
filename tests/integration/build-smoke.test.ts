@@ -794,10 +794,10 @@ Deno.test("build smoke: an app that uses each gated feature ships its runtime", 
 });
 
 // The probe is memoized per process, so run it in a subprocess with DENO_BIN
-// pointed at a fake `deno` that reports an unsupported version. (POSIX only:
+// pointed at a fake `deno` that is not denext's runtime (no identity line). (POSIX only:
 // the fake is a shell script.)
 Deno.test({
-  name: "bundle support probe rejects an old Deno with a clear, actionable error",
+  name: "bundle support probe refuses a Deno that is not denext's runtime (5.0), naming the fix",
   ignore: Deno.build.os === "windows",
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_fakedeno_" });
@@ -816,8 +816,9 @@ Deno.test({
     });
     const text = new TextDecoder().decode(out.stdout);
 
-    assertStringIncludes(text, "requires Deno 2");
-    assertStringIncludes(text, "DENO_BIN");
+    assertStringIncludes(text, "bundling needs denext's Deno runtime");
+    assertStringIncludes(text, "upstream Deno 1.40.0");
+    assertStringIncludes(text, "denext toolchain install");
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
