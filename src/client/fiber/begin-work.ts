@@ -389,19 +389,18 @@ function beginHost(wip: Fiber): Fiber | null {
  */
 function formStatusScope(wip: Fiber): Fiber["inherited"] {
   const props = wip.vnode.props ?? {};
-  if (wip.vnode.type !== "form") {
-    if (typeof props.formAction === "function") {
-      fiberExt(wip).formStatus = wip.inherited.get(FormStatusContext._id) as
-        | FormStatusSignal
-        | undefined;
-    }
-    return wip.inherited;
-  }
   const scanned = typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__;
-  if (!scanned && typeof props.action !== "function") return wip.inherited;
-  const x = fiberExt(wip);
-  x.formStatus ??= createFormStatusSignal();
-  return new ContextScope(wip.inherited, FormStatusContext._id, x.formStatus);
+  if (wip.vnode.type === "form" && (scanned || typeof props.action === "function")) {
+    const x = fiberExt(wip);
+    x.formStatus ??= createFormStatusSignal();
+    return new ContextScope(wip.inherited, FormStatusContext._id, x.formStatus);
+  }
+  if (scanned && typeof props.formAction === "function") {
+    fiberExt(wip).formStatus = wip.inherited.get(FormStatusContext._id) as
+      | FormStatusSignal
+      | undefined;
+  }
+  return wip.inherited;
 }
 
 // A DOM element: claim its server node during hydration, and — for a `<form>` with a function action —

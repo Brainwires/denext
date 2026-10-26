@@ -51,7 +51,7 @@ Deno.test("the installed runner is form-action.ts's", async () => {
   await installFormActions();
   const seen: unknown[] = [];
   setFormActionRunner((...args) => {
-    seen.push(args[0].action);
+    seen.push(args[2][0]);
     runFormAction(...args);
   });
   const action = () => {};

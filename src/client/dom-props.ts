@@ -228,7 +228,7 @@ const hasOwn = Object.prototype.hasOwnProperty;
 export const NO_PROPS: Record<string, unknown> = Object.freeze({});
 
 /** Where a function-valued form action is set: its action, error route and host state. */
-type FormActionSite = readonly [(payload: unknown) => void, ErrorRouter, HostState];
+export type FormActionSite = readonly [(payload: unknown) => void, ErrorRouter, HostState];
 
 /** A form or submit button carrying a function-valued action. */
 type ActionEl = Element & { __dnxFA?: FormActionSite; form?: ArmedForm | null };
@@ -236,20 +236,19 @@ type ActionEl = Element & { __dnxFA?: FormActionSite; form?: ArmedForm | null };
 /** A form whose submit denext intercepts (one listener per form, however many actions). */
 type ArmedForm = HTMLFormElement & { __dnxFA?: FormActionSite; __dnxFS?: true };
 
-/** One submit of a function-valued form action, taken when it happened. */
-export interface FormActionSubmit {
-  /** The action to call. */
-  readonly action: (payload: unknown) => void;
-  /** Routes a thrown or rejected action to the nearest boundary. */
-  readonly onError: ErrorRouter;
-  /** The submitted `FormData` (the submitter's name/value included), as it was at the submit. */
+/** A submit that waited for the form-action runtime: what was submitted, taken at the submit. */
+export interface HeldSubmit {
+  /** The submitted `FormData` (the submitter's name/value included), or undefined. */
   readonly data: unknown;
-  /** Ends the `useFormStatus` pending state the submit started (once). */
-  readonly done: () => void;
 }
 
 /** Runs one submit of a function-valued form action (form-action.ts's `runFormAction`). */
-export type FormActionRunner = (submit: FormActionSubmit) => void;
+export type FormActionRunner = (
+  event: Event,
+  form: HTMLFormElement,
+  site: FormActionSite,
+  held?: HeldSubmit,
+) => void;
 
 /**
  * The form-action runtime, installed by form-action.ts when it loads. Null until a
@@ -314,62 +313,31 @@ function armForm(form: ArmedForm | null | undefined): void {
 
 /**
  * An armed form's submit: the submitting button's `formAction`, else the form's own `action`
- * (React's rule); neither leaves the submit native. What was submitted and `useFormStatus`'s
- * pending state are taken now, so a submit that beats the form-action runtime holds them
- * unchanged until it loads (the submit itself is never sent natively).
+ * (React's rule); neither leaves the submit native. A submit that beats the form-action runtime
+ * is held for it (never sent natively), with its `FormData` and its form's `useFormStatus` pending
+ * state taken now.
  */
 function formSubmit(event: Event, form: ArmedForm): void {
-  const site = ((event as SubmitEvent).submitter as ActionEl | null)?.__dnxFA ?? form.__dnxFA;
+  const submitter = (event as SubmitEvent).submitter as ActionEl | null;
+  const site = submitter?.__dnxFA ?? form.__dnxFA;
   if (!site) return;
   event.preventDefault();
-  const submit = beginSubmit(event, form, site);
-  if (runFormAction) return runFormAction(submit);
-  installFormActions().then(() => runFormAction!(submit), (err) => {
-    submit.done();
+  if (runFormAction) return runFormAction(event, form, site);
+  let data: unknown;
+  try {
+    data = new FormData(form, submitter as HTMLElement | null);
+  } catch { /* no FormData here (a test shim) */ }
+  const sig = site[2].ext?.formStatus;
+  const pending = (by: number) => {
+    if (!sig) return;
+    sig.pending += by;
+    sig.listeners.forEach((l) => l());
+  };
+  pending(1);
+  installFormActions().then(() => runFormAction!(event, form, site, { data }), (err) => {
+    pending(-1);
     site[1](err);
   });
-}
-
-/** Start a submit: its `FormData` now, and its form's `useFormStatus` pending until `done`. */
-function beginSubmit(
-  event: Event,
-  form: ArmedForm,
-  [action, onError, state]: FormActionSite,
-): FormActionSubmit {
-  const data = submittedData(event, form);
-  const sig = state.ext?.formStatus;
-  if (sig) {
-    sig.pending++;
-    sig.data = data as FormData | null ?? null;
-    sig.method = (form.method || "post").toLowerCase();
-    sig.action = action;
-    for (const l of sig.listeners) l();
-  }
-  let settled = false;
-  const done = () => {
-    if (settled || !sig) return;
-    settled = true;
-    sig.pending = Math.max(0, sig.pending - 1);
-    if (sig.pending === 0) sig.data = sig.method = sig.action = null;
-    for (const l of sig.listeners) l();
-  };
-  return { action, onError, data, done };
-}
-
-/**
- * The submitted form's `FormData`, with the submit button's own name/value as a native submit
- * sends them; `undefined` where there is no `FormData` or the target is no form (a test shim).
- */
-function submittedData(event: Event, form: ArmedForm): unknown {
-  const FormDataCtor = (globalThis as { FormData?: unknown }).FormData as
-    | (new (form: unknown, submitter?: unknown) => unknown)
-    | undefined;
-  if (!FormDataCtor) return undefined;
-  try {
-    return new FormDataCtor(form, (event as SubmitEvent).submitter ?? null);
-  } catch {
-    return undefined;
-  }
 }
 
 /**
