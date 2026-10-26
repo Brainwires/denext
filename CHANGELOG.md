@@ -731,6 +731,20 @@ and this project adheres to
 - **An anonymous sign-in's auto-REST requests also count against its address (`@denext/backend`).**
   Each anonymous user had a `rest.rateLimit` budget of its own, so minting sign-ins minted budgets.
 
+### Docs
+
+- **Runtime reference.** A new page, [Runtime reference](https://denext.dev/docs/runtime-reference),
+  lists everything denext's Deno runtime adds to Deno 2.9.8 in one place: `Deno.build.denext` and
+  the `--version` marker, `Deno.SQL`, `request.signal`'s default, worker heap limits,
+  `module.register()` hooks, the `--max-memory` / `--max-cpu-time` / `--max-time` and
+  `--allow-net-connect` / `--allow-net-listen` flags, native TypeScript 7 and type-aware lint,
+  Vitest/Jest in `deno test`, Node.js-style npm resolution, the supply-chain gates, the runtime's
+  environment variables and the Deno Desktop APIs, each with an example, the runtime version it
+  arrived in and a link to its guide. The toolchain guide gains a section on the install gates
+  (malicious-version refusal, the low-download check, `paranoid`) and says what runtime
+  `3.0.0-rc.6` changes in the jail: a host list holds every program a script starts, writes are
+  confined to the script's own package, and `"executables": true` / `"allowPrivate": true`.
+
 ## [4.8.0] - 2026-10-23
 
 ### Added

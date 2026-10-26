@@ -1169,7 +1169,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
-  `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
+  `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
+  and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
   opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
   first use, no build for the host, a failed download) the command stops with the fix
   (`denext toolchain install`) — denext never runs another Deno on its own. Every other verb that

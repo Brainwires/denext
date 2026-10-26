@@ -39,7 +39,8 @@ version from `3.0.0-rc.1`; see [Versions](#versions)): stock Deno plus
 Vitest/Jest compatibility in `deno test`. denext manages it the same way it manages the
 [Deno Desktop runtime](/docs/desktop-runtime): each denext release pins one build per platform by
 version and SHA-256, downloads it the first time a command needs it, verifies it, and reuses the
-verified copy from then on.
+verified copy from then on. Every API, flag, config key and environment variable the build adds is
+listed, with the version it arrived in, in the [runtime reference](/docs/runtime-reference).
 
 There is nothing to install and nothing to configure. Install denext as usual; Deno itself is
 optional.
@@ -381,6 +382,13 @@ resolves it, and also checks `--doc` code blocks and `deno bundle --check` nativ
 output differs, and the [explained type errors](/docs/error-handling#explained-type-errors) read
 both checkers' wording.
 
+From runtime `3.0.0-rc.6` a `compilerOptions.types` entry that nothing resolves is an error under
+both engines, pointed at the entry in `deno.json`, with what to write instead: `"npm:@types/x"`
+for a package's types (or `"npm:x"` when the package ships its own, `"npm:vite/client"` for a
+subpath), or remove it. `"node"` and `"deno"` are fine as they are. Earlier runtimes passed such
+an entry silently, so a `"types": ["vite/client"]` carried over from a `tsconfig.json` can start
+failing there. The same release prints `Checked N files` after a clean `deno check`.
+
 The dev type-check overlay checks only the files an edit changed (and what they import). From
 runtime `3.0.0-rc.2` the native check also:
 
@@ -543,7 +551,8 @@ they are out, add it back to the project's `deno.json`, knowing it lets any just
 An approved dependency's lifecycle script (`preinstall`, `install`, `postinstall`, approved with
 `--allow-scripts` or deno.json `allowScripts`) runs **jailed** on denext's Deno: a scrubbed
 environment (no `GITHUB_TOKEN`, `NPM_TOKEN` or other credentials), a scratch `HOME` removed after
-the script, writes only beneath `node_modules`, no credential files, no network, every `deno` it
+the script, writes only beneath `node_modules` (from runtime `3.0.0-rc.6`, its own package's
+folder), no credential files, no network, every `deno` it
 starts clamped to the same limits, and the OS confining the whole process tree where it can
 (Landlock and seccomp on Linux, `sandbox-exec` on macOS). A compromised package's install script
 then can't read your tokens, phone home or rewrite your project. The project's own scripts (the
@@ -560,12 +569,27 @@ root `package.json`, workspace members) are your code and are not jailed.
 - **Per-package exceptions** keep the jail on and widen it for one package: environment variables
   passed through, extra writable directories (relative to deno.json; create them first, Linux
   skips a missing one) and the network. From runtime `3.0.0-rc.6` `net` also takes the hosts the
-  scripts may reach (`"net": ["storage.googleapis.com"]`, enforced for every `deno` in the jail;
-  a program that isn't Deno, such as `curl`, can still reach any host), and a `write` path may
-  start with `~` (your home directory, resolved when the jail runs, so a checked-in deno.json
-  names no one's home). On older runtimes `net` is `true` or `false` only. A node-pre-gyp
-  package's declared `binary.host` is allowed by itself (not under `paranoid`; a host list
-  replaces it).
+  scripts may reach (`"net": ["storage.googleapis.com"]`), and a `write` path may start with `~`
+  (your home directory, resolved when the jail runs, so a checked-in deno.json names no one's
+  home). On older runtimes `net` is `true` or `false` only. A node-pre-gyp package's declared
+  `binary.host` is allowed by itself (not under `paranoid`; a host list replaces it, and
+  `"net": false` drops it).
+- **What a host list holds (runtime `3.0.0-rc.6`).** The jail starts an allow-listing proxy on
+  loopback for the script and points every client at it (`HTTP(S)_PROXY`, `ALL_PROXY`, npm's and
+  `global-agent`'s proxy keys, `NODE_USE_ENV_PROXY=1`); the OS lets the script reach only that
+  proxy, so `curl` or a raw socket can't go around it (macOS; Linux 6.7 and later). A listed name
+  that resolves to this machine or its private network is refused, unless it is the IP literal
+  itself, `localhost`, or the package's entry sets `"allowPrivate": true` (a mirror on your
+  network). On Linux before 6.7 a host list from your deno.json keeps the network open at the OS
+  level (with a warning) and still holds every `deno`; hosts a package declares for itself get no
+  network there. On Windows the proxy holds only the clients that honour the proxy variables.
+  With a list, a script may not listen for connections either.
+- **Per-package writes (runtime `3.0.0-rc.6`).** A jailed script writes beneath its own package's
+  folder, its `write` paths and the scratch `HOME` only, no longer anywhere in `node_modules`, so
+  one package's script can't rewrite another's. A package that writes a sibling directory
+  (Prisma's `node_modules/.prisma`) lists it in `write`. Files with an execute bit that a script
+  leaves in a `~` path are removed, and the script fails, unless the entry sets
+  `"executables": true` (a browser download, such as puppeteer's).
 - **Workspaces: the root deno.json only.** Deno reads `supplyChain` from the workspace root's
   deno.json alone, as it does `allowScripts`: one `node_modules` is installed for every member. A
   member's own `supplyChain` is ignored (with a warning), and relative `write` paths are resolved
@@ -579,7 +603,8 @@ root `package.json`, workspace members) are your code and are not jailed.
         "puppeteer": {
           "net": ["storage.googleapis.com"],
           "env": ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"],
-          "write": ["~/.cache/puppeteer"]
+          "write": ["~/.cache/puppeteer"],
+          "executables": true
         },
         "msw": { "write": ["public"] }
       }
@@ -588,7 +613,8 @@ root `package.json`, workspace members) are your code and are not jailed.
 }
 ```
 
-(On runtime `3.0.0-rc.5`, puppeteer's entry is `"net": true` with the same `env` and no `write`.)
+(On runtime `3.0.0-rc.5`, puppeteer's entry is `"net": true` with the same `env` and no `write`
+or `executables`.)
 Up to `3.0.0-rc.5` an exceptions object counts as asking for the jail: on Windows an install then
 prints a one-line warning that the script's other programs are not confined. From `3.0.0-rc.6` an
 object that only lists `packages` configures the default jail and prints nothing.
@@ -677,9 +703,50 @@ node-gyp downloads the Node.js headers (`npm_config_nodedir` points it at local 
 because they need nothing: `esbuild` (its binary is an optional dependency), `bcrypt`, `playwright`
 (no install script), `husky` 9 (the project's own `prepare`) and `bufferutil`.
 
+## Supply chain: install gates
+
+Besides the jail, denext's Deno (from runtime `3.0.0-rc.2`) has three gates on what an install
+lets in. Each is an `.npmrc` key (also `npm_config_<key>` in the environment) or a key of the root
+deno.json's `supplyChain`; where several sources set one, the stricter value wins.
+
+- **Malicious versions** (`advisory-check`, deno.json `advisoryCheck`). Before npm versions are
+  installed they are looked up in [OSV](https://osv.dev); a version with a `MAL-` advisory (the
+  OpenSSF malicious-packages data: typosquats, hijacked releases, credential stealers) is refused,
+  naming the advisory. `deno add` puts deno.json and package.json back as they were. `on` (the
+  default) warns and installs when OSV can't be reached; `required` refuses then; `off` doesn't
+  ask. Clean answers are reused for 24 hours (`DENO_OSV_CACHE_TTL`), and `DENO_OSV_URL` names a
+  mirror.
+- **Packages almost nobody downloads** (`low-download-check`, deno.json `lowDownloadCheck`). A new
+  package `deno add` adds with fewer weekly downloads than `low-download-threshold` (1000; `0`
+  turns it off) on npmjs.org: `warn` (the default) warns and adds, `prompt` asks in a terminal and
+  refuses without one or under `CI`, `required` also refuses when the count is unknown, `off` skips
+  it. `--allow-low-downloads=npm:<name>`, `.npmrc` `allowed-unpopular-packages` (names, `@scope/*`,
+  `prefix*`) or deno.json `allowLowDownloads` let a package through. Packages from another
+  registry are not checked.
+- **`paranoid`** (`.npmrc` `paranoid=true`, deno.json `"supplyChain": { "paranoid": true }`). Every
+  gate on and failing closed: the jail on (and an approved script refused where the OS can't
+  confine it), `advisory-check=required`, `low-download-check=required`, the `no-downgrade` trust
+  policy. A weaker setting anywhere (`jail-scripts=false`, `advisory-check=off`, …) is an error
+  naming where it is, so a configuration can't look strict while being loose.
+
+```json
+{
+  "supplyChain": {
+    "advisoryCheck": "required",
+    "lowDownloadCheck": "prompt",
+    "allowLowDownloads": ["@acme/*"]
+  }
+}
+```
+
+Every key, and the runtime versions they arrived in, are in the
+[runtime reference](/docs/runtime-reference#npm-supply-chain).
+
 ## Notes: how denext's Deno build is kept current
 
-<a id="versions"></a>**Versions.** Up to `2.9.7-denext.22` each build was named after the Deno release it
+### Versions
+
+Up to `2.9.7-denext.22` each build was named after the Deno release it
 was built from plus `-denext.N`. From `3.0.0-rc.1` (then `3.0.0-rc.2`, …) the fork has its own
 version, which names no Deno release; `3.0.0` final carries Deno's planned 3.0 milestone. The two
 schemes sort in release order by semver (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.10` <
@@ -691,7 +758,9 @@ way. The Deno release a build is made from is the pin's `deno` field (2.9.7 up t
 toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
 stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
 
-<a id="identity"></a>**Telling denext's Deno from upstream Deno.** Upstream Deno releases a
+### Identity
+
+Telling denext's Deno from upstream Deno: upstream Deno releases a
 `3.0.0` too, so a version such as `3.0.0-rc.3` does not say whose runtime it is. From `3.0.0-rc.3`
 denext's Deno carries an identity marker: `Deno.build.denext` (its version, a string; absent on
 upstream Deno) and a last line in `deno --version`:
@@ -713,7 +782,9 @@ Deno whatever its number. A build from before the marker is recognised by its ve
 and earlier). A runtime release from `3.0.0-rc.3` must record the marker in its manifest
 (`cli.identity`), or `deno task desktop:pin-runtime` refuses it.
 
-**Tracking Deno.** The toolchain is Deno's latest release (2.9.8) plus denext's patches — `Deno.SQL`,
+### Tracking Deno
+
+The toolchain is Deno's latest release (2.9.8) plus denext's patches — `Deno.SQL`,
 Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
 published (as `2.9.7-denext.N`, then `3.0.0-rc.N`) with SHA-256 sums and build attestations. Between Deno releases we
 review what Deno's main branch has gained and take the fixes that matter: `2.9.7-denext.16` took the
@@ -749,14 +820,24 @@ only). On Windows a spawned child inherits only its own handles, so a concurrent
 keeps another's output pipe open (`.output()` waited for the unrelated process to exit), and a
 workspace member's import map can map a module on another drive. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
+`3.0.0-rc.6` (released; denext moves its pin to it in a later release) makes a jailed script's
+host list hold every program it starts and confines each script's writes to its own package, adds
+`module.register()` hooks, Node's `--trace-sigint`, coverage written when SIGINT or SIGTERM ends a
+run, `deno check`'s `Checked N files` summary and the `compilerOptions.types` error, and runs
+`deno jupyter` cells with the config's permissions. The
+[runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
-**Support across denext releases.** The patches are carried forward from release to release. Each
+### Support across denext releases
+
+The patches are carried forward from release to release. Each
 denext release pins exactly one build (a SHA-256 per target, checked on download), so a project
 always runs the build its denext version was tested with, and upgrading denext moves the build with
 it. `DENEXT_DENO=stock` always works: what needs the build (`Deno.SQL`, Vitest/Jest compatibility,
 the bundled esbuild) falls back or says why it can't.
 
-**Bootstrapping.** The first command that runs project code — or the installer, ahead of time —
+### Bootstrapping
+
+The first command that runs project code — or the installer, ahead of time —
 downloads the pinned build for the platform into `<DENO_DIR>/denext-deno/`, verifies its SHA-256
 against the pin, records a stamp and re-runs itself on it. Every child process it starts (tasks,
 the UI, the MCP server, builds) finds that `deno` first on `PATH`. The `deno` on your `PATH` is never
