@@ -16,6 +16,7 @@ import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { actionIdFor, forgetTaggedServers } from "../src/runtime/server-action.ts";
 import { writeNativeActionFormFixture } from "./helpers/native-action-form-fixture.ts";
 import { serverModuleIdFor } from "../src/build/boundary-ids.ts";
+import { inlineActionModuleKey } from "../src/build/inline-server-action.ts";
 import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 import { watchTests } from "./helpers/watchdog.ts";
 
@@ -60,9 +61,13 @@ async function assertInlinePost(origin: string, title: string): Promise<void> {
   assertStringIncludes(await (await fetch(origin + "/")).text(), `<li>inline:${title}</li>`);
 }
 
-/** The id next-compat's server bundle gives the page's first inline action (`addInline`). */
+/**
+ * The id next-compat's server bundle gives the page's first inline action (`addInline`): keyed by
+ * the module's project-relative path, so a build of the same source elsewhere mints the same.
+ */
 function compatId(dir: string): string {
-  return actionIdFor(toFileUrl(join(dir, "app", "page.tsx")).href, "inline:0:addInline");
+  const url = toFileUrl(join(dir, "app", "page.tsx")).href;
+  return actionIdFor(inlineActionModuleKey(url, dir), "inline:0:addInline");
 }
 
 Deno.test({
