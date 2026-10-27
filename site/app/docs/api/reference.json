@@ -2125,8 +2125,8 @@
           "slug": "PUBLIC_ENV_PREFIXES",
           "kind": "variable",
           "signature": "PUBLIC_ENV_PREFIXES: typeOperator",
-          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.",
-          "docFull": "Prefixes that mark an environment variable as safe to expose to the browser.\n`NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is\nthe denext-native prefix. Any other variable stays server-only.",
+          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix; FRESH_PUBLIC_ is Fresh's, for a migrated Fresh app. Any other variable stays server-only.",
+          "docFull": "Prefixes that mark an environment variable as safe to expose to the browser.\n`NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is\nthe denext-native prefix; `FRESH_PUBLIC_` is Fresh's, for a migrated Fresh app. Any other\nvariable stays server-only.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.8.0",
+          "signature": "VERSION: 4.9.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -5619,6 +5619,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthPasskeyAndroidApp",
+          "slug": "AuthPasskeyAndroidApp",
+          "kind": "interface",
+          "signature": "interface AuthPasskeyAndroidApp",
+          "doc": "An Android app in passkeys.androidApps (the shape appLinks.android takes).",
+          "docFull": "An Android app in `passkeys.androidApps` (the shape `appLinks.android` takes).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthPasskeyConfig",
           "slug": "AuthPasskeyConfig",
           "kind": "interface",
@@ -5637,6 +5649,18 @@
           "signature": "interface AuthPasskeyMdsConfig",
           "doc": "passkeys.attestation.mds: where the metadata comes from and what it lets through.",
           "docFull": "`passkeys.attestation.mds`: where the metadata comes from and what it lets through.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthPasskeyRevocationPolicy",
+          "slug": "AuthPasskeyRevocationPolicy",
+          "kind": "typeAlias",
+          "signature": "type AuthPasskeyRevocationPolicy = soft | hard",
+          "doc": "passkeys.attestation.revocation: \"soft\" goes on when no OCSP answer or CRL can be had, \"hard\" refuses.",
+          "docFull": "`passkeys.attestation.revocation`: `\"soft\"` goes on when no OCSP answer or CRL can be had,\n`\"hard\"` refuses.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6878,6 +6902,18 @@
           "docFull": "The current request context, or undefined if none is active.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "currentSessionId",
+          "slug": "currentSessionId",
+          "kind": "function",
+          "signature": "currentSessionId(): Promise<string | null>",
+          "doc": "The id of the current request's cookie session — what revokeSession takes: the store id of a store-backed session (AuthSession.sessionId), else a stateless session's own AuthSession.sid. null when signed out (or still owing a second factor), for a stateless cookie issued before denext minted ids, and for a bearer (native app or access token) session. Server-only: keep it out of anything sent to the browser (GET {basePath}/session and the client hooks never carry it); list a user's devices by it on the server.",
+          "docFull": "The id of the current request's cookie session — what {@link revokeSession} takes: the store\nid of a store-backed session ({@link AuthSession.sessionId}), else a stateless session's own\n{@link AuthSession.sid}. `null` when signed out (or still owing a second factor), for a\nstateless cookie issued before denext minted ids, and for a bearer (native app or access\ntoken) session. Server-only: keep it out of anything sent to the browser\n(`GET {basePath}/session` and the client hooks never carry it); list a user's devices by it\non the server.",
+          "params": [],
+          "returns": "The session id, or null.",
           "examples": [],
           "denextOnly": true
         },
@@ -11932,8 +11968,8 @@
           "slug": "PUBLIC_ENV_PREFIXES",
           "kind": "variable",
           "signature": "PUBLIC_ENV_PREFIXES: typeOperator",
-          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.",
-          "docFull": "Prefixes that mark an environment variable as safe to expose to the browser.\n`NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is\nthe denext-native prefix. Any other variable stays server-only.",
+          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix; FRESH_PUBLIC_ is Fresh's, for a migrated Fresh app. Any other variable stays server-only.",
+          "docFull": "Prefixes that mark an environment variable as safe to expose to the browser.\n`NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is\nthe denext-native prefix; `FRESH_PUBLIC_` is Fresh's, for a migrated Fresh app. Any other\nvariable stays server-only.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -13450,8 +13486,8 @@
           "slug": "revokeSession",
           "kind": "function",
           "signature": "revokeSession(sessionId: string): Promise<void>",
-          "doc": "Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — \"sign out this device\". Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless.",
-          "docFull": "Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so\nits cookie stops authenticating immediately — \"sign out this device\". Fires the\n`sessionRevoked` event. Requires `denextAuth({ sessionStore })`; throws when sessions\nare stateless.",
+          "doc": "Revoke one session by id, so its cookie stops authenticating from the next read — \"sign out this device\". Fires the sessionRevoked event.",
+          "docFull": "Revoke one session by id, so its cookie stops authenticating from the next read — \"sign out\nthis device\". Fires the `sessionRevoked` event.\n\n- **Store-backed** (`denextAuth({ sessionStore })`): `sessionId` is the session's\n  {@link AuthSession.sessionId}; its record is deleted from the store.\n- **Stateless** (no `sessionStore`): `sessionId` is the session's own\n  {@link AuthSession.sid}; it goes on the auth adapter's revocation list (`revokeSids`) for the\n  larger of `session.maxLifetime` and 400 days (so a lifetime raised later can't outlive it),\n  and every read of a stateless session checks that list from then on (`isSidRevoked`, at most\n  once per request). Until an app first revokes a session this way its reads make no such\n  query. Needs an adapter with the list: `sqliteAuthAdapter`, `postgresAuthAdapter`,\n  `inMemoryAuthAdapter` (one process) or `backendAuthAdapter()`; throws with one that lacks it\n  (an Auth.js adapter) or with none.\n\n{@link currentSessionId} gives the current request's id; never send it to the browser.",
           "params": [
             {
               "name": "sessionId",
@@ -15064,6 +15100,18 @@
           "denextOnly": true
         },
         {
+          "name": "SsoSessionIndexRecord",
+          "slug": "SsoSessionIndexRecord",
+          "kind": "interface",
+          "signature": "interface SsoSessionIndexRecord",
+          "doc": "A stateless cookie session a SAML sign-in started: Single Logout's session index.",
+          "docFull": "A stateless cookie session a SAML sign-in started: Single Logout's session index.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SsoSessionRecord",
           "slug": "SsoSessionRecord",
           "kind": "interface",
@@ -15118,6 +15166,18 @@
           "signature": "interface StandardSchemaV1<Output>",
           "doc": "The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.",
           "docFull": "The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StartConfig",
+          "slug": "StartConfig",
+          "kind": "interface",
+          "signature": "interface StartConfig",
+          "doc": "The production server's settings (see DenextConfig.start).",
+          "docFull": "The production server's settings (see {@link DenextConfig.start}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -17669,8 +17729,8 @@
           "slug": "PUBLIC_ENV_PREFIXES",
           "kind": "variable",
           "signature": "PUBLIC_ENV_PREFIXES: typeOperator",
-          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.",
-          "docFull": "Prefixes that mark an environment variable as safe to expose to the browser.\n`NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is\nthe denext-native prefix. Any other variable stays server-only.",
+          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix; FRESH_PUBLIC_ is Fresh's, for a migrated Fresh app. Any other variable stays server-only.",
+          "docFull": "Prefixes that mark an environment variable as safe to expose to the browser.\n`NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is\nthe denext-native prefix; `FRESH_PUBLIC_` is Fresh's, for a migrated Fresh app. Any other\nvariable stays server-only.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -21460,8 +21520,8 @@
           "slug": "desktopPackageFlags",
           "kind": "function",
           "signature": "desktopPackageFlags(entryUrl: string, os: DesktopOs, netSplit?: boolean): Promise<string[]>",
-          "doc": "The deno desktop --allow-* flags for a scaffolded packaging script: read the project's denext.config.ts (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code). The network grant is split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or later, read from the deno on PATH the script builds with (desktopNetSplitFor); DENEXT_DESKTOP_RUNTIME=stock, a local runtime build or a stock deno keep --allow-net.",
-          "docFull": "The `deno desktop` `--allow-*` flags for a scaffolded packaging script: read the project's\n`denext.config.ts` (next to `entryUrl` — a packaging script lives in `scripts/`, so the config\nis `../denext.config.ts`) and derive the least-privilege flags for `os` via {@linkcode\ndesktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The\nconfig is imported dynamically at run time from a caller-supplied URL, so it is never part of\nthis module's own dependency graph (nor a build-time import of user code). The network grant is\nsplit by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or\nlater, read from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});\n`DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a stock `deno` keep `--allow-net`.",
+          "doc": "The deno desktop --allow-* flags for a scaffolded packaging script: read the project's config (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts, or its .mts / .js / .mjs twin) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code). The network grant is split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or later, read from the deno on PATH the script builds with (desktopNetSplitFor); DENEXT_DESKTOP_RUNTIME=stock, a local runtime build or a stock deno keep --allow-net.",
+          "docFull": "The `deno desktop` `--allow-*` flags for a scaffolded packaging script: read the project's\nconfig (next to `entryUrl` — a packaging script lives in `scripts/`, so the config is\n`../denext.config.ts`, or its `.mts` / `.js` / `.mjs` twin) and derive the least-privilege flags for `os` via {@linkcode\ndesktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The\nconfig is imported dynamically at run time from a caller-supplied URL, so it is never part of\nthis module's own dependency graph (nor a build-time import of user code). The network grant is\nsplit by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or\nlater, read from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});\n`DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a stock `deno` keep `--allow-net`.",
           "params": [
             {
               "name": "entryUrl",
@@ -21673,9 +21733,9 @@
           "name": "desktopRuntimeDenoFlags",
           "slug": "desktopRuntimeDenoFlags",
           "kind": "function",
-          "signature": "desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator): string[]",
-          "doc": "The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it: --unstable-no-legacy-abort, which the runtime keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. The stock runtime (an empty env) gets none: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.",
-          "docFull": "The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime\nbuild) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it:\n`--unstable-no-legacy-abort`, which the runtime keeps from the compiled app's metadata (from\n2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not\ndelivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under\n`denext start` and a `build --compile` binary. The stock runtime (an empty env) gets none: it\nignores the setting. A flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.",
+          "signature": "desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator, pin?: object): string[]",
+          "doc": "The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it. A runtime before 3.0.0-rc.5 gets --unstable-no-legacy-abort, which it keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. From 3.0.0-rc.5 that is the runtime's default, so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.",
+          "docFull": "The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime\nbuild) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it. A runtime before\n`3.0.0-rc.5` gets `--unstable-no-legacy-abort`, which it keeps from the compiled app's metadata\n(from 2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not\ndelivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under\n`denext start` and a `build --compile` binary. From `3.0.0-rc.5` that is the runtime's default,\nso it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A\nflag already in `denoFlags` (`desktop.denoFlags`) is not repeated.",
           "params": [
             {
               "name": "runtimeEnv",
@@ -21684,6 +21744,10 @@
             {
               "name": "denoFlags",
               "doc": "The flags the command already passes (desktop.denoFlags)."
+            },
+            {
+              "name": "pin",
+              "doc": "The runtime pin (its version decides whether the flag is still needed)."
             }
           ],
           "returns": "The flags, to splice in before the entry.",
@@ -21728,8 +21792,8 @@
           "slug": "desktopSignWindows",
           "kind": "function",
           "signature": "desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>",
-          "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.",
-          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`, timestamped by `DENEXT_SIGN_TIMESTAMP_URL`), batched a few\ndozen files per `signtool sign` call. Without a certificate, or without `signtool` (off\nWindows), nothing is signed and a warning says so. The password, which signtool takes only as\n`/p`, is redacted from a failure message.",
+          "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, is redacted from a failure message.",
+          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, is redacted from a failure message.",
           "params": [
             {
               "name": "files",
@@ -22796,9 +22860,9 @@
           "name": "DesktopUpdateErrorCode",
           "slug": "DesktopUpdateErrorCode",
           "kind": "typeAlias",
-          "signature": "type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | not_staged | rejected",
+          "signature": "type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | expired | not_staged | rejected",
           "doc": "The code on a DesktopUpdateError:",
-          "docFull": "The `code` on a {@linkcode DesktopUpdateError}:\n\n- `network`: the manifest or a file could not be fetched (HTTP error, timeout, transport, or\n  invalid JSON);\n- `invalid`: the manifest is malformed (fails {@linkcode isOtaManifest}), or a path is unsafe;\n- `integrity`: the recomputed version does not match `manifest.version`, or a staged file's\n  SHA-256 does not match its manifest entry;\n- `unsigned`: the manifest carries no `signature` (a `publicKey` is always configured);\n- `signature`: the `signature` does not verify against the configured `publicKey`;\n- `downgrade`: `manifest.sequence` is `<=` the highest accepted, or absent after a sequenced\n  manifest was accepted;\n- `platform_mismatch`: the manifest names another target (`denext export --platform`) than this\n  app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), its\n  `platform` disagrees with the export's stamp file, or that stamp (which the version covers,\n  unlike the unsigned field) names another target, with or without the field;\n- `not_staged`: {@linkcode applyDesktopUpdate} named a version that is not staged;\n- `rejected`: the version was rolled back after failing to boot; refused until\n  {@linkcode desktopUpdateReset}.",
+          "docFull": "The `code` on a {@linkcode DesktopUpdateError}:\n\n- `network`: the manifest or a file could not be fetched (HTTP error, timeout, transport, or\n  invalid JSON);\n- `invalid`: the manifest is malformed (fails {@linkcode isOtaManifest}), or a path is unsafe;\n- `integrity`: the recomputed version does not match `manifest.version`, or a staged file's\n  SHA-256 does not match its manifest entry;\n- `unsigned`: the manifest carries no `signature` (a `publicKey` is always configured);\n- `signature`: the `signature` does not verify against the configured `publicKey`;\n- `downgrade`: `manifest.sequence` is `<=` the highest accepted or the bundled export's own\n  (recorded by {@linkcode resolveDesktopUiDir}), or absent once there is such a floor;\n- `platform_mismatch`: the manifest names another target (`denext export --platform`) than this\n  app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), its\n  `platform` disagrees with the export's stamp file, or that stamp (which the version covers,\n  unlike the unsigned field) names another target, with or without the field;\n- `expired`: the manifest's signed `expiresAt` has passed, or it carries none while the bundled\n  export's manifest does (re-sign it: `denext ota manifest --sign`);\n- `not_staged`: {@linkcode applyDesktopUpdate} named a version that is not staged;\n- `rejected`: the version was rolled back after failing to boot; refused until\n  {@linkcode desktopUpdateReset}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -25062,7 +25126,7 @@
           "kind": "typeAlias",
           "signature": "type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout | scheme_not_declared | pkce_required | scheme_owned_by_other_app | scheme_not_registered | session_in_progress | port_in_use",
           "doc": "The code on an openAuthSession rejection:",
-          "docFull": "The `code` on an {@linkcode openAuthSession} rejection:\n\n- `cancelled`: the user closed the sheet (or the popup) without finishing, or (Deno Desktop)\n  the `signal` aborted;\n- `busy`: another auth session is still open (one at a time);\n- `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,\n  or `timeoutMs` is not a positive number;\n- `unsupported`: the shell has no `DenextAuthSession` plugin, the sheet could not be\n  presented, the web popup was blocked, or there is no window (SSR);\n- `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform\n  allows it).\n\nDeno Desktop's custom-scheme callbacks add:\n\n- `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;\n- `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256`;\n- `scheme_owned_by_other_app`: another app handles the scheme (its identity in\n  {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call\n  `claimDeepLinkScheme` (`denext/desktop/client`);\n- `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev\n  run);\n- `session_in_progress`: another custom-scheme session is still open.\n\nIts loopback flow adds `port_in_use`: another program holds the fixed\n{@linkcode AuthSessionOptions.loopbackPort}.",
+          "docFull": "The `code` on an {@linkcode openAuthSession} rejection:\n\n- `cancelled`: the user closed the sheet (or the popup) without finishing, or (Deno Desktop)\n  the `signal` aborted;\n- `busy`: another auth session is still open (one at a time);\n- `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,\n  or `timeoutMs` is not a positive number;\n- `unsupported`: the shell has no `DenextAuthSession` plugin, the sheet could not be\n  presented, the web popup was blocked, or there is no window (SSR);\n- `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform\n  allows it).\n\nDeno Desktop's custom-scheme callbacks add:\n\n- `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;\n- `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256` (every\n  platform: the iOS / Android shell and the web popup too), and `pkce: \"not-applicable\"` was not\n  given;\n- `scheme_owned_by_other_app`: another app handles the scheme (its identity in\n  {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call\n  `claimDeepLinkScheme` (`denext/desktop/client`);\n- `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev\n  run);\n- `session_in_progress`: another custom-scheme session is still open.\n\nIts loopback flow adds `port_in_use`: another program holds the fixed\n{@linkcode AuthSessionOptions.loopbackPort}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -25843,7 +25907,7 @@
           "kind": "function",
           "signature": "downloadToFile(url: string, path: string, options?: DownloadToFileOptions): Promise<object>",
           "doc": "Download a URL straight into a file (missing parent folders are created), with progress.",
-          "docFull": "Download a URL straight into a file (missing parent folders are created), with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service downloads it (a `URLSession`\n  background session on iOS, WorkManager on Android): it carries on while the app is in the\n  background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it\n  where it stopped when the server allows a range. The body never passes through the WebView,\n  and CORS does not apply.\n- Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the\n  plugin's native download (`downloadFile`), without progress. (A plugin without\n  `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process (with the request `headers`; CORS does not apply) and writes\n  under the app's folder, with progress. {@linkcode fileTransfers} lists it and\n  {@linkcode onFileTransfer} reports it; {@linkcode cancelFileTransfer} or aborting `signal`\n  cancels it and drops the partial file. It cannot pause ({@linkcode pauseFileTransfer}\n  rejects with code `\"unsupported\"`).\n- Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System\n  with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range\n  request (a server that answers 200 starts it over).",
+          "docFull": "Download a URL straight into a file (missing parent folders are created), with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service downloads it (a `URLSession`\n  background session on iOS, WorkManager on Android): it carries on while the app is in the\n  background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it\n  where it stopped when the server allows a range. The body never passes through the WebView,\n  and CORS does not apply.\n- Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the\n  plugin's native download (`downloadFile`), without progress. (A plugin without\n  `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process (with the request `headers`; CORS does not apply) and writes\n  under the app's folder, with progress. {@linkcode fileTransfers} lists it and\n  {@linkcode onFileTransfer} reports it; {@linkcode pauseFileTransfer} keeps the bytes so far\n  and {@linkcode resumeFileTransfer} asks for the rest with a range request (a server that\n  answers 200 starts it over); {@linkcode cancelFileTransfer} or aborting `signal` cancels it\n  and drops the partial file. A download a restart interrupted continues when the same URL is\n  downloaded to the same file again.\n- Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System\n  with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range\n  request (a server that answers 200 starts it over).",
           "params": [
             {
               "name": "url",
@@ -27984,7 +28048,7 @@
           "kind": "function",
           "signature": "openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>",
           "doc": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.",
-          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\n- **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,\n  and the runtime catches the redirect on an ephemeral loopback port (RFC 8252), or on\n  `loopbackPort` for a provider with a fixed registered redirect. Otherwise a\n  custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,\n  a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows\n  and Linux the system browser, and the callback comes back as a deep link. While the system\n  browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser\n  reports no cancellation. Either way `callbackScheme` must be declared in\n  `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: \"not-applicable\"` with a\n  `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry\n  the same `state`, and another app handling the scheme is refused\n  (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches\n  {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,\n  denext's pinned runtime).\n\nOnly one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this\nonly opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)\nbefore the call, compare `state` after it, and exchange the `code` on your server.",
+          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\n- **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,\n  and the runtime catches the redirect on an ephemeral loopback port (RFC 8252), or on\n  `loopbackPort` for a provider with a fixed registered redirect. Otherwise a\n  custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,\n  a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows\n  and Linux the system browser, and the callback comes back as a deep link. While the system\n  browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser\n  reports no cancellation. Either way `callbackScheme` must be declared in\n  `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: \"not-applicable\"` with a\n  `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry\n  the same `state`, and another app handling the scheme is refused\n  (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches\n  {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,\n  denext's pinned runtime).\n\nOnly one session is open at a time (`busy` otherwise). The URL must carry PKCE S256 (a\n`code_challenge` and `code_challenge_method=S256`; `pkce_required` otherwise) unless\n`pkce: \"not-applicable\"` with a `reason`. Generate `state` and the PKCE verifier before the\ncall, compare `state` after it, and exchange the `code` (with the verifier) on your server.",
           "params": [
             {
               "name": "url",
@@ -27997,7 +28061,7 @@
           ],
           "returns": "The callback URL. It rejects with an AuthSessionError whose code is one of AuthSessionErrorCode.",
           "examples": [
-            "```ts\nimport { openAuthSession } from \"denext/mobile\";\n\nexport async function signIn(): Promise<void> {\n  const state = crypto.randomUUID();\n  const authorize = new URL(\"https://auth.example.com/authorize\");\n  authorize.searchParams.set(\"client_id\", \"my-app\");\n  authorize.searchParams.set(\"redirect_uri\", \"myapp://auth/callback\");\n  authorize.searchParams.set(\"response_type\", \"code\");\n  authorize.searchParams.set(\"state\", state);\n  // (add code_challenge / code_challenge_method for PKCE)\n  const { url } = await openAuthSession(authorize.href, { callbackScheme: \"myapp\" });\n  const params = new URL(url).searchParams;\n  if (params.get(\"state\") !== state) throw new Error(\"state mismatch\");\n  await fetch(\"/api/auth/exchange\", { method: \"POST\", body: params.get(\"code\") });\n}\n```"
+            "```ts\nimport { openAuthSession } from \"denext/mobile\";\n\nexport async function signIn(): Promise<void> {\n  const state = crypto.randomUUID();\n  const authorize = new URL(\"https://auth.example.com/authorize\");\n  authorize.searchParams.set(\"client_id\", \"my-app\");\n  authorize.searchParams.set(\"redirect_uri\", \"myapp://auth/callback\");\n  authorize.searchParams.set(\"response_type\", \"code\");\n  authorize.searchParams.set(\"state\", state);\n  const verifier = crypto.randomUUID() + crypto.randomUUID();\n  const digest = await crypto.subtle.digest(\"SHA-256\", new TextEncoder().encode(verifier));\n  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))\n    .replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\");\n  authorize.searchParams.set(\"code_challenge\", challenge);\n  authorize.searchParams.set(\"code_challenge_method\", \"S256\");\n  const { url } = await openAuthSession(authorize.href, { callbackScheme: \"myapp\" });\n  const params = new URL(url).searchParams;\n  if (params.get(\"state\") !== state) throw new Error(\"state mismatch\");\n  await fetch(\"/api/auth/exchange\", {\n    method: \"POST\",\n    body: JSON.stringify({ code: params.get(\"code\"), verifier }),\n  });\n}\n```"
           ],
           "denextOnly": true
         },
@@ -28158,7 +28222,7 @@
           "kind": "function",
           "signature": "otaBooted(): Promise<void>",
           "doc": "Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.",
-          "docFull": "Confirm to the native side that the running UI booted. Call it once after the app's\nfirst render: a UI on its trial launch that never calls it is rolled back by the\nnative watchdog (after 15 s of foreground time by default), and on the next launch if the\napp died twice before confirming. Harmless on the bundled UI or a confirmed one.\n\nIt sends this page's own UI version, read from the `_denext/ota.json` the page was served\nwith (its web root), and the native side confirms only when that is the version on trial.\nA late call from the page being replaced therefore cannot confirm the new UI. The manifest\nis read at the first call, before the page could have been switched away from; reading\n`otaStatus().pending` instead would name the new version as soon as the switch starts.\n\nResolves on the web and when the plugin is missing, and never rejects: a failure here\nmust not break the app that just booted.",
+          "docFull": "Confirm to the native side that the running UI booted. Call it once after the app's\nfirst render: a UI on its trial launch that never calls it is rolled back by the\nnative watchdog (after 15 s of foreground time by default), and on the next launch if the\napp died twice before confirming. Harmless on the bundled UI or a confirmed one.\n\nIt sends this page's own UI version, read from the `_denext/ota.json` the page was served\nwith (its web root), and the native side confirms only when that is the version on trial.\nA late call from the page being replaced therefore cannot confirm the new UI. A page with no\nreadable manifest sends no version, and a current shell (OTA template generation 11 on) then\nconfirms nothing: every downloaded UI carries its manifest, so only a page that is not the\ntrial UI lacks one. (A shell older than that confirms a version-less call.) The manifest\nis read at the first call, before the page could have been switched away from; reading\n`otaStatus().pending` instead would name the new version as soon as the switch starts.\n\nResolves on the web and when the plugin is missing, and never rejects: a failure here\nmust not break the app that just booted.",
           "params": [],
           "returns": "A promise that settles once the native side has recorded the boot.",
           "examples": [
@@ -28194,9 +28258,9 @@
           "name": "OtaErrorCode",
           "slug": "OtaErrorCode",
           "kind": "typeAlias",
-          "signature": "type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch",
+          "signature": "type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | expired",
           "doc": "The code of a native DenextOta refusal, carried on an error result:",
-          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary pins origins (`denext mobile add-ota --ota-origin`) and `baseUrl` is on\n  none of them, or it embeds no key and `baseUrl` is neither a pinned https origin nor loopback\n  (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);\n- `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,\n  or it has none after a sequenced manifest was accepted;\n- `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS\n  `CFBundleVersion`, Android `versionCode`);\n- `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary\n  embeds (`denext mobile fingerprint --write`): the UI was built for another native layer.\n  Checked only when both carry one.\n- `platform_mismatch`: the manifest names another target than this shell's (`ios` /\n  `android`): it is that platform's export (`denext export --platform`), with that platform's\n  files. Checked here, before the native side sees it. The manifest's `platform` field is not\n  signed; the export's stamp file is (the version covers it), so a stamped export is refused\n  by another target whether or not the field is present. Only a manifest with neither (a `web`\n  export) fits every shell.\n\nThe trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,\n`native_mismatch`, and\n`invalid` for a malformed or oversized manifest) run before any file is downloaded, and a\nrefusal leaves the running UI and any staged one as they were.",
+          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary pins origins (`denext mobile add-ota --ota-origin`) and `baseUrl` is on\n  none of them, or it embeds no key and `baseUrl` is not a pinned https origin. A loopback\n  `baseUrl` (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` on Android) passes both checks\n  only in a debug build (iOS: compiled with `DEBUG`, Xcode's Debug configuration; Android: a\n  debuggable build); a release build treats it as any other origin;\n- `expired`: the manifest's signed `expiresAt` has passed (re-sign it: `denext ota manifest\n  --sign`), or it carries none while the app's bundled UI does (an expiry-aware app refuses an\n  unexpiring release). Checked here too, before the running version is reported `current`, so\n  a feed stuck on an old release shows up as an error;\n- `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted or\n  the bundled UI's own manifest carries, or it has none once there is such a floor;\n- `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS\n  `CFBundleVersion`, Android `versionCode`);\n- `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary\n  embeds (`denext mobile fingerprint --write`): the UI was built for another native layer.\n  Checked only when both carry one.\n- `platform_mismatch`: the manifest names another target than this shell's (`ios` /\n  `android`): it is that platform's export (`denext export --platform`), with that platform's\n  files. Checked here, before the native side sees it. The manifest's `platform` field is not\n  signed; the export's stamp file is (the version covers it), so a stamped export is refused\n  by another target whether or not the field is present. Only a manifest with neither (a `web`\n  export) fits every shell.\n\nThe trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,\n`native_mismatch`, `expired`, and\n`invalid` for a malformed or oversized manifest) run before any file is downloaded, and a\nrefusal leaves the running UI and any staged one as they were.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -28282,9 +28346,9 @@
           "name": "otaSignaturePayload",
           "slug": "otaSignaturePayload",
           "kind": "function",
-          "signature": "otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint>): Promise<Uint8Array>",
-          "doc": "The bytes an OTA manifest signature covers, as UTF-8 with \\n (0x0A) separators and no trailing newline. A manifest with a nativeFingerprint (and a sequence) uses the v3 format, one with a sequence but no fingerprint v2, one without a sequence v1:",
-          "docFull": "The bytes an OTA manifest signature covers, as UTF-8 with `\\n` (0x0A) separators and no\ntrailing newline. A manifest with a `nativeFingerprint` (and a `sequence`) uses the v3 format,\none with a `sequence` but no fingerprint v2, one without a `sequence` v1:\n\n- v3: `\"denext-ota-v3\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\") + \"\\n\" + nativeFingerprint`\n- v2: `\"denext-ota-v2\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\")`\n- v1: `\"denext-ota-v1\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\")`\n\n`\"1\"` is `required === true`, anything else `\"0\"`; `sha256hex` is lowercase hex of the SHA-256\nof the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain\ndecimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the\nempty string; `nativeFingerprint` is 64 lowercase hex digits. The version already covers every\nfile, so the chain is files → version → signature, and none of the metadata can change under a\nvalid signature. The native `DenextOta` plugin builds the same bytes (v3 when the manifest has a\n`sequence` and a `nativeFingerprint`, v2 with a `sequence` alone, else v1). A v2 manifest\n(no fingerprint) is signed and verified exactly as before v3 existed.",
+          "signature": "otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint | expiresAt>): Promise<Uint8Array>",
+          "doc": "The bytes an OTA manifest signature covers, as UTF-8 with \\n (0x0A) separators and no trailing newline. A manifest with an expiresAt (and a sequence) uses the v4 format, else one with a nativeFingerprint (and a sequence) v3, one with a sequence but neither v2, one without a sequence v1:",
+          "docFull": "The bytes an OTA manifest signature covers, as UTF-8 with `\\n` (0x0A) separators and no\ntrailing newline. A manifest with an `expiresAt` (and a `sequence`) uses the v4 format, else one\nwith a `nativeFingerprint` (and a `sequence`) v3, one with a `sequence` but neither v2, one\nwithout a `sequence` v1:\n\n- v4: `\"denext-ota-v4\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\") + \"\\n\" + (nativeFingerprint ?? \"\") + \"\\n\" + expiresAt`\n- v3: `\"denext-ota-v3\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\") + \"\\n\" + nativeFingerprint`\n- v2: `\"denext-ota-v2\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\")`\n- v1: `\"denext-ota-v1\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\")`\n\n`\"1\"` is `required === true`, anything else `\"0\"`; `sha256hex` is lowercase hex of the SHA-256\nof the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain\ndecimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the\nempty string; `nativeFingerprint` is 64 lowercase hex digits (the empty string in v4 when\nabsent); `expiresAt` is a plain decimal integer (Unix seconds). The version already covers every\nfile, so the chain is files → version → signature, and none of the metadata can change under a\nvalid signature. The native `DenextOta` plugin builds the same bytes (v4 when the manifest has an\n`expiresAt`, else v3 when it has a `sequence` and a `nativeFingerprint`, v2 with a `sequence`\nalone, else v1). A v2 / v3 manifest (no expiry) is signed and verified exactly as before v4\nexisted.",
           "params": [
             {
               "name": "manifest",
@@ -28329,7 +28393,7 @@
           "kind": "function",
           "signature": "pauseFileTransfer(id: string): Promise<boolean>",
           "doc": "Pause a running download: the bytes so far are kept, and resumeFileTransfer continues from them where the server allows a range (else it starts over). Its downloadToFile promise stays pending until then. Uploads cannot pause.",
-          "docFull": "Pause a running download: the bytes so far are kept, and {@linkcode resumeFileTransfer}\ncontinues from them where the server allows a range (else it starts over). Its\n`downloadToFile` promise stays pending until then. Uploads cannot pause.\n\nA Deno Desktop download cannot pause (the runtime keeps no partial file to resume): this\nrejects with code `\"unsupported\"`; cancel it and download it again.",
+          "docFull": "Pause a running download: the bytes so far are kept, and {@linkcode resumeFileTransfer}\ncontinues from them where the server allows a range (else it starts over). Its\n`downloadToFile` promise stays pending until then. Uploads cannot pause.\n\nA Deno Desktop download pauses in the runtime: it keeps the partial file (and a sidecar naming\nthe URL and its validator) beside the destination, and a resume asks for the rest with a range\nrequest guarded by `If-Range`.",
           "params": [
             {
               "name": "id",
@@ -29150,6 +29214,25 @@
           "denextOnly": true
         },
         {
+          "name": "rekeyKeyValueStore",
+          "slug": "rekeyKeyValueStore",
+          "kind": "function",
+          "signature": "rekeyKeyValueStore(name?: string): Promise<void>",
+          "doc": "Rotate the key of the encrypted store name (openKeyValueStore(name, { encrypted: true })): a new random 256-bit key, the store's SQLCipher database re-encrypted under it (PRAGMA rekey, one transaction in SQLCipher), and the key in secureStore replaced. A store that has no key yet is given one first, as its first use would.",
+          "docFull": "Rotate the key of the encrypted store `name` (`openKeyValueStore(name, { encrypted: true })`):\na new random 256-bit key, the store's SQLCipher database re-encrypted under it (`PRAGMA\nrekey`, one transaction in SQLCipher), and the key in secureStore replaced. A store that has\nno key yet is given one first, as its first use would.\n\nCrash safety: the new key is first kept in its own secureStore entry and the store's key stays\nthe old one until the rekey has committed; only then does the new key replace it. A process\nthat dies before the rekey commits leaves the store under the old key; one that dies after it\nleaves the new key waiting in that entry. Either way the next use of the store tries the\ncurrent key, then the waiting one, and finishes the move — no data is lost.\n\nCalls on the store made while it rotates wait for the new key. Refused with\n{@linkcode KeyValueStoreError} `ENCRYPTION_UNAVAILABLE` wherever encrypted stores are (the\nbrowser, Deno Desktop, the fallbacks, a build without SQLCipher, a plugin from before 4.8.1,\na secureStore that is not secret), and `WRONG_KEY` when the stored key does not open the store.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The store's name (default \"default\")."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```ts\nimport { rekeyKeyValueStore } from \"denext/mobile\";\n\nawait rekeyKeyValueStore(\"vault\"); // e.g. after a sign-out, or on a schedule\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "reloadWidgets",
           "slug": "reloadWidgets",
           "kind": "function",
@@ -29612,7 +29695,7 @@
           "kind": "variable",
           "signature": "secureStore: SecureStore",
           "doc": "A string key-value store for secrets.",
-          "docFull": "A string key-value store for secrets.\n\n- Inside the native shell with `@aparajita/capacitor-secure-storage` installed (`denext\n  mobile add secure-store`), values live in the iOS Keychain (accessible when the device is\n  unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the\n  plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same\n  entries.\n- Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,\n  through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret\n  Service on Linux (gnome-keyring or KWallet, through the runtime's libsecret). When that store\n  is not usable (Linux without a Secret Service provider, with the keyring locked, or under a\n  runtime without its own store) the call fails with `backend_unavailable` and says why: a real\n  error, never `null` and never the plaintext web fallback.\n- **On the web it is NOT secret.** The fallback is a plain IndexedDB database\n  (`denext-secure-store`) that any script on the origin, and anyone with the device's\n  browser profile, can read. It keeps a web build working; it does not protect anything.\n\nValues are strings: `JSON.stringify` anything else.\n\n`set(key, value, { fallback: \"session\" })` / `get(key, { fallback: \"session\" })` opt in to\n`sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns\nonce and `set` resolves `{ stored: \"session\" }`. `get` also answers from that copy when the OS\nstore resolves with no value for the key (its own value, when present, wins). A successful OS\n`set` clears the copy and `delete` clears both. That copy is NOT secret and ends with the tab.\n\n`set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /\nTouch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a\n`BiometricError` when the user is not verified, including always on the web. The gate is in\ndenext's code, not in the Keychain item (see {@linkcode SecureStoreSetOptions}).",
+          "docFull": "A string key-value store for secrets.\n\n- Inside the native shell with `@aparajita/capacitor-secure-storage` installed (`denext\n  mobile add secure-store`), values live in the iOS Keychain (accessible when the device is\n  unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the\n  plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same\n  entries.\n- Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,\n  through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret\n  Service on Linux (gnome-keyring or KWallet, through the runtime's libsecret). When that store\n  is not usable (Linux without a Secret Service provider, with the keyring locked, or under a\n  runtime without its own store) the call fails with `backend_unavailable` and says why: a real\n  error, never `null` and never the plaintext web fallback.\n- **On the web it is NOT secret.** The fallback is a plain IndexedDB database\n  (`denext-secure-store`) that any script on the origin, and anyone with the device's\n  browser profile, can read. It keeps a web build working; it does not protect anything.\n\nValues are strings: `JSON.stringify` anything else.\n\n`set(key, value, { fallback: \"session\" })` / `get(key, { fallback: \"session\" })` opt in to\n`sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns\nonce and `set` resolves `{ stored: \"session\" }`. `get` also answers from that copy when the OS\nstore resolves with no value for the key (its own value, when present, wins). A successful OS\n`set` clears the copy and `delete` clears both. That copy is NOT secret and ends with the tab.\n\n`set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /\nTouch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a\n`BiometricError` when the user is not verified, including always on the web. In a current\niOS / Android shell the OS enforces it (a Keychain access control, an Android Keystore key that\nneeds the user); in an older shell and on Deno Desktop it is denext's code in the page (see\n{@linkcode SecureStoreSetOptions.requireBiometric}).",
           "params": [],
           "returns": "",
           "examples": [
@@ -30124,8 +30207,8 @@
           "slug": "SqliteEncryptionError",
           "kind": "class",
           "signature": "class SqliteEncryptionError",
-          "doc": "A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' as the first statement, such as PRAGMA rekey).",
-          "docFull": "A refused encryption request: `ENCRYPTION_UNAVAILABLE` (this backing has no SQLCipher, or the\nplugin has encryption off; nothing ran), `WRONG_KEY` (another passphrase than the one the\nplugin keeps), `KEY_REQUIRED` (the database is encrypted: run `PRAGMA key` first) or\n`UNSUPPORTED` (a key pragma other than `PRAGMA key = '…'` as the first statement, such as\n`PRAGMA rekey`).",
+          "doc": "A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first; or a rekey of a database that was never keyed) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' / PRAGMA rekey = '…' as the first statement, such as PRAGMA hexkey, or a rekey inside a transaction).",
+          "docFull": "A refused encryption request: `ENCRYPTION_UNAVAILABLE` (this backing has no SQLCipher, or the\nplugin has encryption off; nothing ran), `WRONG_KEY` (another passphrase than the one the\nplugin keeps), `KEY_REQUIRED` (the database is encrypted: run `PRAGMA key` first; or a rekey\nof a database that was never keyed) or `UNSUPPORTED` (a key pragma other than\n`PRAGMA key = '…'` / `PRAGMA rekey = '…'` as the first statement, such as `PRAGMA hexkey`, or\na rekey inside a transaction).",
           "params": [],
           "returns": "",
           "examples": [],

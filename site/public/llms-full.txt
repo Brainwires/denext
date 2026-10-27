@@ -1474,7 +1474,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ProfilerProps` — Props for Profiler.
 - `type PropsComparator = (prev: Record<string, unknown>, next: Record<string, unknown>) => boolean` — Compares a component's previous and next props; true means "skip re-render".
 - `type PropsWithChildren<P> = P & object` — Add children to props.
-- `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
+- `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix; FRESH_PUBLIC_ is Fresh's, for a migrated Fresh app. Any other variable stays server-only.
 - `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `type QueryInput = Record<string, string | number | boolean | null | undefined> | string` — An href's query: a record (nullish values are dropped) or a pre-built query string.
 - `type ReactElement<P, _T> = VNode & object` — A denext element (React's ReactElement). The 2nd param (element type) is accepted for @types/react shape compatibility; denext keys elements on VNode.
@@ -1631,7 +1631,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.8.0` — The denext framework version.
+- `VERSION: 4.9.0` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1736,8 +1736,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Author` — A named author (<meta name="author">, optional <link rel="author">).
 - `interface AuthorizedCallbackInput` — What AuthCallbacks.authorized is asked about.
 - `interface AuthorizedTapOptions<T>` — Options for tapChannelAuthorized.
+- `interface AuthPasskeyAndroidApp` — An Android app in passkeys.androidApps (the shape appLinks.android takes).
 - `interface AuthPasskeyConfig` — Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or as the second. Every field is optional; the relying party defaults to canonicalOrigin.
 - `interface AuthPasskeyMdsConfig` — passkeys.attestation.mds: where the metadata comes from and what it lets through.
+- `type AuthPasskeyRevocationPolicy = soft | hard` — passkeys.attestation.revocation: "soft" goes on when no OCSP answer or CRL can be had, "hard" refuses.
 - `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider | SamlProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
@@ -1830,6 +1832,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CsrfDoubleSubmitOptions` — The double-submit half of CsrfOptions.
 - `interface CsrfOptions` — Options for csrf.
 - `currentContext(): RequestContext | undefined` — The current request context, or undefined if none is active.
+- `currentSessionId(): Promise<string | null>` — The id of the current request's cookie session — what revokeSession takes: the store id of a store-backed session (AuthSession.sessionId), else a stateless session's own AuthSession.sid. null when signed out (or still owing a second factor), for a stateless cookie issued before denext minted ids, and for a bearer (native app or access token) session. Server-only: keep it out of anything sent to the browser (GET {basePath}/session and the client hooks never carry it); list a user's devices by it on the server.
 - `interface CustomProviderAdapter` — The stored-provider group.
 - `interface CustomProviderRecord` — One stored OAuth / OIDC identity provider (custom:<name>).
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
@@ -2207,7 +2210,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PrepareStepOptions` — Options for PluginContext.addPrepareStep.
 - `interface ProfileInput` — Raw inputs a provider maps into an AuthUser.
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
-- `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
+- `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix; FRESH_PUBLIC_ is Fresh's, for a migrated Fresh app. Any other variable stays server-only.
 - `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `type PushErrorCode = invalid-token | auth | rate-limited | payload | server | network | config | rejected` — Why a push failed: - invalid-token: the token is dead (uninstalled app, wrong topic): prune it; - auth: the credentials were refused (after one retry with a fresh token); - rate-limited: slow down (see retryAfter); - payload: the message is malformed or too large; - server: the push service failed (5xx); retry later; - network: fetch itself failed; - config: no credentials for the target's platform, or an option that platform lacks; - rejected: any other refusal (see reason).
 - `interface PushPayload` — What to send. Every field is optional; unsupported ones are ignored per platform.
@@ -2312,7 +2315,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RevenueCatWebhookEvent` — One webhook event (the fields RevenueCat documents; others are kept on the object).
 - `revokeAllSessions(userId: string): Promise<void>` — Revoke every session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft: the session store's records, every native app session family when the adapter has that group, and — with an adapter — every cookie session signed in before now, stateless ones included (the user's sessionsValidAfter). Fires the sessionRevoked event. Throws when there is nothing to revoke through: no adapter and no sessionStore.
 - `revokeApiToken(config: AuthConfig, id: string, options?: object): Promise<boolean>` — Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error, and fires nothing; an actual revocation fires apiTokenRevoked (reason: "revoked").
-- `revokeSession(sessionId: string): Promise<void>` — Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — "sign out this device". Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless.
+- `revokeSession(sessionId: string): Promise<void>` — Revoke one session by id, so its cookie stops authenticating from the next read — "sign out this device". Fires the sessionRevoked event.
 - `rewrite(destination: string, init?: object): RewriteCommand` — Internally route as if the request were for destination (no client redirect).
 - `REWRITE: typeOperator` — Internal marker symbol keying a RewriteCommand.
 - `interface RewriteCommand` — Command returned by rewrite to route as if the URL were destination.
@@ -2431,11 +2434,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SsoMetadataRefreshSummary` — What refreshSsoMetadata did.
 - `interface SsoProviderRecord` — A stored SAML 2.0 identity provider of the /auth/v1 SSO admin API (/admin/sso/providers). The entity id is unique across providers, and so is every domain.
 - `type SsoProviderWrite = ok | not_found | entity_id_exists | domain_exists` — What a create / update of an SsoProviderRecord came to.
+- `interface SsoSessionIndexRecord` — A stateless cookie session a SAML sign-in started: Single Logout's session index.
 - `interface SsoSessionRecord` — An /auth/v1 session that a SAML assertion started — what an IdP-initiated LogoutRequest (NameID + SessionIndex) is resolved to.
 - `STALLED: Symbol` — Sentinel returned by readCappedBody when the body stalls (idle).
 - `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
 - `type StandardResult<Output> = object | object` — A Standard Schema validation result: a parsed value, or a list of issues.
 - `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
+- `interface StartConfig` — The production server's settings (see DenextConfig.start).
 - `type StaticParamsGenerator = (context: object) => RouteParams[] | Promise<RouteParams[]>` — generateStaticParams — the param sets to pre-render. Called with the parent segments' params (from a layout's own generator, or {} at the root), Next.js style; a [...rest] value may be a string[].
 - `interface SubscriptionConfig<In, Out>` — The definition passed to defineSubscription.
 - `interface SubscriptionContext` — What a subscription's authorize / resolve receive besides the input.
@@ -2623,7 +2628,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ProfilerProps` — Props for Profiler.
 - `type PropsComparator = (prev: Record<string, unknown>, next: Record<string, unknown>) => boolean` — Compares a component's previous and next props; true means "skip re-render".
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
-- `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
+- `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix; FRESH_PUBLIC_ is Fresh's, for a migrated Fresh app. Any other variable stays server-only.
 - `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `qrl<E>(loader: () => Promise<(event: E) => unknown>, id: string, capture?: typeOperator): Qrl<E>` — Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree.
 - `interface Qrl<E>` — A reference to a lazily-loaded handler: callable, tagged with its stable id.
@@ -2906,7 +2911,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopPackageArches(arch: string): Array<x86_64 | arm64>` — The bundle arches a Linux / Windows run builds: both for both, the machine's own for host.
 - `interface DesktopPackageArgs` — A package script's parsed command line.
 - `interface DesktopPackageArgSpec` — What parseDesktopPackageArgs accepts.
-- `desktopPackageFlags(entryUrl: string, os: DesktopOs, netSplit?: boolean): Promise<string[]>` — The deno desktop --allow-* flags for a scaffolded packaging script: read the project's denext.config.ts (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code). The network grant is split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or later, read from the deno on PATH the script builds with (desktopNetSplitFor); DENEXT_DESKTOP_RUNTIME=stock, a local runtime build or a stock deno keep --allow-net.
+- `desktopPackageFlags(entryUrl: string, os: DesktopOs, netSplit?: boolean): Promise<string[]>` — The deno desktop --allow-* flags for a scaffolded packaging script: read the project's config (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts, or its .mts / .js / .mjs twin) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code). The network grant is split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or later, read from the deno on PATH the script builds with (desktopNetSplitFor); DENEXT_DESKTOP_RUNTIME=stock, a local runtime build or a stock deno keep --allow-net.
 - `desktopPackageMeta(entryUrl: string, fallbackName: string): Promise<DesktopPackageMeta>` — packageMetaFrom for the project whose scripts/ holds entryUrl.
 - `interface DesktopPackageMeta` — What every installer says about the app.
 - `interface DesktopPageGlobals` — What the injected globalThis.__denext carries besides the desktop marker and the token (see injectDesktopGlobal).
@@ -2919,10 +2924,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopRunOptions` — Options for desktopRun.
 - `interface DesktopRuntime` — What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.
 - `interface DesktopRuntimeConfig` — What resolveDesktopCapabilities reads: the project config, or the JSON slice of it the desktop sync writes to .deno-desktop/config.json ({ desktop, spa: { proxy } }), which the generated desktop.ts imports so denext.config.ts (and every plugin it imports) stays out of the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.
-- `desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator): string[]` — The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it: --unstable-no-legacy-abort, which the runtime keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. The stock runtime (an empty env) gets none: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.
+- `desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: typeOperator, pin?: object): string[]` — The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it. A runtime before 3.0.0-rc.5 gets --unstable-no-legacy-abort, which it keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. From 3.0.0-rc.5 that is the runtime's default, so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
-- `desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.
+- `desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, is redacted from a failure message.
 - `interface DesktopSignWindowsDeps` — What desktopSignWindows runs commands and reads settings through (tests stub them).
 - `desktopSlug(name: string): string` — A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
 - `desktopToolGate(why: string | undefined, format: string, explicit: boolean): boolean` — Whether why (a reason the tool for format cannot run, or undefined when it can) still lets the format build: a default format is skipped with a warning, an asked-for one fails.
@@ -2999,7 +3004,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopBooted(config: DesktopUpdaterConfig): Promise<void>` — Confirm that the active overlay booted. Call it once the app has served and rendered (the desktop runtime calls it behind a short delay after Deno.serve is up). It flips a PENDING pointer to confirmed and clears the watchdog marker, so a crash BEFORE this call leaves the version pending and the next resolveDesktopUiDir rolls it back. Best effort: it never throws.
 - `interface DesktopUpdateCheck` — The result of checkForDesktopUpdate.
 - `class DesktopUpdateError` — A refusal from the updater, carrying a machine-readable DesktopUpdateErrorCode.
-- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | not_staged | rejected` — The code on a DesktopUpdateError:
+- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | expired | not_staged | rejected` — The code on a DesktopUpdateError:
 - `interface DesktopUpdatePrepared` — The result of prepareDesktopUpdate.
 - `interface DesktopUpdaterConfig` — Configuration for the desktop UI self-updater.
 - `desktopUpdateReset(config: DesktopUpdaterConfig): Promise<void>` — Return to the bundled export: delete every overlay version, every staging dir, and all state (pointer, sequence, rejected, marker). A no-op when nothing is installed.
@@ -3387,14 +3392,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.
 - `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
 - `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
-- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch` — The code of a native DenextOta refusal, carried on an error result:
+- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | expired` — The code of a native DenextOta refusal, carried on an error result:
 - `otaInstallId(): string` — This install's stable OTA id: a random base64url string made on first use and kept in localStorage (denext:ota-install-id), so a channels server (createOtaHandler({ channels })) puts the device in the same staged-rollout bucket on every check. It identifies nothing but the install; clearing the app's data makes a new one. Where storage is unavailable it lasts for the page's lifetime.
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
 - `type OtaPrepareResult = object | object | object | object | object` — The outcome of prepareUiUpdate. It never throws; every failure is a value.
 - `interface OtaRejectedEvent` — What onOtaRejected reports: a downloaded UI that failed re-verification.
 - `otaReset(): Promise<void>` — Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.
-- `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with a nativeFingerprint (and a sequence) uses the v3 format, one with a sequence but no fingerprint v2, one without a sequence v1:
+- `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint | expiresAt>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with an expiresAt (and a sequence) uses the v4 format, else one with a nativeFingerprint (and a sequence) v3, one with a sequence but neither v2, one without a sequence v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
 - `interface OtaStatus` — What the native side reports about the UI versions on this device.
 - `pauseFileTransfer(id: string): Promise<boolean>` — Pause a running download: the bytes so far are kept, and resumeFileTransfer continues from them where the server allows a range (else it starts over). Its downloadToFile promise stays pending until then. Uploads cannot pause.
@@ -3457,6 +3462,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `registerForPush(options?: RegisterForPushOptions): Promise<PushRegistration>` — Register the device for remote notifications and resolve its token, for your server to send to through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your server (with the user it belongs to) and send from there.
 - `interface RegisterForPushOptions` — Options for registerForPush.
 - `registerSystemIcons(icons: Readonly<Record<string, string>>): void` — Add Material Symbols SystemIcon can draw off iOS: name → the d of the symbol's path in its 960-unit grid (viewBox="0 -960 960 960", as @material-symbols/svg-* ships them). A registered name replaces a built-in one.
+- `rekeyKeyValueStore(name?: string): Promise<void>` — Rotate the key of the encrypted store name (openKeyValueStore(name, { encrypted: true })): a new random 256-bit key, the store's SQLCipher database re-encrypted under it (PRAGMA rekey, one transaction in SQLCipher), and the key in secureStore replaced. A store that has no key yet is given one first, as its first use would.
 - `reloadWidgets(kind?: string): Promise<void>` — Ask the OS to redraw widget kind (every kind when omitted) from its stored snapshot. Outside the native shell, or without the plugin, it does nothing.
 - `removeDeliveredNotifications(selector: DeliveredNotificationSelector): Promise<void>` — Remove delivered notifications from the notification centre — local ones and remote pushes alike. Pending (scheduled) notifications are not touched: cancelNotification cancels those.
 - `requestPermission(name: PermissionName): Promise<PermissionState>` — Ask for a permission when a prompt can still be shown, and report the outcome. A decided permission (granted, limited, blocked) comes back as it is, without a prompt. A refusal reads blocked on iOS (it never prompts again) and denied on Android's first refusal (a later request prompts again, after your rationale); see PermissionState.
@@ -3520,7 +3526,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SqliteBackend = native | opfs | memory` — Where a database lives: the native plugin, OPFS in the browser, or memory.
 - `type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer` — A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.
 - `interface SqliteDatabase` — An open database (openSqlite).
-- `class SqliteEncryptionError` — A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' as the first statement, such as PRAGMA rekey).
+- `class SqliteEncryptionError` — A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first; or a rekey of a database that was never keyed) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' / PRAGMA rekey = '…' as the first statement, such as PRAGMA hexkey, or a rekey inside a transaction).
 - `type SqliteEncryptionErrorCode = ENCRYPTION_UNAVAILABLE | WRONG_KEY | KEY_REQUIRED | UNSUPPORTED` — Why SqliteEncryptionError was thrown.
 - `interface SqliteOptions` — Options for openSqlite and deleteSqlite.
 - `type SqliteParams = typeOperator | Readonly<Record<string, SqliteBindValue>>` — A statement's parameters: positional (?), or named by their placeholder, prefix included ({ $id: 1 } for $id, { ":id": 1 } for :id).
