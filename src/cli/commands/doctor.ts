@@ -47,16 +47,24 @@ import { workspaceRootHint } from "../../build/workspace-imports.ts";
 import {
   explainJailFailures,
   grantsSomething,
+  homeName,
   JAIL_DEFAULT_RELEASE,
   JAIL_DOCS_URL,
+  type JailConfinement,
+  jailConfinement,
   jailEffective,
   jailFailures,
+  type JailHome,
   jailHostListsSupported,
+  jailPatch,
   type JailProject,
   type JailRequirement,
+  jailRuntime,
   type JailSetting,
   jailSnippet,
+  type LifecycleJail,
   readJailProject,
+  readLifecycleJail,
   requiredJailExceptions,
   upstreamByNameAdvice,
 } from "../../build/jail-scripts.ts";
@@ -355,6 +363,11 @@ export interface JailScriptsCheckOptions {
   readonly installLog?: string;
   /** The OS the project installs on (default: this one). */
   readonly os?: typeof Deno.build.os;
+  /**
+   * The machine's `lifecycleJail` report (`deno info --json`, runtime 3.0.0-rc.7 and later);
+   * default: read from the project's `deno` when the runtime reports it.
+   */
+  readonly lifecycleJail?: LifecycleJail | null;
 }
 
 /** What the jail can't do on Windows, said with every Windows jail detail. */
@@ -362,7 +375,7 @@ const WINDOWS_JAIL_NOTE = "on Windows the OS can't confine the scripts' other pr
   "(`curl`, a compiler, a downloaded binary): only the scrubbed environment, the scratch HOME " +
   "and every `deno` they start are jailed";
 
-/** Whether deno.json approves any dependency's lifecycle scripts (`allowScripts`). */
+/** Whether the settings (deno.json, or package.json's `"deno"`) approve any lifecycle script. */
 function approvesScripts(denoJson: Record<string, unknown> | null): boolean {
   const v = denoJson?.allowScripts;
   if (v === true) return true;
@@ -390,46 +403,111 @@ export async function jailScriptsCheck(
 ): Promise<Check | null> {
   const name = "lifecycle-script jail";
   const os = options.os ?? Deno.build.os;
-  const log = options.installLog ?? "";
-  const project = await readJailProject(dir, options.env ? { env: options.env } : {});
-  const explained = [
-    ...explainJailFailures(jailFailures(log, os), options.version, project.setting.packages),
-    ...upstreamByNameAdvice({
-      output: log,
-      denoJson: project.denoJson,
-      env: options.env ?? safeEnv,
-      ...(options.version ? { version: options.version } : {}),
-    }),
-  ];
-  const required = (await requiredJailExceptions(project, undefined, options.version))
-    .filter(grantsSomething);
-  const blocked = jailBlockers(project, os);
-  if (required.length === 0 && explained.length === 0 && blocked.length === 0) return null;
-  const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
-  const on = jailEffective(project.setting, options.version);
-  const windows = on && os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
+  const facts = await jailCheckFacts(dir, options, os);
+  const { project, explained, required, blocked, on, confinement } = facts;
+  const nothing = required.length === 0 && explained.length === 0 && blocked.length === 0;
+  if (nothing && !confinement) return null;
+  const missing = required.filter((r) => jailPatch(r, project.setting, options.version) !== null);
+  const note = confinementNote(confinement, on, os);
   const failures = explained.length
     ? `the install log shows: ${explained.map((l) => l.trim()).join(" · ")}; `
     : "";
   const blockers = blocked.map((b) => `${b}; `).join("");
   if (on && missing.length) {
-    return {
-      name,
-      ok: false,
-      detail: blockers + failures +
-        missingJailDetail(missing, project.setting, options.version) + windows,
-      critical: false,
-    };
+    const why = missingJailDetail(missing, project.setting, options.version, project.home);
+    return { name, ok: false, detail: blockers + failures + why + note, critical: false };
   }
   if (explained.length || blocked.length) {
     return { name, ok: false, detail: `${blockers}${failures}${JAIL_DOCS_URL}`, critical: false };
   }
-  return {
-    name,
-    ok: true,
-    detail: passingJailDetail(required, project.setting, on) + windows,
-    critical: false,
-  };
+  // where the OS can't confine, a project that approves scripts runs them nearly unconfined
+  const exposed = confinement?.state === "no-os-sandbox" && approvesScripts(project.settings);
+  const detail = nothing
+    ? confinement!.detail // the jail's real state on this machine (runtime 3.0.0-rc.7 and later)
+    : passingJailDetail(required, project.setting, on) + note;
+  return { name, ok: !exposed, detail, critical: false };
+}
+
+/** What {@linkcode jailScriptsCheck} decides from. */
+interface JailCheckFacts {
+  readonly project: JailProject;
+  /** The install log's jail failures and proxy advice, explained. */
+  readonly explained: readonly string[];
+  /** The listed dependencies that need an exception. */
+  readonly required: readonly JailRequirement[];
+  /** What stops the settings from doing what they look like they do. */
+  readonly blocked: readonly string[];
+  /** Whether the jail is on for the project. */
+  readonly on: boolean;
+  /** The jail's real state on this machine, when the runtime reports it. */
+  readonly confinement: { readonly state: JailConfinement; readonly detail: string } | null;
+}
+
+/** Read the project, the install log and the machine's confinement for the jail check. */
+async function jailCheckFacts(
+  dir: string,
+  options: JailScriptsCheckOptions,
+  os: typeof Deno.build.os,
+): Promise<JailCheckFacts> {
+  const { version } = options;
+  const log = options.installLog ?? "";
+  const project = await readJailProject(dir, {
+    ...(options.env ? { env: options.env } : {}),
+    ...(version ? { version } : {}),
+  });
+  const { home } = project;
+  const explained = [
+    ...explainJailFailures(jailFailures(log, os), version, project.setting.packages, home),
+    ...upstreamByNameAdvice({
+      output: log,
+      denoJson: project.settings,
+      home,
+      env: options.env ?? safeEnv,
+      ...(version ? { version } : {}),
+    }),
+  ];
+  const required = (await requiredJailExceptions(project, undefined, version))
+    .filter(grantsSomething);
+  const on = jailEffective(project.setting, version);
+  const confinement = await confinementOf(dir, project, on, options);
+  return { project, explained, required, blocked: jailBlockers(project, os), on, confinement };
+}
+
+/**
+ * What the jail can't confine, said after the check's detail: the runtime's own report where it
+ * has one (nothing for a jail that is off), else the static Windows note.
+ */
+function confinementNote(
+  confinement: JailCheckFacts["confinement"],
+  on: boolean,
+  os: typeof Deno.build.os,
+): string {
+  if (confinement) return confinement.state === "off" ? "" : ` (${confinement.detail})`;
+  return on && os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
+}
+
+/**
+ * The jail's real state for the project on this machine: off (the project opted out), or what
+ * the runtime's own `lifecycleJail` report says. Null on runtimes before 3.0.0-rc.7 and stock
+ * Deno, which don't report it, and when the report can't be had.
+ */
+async function confinementOf(
+  dir: string,
+  project: JailProject,
+  on: boolean,
+  options: JailScriptsCheckOptions,
+): Promise<{ readonly state: JailConfinement; readonly detail: string } | null> {
+  if (!jailRuntime(options.version).confinementInfo) return null;
+  if (!on) {
+    return {
+      state: "off",
+      detail: `off (${project.setting.source}): dependencies' install scripts run unconfined`,
+    };
+  }
+  const report = options.lifecycleJail !== undefined
+    ? options.lifecycleJail
+    : await readLifecycleJail(denoExecutable(), dir);
+  return report ? jailConfinement(report) : null;
 }
 
 /**
@@ -439,6 +517,13 @@ export async function jailScriptsCheck(
  */
 function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] {
   const out: string[] = [];
+  if (project.ignoredPackageJsonSettings) {
+    out.push(
+      `${project.ignoredPackageJsonSettings}'s "deno" object sets "allowScripts" or ` +
+        `"supplyChain", which Deno ignores beside a deno.json (the deno.json is the only home ` +
+        `then); fix: move them to ${project.configPath}`,
+    );
+  }
   if (project.ignoredMemberConfig) {
     out.push(
       `${project.ignoredMemberConfig} sets "supplyChain", which Deno ignores in a workspace ` +
@@ -447,7 +532,7 @@ function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] 
         }`,
     );
   }
-  if (os === "windows" && project.setting.paranoid && approvesScripts(project.denoJson)) {
+  if (os === "windows" && project.setting.paranoid && approvesScripts(project.settings)) {
     out.push(
       `${project.setting.paranoid} turns on paranoid, which refuses to run an approved ` +
         "dependency's install script on Windows (the OS can't confine it), so the approved " +
@@ -462,7 +547,8 @@ function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] 
 function missingJailDetail(
   missing: readonly JailRequirement[],
   setting: JailSetting,
-  version?: string,
+  version: string | undefined,
+  home: JailHome,
 ): string {
   const why = setting.state === "on"
     ? `${setting.source} turns it on`
@@ -470,7 +556,8 @@ function missingJailDetail(
   const verb = missing.length === 1 ? "needs" : "need";
   return `${missing.map((r) => r.entry.name).join(", ")} ${verb} an exception: dependencies' ` +
     `install scripts run jailed (${why}) and theirs download or write outside node_modules; ` +
-    `fix: add ${JSON.stringify(JSON.parse(jailSnippet(missing)))} to deno.json (never turn the ` +
+    `fix: add ${JSON.stringify(JSON.parse(jailSnippet(missing, home)))} to ${homeName(home)} ` +
+    "(never turn the " +
     `jail off for it): ${JAIL_DOCS_URL}` + cacheNote(missing, version);
 }
 

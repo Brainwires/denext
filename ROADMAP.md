@@ -48,7 +48,20 @@ Low findings from the 4.8 supply-chain audit:
   `readJailSetting` still counts it as on, so next to `jail-scripts=false`
   denext writes exceptions and `doctor` flags missing ones for a jail that is off.
 - **Narrow existing exceptions on the move to rc.6.** A built-in entry already configured as
-  `net: true` stays so; `doctor` (or `upgrade`) could offer the host list and the `~` cache.
+  `net: true` stays so; `doctor` (or `upgrade`) could offer the host list. (The `~` cache,
+  `executables` and Prisma's `node_modules/.prisma` are now added to an existing entry.)
+- **Pin runtime `3.0.0-rc.7`.** The jail work for it is in and gated on the version
+  (`jailRuntime`): `knownPackages`, doctor's `lifecycleJail` status, package.json's `"deno"`
+  settings home. Pinning flips `src/build/deno-toolchain-pin.json`; then add the rc.7 rows
+  (`knownPackages`, the package.json `"deno"` object, `lifecycleJail`) to the runtime reference.
+- **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
+  `libxmljs`): from rc.7 their declared host needs a grant, and a `knownPackages` entry can't
+  cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.
+- **`Requires ffi access` in an install log.** `jailFailures` doesn't explain it yet: before rc.7
+  (and where the OS can't confine) a jailed install check can't load the package's own native
+  addon; say to leave the package unapproved.
+- **A package.json project's npm workspace member** gets its exceptions written to its own
+  package.json `"deno"` object when `denext add` runs in it; the runtime reads the root's only.
 - **npm (`package.json` `workspaces`) members** are not read for dependencies; only a deno.json
   `workspace` is.
 - **An unknown package's network failure** is pointed at `net: true`; on rc.6 suggest listing

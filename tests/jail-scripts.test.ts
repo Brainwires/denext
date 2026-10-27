@@ -72,6 +72,12 @@ function plain(e: JailPackageException): unknown {
   return JSON.parse(JSON.stringify(e));
 }
 
+/** Whether a list entry grants anything: the network, env, project directories or known hosts. */
+function entryGrants(e: (typeof JAIL_SCRIPT_EXCEPTIONS)[number]): boolean {
+  const lists = [e.exception.env, e.writeTargets, e.declaredHosts];
+  return e.exception.net === true || lists.some((l) => (l?.length ?? 0) > 0);
+}
+
 /** One list entry is in deno.json's exception shape and says why. */
 function assertEntryShape(e: (typeof JAIL_SCRIPT_EXCEPTIONS)[number]): void {
   assert(/^(@[a-z0-9-]+\/)?[a-z0-9.-]+$/.test(e.name), e.name);
@@ -80,8 +86,7 @@ function assertEntryShape(e: (typeof JAIL_SCRIPT_EXCEPTIONS)[number]): void {
     assert(["env", "write", "net"].includes(key), `${e.name}: ${key}`);
   }
   const env = [...e.exception.env ?? []];
-  const grants = e.exception.net === true || env.length > 0 || (e.writeTargets?.length ?? 0) > 0;
-  assert(grants, `${e.name} grants something`);
+  assert(entryGrants(e), `${e.name} grants something`);
   for (const v of env) assert(/^[A-Za-z_][A-Za-z0-9_]*$/.test(v), v);
   assertEquals(env, [...env].sort(), e.name);
   assertFalse((e.via ?? []).includes(e.name), e.name);
