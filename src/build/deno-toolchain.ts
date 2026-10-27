@@ -1729,6 +1729,16 @@ function linkPath(env: EnvGet, os: string): string {
   return join(denoToolchainLinkDir(env), os === "windows" ? "deno.cmd" : "deno");
 }
 
+/**
+ * Whether `path` is `dir` or below it, compared up to a separator: `…/denext-deno-other/x` is
+ * not inside `…/denext-deno`.
+ */
+function isUnder(dir: string, path: string): boolean {
+  const base = dir.replace(/[\\/]+$/, "");
+  if (path === base) return true;
+  return path.startsWith(base) && (path[base.length] === "/" || path[base.length] === "\\");
+}
+
 /** Whether the file at `path` is a link this module created. */
 async function isOurLink(path: string, os: string, cacheRoot: string): Promise<boolean> {
   if (os === "windows") {
@@ -1736,7 +1746,15 @@ async function isOurLink(path: string, os: string, cacheRoot: string): Promise<b
     return text !== null && text.includes(SHIM_MARK);
   }
   const target = await Deno.readLink(path).catch(() => null);
-  return target !== null && target.startsWith(cacheRoot);
+  return target !== null && isUnder(cacheRoot, target);
+}
+
+/**
+ * The `.cmd` shim's line for `deno`: cmd expands `%…%` even inside quotes, so each `%` in the path
+ * is doubled (a batch file reads `%%` as one `%`).
+ */
+function shimLine(deno: string): string {
+  return `"${deno.replaceAll("%", "%%")}" %*`;
 }
 
 /** The PATH line the user adds once. */
@@ -1773,7 +1791,7 @@ export async function linkDenoToolchain(
   await Deno.mkdir(denoToolchainLinkDir(env), { recursive: true });
   if (existing) await Deno.remove(link);
   if (os === "windows") {
-    await Deno.writeTextFile(link, `@echo off\r\n${SHIM_MARK}\r\n"${deno}" %*\r\n`);
+    await Deno.writeTextFile(link, `@echo off\r\n${SHIM_MARK}\r\n${shimLine(deno)}\r\n`);
   } else {
     await Deno.symlink(deno, link);
   }
@@ -1787,7 +1805,7 @@ async function linkedBinary(link: string, os: string, cacheRoot: string): Promis
   }
   if (os !== "windows") return await Deno.readLink(link);
   const text = await Deno.readTextFile(link);
-  return /^"([^"]+)" %\*/m.exec(text)?.[1] ?? null;
+  return /^"([^"]+)" %\*/m.exec(text)?.[1]?.replaceAll("%%", "%") ?? null;
 }
 
 /**
@@ -1808,7 +1826,7 @@ export async function staleToolchainLink(
   const link = linkPath(env, os);
   const target = await linkedBinary(link, os, root);
   if (target === null || pin.version === null) return null;
-  if (target.startsWith(join(root, pin.version))) return null;
+  if (isUnder(join(root, pin.version), target)) return null;
   return `denext: ${link} points at ${target}, not the pinned toolchain ${pin.version}; ` +
     "run `denext toolchain link` again (or `denext toolchain unlink`).";
 }

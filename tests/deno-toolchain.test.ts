@@ -11,7 +11,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { dirname, join, toFileUrl } from "@std/path";
 import { parse as parseYaml } from "@std/yaml";
 import {
   DENO_TOOLCHAIN,
@@ -729,6 +729,42 @@ Deno.test("link / unlink use $DENEXT_INSTALL/bin, the custom-prefix install's bi
       cacheRoot: root,
     });
     assertEquals(fallback.link, join(home, ".denext", "bin", "deno.cmd"));
+  } finally {
+    await Deno.remove(home, { recursive: true });
+  }
+});
+
+Deno.test("link / unlink: a sibling directory's link is not ours; a % in the shim's path is literal", async () => {
+  const home = await Deno.makeTempDir();
+  const root = join(home, "cache", "denext-deno");
+  const env = envOf({ HOME: home });
+  try {
+    if (Deno.build.os !== "windows") {
+      // `…/denext-deno-other/deno` merely starts with the cache root's path: someone else's.
+      const other = join(home, "cache", "denext-deno-other", "deno");
+      await Deno.mkdir(dirname(other), { recursive: true });
+      await Deno.writeTextFile(other, BINARY);
+      const link = join(home, ".denext", "bin", "deno");
+      await Deno.mkdir(dirname(link), { recursive: true });
+      await Deno.symlink(other, link);
+      await assertRejects(
+        () => unlinkDenoToolchain({ env, os: "linux", cacheRoot: root }),
+        Error,
+        "left alone",
+      );
+      assertEquals(await Deno.readLink(link), other, "left in place");
+      await Deno.remove(link);
+    }
+    // cmd expands `%…%` even inside quotes: the shim doubles each `%`, and reads it back as one.
+    const bin = join(root, "50%HOME%", "deno.exe");
+    const shim = await linkDenoToolchain(bin, { env, os: "windows", cacheRoot: root });
+    const text = await Deno.readTextFile(shim.link);
+    assertStringIncludes(text, `"${bin.replaceAll("%", "%%")}" %*`);
+    const pin = { schema: 1 as const, version: "9.9.9-denext.2", targets: {} };
+    assertStringIncludes(
+      (await staleToolchainLink({ env, os: "windows", cacheRoot: root, pin })) ?? "",
+      `points at ${bin}`,
+    );
   } finally {
     await Deno.remove(home, { recursive: true });
   }

@@ -29,7 +29,7 @@ import {
   type ViteEmitterFinding,
 } from "./migrate-vite-plugins.ts";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
-import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
+import { evalNextConfigProgram, LOAD_NEXT_CONFIG, machineEnvIn } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { VERSION } from "../version.ts";
@@ -571,10 +571,16 @@ function nextConfigReport(next: NextConfigTranslation | null): NextConfigReport 
     evaluated: !next.raw,
     ...(next.raw && next.rawReason ? { reason: next.rawReason } : {}),
     carried: [...Object.keys(next.fields), ...Object.keys(next.rules)],
-    dropped: next.dropped.map((key) => ({
-      key,
-      note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
-    })),
+    dropped: [
+      ...next.dropped.map((key) => ({
+        key,
+        note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
+      })),
+      ...Object.entries(next.machineEnv ?? {}).map(([key, vars]) => ({
+        key,
+        note: machineEnvNote(vars),
+      })),
+    ],
   };
 }
 
@@ -1063,6 +1069,11 @@ interface NextConfigTranslation {
   /** Why the evaluation failed (when {@link raw}). */
   rawReason?: string;
   /**
+   * Keys left out because their evaluated value interpolates a machine-path variable (`HOME`,
+   * `TMPDIR`, …), each with the variables: inlined, it would carry the migrating machine's path.
+   */
+  machineEnv?: Record<string, string[]>;
+  /**
    * True when the next.config wires MDX plugins (`@next/mdx`/`createMDX` with
    * remark/rehype/recma lists). `createMDX` hides those options inside a webpack-loader
    * closure, so the generated `denext.config.ts` recovers them at BUILD time via
@@ -1231,10 +1242,52 @@ async function evalNextConfig(
     marker: NEXT_EVAL_MARKER,
   });
   if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
+  const value = result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">;
+  return { ...base, ...withoutMachineEnv(value) };
+}
+
+/**
+ * The translation without the fields and rule lists whose values interpolate a machine-path
+ * variable (the evaluator hands the config placeholders for them), listed in `machineEnv` for a
+ * hand port instead of being inlined with this machine's path.
+ */
+function withoutMachineEnv(
+  value: Pick<NextConfigTranslation, "fields" | "rules" | "dropped">,
+): Pick<NextConfigTranslation, "fields" | "rules" | "dropped" | "machineEnv"> {
+  const machineEnv: Record<string, string[]> = {};
+  const keep = (group: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(group ?? {}).filter(([key, v]) => {
+        const vars = machineEnvIn(v);
+        if (vars.length) machineEnv[key] = vars;
+        return vars.length === 0;
+      }),
+    );
+  const fields = keep(value.fields);
+  // A rule list keeps the rules that read no machine path; only the others are left out.
+  const lists: Record<string, unknown> = {};
+  for (const [key, list] of Object.entries(value.rules ?? {})) {
+    if (!Array.isArray(list)) {
+      lists[key] = list;
+      continue;
+    }
+    const vars = machineEnvIn(list);
+    if (vars.length) machineEnv[key] = vars;
+    lists[key] = list.filter((rule) => machineEnvIn(rule).length === 0);
+  }
+  const rules = keep(lists);
   return {
-    ...base,
-    ...(result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">),
+    fields,
+    rules,
+    dropped: value.dropped ?? [],
+    ...(Object.keys(machineEnv).length ? { machineEnv } : {}),
   };
+}
+
+/** The note for a key left out by {@linkcode withoutMachineEnv}. */
+function machineEnvNote(vars: string[]): string {
+  return `a rule or value reads ${vars.join(", ")} — this machine's path — and was not ` +
+    `inlined. Port it by hand (read process.env at run time).`;
 }
 
 /**
@@ -2867,6 +2920,9 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
     for (const [fn, arr] of ruleEntries) bodyLines.push(`  ${fn}: () => (${JSON.stringify(arr)}),`);
   }
   if (next.dropped.length) notes.push(...droppedKeyNotes(next.dropped));
+  for (const [key, vars] of Object.entries(next.machineEnv ?? {})) {
+    notes.push(`  // ${commentSafe(key)}: ${machineEnvNote(vars)}`);
+  }
   return notes;
 }
 

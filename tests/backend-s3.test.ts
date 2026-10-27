@@ -879,3 +879,25 @@ Deno.test("TUS part upload: a presigned PUT that never answers is given up on (F
     Promise.resolve(new Response(null, { status: 200, headers: { etag: '"p1"' } }));
   assertEquals(await putPart("https://store.example/part", new Uint8Array(8), 1_000, ok), '"p1"');
 });
+
+Deno.test("s3: a ranged get reports the range the store answered, none when it sent it all", async () => {
+  let answer = (): Response =>
+    new Response("hello world", { status: 200, headers: { "content-length": "11" } });
+  const d = s3({
+    endpoint: S3_ENDPOINT,
+    region: "us-east-1",
+    bucket: "b",
+    credentials: CREDENTIALS,
+    fetch: () => Promise.resolve(answer()),
+  });
+  // A store that ignores `Range`: the whole object, and no range claimed for it.
+  const whole = await d.get("own", "k", { start: 2, end: 4 });
+  assertEquals([whole?.size, whole?.range], [11, undefined]);
+  await whole?.body.cancel();
+  // A store that honours it: the range from its Content-Range, which may be shorter than the
+  // one asked for (the server then refuses it rather than serving a short part).
+  answer = () => new Response("llo", { status: 206, headers: { "content-range": "bytes 2-4/11" } });
+  const part = await d.get("own", "k", { start: 2, end: 6 });
+  assertEquals([part?.size, part?.range], [11, { start: 2, end: 4 }]);
+  await part?.body.cancel();
+});

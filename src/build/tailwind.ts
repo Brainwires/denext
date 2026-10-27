@@ -6,7 +6,8 @@
 // first-class Tailwind support.
 
 import { runToExit } from "./exited-output.ts";
-import { join, resolve } from "@std/path";
+import { isAbsolute, join, resolve } from "@std/path";
+import { userHomeDir } from "./deno-cache-dir.ts";
 import { denoExecutable } from "./deno-executable.ts";
 import { ensureDir } from "@std/fs";
 import type { TailwindConfig } from "../server/config.ts";
@@ -52,8 +53,16 @@ export function tailwindDownloadUrl(version: string, asset: string): string {
 
 /** Cache directory denext stores downloaded Tailwind binaries in. */
 function cacheDir(): string {
-  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".";
-  const base = Deno.env.get("XDG_CACHE_HOME") ?? join(home, ".cache");
+  const xdg = Deno.env.get("XDG_CACHE_HOME");
+  const home = userHomeDir();
+  const base = xdg && isAbsolute(xdg) ? xdg : home ? join(home, ".cache") : undefined;
+  if (!base) {
+    // Never the working directory: a repository could ship the binary there.
+    throw new Error(
+      "denext: no cache directory for the Tailwind binary — set HOME (or XDG_CACHE_HOME) to an " +
+        "absolute path.",
+    );
+  }
   return join(base, "denext", "tailwind", tailwindVersion());
 }
 

@@ -197,6 +197,10 @@ export {
   type MacosCodesignOptions,
   type NotaryCredentials,
   notarytoolSubmitArgs,
+  type SigntoolCertificateDeps,
+  type StoreCommandResult,
+  type StoreCommandRunner,
+  type StoreCommandRunnerSync,
 } from "./code-signing.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {

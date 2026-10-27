@@ -12,26 +12,6 @@
 
 - **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
-- **Toolchain audit (4.8) low-severity follow-ups:**
-  - The Windows `toolchain link` shim writes `"<deno>" %*`: a `%` in the toolchain's path is
-    expanded by cmd. Double each `%` when writing it (and when reading it back).
-  - `toolchain link` / `unlink` on macOS and Linux take a link as denext's when its target merely
-    starts with the cache root's path (`…/denext-deno-other/…` counts). Compare up to a separator.
-  - `build --compile --sign` with signtool passes the `.pfx` password as `/p <password>` on the
-    command line, where an administrator's process listing can read it. Sign by thumbprint after
-    importing the `.pfx` into the user's store instead.
-  - With neither `HOME` nor `USERPROFILE` set, `DENO_DIR` falls back to the working directory, so a
-    checked-out repository could ship a toolchain binary and a stamp that vouches for it. Refuse,
-    or use a per-user directory under the system temp directory.
-  - The installers check the archive against `SHA256SUMS` from the same release: integrity, not
-    authenticity. Verify the release's build attestation (or a signature) too.
-  - A relative `DENO_BIN` resolves against the child's working directory (`build --compile` runs
-    in the project), unlike `DENEXT_DENO`, which is made absolute. Resolve it when read.
-  - The compile directory's `.npmrc` copy gets mode 0600 only when it is created; rewrite an older
-    copy's mode too.
-  - The never-embedded walk of `build --compile` does not follow symlinks, while `deno compile
-    --include` may embed what a symlinked directory holds: check what it embeds, and exclude
-    `.env` files and databases behind a link too.
 
 ## Supply chain (lifecycle-script jail)
 
@@ -143,14 +123,6 @@ Low findings from the 4.8 supply-chain audit:
 
 Low findings of the 4.8 backend audit (realtime and storage):
 
-- **TUS: a PATCH that outlives its lease.** A PATCH stalled past the 5-minute lease still saves
-  its progress, unconditionally, over a newer PATCH's (`saveResumable` does not check the lease).
-  The completion's size check fails such an upload closed, but its orphaned chunk objects stay in
-  `.denext-tus`. Save only while holding the lease, and refuse a PATCH that lost it.
-- **Ranged reads from a store that ignores `Range`.** `serve` answers `206` with the requested
-  range even when the S3-compatible store answered `200` with the whole object; use the range the
-  driver reports (and fall back to a `200`). The object's size is also read by a `HEAD` before
-  the `GET`, so a concurrent overwrite can change it in between.
 - **Realtime: a frame in the Live hub's flush window at a drop.** A frame published just before a
   subscriber's connection dropped is fanned out on the hub's next flush, so a reconnect
   re-authorized within those milliseconds under other claims can still receive it (same user).
@@ -181,17 +153,6 @@ print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mob
   record, but the page chooses every id: no boundary is crossed); a `secureStore` accessibility
   option (ThisDeviceOnly for tokens) is new API and changing the default changes documented
   behaviour, so it needs a decision.
-
-## Migrators and auth providers (audit 4.8, low findings)
-
-- **`migrate` freezes the migrating machine's paths into inlined rules.** The next.config
-  evaluator keeps `HOME`, `TMPDIR`, `DENO_DIR` and the Windows profile variables; a
-  `redirects()` / `headers()` that interpolates one of them is written into `denext.config.ts`
-  with that machine's value. Pass placeholders for them, or flag such a rule for review.
-- **`denext patch` follows links inside `node_modules`.** A patch's targets are confined
-  lexically to the package folder, and the package folder is resolved through pnpm's links (which
-  may lead to a workspace package outside the app). Confine the resolved targets to the project
-  or workspace root, by real path.
 
 ## Build toolchain: waiting on `deno bundle`
 

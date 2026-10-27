@@ -19,14 +19,16 @@
 // `disable-executable-page-protection`, none of which denort needs.
 //
 // Credentials come from the environment only (./code-signing.ts lists them) and are never
-// printed: a failing command's message has the certificate password redacted, and osslsigncode
-// reads it from a 0600 file rather than its command line. A configured `compile.sign` without
+// printed: a failing command's message has the certificate password redacted, osslsigncode
+// reads it from a 0600 file and signtool signs by thumbprint after the .pfx is imported into the
+// user's store (PowerShell reads the password from stdin), so it is on no command line. A configured `compile.sign` without
 // credentials (or the tool) warns and leaves the binary unsigned; an explicit `--sign` fails.
 
 import { runToExit } from "./exited-output.ts";
 import { dirname, isAbsolute, join } from "@std/path";
 import type { CompileSignConfig } from "../server/config.ts";
 import {
+  cleanupOnSignal,
   DEFAULT_TIMESTAMP_URL,
   macosCodesignArgs,
   type NotaryCredentials,
@@ -37,10 +39,12 @@ import {
   processSigningEnv,
   type SigningEnv,
   signtoolArgs,
+  type SigntoolCertificateDeps,
   type WindowsCertificate,
   windowsCertificate,
   windowsCertificateSecrets,
   windowsSignTool,
+  withSigntoolCertificate,
 } from "./code-signing.ts";
 import { macosSigningEntitlements } from "./desktop-macos-signing.ts";
 import { hasCommand } from "../ui/signing.ts";
@@ -90,6 +94,8 @@ export interface CompileSignDeps {
   /** The host OS (default `Deno.build.os`). */
   readonly os?: string;
   readonly warn?: (message: string) => void;
+  /** The certificate-store import a password-protected `.pfx` goes through for signtool. */
+  readonly store?: SigntoolCertificateDeps;
 }
 
 /** What {@linkcode signCompiledBinary} did. */
@@ -169,6 +175,7 @@ interface SignRun {
   readonly has: (cmd: string) => Promise<boolean>;
   readonly os: string;
   readonly warn: (message: string) => void;
+  readonly store?: SigntoolCertificateDeps;
 }
 
 /** A missing prerequisite: `--sign` fails, a configured `compile.sign` warns and skips. */
@@ -203,6 +210,7 @@ export async function signCompiledBinary(
     has: deps.has ?? ((cmd) => hasCommand(cmd)),
     os: deps.os ?? Deno.build.os,
     warn: deps.warn ?? ((m) => console.warn(m)),
+    store: deps.store,
   };
   const platform = targetPlatform(options.target);
   if (platform === "macos") return await signMacos(binary, ctx);
@@ -330,10 +338,11 @@ async function signWindows(binary: string, ctx: SignRun): Promise<CompileSignRes
   const timestamp = ctx.config.timestampUrl ?? ctx.env("DENEXT_SIGN_TIMESTAMP_URL") ??
     DEFAULT_TIMESTAMP_URL;
   if (tool === "signtool") {
-    await runOrThrow(
-      ctx.run,
-      signtoolArgs([binary], cert, timestamp),
-      windowsCertificateSecrets(cert),
+    // A .pfx password reaches signtool through the user's store, never its command line.
+    await withSigntoolCertificate(
+      cert,
+      (signer) => runOrThrow(ctx.run, signtoolArgs([binary], signer, timestamp)),
+      ctx.store,
     );
   } else {
     if (cert.kind !== "pfx") {
@@ -366,39 +375,6 @@ async function sweepStaleSignDirs(dir: string, prefix: string): Promise<void> {
       }
     }
   } catch { /* nothing to sweep, or not ours to read */ }
-}
-
-/** The exit code a shell reports for a process ended by `signal`. */
-const SIGNAL_EXIT: Partial<Record<Deno.Signal, number>> = {
-  SIGHUP: 129,
-  SIGINT: 130,
-  SIGTERM: 143,
-  SIGBREAK: 149,
-};
-
-/**
- * Run `cleanup` (synchronously) and exit when the process is interrupted or terminated, until the
- * returned function removes the listeners: a `finally` does not run when a signal ends the
- * process.
- */
-function cleanupOnSignal(cleanup: () => void): () => void {
-  const signals: Deno.Signal[] = Deno.build.os === "windows"
-    ? ["SIGINT", "SIGBREAK"]
-    : ["SIGINT", "SIGTERM", "SIGHUP"];
-  const added: [Deno.Signal, () => void][] = [];
-  for (const signal of signals) {
-    const listener = () => {
-      cleanup();
-      Deno.exit(SIGNAL_EXIT[signal] ?? 1);
-    };
-    try {
-      Deno.addSignalListener(signal, listener);
-      added.push([signal, listener]);
-    } catch { /* not a signal this platform delivers */ }
-  }
-  return () => {
-    for (const [signal, listener] of added) Deno.removeSignalListener(signal, listener);
-  };
 }
 
 /** Remove `path` and everything under it, now (a signal handler can't wait). */
