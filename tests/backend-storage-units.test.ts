@@ -320,6 +320,37 @@ Deno.test("servedBytes: a store that ignored Range is sliced; a changed object i
     await text(servedBytes(info, { ...info, body: chunked }, { start: 1, end: 7 })),
     "ello wo",
   );
+  // A range past whole leading chunks skips them.
+  const chunks = () =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const part of ["he", "llo w", "orld"]) c.enqueue(new TextEncoder().encode(part));
+        c.close();
+      },
+    });
+  assertEquals(
+    await text(servedBytes(info, { ...info, body: chunks() }, { start: 7, end: 9 })),
+    "orl",
+  );
+  // A body shorter than the size it claimed errors the stream instead of ending it short.
+  const short = new Blob(["hello"]).stream();
+  await assertRejects(
+    () => text(servedBytes(info, { ...info, body: short }, { start: 2, end: 8 })),
+    StorageError,
+    "ended early",
+  );
+  // Cancelling the served stream cancels the store's body.
+  let cancelled: unknown = "no";
+  const source = new ReadableStream<Uint8Array>({
+    pull(c) {
+      c.enqueue(new TextEncoder().encode("hello world"));
+    },
+    cancel(reason) {
+      cancelled = reason;
+    },
+  });
+  await servedBytes(info, { ...info, body: source }, { start: 0, end: 3 }).cancel("bye");
+  assertEquals(cancelled, "bye");
   // A store that honoured it, and no range at all: passed through.
   const range = { start: 2, end: 4 };
   const ranged = new Blob(["llo"]).stream();
