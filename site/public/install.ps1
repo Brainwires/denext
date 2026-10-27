@@ -314,10 +314,18 @@ function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
 # The extracted denext.exe's Authenticode signature: a signed binary must verify (a signature
 # that no longer matches the file, or one that chains to no trusted root, is refused even under
 # DENEXT_INSECURE); an unsigned one (a release built without the signing secrets) is installed
-# on the checks above, with a note.
+# on the checks above, with a note. The signature must be the file's own: Windows also vouches
+# for its system files through catalogs, and since Authenticode's hash leaves the embedded
+# signature out, any Windows binary - re-signed by anyone, or not at all - still matches its
+# catalog. denext.exe is never one of those, so a catalog signature is refused.
+# TODO: once releases are signed with denext's own certificate, also require its publisher
+# (DENEXT_WINDOWS_PUBLISHER, the certificate's subject) instead of any trusted one.
 function Assert-Authenticode([string]$exe) {
   $sig = Get-AuthenticodeSignature -LiteralPath $exe
   $status = "$($sig.Status)"
+  if ("$($sig.SignatureType)" -eq 'Catalog' -or $sig.IsOSBinary) {
+    throw "denext: denext.exe is a Windows system file (vouched for by a Windows catalog, not by a signature of its own) - not installing."
+  }
   if ($status -eq 'NotSigned') {
     Write-Host 'denext: denext.exe carries no Authenticode signature (this release was built unsigned)'
     return

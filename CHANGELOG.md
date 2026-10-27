@@ -25,6 +25,13 @@ and this project adheres to
 
 ### Fixed
 
+- **Windows signing with a password-protected `.pfx` works when started from PowerShell 7.**
+  signtool signing imports the `.pfx` into the user's certificate store through Windows
+  PowerShell, which, started from a PowerShell 7 session (a pwsh terminal, a CI runner's default
+  shell), inherits 7's module path and cannot load its own `Microsoft.PowerShell.Security` and
+  `PKI` modules: the import stopped at `ConvertTo-SecureString` and nothing was signed. The import
+  and the removal afterwards now call .NET directly and need no PowerShell module, and the CEF
+  signature and certificate-trust checks put Windows PowerShell's own modules first.
 - **A command that read a quick child's output no longer waits up to 5 s to exit.** The reader
   that collects a child's output until it exits (`deno info`, `deno bundle`, the type check and
   the other children denext runs) started its 5 s drain timer when the exit was reported after
@@ -93,6 +100,11 @@ and this project adheres to
 
 ### Security
 
+- **`install.ps1` no longer accepts a Windows system file as `denext.exe`.** Authenticode's hash
+  leaves the embedded signature out, so any Windows binary, re-signed by anyone or not at all,
+  still matched its system catalog and was reported as "Authenticode signature verified". The
+  installer now refuses a signature that comes from a catalog rather than from the file itself; an
+  unsigned `denext.exe` is installed as before.
 - **The packaged app's launch file fails closed (runtime `3.0.0-denext.1`).** The desktop
   package scripts' `laufey-launch.json` now always carries `bridgeOrigins` (the app origin plus
   `desktop.app.bridgeOrigins`), carries `passkeyRpIds` (`desktop.capabilities.passkeys.rpIds`)

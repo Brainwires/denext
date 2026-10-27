@@ -561,7 +561,7 @@ function storeFake(importAnswer: Partial<SignCommandResult> = {}) {
     const script = scriptOf(cmd);
     calls.push({ cmd: [...cmd], stdin, script });
     return Promise.resolve(
-      script.includes("Import-PfxCertificate")
+      script.includes("X509Certificate2Collection")
         ? {
           code: 0,
           stdout: JSON.stringify({ sha1: THUMB.toLowerCase(), added: [THUMB, CHAIN] }),
@@ -602,10 +602,10 @@ Deno.test("signCompiledBinary (Windows, signtool): the .pfx password is on no co
     assert(!call.cmd.some((a) => a.includes("s3cret")), "never in PowerShell's argv");
     assert(!call.script.includes("s3cret"), "never in the script it runs");
   }
-  assertStringIncludes(imported.script, "Import-PfxCertificate -FilePath $path");
+  assertStringIncludes(imported.script, "$certs.Import([IO.File]::ReadAllBytes($path), $pw,");
   assertStringIncludes(imported.script, "$path = 'C:/c.pfx'");
   assertStringIncludes(removed.script, `'${THUMB}', '${CHAIN}'`);
-  assertStringIncludes(removed.script, "-DeleteKey");
+  assertStringIncludes(removed.script, "Remove-DenextKey $c");
 });
 
 Deno.test("signCompiledBinary (Windows, signtool): a failed signtool still removes the imported certificate", async () => {
@@ -625,7 +625,7 @@ Deno.test("signCompiledBinary (Windows, signtool): a failed signtool still remov
   assertStringIncludes(err.message, "no timestamp");
   assert(!err.message.includes("s3cret"), err.message);
   assertEquals(store.calls.length, 2, "imported, then removed");
-  assertStringIncludes(store.calls[1].script, "Remove-Item");
+  assertStringIncludes(store.calls[1].script, "$store.Remove($c)");
 });
 
 Deno.test("withSigntoolCertificate: a failed import says so without the password; nothing to remove", async () => {
@@ -673,20 +673,109 @@ Deno.test("withSigntoolCertificate: a failed import says so without the password
   assertEquals(storeRemoveScript([]).includes("@()"), true);
 });
 
+Deno.test("withSigntoolCertificate: the store scripts call .NET, no PowerShell module's cmdlet", async () => {
+  // Windows PowerShell started from PowerShell 7 inherits 7's PSModulePath and cannot load its
+  // own Microsoft.PowerShell.Security (ConvertTo-SecureString, the Cert: drive) or PKI
+  // (Import-PfxCertificate) modules: the import failed on CI with CouldNotAutoloadMatchingModule.
+  const store = storeFake();
+  await withSigntoolCertificate(
+    { kind: "pfx", path: "C:/c.pfx", password: "s3cret" },
+    () => Promise.resolve(),
+    store,
+  );
+  assertEquals(store.calls.length, 2);
+  const [imported, removed] = store.calls;
+  for (const { script } of store.calls) {
+    for (
+      const cmdlet of [
+        "ConvertTo-SecureString",
+        "Import-PfxCertificate",
+        "Get-ChildItem",
+        "Remove-Item",
+        "Test-Path",
+        "Cert:",
+        "ConvertTo-Json",
+        "New-Object",
+        "Where-Object",
+        "ForEach-Object",
+        "Import-Module",
+      ]
+    ) {
+      assert(!script.includes(cmdlet), `${cmdlet} needs a module: ${script}`);
+    }
+  }
+  assertStringIncludes(
+    imported.script,
+    "[Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')",
+  );
+  assertStringIncludes(imported.script, "$F::PersistKeySet -bor $F::UserKeySet");
+  assert(!imported.script.includes("Exportable"), "the imported key is not exportable");
+  assertStringIncludes(removed.script, "Find('FindByThumbprint', $t, $false)");
+  assertStringIncludes(removed.script, "$k.Key.Delete()");
+});
+
 Deno.test({
   name: "withSigntoolCertificate (Windows): imports the .pfx for the signing, then removes it",
   ignore: Deno.build.os !== "windows",
   async fn() {
     const dir = await Deno.makeTempDir();
     const pfx = join(dir, "test.pfx");
+    // The test's own setup uses PKI / Security cmdlets: Windows PowerShell's own modules first,
+    // whatever module path this process inherited.
     const ps = async (script: string) => {
-      const [cmd, ...args] = powershellArgs(script);
+      const [cmd, ...args] = powershellArgs(
+        `$env:PSModulePath = "$PSHOME\\Modules"\n$ProgressPreference = 'SilentlyContinue'\n${script}`,
+      );
       const out = await new Deno.Command(cmd, { args, stdin: "null", stderr: "inherit" })
         .output();
       return new TextDecoder().decode(out.stdout).trim();
     };
     const inStore = async (sha1: string) =>
       (await ps(`Test-Path -LiteralPath 'Cert:\\CurrentUser\\My\\${sha1}'`)) === "True";
+    // The user's persisted keys (CryptoAPI and CNG): an import that removes its certificate but
+    // leaves its key behind grows these.
+    const keyFiles = async () => {
+      let n = 0;
+      for (const sub of ["Crypto\\RSA", "Crypto\\Keys"]) {
+        const root = join(Deno.env.get("APPDATA") ?? "", "Microsoft", sub);
+        const walk = async (d: string): Promise<void> => {
+          try {
+            for await (const e of Deno.readDir(d)) {
+              if (e.isDirectory) await walk(join(d, e.name));
+              else n++;
+            }
+          } catch { /* not there */ }
+        };
+        await walk(root);
+      }
+      return n;
+    };
+    // A PSModulePath like the one Windows PowerShell inherits from PowerShell 7: modules by the
+    // names of its own that it cannot load.
+    const poisoned = join(dir, "modules");
+    for (const m of ["Microsoft.PowerShell.Security", "PKI", "Microsoft.PowerShell.Utility"]) {
+      await Deno.mkdir(join(poisoned, m), { recursive: true });
+      await Deno.writeTextFile(
+        join(poisoned, m, `${m}.psd1`),
+        "@{ ModuleVersion = '7.0.0.0'; PowerShellVersion = '7.0'; RootModule = 'missing.dll'; " +
+          "CompatiblePSEditions = @('Core') }",
+      );
+    }
+    const runPoisoned = async (cmd: readonly string[], stdin: string) => {
+      const child = new Deno.Command(cmd[0], {
+        args: cmd.slice(1),
+        env: { PSModulePath: poisoned },
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const writer = child.stdin.getWriter();
+      await writer.write(new TextEncoder().encode(stdin));
+      await writer.close();
+      const out = await child.output();
+      const text = (b: Uint8Array) => new TextDecoder().decode(b);
+      return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
+    };
     // A throwaway code-signing certificate, exported to a password-protected .pfx and taken out
     // of the store again, so the import below is what puts it there.
     const sha1 = await ps([
@@ -700,16 +789,32 @@ Deno.test({
     try {
       assert(/^[0-9A-F]{40}$/.test(sha1), sha1);
       assert(!(await inStore(sha1)));
+      const keys = await keyFiles();
       const seen = await withSigntoolCertificate(
         { kind: "pfx", path: pfx, password: "p@ss wörd" },
         async (c) => {
           assertEquals(c, { kind: "thumbprint", sha1 });
           assert(await inStore(sha1), "in the user's store while signing");
+          assert(await keyFiles() > keys, "with its key");
           return "signed";
         },
       );
       assertEquals(seen, "signed");
       assert(!(await inStore(sha1)), "removed once signing is done");
+      assertEquals(await keyFiles(), keys, "its key removed with it");
+      // The same under a module path Windows PowerShell cannot load its own modules from.
+      const poisonedSeen = await withSigntoolCertificate(
+        { kind: "pfx", path: pfx, password: "p@ss wörd" },
+        async (c) => {
+          assertEquals(c, { kind: "thumbprint", sha1 });
+          assert(await inStore(sha1));
+          return "signed";
+        },
+        { run: runPoisoned },
+      );
+      assertEquals(poisonedSeen, "signed");
+      assert(!(await inStore(sha1)));
+      assertEquals(await keyFiles(), keys);
       // A wrong password fails the import, and leaves nothing behind.
       await assertRejects(() =>
         withSigntoolCertificate(
@@ -718,6 +823,7 @@ Deno.test({
         )
       );
       assert(!(await inStore(sha1)));
+      assertEquals(await keyFiles(), keys);
     } finally {
       if (/^[0-9A-F]{40}$/.test(sha1) && await inStore(sha1)) {
         await ps(`Remove-Item -LiteralPath 'Cert:\\CurrentUser\\My\\${sha1}' -DeleteKey`);

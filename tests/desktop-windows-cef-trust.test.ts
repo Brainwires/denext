@@ -254,3 +254,19 @@ Deno.test("the probes: odd PowerShell output is no answer, odd fields get defaul
   assertStringIncludes(bare, "is a certificate this machine does not trust: no subject.");
   assertStringIncludes(cefSignatureProblem({ status: "NotTrusted", message: "" })!, "(NotTrusted)");
 });
+
+Deno.test("the probes: Windows PowerShell's own modules first, whatever module path it inherited", async () => {
+  // `powershell.exe` started from PowerShell 7 inherits 7's PSModulePath and cannot load its own
+  // Microsoft.PowerShell.Security (Get-AuthenticodeSignature) from it.
+  const scripts: string[] = [];
+  const record: PowerShellRunner = (script) => {
+    scripts.push(script);
+    return Promise.resolve({ code: 0, stdout: "{}" });
+  };
+  await authenticodeSignature("x", { os: "windows", powershell: record });
+  await certificateTrust("c", "p", { os: "windows", powershell: record });
+  assertEquals(scripts.length, 2);
+  for (const script of scripts) {
+    assertEquals(script.split("\n")[0], '$env:PSModulePath = "$PSHOME\\Modules"');
+  }
+});

@@ -434,6 +434,20 @@ Deno.test("install.ps1: a signed-in gh must verify the archive's build attestati
   }
 });
 
+/**
+ * `pe` (a PE file's bytes) with its COFF header's TimeDateStamp changed: the PE header's offset
+ * is at 0x3C, and the timestamp 8 bytes past it (after the `PE\0\0` signature and the
+ * Machine and NumberOfSections fields).
+ */
+function withChangedPeTimestamp(pe: Uint8Array): Uint8Array {
+  const out = pe.slice();
+  const view = new DataView(out.buffer);
+  const header = view.getUint32(0x3c, true);
+  assertEquals(view.getUint32(header, true), 0x00004550, "a PE file");
+  view.setUint32(header + 8, view.getUint32(header + 8, true) ^ 0x5a5a5a5a, true);
+  return out;
+}
+
 Deno.test("install.ps1: a denext.exe whose Authenticode signature does not verify is refused", {
   ignore: NOT_WINDOWS,
 }, async () => {
@@ -445,7 +459,13 @@ Deno.test("install.ps1: a denext.exe whose Authenticode signature does not verif
     await Deno.mkdir(stage, { recursive: true });
     const exe = join(stage, "denext.exe");
     const sys = Deno.env.get("SystemRoot") ?? "C:\\Windows";
-    await Deno.copyFile(join(sys, "System32", "whoami.exe"), exe);
+    // A Windows binary with its COFF TimeDateStamp changed: the timestamp is covered by the
+    // Authenticode hash (the embedded signature is not), so no system catalog vouches for the
+    // copy and only the signature below is left to judge it.
+    await Deno.writeFile(
+      exe,
+      withChangedPeTimestamp(await Deno.readFile(join(sys, "System32", "whoami.exe"))),
+    );
     // Signed by a throwaway certificate no root vouches for: present, and not valid.
     const signed = await powerShell([
       "-Command",
@@ -471,6 +491,46 @@ Deno.test("install.ps1: a denext.exe whose Authenticode signature does not verif
         `Remove-Item -LiteralPath 'Cert:\\CurrentUser\\My\\${thumbprint}' -DeleteKey`,
       ], {});
     }
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: a Windows system file vouched for only by a catalog is refused", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  // Authenticode's hash leaves the embedded signature out, so a Windows binary matches its
+  // system catalog however it is (re-)signed: a Valid catalog signature is not a denext build's.
+  const probe = await powerShell([
+    "-Command",
+    "foreach ($f in 'whoami.exe','hostname.exe','where.exe','findstr.exe','cmd.exe') { " +
+    "$p = Join-Path $env:SystemRoot ('System32\\' + $f); " +
+    "$s = Get-AuthenticodeSignature -LiteralPath $p; " +
+    "if ([string]$s.Status -eq 'Valid' -and [string]$s.SignatureType -eq 'Catalog') " +
+    "{ $p; break } }",
+  ], {});
+  const system = new TextDecoder().decode(probe.stdout).trim();
+  if (!system) {
+    // Catalog lookups need the cryptographic service (absent over some remote sessions).
+    console.warn("no catalog-signed system binary verifies here; nothing to check");
+    return;
+  }
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  const stage = join(dir, "stage");
+  try {
+    await Deno.mkdir(stage, { recursive: true });
+    await Deno.copyFile(system, join(stage, "denext.exe"));
+    const zip = await zipStage(dir, stage);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    const run = await install(release, root, { DENEXT_NO_TOOLCHAIN: "1", DENEXT_INSECURE: "1" });
+    assert(run.code !== 0, run.out);
+    assertStringIncludes(run.out, "is a Windows system file");
+    assert(!run.out.includes("Authenticode signature verified"), run.out);
+    assert(!(await exists(join(root, "bin", "denext.exe"))));
+  } finally {
     await release.close();
     await Deno.remove(dir, { recursive: true });
   }

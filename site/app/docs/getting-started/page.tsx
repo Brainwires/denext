@@ -117,7 +117,9 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
         <code>gh attestation verify</code>{" "}
         or nothing is installed (<code>DENEXT_REQUIRE_ATTESTATION=1</code>{" "}
         refuses an install that can't check it). On Windows, a signed <code>denext.exe</code>{" "}
-        must also carry a valid Authenticode signature. It resolves the <em>latest stable</em>{" "}
+        must also carry a valid Authenticode signature of its own: a file Windows vouches for only
+        through a system catalog (one of its own binaries) is refused. It resolves the{" "}
+        <em>latest stable</em>{" "}
         release: release candidates are GitHub prereleases and are never "latest", so pick one with
         {" "}
         <code>DENEXT_VERSION=v&lt;version&gt;-rc.N</code>{" "}

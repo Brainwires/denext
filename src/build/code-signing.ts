@@ -288,41 +288,94 @@ function psQuote(value: string): string {
 }
 
 /**
- * The PowerShell that imports the `.pfx` at `path` into `Cert:\CurrentUser\My` (its key not
+ * A PowerShell function that deletes the persisted private key of `$c` (a certificate the store
+ * import put there): a CNG key through `CngKey.Delete`, a CryptoAPI one by clearing it with
+ * `PersistKeyInCsp` off. .NET only, so it needs no PowerShell module.
+ */
+const DELETE_KEY_FUNCTION = [
+  "function Remove-DenextKey($c) {",
+  "  if (-not $c.HasPrivateKey) { return }",
+  "  $k = $null",
+  "  try { $k = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::" +
+  "GetRSAPrivateKey($c) } catch { }",
+  "  if ($null -eq $k) { try { $k = [Security.Cryptography.X509Certificates." +
+  "ECDsaCertificateExtensions]::GetECDsaPrivateKey($c) } catch { } }",
+  "  if ($k -is [Security.Cryptography.RSACryptoServiceProvider]) " +
+  "{ $k.PersistKeyInCsp = $false; $k.Clear() }",
+  "  elseif ($null -ne $k -and $k.Key -is [Security.Cryptography.CngKey]) { $k.Key.Delete() }",
+  "}",
+].join("\n");
+
+/**
+ * The PowerShell that imports the `.pfx` at `path` into the user's `My` store (its key not
  * exportable), the password read from stdin (base64 of its UTF-8 bytes), never from argv. It
  * prints `{ "sha1": <the signing certificate's thumbprint>, "added": [<thumbprints it added>] }`:
- * a certificate the store already held is not in `added`, so removing those never takes one the
- * user had.
+ * a certificate the store already held is left as it is and is not in `added`, so removing those
+ * never takes one the user had.
+ *
+ * The script calls .NET (`X509Certificate2Collection`, `X509Store`) and no cmdlet, so it needs no
+ * PowerShell module: Windows PowerShell started from PowerShell 7 inherits 7's `PSModulePath`,
+ * and then cannot load its own `Microsoft.PowerShell.Security` (`ConvertTo-SecureString`, the
+ * `Cert:` drive) or `PKI` (`Import-PfxCertificate`) modules.
  */
 export function storeImportScript(path: string): string {
   return [
     "$ErrorActionPreference = 'Stop'",
+    DELETE_KEY_FUNCTION,
     "$raw = [Console]::In.ReadToEnd().Trim()",
-    "$pw = ConvertTo-SecureString -String ([Text.Encoding]::UTF8.GetString(" +
-    "[Convert]::FromBase64String($raw))) -AsPlainText -Force",
+    "$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw))",
     `$path = ${psQuote(path)}`,
-    "$before = @(Get-ChildItem Cert:\\CurrentUser\\My | ForEach-Object { $_.Thumbprint })",
-    "$certs = @(Import-PfxCertificate -FilePath $path -CertStoreLocation " +
-    "Cert:\\CurrentUser\\My -Password $pw)",
-    "$signer = @($certs | Where-Object { $_.HasPrivateKey })",
-    "$added = @($certs | Where-Object { $before -notcontains $_.Thumbprint } | " +
-    "ForEach-Object { $_.Thumbprint })",
-    "if ($signer.Count -eq 0) { foreach ($t in $added) { Remove-Item " +
-    '"Cert:\\CurrentUser\\My\\$t" -DeleteKey }; ' +
-    "throw 'the .pfx holds no certificate with a private key' }",
-    "ConvertTo-Json -Compress @{ sha1 = $signer[0].Thumbprint; added = [string[]]$added }",
+    "$F = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]",
+    "$certs = [Security.Cryptography.X509Certificates.X509Certificate2Collection]::new()",
+    "$certs.Import([IO.File]::ReadAllBytes($path), $pw, ($F::PersistKeySet -bor $F::UserKeySet))",
+    "$store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')",
+    "$store.Open('ReadWrite')",
+    "$before = @{}",
+    "foreach ($s in $store.Certificates) { $before[$s.Thumbprint] = $true }",
+    "$added = @()",
+    "$signer = $null",
+    "try {",
+    "  foreach ($c in $certs) {",
+    "    if ($null -eq $signer -and $c.HasPrivateKey) { $signer = $c.Thumbprint }",
+    // A certificate the store already holds keeps its own entry and key; the key this import
+    // persisted for it (a fresh container) is deleted.
+    "    if ($before.ContainsKey($c.Thumbprint)) { Remove-DenextKey $c }",
+    "    else { $store.Add($c); $added += $c.Thumbprint }",
+    "  }",
+    "  if ($null -eq $signer) { throw 'the .pfx holds no certificate with a private key' }",
+    "} catch {",
+    "  foreach ($c in $certs) {",
+    "    if ($added -contains $c.Thumbprint) { try { $store.Remove($c) } catch { } }",
+    "    if (-not $before.ContainsKey($c.Thumbprint)) { try { Remove-DenextKey $c } catch { } }",
+    "  }",
+    "  throw",
+    "} finally { $store.Close() }",
+    "$quoted = @()",
+    "foreach ($t in $added) { $quoted += '\"' + $t + '\"' }",
+    '[Console]::Out.WriteLine(\'{"sha1":"\' + $signer + \'","added":[\' + ' +
+    "($quoted -join ',') + ']}')",
   ].join("\n");
 }
 
-/** The PowerShell that removes the store certificates (and their keys) `thumbprints` names. */
+/**
+ * The PowerShell that removes the store certificates (and their keys) `thumbprints` names. .NET
+ * only, no cmdlet, like {@linkcode storeImportScript}.
+ */
 export function storeRemoveScript(thumbprints: readonly string[]): string {
   const list = thumbprints.map(psQuote).join(", ");
   return [
     "$ErrorActionPreference = 'Continue'",
-    `foreach ($t in @(${list})) {`,
-    '  $p = "Cert:\\CurrentUser\\My\\$t"',
-    "  if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -DeleteKey }",
-    "}",
+    DELETE_KEY_FUNCTION,
+    "$store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')",
+    "$store.Open('ReadWrite')",
+    "try {",
+    `  foreach ($t in @(${list})) {`,
+    "    foreach ($c in @($store.Certificates.Find('FindByThumbprint', $t, $false))) {",
+    "      try { Remove-DenextKey $c } catch { }",
+    "      $store.Remove($c)",
+    "    }",
+    "  }",
+    "} finally { $store.Close() }",
   ].join("\n");
 }
 
@@ -420,7 +473,8 @@ export function cleanupOnSignal(cleanup: () => void): () => void {
 /**
  * Sign with `cert` through signtool without its password ever reaching a command line. A
  * password-protected `.pfx` is imported into the user's certificate store (`CurrentUser\My`, key
- * not exportable) by PowerShell, which reads the password from stdin; `sign` then gets the
+ * not exportable) by PowerShell (through .NET, no PowerShell module), which reads the password
+ * from stdin; `sign` then gets the
  * certificate as a store thumbprint (`/sha1`), and every certificate the import added is removed
  * again, with its key, when `sign` settles, fails, or the process is interrupted. Any other
  * certificate (a `.pfx` with no password, a thumbprint) is handed to `sign` as it is.
