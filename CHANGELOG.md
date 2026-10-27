@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext doctor` and `denext desktop doctor` check the launch policy.** A desktop project whose
+  packaged `laufey-launch.json` would lack `bridgeOrigins` (an unwritable
+  `desktop.app.bridgeOrigins`) or, with passkeys enabled, an RP list (`rpIds` empty), or whose
+  `scripts/package-*.ts` never write denext's launch file, is flagged with the fix
+  (`desktop doctor`: the `launch-policy` check, a warning per gap).
+
+### Changed
+
+- **Symlinks in the lifecycle-script jail (runtime `3.0.0-denext.1`).** On macOS and Linux, where
+  Seatbelt / Landlock confine the script, a link whose path and target both lie in the script's
+  write roots is allowed, so electron-style postinstalls (the macOS bundle's `Versions/Current`
+  links) install under the jail. Windows still refuses them. See the toolchain guide.
+
 ### Fixed
 
 - **The runtime's `3.0.0-denext.N` releases order after `3.0.0-rc.N`.** The runtime fork follows
@@ -73,6 +88,20 @@ and this project adheres to
 
 ### Security
 
+- **The packaged app's launch file fails closed (runtime `3.0.0-denext.1`).** The desktop
+  package scripts' `laufey-launch.json` now always carries `bridgeOrigins` (the app origin plus
+  `desktop.app.bridgeOrigins`), carries `passkeyRpIds` (`desktop.capabilities.passkeys.rpIds`)
+  whenever passkeys are on, and, on denext's pinned runtime from `3.0.0-denext.1`
+  (`FIRST_STRICT_LAUNCH_RUNTIME`; not under `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime
+  build), sets `"strictPolicy": true`: a policy the file leaves out then refuses instead of
+  allowing (no bridge pin gives the bridge to no document, no RP list refuses every passkey
+  ceremony). The RP list is enforced natively by the window's backend before the OS sees a
+  ceremony. Packaging warns when passkeys list no relying party. `writeLaufeyLaunchConfig` takes
+  `{ strict }` to override the gate.
+- **The Linux secure store is per app (runtime `3.0.0-denext.1`).** Items are keyed by the app id
+  too, so two apps using the same service and account no longer share a secret; an item an older
+  build stored under the shared attributes moves into the app's namespace on its first lookup
+  during the app's first run of the updated build, only when that app had run here before.
 - **`denext ui`'s `/config/next` panel no longer offers to translate a value that reads this
   machine's paths.** A `next.config` value or rule built from `HOME`, `TMPDIR`, `USERPROFILE` and
   the like was shown and translated with the evaluating machine's path in it; it is now held back

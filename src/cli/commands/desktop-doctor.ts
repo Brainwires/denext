@@ -11,6 +11,14 @@ import {
 } from "../../build/desktop-doctor.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { desktopBridgeOrigins } from "../../build/desktop-app-config.ts";
+import {
+  isDesktopProject,
+  type LaunchPolicyProblem,
+  launchPolicyProblems,
+  stalePackageScripts,
+} from "../../build/desktop-launch-policy.ts";
+import { resolveProject } from "../../build/paths.ts";
 
 /** The flags only `desktop doctor` reads. */
 export const DESKTOP_DOCTOR_FLAGS: readonly FlagSpec[] = [
@@ -21,6 +29,29 @@ export const DESKTOP_DOCTOR_FLAGS: readonly FlagSpec[] = [
       "default on a Linux host",
   },
 ];
+
+/**
+ * The project's packaged launch-policy gaps (see `launchPolicyProblems`); a config that does not
+ * load is one too.
+ *
+ * @param dir The project directory.
+ * @returns The problems, or `null` when `dir` has no desktop target.
+ */
+export async function projectLaunchPolicy(dir: string): Promise<LaunchPolicyProblem[] | null> {
+  if (!await isDesktopProject(dir)) return null;
+  let config: unknown;
+  try {
+    config = (await resolveProject(dir)).config;
+  } catch (err) {
+    return [{
+      message: `denext.config could not be loaded, so the launch policy is unknown: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      fix: "fix the config (`denext doctor` names the problem)",
+    }];
+  }
+  return launchPolicyProblems(config, desktopBridgeOrigins, await stalePackageScripts(dir));
+}
 
 /**
  * `denext desktop doctor`.
@@ -46,6 +77,7 @@ export async function desktopDoctor(
   const report = await runDesktopDoctor({
     runtimeStatus: () => desktopRuntimeStatus({ projectDir: dir, deno: denoExecutable() }),
     deno: denoExecutable(),
+    launchPolicy: () => projectLaunchPolicy(dir),
     ...seams,
     os,
     ...(linux ? { linux } : {}),

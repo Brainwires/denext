@@ -999,7 +999,9 @@ export interface DesktopCapabilitiesConfig {
    * denext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot
    * use (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app
    * may request and is required; anything else answers `invalid_rp` without reaching the OS.
-   * `false` (or leaving it out) disables it.
+   * The list is also written to the packaged app's `laufey-launch.json` (`"passkeyRpIds"`), so the
+   * webview backend enforces it natively; from runtime 3.0.0-denext.1 (`"strictPolicy"`) a launch
+   * file without it refuses every ceremony. `false` (or leaving it out) disables it.
    */
   passkeys?: false | DesktopPasskeysConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
@@ -1012,7 +1014,8 @@ export interface DesktopCapabilitiesConfig {
 export interface DesktopPasskeysConfig {
   /**
    * The relying-party IDs (`"example.com"`) the app may request. Required: an empty list allows
-   * none, and no default allows any.
+   * none (enforced natively and failing closed; `denext doctor` flags it), and no default allows
+   * any.
    */
   rpIds: string[];
 }
@@ -1094,7 +1097,9 @@ export interface DesktopConfig {
      * (`desktop.app.origin`, `app://localhost` when unset). Written, after the app origin, to the
      * packaged app's `laufey-launch.json` `"bridgeOrigins"`; a binding still answers such a
      * document only when its `bind(name, fn, { origins })` lists it too. Needs denext's pinned
-     * runtime.
+     * runtime. From runtime 3.0.0-denext.1 the launch file also sets `"strictPolicy": true`, under
+     * which a launch file without `bridgeOrigins` gives the bridge to no document (fails closed);
+     * denext's packaging always writes the key.
      */
     bridgeOrigins?: string[];
     /**

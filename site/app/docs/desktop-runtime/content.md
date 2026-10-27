@@ -435,7 +435,15 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   told a locked keyring from a missing item only by parsing its output. That path is gone: on Linux
   the secure store is the runtime's alone, and a `.deb` / `.rpm` with `secure-store` on depends on
   libsecret itself (`libsecret-1-0` / `libsecret`). Items keep the `service` / `account`
-  attributes `secret-tool` wrote, so values stored before stay readable.
+  attributes `secret-tool` wrote, so values stored before stay readable. From `3.0.0-denext.1`
+  each item also carries the app id (`laufey-app-id`, the packaged app's `desktop.app.identifier`),
+  because the Secret Service doesn't keep one user's programs apart: two apps using the same service
+  and account no longer read and overwrite each other's secret. An item an older build wrote under
+  the shared attributes moves into the app's namespace on the app's first lookup of it during its
+  first run of the updated build (a `.laufey-secret-store-v2` marker in the app data directory ends
+  that run's window), and only when the app had run here before, so a newly installed app never
+  takes another app's item. An app without an identifier has no namespace: it neither moves nor
+  sees the shared items.
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 

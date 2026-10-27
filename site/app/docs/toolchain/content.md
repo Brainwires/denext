@@ -750,6 +750,16 @@ chromedriver's `googlechromelabs.github.io` / `storage.googleapis.com`. A mirror
 (`PUPPETEER_DOWNLOAD_BASE_URL`, `PRISMA_ENGINES_MIRROR`, `NODEJS_ORG_MIRROR`, …) needs its host
 added to that package's `net`.
 
+Symbolic links inside the jail work on macOS and Linux from runtime `3.0.0-denext.1`. Where an
+OS sandbox (Seatbelt on macOS, Landlock on Linux) confines the script, `fs.symlink`,
+`fs.symlinkSync`, `fs.promises.symlink` and `Deno.symlink` may create a link whose path and target
+both lie within the script's write roots (its own package folder and its exception's `write`
+paths; a dangling target is fine), so electron's postinstall, which unpacks the macOS app bundle's
+`Versions/Current -> A` links, installs under the jail. A target outside those roots, a link
+outside them, and a `..` after a name in the target are refused. On Windows, and wherever the OS
+can't confine the script, a symlink still needs unscoped read and write grants, so it is refused
+there (before `3.0.0-denext.1` it was refused everywhere, with `create symlink: denied`).
+
 The packages that download a browser or app into a cache under your home (puppeteer, Playwright's
 browser packages, Cypress) lose it with the jail's scratch `HOME`, which is removed after the
 script. On runtime `3.0.0-rc.6` and later their exception grants the cache directory under `~`

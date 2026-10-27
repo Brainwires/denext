@@ -12,7 +12,8 @@
 //                            module and the plugins it imports are never compiled into the app;
 //                            written only for an entry that imports it
 //   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
-//                            `singleInstance`, `inspectable`, `bridgeOrigins`, on Linux
+//                            `singleInstance`, `inspectable`, `bridgeOrigins`,
+//                            `passkeyRpIds`, `strictPolicy`, on Linux
 //                            `requireSandbox`, on Windows `proxy`), read at process
 //                            start from the packaged bundle:
 //                            `<App>.app/Contents/Resources/` on macOS, next to the executable on
@@ -37,6 +38,11 @@ import type { DesktopOs } from "./desktop-capabilities.ts";
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import {
+  desktopPasskeyRpIds,
+  PASSKEY_RP_IDS_FIX,
+  strictLaunchRuntime,
+} from "./desktop-launch-policy.ts";
 
 /** Where the runtime looks for the embedded origin + identifier, relative to the project root. */
 export const DESKTOP_APP_CONFIG_FILE = ".deno-desktop/app.json";
@@ -70,6 +76,18 @@ export interface LaufeyLaunchConfig {
    * schemes' every origin, or (the default `app://localhost`, no custom scheme) to none at all.
    */
   readonly bridgeOrigins?: string[];
+  /**
+   * The relying parties the app's native passkey ceremonies may name (file only, no env var):
+   * `desktop.capabilities.passkeys.rpIds`, written whenever the passkeys capability is on. laufey
+   * refuses any other RP ID with `invalid_rp` before the OS sees it; an empty list refuses all.
+   */
+  readonly passkeyRpIds?: string[];
+  /**
+   * The strict launch policy (file only, runtime `3.0.0-denext.1`+): a policy key the file leaves
+   * out refuses instead of allowing (no `bridgeOrigins` / `customSchemes`: the bridge serves no
+   * document; no `passkeyRpIds`: every passkey ceremony is refused).
+   */
+  readonly strictPolicy?: boolean;
   /**
    * Linux CEF: refuse to start (exit 78) where web content would run without Chromium's sandbox
    * (`desktop.linux.requireSandbox`). Written only for Linux, and only when `true`.
@@ -327,34 +345,72 @@ export function laufeyLaunchPath(os: DesktopOs, bundle: string): string {
 }
 
 /**
- * Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable`, (on
- * Linux) `desktop.linux.requireSandbox` and (on Windows) `desktop.windows.proxy` in the project's
- * `denext.config.ts` (the bridge pinned to the app origin, {@linkcode desktopBridgeOrigins})
- * (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`). On macOS it also lists
- * `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`. On macOS call it BEFORE
- * code-signing: both files live inside the sealed bundle.
+ * The packaged app's `laufey-launch.json` settings from `desktop.app`, `desktop.inspectable`,
+ * `desktop.capabilities.passkeys` (`passkeyRpIds`), (on Linux) `desktop.linux.requireSandbox` and
+ * (on Windows) `desktop.windows.proxy`: the bridge always pinned ({@linkcode desktopBridgeOrigins}),
+ * and on a strict runtime `"strictPolicy": true`, so whatever the file leaves out fails closed.
+ *
+ * @param config The project config.
+ * @param os The target OS.
+ * @param strict Whether the runtime reads `"strictPolicy"` (`strictLaunchRuntime`).
+ * @returns The settings.
+ */
+function packagedLaunchConfig(
+  config: unknown,
+  os: DesktopOs,
+  strict: boolean,
+): LaufeyLaunchConfig {
+  const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
+  const passkeyRpIds = desktopPasskeyRpIds(config);
+  // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
+  // written: without it the runtime would leave them on.
+  return {
+    ...desktopLaunchConfig(config),
+    inspectable: desktopInspectable(config, "package"),
+    bridgeOrigins: desktopBridgeOrigins(config),
+    ...(passkeyRpIds ? { passkeyRpIds } : {}),
+    ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
+    ...(proxy ? { proxy } : {}),
+    ...(strict ? { strictPolicy: true } : {}),
+  };
+}
+
+/** Options for {@linkcode writeLaufeyLaunchConfig}. */
+export interface LaufeyLaunchWriteOptions {
+  /**
+   * Whether the runtime reads `"strictPolicy"` (default `strictLaunchRuntime()`: denext's pinned
+   * runtime from `3.0.0-denext.1`, not `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime build).
+   */
+  readonly strict?: boolean;
+}
+
+/**
+ * Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the
+ * project's `denext.config.ts` (resolved beside `entryUrl`'s directory, like
+ * `desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's
+ * `NSUserActivityTypes`. On macOS call it BEFORE code-signing: both files live inside the sealed
+ * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
  * @param bundle The `.app` (macOS) or bundle directory (Windows / Linux) `deno desktop` wrote.
+ * @param options Whether the runtime is strict (default: from the pin and the env).
  * @returns The path written (always written: it carries `inspectable`).
  */
 export async function writeLaufeyLaunchConfig(
   entryUrl: string,
   os: DesktopOs,
   bundle: string,
+  options: LaufeyLaunchWriteOptions = {},
 ): Promise<string | null> {
   const config = await loadConfigBeside(entryUrl);
-  const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
-  // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
-  // written: without it the runtime would leave them on.
-  const launch: LaufeyLaunchConfig = {
-    ...desktopLaunchConfig(config),
-    inspectable: desktopInspectable(config, "package"),
-    bridgeOrigins: desktopBridgeOrigins(config),
-    ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
-    ...(proxy ? { proxy } : {}),
-  };
+  const launch = packagedLaunchConfig(config, os, options.strict ?? strictLaunchRuntime());
+  if (launch.passkeyRpIds?.length === 0) {
+    console.warn(
+      "  denext: desktop.capabilities.passkeys lists no relying party, so the packaged app " +
+        `refuses every passkey ceremony (invalid_rp): ${PASSKEY_RP_IDS_FIX}.`,
+    );
+  }
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");
