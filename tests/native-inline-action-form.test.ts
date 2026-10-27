@@ -15,11 +15,16 @@ import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { actionIdFor, forgetTaggedServers } from "../src/runtime/server-action.ts";
 import { setBuildActionIdSecret } from "../src/server/action-ids.ts";
+import { restoreActionIdStateAfterEachTest } from "./helpers/action-id-state.ts";
 import { writeNativeActionFormFixture } from "./helpers/native-action-form-fixture.ts";
 import { serverModuleIdFor } from "../src/build/boundary-ids.ts";
 import { inlineActionModuleKey } from "../src/build/inline-server-action.ts";
 import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 import { watchTests } from "./helpers/watchdog.ts";
+
+// A test that installs a build secret or sets DENEXT_ACTION_ID_SECRET hands the next one the
+// state as it found it, even when it fails half-way.
+restoreActionIdStateAfterEachTest();
 
 // Builds in this process: a stalled one fails its test instead of holding the CI job.
 watchTests();
@@ -73,8 +78,6 @@ function compatId(dir: string): string {
 
 Deno.test({
   name: "native inline Server Action: `denext start` renders its endpoint and runs a no-JS post",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await fixture();
   try {
@@ -148,8 +151,6 @@ for (const unbundled of [false, true]) {
     name: `native inline Server Action: \`denext dev\`${
       unbundled ? " (unbundled)" : ""
     } renders its endpoint and runs a no-JS post`,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async () => {
     const dir = await fixture();
     try {
@@ -179,8 +180,6 @@ for (const unbundled of [false, true]) {
 
 Deno.test({
   name: "native inline Server Action: `denext export` renders its endpoint",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await fixture({ static: true });
   // The export runs in its own process: the shared secret a deploy that builds more than once
@@ -203,8 +202,6 @@ Deno.test({
 
 Deno.test({
   name: "native bound Server Actions: a closure and `.bind` post their sealed values, no-JS",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await fixture({ closure: true });
   try {

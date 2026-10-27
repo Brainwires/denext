@@ -18,7 +18,7 @@ import { encodeActionArgs } from "../../src/client/action-dispatch.ts";
 import { prepareWire } from "../../src/runtime/wire-encode.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
 import { ACTION_ID_SECRET_ENV } from "../../src/server/action-ids.ts";
-import { onFreePort } from "../helpers/port.ts";
+import { boundPort, listenedPort } from "../helpers/port.ts";
 import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
 import { removeTempDir } from "../helpers/temp.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
@@ -183,17 +183,12 @@ async function assertNoSecret(root: string): Promise<Map<string, string>> {
 }
 
 /**
- * A long-running CLI server (`start` / `dev`) on a free port, ready to answer `/`; a port taken
- * between the pick and the bind is retried on another.
+ * A long-running CLI server (`start` / `dev`) on `--port 0`, ready to answer `/` on the port it
+ * says it bound (nothing picks a port another process could take first).
  */
-function server(dir: string, verb: "start" | "dev") {
-  return onFreePort((port) => serverOn(dir, verb, port));
-}
-
-/** {@linkcode server} on `port`. */
-async function serverOn(dir: string, verb: "start" | "dev", port: number) {
+async function server(dir: string, verb: "start" | "dev") {
   const child = new Deno.Command(Deno.execPath(), {
-    args: cliArgs(dir, [verb, "--port", String(port)]),
+    args: cliArgs(dir, [verb, "--port", "0"]),
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
@@ -201,16 +196,20 @@ async function serverOn(dir: string, verb: "start" | "dev", port: number) {
   }).spawn();
   // Keep what the server prints (drained, so a full pipe never stalls it) for a failure message.
   let output = "";
+  let port: number | undefined; // read before the tail is cut
   const drain = async (stream: ReadableStream<Uint8Array>) => {
     const decoder = new TextDecoder();
     for await (const chunk of stream) {
-      output = (output + decoder.decode(chunk, { stream: true })).slice(-8000);
+      output += decoder.decode(chunk, { stream: true });
+      port ??= listenedPort(output);
+      output = output.slice(-8000);
     }
   };
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   const exited = child.status.then((s) => s);
   let exitCode: number | null = null;
   exited.then((s) => exitCode = s.code);
+  await boundPort(() => port, () => exitCode !== null);
   // `localhost`: `denext dev` binds it, which a runner may resolve to `::1` only (`start` binds
   // 0.0.0.0); the client tries each address the name resolves to.
   const origin = `http://localhost:${port}`;
@@ -218,7 +217,7 @@ async function serverOn(dir: string, verb: "start" | "dev", port: number) {
   let ready = false;
   for (
     const deadline = Date.now() + 300_000;
-    !ready && exitCode === null && Date.now() < deadline;
+    !ready && port !== undefined && exitCode === null && Date.now() < deadline;
   ) {
     try {
       const res = await fetch(`${origin}/`);

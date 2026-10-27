@@ -16,10 +16,15 @@ import {
 import { dotStuff, encodeHeaderText, quotedPrintable } from "../src/server/auth/smtp-message.ts";
 import { type FakeSmtpServer, SMTP_TEST_CA, startFakeSmtp } from "./helpers/fake-smtp.ts";
 
-/** A mailer for `server`, trusting the test CA. */
+/**
+ * A mailer for `server`, trusting the test CA. On 127.0.0.1, where the fake listens (its
+ * certificate names it too), not `localhost`: on Windows `localhost` resolves to `::1` first, and
+ * a connect refused there takes ~2 s of SYN retries before the IPv4 address is tried, which a
+ * short `timeoutMs` reports as "connecting timed out" before the step under test is reached.
+ */
 function mailerFor(server: FakeSmtpServer, options: Partial<SmtpMailerOptions> = {}) {
   return smtpMailer({
-    host: "localhost",
+    host: "127.0.0.1",
     port: server.port,
     user: "user",
     pass: "secret",
@@ -300,9 +305,7 @@ Deno.test("smtp: a server that never greets times out", async () => {
   await withServer({ silent: true }, async (server) => {
     const started = Date.now();
     await assertRejects(
-      // 127.0.0.1, not localhost: on Windows "localhost" tries ::1 first, and a refused
-      // loopback connect there takes ~2 s of SYN retries, longer than this timeout.
-      () => mailerFor(server, { host: "127.0.0.1", timeoutMs: 200 }).send(MESSAGE),
+      () => mailerFor(server, { timeoutMs: 200 }).send(MESSAGE),
       SmtpError,
       "the greeting timed out",
     );

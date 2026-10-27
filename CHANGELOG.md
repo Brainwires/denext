@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A command that read a quick child's output no longer waits up to 5 s to exit.** The reader
+  that collects a child's output until it exits (`deno info`, `deno bundle`, the type check and
+  the other children denext runs) started its 5 s drain timer when the exit was reported after
+  the pipes had already closed, the usual order for a short-lived child, and nothing cleared it:
+  the process stayed alive until it fired.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking

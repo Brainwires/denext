@@ -1478,8 +1478,6 @@ async function captureTick(fn: () => Promise<unknown>): Promise<() => void> {
 
 Deno.test({
   name: "realtime publication: its tables join the registry, with triggers, and leave it",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({
       notes: { policy: ownerOnly },
@@ -1566,8 +1564,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime: a key naming a publication table is admitted once the publication is read",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({
       notes: { policy: ownerOnly },
@@ -1595,8 +1591,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime: the notify source turns realtime triggers on; the logical one turns them off",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.triggers.set(
@@ -1640,8 +1634,6 @@ function assertUnderMigrationLock(sql: FakeRealtimeClient, match: RegExp): void 
 
 Deno.test({
   name: "realtime DDL at startup runs under the backend's migration lock",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.publication.push({
@@ -1703,8 +1695,6 @@ function fakeSlot(sql: FakeRealtimeClient, batches: Uint8Array[][]) {
 Deno.test({
   name:
     "realtime source logical: no trigger migrations, the denext_realtime publication, WAL events",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.triggers.set(

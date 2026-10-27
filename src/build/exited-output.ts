@@ -30,8 +30,16 @@ async function readPipe(
     }
   })().catch(() => {});
   let grace: ReturnType<typeof setTimeout> | undefined;
-  const late = exited.then(() => new Promise<void>((r) => grace = setTimeout(r, graceMs)));
+  let read = false;
+  // No grace once the pipes have ended: an exit reported after the EOF must not start a timer
+  // nothing would clear.
+  const late = exited.then(() =>
+    new Promise<void>((r) => {
+      if (!read) grace = setTimeout(r, graceMs);
+    })
+  );
   await Promise.race([all, late]);
+  read = true;
   clearTimeout(grace);
   await reader.cancel().catch(() => {});
   const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));

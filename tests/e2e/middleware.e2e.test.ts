@@ -7,9 +7,10 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser, pollFor } from "./harness.ts";
-import { fromFileUrl } from "@std/path";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const EXAMPLE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
+// A private copy: the build writes its `.denext/` (never into the checkout's example).
+const EXAMPLE = await copyExample("hello");
 
 Deno.test({
   name: "e2e: middleware redirects a legacy path (308) and tags a response header",

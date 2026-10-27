@@ -20,7 +20,7 @@ import { removeTempDir } from "../helpers/temp.ts";
 import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
-import { onFreePort } from "../helpers/port.ts";
+import { boundPort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -68,7 +68,7 @@ export default {
   compile: {
     include: ["lib/motto.txt"],
     // On the toolchain the network grant is baked by direction: listen on the server's own hosts
-    // (any port: the test picks one at run time), connect anywhere.
+    // (any port: the binary binds the one the OS picks), connect anywhere.
     permissions: { write: ["app.db", ".storage"], netListen: ["0.0.0.0", "127.0.0.1", "localhost"] },
   },
   plugins: [
@@ -290,25 +290,15 @@ interface Served {
 const DRAIN_MS = 3000;
 
 /**
- * Start the binary on a free port and wait until `/` answers; a port taken between the pick and
- * the bind is retried on another.
+ * Start the binary on `--port 0` and wait until `/` answers on the port it says it bound (nothing
+ * picks a port another process could take first).
  */
-function serve(bin: string, cwd: string, env: Record<string, string>): Promise<Served> {
-  return onFreePort((port) => serveOn(port, bin, cwd, env));
-}
-
-/** {@linkcode serve} on `port`. */
-async function serveOn(
-  port: number,
-  bin: string,
-  cwd: string,
-  env: Record<string, string>,
-): Promise<Served> {
+async function serve(bin: string, cwd: string, env: Record<string, string>): Promise<Served> {
   // On Windows the stop is the console's Ctrl-C (tests/helpers/console-ctrl.ts): `kill("SIGTERM")`
   // there is `TerminateProcess`, which no handler sees.
-  const server = spawnStoppable(bin, [], {
+  const server = spawnStoppable(bin, ["--port", "0"], {
     cwd,
-    env: { NO_COLOR: "1", PORT: String(port), DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env },
+    env: { NO_COLOR: "1", DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env },
   });
   const child = server.child;
   let output = "";
@@ -319,6 +309,7 @@ async function serveOn(
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
+  const port = await boundPort(() => output, () => exited);
   const origin = `http://127.0.0.1:${port}`;
   const get = async (path: string) => {
     const res = await fetch(origin + path);
@@ -362,7 +353,7 @@ async function serveOn(
     const out = await stop(DRAIN_MS + 10_000);
     return { text, exitMs: performance.now() - at, output: out };
   };
-  for (let i = 0; i < 1200 && !exited; i++) {
+  for (let i = 0; i < 1200 && port !== undefined && !exited; i++) {
     try {
       if ((await get("/")).status === 200) return { get, stop, stopDuring };
     } catch { /* not listening yet */ }

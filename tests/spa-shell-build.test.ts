@@ -135,8 +135,6 @@ Deno.test("spa.shell config: validated, and never together with spa.loading", ()
 
 Deno.test({
   name: "spa.shell export: each target's shell is prerendered with hashed scripts",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixtureCopy();
   try {
@@ -165,8 +163,6 @@ Deno.test({
 
 Deno.test({
   name: "spa.shell dev: the dev server serves the prerendered shell for the page's target",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixtureCopy();
   const server = await startSpaDevOnDir(dir);

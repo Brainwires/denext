@@ -46,8 +46,6 @@ export default function Page() {
 Deno.test({
   name:
     "export (next-compat): the Flight bundle is the compat one, and the island hydrates from it",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nc_export_" });
   try {
@@ -82,8 +80,6 @@ Deno.test({
 
 Deno.test({
   name: "export (next-compat): a previous `denext build`'s server bundle still loads afterwards",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // The desktop and mobile package scripts run `deno task export` in a project that may hold a
   // `denext build`. The export used to rebuild the compat server bundle into `.denext/server/`

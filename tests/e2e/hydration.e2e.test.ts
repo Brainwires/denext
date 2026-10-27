@@ -18,9 +18,10 @@ import {
   launchBrowser,
   type RunningServer,
 } from "./harness.ts";
-import { fromFileUrl } from "@std/path";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const EXAMPLE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
+// A private copy: the build writes its `.denext/` (never into the checkout's example).
+const EXAMPLE = await copyExample("hello");
 
 async function stepServerHtml(server: RunningServer): Promise<void> {
   const html = await (await fetch(server.origin + "/")).text();

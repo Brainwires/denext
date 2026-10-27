@@ -158,3 +158,33 @@ Deno.test("quietThenExplain: runs once with stderr discarded; a failure runs aga
   const failed = await quietThenExplain((mode) => (modes.push(mode), Promise.resolve(output(++n))));
   assertEquals([failed.code, modes], [2, ["null", "piped"]], "the re-run's output is returned");
 });
+
+// Pipes that reach EOF before the exit is reported (the usual order for a quick child) ended the
+// read with no grace timer yet; the exit then started one nothing cleared, so every such read left
+// a timer running for the grace period (5 s by default), which held a test's ops open.
+Deno.test({
+  name: "exitedOutput: pipes that end before the exit leave no grace timer behind",
+  sanitizeOps: true,
+  sanitizeResources: true,
+  fn: async () => {
+    const exit = Promise.withResolvers<Deno.CommandStatus>();
+    const ended = () =>
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("x"));
+          c.close();
+        },
+      });
+    const child = { status: exit.promise, stdout: ended(), stderr: ended() };
+    const reading = exitedOutput(child as unknown as Deno.ChildProcess, {
+      stdout: true,
+      stderr: true,
+    }, 60_000);
+    await new Promise((r) => setTimeout(r, 0)); // both pipes are at EOF; then the exit
+    exit.resolve({ success: true, code: 0, signal: null });
+    const out = await reading;
+    assertEquals(new TextDecoder().decode(out.stdout), "x");
+    assertEquals(new TextDecoder().decode(out.stderr), "x");
+    await new Promise((r) => setTimeout(r, 0)); // a timer the exit started is pending by now
+  },
+});

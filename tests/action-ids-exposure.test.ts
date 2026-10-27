@@ -38,29 +38,15 @@ import {
   tagServerExports,
 } from "../src/runtime/server-action.ts";
 import { type GraphModule, referencedActionExports } from "../src/build/action-references.ts";
+import { restoreActionIdStateAfterEachTest } from "./helpers/action-id-state.ts";
 import { buildBoundaryManifest, resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { deserializeBoundary, serializeBoundary } from "../src/build/boundary-manifest.ts";
 
-/**
- * The process-wide action-id state these tests change (`setBuildActionIdSecret`,
- * `setLegacyActionIds`, `setUnreferencedActionsPermissive`), restored after every test: a test
- * that fails half-way must not leave the next one — or another file in this process — minting ids
- * under its secret.
- */
-const SHARED_STATE = ["actionIdSecret", "serverActionExposure"].map((name) =>
-  Symbol.for(`denext.shared.${name}`)
-);
-let saved: Array<Record<string, unknown> | undefined> = [];
-Deno.test.beforeEach(() => {
-  const slots = globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>;
-  saved = SHARED_STATE.map((key) => slots[key] && { ...slots[key] });
-});
-Deno.test.afterEach(() => {
-  const slots = globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>;
-  SHARED_STATE.forEach((key, i) => {
-    if (saved[i] && slots[key]) Object.assign(slots[key], saved[i]);
-  });
-});
+// The process-wide action-id state these tests change (`setBuildActionIdSecret`,
+// `setLegacyActionIds`, `setUnreferencedActionsPermissive`, `DENEXT_ACTION_ID_SECRET`), restored
+// after every test: a test that fails half-way must not leave the next one minting ids under its
+// secret.
+restoreActionIdStateAfterEachTest();
 
 const ORIGIN = "http://app.test";
 const SECRET_A = "build-secret-aaaaaaaaaaaaaaaaaaaaaaaa";

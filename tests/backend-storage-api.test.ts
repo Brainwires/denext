@@ -55,8 +55,6 @@ async function harness() {
 
 Deno.test({
   name: "server API: runtime buckets, info, exists, copy, move, folders, batch signing",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   try {
@@ -192,8 +190,6 @@ Deno.test({
 
 Deno.test({
   name: "Storage API: error envelope, unknown routes, methods, bodies, CSRF, batches",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const service = { authorization: `Bearer ${SECRET_KEY}` };
@@ -335,8 +331,6 @@ Deno.test({
 
 Deno.test({
   name: "image transforms take AVIF sources: render/image and signed transform URLs",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const service = { authorization: `Bearer ${SECRET_KEY}` };
@@ -645,8 +639,6 @@ Deno.test("storage helpers reject outside their runtime", async () => {
 
 Deno.test({
   name: "client helpers over the Storage API: list, info, move, copy, remove, sign, resumable",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const cookie = await cookieFor(USER_A);
@@ -717,8 +709,6 @@ Deno.test({
 
 Deno.test({
   name: "versions on the server API; the admin hooks; lifecycle validation",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   try {
@@ -937,8 +927,6 @@ Deno.test("sqlite metadata: a key prefix matches case-sensitively, wildcards lit
 
 Deno.test({
   name: "client: listFilesV2, version-aware info and remove, signed resumable uploads",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const original = globalThis.fetch;
@@ -998,8 +986,6 @@ Deno.test({
 
 Deno.test({
   name: "authorize({ session }): a supabase-js caller's access token is a session",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   // The documented `authorize: ({ session }) => !!session` refused every supabase-js upload:
   // a JWT identity reached `authorize` with no session. It now carries the token's session.
