@@ -14,7 +14,7 @@
 // suite: `gh run download <run> -n coverage-lcov -D coverage`, then `deno task coverage:ratchet:update`.
 
 import { join, relative, resolve } from "@std/path";
-import { type FileCoverage, parseLcov, pct } from "./coverage-floor.ts";
+import { canonicalPath, type FileCoverage, parseLcov, pct } from "./coverage-floor.ts";
 
 /** The trees the ratchet covers (relative to the project root): `.ts` / `.tsx` modules in them. */
 export const RATCHETED: readonly string[] = ["src/cli", "src/server", "src/compat", "packages"];
@@ -207,8 +207,10 @@ export async function main(args: string[], root: string = resolve(".")): Promise
     return 2;
   }
   const baselinePath = at === -1 ? join(root, BASELINE_FILE) : resolve(root, args[at + 1]);
-  const lcov = parseLcov(await Deno.readTextFile(input));
-  const coverage = ratchetedCoverage(lcov, lcovRoot(lcov.keys()) ?? root);
+  // Paths resolved on both sides (see coverage-floor.ts's main): a report written under a
+  // symlinked checkout spells the same file two ways, and the root may be the other spelling.
+  const lcov = parseLcov(await Deno.readTextFile(input), canonicalPath);
+  const coverage = ratchetedCoverage(lcov, lcovRoot(lcov.keys()) ?? canonicalPath(root));
   const baseline = await readBaseline(baselinePath);
   const exists = existsIn(root);
   if (args.includes("--update")) {

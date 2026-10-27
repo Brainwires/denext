@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The test tasks leave the checkout as they found it (contributors).** `scripts/test-run.ts` keeps
+  `.deno/`, `.denext/` and `coverage/` out of every pass's test discovery (its `--ignore` replaced
+  `deno.json`'s `exclude`, so a `.deno/npm-compat` left by an earlier run's type-check was run as
+  tests). The example integration tests build private copies, so a build no longer rewrites
+  `examples/*/deno.lock` (the six that lacked `jsr:@std/encoding` now record it). The Docker probe
+  of the Docker-backed tests gives up after 5 s and skips them, where a hung Docker Desktop held the
+  whole suite. `coverage:floor`, `coverage:ratchet` and `coverage:fallow` (and the converter
+  `denext fallow init` scaffolds) resolve symlinks in the report's paths and the project root and merge a
+  file's records, so a run under a symlinked directory (macOS `/var` → `/private/var`) no longer
+  lists files as never loaded.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking

@@ -77,6 +77,16 @@ function covers(entry: string, file: string): boolean {
   return e === "" || e === "." || file === e || file.startsWith(`${e}/`);
 }
 
+/**
+ * Directories tools write into the checkout that test discovery must never walk: `.deno/` (the
+ * toolchain's native type-check generates its project there, an `npm-compat` copy of the `@jsr/*`
+ * packages with their own `_test.ts` files included), `.denext/` (build output) and `coverage/`.
+ * Every stock pass names them in its `--ignore`: a `--ignore` on the command line replaces
+ * `deno.json`'s `exclude` / `test.exclude` instead of adding to it, so the config's own `.deno/`
+ * entry no longer applies once this script passes one.
+ */
+export const TOOL_CACHE_DIRS: readonly string[] = [".deno/", ".denext/", "coverage/"];
+
 /** The `deno test` flags whose value may be the next argument (`--filter foo`). */
 const VALUE_FLAGS = TEST_VALUE_FLAGS;
 
@@ -185,12 +195,16 @@ export function testPasses(
   // named file whatever its name, and cannot resolve `vitest`.
   const stockPaths = paths.filter((p) => !p.endsWith(VITEST_SUFFIX));
   const base = ["test", "-A", "--unstable-kv", ...flags];
-  const ignore = [...ignores, ...serialFiles];
+  const ignore = [
+    ...ignores,
+    ...serialFiles,
+    ...TOOL_CACHE_DIRS.filter((d) => !ignores.some((i) => covers(i, d))),
+  ];
   return {
     parallel: paths.length > 0 && stockPaths.length === 0 ? null : [
       ...base,
       ...(coverage ? [] : ["--parallel"]),
-      ...(ignore.length > 0 ? [`--ignore=${ignore.join(",")}`] : []),
+      `--ignore=${ignore.join(",")}`,
       ...stockPaths,
       ...rest,
     ],
