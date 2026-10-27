@@ -4,29 +4,23 @@
 // `processShared("actionIdSecret")`, so every loaded copy of the module agrees), and so does the
 // exposure policy (src/runtime/server-action.ts, `processShared("serverActionExposure")`). A test
 // that installs a build secret (`setBuildActionIdSecret`, or an in-process `denext start` reading
-// a build's manifest), turns on the legacy ids or sets `DENEXT_ACTION_ID_SECRET` and then fails
-// half-way would otherwise leave every later test of its file minting ids under that secret.
-
-import { ACTION_ID_SECRET_ENV } from "../../src/server/action-ids.ts";
+// a build's manifest) or turns on the legacy ids and then fails half-way would otherwise leave
+// every later test of its file minting ids under that secret. `DENEXT_ACTION_ID_SECRET` is the
+// process's environment, shared by every file of a parallel run: a test that sets it restores it
+// itself (and its file is in tests/serial-tests.ts).
 
 /** The `processShared` slots that hold the action-id state. */
 const SLOTS = ["actionIdSecret", "serverActionExposure"].map((name) =>
   Symbol.for(`denext.shared.${name}`)
 );
 
-/** What {@linkcode snapshotActionIdState} saw. */
-interface ActionIdState {
-  readonly slots: ReadonlyArray<Record<string, unknown> | undefined>;
-  readonly env: string | undefined;
-}
+/** What {@linkcode snapshotActionIdState} saw: a copy of each shared slot. */
+type ActionIdState = ReadonlyArray<Record<string, unknown> | undefined>;
 
-/** The action-id state as it is now: a copy of each shared slot, and the environment's secret. */
+/** The action-id state as it is now. */
 function snapshotActionIdState(): ActionIdState {
   const shared = globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>;
-  return {
-    slots: SLOTS.map((key) => shared[key] && { ...shared[key] }),
-    env: Deno.env.get(ACTION_ID_SECRET_ENV),
-  };
+  return SLOTS.map((key) => shared[key] && { ...shared[key] });
 }
 
 /**
@@ -37,14 +31,12 @@ function snapshotActionIdState(): ActionIdState {
 function restoreActionIdState(saved: ActionIdState): void {
   const shared = globalThis as unknown as Record<symbol, Record<string, unknown> | undefined>;
   SLOTS.forEach((key, i) => {
-    const before = saved.slots[i];
+    const before = saved[i];
     const now = shared[key];
     if (!before || !now) return; // the module creates its slot as it loads, before any test
     for (const field of Object.keys(now)) if (!(field in before)) delete now[field];
     Object.assign(now, before);
   });
-  if (saved.env === undefined) Deno.env.delete(ACTION_ID_SECRET_ENV);
-  else Deno.env.set(ACTION_ID_SECRET_ENV, saved.env);
 }
 
 /**
