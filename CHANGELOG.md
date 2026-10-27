@@ -118,7 +118,9 @@ and this project adheres to
   imported into the user's certificate store (`CurrentUser\My`, its key not exportable) by
   PowerShell reading the password from stdin, signed with by thumbprint, and removed again, key
   included, when signing ends, fails or is interrupted; a certificate the store already held is
-  left in place. (`osslsigncode` already read it from a 0600 file.)
+  left in place. (`osslsigncode` already read it from a 0600 file.) `denext/desktop` exports the
+  types of the import's test seams (`SigntoolCertificateDeps`, `StoreCommandRunner`,
+  `StoreCommandRunnerSync`, `StoreCommandResult`).
 
 - **The installers verify a release's origin, not only its checksum.** `SHA256SUMS` comes from
   the same release as the archive, so whoever can replace one can replace the other. Every
