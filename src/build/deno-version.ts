@@ -70,15 +70,23 @@ function comparePrerelease(x: readonly string[], y: readonly string[]): number {
   return Math.sign(x.length - y.length);
 }
 
+/** The core of the fork's own-version line: `3.0.0-rc.N`, then `3.0.0-denext.N`. */
+const OWN_LINE_CORE = "3.0.0";
+
 /** The prerelease name that follows the release candidates on the fork's own-version line. */
 const OWN_LINE_PRERELEASE = "denext";
 
+/** Whether `v` has the core of the fork's own-version line ({@linkcode OWN_LINE_CORE}). */
+function onOwnLine(v: ParsedVersion): boolean {
+  return v.core.join(".") === OWN_LINE_CORE;
+}
+
 /**
- * The rank of a prerelease's name on the fork's own-version line (a `3.0.0` or later core):
- * `rc.N` 0, `denext.N` 1. `undefined` for any other name, which keeps semver's order.
+ * The rank of a prerelease's name on the fork's own-version line ({@linkcode OWN_LINE_CORE}):
+ * `rc.N` 0, `denext.N` 1. `undefined` for any other name or core, which keeps semver's order.
  */
 function ownLineRank(v: ParsedVersion): number | undefined {
-  if (v.core[0] < 3) return undefined;
+  if (!onOwnLine(v)) return undefined;
   const name = v.pre[0];
   return name === "rc" ? 0 : name === OWN_LINE_PRERELEASE ? 1 : undefined;
 }
@@ -87,7 +95,7 @@ function ownLineRank(v: ParsedVersion): number | undefined {
  * The precedence of two Deno versions (build metadata ignored): semver's, with one exception for
  * the fork's own-version line. `2.9.7-denext.9` < `2.9.7-denext.10` < `2.9.7` (a prerelease sorts
  * below its release) and `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.10` < `3.0.0-denext.1` <
- * `3.0.0-denext.10` < `3.0.0`: on a `3.0.0` or later core a `denext.N` prerelease outranks every
+ * `3.0.0-denext.10` < `3.0.0`: on the `3.0.0` core a `denext.N` prerelease outranks every
  * `rc.N` one (the fork's releases after its last release candidate), where semver's ASCII order
  * would put it below. A version that does not parse sorts below every one that does.
  *
@@ -155,12 +163,12 @@ const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 
 /**
  * The stock release an old-scheme version (`2.9.7-denext.N`) is built from, or `null`. The fork's
- * own `3.0.0-denext.N` has the same shape but names no stock release: the old scheme ended below
- * {@linkcode FIRST_OWN_VERSION_RUNTIME}.
+ * own `3.0.0-denext.N` has the same shape but names no stock release: it is the own-version line
+ * ({@linkcode OWN_LINE_CORE}).
  */
 function oldSchemeRelease(version: string): string | null {
   const m = OLD_SCHEME.exec(version);
-  return m && compareDenoVersions(m[1], FIRST_OWN_VERSION_RUNTIME) < 0 ? m[1] : null;
+  return m && m[1] !== OWN_LINE_CORE ? m[1] : null;
 }
 
 /**

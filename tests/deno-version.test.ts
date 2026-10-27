@@ -199,8 +199,10 @@ Deno.test("compareDenoVersions: the fork's 3.0.0-denext.N line outranks every 3.
       .sort(compareDenoVersions),
     ["2.9.7-denext.22", "3.0.0-rc.6", "3.0.0-denext.1", "3.0.0-denext.2", "3.0.0-denext.10"],
   );
-  // The old scheme keeps plain semver against an upstream release candidate of its core.
+  // Off the 3.0.0 core plain semver stands: the old scheme against an upstream release
+  // candidate of its core, and any other core.
   assert(compareDenoVersions("2.10.0-denext.1", "2.10.0-rc.1") < 0);
+  assert(compareDenoVersions("3.1.0-denext.1", "3.1.0-rc.1") < 0);
   // Other prerelease names on the 3.0.0 core keep semver too.
   assert(compareDenoVersions("3.0.0-alpha.1", "3.0.0-denext.1") < 0);
 });
@@ -219,7 +221,8 @@ Deno.test("3.0.0-denext.N: denext's release, built from the pin's Deno (not the 
     assert(compareDenoVersions(v, FIRST_MARKER_RUNTIME) > 0, v);
     assert(compareDenoVersions(v, FIRST_OWN_VERSION_RUNTIME) > 0, v);
   }
-  // The old scheme is unchanged.
+  // The old scheme is unchanged (any other core: `<stock>-denext.N`).
   assertEquals(pinnedDenoReleaseVersion("2.9.7-denext.22", "2.9.8"), "2.9.7");
+  assertEquals(pinnedDenoReleaseVersion("9.9.9-denext.1", "2.9.8"), "9.9.9");
   assert(isPreMarkerDenextVersion("2.9.7-denext.22"));
 });
