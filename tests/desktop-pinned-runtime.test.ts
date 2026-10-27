@@ -1606,6 +1606,22 @@ Deno.test("pin generator: a 3.0.0-rc.3+ release must record the CLI's identity m
   assertEquals(toolchainPinFromRelease(old.tag, old.manifest, old.sums)!.version, "3.0.0-rc.2");
 });
 
+Deno.test("pin generator: a 3.0.0-denext.N release pins, built from the manifest's Deno", () => {
+  // After 3.0.0-rc.6 the fork releases 3.0.0-denext.N: its own version, not the old
+  // `<stock>-denext.N` scheme, so it goes with any stock `deno` and must carry the marker.
+  const r = ownVersionRelease("3.0.0-denext.1");
+  const runtime = pinFromRelease(r.tag, r.manifest, r.sums);
+  assertEquals([runtime.version, runtime.deno], ["3.0.0-denext.1", "2.9.7"]);
+  assertThrows(() => toolchainPinFromRelease(r.tag, r.manifest, r.sums), Error, "cli.identity");
+  r.manifest.cli.identity = {
+    buildDenext: "3.0.0-denext.1",
+    versionLine: denextVersionLine("3.0.0-denext.1"),
+  };
+  const toolchain = toolchainPinFromRelease(r.tag, r.manifest, r.sums)!;
+  assertEquals([toolchain.version, toolchain.deno], ["3.0.0-denext.1", "2.9.7"]);
+  assert(compareDenoVersions(runtime.version, "3.0.0-rc.6") > 0);
+});
+
 Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {
   // deno-lint-ignore no-explicit-any
   type R = { manifest: any; sums: string };
