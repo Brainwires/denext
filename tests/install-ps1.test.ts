@@ -62,12 +62,18 @@ function serveRelease(tag: string, opts: { rateLimited?: boolean } = {}): Releas
   };
 }
 
-/** A zip holding `denext.exe` (a small system executable stands in for the real binary). */
+/**
+ * A zip holding `denext.exe`: a small system executable stands in for the real binary, its COFF
+ * timestamp changed so no Windows catalog vouches for it (the installer refuses a system file).
+ */
 async function releaseZip(dir: string): Promise<Uint8Array> {
   const stage = join(dir, "stage");
   await Deno.mkdir(stage, { recursive: true });
   const sys = Deno.env.get("SystemRoot") ?? "C:\\Windows";
-  await Deno.copyFile(join(sys, "System32", "whoami.exe"), join(stage, "denext.exe"));
+  await Deno.writeFile(
+    join(stage, "denext.exe"),
+    withChangedPeTimestamp(await Deno.readFile(join(sys, "System32", "whoami.exe"))),
+  );
   return await zipStage(dir, stage);
 }
 
