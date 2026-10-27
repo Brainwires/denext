@@ -28,6 +28,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/cli-analyze-coverage.test.ts",
   "tests/cli-dashboard.test.ts",
   "tests/clerk-example.test.ts",
+  "tests/cli-help-dir.test.ts",
   "tests/cli-plugin-add-remove.test.ts",
   // Sets DENEXT_STATE_DIR and clears the standalone variables around `runStandalone`.
   "tests/compile-app.test.ts",
