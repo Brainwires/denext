@@ -788,14 +788,17 @@ Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runt
 currently `3.0.0-rc.5`).
 
 **Naming.** Up to `2.9.7-denext.22` a release was named after the Deno release it was built from
-plus `-denext.<n>`. The next release is `3.0.0-rc.1`, then `3.0.0-rc.2` and so on: the fork's own
+plus `-denext.<n>`. The next releases were `3.0.0-rc.1` through `3.0.0-rc.6`: the fork's own
 version, tagged `denext-runtime-v3.0.0-rc.1`, with its archives named after it
-(`deno-desktop-runtime-3.0.0-rc.1-<target>-<backend>.tar.gz`). `3.0.0` final carries Deno's planned
-3.0 milestone. The Deno release a runtime is built from stays in the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and
-that is still the stock `deno desktop` it packages with. Semver orders the two schemes in release
-order (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0`), which is how denext compares runtime versions.
-Upstream Deno releases a `3.0.0` too, so from `3.0.0-rc.3` denext tells its own Deno from upstream's
-by an identity marker rather than the version: `Deno.build.denext` and a
+(`deno-desktop-runtime-3.0.0-rc.1-<target>-<backend>.tar.gz`). After `3.0.0-rc.6` the release
+candidates end: the fork's releases are `3.0.0-denext.1`, `3.0.0-denext.2`, and so on, tagged
+`denext-runtime-v3.0.0-denext.1`. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS
+line, and denext's runtime is the forward line. The Deno release a runtime is built from stays in
+the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and that is still the stock
+`deno desktop` it packages with. denext compares runtime versions by semver with one exception: on
+the `3.0.0` core a `denext.N` release ranks above every `rc.N` one, where plain semver would put it
+below, so `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.6` < `3.0.0-denext.1` < `3.0.0-denext.2`.
+From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marker rather than the version: `Deno.build.denext` and a
 `denext <version> (Brainwires)` line in `deno --version` (see the
 [toolchain notes](/docs/toolchain#identity)).
 

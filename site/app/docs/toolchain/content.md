@@ -588,7 +588,7 @@ root `package.json`, workspace members) are your code and are not jailed.
   home). On older runtimes `net` is `true` or `false` only. Up to runtime `3.0.0-rc.6` a
   node-pre-gyp package's declared `binary.host` is allowed by itself (not under `paranoid`; a host
   list replaces it, and `"net": false` drops it).
-- **A declared host is a request (runtime `3.0.0-rc.7`).** The download host a package declares
+- **A declared host is a request (runtime `3.0.0-denext.1`).** The download host a package declares
   for itself is honoured only when `jailScripts.knownPackages` lists it for that package
   (`"knownPackages": { "grpc": ["node-precompiled-binaries.grpc.io"] }`; `host` covers every
   port, `host:port` one), and never when it is or resolves to this machine or its network. An
@@ -615,7 +615,7 @@ root `package.json`, workspace members) are your code and are not jailed.
   deno.json alone, as it does `allowScripts`: one `node_modules` is installed for every member. A
   member's own `supplyChain` is ignored (with a warning), and relative `write` paths are resolved
   against the root's directory.
-- **A package.json project (runtime `3.0.0-rc.7`).** A project with a package.json and no
+- **A package.json project (runtime `3.0.0-denext.1`).** A project with a package.json and no
   deno.json installs and resolves as Node.js does, and any deno.json turns that off. There the
   root package.json's `"deno"` object holds both settings, in deno.json's shapes:
   `"deno": { "allowScripts": [...], "supplyChain": { "jailScripts": { ... } } }`, and
@@ -667,7 +667,7 @@ and, when the jail is on for the project, add the narrowest exception each needs
 download hosts instead of `net: true`, the browser packages' cache under `~` with
 `"executables": true`, and Prisma's `node_modules/.prisma`; an entry you already have gets only
 those two additions when it lacks them, never a change to its `net` or `env`. On runtime
-`3.0.0-rc.7` and later they also list the reviewed hosts a package declares for itself under
+`3.0.0-denext.1` and later they also list the reviewed hosts a package declares for itself under
 `knownPackages`, and in a package.json project with no deno.json they write package.json's
 `"deno"` object rather than create a deno.json, which would take the project out of Node mode. In a workspace
 they read every member's dependencies and write the root deno.json. A project directory a
@@ -690,7 +690,7 @@ hosts it needs (`"net": ["<host>"]`, a host list from runtime `3.0.0-rc.6`), nev
 `"net": true`. The package name in that advice comes
 from the install log, which the script itself can print to, so it is quoted as a JSON string.
 
-From runtime `3.0.0-rc.7` `denext doctor` also says what the jail really does on the machine,
+From runtime `3.0.0-denext.1` `denext doctor` also says what the jail really does on the machine,
 from the runtime's own report (`deno info --json`'s `lifecycleJail`): **confined** by the OS
 (`seatbelt` on macOS, `landlock` on Linux, with a note where other programs aren't held to a host
 list or a script gets no network namespace of its own), **no OS sandbox** (Windows, Linux without
@@ -723,20 +723,20 @@ an upstream proxy, and doctor never suggests turning the jail off.
 | `cypress`                                           | downloads the Cypress app into `~/.cache/Cypress`                                                         | `net`, `CYPRESS_CACHE_FOLDER` / `_INSTALL_BINARY` / `_DOWNLOAD_MIRROR`                                        |
 | `electron`                                          | downloads Electron and unpacks it into its package                                                        | `net`, `ELECTRON_*` mirror / skip env                                                                         |
 | `ffmpeg-static`                                     | downloads ffmpeg into its package                                                                         | `net`, `FFMPEG_BINARIES_URL`                                                                                  |
-| `grpc`                                              | node-pre-gyp downloads the binding from its declared host                                                 | `knownPackages` (`3.0.0-rc.7`): `node-precompiled-binaries.grpc.io`                                           |
+| `grpc`                                              | node-pre-gyp downloads the binding from its declared host                                                 | `knownPackages` (`3.0.0-denext.1`): `node-precompiled-binaries.grpc.io`                                       |
 | `keytar`                                            | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                                         |
 | `lefthook`                                          | `lefthook install` writes `.git/hooks`                                                                    | `write`: the repository's `.git/hooks`                                                                        |
 | `msw`                                               | copies `mockServiceWorker.js` into `msw.workerDirectory`                                                  | `write`: those directories                                                                                    |
 | `node-pty`                                          | node-gyp build when no prebuilt binary matches                                                            | `net`                                                                                                         |
 | `node-sass`                                         | downloads the libsass binding from GitHub                                                                 | `net`, `SASS_BINARY_*`                                                                                        |
-| `nodegit`                                           | downloads the binding from its declared host                                                              | `knownPackages` (`3.0.0-rc.7`): `axonodegit.s3.amazonaws.com`                                                 |
+| `nodegit`                                           | downloads the binding from its declared host                                                              | `knownPackages` (`3.0.0-denext.1`): `axonodegit.s3.amazonaws.com`                                             |
 | `playwright-chromium`, `-firefox`, `-webkit`        | download their browser into the Playwright cache                                                          | `net`, `PLAYWRIGHT_BROWSERS_PATH` / `_DOWNLOAD_HOST` / `_SKIP_BROWSER_DOWNLOAD`                               |
 | `puppeteer`                                         | downloads Chrome for Testing into `~/.cache/puppeteer`                                                    | `net`, `PUPPETEER_CACHE_DIR` / `_DOWNLOAD_BASE_URL` / `_SKIP_DOWNLOAD`                                        |
 | `re2`                                               | downloads a prebuilt binding from GitHub, else node-gyp                                                   | `net`                                                                                                         |
 | `sharp`                                             | before 0.33 downloads libvips; later only a build from source needs the network                           | `net`, `SHARP_*_GLOBAL_LIBVIPS`                                                                               |
 | `simple-git-hooks`                                  | writes `.git/hooks`                                                                                       | `write`: the repository's `.git/hooks`                                                                        |
 | `sqlite3`                                           | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                                         |
-| `wrtc`                                              | downloads the WebRTC binding from its declared host                                                       | `knownPackages` (`3.0.0-rc.7`): `node-webrtc.s3.amazonaws.com`                                                |
+| `wrtc`                                              | downloads the WebRTC binding from its declared host                                                       | `knownPackages` (`3.0.0-denext.1`): `node-webrtc.s3.amazonaws.com`                                            |
 
 On runtime `3.0.0-rc.6` and later each `net` grant is the package's download hosts: GitHub
 releases (`github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`)
@@ -763,9 +763,9 @@ because they need nothing: `esbuild` (its binary is an optional dependency), `pl
 install script) and `husky` 9 (the project's own `prepare`). `bcrypt` 6 and `bufferutil` ship
 prebuilt binaries that `node-gyp-build` loads at run time, so leave their install scripts
 unapproved. Approving them works where the OS confines lifecycle scripts (macOS, Linux with
-Landlock) from runtime `3.0.0-rc.7`, which lets the install check load the package's own binary;
+Landlock) from runtime `3.0.0-denext.1`, which lets the install check load the package's own binary;
 elsewhere, and on older runtimes, the approved check fails. `bcrypt` 5 downloads from GitHub
-through node-pre-gyp, which from `3.0.0-rc.7` needs a host grant: upgrade to `bcrypt` 6.
+through node-pre-gyp, which from `3.0.0-denext.1` needs a host grant: upgrade to `bcrypt` 6.
 
 ## Supply chain: install gates
 
@@ -824,8 +824,9 @@ stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetch
 
 ### Identity
 
-Telling denext's Deno from upstream Deno: upstream Deno releases a
-`3.0.0` too, so a version such as `3.0.0-rc.3` does not say whose runtime it is. From `3.0.0-rc.3`
+Telling denext's Deno from stock Deno: there is no upstream 3.0 (upstream Deno stays on its 2.9.x
+LTS line, and denext's runtime is the forward line), but a version number alone still doesn't say
+whose runtime it is: any build can carry `3.0.0-rc.3` in its version. From `3.0.0-rc.3`
 denext's Deno carries an identity marker: `Deno.build.denext` (its version, a string; absent on
 upstream Deno) and a last line in `deno --version`:
 
@@ -840,8 +841,8 @@ denext recognises its toolchain and the `deno` a desktop build runs by that mark
 process by `Deno.build.denext`, for another binary by the `--version` line): whether a command
 already runs on the toolchain, `denext toolchain status`, `denext doctor`, the native type check,
 the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.8
-exactly" check and the direction-split network flags. An upstream `3.0.0-rc.N` or `3.0.0` is stock
-Deno whatever its number. A build from before the marker is recognised by its version only:
+exactly" check and the direction-split network flags. A Deno without the marker is stock Deno whatever
+its number. A build from before the marker is recognised by its version only:
 `2.9.7-denext.N`, or exactly the pinned toolchain while the pin predates the marker (`3.0.0-rc.2`
 and earlier). A runtime release from `3.0.0-rc.3` must record the marker in its manifest
 (`cli.identity`), or `deno task desktop:pin-runtime` refuses it.
@@ -884,11 +885,16 @@ only). On Windows a spawned child inherits only its own handles, so a concurrent
 keeps another's output pipe open (`.output()` waited for the unrelated process to exit), and a
 workspace member's import map can map a module on another drive. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
-`3.0.0-rc.6` (released; denext moves its pin to it in a later release) makes a jailed script's
+`3.0.0-rc.6` (released; denext doesn't pin it, and moves its pin to `3.0.0-denext.1` instead) makes a jailed script's
 host list hold every program it starts and confines each script's writes to its own package, adds
 `module.register()` hooks, Node's `--trace-sigint`, coverage written when SIGINT or SIGTERM ends a
 run, `deno check`'s `Checked N files` summary and the `compilerOptions.types` error, and runs
-`deno jupyter` cells with the config's permissions. The
+`deno jupyter` cells with the config's permissions. The release candidates end there: the next
+release is `3.0.0-denext.1` (denext's version comparison orders `3.0.0-denext.N`
+above every `3.0.0-rc.N`), which carries everything in rc.6 and adds the hardened jail:
+`jailScripts.knownPackages` for the hosts a package declares itself, `deno info --json`'s
+`lifecycleJail` report, and package.json's `"deno"` object as the settings' home in a project
+with no deno.json. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

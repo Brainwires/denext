@@ -45,9 +45,13 @@ denext 3.0.0-rc.5 (Brainwires)
 | `deno upgrade`             | Refuses to run in a release build, and the background update check is off: upstream's channels would replace the fork with stock Deno. Use `denext upgrade` or `denext toolchain install`.        | `3.0.0-rc.1` |
 | Release channel            | `deno --version` says `stable`, the channel of the Deno release the build is made from (2.9.8). `npm` `engines.deno` ranges are checked against that release, not against the prerelease version. | `3.0.0-rc.1` |
 
-The versions sort in release order by semver: `2.9.7-denext.1` … `2.9.7-denext.22`, then
-`3.0.0-rc.1`, `3.0.0-rc.2`, … `3.0.0`. denext 4.x pins `3.0.0-rc.5`; `3.0.0-rc.6` is released and
-the rows marked "rc.6" below need it. Before the marker (`3.0.0-rc.2` and earlier) denext
+The versions sort in release order: `2.9.7-denext.1` … `2.9.7-denext.22`, then `3.0.0-rc.1` …
+`3.0.0-rc.6`, then `3.0.0-denext.1`, `3.0.0-denext.2`, …. That is semver's order with one
+exception: denext ranks the `3.0.0-denext.N` releases above every `3.0.0-rc.N`, where plain semver
+would put them below. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS line, and
+denext's runtime is the forward line. denext 4.x pins `3.0.0-rc.5`; `3.0.0-rc.6` is released and
+the rows marked "rc.6" below need it, and the rows marked "denext.1" need `3.0.0-denext.1` (not
+yet released). Before the marker (`3.0.0-rc.2` and earlier) denext
 recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
 **Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno
@@ -210,15 +214,18 @@ Four gates on what `deno install` and `deno add` let in. The `.npmrc` keys also 
 `npm_config_<key>` from the environment; deno.json's `supplyChain` (the workspace root's only)
 mirrors them. Where sources disagree the stricter value wins.
 
-| `.npmrc` key                 | deno.json `supplyChain`                                                         | Default                    | What                                                                                                                                   | Since        |
-| ---------------------------- | ------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| `jail-scripts`               | `jailScripts`: `true` / `false` / `{ net, packages, upstreamByName }`           | `true` (from `3.0.0-rc.5`) | An approved dependency's lifecycle script runs jailed: scrubbed environment, scratch HOME, limited writes, no network, OS confinement. | `3.0.0-rc.2` |
-|                              | `jailScripts.packages.<name>`: `{ env, write, net, executables, allowPrivate }` |                            | One package's exceptions. `net`: `true`, `false` or a host list (`3.0.0-rc.6`); `write` paths may start with `~` (`3.0.0-rc.6`).       | `3.0.0-rc.2` |
-| `advisory-check`             | `advisoryCheck`: `"on"` / `"off"` / `"required"`                                | `on`                       | Refuses a version OSV lists as malicious (`MAL-…`); `required` also refuses when OSV can't be reached.                                 | `3.0.0-rc.2` |
-| `low-download-check`         | `lowDownloadCheck`: `"off"` / `"warn"` / `"prompt"` / `"required"`              | `warn`                     | What `deno add` does for a new package with few weekly downloads (a typosquat guard).                                                  | `3.0.0-rc.2` |
-| `low-download-threshold`     | `lowDownloadThreshold`                                                          | `1000`                     | Weekly downloads below which that check applies; `0` turns it off.                                                                     | `3.0.0-rc.2` |
-| `allowed-unpopular-packages` | `allowLowDownloads`                                                             |                            | Names (or `@scope/*`, `prefix*`) added whatever their counts.                                                                          | `3.0.0-rc.2` |
-| `paranoid`                   | `paranoid`                                                                      | `false`                    | Every gate on and failing closed; a weaker setting anywhere is an error.                                                               | `3.0.0-rc.2` |
+| `.npmrc` key                 | deno.json `supplyChain`                                                         | Default                    | What                                                                                                                                   | Since            |
+| ---------------------------- | ------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `jail-scripts`               | `jailScripts`: `true` / `false` / `{ net, packages, upstreamByName }`           | `true` (from `3.0.0-rc.5`) | An approved dependency's lifecycle script runs jailed: scrubbed environment, scratch HOME, limited writes, no network, OS confinement. | `3.0.0-rc.2`     |
+|                              | `jailScripts.packages.<name>`: `{ env, write, net, executables, allowPrivate }` |                            | One package's exceptions. `net`: `true`, `false` or a host list (`3.0.0-rc.6`); `write` paths may start with `~` (`3.0.0-rc.6`).       | `3.0.0-rc.2`     |
+|                              | `jailScripts.knownPackages`: `{ "<name>": ["<host>"] }`                         |                            | A package's own declared download host (node-pre-gyp's `binary.host`) is reached only when listed here for that package.               | `3.0.0-denext.1` |
+|                              | package.json `"deno": { "allowScripts", "supplyChain" }`                        |                            | In a project with a package.json and no deno.json, the home of both settings; beside a deno.json it is ignored with a warning.         | `3.0.0-denext.1` |
+|                              |                                                                                 |                            | `deno info --json` reports `lifecycleJail`: whether the OS confines the jail on this machine (`seatbelt`, `landlock`), or why not.     | `3.0.0-denext.1` |
+| `advisory-check`             | `advisoryCheck`: `"on"` / `"off"` / `"required"`                                | `on`                       | Refuses a version OSV lists as malicious (`MAL-…`); `required` also refuses when OSV can't be reached.                                 | `3.0.0-rc.2`     |
+| `low-download-check`         | `lowDownloadCheck`: `"off"` / `"warn"` / `"prompt"` / `"required"`              | `warn`                     | What `deno add` does for a new package with few weekly downloads (a typosquat guard).                                                  | `3.0.0-rc.2`     |
+| `low-download-threshold`     | `lowDownloadThreshold`                                                          | `1000`                     | Weekly downloads below which that check applies; `0` turns it off.                                                                     | `3.0.0-rc.2`     |
+| `allowed-unpopular-packages` | `allowLowDownloads`                                                             |                            | Names (or `@scope/*`, `prefix*`) added whatever their counts.                                                                          | `3.0.0-rc.2`     |
+| `paranoid`                   | `paranoid`                                                                      | `false`                    | Every gate on and failing closed; a weaker setting anywhere is an error.                                                               | `3.0.0-rc.2`     |
 
 The jail, its exceptions and what denext writes for you are in
 [Supply chain: lifecycle-script jail](/docs/toolchain#supply-chain-lifecycle-script-jail); the
