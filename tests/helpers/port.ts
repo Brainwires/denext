@@ -58,11 +58,12 @@ export async function onFreePort<T>(
 }
 
 /**
- * What a denext server prints once it listens: `denext listening on http://<host>:<port>` (`start`,
- * a compiled binary) or `denext dev  ▸  http://<host>:<port>` (`dev`).
+ * What a denext server prints once it listens, on one line: `denext listening on http://…:<port>`
+ * (a server started through the API, a compiled binary's), `denext start ▸ http://…:<port>`,
+ * `denext dev  ▸  http://…:<port>` or `denext dev (SPA)  ▸  http://…:<port>`. Only the `denext`
+ * word and the URL are matched: a Windows console pipe mangles the `▸`.
  */
-const LISTENING =
-  /(?:denext listening on|denext dev\s+▸)\s+https?:\/\/(?:\[[^\]\s]+\]|[^\s:/]+):(\d+)/;
+const LISTENING = /\bdenext\b[^\n]*?\bhttps?:\/\/(?:\[[^\]\s]+\]|[^\s:/]+):(\d+)/;
 
 /**
  * The port a denext server says it bound, from its output so far.
