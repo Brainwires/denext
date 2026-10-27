@@ -364,7 +364,7 @@ export interface JailScriptsCheckOptions {
   /** The OS the project installs on (default: this one). */
   readonly os?: typeof Deno.build.os;
   /**
-   * The machine's `lifecycleJail` report (`deno info --json`, runtime 3.0.0-rc.7 and later);
+   * The machine's `lifecycleJail` report (`deno info --json`, runtime 3.0.0-denext.1 and later);
    * default: read from the project's `deno` when the runtime reports it.
    */
   readonly lifecycleJail?: LifecycleJail | null;
@@ -423,7 +423,7 @@ export async function jailScriptsCheck(
   // where the OS can't confine, a project that approves scripts runs them nearly unconfined
   const exposed = confinement?.state === "no-os-sandbox" && approvesScripts(project.settings);
   const detail = nothing
-    ? confinement!.detail // the jail's real state on this machine (runtime 3.0.0-rc.7 and later)
+    ? confinement!.detail // the jail's real state on this machine (runtime 3.0.0-denext.1 and later)
     : passingJailDetail(required, project.setting, on) + note;
   return { name, ok: !exposed, detail, critical: false };
 }
@@ -488,7 +488,7 @@ function confinementNote(
 
 /**
  * The jail's real state for the project on this machine: off (the project opted out), or what
- * the runtime's own `lifecycleJail` report says. Null on runtimes before 3.0.0-rc.7 and stock
+ * the runtime's own `lifecycleJail` report says. Null on runtimes before 3.0.0-denext.1 and stock
  * Deno, which don't report it, and when the report can't be had.
  */
 async function confinementOf(

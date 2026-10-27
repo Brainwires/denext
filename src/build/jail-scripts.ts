@@ -16,7 +16,7 @@
 // itself turn the jail on.
 //
 // What the runtime takes grows by release ({@linkcode jailRuntime}): rc.6 per-package host lists,
-// `~` write paths, per-package write roots and the `executables` sweep (items 108, 111); rc.7
+// `~` write paths, per-package write roots and the `executables` sweep (items 108, 111); denext.1
 // `knownPackages` for the hosts a package declares itself, `deno info --json`'s `lifecycleJail`
 // (item 124), and, in a package.json project with no deno.json, package.json's
 // `"deno": { "allowScripts", "supplyChain" }` object as the settings' home (item 125). Each is
@@ -61,9 +61,10 @@ export function jailHostListsSupported(
  * The first release of denext's Deno with the hardened jail (DENEXT.md item 124: a package's
  * declared download host needs `jailScripts.knownPackages`, and `deno info --json` reports
  * `lifecycleJail`) and package.json's `"deno"` object as the settings' home in a project without
- * a deno.json (item 125).
+ * a deno.json (item 125). The fork's releases after `3.0.0-rc.6` are `3.0.0-denext.N`, which
+ * {@linkcode compareDenoVersions} orders above every `3.0.0-rc.N`.
  */
-export const JAIL_HARDENED_RELEASE = "3.0.0-rc.7";
+export const JAIL_HARDENED_RELEASE = "3.0.0-denext.1";
 
 /** What a release of denext's Deno takes and reports for the lifecycle-script jail. */
 export interface JailRuntime {
@@ -76,11 +77,11 @@ export interface JailRuntime {
    * path are removed unless its entry sets `executables` (rc.6, item 111).
    */
   readonly writeRoots: boolean;
-  /** A declared download host needs `jailScripts.knownPackages` (rc.7, item 124). */
+  /** A declared download host needs `jailScripts.knownPackages` (denext.1, item 124). */
   readonly knownPackages: boolean;
-  /** `deno info --json` carries `lifecycleJail` (rc.7, item 124). */
+  /** `deno info --json` carries `lifecycleJail` (denext.1, item 124). */
   readonly confinementInfo: boolean;
-  /** package.json's `"deno"` object holds the settings when there is no deno.json (rc.7, item 125). */
+  /** package.json's `"deno"` object holds the settings when there is no deno.json (denext.1, item 125). */
   readonly packageJsonHome: boolean;
 }
 
@@ -99,14 +100,14 @@ function atLeast(version: string | undefined, release: string): boolean {
  */
 export function jailRuntime(version: string | undefined = toolchainPin.version): JailRuntime {
   const rc6 = atLeast(version, JAIL_HOSTS_RELEASE);
-  const rc7 = atLeast(version, JAIL_HARDENED_RELEASE);
+  const hardened = atLeast(version, JAIL_HARDENED_RELEASE);
   return {
     onByDefault: atLeast(version, JAIL_DEFAULT_RELEASE),
     hostLists: rc6,
     writeRoots: rc6,
-    knownPackages: rc7,
-    confinementInfo: rc7,
-    packageJsonHome: rc7,
+    knownPackages: hardened,
+    confinementInfo: hardened,
+    packageJsonHome: hardened,
   };
 }
 
@@ -136,7 +137,7 @@ export interface JailSetting {
   readonly source?: string;
   /** deno.json's `supplyChain.jailScripts.packages`. */
   readonly packages: Readonly<Record<string, JailPackageException>>;
-  /** deno.json's `supplyChain.jailScripts.knownPackages` (runtime 3.0.0-rc.7 and later). */
+  /** deno.json's `supplyChain.jailScripts.knownPackages` (runtime 3.0.0-denext.1 and later). */
   readonly knownPackages?: Readonly<Record<string, readonly string[]>>;
   /** Where `paranoid` is turned on, when it is (it refuses scripts the OS can't confine). */
   readonly paranoid?: string;
@@ -149,7 +150,7 @@ export type JailHome = "deno.json" | "package.json";
 export interface JailInputs {
   /**
    * The object holding `supplyChain`: the parsed deno.json, or package.json's `"deno"` object in
-   * a package.json project on runtime 3.0.0-rc.7 and later (or null).
+   * a package.json project on runtime 3.0.0-denext.1 and later (or null).
    */
   readonly denoJson?: Record<string, unknown> | null;
   /** Which file that object is (default `deno.json`), for the sources' names. */
@@ -344,7 +345,7 @@ export interface JailProject {
   readonly denoJson: Record<string, unknown> | null;
   /**
    * The file that holds `allowScripts` and `supplyChain`: deno.json, or, in a project with a
-   * package.json and no deno.json on runtime 3.0.0-rc.7 and later, package.json (its `"deno"`
+   * package.json and no deno.json on runtime 3.0.0-denext.1 and later, package.json (its `"deno"`
    * object).
    */
   readonly home: JailHome;
@@ -354,7 +355,7 @@ export interface JailProject {
   readonly settings: Record<string, unknown> | null;
   /**
    * A root package.json whose `"deno"` object sets `allowScripts` / `supplyChain` beside a
-   * deno.json, which the runtime ignores (3.0.0-rc.7 and later; null otherwise).
+   * deno.json, which the runtime ignores (3.0.0-denext.1 and later; null otherwise).
    */
   readonly ignoredPackageJsonSettings: string | null;
   /** The parsed package.json, or null. */
@@ -461,7 +462,7 @@ async function packagesOf(
 
 /**
  * Where the project's `allowScripts` / `supplyChain` live for the runtime: package.json's
- * `"deno"` object in a project with a package.json and no deno.json on 3.0.0-rc.7 and later,
+ * `"deno"` object in a project with a package.json and no deno.json on 3.0.0-denext.1 and later,
  * else the deno.json; and a root package.json `"deno"` object that a deno.json beside it makes
  * the runtime ignore.
  */
@@ -519,7 +520,7 @@ export interface JailRequirement {
   readonly refused?: readonly string[];
   /**
    * The download hosts the package declares for itself, for `jailScripts.knownPackages`
-   * (runtime 3.0.0-rc.7 and later).
+   * (runtime 3.0.0-denext.1 and later).
    */
   readonly known?: readonly string[];
 }
@@ -678,7 +679,7 @@ function rootWrites(entry: JailExceptionEntry, version: string | undefined): str
 
 /**
  * The hosts the entry's package declares for itself, for `knownPackages` on a runtime that
- * honours a declared host only when listed there (3.0.0-rc.7 and later); empty before.
+ * honours a declared host only when listed there (3.0.0-denext.1 and later); empty before.
  */
 function knownHosts(entry: JailExceptionEntry, version: string | undefined): string[] {
   return jailRuntime(version).knownPackages ? [...new Set(entry.declaredHosts ?? [])].sort() : [];
@@ -770,7 +771,7 @@ function refusedLines(reqs: readonly JailRequirement[]): string[] {
  * What a requirement still needs written, given the project's own settings: the whole package
  * entry when there is none, else only what the runtime needs that the existing entry lacks (a
  * `~` cache or sibling `write` path, `executables`, from 3.0.0-rc.6); and its `knownPackages`
- * hosts when they are not listed (3.0.0-rc.7). The user's own `net`, `env` and other `write`
+ * hosts when they are not listed (3.0.0-denext.1). The user's own `net`, `env` and other `write`
  * paths are never changed.
  */
 export interface JailPatch {
@@ -867,7 +868,7 @@ function names(reqs: readonly JailRequirement[]): string {
 }
 
 /**
- * The `supplyChain` JSON for the missing exceptions: the package entries and (runtime 3.0.0-rc.7
+ * The `supplyChain` JSON for the missing exceptions: the package entries and (runtime 3.0.0-denext.1
  * and later) the `knownPackages` hosts, inside package.json's `"deno"` object when that is the
  * settings' home.
  *
@@ -1040,7 +1041,7 @@ function unwrittenReport(
 /**
  * Find the project's dependencies that need a lifecycle-script jail exception and, when the jail
  * is on for the project, write the missing ones into its deno.json (comments and key order
- * kept), or, in a package.json project on runtime 3.0.0-rc.7 and later, into package.json's
+ * kept), or, in a package.json project on runtime 3.0.0-denext.1 and later, into package.json's
  * `"deno"` object. An existing entry is completed with what the runtime needs and it lacks
  * ({@linkcode jailPatch}), never narrowed or widened otherwise. Nothing is written when the jail
  * is off (the project opted out, or the runtime jails only on request), and the jail is never
@@ -1419,7 +1420,7 @@ export function upstreamByNameAdvice(inputs: UpstreamByNameInputs): string[] {
 
 /**
  * What the OS confines a lifecycle script on this machine, as `deno info --json` reports it in
- * `lifecycleJail` (runtime 3.0.0-rc.7 and later, DENEXT.md item 124).
+ * `lifecycleJail` (runtime 3.0.0-denext.1 and later, DENEXT.md item 124).
  */
 export interface LifecycleJail {
   /** `"seatbelt"` (macOS), `"landlock"` (Linux) or `"none"`. */

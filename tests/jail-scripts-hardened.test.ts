@@ -1,7 +1,7 @@
 // The lifecycle-script jail on the runtimes after 3.0.0-rc.5, as denext prepares a project for
 // them (src/build/jail-scripts.ts): rc.6's per-package write roots and `executables` sweep
-// (Brainwires/deno DENEXT.md item 111), rc.7's `knownPackages` and `deno info --json`
-// `lifecycleJail` (item 124), and rc.7's package.json `"deno"` object as the settings' home in a
+// (Brainwires/deno DENEXT.md item 111), denext.1's `knownPackages` and `deno info --json`
+// `lifecycleJail` (item 124), and denext.1's package.json `"deno"` object as the settings' home in a
 // project without a deno.json (item 125). Each is gated on the runtime version, so stock Deno and
 // rc.5 behave as before. Nothing here runs an install or touches the network.
 
@@ -26,13 +26,13 @@ import {
 
 const RC5 = "3.0.0-rc.5";
 const RC6 = "3.0.0-rc.6";
-const RC7 = "3.0.0-rc.7";
+const DENEXT1 = "3.0.0-denext.1";
 /** No environment: a test never inherits the runner's `npm_config_*`. */
 const NO_ENV = () => undefined;
 
 /** A temp project holding `files` (objects are JSON); returns its (real) path. */
 async function project(files: Record<string, unknown>): Promise<string> {
-  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_jail_rc7_" }));
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_jail_hardened_" }));
   for (const [rel, body] of Object.entries(files)) {
     const path = join(dir, rel);
     await Deno.mkdir(dirname(path), { recursive: true });
@@ -61,7 +61,7 @@ async function exists(path: string): Promise<boolean> {
 }
 
 Deno.test("jail runtime: each feature from its release, none on stock Deno", () => {
-  assertEquals(JAIL_HARDENED_RELEASE, RC7);
+  assertEquals(JAIL_HARDENED_RELEASE, DENEXT1);
   const none = {
     onByDefault: false,
     hostLists: false,
@@ -89,7 +89,30 @@ Deno.test("jail runtime: each feature from its release, none on stock Deno", () 
     confinementInfo: true,
     packageJsonHome: true,
   };
-  for (const v of [RC7, "3.0.0-rc.10", "3.0.0", "3.1.0"]) assertEquals(jailRuntime(v), all, v);
+  for (const v of [DENEXT1, "3.0.0-denext.2", "3.0.0-denext.10", "3.0.0", "3.1.0"]) {
+    assertEquals(jailRuntime(v), all, v);
+  }
+});
+
+Deno.test("jail runtime: the hardened gate is 3.0.0-denext.1, above every 3.0.0-rc.N", () => {
+  assertEquals(JAIL_HARDENED_RELEASE, DENEXT1);
+  const rc6Features = {
+    onByDefault: true,
+    hostLists: true,
+    writeRoots: true,
+    knownPackages: false,
+    confinementInfo: false,
+    packageJsonHome: false,
+  };
+  // the release candidates, whatever their number, sort below the denext line: none is hardened
+  for (const v of [RC6, "3.0.0-rc.7", "3.0.0-rc.10", "3.0.0-rc.99"]) {
+    assertEquals(jailRuntime(v), rc6Features, v);
+  }
+  // denext.1 and every later denext.N are at or above the gate (plain semver puts them below rc)
+  for (const v of [DENEXT1, "3.0.0-denext.2", "3.0.0-denext.10"]) {
+    const rt = jailRuntime(v);
+    assert(rt.knownPackages && rt.confinementInfo && rt.packageJsonHome, v);
+  }
 });
 
 Deno.test("jail rc.6: browser caches keep their executables; Prisma writes node_modules/.prisma", async () => {
@@ -184,7 +207,7 @@ Deno.test("jail rc.6: an entry written for rc.5 is completed, its own grants kep
   }
 });
 
-Deno.test("jail rc.7: reviewed declared hosts are written to knownPackages, never before", async () => {
+Deno.test("jail denext.1: reviewed declared hosts are written to knownPackages, never before", async () => {
   for (const e of JAIL_SCRIPT_EXCEPTIONS.filter((e) => e.declaredHosts)) {
     assertEquals(e.exception, {}, `${e.name}: knownPackages is its only grant`);
     for (const h of e.declaredHosts!) assertFalse(h.includes("github"), `${e.name}: ${h}`);
@@ -196,8 +219,8 @@ Deno.test("jail rc.7: reviewed declared hosts are written to knownPackages, neve
   const dir = await project(files);
   try {
     const rc6 = await applyJailExceptions(dir, { version: RC6, env: NO_ENV });
-    assertEquals(rc6.action, "none", "a declared host is allowed by itself before rc.7");
-    const r = await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    assertEquals(rc6.action, "none", "a declared host is allowed by itself before denext.1");
+    const r = await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     assertEquals(r.action, "written");
     assertEquals(await jailIn(join(dir, "deno.json")), {
       knownPackages: {
@@ -213,7 +236,7 @@ Deno.test("jail rc.7: reviewed declared hosts are written to knownPackages, neve
         supplyChain: { jailScripts: { knownPackages: { grpc: ["mirror.example.com"] } } },
       }),
     );
-    await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     const known = (await jailIn(join(dir, "deno.json"))).knownPackages as Record<string, unknown>;
     assertEquals(known.grpc, ["mirror.example.com"]);
     assertEquals(Object.keys(known).sort(), ["grpc", "nodegit", "wrtc"]);
@@ -226,7 +249,7 @@ Deno.test("jail rc.7: reviewed declared hosts are written to knownPackages, neve
   }
 });
 
-Deno.test("jail rc.7: the snippet carries packages and knownPackages, in package.json's deno", () => {
+Deno.test("jail denext.1: the snippet carries packages and knownPackages, in package.json's deno", () => {
   const grpc = JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === "grpc")!;
   const msw = JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === "msw")!;
   const reqs = [
@@ -245,7 +268,7 @@ Deno.test("jail rc.7: the snippet carries packages and knownPackages, in package
   assertEquals(JSON.parse(jailSnippet(reqs, "package.json")), { deno: inner });
 });
 
-Deno.test('jail rc.7: a package.json project\'s settings live in its "deno" object', async () => {
+Deno.test('jail denext.1: a package.json project\'s settings live in its "deno" object', async () => {
   const pkg = {
     name: "nest-app",
     scripts: { start: "nest start" },
@@ -257,7 +280,7 @@ Deno.test('jail rc.7: a package.json project\'s settings live in its "deno" obje
     const old = await applyJailExceptions(dir, { version: RC6, env: NO_ENV });
     assertEquals([old.action, old.home], ["manual", "deno.json"]);
     assertStringIncludes(old.lines[0], "add this to deno.json");
-    const r = await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    const r = await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     assertEquals([r.action, r.home], ["written", "package.json"]);
     assertEquals(r.configPath, join(dir, "package.json"));
     assertStringIncludes(r.lines[0], 'package.json: "deno".supplyChain.jailScripts exception');
@@ -268,12 +291,12 @@ Deno.test('jail rc.7: a package.json project\'s settings live in its "deno" obje
     assertEquals(Object.keys(jail.packages as object), ["puppeteer"]);
     // read back from there: configured, and the source names the object
     assertEquals(
-      (await applyJailExceptions(dir, { version: RC7, env: NO_ENV })).action,
+      (await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV })).action,
       "configured",
     );
     doc.deno = { allowScripts: ["npm:puppeteer"], supplyChain: { jailScripts: false } };
     await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(doc));
-    const off = await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    const off = await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     assertEquals(off.action, "off");
     assertStringIncludes(
       off.lines[0],
@@ -284,13 +307,13 @@ Deno.test('jail rc.7: a package.json project\'s settings live in its "deno" obje
   }
 });
 
-Deno.test('jail rc.7: a "deno" field without the settings is not read; a string one isn\'t edited', async () => {
+Deno.test('jail denext.1: a "deno" field without the settings is not read; a string one isn\'t edited', async () => {
   // an object with neither key is not the settings (a dependency may name an entry point)
   const dir = await project({
     "package.json": { deno: { entry: "./main.ts" }, dependencies: { re2: "1" } },
   });
   try {
-    const r = await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    const r = await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     assertEquals(r.action, "written");
     const doc = await readObject(join(dir, "package.json"));
     assertEquals((doc.deno as Record<string, unknown>).entry, "./main.ts");
@@ -299,7 +322,7 @@ Deno.test('jail rc.7: a "deno" field without the settings is not read; a string 
       join(dir, "package.json"),
       JSON.stringify({ deno: "./main.ts", dependencies: { re2: "1" } }),
     );
-    const manual = await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    const manual = await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     assertEquals(manual.action, "manual");
     assertStringIncludes(manual.lines[0], "add this to package.json");
     assert(JSON.parse(manual.snippet!).deno.supplyChain.jailScripts.packages.re2);
@@ -308,7 +331,7 @@ Deno.test('jail rc.7: a "deno" field without the settings is not read; a string 
   }
 });
 
-Deno.test("jail rc.7: beside a deno.json, package.json's object is ignored and doctor says so", async () => {
+Deno.test("jail denext.1: beside a deno.json, package.json's object is ignored and doctor says so", async () => {
   const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
   const dir = await project({
     "deno.json": "{}\n",
@@ -320,10 +343,10 @@ Deno.test("jail rc.7: beside a deno.json, package.json's object is ignored and d
   const seatbelt: LifecycleJail = { osSandbox: "seatbelt", hostLists: "proxy", warnings: [] };
   try {
     // the deno.json is the only home: the package.json `false` doesn't turn the jail off
-    const r = await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    const r = await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     assertEquals([r.action, r.home], ["written", "deno.json"]);
     const check = await jailScriptsCheck(dir, {
-      version: RC7,
+      version: DENEXT1,
       env: NO_ENV,
       os: "linux",
       lifecycleJail: seatbelt,
@@ -374,14 +397,14 @@ const WINDOWS: LifecycleJail = {
 /** A project with no dependency in the built-in list. */
 const PLAIN = { "deno.json": "{}\n", "package.json": { dependencies: { zod: "3" } } };
 
-const RC7_LINUX = { version: RC7, env: NO_ENV, os: "linux" as const };
+const DENEXT1_LINUX = { version: DENEXT1, env: NO_ENV, os: "linux" as const };
 
-Deno.test("doctor rc.7: confined by the OS, and what that can't hold", async () => {
+Deno.test("doctor denext.1: confined by the OS, and what that can't hold", async () => {
   await withDoctor(PLAIN, async (check, dir) => {
-    const confined = await check(dir, { ...RC7_LINUX, lifecycleJail: LANDLOCK });
+    const confined = await check(dir, { ...DENEXT1_LINUX, lifecycleJail: LANDLOCK });
     assertEquals([confined?.ok, confined?.detail], [true, "confined by the OS (landlock)"]);
     const partial = await check(dir, {
-      ...RC7_LINUX,
+      ...DENEXT1_LINUX,
       lifecycleJail: { ...LANDLOCK, hostLists: "unconfined", networkNamespace: false },
     });
     assertStringIncludes(partial!.detail, "other programs reach any host");
@@ -389,9 +412,9 @@ Deno.test("doctor rc.7: confined by the OS, and what that can't hold", async () 
   });
 });
 
-Deno.test("doctor rc.7: no OS sandbox, a warning only when scripts are approved", async () => {
+Deno.test("doctor denext.1: no OS sandbox, a warning only when scripts are approved", async () => {
   await withDoctor(PLAIN, async (check, dir) => {
-    const opts = { ...RC7_LINUX, os: "windows" as const, lifecycleJail: WINDOWS };
+    const opts = { ...DENEXT1_LINUX, os: "windows" as const, lifecycleJail: WINDOWS };
     const bare = await check(dir, opts);
     assertEquals(bare?.ok, true, "nothing approved: nothing runs unconfined");
     assertStringIncludes(bare!.detail, "no OS sandbox (Windows has no OS sandbox");
@@ -413,27 +436,30 @@ Deno.test("doctor rc.7: no OS sandbox, a warning only when scripts are approved"
   });
 });
 
-Deno.test("doctor rc.7: off, with its source; rc.5 and a silent runtime as before", async () => {
+Deno.test("doctor denext.1: off, with its source; rc.5 and a silent runtime as before", async () => {
   await withDoctor({ ...PLAIN, ".npmrc": "jail-scripts=false\n" }, async (check, dir) => {
-    const off = await check(dir, { ...RC7_LINUX, lifecycleJail: WINDOWS });
+    const off = await check(dir, { ...DENEXT1_LINUX, lifecycleJail: WINDOWS });
     assertEquals(
       [off?.ok, off?.detail],
       [true, "off (.npmrc jail-scripts): dependencies' install scripts run unconfined"],
     );
     await Deno.remove(join(dir, ".npmrc"));
     // rc.5 doesn't report it: as before, no listed dependency means no check
-    assertEquals(await check(dir, { ...RC7_LINUX, version: RC5, lifecycleJail: WINDOWS }), null);
-    // rc.7 without an injected report asks the runtime; one that doesn't answer leaves it out
-    const asked = await check(dir, RC7_LINUX);
+    assertEquals(
+      await check(dir, { ...DENEXT1_LINUX, version: RC5, lifecycleJail: WINDOWS }),
+      null,
+    );
+    // denext.1 without an injected report asks the runtime; one that doesn't answer leaves it out
+    const asked = await check(dir, DENEXT1_LINUX);
     assert(asked === null || /^(confined|no OS)/.test(asked.detail));
   });
 });
 
-Deno.test('doctor rc.7: a package.json project\'s missing exception names its "deno" object', async () => {
+Deno.test('doctor denext.1: a package.json project\'s missing exception names its "deno" object', async () => {
   const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
   const dir = await project({ "package.json": { dependencies: { re2: "1" } } });
   try {
-    const opts = { version: RC7, env: NO_ENV, os: "linux" as const, lifecycleJail: null };
+    const opts = { version: DENEXT1, env: NO_ENV, os: "linux" as const, lifecycleJail: null };
     const missing = await jailScriptsCheck(dir, opts);
     assertEquals(missing?.ok, false);
     assertStringIncludes(
@@ -441,7 +467,7 @@ Deno.test('doctor rc.7: a package.json project\'s missing exception names its "d
       '{"deno":{"supplyChain":{"jailScripts":{"packages":{"re2"',
     );
     assertStringIncludes(missing!.detail, 'to package.json "deno"');
-    await applyJailExceptions(dir, { version: RC7, env: NO_ENV });
+    await applyJailExceptions(dir, { version: DENEXT1, env: NO_ENV });
     const configured = await jailScriptsCheck(dir, opts);
     assertEquals([configured?.ok, configured?.detail], [true, "exceptions configured for re2"]);
   } finally {
@@ -449,12 +475,14 @@ Deno.test('doctor rc.7: a package.json project\'s missing exception names its "d
   }
 });
 
-Deno.test('jail rc.7: install-log fixes and upstreamByName name package.json\'s "deno"', () => {
+Deno.test('jail denext.1: install-log fixes and upstreamByName name package.json\'s "deno"', () => {
   const log = "error: script 'install' in 're2@1.21.0' failed with exit code 1\n" +
     "getaddrinfo ENOTFOUND github.com\n" +
     "error: script 'postinstall' in 'evil@1.0.0' failed with exit code 1\n" +
     "Error: EACCES: permission denied, open '/home/me/.zshrc'\n";
-  const text = explainJailFailures(jailFailures(log, "linux"), RC7, {}, "package.json").join("\n");
+  const text = explainJailFailures(jailFailures(log, "linux"), DENEXT1, {}, "package.json").join(
+    "\n",
+  );
   assertStringIncludes(text, 'fix: package.json "deno" "supplyChain"');
   assertStringIncludes(text, 'in package.json "deno"');
   const proxied = "error: script 'postinstall' in 'pkg@1.0.0' failed with exit code 1\n" +
@@ -464,7 +492,7 @@ Deno.test('jail rc.7: install-log fixes and upstreamByName name package.json\'s 
     output: proxied,
     denoJson: { supplyChain: { jailScripts: { packages: { pkg: { net: ["cdn.example.com"] } } } } },
     home: "package.json",
-    version: RC7,
+    version: DENEXT1,
   });
   assertStringIncludes(advice.join("\n"), 'fix: package.json "deno" "supplyChain"');
 });
@@ -529,11 +557,11 @@ Deno.test({
   },
 });
 
-Deno.test("jail: bcrypt and bufferutil say approving works only where the OS confines (rc.7)", () => {
+Deno.test("jail: bcrypt and bufferutil say approving works only where the OS confines (denext.1)", () => {
   for (const name of ["bcrypt", "bufferutil"]) {
     const why = JAIL_NOT_NEEDED.find((n) => n.name === name)?.why ?? "";
     assertStringIncludes(why, "unapproved", name);
     assertStringIncludes(why, "where the OS confines lifecycle scripts", name);
-    assertStringIncludes(why, "3.0.0-rc.7", name);
+    assertStringIncludes(why, "3.0.0-denext.1", name);
   }
 });

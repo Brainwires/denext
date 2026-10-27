@@ -18,7 +18,7 @@
 // writes only beneath its own package's folder, and executables left in a `~` path are removed
 // unless the entry sets `"executables": true`: an entry names the node_modules directories
 // outside its package that it writes (`siblingWrite`), and a browser cache gets `executables`.
-// From rc.7 (item 124) the download host a package declares for itself (node-pre-gyp's
+// From denext.1 (item 124) the download host a package declares for itself (node-pre-gyp's
 // `binary.host`) is honoured only when `jailScripts.knownPackages` lists it: `declaredHosts`
 // holds the reviewed ones. There is no per-package opt-out, so
 // each entry is the narrowest grant that lets the script do its job. `denext migrate` / `create` / `add` write the entries for
@@ -104,7 +104,7 @@ export interface JailExceptionEntry {
   /**
    * The download hosts the package's own package.json declares (node-pre-gyp's `binary.host`),
    * reviewed: written to `jailScripts.knownPackages` on a runtime that honours a declared host
-   * only when that lists it (3.0.0-rc.7 and later). Older runtimes allow a declared host by
+   * only when that lists it (3.0.0-denext.1 and later). Older runtimes allow a declared host by
    * itself. Only hosts that serve the file themselves are listed: a GitHub release download
    * redirects to another host, which a declaration can't cover (those packages get a `net` list).
    */
@@ -411,9 +411,9 @@ export const JAIL_NOT_NEEDED: readonly { readonly name: string; readonly why: st
     name: "bcrypt",
     why: "bcrypt 6 ships prebuilt binaries that `node-gyp-build` loads at run time, so leave its " +
       "install script unapproved. Approving it works where the OS confines lifecycle scripts " +
-      "(macOS, Linux with Landlock) from runtime 3.0.0-rc.7, which lets the install check load " +
+      "(macOS, Linux with Landlock) from runtime 3.0.0-denext.1, which lets the install check load " +
       "the package's own binary; elsewhere, and on older runtimes, the approved check fails. " +
-      "bcrypt 5 downloads from GitHub through node-pre-gyp, which from rc.7 needs a host grant: " +
+      "bcrypt 5 downloads from GitHub through node-pre-gyp, which from denext.1 needs a host grant: " +
       "upgrade to bcrypt 6",
   },
   {
@@ -428,7 +428,7 @@ export const JAIL_NOT_NEEDED: readonly { readonly name: string; readonly why: st
     name: "bufferutil",
     why: "`node-gyp-build` loads a bundled prebuilt binary at run time, so leave its install " +
       "script unapproved. Approving it works where the OS confines lifecycle scripts (macOS, " +
-      "Linux with Landlock) from runtime 3.0.0-rc.7; elsewhere, and on older runtimes, the " +
+      "Linux with Landlock) from runtime 3.0.0-denext.1; elsewhere, and on older runtimes, the " +
       "approved install check can't load the binary and fails",
   },
 ];
