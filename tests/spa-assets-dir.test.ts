@@ -126,8 +126,6 @@ for (const compat of [false, true]) {
   const path = compat ? "esbuild" : "native";
   Deno.test({
     name: `spa.assetsDir (${path} path): export lays out assets/ the way T3's server serves it`,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const dir = await spaFixture(compat, `, assetsDir: "assets", viteManifest: true, ota: true`);
     try {
@@ -190,8 +188,6 @@ for (const compat of [false, true]) {
 
 Deno.test({
   name: "spa.assetsDir: unset keeps _denext/client/ (default layout unchanged)",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture(false, "");
   try {
@@ -275,8 +271,6 @@ async function builtProject(): Promise<string> {
 
 Deno.test({
   name: "spa.assetsDir: denext start serves the client from /assets/, public/assets/ behind it",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await builtProject();
   const controller = new AbortController();
@@ -315,8 +309,6 @@ Deno.test({
 
 Deno.test({
   name: "spa.assetsDir: the dev server (bundled loop) serves the client from /assets/",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture(true, `, assetsDir: "assets"`);
   const server = await startSpaDevOnDir(dir, { DENEXT_DEV_TYPECHECK: "0" }, { unbundled: false });
@@ -347,8 +339,6 @@ Deno.test({
 // the bundle is the client) and the static export — and the public file never replaces it.
 Deno.test({
   name: "spa.assetsDir: a public/ file at a build path loses to the build in export, dev and start",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const PUBLIC = "// public/assets/index.js";
   const dir = await spaFixture(false, `, assetsDir: "assets"`);
@@ -379,8 +369,6 @@ Deno.test({
 
 Deno.test({
   name: "spa.assetsDir: denext start serves the build's file over a same-named public one",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await builtProject();
   await Deno.writeTextFile(join(dir, "public", "assets", "index.js"), "// public");

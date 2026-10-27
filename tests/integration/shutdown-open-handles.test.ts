@@ -12,7 +12,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
-import { onFreePort } from "../helpers/port.ts";
+import { boundPort, untilServes } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -87,21 +87,10 @@ async function cli(dir: string, args: string[]): Promise<void> {
  * Ctrl-C (or, with `kind: "break"`, Ctrl-Break) on Windows: the request's body, how long the
  * process took to exit after the signal, and its output. Fails if it outlives the deadline by far.
  */
-function startThenStop(
+async function startThenStop(
   dir: string,
   env: Record<string, string>,
   kind: "c" | "break" = "c",
-): Promise<{ text: string; exitMs: number; output: string }> {
-  // A port taken between the pick and the bind fails the start (before any signal): retried.
-  return onFreePort((port) => startThenStopOn(port, dir, env, kind));
-}
-
-/** {@linkcode startThenStop} on `port`. */
-async function startThenStopOn(
-  port: number,
-  dir: string,
-  env: Record<string, string>,
-  kind: "c" | "break",
 ): Promise<{ text: string; exitMs: number; output: string }> {
   const server = spawnStoppable(
     Deno.execPath(),
@@ -113,7 +102,7 @@ async function startThenStopOn(
       join(FW, "cli.ts"),
       "start",
       "--port",
-      String(port),
+      "0", // the port the OS picks, which the server prints: nothing another process can take
       dir,
     ],
     { cwd: dir, env: { NO_COLOR: "1", DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env } },
@@ -127,16 +116,11 @@ async function startThenStopOn(
   const reading = Promise.all([read(child.stdout), read(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
-  const origin = `http://127.0.0.1:${port}`;
   try {
-    for (let i = 0; i < 1200 && !exited; i++) {
-      try {
-        const res = await fetch(`${origin}/`);
-        await res.body?.cancel();
-        if (res.status === 200) break;
-      } catch { /* not listening yet */ }
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    const port = await boundPort(() => output, () => exited);
+    const origin = `http://127.0.0.1:${port}`;
+    const up = port === undefined ? undefined : await untilServes(`${origin}/`, () => exited);
+    await up?.body?.cancel();
     assert(!exited, `start exited early:\n${output}`);
     const inFlight = fetch(`${origin}/api/slow`).then((r) => r.text());
     // Signal once the handler is running (it says so), not after a fixed wait a loaded machine

@@ -318,8 +318,6 @@ Deno.serve((req) => {
 
 Deno.test({
   name: "functions: a client that goes away aborts the function's request",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const app = await functionsApp({
       // `?until=S/A` answers once the function has seen S requests start and A of them aborted
@@ -374,8 +372,6 @@ Deno.serve(async (req) => {
 
 Deno.test({
   name: "functions: dev restarts workers after an edit and finds new functions",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const app = await functionsApp(
       {
@@ -433,8 +429,6 @@ Deno.test("functions: permissions need Deno's worker options in deno.json", asyn
 
 Deno.test({
   name: "FunctionHost: a worker's permissions are passed to the Worker constructor",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const seen: unknown[] = [];
     const host = new FunctionHost("p", "/tmp/p.ts", { net: false }, (url, options) => {
@@ -456,8 +450,6 @@ Deno.test({
 
 Deno.test({
   name: "denext generate function: the scaffold runs as an Edge Function",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const app = await functionsApp({}, { functions: { verifyJwt: false } }, "dev");
     try {
@@ -529,8 +521,6 @@ Deno.test("denext functions list: names, routes, files and verifyJwt", async () 
 
 Deno.test({
   name: "denext functions new / serve / delete / download / deploy",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { createFunctionsCommand } = await import(
       "../packages/backend/src/functions-command.ts"
@@ -601,8 +591,6 @@ Deno.test({
 
 Deno.test({
   name: "functions: with Supabase keys, the anon key passes; a refused credential is a 401",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const KEY = "sb_publishable_functions_unit_key_000000";
     const app = await functionsApp(
@@ -635,8 +623,6 @@ Deno.test({
 
 Deno.test({
   name: "FunctionHost.retire: in-flight requests finish, then the worker stops",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const dir = await Deno.makeTempDir();
     try {
@@ -762,8 +748,6 @@ async function getWithHost(port: number, path: string, host: string): Promise<{ 
 
 Deno.test({
   name: "functions: SUPABASE_URL never comes from a request's Host (the worker keeps it for life)",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const probe = "/functions/v1/probe";
     // `denext functions serve`: the first request forges Host; the worker must not adopt it.

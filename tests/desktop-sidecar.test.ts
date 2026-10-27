@@ -32,7 +32,6 @@ import {
   workerSidecarLauncher,
 } from "../src/desktop/sidecar-launch.ts";
 import type { SidecarExit } from "../src/desktop/sidecar.ts";
-import { onFreePort } from "./helpers/port.ts";
 
 // ── fakes ────────────────────────────────────────────────────────────────────────────────────
 
@@ -601,29 +600,30 @@ const server = http.createServer((req, res) => {
     bootstrap: sc.bootstrap, secret: sc.secrets.TOKEN }));
 });
 sc.onShutdown(async () => { console.log("shutting down"); await new Promise((r) => server.close(r)); });
-server.listen(Number(process.env.PORT), "127.0.0.1", () => { console.log("listening", process.env.PORT); sc.ready(); });
+server.listen(Number(process.env.PORT), "127.0.0.1", () => { console.log("listening", server.address().port); sc.ready(); });
 `;
 
 /**
- * A worker sidecar of `entry` on a free port, once it signalled ready (`definition` gets the
- * port). A port taken between the pick and the bind fails the start with the sidecar's output,
- * and is retried on another.
+ * A worker sidecar of `entry` given port 0, once it signalled ready (`definition` gets that port),
+ * and the port its server bound (it prints it): nothing picks a port another process could take
+ * before the sidecar binds it.
  */
-function readyWorker(
+async function readyWorker(
   entry: string,
   definition: (port: number) => SidecarDefinition,
 ) {
-  return onFreePort(async (port) => {
-    const ctx = realCtx(definition(port), { port });
-    const inst = await workerSidecarLauncher({ entry })(ctx);
-    try {
-      await until(() => ctx.readySignals === 1);
-    } catch (err) {
-      await inst.stop(0);
-      throw new Error(`${(err as Error).message}; the sidecar printed:\n${ctx.lines.join("\n")}`);
-    }
-    return { port, ctx, inst };
-  });
+  const ctx = realCtx(definition(0), { port: 0 });
+  const inst = await workerSidecarLauncher({ entry })(ctx);
+  let port = 0;
+  try {
+    await until(() => ctx.readySignals === 1);
+    port = Number(/^stdout:listening (\d+)$/m.exec(ctx.lines.join("\n"))?.[1]);
+    assert(port > 0, "the sidecar printed its port");
+  } catch (err) {
+    await inst.stop(0);
+    throw new Error(`${(err as Error).message}; the sidecar printed:\n${ctx.lines.join("\n")}`);
+  }
+  return { port, ctx, inst };
 }
 
 /** Wait until `check` holds (real time, bounded). */
@@ -644,9 +644,10 @@ Deno.test("worker launcher: a node:http backend runs in a worker with its own ar
   try {
     const body = await (await fetch(`http://127.0.0.1:${port}/`)).json();
     assertEquals(body, {
-      argv: ["--port", String(port)],
+      // `{port}` and PORT carry the port the host gave (0 here: the server binds one the OS picks)
+      argv: ["--port", "0"],
       env: "desktop",
-      port: String(port),
+      port: "0",
       bootstrap: { hello: "world" },
       secret: "s3cret",
     });

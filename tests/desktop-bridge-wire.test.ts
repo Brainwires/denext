@@ -223,14 +223,33 @@ Deno.test({ ...TEST, name: "wire: a wrong token is refused (forbidden)" }, async
     const err = await assertRejects(() => desktopExtension("echo").ping({}));
     assertEquals(codeOf(err), "forbidden");
     assertEquals(server.log.at(-1)?.status, 403);
-    // The event stream is refused too, and the client stops (403 is fatal, no retry storm).
+    // The event stream is refused too, and the client stops (403 is fatal, no retry storm): once
+    // it has the answer, it schedules no reconnect (a retry is a timer of at least a second).
+    const g = globalThis as { fetch: typeof fetch; setTimeout: typeof setTimeout };
+    const { fetch: realFetch, setTimeout: realSetTimeout } = g;
+    let answered: Promise<Response> | undefined;
+    const retries: number[] = [];
+    g.fetch = (input, init) => {
+      const res = realFetch(input, init);
+      if (String(input).includes("/_denext/desktop/events")) answered = res;
+      return res;
+    };
+    g.setTimeout = ((fn: () => void, ms?: number) => {
+      if ((ms ?? 0) >= 1000) retries.push(ms!);
+      return realSetTimeout(fn, ms);
+    }) as typeof setTimeout;
     const stop = onDesktopEvent("echo", "pong", () => {});
     try {
-      await until(() => server.log.some((r) => r.path === "/_denext/desktop/events"));
-      await new Promise((r) => setTimeout(r, 1500));
+      await until(() => answered !== undefined);
+      // The client cancels the refused body and returns; let that and its continuation run.
+      await (await answered!).body?.cancel().catch(() => {});
+      for (let i = 0; i < 3; i++) await new Promise((r) => realSetTimeout(r, 0));
+      assertEquals(retries, [], "no reconnect is scheduled after a 403");
       const opens = server.log.filter((r) => r.path === "/_denext/desktop/events");
       assertEquals(opens.map((r) => r.status), [403]);
     } finally {
+      g.fetch = realFetch;
+      g.setTimeout = realSetTimeout;
       stop();
     }
   }, { token: "not-the-launch-token" });

@@ -25,6 +25,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A command that read a quick child's output no longer waits up to 5 s to exit.** The reader
+  that collects a child's output until it exits (`deno info`, `deno bundle`, the type check and
+  the other children denext runs) started its 5 s drain timer when the exit was reported after
+  the pipes had already closed, the usual order for a short-lived child, and nothing cleared it:
+  the process stayed alive until it fired.
 - **The runtime's `3.0.0-denext.N` releases order after `3.0.0-rc.N`.** The runtime fork follows
   `3.0.0-rc.6` with `3.0.0-denext.1`, `3.0.0-denext.2`, …, which plain semver sorts below every
   release candidate. denext's runtime version comparison now puts a `denext.N` prerelease above

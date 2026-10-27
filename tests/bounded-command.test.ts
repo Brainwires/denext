@@ -14,18 +14,37 @@ import { boundedOutput, runBounded } from "./helpers/bounded-command.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
 /**
- * A script that spawns a grandchild (inheriting stdout) that ticks `beat` forever, says so once
- * the first tick is on disk, then waits forever itself.
+ * A script that spawns a grandchild (inheriting stdout) that listens on a loopback port for as long
+ * as it lives and writes the port to `portFile`, says so once the port is on disk, then waits
+ * forever itself.
  */
-function hangingTree(beat: string): string {
-  const grandchild = `while (true) { Deno.writeTextFileSync(${JSON.stringify(beat)}, ` +
-    `String(Date.now())); await new Promise((r) => setTimeout(r, 50)); }`;
+function hangingTree(portFile: string): string {
+  const grandchild = `const l = Deno.listen({ hostname: "127.0.0.1", port: 0 }); ` +
+    `Deno.writeTextFileSync(${JSON.stringify(portFile + ".tmp")}, String(l.addr.port)); ` +
+    `Deno.renameSync(${JSON.stringify(portFile + ".tmp")}, ${JSON.stringify(portFile)}); ` +
+    `for await (const c of l) c.close();`;
   return `new Deno.Command(Deno.execPath(), { args: ["eval", ${JSON.stringify(grandchild)}], ` +
     `stdout: "inherit", stderr: "inherit" }).spawn();\n` +
-    `while (true) { try { Deno.statSync(${JSON.stringify(beat)}); break; } catch { ` +
+    `while (true) { try { Deno.statSync(${JSON.stringify(portFile)}); break; } catch { ` +
     `await new Promise((r) => setTimeout(r, 50)); } }\n` +
     `console.log("phase: waiting on the grandchild");\n` +
     `await new Promise(() => setInterval(() => {}, 1000));\n`;
+}
+
+/**
+ * Whether the process listening on `port` has gone: its listener refuses a connection. Polled
+ * until it does (a kill takes effect a moment after it is sent) or `ms` passes.
+ */
+async function listenerGone(port: number, ms = 30_000): Promise<boolean> {
+  for (const end = Date.now() + ms; Date.now() < end;) {
+    try {
+      (await Deno.connect({ hostname: "127.0.0.1", port })).close();
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
 }
 
 /** Long enough for two Deno processes to start on a loaded machine. */
@@ -41,9 +60,9 @@ Deno.test("runBounded: a child that finishes in time reports its exit and output
 
 Deno.test("runBounded: at the deadline the whole tree is killed and the output so far returned", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_bounded_" });
-  const beat = join(dir, "beat");
+  const portFile = join(dir, "port");
   const script = join(dir, "tree.ts");
-  await Deno.writeTextFile(script, hangingTree(beat));
+  await Deno.writeTextFile(script, hangingTree(portFile));
   try {
     const t0 = Date.now();
     const r = await runBounded(Deno.execPath(), ["run", "-A", script], { timeoutMs: DEADLINE_MS });
@@ -54,11 +73,12 @@ Deno.test("runBounded: at the deadline the whole tree is killed and the output s
       Date.now() - t0 < DEADLINE_MS + 15_000,
       `returned ${Date.now() - t0} ms after the start`,
     );
-    // The grandchild is gone: its heartbeat stops.
-    await new Promise((r) => setTimeout(r, 500));
-    const first = await Deno.readTextFile(beat);
-    await new Promise((r) => setTimeout(r, 500));
-    assertEquals(await Deno.readTextFile(beat), first, "the grandchild still runs");
+    // The grandchild is gone: its listener refuses connections (a sign of its death, not a
+    // heartbeat that a loaded machine may merely have slowed).
+    assert(
+      await listenerGone(Number(await Deno.readTextFile(portFile))),
+      "the grandchild still runs",
+    );
   } finally {
     await removeTempDir(dir);
   }

@@ -14,7 +14,7 @@ import { scaffoldMonorepo } from "../../src/build/scaffold-monorepo.ts";
 import { removeTempDir } from "../helpers/temp.ts";
 import { cachedToolchain, linkedEnv } from "../helpers/toolchain.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
-import { onFreePort } from "../helpers/port.ts";
+import { boundPort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -83,20 +83,10 @@ interface Server {
 }
 
 /**
- * Start `denext <verb> . --port <p>` from this checkout in `cwd` with `flags`, and wait until `/`
- * answers 200; a port taken between the pick and the bind is retried on another.
+ * Start `denext <verb> . --port 0` from this checkout in `cwd` with `flags`, and wait until `/`
+ * answers 200 on the port it says it bound (nothing picks a port another process could take).
  */
-function serve(verb: "start" | "dev", flags: string[], cwd: string): Promise<Server> {
-  return onFreePort((port) => serveOn(verb, flags, cwd, port));
-}
-
-/** {@linkcode serve} on `port`. */
-async function serveOn(
-  verb: "start" | "dev",
-  flags: string[],
-  cwd: string,
-  port: number,
-): Promise<Server> {
+async function serve(verb: "start" | "dev", flags: string[], cwd: string): Promise<Server> {
   const child = new Deno.Command(RUN.deno, {
     args: [
       "run",
@@ -107,7 +97,7 @@ async function serveOn(
       verb,
       ".",
       "--port",
-      `${port}`,
+      "0",
       "--host",
       "127.0.0.1",
     ],
@@ -124,6 +114,7 @@ async function serveOn(
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
+  const port = await boundPort(() => output, () => exited);
   const origin = `http://127.0.0.1:${port}`;
   const stop = async () => {
     if (!exited) child.kill("SIGTERM");
@@ -132,7 +123,7 @@ async function serveOn(
     return output;
   };
   // Generous: a loaded machine takes a while to load the app's modules.
-  for (let i = 0; i < 1800 && !exited; i++) {
+  for (let i = 0; i < 1800 && port !== undefined && !exited; i++) {
     try {
       const res = await fetch(`${origin}/`);
       await res.body?.cancel();

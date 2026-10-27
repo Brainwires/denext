@@ -42,8 +42,6 @@ async function bootSpaDev(dir: string, hostname: string) {
 
 Deno.test({
   name: "denext_dev_logs finds an SPA dev server bound to [::1] and reads the page's console",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const prior = Deno.env.get("DENEXT_DEV_TYPECHECK");
   Deno.env.set("DENEXT_DEV_TYPECHECK", "0");
@@ -137,8 +135,6 @@ function fakePage(
 
 Deno.test({
   name: "SPA dev: the DevTools tools pull the open page's tree over the reload stream",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const prior = Deno.env.get("DENEXT_DEV_TYPECHECK");
   Deno.env.set("DENEXT_DEV_TYPECHECK", "0");

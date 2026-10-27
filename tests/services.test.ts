@@ -23,7 +23,7 @@ import {
   type ServicesSnapshot,
   stopServices,
 } from "../src/server/service-loader.ts";
-import { supervisionStatus } from "../src/server/supervise.ts";
+import { forgetStoppedSupervisors, supervisionStatus } from "../src/server/supervise.ts";
 import { runHealthChecks } from "../src/server/health.ts";
 import { loadInstrumentation } from "../src/server/instrumentation.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
@@ -205,6 +205,8 @@ Deno.test("the status snapshot: a debounced write still in flight finishes befor
   let held: (() => void) | undefined;
   let inFlight!: () => void;
   const reached = new Promise<void>((r) => inFlight = r);
+  // Each snapshot write's start and end, in order.
+  const writes: Array<"begin" | "end"> = [];
   try {
     // Hold the first debounced write before it creates its temporary file.
     Deno.writeTextFile = (async (
@@ -212,21 +214,30 @@ Deno.test("the status snapshot: a debounced write still in flight finishes befor
       data: string | ReadableStream<string>,
       options?: Deno.WriteFileOptions,
     ) => {
-      if (String(path).endsWith(".tmp") && !held) {
+      const snapshot = String(path).endsWith(".tmp");
+      if (snapshot) writes.push("begin");
+      if (snapshot && !held) {
         await new Promise<void>((r) => {
           held = r;
           inFlight();
         });
       }
       await write(path, data, options);
+      if (snapshot) writes.push("end");
     }) as typeof Deno.writeTextFile;
     assert(await bootServices(dir, { outDir }));
     await reached;
     const stopping = stopServices();
-    await new Promise((r) => setTimeout(r, 50)); // the final write would race ahead here
+    // Once the supervisors are down the stop queues its final write, which would race ahead of
+    // the held one here: it must not begin until that one has ended.
+    await until(() => supervisionStatus().length === 0);
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(writes, ["begin"], "the final write waits for the one in flight");
     held!();
     await stopping;
-    await new Promise((r) => setTimeout(r, 50)); // a write the stop did not wait for lands here
+    // The stop resolved only once nothing more is in flight: every write it began has ended.
+    assertEquals(writes.at(-1), "end");
+    assertEquals(writes.filter((w) => w === "begin").length, writes.length / 2);
     const last = JSON.parse(await Deno.readTextFile(snapshotPath)) as ServicesSnapshot;
     assertEquals(last.supervisors, [], "the final snapshot is the last one written");
     assertEquals([...Deno.readDirSync(outDir)].map((e) => e.name), [SERVICES_SNAPSHOT]);
@@ -264,6 +275,8 @@ Deno.test("bootServices: a tree that gives up fails the health check and calls o
     console.error = error;
     console.warn = warn;
     await stopServices();
+    // A failed tree stays listed by design (its status says why); the next test starts clean.
+    forgetStoppedSupervisors();
     await removeTempDir(dir);
   }
   assertEquals((await runHealthChecks()).checks.services, undefined);

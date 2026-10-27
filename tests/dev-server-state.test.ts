@@ -39,8 +39,6 @@ async function tempApp(): Promise<string> {
 
 Deno.test({
   name: "dev getManifest: concurrent first hits share ONE scan (single-flight after a rebuild)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   let scans = 0;
@@ -71,8 +69,6 @@ Deno.test({
 
 Deno.test({
   name: "dev compat assets: a request racing a rebuild waits for the completed generation",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {

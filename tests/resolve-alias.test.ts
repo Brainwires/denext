@@ -117,8 +117,6 @@ Deno.test("resolveAlias: an importer-sensitive alias wraps the module it replace
 
 Deno.test({
   name: "resolveAlias: a SPA compat export applies the configured aliases",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_resolve_alias_spa_" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -162,8 +160,6 @@ Deno.test({
 
 Deno.test({
   name: "resolveAlias: a target that is an import-map entry resolves (a npm package gets it too)",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_resolve_alias_map_" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;

@@ -94,7 +94,6 @@ async function check(
 
 Deno.test({
   name: "jsx-directives: client:* type-checks on @types/react components only with the file",
-  sanitizeResources: false,
   async fn() {
     const bare = await check(false, APP);
     assert(bare.code !== 0, "without the file the directives are unknown props");
@@ -106,7 +105,6 @@ Deno.test({
 
 Deno.test({
   name: "jsx-directives: a misspelled directive or a wrong value type is still an error",
-  sanitizeResources: false,
   async fn() {
     const misuse = await check(true, MISUSE);
     assert(misuse.code !== 0, misuse.out);
@@ -117,7 +115,6 @@ Deno.test({
 
 Deno.test({
   name: "jsx-directives: a props spread type-checks under exactOptionalPropertyTypes",
-  sanitizeResources: false,
   async fn() {
     const typed = await check(true, SPREAD, { exactOptionalPropertyTypes: true });
     assertEquals(typed.code, 0, typed.out);

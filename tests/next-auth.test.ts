@@ -639,10 +639,14 @@ Deno.test("next-auth: concurrent requests each read their own lazy config", asyn
     a: tenantConfig("a", `${SECRET}-tenant-a`),
     b: tenantConfig("b", `${SECRET}-tenant-b`),
   };
+  // While the two reads race, tenant a's config resolves only after tenant b's has, so b's is the
+  // process's latest while a runs (an ordering, not a delay a loaded machine could reorder).
+  const bResolved = Promise.withResolvers<void>();
+  let racing = false;
   const result = NextAuth(async (req) => {
     const tenant = req?.headers.get("x-tenant") ?? "a";
-    // Tenant a resolves last, so tenant b's config is the process's latest while a runs.
-    if (tenant === "a") await new Promise((r) => setTimeout(r, 20));
+    if (racing && tenant === "a") await bResolved.promise;
+    if (racing && tenant === "b") bResolved.resolve();
     return tenants[tenant];
   });
   const a = browserFor(result, { "x-tenant": "a" });
@@ -654,6 +658,7 @@ Deno.test("next-auth: concurrent requests each read their own lazy config", asyn
     const req = request(browser.jar, "/api/me", { headers: { "x-tenant": tenant } });
     return inRequest(req, browser.jar, async () => await (await guarded(req)).json());
   };
+  racing = true;
   const [ra, rb] = await Promise.all([read(a, "a"), read(b, "b")]);
   assertEquals(ra.value, { name: "a" });
   assertEquals(rb.value, { name: "b" });

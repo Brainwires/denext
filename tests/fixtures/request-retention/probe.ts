@@ -2,8 +2,8 @@
 // examples/hello's app handler and reports how many of the finished requests and responses a
 // forced GC leaves alive: whatever the server keeps per request (a map keyed by request, a cached
 // response, a captured async context, a renderer left installed) keeps them. Prints one JSON line.
-import { fromFileUrl } from "@std/path";
 import { createTestApp } from "../../../src/testing/mod.ts";
+import { copyExample } from "../../helpers/example-copy.ts";
 
 const gc = (globalThis as { gc?: () => void }).gc;
 if (!gc) throw new Error("run with --v8-flags=--expose-gc");
@@ -15,7 +15,8 @@ async function collect(): Promise<void> {
   }
 }
 
-const HELLO = fromFileUrl(new URL("../../../examples/hello", import.meta.url));
+// A private copy: the test app writes its `.denext/`, which other test files build at the same time.
+const HELLO = await copyExample("hello");
 const ROUNDS = Number(Deno.args[0] ?? 40);
 // A streamed page with an island, a static page, an async server component, a route handler and
 // a 404.

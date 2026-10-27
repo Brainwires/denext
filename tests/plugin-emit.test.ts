@@ -293,8 +293,6 @@ async function fetchFrom(
 for (const compat of [false, true]) {
   Deno.test({
     name: `emitFile, SPA ${compat ? "esbuild" : "native"} path: export root + build/start serve it`,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     resetPlugins();
     const dir = await spaProject(compat);
@@ -331,8 +329,6 @@ for (const compat of [false, true]) {
 
 Deno.test({
   name: "emitFile, App Router: export root + build/start serve it (ahead of public/)",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   resetPlugins();
   const dir = await project(
@@ -365,8 +361,6 @@ Deno.test({
 
 Deno.test({
   name: "emitFile, App Router export: a build step cannot overwrite a page the export rendered",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   resetPlugins();
   const overwriter = `{

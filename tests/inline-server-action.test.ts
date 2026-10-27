@@ -23,12 +23,17 @@ import {
   transformInlineServerActions,
 } from "../src/build/inline-server-action.ts";
 import { setBuildActionIdSecret } from "../src/server/action-ids.ts";
+import { restoreActionIdStateAfterEachTest } from "./helpers/action-id-state.ts";
 import { generateServerStub } from "../src/build/client-imports.ts";
 import { serverStubPlugin, stopNextCompat } from "../src/build/next-compat.ts";
 import { ACTION_PREFIX, getServerAction, isServerAction } from "../src/runtime/server-action.ts";
 import { resolveAction } from "../src/server/action-handler.ts";
 import { sealBoundValues } from "../src/server/action-bound.ts";
 import { buildInChild } from "./helpers/bounded-build.ts";
+
+// A test that installs a build secret or sets DENEXT_ACTION_ID_SECRET hands the next one the
+// state as it found it, even when it fails half-way.
+restoreActionIdStateAfterEachTest();
 
 const MOD = "file:///app/page.tsx";
 
@@ -260,8 +265,6 @@ const fw = (p: string) => fromFileUrl(new URL(`../${p}`, import.meta.url));
 
 Deno.test({
   name: "native client bundle: an inline action in a client component fails the build",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp("denext_inline_native_", {
     "deno.json": JSON.stringify({
