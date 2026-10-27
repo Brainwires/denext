@@ -14,7 +14,13 @@
 // `net` also takes the hosts the scripts may reach, and a `write` path may start with `~` (the
 // user's home, resolved when the jail runs); each entry below names its download hosts and, for
 // a download cache under the home, the cache directory and its variable, used on runtimes that
-// take them (`net: true` and no cache grant on older ones). There is no per-package opt-out, so
+// take them (`net: true` and no cache grant on older ones). Also from rc.6 (item 111) a script
+// writes only beneath its own package's folder, and executables left in a `~` path are removed
+// unless the entry sets `"executables": true`: an entry names the node_modules directories
+// outside its package that it writes (`siblingWrite`), and a browser cache gets `executables`.
+// From rc.7 (item 124) the download host a package declares for itself (node-pre-gyp's
+// `binary.host`) is honoured only when `jailScripts.knownPackages` lists it: `declaredHosts`
+// holds the reviewed ones. There is no per-package opt-out, so
 // each entry is the narrowest grant that lets the script do its job. `denext migrate` / `create` / `add` write the entries for
 // the dependencies they find, and `denext doctor` flags a missing one; nothing here ever turns the
 // jail off. Data only: src/build/jail-scripts.ts reads it.
@@ -30,9 +36,18 @@ export interface JailPackageException {
    * they may reach.
    */
   readonly net?: boolean | readonly string[];
+  /**
+   * Runtime 3.0.0-rc.6 and later: keep the files with an execute bit the scripts leave in a `~`
+   * write path (a browser download), which the jail otherwise removes.
+   */
+  readonly executables?: boolean;
 }
 
-/** A download cache under the user's home that the package keeps across installs. */
+/**
+ * A download cache under the user's home that the package keeps across installs. It holds the
+ * downloaded browser or app, so on a runtime that sweeps executables out of `~` write paths the
+ * entry also gets `"executables": true`.
+ */
 export interface JailCache {
   /** The variable naming the cache directory, passed through (`PUPPETEER_CACHE_DIR`). */
   readonly env: string;
@@ -80,6 +95,20 @@ export interface JailExceptionEntry {
    * finds none needs no exception (msw without a `workerDirectory` copies nothing).
    */
   readonly writeTargets?: readonly JailWriteTarget[];
+  /**
+   * Directories outside the package's own folder that its script writes, relative to the
+   * project (`node_modules/.prisma`): added to `write` on a runtime that confines a script's
+   * writes to its own package (3.0.0-rc.6 and later), where nothing else is needed before.
+   */
+  readonly siblingWrite?: readonly string[];
+  /**
+   * The download hosts the package's own package.json declares (node-pre-gyp's `binary.host`),
+   * reviewed: written to `jailScripts.knownPackages` on a runtime that honours a declared host
+   * only when that lists it (3.0.0-rc.7 and later). Older runtimes allow a declared host by
+   * itself. Only hosts that serve the file themselves are listed: a GitHub release download
+   * redirects to another host, which a declaration can't cover (those packages get a `net` list).
+   */
+  readonly declaredHosts?: readonly string[];
   /** What the exception cannot fix, and what to do about it. */
   readonly caveat?: string;
 }
@@ -135,8 +164,12 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
       ],
     },
     writeTargets: ["prisma-output"],
+    siblingWrite: ["node_modules/.prisma"],
     caveat: "The project's `.env` is unreadable inside the jail; `prisma generate` does not " +
-      "need it, but a schema whose generator block reads `env(...)` does.",
+      "need it, but a schema whose generator block reads `env(...)` does. The default " +
+      "`prisma-client-js` output is `node_modules/.prisma`; with an isolated `node_modules` " +
+      "(a deno.json project's `node_modules/.deno/` layout) it lies beside `@prisma/client`'s " +
+      "real folder instead: give the generator an `output` in the project, which is granted.",
   },
   {
     name: "@prisma/engines",
@@ -184,8 +217,8 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   {
     name: "canvas",
     hosts: [...GITHUB, NODE_HEADERS],
-    reason: "install fetches a prebuilt binding with `prebuild-install` from GitHub (canvas 3; " +
-      "canvas 2's declared node-pre-gyp host is allowed by the jail by itself), else builds it",
+    reason: "install fetches a prebuilt binding from GitHub (canvas 3 with `prebuild-install`, " +
+      "canvas 2 with node-pre-gyp from its declared GitHub host), else builds it",
     exception: { net: true },
     caveat: NODE_GYP,
   },
@@ -244,6 +277,15 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
     exception: { net: true, env: ["FFMPEG_BINARIES_URL"] },
   },
   {
+    name: "grpc",
+    declaredHosts: ["node-precompiled-binaries.grpc.io"],
+    reason: "install (`node-pre-gyp install`) downloads the prebuilt binding from the host its " +
+      "package.json declares (`binary.host`), else builds it",
+    exception: {},
+    caveat: "Deprecated in favour of the pure-JavaScript `@grpc/grpc-js`, which has no install " +
+      "script. " + NODE_GYP,
+  },
+  {
     name: "keytar",
     hosts: [...GITHUB, NODE_HEADERS],
     reason: "`prebuild-install` fetches a prebuilt binding from GitHub releases, else builds it",
@@ -277,6 +319,14 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
     hosts: [...GITHUB, NODE_HEADERS],
     reason: "install downloads the libsass binding from GitHub, else builds it",
     exception: { net: true, env: ["SASS_BINARY_NAME", "SASS_BINARY_PATH", "SASS_BINARY_SITE"] },
+    caveat: NODE_GYP,
+  },
+  {
+    name: "nodegit",
+    declaredHosts: ["axonodegit.s3.amazonaws.com"],
+    reason: "install downloads the prebuilt binding from the host its package.json declares " +
+      "(`binary.host`), else builds it",
+    exception: {},
     caveat: NODE_GYP,
   },
   ...PLAYWRIGHT_BROWSERS.map((browser): JailExceptionEntry => ({
@@ -339,6 +389,13 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
     exception: { net: true },
     caveat: NODE_GYP,
   },
+  {
+    name: "wrtc",
+    declaredHosts: ["node-webrtc.s3.amazonaws.com"],
+    reason: "install downloads the prebuilt WebRTC binding from the host its package.json " +
+      "declares (`binary.host`)",
+    exception: {},
+  },
 ];
 
 /**
@@ -352,8 +409,12 @@ export const JAIL_NOT_NEEDED: readonly { readonly name: string; readonly why: st
   },
   {
     name: "bcrypt",
-    why: "bcrypt 6 ships prebuilt binaries; bcrypt 5's node-pre-gyp host is declared, which the " +
-      "jail allows by itself",
+    why: "bcrypt 6 ships prebuilt binaries that `node-gyp-build` loads at run time, so leave its " +
+      "install script unapproved. Approving it works where the OS confines lifecycle scripts " +
+      "(macOS, Linux with Landlock) from runtime 3.0.0-rc.7, which lets the install check load " +
+      "the package's own binary; elsewhere, and on older runtimes, the approved check fails. " +
+      "bcrypt 5 downloads from GitHub through node-pre-gyp, which from rc.7 needs a host grant: " +
+      "upgrade to bcrypt 6",
   },
   {
     name: "playwright",
@@ -365,6 +426,9 @@ export const JAIL_NOT_NEEDED: readonly { readonly name: string; readonly why: st
   },
   {
     name: "bufferutil",
-    why: "`node-gyp-build` loads a bundled prebuilt binary",
+    why: "`node-gyp-build` loads a bundled prebuilt binary at run time, so leave its install " +
+      "script unapproved. Approving it works where the OS confines lifecycle scripts (macOS, " +
+      "Linux with Landlock) from runtime 3.0.0-rc.7; elsewhere, and on older runtimes, the " +
+      "approved install check can't load the binary and fails",
   },
 ];
